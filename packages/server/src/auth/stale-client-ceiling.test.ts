@@ -80,7 +80,6 @@ async function seedClientWithCeiling(
     scopes,
     redirectUris: [CALLBACK],
     postLogoutRedirectUris: [ORIGIN + "/"],
-    referenceId: null,
   });
   return clientId;
 }
@@ -260,7 +259,6 @@ async function seedClientWithCeilingNull(c: TestContext): Promise<string> {
     scopes: null,
     redirectUris: [CALLBACK],
     postLogoutRedirectUris: [ORIGIN + "/"],
-    referenceId: null,
   });
   return clientId;
 }

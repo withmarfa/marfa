@@ -27,7 +27,7 @@ import {
   TEST_API_KEY_SALT,
   type TestContext,
 } from "../test-utils.js";
-import type { Storage } from "../storage/interface.js";
+import { readSpaceConfig } from "../storage/space-config.js";
 
 // ---------------------------------------------------------------------------
 // Unit — checkOperatorKey reads the flag and the space binding together
@@ -56,23 +56,8 @@ describe("checkOperatorKey (unit)", () => {
     expect(checkOperatorKey(key)).toBe(key);
   });
 
-  it("rejects a space-bound operator key with FORBIDDEN", () => {
-    // The row constraint holds the pair together, so no store hands this
-    // shape back today. The gate still asks both questions, because reading
-    // `is_operator` alone would readmit anything that ever gained the flag
-    // while bound to a space — which is what the constraint protects and not
-    // something this function should depend on.
-    const key = fakeKey({ is_operator: true, space_id: "space-a" });
-    expect(() => checkOperatorKey(key)).toThrow(MarfaError);
-    try {
-      checkOperatorKey(key);
-    } catch (e) {
-      expect((e as MarfaError).code).toBe(ErrorCode.FORBIDDEN);
-    }
-  });
-
   it("rejects a credential without the operator flag", () => {
-    expect(() => checkOperatorKey(fakeKey({ space_id: "space-a" }))).toThrow(
+    expect(() => checkOperatorKey(fakeKey({ is_operator: false }))).toThrow(
       MarfaError,
     );
     expect(() => checkOperatorKey(fakeKey())).toThrow(MarfaError);
@@ -94,19 +79,10 @@ describe("checkOperatorKey (unit)", () => {
 // Integration
 // ---------------------------------------------------------------------------
 
-/** The space store is optional on the interface but always present in a
- *  test context built with the default (hosted-capable) storage. */
-function spaceStore(ctx: TestContext): NonNullable<Storage["spaces"]> {
-  const spaces = ctx.storage.spaces;
-  if (!spaces) throw new Error("test context has no space store");
-  return spaces;
-}
-
 async function mintKey(
   ctx: TestContext,
   opts: {
     label: string;
-    spaceId?: string;
     spacePermissions?: SpacePermission[];
     is_operator?: boolean;
   },
@@ -123,7 +99,6 @@ async function mintKey(
       is_operator: opts.is_operator ?? false,
     },
     hashApiKey(raw, TEST_API_KEY_SALT),
-    opts.spaceId,
   );
   return raw;
 }
@@ -137,10 +112,8 @@ describe("the mint never exceeds the caller", () => {
 
   it("refuses a space permission the caller does not hold, by name", async () => {
     ctx = await createTestContext();
-    const spaceA = `space-a-${Math.random().toString(36).slice(2, 10)}`;
     const caller = await mintKey(ctx, {
       label: "clamp-caller",
-      spaceId: spaceA,
       spacePermissions: ["space.keys", "space.webhooks"],
     });
 
@@ -166,10 +139,8 @@ describe("the mint never exceeds the caller", () => {
 
   it("permits a peer mint of what the caller already holds", async () => {
     ctx = await createTestContext();
-    const spaceA = `space-a-${Math.random().toString(36).slice(2, 10)}`;
     const caller = await mintKey(ctx, {
       label: "peer-caller",
-      spaceId: spaceA,
       spacePermissions: ["space.keys", "space.webhooks"],
     });
 
@@ -190,25 +161,20 @@ describe("the mint never exceeds the caller", () => {
     // is what the credential actually holds, and it is what a later gate asks.
     const stored = await ctx.storage.keys.get(minted.id);
     expect(stored?.space_permissions).toEqual(["space.webhooks"]);
-    // The new key inherits the caller's space, so its reach stops where the
-    // caller's does on the other axis too.
-    expect(stored?.space_id).toBe(spaceA);
   });
 });
 
-describe("space config is space-scoped self-service", () => {
+describe("instance config is self-service behind space.settings", () => {
   let ctx: TestContext;
 
   afterEach(async () => {
     await ctx.cleanup();
   });
 
-  it("a holder of space.settings reads and writes its own space config", async () => {
+  it("a holder of space.settings reads and writes the instance config", async () => {
     ctx = await createTestContext();
-    const space = (await spaceStore(ctx).create("Own Space")).id;
     const caller = await mintKey(ctx, {
       label: "config-holder",
-      spaceId: space,
       spacePermissions: ["space.settings"],
     });
 
@@ -226,17 +192,15 @@ describe("space config is space-scoped self-service", () => {
       trash_retention_days: 7,
     });
 
-    // The write landed on the caller's own space, not somewhere else.
-    const stored = await spaceStore(ctx).getConfig(space);
+    // The write landed on the instance config.
+    const stored = await readSpaceConfig(ctx.storage.settings);
     expect(stored?.trash_retention_days).toBe(7);
   });
 
   it("refuses a credential that does not hold space.settings", async () => {
     ctx = await createTestContext();
-    const space = (await spaceStore(ctx).create("Own Space")).id;
     const caller = await mintKey(ctx, {
       label: "config-none",
-      spaceId: space,
     });
 
     const res = await request(ctx.app, "GET", "/spaces/me/config", {

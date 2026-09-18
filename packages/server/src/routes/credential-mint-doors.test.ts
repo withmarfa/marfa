@@ -57,7 +57,7 @@ const ORIGIN = "http://localhost:0";
 // Fixture
 // ---------------------------------------------------------------------------
 
-async function mintFullSpaceKey(spaceId: string): Promise<string> {
+async function mintFullSpaceKey(): Promise<string> {
   const raw = `marfa_k1_minttest_${Math.random().toString(36).slice(2, 14)}`;
   await ctx.storage.keys.create(
     {
@@ -68,7 +68,6 @@ async function mintFullSpaceKey(spaceId: string): Promise<string> {
       is_operator: false,
     },
     hashApiKey(raw, TEST_API_KEY_SALT),
-    spaceId,
   );
   return raw;
 }
@@ -118,8 +117,7 @@ const DOORS: MintDoor[] = [
     name: "POST /keys — a mint is clamped to the creator, space is inherited",
     specRoute: "post /keys",
     forgedSource: async () => {
-      const spaceId = `t-forge-${Math.random().toString(36).slice(2, 10)}`;
-      const caller = await mintFullSpaceKey(spaceId);
+      const caller = await mintFullSpaceKey();
       const res = await request(ctx.app, "POST", "/keys", {
         key: caller,
         body: {
@@ -130,19 +128,7 @@ const DOORS: MintDoor[] = [
       expect(res.status).toBeGreaterThanOrEqual(400);
     },
     ceiling: async () => {
-      const spaceId = `t-mint-${Math.random().toString(36).slice(2, 10)}`;
-      const spaceKey = await mintFullSpaceKey(spaceId);
-
-      // Over the ceiling: naming a space — binding is inherited, never chosen.
-      const crossSpace = await request(ctx.app, "POST", "/keys", {
-        key: spaceKey,
-        body: {
-          label: "aim",
-          source: "mint-aim",
-          space_id: "some-other-space",
-        },
-      });
-      expect(crossSpace.status).toBeGreaterThanOrEqual(400);
+      const spaceKey = await mintFullSpaceKey();
 
       // Over the ceiling: claiming the operator flag without holding it.
       // Refused outright rather than coerced, because running the instance
@@ -185,12 +171,10 @@ const DOORS: MintDoor[] = [
     name: "POST /keys — a session mints no wider than its own grant",
     specRoute: "post /keys",
     forgedSource: async () => {
-      const spaceId = `t-oauth-forge-${Math.random().toString(36).slice(2, 8)}`;
-      const space = await ctx.storage.spaces!.create(spaceId);
       const { token } = await seedOauthBearer(
         ctx.storage,
         ["openid", "space.keys"],
-        { spaceId: space.id },
+        {},
       );
       const res = await request(ctx.app, "POST", "/keys", {
         key: token,
@@ -202,16 +186,11 @@ const DOORS: MintDoor[] = [
       expect(res.status).toBeGreaterThanOrEqual(400);
     },
     ceiling: async () => {
-      const space = await ctx.storage.spaces!.create(
-        `t-oauth-mint-${Math.random().toString(36).slice(2, 8)}`,
-      );
       const scopes = ["openid", "space.keys", "core.note:read"];
 
       // Over the ceiling: no space permission, so the door does not open at
       // all.
-      const ungranted = await seedOauthBearer(ctx.storage, ["openid"], {
-        spaceId: space.id,
-      });
+      const ungranted = await seedOauthBearer(ctx.storage, ["openid"], {});
       const refused = await request(ctx.app, "POST", "/keys", {
         key: ungranted.token,
         body: { label: "no cap", source: "oauth-no-cap" },
@@ -220,9 +199,7 @@ const DOORS: MintDoor[] = [
 
       // Over the ceiling: reach the grant does not cover. `core.note:read`
       // does not cover `core.note:write` — the verb ranks.
-      const granted = await seedOauthBearer(ctx.storage, scopes, {
-        spaceId: space.id,
-      });
+      const granted = await seedOauthBearer(ctx.storage, scopes, {});
       const wider = await request(ctx.app, "POST", "/keys", {
         key: granted.token,
         body: {

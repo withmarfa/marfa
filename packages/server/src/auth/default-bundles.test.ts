@@ -127,10 +127,7 @@ describe("runtime custom-namespace resolution", () => {
         });
         expect(res.status).toBe(201);
       }
-      const roots = await resolveRuntimeCustomNamespaces(
-        ctx.storage,
-        ctx.spaceId,
-      );
+      const roots = await resolveRuntimeCustomNamespaces(ctx.storage);
       expect(roots.own).toEqual(["acme"]);
     } finally {
       await ctx.cleanup();
@@ -153,15 +150,12 @@ describe("runtime custom-namespace resolution", () => {
         version: 1,
         fields: { name: { type: "string", required: true } },
       } as const;
-      const space = await ctx.storage.spaces!.create("space-mixed");
       await ctx.storage.types.create(
         { id: "jonah.reading_item", ...baseType },
-        space.id,
         { origin: "user" },
       );
       await ctx.storage.types.create(
         { id: "acme.widget", ...baseType },
-        space.id,
         {
           origin: "integration",
           family: "integration",
@@ -169,7 +163,7 @@ describe("runtime custom-namespace resolution", () => {
         },
       );
 
-      const roots = await resolveRuntimeCustomNamespaces(ctx.storage, space.id);
+      const roots = await resolveRuntimeCustomNamespaces(ctx.storage);
       expect(roots.own).toEqual(["jonah"]);
       expect(roots.connected).toEqual(["acme"]);
 
@@ -200,49 +194,6 @@ describe("runtime custom-namespace resolution", () => {
       await ctx.cleanup();
     }
   });
-
-  it("resolves one space's own registrations and never a sibling's", async () => {
-    // Hosted mode is where the space axis exists at all: registrations
-    // land in their owning space's bucket, and the consent-time question
-    // is "this space's roots", never the union. The space-less bucket
-    // stays empty here — which is exactly why a bucket read alone made
-    // the capability inert for every hosted space.
-    const ctx = await createTestContext({});
-    try {
-      const baseType = {
-        version: 1,
-        fields: { name: { type: "string", required: true } },
-      } as const;
-      const spaceA = await ctx.storage.spaces!.create("space-a");
-      const spaceB = await ctx.storage.spaces!.create("space-b");
-      await ctx.storage.types.create(
-        { id: "acme.gadget", ...baseType },
-        spaceA.id,
-      );
-      await ctx.storage.types.create(
-        { id: "rivalco.thing", ...baseType },
-        spaceB.id,
-      );
-
-      expect(
-        (await resolveRuntimeCustomNamespaces(ctx.storage, spaceA.id)).own,
-      ).toEqual(["acme"]);
-      expect(
-        (await resolveRuntimeCustomNamespaces(ctx.storage, spaceB.id)).own,
-      ).toEqual(["rivalco"]);
-      // The space-less bucket sees neither space's registrations.
-      expect((await resolveRuntimeCustomNamespaces(ctx.storage)).own).toEqual(
-        [],
-      );
-      // The allowlist enumeration spans both — admission, not disclosure.
-      expect(await resolveAllRuntimeCustomNamespaces(ctx.storage)).toEqual([
-        "acme",
-        "rivalco",
-      ]);
-    } finally {
-      await ctx.cleanup();
-    }
-  });
 });
 
 describe("a type whose provenance nobody recorded", () => {
@@ -260,14 +211,12 @@ describe("a type whose provenance nobody recorded", () => {
     // ungrantable to any application.
     const ctx = await createTestContext({});
     try {
-      const space = await ctx.storage.spaces!.create("space-unknown");
       await ctx.storage.types.create(
         { id: "salvage.record", ...baseType },
-        space.id,
         { origin: "unknown" },
       );
 
-      const roots = await resolveRuntimeCustomNamespaces(ctx.storage, space.id);
+      const roots = await resolveRuntimeCustomNamespaces(ctx.storage);
       expect(roots.ownReadOnly).toEqual(["salvage"]);
       expect(roots.own).toEqual([]);
       expect(roots.connected).toEqual([]);
@@ -289,19 +238,16 @@ describe("a type whose provenance nobody recorded", () => {
     // contradiction on one screen, so the stronger grant wins.
     const ctx = await createTestContext({});
     try {
-      const space = await ctx.storage.spaces!.create("space-both");
       await ctx.storage.types.create(
         { id: "salvage.mine", ...baseType },
-        space.id,
         { origin: "user" },
       );
       await ctx.storage.types.create(
         { id: "salvage.restored", ...baseType },
-        space.id,
         { origin: "unknown" },
       );
 
-      const roots = await resolveRuntimeCustomNamespaces(ctx.storage, space.id);
+      const roots = await resolveRuntimeCustomNamespaces(ctx.storage);
       expect(roots.own).toEqual(["salvage"]);
       expect(roots.ownReadOnly).toEqual(["salvage"]);
 

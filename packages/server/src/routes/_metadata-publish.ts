@@ -18,7 +18,6 @@ import type { Storage } from "../storage/interface.js";
 export async function itemAfterMetadataWrite(
   storage: Storage,
   before: Item,
-  spaceId: string | undefined,
 ): Promise<Item> {
-  return (await storage.items.get(before.id, spaceId)) ?? before;
+  return (await storage.items.get(before.id)) ?? before;
 }

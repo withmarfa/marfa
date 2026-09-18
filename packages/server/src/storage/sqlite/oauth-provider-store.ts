@@ -50,7 +50,6 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
         id: auth_oauth_access_token.id,
         userId: auth_oauth_access_token.userId,
         clientId: auth_oauth_access_token.clientId,
-        referenceId: auth_oauth_access_token.referenceId,
         scopes: auth_oauth_access_token.scopes,
         expiresAt: auth_oauth_access_token.expiresAt,
         createdAt: auth_oauth_access_token.createdAt,
@@ -82,7 +81,6 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
       id: row.id,
       userId: row.userId,
       clientId: row.clientId,
-      referenceId: row.referenceId,
       scopes,
       expiresAtMs: expMs,
       createdAtMs: row.createdAt ? row.createdAt.getTime() : null,
@@ -97,7 +95,6 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
         name: auth_oauth_client.name,
         redirectUris: auth_oauth_client.redirectUris,
         postLogoutRedirectUris: auth_oauth_client.postLogoutRedirectUris,
-        referenceId: auth_oauth_client.referenceId,
         public: auth_oauth_client.public,
         tokenEndpointAuthMethod: auth_oauth_client.tokenEndpointAuthMethod,
         scopes: auth_oauth_client.scopes,
@@ -156,7 +153,6 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
       name: row.name,
       redirectUris,
       postLogoutRedirectUris,
-      referenceId: row.referenceId,
       isPublic: isPublicClient(row.public, row.tokenEndpointAuthMethod),
       scopes,
       grantTypes,
@@ -348,14 +344,12 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
     clientId: string;
     userId: string;
     revoked: boolean;
-    referenceId: string | null;
   } | null> {
     const rows = await this.db
       .select({
         clientId: auth_oauth_refresh_token.clientId,
         userId: auth_oauth_refresh_token.userId,
         revoked: auth_oauth_refresh_token.revoked,
-        referenceId: auth_oauth_refresh_token.referenceId,
       })
       .from(auth_oauth_refresh_token)
       .where(eq(auth_oauth_refresh_token.token, tokenHash))
@@ -366,7 +360,6 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
       clientId: row.clientId,
       userId: row.userId,
       revoked: Boolean(row.revoked),
-      referenceId: row.referenceId ?? null,
     };
   }
 
@@ -385,7 +378,6 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
         token: input.refreshTokenHash,
         clientId: input.clientId,
         userId: input.authUserId,
-        referenceId: input.referenceId,
         expiresAt: refreshExpires,
         createdAt: now,
         scopes: scopesJson,
@@ -396,7 +388,6 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
       token: input.accessTokenHash,
       clientId: input.clientId,
       userId: input.authUserId,
-      referenceId: input.referenceId,
       refreshId,
       expiresAt: accessExpires,
       createdAt: now,
@@ -416,7 +407,6 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
   async listGrantItemsForClient(clientId: string): Promise<
     {
       id: string;
-      spaceId: string | null;
       authUserId: string | null;
       state: string;
     }[]
@@ -424,7 +414,6 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
     const rows = await this.db
       .select({
         id: items.id,
-        spaceId: items.space_id,
         state: items.state,
         authUserId: sql`json_extract(${items.properties}, '$.user_id')`,
       })
@@ -438,7 +427,6 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
       );
     return rows.map((row) => ({
       id: row.id,
-      spaceId: row.spaceId ?? null,
       authUserId: typeof row.authUserId === "string" ? row.authUserId : null,
       state: row.state,
     }));
@@ -517,7 +505,6 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
       public: input.isPublic,
       type: input.type ?? null,
       requirePKCE: true,
-      referenceId: input.referenceId,
       metadata: null,
     });
     return {
@@ -529,7 +516,7 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
 
   /**
    * Resolve the projected `system.connection { kind: "app" }` item id for
-   * (spaceId, clientId, authUserId). Single-row lookup via json_extract
+   * (clientId, authUserId). Single-row lookup via json_extract
    * predicates on properties. Returns null if no projection row exists.
    *
    * **`state = 'active'` is part of the identity, not a filter.** Every
@@ -558,14 +545,9 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
    * insert every caller falls through to is the only remaining branch.
    */
   async findGrantItemId(opts: {
-    spaceId: string | null;
     clientId: string;
     authUserId: string;
   }): Promise<string | null> {
-    const spacePredicate =
-      opts.spaceId === null
-        ? sql`${items.space_id} IS NULL`
-        : sql`${items.space_id} = ${opts.spaceId}`;
     const rows = await this.db
       .select({ id: items.id })
       .from(items)
@@ -573,7 +555,6 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
         and(
           eq(items.type, "system.connection"),
           eq(items.state, "active"),
-          spacePredicate,
           sql`json_extract(${items.properties}, '$.kind') = 'app'`,
           sql`json_extract(${items.properties}, '$.client_id') = ${opts.clientId}`,
           sql`json_extract(${items.properties}, '$.user_id') = ${opts.authUserId}`,
@@ -701,20 +682,16 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
   async upsertConsent(input: {
     clientId: string;
     authUserId: string;
-    referenceId: string | null;
     scopes: readonly string[];
   }): Promise<void> {
     const now = new Date();
-    // One statement, arbitrated by `uq_auth_oauth_consent_client_user`. The
-    // update half re-stamps `referenceId` so a re-consent under a new space
-    // binding moves the standing grant with it.
+    // One statement, arbitrated by `uq_auth_oauth_consent_client_user`.
     await this.db
       .insert(auth_oauth_consent)
       .values({
         id: generateId(),
         clientId: input.clientId,
         userId: input.authUserId,
-        referenceId: input.referenceId,
         scopes: JSON.stringify([...input.scopes]),
         createdAt: now,
         updatedAt: now,
@@ -723,7 +700,6 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
         target: [auth_oauth_consent.clientId, auth_oauth_consent.userId],
         set: {
           scopes: JSON.stringify([...input.scopes]),
-          referenceId: input.referenceId,
           updatedAt: now,
         },
       });

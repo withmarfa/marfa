@@ -117,7 +117,6 @@ async function seedAccessToken(
     token: tokenHash,
     clientId,
     userId: authUserId,
-    referenceId: null,
     expiresAt: new Date(Date.now() + 3600_000),
     createdAt: new Date(),
     scopes: JSON.stringify(scopes),
@@ -827,13 +826,10 @@ describe("revocation reaches outstanding device codes", () => {
       200,
     );
 
-    await c.storage.items.delete(grant.id, grant.space_id ?? undefined);
+    await c.storage.items.delete(grant.id);
 
     // Exactly the disagreement described: one axis moved, the other did not.
-    const soft = await c.storage.items.getIncludingTrashed(
-      grant.id,
-      grant.space_id ?? undefined,
-    );
+    const soft = await c.storage.items.getIncludingTrashed(grant.id);
     expect(soft?.state).toBe("revoked");
     expect(soft?.properties.status).toBe("active");
 
@@ -885,12 +881,9 @@ describe("revocation reaches outstanding device codes", () => {
 
     // The purge route's own two steps: soft delete first, because purge
     // refuses an item that has not been soft-deleted.
-    const spaceId = grant.space_id ?? undefined;
-    await c.storage.items.delete(grant.id, spaceId);
-    await c.storage.items.purge(grant.id, spaceId);
-    expect(
-      await c.storage.items.getIncludingTrashed(grant.id, spaceId),
-    ).toBeNull();
+    await c.storage.items.delete(grant.id);
+    await c.storage.items.purge(grant.id);
+    expect(await c.storage.items.getIncludingTrashed(grant.id)).toBeNull();
 
     // The foreign key did the rest: the row survived, its grant did not.
     const row = await c.storage.oauth.findDeviceCodeByHash(

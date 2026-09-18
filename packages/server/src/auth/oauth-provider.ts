@@ -14,9 +14,8 @@
  *      (acceptable tradeoff; documented).
  *   2. `buildOauthProviderPlugin(...)` — constructs the plugin with
  *      opaque tokens hashed via Marfa's `hashApiKey(t, salt)`, the
- *      `marfa_at_` / `marfa_rt_` prefixes, space binding via
- *      `clientReference` + `postLogin.consentReferenceId`, and OIDC
- *      custom claims for profile + email + space_id.
+ *      `marfa_at_` / `marfa_rt_` prefixes, and OIDC custom claims for
+ *      profile + email.
  *   3. `buildOauthProjectionPlugin(...)` — the before-hook that
  *      defends against refresh-token replay by pre-emptively revoking
  *      access tokens when a stale refresh is detected.
@@ -49,10 +48,6 @@ import type { PermissionBundle } from "@withmarfa/shared";
 import type { Storage } from "../storage/interface.js";
 import { getPermissionBundles } from "../config.js";
 import { deriveCustomTypeNamespaces } from "./default-bundles.js";
-import {
-  NO_GRANT_SPACE_MESSAGE,
-  resolveSpaceIdForAuthUser,
-} from "./grant-space.js";
 import { dcrDefaultScopes, SESSION_CRITICAL_SCOPES } from "./mint-ceiling.js";
 import { log } from "../middleware/logger.js";
 import {
@@ -370,8 +365,8 @@ export interface OauthProviderOptions {
    *  `hashApiKey(token, salt)` returns identical output, letting the
    *  middleware look up `auth_oauth_access_token.token` directly. */
   apiKeySalt: string;
-  /** The Storage handle. Threaded into clientReference + custom-claim
-   *  callbacks and the grant-projection after-hooks. */
+  /** The Storage handle. Threaded into the custom-claim callbacks and the
+   *  grant-projection after-hooks. */
   storage: Storage;
   /** Base URL for the issuer (used in id_token claims). */
   baseURL: string;
@@ -410,51 +405,6 @@ export function buildOauthProviderPlugin(
     // is a future-watch item; revisit if MCP standardizes it.
     allowDynamicClientRegistration: true,
     allowUnauthenticatedClientRegistration: true,
-
-    // ----- Space binding -----
-    // `clientReference` is invoked at CLIENT-REGISTRATION time. The
-    // returned value is written to `auth_oauth_client.reference_id`
-    // and is immutable for the life of the client. Used for things
-    // like "list all clients a space has registered."
-    clientReference: async ({ user }) => {
-      if (!user) return undefined;
-      return resolveSpaceIdForAuthUser(opts.storage);
-    },
-
-    // `postLogin.consentReferenceId` is invoked at TOKEN-ISSUANCE
-    // time (verified in @better-auth/oauth-provider@1.6.13). The return
-    // value is written to
-    // `auth_oauth_access_token.reference_id` for every minted token.
-    //
-    // The bearer middleware reads that column as the per-token
-    // `space_id`:
-    //
-    //   middleware/auth.ts:325:
-    //     const oauthSpaceId = oauthToken.referenceId ?? undefined;
-    //
-    // Without this callback, `reference_id` is NULL on every issued
-    // token → the bearer middleware sees `space_id=undefined` →
-    // keys-mode behavior → multi-space scoping breaks. With it, each
-    // token is bound to the consenting user's space at issuance, so
-    // the same client can serve users from different spaces without
-    // cross-space leakage.
-    //
-    // The plugin's `postLogin` config wraps an OPTIONAL account-
-    // selection flow (multi-account UX); Marfa has single-account-per-
-    // session, so `shouldRedirect` always returns false and the
-    // `/auth/post-login` page is never hit. We only wire this block
-    // for the `consentReferenceId` field.
-    //
-    // Keys mode resolves too, to the instance's one space. It used to
-    // answer `undefined` here and mint a NULL `reference_id`, which the
-    // bearer middleware then admitted as a principal the storage layer
-    // applies no space predicate to. A token that still arrives unbound is
-    // refused rather than promoted.
-    postLogin: {
-      page: "/auth/post-login",
-      shouldRedirect: () => false,
-      consentReferenceId: async () => resolveSpaceIdForAuthUser(opts.storage),
-    },
 
     // ----- Scope grammar -----
     // Default scopes (clients can request these). `clientRegistrationAllowedScopes`
@@ -525,11 +475,10 @@ export function buildOauthProviderPlugin(
     // NOT call (it reads `auth_oauth_access_token` directly + joins
     // `system.connection`). Kept anyway so external resource servers
     // introspecting Marfa-issued tokens get a usable claim set.
-    customAccessTokenClaims: ({ user, scopes, referenceId }) => {
+    customAccessTokenClaims: ({ user, scopes }) => {
       const claims: Record<string, unknown> = {
         scope: scopes.join(" "),
       };
-      if (referenceId) claims.space_id = referenceId;
       if (user) claims.user_id = user.id;
       return claims;
     },
@@ -945,7 +894,6 @@ interface RevokeResolution {
     clientId: string;
     userId: string;
     revoked: boolean;
-    referenceId: string | null;
   };
   /** The hash the row was found under, so the after-hook can ask whether
    *  the plugin deleted it. */
@@ -1154,35 +1102,18 @@ async function cascadeClientRevoke(
       // records have to follow.
     }
 
-    // **The token names the bucket, unless it names none.** A refresh token
-    // minted before a grant's space resolved carries a NULL reference, and
-    // the migration that moves a stranded projection into the space the
-    // resolver now answers does not rewrite the token rows behind it. A
-    // lookup keyed on the token alone would then miss the row that moved,
-    // and this cascade would report an ended grant over a live one on the
-    // security page — the silent revoke this whole change exists to close,
-    // arriving through the one surface that reads the space off a token
-    // rather than off the account. Asking the resolver for that case is what
-    // every other caller of the question does.
-    const spaceId =
-      row.referenceId ?? (await resolveSpaceIdForAuthUser(storage));
     grantItemId = await provider.findGrantItemId({
-      spaceId: spaceId ?? null,
       clientId: row.clientId,
       authUserId: row.userId,
     });
-    const item = grantItemId
-      ? await storage.items.get(grantItemId, spaceId)
-      : null;
+    const item = grantItemId ? await storage.items.get(grantItemId) : null;
     await revokeProjectedGrant(storage, {
       itemId: item ? item.id : null,
       properties: item?.properties,
-      spaceId,
       clientId: row.clientId,
       authUserId: row.userId,
     });
     auditGrantRevoked(storage, {
-      spaceId,
       clientId: row.clientId,
       authUserId: row.userId,
       grantItemId: item ? item.id : null,
@@ -1685,7 +1616,6 @@ async function narrowAuthorizeScopes(
   // guessing would be worse than the null the audit store already admits
   // for system-initiated rows. The client is the subject here anyway.
   void storage.audit.log({
-    space_id: null,
     action: "auth.scopes.narrowed",
     resource_type: "oauth_client",
     resource_id: clientId,
@@ -1925,27 +1855,6 @@ async function guardRefreshTokenGrant(
     });
   }
   if (!row.revoked) {
-    // **An active refresh token with no space rotates into another one with
-    // no space.** The plugin carries the presented token's `reference_id`
-    // forward verbatim rather than re-resolving it, so a token minted before
-    // a grant's space resolved mints its replacement exactly as unbound, and
-    // the bearer middleware refuses that on every request with nothing naming
-    // the cause. Refused here instead, in the field a client reads. This is
-    // the one grant type that reaches a mint without passing through a code,
-    // so the authorization-code guard below never sees it.
-    //
-    // Only the NULL case. A token carrying a real space keeps it even if the
-    // account has since moved: the token's own binding is the grant, and
-    // re-resolving here would refuse a credential that works.
-    if (row.referenceId === null) {
-      log("info", "oauth refresh refused: the grant carries no space", {
-        client_id: row.clientId,
-      });
-      throw new APIError("BAD_REQUEST", {
-        error: "invalid_grant",
-        error_description: NO_GRANT_SPACE_MESSAGE,
-      });
-    }
     return; // active — let the plugin rotate
   }
 
@@ -2038,50 +1947,6 @@ async function guardAuthorizationCodeGrant(
 
   // Unknown code: not ours to judge. The plugin returns the spec error.
   if (!row) return;
-
-  // **The last place a grant with no space can be stopped, and the only one
-  // that covers every path to a code.** The consent route refuses before it
-  // mints one, but the plugin answers `/oauth2/authorize` itself when a
-  // standing consent already covers the request and redirects to the callback
-  // without that route running at all. An account whose space stops resolving
-  // after it consented reaches the exchange by that path, and the token minted
-  // for it would carry no space and be refused on every request, with nothing
-  // telling anybody why.
-  //
-  // Refused here rather than in a before-hook on the authorize endpoint,
-  // because a before-hook has no session: Better Auth resolves one inside the
-  // endpoint. The code has already reached the client's callback by this
-  // point, so this does not spare the redirect; what it spares is a
-  // credential that mints and then reaches nothing, and it names the cause
-  // where a client is listening.
-  //
-  // Bracketed because this one check does not share the function's fail-open
-  // rule and the difference has to be visible: an unreadable answer is not
-  // permission to mint, so a blip refuses with a retryable code rather than
-  // falling through to a token nothing will accept.
-  let codeGrantSpaceId: string | undefined;
-  try {
-    codeGrantSpaceId = await resolveSpaceIdForAuthUser(storage);
-  } catch (err) {
-    log("warn", "oauth authorization-code space lookup failed", {
-      client_id: row.clientId,
-      error: err instanceof Error ? err.message : String(err),
-    });
-    throw new APIError("SERVICE_UNAVAILABLE", {
-      error: "temporarily_unavailable",
-      error_description:
-        "The space this grant belongs to could not be read. Try again.",
-    });
-  }
-  if (codeGrantSpaceId === undefined) {
-    log("info", "oauth authorization-code refused: no space for the account", {
-      client_id: row.clientId,
-    });
-    throw new APIError("BAD_REQUEST", {
-      error: "invalid_grant",
-      error_description: NO_GRANT_SPACE_MESSAGE,
-    });
-  }
 
   if (row.hasConsent) return;
 

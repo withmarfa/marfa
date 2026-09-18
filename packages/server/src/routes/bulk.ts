@@ -56,11 +56,11 @@ import {
   permitsMirrorWrite,
   itemProvenanceSource,
   getTypeFilter,
-  hasOperatorAuthority,
 } from "../middleware/auth.js";
 import { MAX_TAGS_PER_ITEM } from "../tag-limits.js";
 import { namesSystemNamespace } from "./_system-type-visibility.js";
 import type { BulkActionJobRow, Storage } from "../storage/interface.js";
+import { readSpaceConfig } from "../storage/space-config.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import { publish } from "../pubsub.js";
 import { applyInlineEdges, announceInlineEdges } from "./_edges-inline.js";
@@ -465,7 +465,6 @@ async function processBulkItem(
   index: number,
   options: {
     mode: "upsert" | "create_only";
-    spaceId: string | undefined;
     stampedSource: string | undefined;
     /**
      * Whether the caller has already opened the batch transaction (atomic
@@ -568,7 +567,6 @@ async function processBulkItem(
 
   const {
     mode,
-    spaceId,
     stampedSource,
     atomic,
     retype,
@@ -593,9 +591,9 @@ async function processBulkItem(
     // would describe edges a later item's failure then rolls back.
     recordEdgeChanges(
       atomic
-        ? await applyInlineEdges(storage, id, edgeSet, spaceId, checkEdgeWrite)
+        ? await applyInlineEdges(storage, id, edgeSet, checkEdgeWrite)
         : await storage.runInTransaction(() =>
-            applyInlineEdges(storage, id, edgeSet, spaceId, checkEdgeWrite),
+            applyInlineEdges(storage, id, edgeSet, checkEdgeWrite),
           ),
     );
   };
@@ -641,11 +639,7 @@ async function processBulkItem(
   let existing: Item | null = null;
   let matchedBy: "source_id" | "id" | null = null;
   if (stampedSource && sourceId) {
-    existing = await storage.items.findBySourceId(
-      stampedSource,
-      sourceId,
-      spaceId,
-    );
+    existing = await storage.items.findBySourceId(stampedSource, sourceId);
     if (existing) matchedBy = "source_id";
   }
   // Fall back to primary-id lookup when no (source, source_id) match was
@@ -666,8 +660,8 @@ async function processBulkItem(
     // row is not something a re-sync silently edits.
     existing =
       mode === "create_only"
-        ? await storage.items.getIncludingTrashed(raw.id, spaceId)
-        : await storage.items.get(raw.id, spaceId);
+        ? await storage.items.getIncludingTrashed(raw.id)
+        : await storage.items.get(raw.id);
     if (existing) matchedBy = "id";
   }
 
@@ -767,12 +761,7 @@ async function processBulkItem(
         // and it is the difference between predicting the write and
         // approximating it. `existing.type` rather than the destination for
         // the same reason: the store resolves against the row's own type.
-        resolveIncomingProperties(
-          existing.type,
-          raw.properties,
-          false,
-          spaceId,
-        ) ?? {},
+        resolveIncomingProperties(existing.type, raw.properties, false) ?? {},
         false,
         "merge",
       );
@@ -783,10 +772,8 @@ async function processBulkItem(
       // row's own type without refusing every write to a type whose schema
       // this request's registry does not carry, so it asks first — the
       // same guard the single-item door runs.
-      if (isMove || getTypeSchema(resultingType, spaceId) !== undefined) {
-        const validation = validateProperties(resultingType, merged, {
-          ...(spaceId === undefined ? {} : { spaceId }),
-        });
+      if (isMove || getTypeSchema(resultingType) !== undefined) {
+        const validation = validateProperties(resultingType, merged);
         if (!validation.success) {
           // Named, not counted, and not a reason to abandon the rest — the
           // point of moving a corpus per item is that some of it cannot go,
@@ -812,16 +799,12 @@ async function processBulkItem(
       }
     }
     assertTierApplicable(resultingType, raw.tier);
-    const updated = await storage.items.update(
-      existing.id,
-      {
-        properties: raw.properties,
-        ...(resultingType === existing.type ? {} : { type: resultingType }),
-        tier: raw.tier,
-        timestamp: raw.timestamp,
-      },
-      spaceId,
-    );
+    const updated = await storage.items.update(existing.id, {
+      properties: raw.properties,
+      ...(resultingType === existing.type ? {} : { type: resultingType }),
+      tier: raw.tier,
+      timestamp: raw.timestamp,
+    });
     if ("error" in updated) {
       return {
         result: {
@@ -907,7 +890,7 @@ async function processBulkItem(
       ...(raw.device !== undefined && { device: raw.device }),
       ...(raw.tags !== undefined && { tags: raw.tags }),
     };
-    const created = await storage.items.create(createInput, spaceId);
+    const created = await storage.items.create(createInput);
     if (raw.edges) {
       await reconcileEdges(created.id, raw.edges);
     }
@@ -940,8 +923,7 @@ export function bulkRoutes(storage: Storage) {
   router.openapi(bulkRoute, async (c) => {
     // Authenticated + per-item type-write authorization, mirroring the
     // single-item `POST /items` gate: the credential must hold write on each
-    // item's type, and nothing bypasses that. Space scoping is threaded
-    // through every storage call below via `spaceId`.
+    // item's type, and nothing bypasses that.
     requireAuth(c);
     const checkWrite = (raw: { type: string; properties?: unknown }): void => {
       requireTypeAccess(c, raw.type, "write");
@@ -983,7 +965,6 @@ export function bulkRoutes(storage: Storage) {
       );
     }
 
-    const spaceId = c.get("apiKey")?.space_id;
     const stampedSource = itemProvenanceSource(c.get("apiKey"));
 
     if (items.length === 0) {
@@ -1050,7 +1031,6 @@ export function bulkRoutes(storage: Storage) {
       for (const [i, raw] of items.entries()) {
         const processed = await processBulkItem(storage, raw, i, {
           mode,
-          spaceId,
           stampedSource,
           atomic,
           retype,
@@ -1121,19 +1101,17 @@ export function bulkRoutes(storage: Storage) {
         type: r.result.outcome === "created" ? "created" : "updated",
         item: r.item,
         ...(metadata && { metadata }),
-        spaceId,
         enableFanout,
       });
     }
     // Edges after the items, so a subscriber sees the endpoints before the
     // relationship naming them.
     for (const changes of inlineEdgeChanges) {
-      await announceInlineEdges(changes, spaceId, enableFanout);
+      await announceInlineEdges(changes, enableFanout);
     }
 
     await storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
-      space_id: c.get("apiKey")?.space_id ?? null,
       key_id: c.get("apiKey")?.id,
       action: "items.bulk",
       resource_type: "items.bulk",
@@ -1256,7 +1234,6 @@ export function bulkRoutes(storage: Storage) {
     }
 
     const callerKey = c.get("apiKey");
-    const spaceId = callerKey?.space_id;
 
     // Narrowed to what the caller may *write*, which this comment claimed
     // before the code did it. The filter compiled readable patterns, so a
@@ -1291,10 +1268,7 @@ export function bulkRoutes(storage: Storage) {
     // filter excludes now matches nothing and reports `matched: 0` rather
     // than refusing, which is the shape of a filter that found nothing. A
     // Whoever needs those rows lifts the lever, acts, and restores it.
-    const spaceConfigForAction =
-      spaceId && storage.spaces
-        ? await storage.spaces.getConfig(spaceId)
-        : null;
+    const spaceConfigForAction = await readSpaceConfig(storage.settings);
     const enforcementForAction = resolveEnforcement(
       spaceConfigForAction,
       callerKey,
@@ -1319,7 +1293,6 @@ export function bulkRoutes(storage: Storage) {
     let cursor: string | undefined;
     do {
       const page = await storage.items.list({
-        spaceId,
         type: filter.type,
         state: filter.state,
         source: filter.source,
@@ -1423,7 +1396,6 @@ export function bulkRoutes(storage: Storage) {
     const apiKeyId = c.get("apiKey")?.id ?? null;
     const job = await storage.bulkActionJobs.create({
       id: generateId(),
-      space_id: spaceId ?? null,
       api_key_id: apiKeyId,
       action,
       input: JSON.stringify(body),
@@ -1438,7 +1410,6 @@ export function bulkRoutes(storage: Storage) {
 
     await storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
-      space_id: c.get("apiKey")?.space_id ?? null,
       key_id: c.get("apiKey")?.id,
       action: "items.bulk_action",
       resource_type: "items.bulk_action",
@@ -1505,7 +1476,7 @@ function assertJobAuth(c: Context<AppEnv>, job: BulkActionJobRow): void {
   // Operator authority reaches every job: `bulkActionJobs.getById` is
   // deliberately unscoped, so this is the only fence, and a purge job
   // carries no space at all.
-  if (hasOperatorAuthority(apiKey)) return;
+  if (apiKey.is_operator) return;
   // **A job belongs to the credential that started it, and to nothing else.**
   // There used to be a rank arm above this one, admitting an admin to any job
   // in its own space; with rank retired there is no space permission that says
@@ -1513,17 +1484,8 @@ function assertJobAuth(c: Context<AppEnv>, job: BulkActionJobRow): void {
   // arm would be widening the model to fit a line rather than the other way
   // round. What is left is the narrower half that was always here.
   if (job.api_key_id && apiKey.id === job.api_key_id) return;
-  // Cloaked as absent rather than refused when the job is not even in this
-  // caller's space, so a cross-space probe cannot enumerate job ids. Matches
-  // the treatment of `/keys/:id`. Within one space the job's existence is not
-  // a secret, only its contents, so that case keeps its 403.
-  // Normalized, because the two sides spell "no space" differently: a caller's
-  // is `undefined` and a row's is `null`, so a space-less caller reading a
-  // space-less job took the cloaked-404 arm and the 403 below was unreachable
-  // on an instance with no space plane.
-  if ((apiKey.space_id ?? null) !== (job.space_id ?? null)) {
-    throw new MarfaError(ErrorCode.BULK_JOB_NOT_FOUND, "Job not found");
-  }
+  // The job's existence is not a secret, only its contents, so this is a
+  // 403 rather than a cloaked 404.
   throw new MarfaError(
     ErrorCode.FORBIDDEN,
     "This job belongs to a different credential",

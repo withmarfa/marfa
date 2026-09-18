@@ -57,25 +57,18 @@ afterAll(async () => {
  * key, whose own type permissions are empty, so the platform's own machinery
  * writes these rows.
  */
-function seedActivity(
-  marker: string,
-  spaceId: string,
-  state?: ItemState,
-): Promise<Item> {
-  return ctx.storage.items.create(
-    {
-      type: "system.activity",
-      properties: {
-        connection_id: connectionId,
-        severity: "info",
-        summary: `ba-${marker}`,
-      },
-      ...(state === undefined ? {} : { state }),
-      tags: [marker],
-      source: `bulk-action-seed-${marker}-${Math.random().toString(36).slice(2, 8)}`,
+function seedActivity(marker: string, state?: ItemState): Promise<Item> {
+  return ctx.storage.items.create({
+    type: "system.activity",
+    properties: {
+      connection_id: connectionId,
+      severity: "info",
+      summary: `ba-${marker}`,
     },
-    spaceId,
-  );
+    ...(state === undefined ? {} : { state }),
+    tags: [marker],
+    source: `bulk-action-seed-${marker}-${Math.random().toString(36).slice(2, 8)}`,
+  });
 }
 
 async function seedPair(
@@ -91,7 +84,7 @@ async function seedPair(
   });
   expect(note.status).toBe(201);
   const { item: n } = (await note.json()) as { item: { id: string } };
-  const activity = await seedActivity(marker, ctx.spaceId);
+  const activity = await seedActivity(marker);
   return { noteId: n.id, activityId: activity.id };
 }
 
@@ -145,7 +138,7 @@ describe("the bulk-action door and the read doors agree about system rows", () =
     // state a platform-internal row actually sits in, and the predicate
     // below is the one the two gates were described in terms of, so a test
     // that drove any other comparison would be about a neighbouring claim.
-    const revoked = await seedActivity(`rev-${marker}`, ctx.spaceId, "revoked");
+    const revoked = await seedActivity(`rev-${marker}`, "revoked");
     expect(revoked.state).toBe("revoked");
     // The tag the filters below select on: `seedActivity` tags with the
     // marker it was handed.
@@ -179,7 +172,7 @@ describe("the bulk-action door and the read doors agree about system rows", () =
     // query that returned zero rows. A write grant is what puts the fence
     // back in the path as the only thing standing between this key and a
     // reserved row.
-    const raw = await mintSpaceKey(ctx, ctx.spaceId, {
+    const raw = await mintSpaceKey(ctx, {
       label: "reads-everything",
       space_permissions: [],
       type_permissions: { "*": "write" },

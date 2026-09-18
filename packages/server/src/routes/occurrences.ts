@@ -469,7 +469,6 @@ interface WindowSeed {
  */
 async function scanEvents<T>(
   storage: Storage,
-  spaceId: string | undefined,
   types: readonly string[],
   budget: ScanBudget,
   narrowing: EventScanNarrowing,
@@ -480,7 +479,6 @@ async function scanEvents<T>(
     let cursor: string | undefined;
     do {
       const page = await storage.items.list({
-        spaceId,
         type,
         state: "active",
         limit: EVENT_PAGE_SIZE,
@@ -636,12 +634,10 @@ function projectWindow(item: Item): WindowSeed | undefined {
  */
 export async function gatherSeriesSeeds(
   storage: Storage,
-  spaceId: string | undefined,
   types: readonly string[],
 ): Promise<RecurrenceSeries[]> {
   const scanned = await scanEvents(
     storage,
-    spaceId,
     types,
     { scanned: 0 },
     { hasProperty: "recurrence" },
@@ -662,14 +658,13 @@ export async function gatherSeriesSeeds(
  */
 async function fetchItemsBatched(
   storage: Storage,
-  spaceId: string | undefined,
   ids: readonly string[],
 ): Promise<Map<string, Item>> {
   const unique = [...new Set(ids)];
   const out = new Map<string, Item>();
   for (let i = 0; i < unique.length; i += ID_BATCH_SIZE) {
     const slice = unique.slice(i, i + ID_BATCH_SIZE);
-    for (const [id, item] of await storage.items.getMany(slice, spaceId)) {
+    for (const [id, item] of await storage.items.getMany(slice)) {
       if (item.state !== "active") continue;
       out.set(id, item);
     }
@@ -978,8 +973,6 @@ export function occurrenceRoutes(
 
   router.openapi(occurrencesRoute, async (c) => {
     requireAuth(c);
-    const credential = c.get("apiKey");
-    const spaceId = credential?.space_id;
     const query = c.req.valid("query");
 
     const from = readInstant(query.from, "from");
@@ -1055,7 +1048,6 @@ export function occurrenceRoutes(
     // about which rules matter.
     const seriesScan = await scanEvents(
       storage,
-      spaceId,
       wanted,
       budget,
       { hasProperty: "recurrence" },
@@ -1068,7 +1060,6 @@ export function occurrenceRoutes(
     // a ghost back on the calendar at a slot nobody is at.
     const exceptionSeeds = await scanEvents(
       storage,
-      spaceId,
       wanted,
       budget,
       { hasProperty: "original_starts_at" },
@@ -1080,7 +1071,6 @@ export function occurrenceRoutes(
     // above, so this is the one pass whose size a caller can influence.
     const windowSeeds = await scanEvents(
       storage,
-      spaceId,
       wanted,
       budget,
       {
@@ -1343,7 +1333,6 @@ export function occurrenceRoutes(
     // the ids are deduplicated on the way in.
     const shownById = await fetchItemsBatched(
       storage,
-      spaceId,
       pending.map((occurrence) => occurrence.item_id),
     );
 

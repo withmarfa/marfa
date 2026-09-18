@@ -26,7 +26,7 @@ import type { AnyValueMap } from "@opentelemetry/api-logs";
  * because magic-link / OAuth flows carry secrets in the query
  * (`?token=...`, `?code=...`).
  *
- * Explicitly KEPT (safe, useful for correlation): `space_id`, `key_id`,
+ * Explicitly KEPT (safe, useful for correlation): `key_id`,
  * `marfa.request_id`, `http.request.method`, `http.route`,
  * `http.response.status_code`, Marfa `error.code`, and the OTel exception
  * trio (`exception.type` / `exception.message` / `exception.stacktrace`) —

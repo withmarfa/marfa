@@ -179,8 +179,6 @@ const oauthLastUsedCache = new Map<string, number>();
  *      most one row write per `DEBOUNCE_MS` per grant.
  *
  * Callers fire-and-forget — failures must never break the auth path.
- * Space-scoped via `spaceId` so a hosted-mode caller cannot trip
- * this against another space's grant row.
  *
  * Used by:
  *   - `authMiddleware` for every authenticated bearer-bearing request.
@@ -191,7 +189,6 @@ const oauthLastUsedCache = new Map<string, number>();
 export async function stampOAuthGrantLastUsed(
   storage: Storage,
   connectionItemId: string,
-  spaceId: string | undefined,
 ): Promise<void> {
   const cacheKey = `oauth:${connectionItemId}`;
   const now = Date.now();
@@ -199,18 +196,14 @@ export async function stampOAuthGrantLastUsed(
   if (now - lastTracked <= DEBOUNCE_MS) return;
   touchLastUsedCache(oauthLastUsedCache, cacheKey, now);
   try {
-    await storage.oauth.updateLastUsedAt(
-      connectionItemId,
-      spaceId ?? null,
-      DEBOUNCE_MS,
-    );
+    await storage.oauth.updateLastUsedAt(connectionItemId, DEBOUNCE_MS);
   } catch {
     // Best-effort; the cache mark above prevents a stampede.
   }
 }
 
 /**
- * Stamp `last_used_at` keyed by (spaceId, clientId, authUserId)
+ * Stamp `last_used_at` keyed by (clientId, authUserId)
  * instead of a pre-resolved `connection_item_id`.
  *
  * The bearer middleware needs this because the plugin's
@@ -230,7 +223,6 @@ export async function stampOAuthGrantLastUsed(
 export async function stampOAuthGrantLastUsedByGrantKey(
   storage: Storage,
   opts: {
-    spaceId: string | undefined;
     clientId: string;
     authUserId: string;
   },
@@ -244,16 +236,11 @@ export async function stampOAuthGrantLastUsedByGrantKey(
   touchLastUsedCache(oauthLastUsedCache, cacheKey, now);
   try {
     const itemId = await storage.oauthProvider?.findGrantItemId({
-      spaceId: opts.spaceId ?? null,
       clientId: opts.clientId,
       authUserId: opts.authUserId,
     });
     if (!itemId) return;
-    await storage.oauth.updateLastUsedAt(
-      itemId,
-      opts.spaceId ?? null,
-      DEBOUNCE_MS,
-    );
+    await storage.oauth.updateLastUsedAt(itemId, DEBOUNCE_MS);
   } catch {
     // Best-effort; the cache mark above prevents a stampede.
   }
@@ -322,10 +309,9 @@ export function authMiddleware(storage: Storage, salt: string) {
     // **Side-channel join, NOT custom claims.** The plugin's
     // `customAccessTokenClaims` only embeds in JWT tokens, and Marfa
     // keeps opaque tokens (correct for our profile — DB lookup is
-    // sub-ms, revocation stays clean). The row itself carries
-    // `referenceId` (= space_id, populated by `clientReference` at
-    // issuance), `userId`, `clientId`, and `scopes`. Everything the
-    // synthetic ApiKey needs comes from the single row.
+    // sub-ms, revocation stays clean). The row itself carries `userId`,
+    // `clientId`, and `scopes`. Everything the synthetic ApiKey needs
+    // comes from the single row.
     //
     // **`connection_item_id` derivation.** The user-facing `system.connection`
     // projection (`{ kind: "app" }` items) is maintained by the
@@ -358,27 +344,6 @@ export function authMiddleware(storage: Storage, salt: string) {
         oauthToken.scopes,
       );
       const profilePermissions = scopesToProfilePermissions(oauthToken.scopes);
-      // Space id from the plugin's referenceId column (= our clientReference
-      // output, which returns the user's space_id at consent time).
-      const oauthSpaceId = oauthToken.referenceId ?? undefined;
-      // **A NULL reference binds the token to no space, and that is never a
-      // valid credential shape in either mode.** The storage layer drops its
-      // space predicate for a space-less caller, so honoring the token would
-      // hand the reach of the operator key to whatever consent gap produced
-      // it. Refuse like any other unresolvable bearer.
-      //
-      // This used to be conditioned on hosted mode, because keys mode bound
-      // nothing to a space and a space-less bearer there was the only shape
-      // there was. Keys mode has a space now and issuance binds to it, so the
-      // exemption became a hole rather than a carve-out: a keys-mode
-      // deployment with better-auth wired issued tokens this branch then
-      // admitted space-less, and the row constraint that makes space-less
-      // mean operator does not reach a principal built in memory.
-      if (oauthSpaceId === undefined) {
-        c.set("apiKey", undefined);
-        c.set("authType", undefined);
-        return next();
-      }
       // Stable composite label/source. Used in audit rows; doesn't need
       // to be a real foreign-key handle — system.connection projection
       // is maintained separately.
@@ -386,14 +351,11 @@ export function authMiddleware(storage: Storage, salt: string) {
       const createdAtIso = oauthToken.createdAtMs
         ? new Date(oauthToken.createdAtMs).toISOString()
         : new Date().toISOString();
-      // **No role is projected, because there is no role.** One account holds
-      // one space and the first person in it holds everything, so a column
-      // saying which of three kinds of person this is carried no information
-      // that the permission set does not carry better. What the app may do is
-      // the grant, which travels beside this principal rather than inside it.
+      // **No role is projected, because there is no role.** What the app may
+      // do is the grant, which travels beside this principal rather than
+      // inside it.
       c.set("apiKey", {
         id: oauthToken.id,
-        space_id: oauthSpaceId,
         label: `oauth:${grantHandle}`,
         source: `oauth:${grantHandle}`,
         default_tier: "library",
@@ -429,7 +391,6 @@ export function authMiddleware(storage: Storage, salt: string) {
 
       if (oauthToken.userId) {
         void stampOAuthGrantLastUsedByGrantKey(storage, {
-          spaceId: oauthSpaceId,
           clientId: oauthToken.clientId,
           authUserId: oauthToken.userId,
         });
@@ -512,46 +473,22 @@ export function checkAuth(apiKey: ApiKey | undefined): ApiKey {
 }
 
 /**
- * Operator gate. Guards the surfaces whose authority is instance-wide
- * rather than space-bounded: space CRUD, cross-space quota writes,
- * instance metrics, archive restore, blob reconciliation.
+ * Operator gate. Guards the surfaces whose authority is instance-wide:
+ * key minting, instance metrics, archive restore, blob reconciliation.
  *
- * Operator authority is authority that is NOT confined to a space, so the
- * gate tests two things: `is_operator` AND the absence of a space binding.
- * The flag alone is not sufficient, and `hasOperatorAuthority` below is
- * where that pair is asked and why.
- *
- * Consequence for callers: a key that passes this gate always has
- * `space_id === undefined`. A surface that belongs inside a space wants
- * `requireSpacePermission` instead, and must thread `key.space_id` into
- * every storage call it makes.
+ * **Running the instance is not a permission**, which is why this reads a
+ * field on the row rather than a member of the permission set. The operator
+ * key is fenced outside the model deliberately: it is never offered on a
+ * consent screen, never derivable from a sign-in, and never needed by an app.
+ * A surface that belongs inside the permission model wants
+ * `requireSpacePermission` instead.
  */
 export function checkOperatorKey(apiKey: ApiKey | undefined): ApiKey {
   const key = checkAuth(apiKey);
-  if (!hasOperatorAuthority(key)) {
+  if (!key.is_operator) {
     throw new MarfaError(ErrorCode.FORBIDDEN, "Operator key required");
   }
   return key;
-}
-
-/**
- * Predicate form of `checkOperatorKey`'s test, for the handful of routes that
- * need the answer as a boolean rather than a throw (they combine it with an
- * integration-credential branch, or use it to widen a space filter).
- *
- * **Running the instance is not a permission**, which is why this reads two
- * fields on the row rather than a member of the permission set. The operator
- * key is fenced outside the model deliberately: it is never offered on a
- * consent screen, never derivable from a sign-in, and never needed by an app.
- *
- * The space test is half the gate rather than a detail. `POST
- * /admin/spaces/{id}/keys` mints a credential "whose authority is confined to
- * id", and such a key carries no operator flag — but a hand-rolled
- * `is_operator` alone would readmit anything that ever gained one while bound
- * to a space, so the two fields are asked together, here, once.
- */
-export function hasOperatorAuthority(key: ApiKey): boolean {
-  return key.is_operator && !key.space_id;
 }
 
 /**

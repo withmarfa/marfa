@@ -11,55 +11,10 @@ import {
 } from "drizzle-orm/sqlite-core";
 import { sql } from "drizzle-orm";
 
-export const spaces = sqliteTable("spaces", {
-  id: text("id").primaryKey(),
-  name: text("name"),
-  config: text("config"),
-  created_at: text("created_at").notNull(),
-  // Operator-controlled space status. `'active'` (default) allows writes;
-  // `'suspended'` blocks them at the auth middleware. Reads pass through
-  // regardless. The operator key bypasses the gate so operators can
-  // inspect a suspended space.
-  status: text("status").notNull().default("active"),
-});
-
-export const users = sqliteTable(
-  "users",
-  {
-    id: text("id").primaryKey(),
-    name: text("name"),
-    first_name: text("first_name"),
-    last_name: text("last_name"),
-    bio: text("bio"),
-    avatar_blob_hash: text("avatar_blob_hash"),
-    provider: text("provider").notNull(),
-    provider_id: text("provider_id").notNull(),
-    space_id: text("space_id")
-      .notNull()
-      .references(() => spaces.id),
-    handle: text("handle"),
-    auth_user_id: text("auth_user_id").references(() => auth_user.id, {
-      onDelete: "set null",
-    }),
-    /** IANA zone the account keeps its own clock in. A default and a
-     *  display preference: it answers "what is on today" for a caller
-     *  that names no zone, and never anchors a recurrence. */
-    timezone: text("timezone"),
-    created_at: text("created_at").notNull(),
-    updated_at: text("updated_at").notNull(),
-  },
-  (table) => [
-    uniqueIndex("idx_users_provider").on(table.provider, table.provider_id),
-    uniqueIndex("idx_users_handle").on(table.handle),
-    uniqueIndex("idx_users_auth_user_id").on(table.auth_user_id),
-  ],
-);
-
 export const items = sqliteTable(
   "items",
   {
     id: text("id").primaryKey(),
-    space_id: text("space_id"),
     type: text("type").notNull(),
     state: text("state").notNull().default("active"),
     tier: text("tier").notNull().default("library"),
@@ -129,49 +84,25 @@ export const items = sqliteTable(
     // most often. `id` is in the index rather than left to the ORDER BY,
     // because the keyset cursor compares both to page through the rows
     // that share a millisecond, and a bulk write produces many.
-    //
-    // **Not led by `space_id`, and that was measured rather than
-    // assumed.** A space-leading composite is the better index for a
-    // multi-space deployment and cannot serve a self-host at all: nothing
-    // carries a space there, so no predicate constrains the leading column
-    // and neither planner will
-    // walk it for the ordering — the read falls back to a scan plus a
-    // sort, which is what this index exists to prevent. Leading on
-    // `updated_at` serves both deployment shapes; the space becomes a
-    // filter on the rows the walk already visits, bounded by how much
-    // changed since T rather than by the size of the corpus. Revisit when
-    // one deployment holds enough spaces for that filter to bite, and add
-    // the composite alongside rather than instead.
     index("idx_items_updated_at_id").on(table.updated_at, table.id),
-    // Provenance identity is per space: two spaces syncing the same
-    // integration against the same upstream record are two corpora, not
-    // one. The null space is folded to '' rather than left as a plain
-    // (space_id, source, source_id) composite because `space_id` is
-    // nullable and NULL never equals NULL in a unique index, which would
-    // stop deduping the null-space bucket entirely — every row written
-    // with no space. Spelled as CASE rather than COALESCE because the
-    // renderer splits an index expression on a comma.
+    // Provenance identity: one row per upstream record.
     uniqueIndex("idx_items_source_dedup")
-      .on(
-        sql`CASE WHEN ${table.space_id} IS NULL THEN '' ELSE ${table.space_id} END`,
-        table.source,
-        table.source_id,
-      )
+      .on(table.source, table.source_id)
       .where(sql`source IS NOT NULL`),
     // Serves the folder query: a folder is a path prefix, so
-    // `source_id starts_with 'Notes/'` is a range scan within a space.
+    // `source_id starts_with 'Notes/'` is a range scan.
     // `COLLATE NOCASE` because an index only serves a prefix match when its
     // collation matches the one the match uses, and SQLite's LIKE is
     // case-insensitive over ASCII. Under a BINARY index the planner declines
-    // the range and scans the whole space.
+    // the range and scans the whole table.
     index("idx_items_source_id_prefix")
-      .on(table.space_id, sql`${table.source_id} COLLATE NOCASE`)
+      .on(sql`${table.source_id} COLLATE NOCASE`)
       .where(sql`source_id IS NOT NULL`),
-    // Serves the calendar's window scan: a space, then a range over the
-    // normalized start instant. Partial because only events carry one,
-    // which keeps the index to the calendar rather than the corpus.
+    // Serves the calendar's window scan: a range over the normalized start
+    // instant. Partial because only events carry one, which keeps the index
+    // to the calendar rather than the corpus.
     index("idx_items_starts_at_utc")
-      .on(table.space_id, table.starts_at_utc)
+      .on(table.starts_at_utc)
       .where(sql`starts_at_utc IS NOT NULL`),
     // Serves the enrichment candidate query, which runs on a timer forever
     // and must cost nothing once a corpus is extracted. Partial: only file
@@ -202,7 +133,6 @@ export const edges = sqliteTable(
   "edges",
   {
     id: text("id").primaryKey(),
-    space_id: text("space_id"),
     // No FKs on source_id / target_id — see pg/schema.ts note. App-level
     // checks run in assertEdgeCanBeCreated + planCascadeDelete.
     source_id: text("source_id").notNull(),
@@ -214,16 +144,8 @@ export const edges = sqliteTable(
     version: integer("version").notNull().default(1),
   },
   (table) => [
-    index("idx_edges_source").on(
-      table.space_id,
-      table.source_id,
-      table.edge_type,
-    ),
-    index("idx_edges_target").on(
-      table.space_id,
-      table.target_id,
-      table.edge_type,
-    ),
+    index("idx_edges_source").on(table.source_id, table.edge_type),
+    index("idx_edges_target").on(table.target_id, table.edge_type),
     // The edge half of the catch-up read, same shape and same reasoning
     // as `idx_items_updated_at_id`.
     index("idx_edges_updated_at_id").on(table.updated_at, table.id),
@@ -249,7 +171,6 @@ export const apiKeys = sqliteTable(
   "api_keys",
   {
     id: text("id").primaryKey(),
-    space_id: text("space_id"),
     key_hash: text("key_hash").notNull().unique(),
     label: text("label").notNull(),
     source: text("source").notNull(),
@@ -276,11 +197,9 @@ export const apiKeys = sqliteTable(
      */
     space_permissions: text("space_permissions").notNull().default("[]"),
     /**
-     * **The wildcard default is legal only on a space-bound row.** A row with
-     * no space is the operator tier and holds nothing on any axis, which
-     * `api_keys_space_less_holds_nothing` below refuses in bytes, so an insert
-     * that leaves this column to its default must name a space or the row does
-     * not land. Every space-less mint writes `{}` explicitly for that reason.
+     * **The wildcard default is legal only on a working key.** An operator
+     * row holds nothing on any axis, which `api_keys_space_less_holds_nothing`
+     * below refuses in bytes, so an operator insert writes `{}` explicitly.
      */
     type_permissions: text("type_permissions")
       .notNull()
@@ -317,7 +236,7 @@ export const apiKeys = sqliteTable(
   },
   (table) => [
     uniqueIndex("idx_api_keys_source_per_space")
-      .on(table.space_id, table.source)
+      .on(table.source)
       .where(sql`revoked_at IS NULL`),
     // Every reaper pass and the metrics counter filter on
     // `is_runtime_credential` first. Partial on true: the runtime-credential
@@ -326,28 +245,21 @@ export const apiKeys = sqliteTable(
     index("idx_api_keys_runtime_credential")
       .on(table.is_runtime_credential)
       .where(sql`is_runtime_credential`),
-    // **The two halves of the model's one sentence about the instance tier.**
-    // The migrations create both, and the database is what refuses. Declared
-    // here so the table definition states the shape it writes into: without
-    // them a reader of this file meets the rule for the first time as a driver
-    // error naming a constraint nothing in the source mentions.
+    // **The model's one sentence about the instance tier.** The database is
+    // what refuses. Declared here so the table definition states the shape
+    // it writes into: without it a reader of this file meets the rule for
+    // the first time as a driver error naming a constraint nothing in the
+    // source mentions.
     //
-    // A space-less credential is the operator key and nothing else. Compared
-    // against `1` rather than against the column, because SQLite holds the
-    // boolean as an integer and `=` between a null test and a raw column would
-    // be comparing a truth value with a number.
-    check(
-      "api_keys_operator_iff_space_less",
-      sql`(${table.space_id} IS NULL) = (${table.is_operator} = 1)`,
-    ),
-    // And running the instance is not a permission, so the tier that runs it
+    // Running the instance is not a permission, so the tier that runs it
     // holds none. Compared as bytes rather than semantically, because SQLite
-    // cannot ask an object's size inside a CHECK and both stores write these
+    // cannot ask an object's size inside a CHECK and the store writes these
     // columns through `JSON.stringify`, so `{}` and `[]` are the exact bytes
-    // an empty map and an empty list take.
+    // an empty map and an empty list take. Compared against `1` rather than
+    // against the column, because SQLite holds the boolean as an integer.
     check(
       "api_keys_space_less_holds_nothing",
-      sql`${table.space_id} IS NOT NULL OR (
+      sql`${table.is_operator} <> 1 OR (
         ${table.type_permissions} = '{}' AND
         ${table.edge_permissions} = '{}' AND
         ${table.metadata_permissions} = '{}' AND
@@ -359,37 +271,18 @@ export const apiKeys = sqliteTable(
 );
 
 // ---------------------------------------------------------------------------
-// blobs
-//
-// Blob rows are per-space. The same `hash` can appear under multiple
-// space_ids; the file system / S3 backend dedupes physically (one file
-// per hash), but the blobs table carries one row per (space_id, hash) so
-// cross-space reads of `/blobs/:hash` resolve to the caller's row only —
-// missing for a given space means 404.
-//
-// `space_id` is `NOT NULL DEFAULT ''` rather than nullable to keep the
-// composite PK simple. Empty string `''` is the sentinel for
-// "instance-wide / no space" — used by the platform-registered set and by
-// operator-key uploads in hosted mode where the credential carries no
-// space_id. The empty-string-as-sentinel asymmetry vs other tables (which
-// use nullable `space_id`) is intentional: composite PKs with nullable
-// columns behave inconsistently across SQLite and PG, and this table is
-// the only place we need a composite primary identity.
-export const blobs = sqliteTable(
-  "blobs",
-  {
-    space_id: text("space_id").notNull().default(""),
-    hash: text("hash").notNull(),
-    mime_type: text("mime_type").notNull(),
-    size: integer("size").notNull(),
-    storage_path: text("storage_path").notNull(),
-    // When this space registered the blob. The orphan sweep measures its
-    // grace window against it, so a blob whose item write is still in
-    // flight is not mistaken for one whose item write never landed.
-    created_at: text("created_at").notNull(),
-  },
-  (t) => [primaryKey({ columns: [t.space_id, t.hash] })],
-);
+// blobs — one row per content hash; the backend holds one file per hash.
+// ---------------------------------------------------------------------------
+export const blobs = sqliteTable("blobs", {
+  hash: text("hash").primaryKey(),
+  mime_type: text("mime_type").notNull(),
+  size: integer("size").notNull(),
+  storage_path: text("storage_path").notNull(),
+  // When the blob was registered. The orphan sweep measures its grace
+  // window against it, so a blob whose item write is still in flight is not
+  // mistaken for one whose item write never landed.
+  created_at: text("created_at").notNull(),
+});
 
 // ---------------------------------------------------------------------------
 // oauth_device_codes — Device Authorization Grant (RFC 8628)
@@ -443,16 +336,11 @@ export const oauthDeviceCodes = sqliteTable(
   ],
 );
 
-// Custom types are namespaced per space. The composite PK on (space_id, id)
-// lets two spaces register the same type id independently — each owns its own
-// type vocabulary. `space_id` is NOT NULL DEFAULT '' (empty-string sentinel)
-// for platform registrations, mirroring the `blobs`
-// and `custom_edge_types` tables.
+// The instance's type registrations, the shipped set included.
 export const customTypes = sqliteTable(
   "custom_types",
   {
-    space_id: text("space_id").notNull().default(""),
-    id: text("id").notNull(),
+    id: text("id").primaryKey(),
     schema: text("schema").notNull(),
     // Where the type came from, and who may change it. `platform` is the
     // seeded vocabulary and is locked; `integration` belongs to the manifest
@@ -469,32 +357,19 @@ export const customTypes = sqliteTable(
     created_at: text("created_at").notNull(),
     updated_at: text("updated_at").notNull(),
   },
-  (t) => [
-    primaryKey({ columns: [t.space_id, t.id] }),
-    index("idx_custom_types_origin").on(t.origin),
-  ],
+  (t) => [index("idx_custom_types_origin").on(t.origin)],
 );
 
-// Custom edge types are namespaced per space. The composite PK on
-// (space_id, id) lets two spaces register the same edge-type id
-// independently — each owns its own relationship vocabulary. `space_id`
-// is NOT NULL DEFAULT '' (empty-string sentinel) for instance-wide
-// self-host / platform registrations, mirroring the `blobs` table.
-export const customEdgeTypes = sqliteTable(
-  "custom_edge_types",
-  {
-    space_id: text("space_id").notNull().default(""),
-    id: text("id").notNull(),
-    schema: text("schema").notNull(),
-    created_at: text("created_at").notNull(),
-    updated_at: text("updated_at").notNull(),
-  },
-  (t) => [primaryKey({ columns: [t.space_id, t.id] })],
-);
+// The instance's edge-type registrations.
+export const customEdgeTypes = sqliteTable("custom_edge_types", {
+  id: text("id").primaryKey(),
+  schema: text("schema").notNull(),
+  created_at: text("created_at").notNull(),
+  updated_at: text("updated_at").notNull(),
+});
 
 export const outboundWebhooks = sqliteTable("outbound_webhooks", {
   id: text("id").primaryKey(),
-  space_id: text("space_id"),
   url: text("url").notNull(),
   secret: text("secret").notNull(),
   events: text("events").notNull().default("[]"),
@@ -705,20 +580,6 @@ export const auditLog = sqliteTable(
     id: text("id").primaryKey(),
     timestamp: text("timestamp").notNull(),
     key_id: text("key_id"),
-    /**
-     * Space scope. Stamped from the calling api key's `space_id`, and null
-     * when there was no space to stamp: system-initiated audits, and the
-     * operator key. What can be read back is decided by `GET /audit`, which
-     * takes the `space.audit_read` space permission and then filters on the
-     * caller's own space.
-     *
-     * **A null here is not a key to the whole trail.** The operator key is
-     * the only api key row that may be space-less, and a space-less row holds
-     * no space permission at all, so that gate refuses it before this column
-     * is consulted. Indexed because the filter runs on every hosted-mode
-     * request.
-     */
-    space_id: text("space_id"),
     action: text("action").notNull(),
     resource_type: text("resource_type").notNull(),
     resource_id: text("resource_id"),
@@ -728,7 +589,6 @@ export const auditLog = sqliteTable(
     index("idx_audit_log_timestamp").on(table.timestamp),
     index("idx_audit_log_action").on(table.action),
     index("idx_audit_log_resource_type").on(table.resource_type),
-    index("idx_audit_log_space_id").on(table.space_id),
   ],
 );
 
@@ -737,7 +597,6 @@ export const bulkActionJobs = sqliteTable(
   "bulk_action_jobs",
   {
     id: text("id").primaryKey(),
-    space_id: text("space_id"),
     api_key_id: text("api_key_id"),
     status: text("status").notNull(),
     action: text("action").notNull(),
@@ -758,10 +617,9 @@ export const bulkActionJobs = sqliteTable(
   },
   (table) => [
     index("idx_bulk_action_jobs_status").on(table.status),
-    index("idx_bulk_action_jobs_space_id").on(table.space_id),
     index("idx_bulk_action_jobs_gc").on(table.status, table.finished_at),
     uniqueIndex("idx_bulk_action_jobs_idempotency")
-      .on(table.space_id, table.idempotency_key)
+      .on(table.idempotency_key)
       .where(sql`idempotency_key IS NOT NULL`),
   ],
 );
@@ -786,16 +644,6 @@ export const settings = sqliteTable("settings", {
   value: text("value").notNull(),
 });
 
-export const spaceQuotas = sqliteTable("space_quotas", {
-  space_id: text("space_id").primaryKey(),
-  items_limit: integer("items_limit"),
-  webhooks_limit: integer("webhooks_limit"),
-  blobs_limit: integer("blobs_limit"),
-  storage_bytes_limit: integer("storage_bytes_limit"),
-  rate_per_minute_limit: integer("rate_per_minute_limit"),
-  updated_at: text("updated_at").notNull(),
-});
-
 export const eventLog = sqliteTable(
   "event_log",
   {
@@ -805,13 +653,10 @@ export const eventLog = sqliteTable(
     // events store item_id only.
     item_id: text("item_id"),
     edge_id: text("edge_id"),
-    space_id: text("space_id"),
     payload: text("payload").notNull(),
-    // Cycle-detection metadata: the connection whose action set off this
-    // chain of events; null for events originating from a human caller.
-    // hop_count starts at 0 on human-initiated events and increments on
-    // each reactive publish; pubsub.publish drops events whose hop_count
-    // would exceed the space's `max_event_hop_budget`.
+    // Cycle-detection metadata from the removed integration runtime. Nothing
+    // writes either column now; both stay declared until the dead-column
+    // cleanup.
     originating_connection_id: text("originating_connection_id"),
     hop_count: integer("hop_count").notNull().default(0),
     // Whether this event drives outbound side effects: webhook delivery and
@@ -1007,7 +852,7 @@ export const auth_oauth_client = sqliteTable(
     public: integer("public", { mode: "boolean" }),
     type: text("type"),
     requirePKCE: integer("require_pkce", { mode: "boolean" }),
-    /** Space binding from `clientReference` (Marfa: space_id). */
+    /** The plugin's own column; nothing here writes it. */
     referenceId: text("reference_id"),
     /** JSON object — additional client metadata */
     metadata: text("metadata"),
@@ -1201,7 +1046,6 @@ export const enrichmentState = sqliteTable("enrichment_state", {
   item_id: text("item_id")
     .primaryKey()
     .references(() => items.id, { onDelete: "cascade" }),
-  space_id: text("space_id"),
   blob_ref: text("blob_ref").notNull(),
   extractor_version: integer("extractor_version").notNull(),
   status: text("status").notNull(),
@@ -1238,7 +1082,6 @@ export const idempotencyRecords = sqliteTable(
   "idempotency_records",
   {
     id: text("id").primaryKey(),
-    space_id: text("space_id"),
     idempotency_key: text("idempotency_key").notNull(),
     fingerprint: text("fingerprint").notNull(),
     /** `in_flight` while the write runs, `complete` once it answered. */
@@ -1251,18 +1094,8 @@ export const idempotencyRecords = sqliteTable(
     completed_at: text("completed_at"),
   },
   (table) => [
-    // The null space folded to '' rather than a plain (space_id,
-    // idempotency_key) composite, mirroring `idx_items_source_dedup`:
-    // `space_id` is nullable and NULL never equals NULL in a unique index,
-    // so the plain shape would stop deduping the null-space bucket entirely
-    // — every request on an instance-wide bucket, and every operator-key
-    // request anywhere.
-    uniqueIndex("idx_idempotency_records_key").on(
-      sql`CASE WHEN ${table.space_id} IS NULL THEN '' ELSE ${table.space_id} END`,
-      table.idempotency_key,
-    ),
-    // Serves the retention sweep, which is a range over `created_at`
-    // within a space scope.
-    index("idx_idempotency_records_gc").on(table.space_id, table.created_at),
+    uniqueIndex("idx_idempotency_records_key").on(table.idempotency_key),
+    // Serves the retention sweep, which is a range over `created_at`.
+    index("idx_idempotency_records_gc").on(table.created_at),
   ],
 );

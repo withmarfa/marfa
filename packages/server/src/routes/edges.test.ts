@@ -1,13 +1,6 @@
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
-import {
-  createTestContext,
-  request,
-  waitForAudit,
-  TEST_API_KEY_SALT,
-} from "../test-utils.js";
+import { createTestContext, request, waitForAudit } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
-import { hashApiKey } from "../middleware/auth.js";
-import { SPACE_PERMISSIONS } from "@withmarfa/shared";
 
 let ctx: TestContext;
 
@@ -865,7 +858,6 @@ describe("event_log accepts item_id=null for edge rows", () => {
       event_type: "edge_created",
       item_id: null,
       edge_id: "019d0000-0000-7000-a000-000000000abc",
-      space_id: undefined,
       payload: JSON.stringify({ type: "edge.created", edge: { id: "x" } }),
     });
     expect(id > 0n).toBe(true);
@@ -1380,175 +1372,6 @@ describe("PATCH/DELETE /edges/:id — source-type gate on trashed source", () =>
       key: ctx.spaceKey,
     });
     expect(deleteEdge.status).toBe(200);
-  });
-});
-
-// The application-layer fence is the only
-// thing standing between space A and space B's edges on the single-edge
-// PATCH/DELETE path. These tests run in hosted mode with two spaces and a
-// space-scoped key for space A, then attempt to mutate/delete an edge that
-// lives entirely in space B by its id.
-describe("Single-edge mutate/delete — cross-space fence", () => {
-  let hostedCtx: TestContext;
-  let spaceA: string;
-  let spaceB: string;
-  // Space A's caller, holding every space permission inside A — the
-  // would-be attacker.
-  let keyA: string;
-  // An edge that lives entirely in space B.
-  let spaceBEdgeId: string;
-  // Source + target items in space A, for the same-space success cases.
-  let aSource: string;
-  let aTarget: string;
-
-  beforeAll(async () => {
-    hostedCtx = await createTestContext({});
-    const a = await hostedCtx.storage.spaces!.create("space-a");
-    const b = await hostedCtx.storage.spaces!.create("space-b");
-    spaceA = a.id;
-    spaceB = b.id;
-
-    // Mint an API key bound to space A holding every space permission.
-    const rawA = "marfa_k1_a_" + Math.random().toString(36).slice(2);
-    await hostedCtx.storage.keys.create(
-      {
-        label: "space-a-caller",
-        source: "space-a-caller",
-        space_permissions: [...SPACE_PERMISSIONS],
-        // Spelled out because the maps are now the whole of a credential's
-        // reach. The subject here is the cross-space fence, so the caller has
-        // to reach items and edges freely inside its own space for the
-        // same-space control cases to mean anything.
-        type_permissions: { "*": "write" },
-        edge_permissions: { "*": "write" },
-        default_tier: "library",
-        is_operator: false,
-      },
-      hashApiKey(rawA, TEST_API_KEY_SALT),
-      spaceA,
-    );
-    keyA = rawA;
-
-    // Seed space B's items + an edge between them — entirely outside A.
-    const bSource = await hostedCtx.storage.items.create(
-      { type: "core.note", properties: { body: "b-source" } },
-      spaceB,
-    );
-    const bTarget = await hostedCtx.storage.items.create(
-      { type: "core.note", properties: { body: "b-target" } },
-      spaceB,
-    );
-    const bEdge = await hostedCtx.storage.edges.createRaw(
-      {
-        source_id: bSource.id,
-        target_id: bTarget.id,
-        edge_type: "about",
-      },
-      spaceB,
-    );
-    spaceBEdgeId = bEdge.id;
-
-    // Seed space A's own items for the same-space success cases.
-    const aSrc = await hostedCtx.storage.items.create(
-      { type: "core.note", properties: { body: "a-source" } },
-      spaceA,
-    );
-    const aTgt = await hostedCtx.storage.items.create(
-      { type: "core.note", properties: { body: "a-target" } },
-      spaceA,
-    );
-    aSource = aSrc.id;
-    aTarget = aTgt.id;
-  });
-
-  afterAll(async () => {
-    await hostedCtx.cleanup();
-  });
-
-  it("PATCH /edges/:id on another space's edge returns 404 (cloaked)", async () => {
-    const res = await request(
-      hostedCtx.app,
-      "PATCH",
-      `/edges/${spaceBEdgeId}`,
-      {
-        key: keyA,
-        body: { properties: { tampered: true } },
-      },
-    );
-    expect(res.status).toBe(404);
-    const data = (await res.json()) as { error: { code: string } };
-    expect(data.error.code).toBe("edge_not_found");
-
-    // The edge must be untouched — read it back from space B's scope.
-    const stillThere = await hostedCtx.storage.edges.get(spaceBEdgeId);
-    expect(stillThere).not.toBeNull();
-    expect(stillThere?.properties).not.toHaveProperty("tampered");
-  });
-
-  it("DELETE /edges/:id on another space's edge returns 404 (cloaked) and does not delete", async () => {
-    const res = await request(
-      hostedCtx.app,
-      "DELETE",
-      `/edges/${spaceBEdgeId}`,
-      { key: keyA },
-    );
-    expect(res.status).toBe(404);
-    const data = (await res.json()) as { error: { code: string } };
-    expect(data.error.code).toBe("edge_not_found");
-
-    // The edge must still exist in space B.
-    const stillThere = await hostedCtx.storage.edges.get(spaceBEdgeId);
-    expect(stillThere).not.toBeNull();
-  });
-
-  it("same-space PATCH /edges/:id still succeeds", async () => {
-    const created = await request(hostedCtx.app, "POST", "/edges", {
-      key: keyA,
-      body: { source_id: aSource, target_id: aTarget, edge_type: "about" },
-    });
-    expect(created.status).toBe(201);
-    const { edge } = (await created.json()) as { edge: { id: string } };
-
-    const res = await request(hostedCtx.app, "PATCH", `/edges/${edge.id}`, {
-      key: keyA,
-      body: { properties: { note: "mine" } },
-    });
-    expect(res.status).toBe(200);
-    const data = (await res.json()) as {
-      edge: { properties: Record<string, unknown> };
-    };
-    expect(data.edge.properties.note).toBe("mine");
-  });
-
-  it("same-space DELETE /edges/:id still succeeds", async () => {
-    // Fresh source/target so we don't collide with the one-to-... edge above.
-    const src = await hostedCtx.storage.items.create(
-      { type: "core.note", properties: { body: "a-del-source" } },
-      spaceA,
-    );
-    const tgt = await hostedCtx.storage.items.create(
-      { type: "core.note", properties: { body: "a-del-target" } },
-      spaceA,
-    );
-    const created = await request(hostedCtx.app, "POST", "/edges", {
-      key: keyA,
-      body: {
-        source_id: src.id,
-        target_id: tgt.id,
-        edge_type: "references",
-      },
-    });
-    expect(created.status).toBe(201);
-    const { edge } = (await created.json()) as { edge: { id: string } };
-
-    const res = await request(hostedCtx.app, "DELETE", `/edges/${edge.id}`, {
-      key: keyA,
-    });
-    expect(res.status).toBe(200);
-
-    // Gone for real.
-    const gone = await hostedCtx.storage.edges.get(edge.id);
-    expect(gone).toBeNull();
   });
 });
 

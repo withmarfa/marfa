@@ -3,7 +3,6 @@ import type { CreateKeyInput } from "@withmarfa/shared";
 import { createApp } from "./app.js";
 import { consentLockDepth } from "./auth/consent-lock.js";
 import { OidcSigner } from "./auth/oidc-signing.js";
-import { resolveSpaceIdForAuthUser } from "./auth/grant-space.js";
 import type { AppConfig } from "./config.js";
 import type { MarfaAuth } from "./auth/instance.js";
 import { createSqliteStorage } from "./storage/sqlite/index.js";
@@ -54,24 +53,17 @@ export interface TestContext {
   storage: Storage;
   blobBackend: BlobBackend;
   /**
-   * The instance tier, and nothing else: no space, no permissions, exactly
-   * what the one unauthenticated mint hands back. It opens the instance
-   * routes and reaches no content at all, so a test about anything inside a
-   * space wants `spaceKey`.
+   * The instance tier, and nothing else: no permissions, exactly what the
+   * one unauthenticated mint hands back. It opens the instance routes and
+   * reaches no content at all, so a test about anything inside the
+   * permission model wants `spaceKey`.
    */
   operatorKey: string;
   /**
-   * The instance's one space. Keys mode provisions one at bootstrap, so a
-   * fixture that stamps the sentinel instead has to provision it here or it
-   * tests a shape the product stopped producing.
-   */
-  spaceId: string;
-  /**
-   * A credential bound to `spaceId`, holding every space permission and
-   * writing every content family — an ordinary working key, and what a
-   * self-hoster is handed alongside the operator key. This is the suite's
-   * working credential: content, the space permissions, everything but the
-   * instance routes.
+   * A working credential holding every space permission and writing every
+   * content family — what the operator mints first through `POST /keys`.
+   * This is the suite's working credential: content, the space permissions,
+   * everything but the instance routes.
    */
   spaceKey: string;
   /** The per-context temporary directory holding the sqlite database and
@@ -118,12 +110,6 @@ export async function closeTestContexts(
  *
  * @param scopes literal scope strings (e.g. `["core.note:read"]`)
  * @param opts.clientName    visible client name (defaults to "Test App")
- * @param opts.spaceId      the space to bind the token to. Omitted, it
- *                           resolves the space issuance would, and throws
- *                           when nothing resolves rather than minting the
- *                           unbound token a fixture used to get by accident.
- *                           Pass `null` deliberately for the unbound shape,
- *                           which the middleware refuses.
  * @param opts.authUserId    Better Auth user id; if absent a synthetic
  *                           one is seeded into `auth_user`.
  */
@@ -132,7 +118,6 @@ export async function seedOauthBearer(
   scopes: string[],
   opts: {
     clientName?: string;
-    spaceId?: string | null;
     authUserId?: string;
   } = {},
 ): Promise<{ token: string; grantId: string; clientId: string }> {
@@ -193,28 +178,20 @@ export async function seedOauthBearer(
   });
   await (insertOp.execute?.() ?? insertOp.run?.() ?? Promise.resolve());
 
-  const grant = await storage.items.create(
-    {
-      type: "system.connection",
-      tier: "library",
-      state: "active",
-      properties: {
-        kind: "app",
-        client_id: clientId,
-        user_id: authUserId,
-        scopes,
-        status: "active",
-        granted_at: now.toISOString(),
-      },
-      source: "test/oauth-bearer",
+  const grant = await storage.items.create({
+    type: "system.connection",
+    tier: "library",
+    state: "active",
+    properties: {
+      kind: "app",
+      client_id: clientId,
+      user_id: authUserId,
+      scopes,
+      status: "active",
+      granted_at: now.toISOString(),
     },
-    // **The projection item stays where the caller put it, which is normally
-    // nowhere.** A `system.connection` row with `kind: "app"` is a grant
-    // projection, and the provider store resolves those space-less on
-    // purpose, and the keys-mode migration excludes them from its move for
-    // the same reason. Only the token's `reference_id` binds to a space.
-    opts.spaceId ?? undefined,
-  );
+    source: "test/oauth-bearer",
+  });
 
   // Mint the token pair via the plugin's storage helper. Hash the BARE
   // (prefix-stripped) token to match what the plugin's `storeTokens.hash`
@@ -223,43 +200,6 @@ export async function seedOauthBearer(
   const rawToken = `marfa_at_${Math.random().toString(36).slice(2)}_${String(Date.now())}`;
   const rawRefresh = `marfa_rt_${Math.random().toString(36).slice(2)}_${String(Date.now())}`;
   const { hashApiKey } = await import("./middleware/auth.js");
-  // **Bound the way issuance binds.** A token whose `reference_id` is NULL is
-  // refused by the middleware in either mode, because a space-less bearer is
-  // a principal the storage layer applies no space predicate to. Omitting the
-  // space here used to produce exactly that, so a fixture minted a token no
-  // deployment can issue and every test through it authenticated as something
-  // the product cannot make. `null` still means unbound, for the cases that
-  // are about the refusal.
-  //
-  // Through the resolver rather than a copy of it. A fixture that answered
-  // this question its own way would drift from issuance silently, and a
-  // fixture that drifts from the thing it stands in for is the reason this
-  // helper needed repairing in the first place.
-  //
-  // **Nothing unresolved is minted silently.** When the caller named no space
-  // and the resolver answers nothing, there is no shape to fall back to: an
-  // unbound token is refused on every request, so a permission test written
-  // through it stops testing the permission and starts re-testing the
-  // refusal, and it does that while staying green. That is the failure this
-  // helper has already caused once. Throwing names the two ways to get here
-  // -- no user row for the id, or an instance holding other than one space --
-  // and points at `spaceId: null` for a case that genuinely wants the unbound
-  // token.
-  let boundSpaceId: string | undefined;
-  if (opts.spaceId === undefined) {
-    boundSpaceId = await resolveSpaceIdForAuthUser(storage);
-    if (boundSpaceId === undefined) {
-      throw new Error(
-        "seedOauthBearer: no space resolved for this bearer, so the token would " +
-          "be minted unbound and refused on every request. Seed a users row for " +
-          `"${authUserId}" or a single space, pass an explicit spaceId, or pass ` +
-          "spaceId: null if the unbound token is what the case is about.",
-      );
-    }
-  } else {
-    boundSpaceId = opts.spaceId ?? undefined;
-  }
-
   await storage.oauthProvider.mintTokenPair({
     accessTokenHash: hashApiKey(
       rawToken.slice("marfa_at_".length),
@@ -271,7 +211,6 @@ export async function seedOauthBearer(
     ),
     clientId,
     authUserId,
-    referenceId: boundSpaceId ?? null,
     scopes,
     accessTtlMs: 3600_000,
   });
@@ -379,19 +318,18 @@ export async function waitForConsentLockDepth(
 }
 
 /**
- * A working credential bound to `spaceId`, shaped the way
- * `POST /admin/spaces/{id}/keys` shapes one: everything in that space unless
- * the caller narrows it, and never the operator tier.
+ * A working credential, shaped the way the operator's `POST /keys` shapes
+ * one for a body that names no narrowing: everything unless the caller
+ * narrows it, and never the operator tier.
  *
- * For a test that needs a second space beside the one `createTestContext`
- * provisions, or a narrower credential in that space. Minting through the
+ * For a test that needs a second working credential beside the one
+ * `createTestContext` provisions, or a narrower one. Minting through the
  * store rather than the route keeps a fixture out of the operator key's way,
  * and the shape is the route's — `test-context-credentials.test.ts` is what
  * holds the two together.
  */
 export async function mintSpaceKey(
   ctx: Pick<TestContext, "storage">,
-  spaceId: string,
   options?: Partial<CreateKeyInput> & { rawKey?: string },
 ): Promise<string> {
   const suffix = Math.random().toString(36).slice(2, 14);
@@ -413,7 +351,6 @@ export async function mintSpaceKey(
       is_operator: false,
     },
     hashApiKey(rawKey, SALT),
-    spaceId,
   );
   return rawKey;
 }
@@ -585,46 +522,35 @@ async function buildTestContext(
   );
   await storage.settings.set("bootstrapped", "true");
 
-  // **The instance's one space and the key that works in it, provisioned here
-  // because bootstrap provisions them there.** This fixture stamps the
-  // sentinel directly rather than driving the unauthenticated mint, so nothing
-  // else would create either — and a keys-mode instance with no space is a
-  // shape the product no longer produces. Everything a real caller owns lives
-  // in the space: connections above all, because a connection with no space
-  // cannot mint a runtime credential now that a space-less credential is the
-  // operator key and nothing else.
+  // **The working key, minted here because the operator mints it there.**
+  // This fixture stamps the sentinel directly rather than driving the
+  // unauthenticated mint, so nothing else would create it.
   //
-  // The wildcard maps and the whole permission list are what
-  // `POST /admin/spaces/{id}/keys` hands back for a body that names no
-  // narrowing, and what a keys-mode bootstrap provisions: a seed with no
-  // creator above it takes everything in its space.
-  const space = await storage.spaces?.create("test-space");
+  // The wildcard maps and the whole permission list are what the operator's
+  // `POST /keys` hands back for a body that names no narrowing: a seed with
+  // no creator above it takes everything.
   const spaceRawKey = `marfa_k1_test_space_key_${suffix}`;
-  if (space) {
-    await storage.keys.create(
-      {
-        label: "test-space-key",
-        source: `test-space-${suffix}`,
-        type_permissions: { "*": "write" },
-        extension_permissions: { "*": "write" },
-        edge_permissions: { "*": "write" },
-        metadata_permissions: { "*": "write" },
-        profile_permissions: { "*": "write" },
-        space_permissions: [...SPACE_PERMISSIONS],
-        default_tier: "library",
-        is_operator: false,
-      },
-      hashApiKey(spaceRawKey, SALT),
-      space.id,
-    );
-  }
+  await storage.keys.create(
+    {
+      label: "test-space-key",
+      source: `test-space-${suffix}`,
+      type_permissions: { "*": "write" },
+      extension_permissions: { "*": "write" },
+      edge_permissions: { "*": "write" },
+      metadata_permissions: { "*": "write" },
+      profile_permissions: { "*": "write" },
+      space_permissions: [...SPACE_PERMISSIONS],
+      default_tier: "library",
+      is_operator: false,
+    },
+    hashApiKey(spaceRawKey, SALT),
+  );
 
   return {
     app,
     storage,
     blobBackend,
     operatorKey: rawKey,
-    spaceId: space?.id ?? "",
     spaceKey: spaceRawKey,
     tmpDir,
     cleanup,
@@ -1000,20 +926,14 @@ export async function settle(ms = 50): Promise<void> {
  * event to await, so it listens for a bounded moment and finds the
  * collection empty.
  */
-export function collectItemEvents(
-  signal: AbortSignal,
-  /** The same fence `GET /events` applies for a scoped viewer, so a frame
-   *  published without a space, or with the wrong one, is invisible here
-   *  too. Omit it to watch everything, which is what the operator key sees. */
-  spaceId?: string,
-): {
+export function collectItemEvents(signal: AbortSignal): {
   events: ItemEventWithId[];
   done: Promise<void>;
 } {
   const events: ItemEventWithId[] = [];
   const done = (async () => {
     try {
-      for await (const event of subscribe({ signal, spaceId })) {
+      for await (const event of subscribe({ signal })) {
         events.push(event);
       }
     } catch {

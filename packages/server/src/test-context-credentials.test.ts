@@ -26,7 +26,6 @@ import type { ApiKey } from "@withmarfa/shared";
 function authorityOf(key: ApiKey) {
   return {
     is_operator: key.is_operator,
-    space_bound: key.space_id !== undefined,
     type_permissions: key.type_permissions,
     edge_permissions: key.edge_permissions,
     metadata_permissions: key.metadata_permissions,
@@ -49,8 +48,8 @@ async function rowFor(
 
 /**
  * Drive a fresh instance through the one unauthenticated mint, which is the
- * only way an operator key comes into being and — in keys mode — the way the
- * one space and its working key do too.
+ * only way an operator key comes into being, and then through the mint the
+ * operator makes with it, which is how the working key does.
  */
 async function mintedByTheProduct(): Promise<{
   operator: ApiKey;
@@ -80,16 +79,18 @@ async function mintedByTheProduct(): Promise<{
       },
     });
     expect(res.status).toBe(201);
-    const body = (await res.json()) as {
-      key: string;
-      space_key?: { key: string };
-    };
-    if (!body.space_key) {
-      throw new Error("keys-mode bootstrap returned no space key");
-    }
+    const body = (await res.json()) as { key: string };
+    // A body naming nothing takes everything from the operator key, which is
+    // a seed rather than a ceiling.
+    const working = await request(fresh.app, "POST", "/keys", {
+      key: body.key,
+      body: { label: "working", source: "working", default_tier: "library" },
+    });
+    expect(working.status).toBe(201);
+    const workingBody = (await working.json()) as { key: string };
     return {
       operator: await rowFor(fresh.storage, body.key),
-      space: await rowFor(fresh.storage, body.space_key.key),
+      space: await rowFor(fresh.storage, workingBody.key),
       operatorRaw: body.key,
       app: fresh,
       cleanup: fresh.cleanup,
@@ -121,9 +122,8 @@ describe("the credentials createTestContext authenticates as", () => {
     // The first mint is only half the claim. A fixture the product cannot
     // seed is worth nothing if a door two steps later writes the same row,
     // and two of them could: the creator ceiling exempts the operator key,
-    // which is right for the key it mints into a space and wrong for one
-    // that will have no space, and `PATCH /keys/{id}` is the only door that
-    // addresses a space-less row at all.
+    // which is right for the working key it seeds and wrong for a second
+    // operator key, and `PATCH /keys/{id}` addresses the operator row too.
     const minted = await mintedByTheProduct();
     try {
       const wide = {
@@ -134,14 +134,14 @@ describe("the credentials createTestContext authenticates as", () => {
         profile_permissions: { "*": "write" },
       };
 
-      // Minting a second operator key: the new key takes the caller's space,
-      // and the caller has none.
+      // Minting a second operator key that would hold something.
       const minting = await request(minted.app.app, "POST", "/keys", {
         key: minted.operatorRaw,
         body: {
           label: "second",
           source: "second",
           default_tier: "library",
+          is_operator: true,
           ...wide,
         },
       });
@@ -172,11 +172,16 @@ describe("the credentials createTestContext authenticates as", () => {
         authorityOf(await rowFor(minted.app.storage, minted.operatorRaw)),
       ).toEqual(authorityOf(minted.operator));
 
-      // A spare operator key is still mintable: it names nothing, so it
-      // derives the caller's empty set and is refused by none of this.
+      // A spare operator key is still mintable: it names no reach, so it is
+      // refused by none of this.
       const spare = await request(minted.app.app, "POST", "/keys", {
         key: minted.operatorRaw,
-        body: { label: "spare", source: "spare", default_tier: "library" },
+        body: {
+          label: "spare",
+          source: "spare",
+          default_tier: "library",
+          is_operator: true,
+        },
       });
       expect(spare.status).toBe(201);
       const spareKey = ((await spare.json()) as { key: string }).key;
@@ -188,17 +193,13 @@ describe("the credentials createTestContext authenticates as", () => {
     }
   });
 
-  it("leave no credential that is space-less and not the operator tier", async () => {
-    // The row constraint says space-less and operator are the same set, and a
-    // principal assembled from a space-less row has no space predicate applied
-    // to it at all. A seeded row that is space-less and carries reach is
-    // therefore reach over every space at once, which is the one thing no
-    // route will write.
+  it("leave no operator credential that holds anything", async () => {
+    // The row constraint says an operator key holds nothing, and a seeded
+    // operator row that carries reach is the one thing no route will write.
     const ctx = await createTestContext();
     try {
       for (const key of await ctx.storage.keys.list()) {
-        if (key.space_id) continue;
-        expect(key.is_operator).toBe(true);
+        if (!key.is_operator) continue;
         expect(key.type_permissions).toEqual({});
         expect(key.edge_permissions).toEqual({});
         expect(key.metadata_permissions).toEqual({});

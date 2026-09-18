@@ -374,22 +374,19 @@ describe("better-auth /auth/* surface", () => {
     // the projection row with a fake client_id string. The /grants
     // listing doesn't validate against the client table.
     const fakeClientId = `client_${Math.random().toString(36).slice(2, 8)}`;
-    const grant = await ctx.storage.items.create(
-      {
-        type: "system.connection",
-        state: "active",
-        tier: "library",
-        properties: {
-          kind: "app",
-          client_id: fakeClientId,
-          scopes: ["core.note:read"],
-          status: "active",
-          granted_at: new Date().toISOString(),
-        },
-        source: "test/oauth",
+    const grant = await ctx.storage.items.create({
+      type: "system.connection",
+      state: "active",
+      tier: "library",
+      properties: {
+        kind: "app",
+        client_id: fakeClientId,
+        scopes: ["core.note:read"],
+        status: "active",
+        granted_at: new Date().toISOString(),
       },
-      ctx.spaceId,
-    );
+      source: "test/oauth",
+    });
 
     const listRes = await request(ctx.app, "GET", "/auth/grants", {
       key: ctx.spaceKey,

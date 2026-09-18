@@ -307,7 +307,6 @@ describe("first-class field shadow rejection", () => {
     "type",
     "state",
     "tier",
-    "space_id",
     "created_at",
     "updated_at",
     "timestamp",
@@ -1088,32 +1087,25 @@ describe("a type whose stored chain cannot be resolved", () => {
     // read. Registered space-less, the broken chain sits in a bucket the
     // credential never resolves and the route answers about the sound row it
     // registered a moment ago.
-    registerTypeSchema({ id: link(0), version: 1, fields: {} }, ctx.spaceId);
+    registerTypeSchema({ id: link(0), version: 1, fields: {} });
     for (let n = 1; n < LENGTH; n += 1) {
-      registerTypeSchema(
-        {
-          id: link(n),
-          version: 1,
-          parent: link(n - 1),
-          fields: {},
-        },
-        ctx.spaceId,
-      );
-    }
-    registerTypeSchema(
-      {
-        id: "broken.victim",
+      registerTypeSchema({
+        id: link(n),
         version: 1,
-        parent: link(LENGTH - 1),
+        parent: link(n - 1),
         fields: {},
-      },
-      ctx.spaceId,
-    );
+      });
+    }
+    registerTypeSchema({
+      id: "broken.victim",
+      version: 1,
+      parent: link(LENGTH - 1),
+      fields: {},
+    });
   });
 
   afterAll(() => {
-    for (let n = LENGTH - 1; n >= 0; n -= 1)
-      unregisterTypeSchema(link(n), ctx.spaceId);
+    for (let n = LENGTH - 1; n >= 0; n -= 1) unregisterTypeSchema(link(n));
   });
 
   it("answers a coded refusal rather than a server fault", async () => {

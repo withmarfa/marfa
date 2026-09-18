@@ -226,16 +226,19 @@ describe("resolveTypeSchema roles", () => {
     // leaf-only and chain-union agree. And `typeHasRole` reads the module
     // registry rather than an injected resolver, so a hand-built resolver
     // cannot be cross-checked against it at all.
-    const space = "01a02000-0000-7000-8000-000000000001";
-    registerTypeSchema(
-      { id: "acme.crate", version: 1, fields: {}, roles: ["container"] },
-      space,
-    );
-    registerTypeSchema(
-      { id: "acme.crate.wooden", version: 1, fields: {}, parent: "acme.crate" },
-      space,
-    );
-    const scoped: TypeResolver = (id) => getTypeSchema(id, space);
+    registerTypeSchema({
+      id: "acme.crate",
+      version: 1,
+      fields: {},
+      roles: ["container"],
+    });
+    registerTypeSchema({
+      id: "acme.crate.wooden",
+      version: 1,
+      fields: {},
+      parent: "acme.crate",
+    });
+    const scoped: TypeResolver = (id) => getTypeSchema(id);
 
     for (const id of [
       "core.media.series",
@@ -250,7 +253,7 @@ describe("resolveTypeSchema roles", () => {
     ]) {
       const projected =
         resolveTypeSchema(id, scoped)?.roles?.includes("container") ?? false;
-      expect(projected, id).toBe(typeHasRole(id, "container", space));
+      expect(projected, id).toBe(typeHasRole(id, "container"));
     }
   });
 
@@ -329,20 +332,18 @@ describe("chain guards", () => {
   // here while `typeHasRole` throws is exactly the disagreement being closed.
   it("agrees with the registry's own walker on cyclic input", () => {
     expect(() => resolveTypeSchema("acme.a", cyclic)).toThrow();
-    registerTypeSchema(
-      { id: "acme.a", version: 1, fields: {}, parent: "acme.b" },
-      "01a02000-0000-7000-8000-000000000002",
-    );
-    registerTypeSchema(
-      { id: "acme.b", version: 1, fields: {}, parent: "acme.a" },
-      "01a02000-0000-7000-8000-000000000002",
-    );
-    expect(() =>
-      typeHasRole(
-        "acme.a",
-        "container",
-        "01a02000-0000-7000-8000-000000000002",
-      ),
-    ).toThrow();
+    registerTypeSchema({
+      id: "acme.a",
+      version: 1,
+      fields: {},
+      parent: "acme.b",
+    });
+    registerTypeSchema({
+      id: "acme.b",
+      version: 1,
+      fields: {},
+      parent: "acme.a",
+    });
+    expect(() => typeHasRole("acme.a", "container")).toThrow();
   });
 });

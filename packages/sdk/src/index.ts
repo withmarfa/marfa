@@ -29,7 +29,6 @@ export type {
   CreateWithAttachmentsInput,
   CreateWithAttachmentsAttachment,
   CreateWithAttachmentsResult,
-  SpaceApiKeySummary,
   DriftedPlatformType,
   SecureStorage,
   Occurrence,
@@ -82,7 +81,7 @@ export { defineType } from "./define-type.js";
 // Local type-graph cache. Registers a `client.types.list()` payload into the
 // shared registry so `validateProperties` answers the way the server does
 // without a round trip — the piece a durable client needs to check a write
-// against a space's custom types before it queues one.
+// against the instance's custom types before it queues one.
 //
 // `validateProperties` is re-exported beside it deliberately, and it is the
 // only runtime value this file takes from `@withmarfa/shared` rather than a
@@ -95,7 +94,6 @@ export { defineType } from "./define-type.js";
 // through the documented usage.
 export { hydrateTypeRegistry, validateProperties } from "@withmarfa/shared";
 export type {
-  HydrateTypeRegistryOptions,
   TypeRegistryHydration,
   // The return type of the function above. Exporting the value without the
   // type it returns leaves a consumer naming it by reaching into the other

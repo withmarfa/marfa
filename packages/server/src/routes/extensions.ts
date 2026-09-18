@@ -306,8 +306,7 @@ export function extensionRoutes(storage: Storage) {
     }
 
     const apiKey = c.get("apiKey");
-    const tid = apiKey?.space_id;
-    const item = await storage.items.get(id, tid);
+    const item = await storage.items.get(id);
     if (!item) {
       throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
     }
@@ -330,8 +329,7 @@ export function extensionRoutes(storage: Storage) {
     }
 
     const apiKey = c.get("apiKey");
-    const tid = apiKey?.space_id;
-    const item = await storage.items.get(id, tid);
+    const item = await storage.items.get(id);
     if (!item) {
       throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
     }
@@ -362,8 +360,7 @@ export function extensionRoutes(storage: Storage) {
     }
 
     const apiKey = c.get("apiKey");
-    const tid = apiKey?.space_id;
-    const item = await storage.items.get(id, tid);
+    const item = await storage.items.get(id);
     if (!item) {
       throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
     }
@@ -411,14 +408,12 @@ export function extensionRoutes(storage: Storage) {
     // of it is the half this door did not touch.
     await publish({
       type: "metadata_changed",
-      item: await itemAfterMetadataWrite(storage, item, apiKey?.space_id),
+      item: await itemAfterMetadataWrite(storage, item),
       metadata: await storage.metadata.get(id),
-      spaceId: apiKey?.space_id,
     });
 
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
-      space_id: c.get("apiKey")?.space_id ?? null,
       key_id: c.get("apiKey")?.id,
       action: "extension.set",
       resource_type: "item",
@@ -436,8 +431,7 @@ export function extensionRoutes(storage: Storage) {
     }
 
     const apiKey = c.get("apiKey");
-    const tid = apiKey?.space_id;
-    const item = await storage.items.get(id, tid);
+    const item = await storage.items.get(id);
     if (!item) {
       throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
     }
@@ -471,14 +465,12 @@ export function extensionRoutes(storage: Storage) {
     // how a subscriber learns to drop its own copy.
     await publish({
       type: "metadata_changed",
-      item: await itemAfterMetadataWrite(storage, item, apiKey?.space_id),
+      item: await itemAfterMetadataWrite(storage, item),
       metadata: await storage.metadata.get(id),
-      spaceId: apiKey?.space_id,
     });
 
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
-      space_id: c.get("apiKey")?.space_id ?? null,
       key_id: c.get("apiKey")?.id,
       action: "extension.delete",
       resource_type: "item",

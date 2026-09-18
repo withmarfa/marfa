@@ -242,10 +242,10 @@ describe("GET /search?include=system", () => {
     // store indexes it for search on the way in, which is all this pair needs
     // — the claim under test is what the read surface does with the row, not
     // how it got there.
-    const device = await ctx.storage.items.create(
-      { type: "system.device", properties: { name: word, kind: "laptop" } },
-      ctx.spaceId,
-    );
+    const device = await ctx.storage.items.create({
+      type: "system.device",
+      properties: { name: word, kind: "laptop" },
+    });
     return { noteId: n.id, deviceId: device.id };
   }
 

@@ -1,14 +1,7 @@
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
-import {
-  createTestContext,
-  request,
-  TEST_API_KEY_SALT,
-  waitForAudit,
-} from "../test-utils.js";
+import { createTestContext, request, waitForAudit } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { parseTrustedProxyCidrs } from "../middleware/client-ip.js";
-import { hashApiKey } from "../middleware/auth.js";
-import { SPACE_PERMISSIONS } from "@withmarfa/shared";
 
 let ctx: TestContext;
 
@@ -53,7 +46,6 @@ async function seedAudit(
     action,
     resource_type: resourceType,
     resource_id: resourceId,
-    space_id: ctx.spaceId,
   });
 }
 
@@ -249,113 +241,6 @@ describe("GET /audit", () => {
     for (const entry of page2.data) {
       expect(page1Ids.has(entry.id)).toBe(false);
     }
-  });
-
-  it("space-scopes reads: a credential sees its own space's rows and no others", async () => {
-    // Four rows: one for space A, one for space B, one system-stamped with
-    // no space at all, and one in the context's own space. Every credential
-    // that reaches this route is bound to a space — the route asks for
-    // `space.audit_read` and the operator key holds no space permissions —
-    // so each reader below should see exactly its own row.
-    const uniqueAction = `test.space.${Math.random().toString(36).slice(2, 8)}`;
-    await ctx.storage.audit.log({
-      action: uniqueAction,
-      resource_type: "test",
-      resource_id: "row-a",
-      space_id: "space-a",
-    });
-    await ctx.storage.audit.log({
-      action: uniqueAction,
-      resource_type: "test",
-      resource_id: "row-b",
-      space_id: "space-b",
-    });
-    await ctx.storage.audit.log({
-      action: uniqueAction,
-      resource_type: "test",
-      resource_id: "row-system",
-      space_id: null,
-    });
-    await ctx.storage.audit.log({
-      action: uniqueAction,
-      resource_type: "test",
-      resource_id: "row-own",
-      space_id: ctx.spaceId,
-    });
-
-    // The context's own credential sees its row and none of the others —
-    // the system-stamped row included, which is the one a filter written as
-    // "my space or unstamped" would leak.
-    const ownRes = await request(
-      ctx.app,
-      "GET",
-      `/audit?action=${uniqueAction}`,
-      { key: ctx.spaceKey },
-    );
-    expect(ownRes.status).toBe(200);
-    const ownBody = (await ownRes.json()) as AuditPage;
-    const ownResourceIds = new Set(ownBody.data.map((e) => e.resource_id));
-    expect(ownResourceIds).toContain("row-own");
-    expect(ownResourceIds).not.toContain("row-a");
-    expect(ownResourceIds).not.toContain("row-b");
-    expect(ownResourceIds).not.toContain("row-system");
-
-    // Storage-level: a space-scoped read returns only rows with the
-    // matching space_id. System-stamped (null) rows do NOT leak to a
-    // space-scoped reader — the route's filter contract is "rows where
-    // space_id = caller's space_id". This is the load-bearing
-    // assertion for the hosted-mode isolation property.
-    const spaceA = await ctx.storage.audit.list({
-      action: uniqueAction,
-      space_id: "space-a",
-    });
-    const spaceAResourceIds = new Set(spaceA.data.map((e) => e.resource_id));
-    expect(spaceAResourceIds).toContain("row-a");
-    expect(spaceAResourceIds).not.toContain("row-b");
-    expect(spaceAResourceIds).not.toContain("row-system");
-
-    const spaceB = await ctx.storage.audit.list({
-      action: uniqueAction,
-      space_id: "space-b",
-    });
-    const spaceBResourceIds = new Set(spaceB.data.map((e) => e.resource_id));
-    expect(spaceBResourceIds).toContain("row-b");
-    expect(spaceBResourceIds).not.toContain("row-a");
-    expect(spaceBResourceIds).not.toContain("row-system");
-
-    // Route-layer end-to-end: mint a space-scoped key, hit
-    // GET /audit, assert it sees only space-A rows. Verifies the
-    // `space_id: callerSpaceId` line in the route handler hasn't
-    // regressed back to an unfiltered shape.
-    const spaceAKey = "marfa_k1_test_space_a_admin";
-    await ctx.storage.keys.create(
-      {
-        label: "space-a-admin",
-        source: "space-a-admin",
-        space_permissions: [...SPACE_PERMISSIONS],
-        type_permissions: {},
-        default_tier: "library",
-        is_operator: false,
-      },
-      hashApiKey(spaceAKey, TEST_API_KEY_SALT),
-      "space-a",
-    );
-    const spaceARouteRes = await request(
-      ctx.app,
-      "GET",
-      `/audit?action=${uniqueAction}`,
-      { key: spaceAKey },
-    );
-    expect(spaceARouteRes.status).toBe(200);
-    const spaceARouteBody = (await spaceARouteRes.json()) as AuditPage;
-    const routeResourceIds = new Set(
-      spaceARouteBody.data.map((e) => e.resource_id),
-    );
-    // Space A's admin sees its own rows only.
-    expect(routeResourceIds).toContain("row-a");
-    expect(routeResourceIds).not.toContain("row-b");
-    expect(routeResourceIds).not.toContain("row-system");
-    expect(routeResourceIds).not.toContain("row-own");
   });
 
   // NOTE: this test creates a SECOND TestContext with custom config.

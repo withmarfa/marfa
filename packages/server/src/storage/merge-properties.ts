@@ -25,12 +25,9 @@ export function resolveIncomingProperties(
   typeId: string,
   properties: Record<string, unknown> | undefined,
   nullClears: boolean,
-  spaceId?: string | null,
 ): Record<string, unknown> | undefined {
   if (properties === undefined) return undefined;
-  return nullClears
-    ? properties
-    : coerceNullProperties(typeId, properties, spaceId);
+  return nullClears ? properties : coerceNullProperties(typeId, properties);
 }
 
 /**

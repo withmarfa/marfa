@@ -104,7 +104,6 @@ export const RESERVED_ITEM_FIELDS: ReadonlySet<string> = new Set([
   "type",
   "state",
   "tier",
-  "space_id",
   "properties",
   "created_at",
   "updated_at",

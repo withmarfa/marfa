@@ -71,47 +71,6 @@ export default [
     },
   },
   {
-    // The space fence has one spelling, and it is `space-condition.ts`.
-    //
-    // Written inline it was written differently in each store, and the
-    // stores then disagreed about what an absent space means: most read
-    // it as "every space", one key-store method read it as "the rows
-    // with no space". An operator uninstalling a space's connection
-    // resolved the connection under the first reading and looked for its
-    // credentials under the second, so the revocation list came back
-    // empty every time while the pipeline reported success. Nothing about
-    // either spelling looks wrong on its own, which is why this is a lint
-    // rule rather than a comment.
-    //
-    // Every store, so a store added tomorrow is covered by default. An
-    // allowlist of the files that happened to read the fence would leave a
-    // new store outside the rule, which is the likeliest way the divergence
-    // comes back: nobody adding a file thinks to add it to a lint config.
-    // The stores that still spell the fence inline carry a file-level
-    // disable saying so, and deleting one is how the next batch gets
-    // normalized. None of them disagrees with the meaning the helper
-    // settled on; they are unconverted, not divergent.
-    //
-    // What still slips past, stated because it is cheap to say and
-    // expensive to discover: a fence built inside a `sql` template, a
-    // column destructured out of its table object first, or a table
-    // imported under another name. The rule reads the shape, not the
-    // meaning.
-    files: ["packages/server/src/storage/sqlite/*.ts"],
-    ignores: ["packages/server/src/storage/sqlite/*.test.ts"],
-    rules: {
-      "no-restricted-syntax": [
-        "error",
-        {
-          selector:
-            "CallExpression[callee.name=/^(eq|ne|isNull|isNotNull)$/] > MemberExpression[property.name='space_id']",
-          message:
-            "Build the space fence with a helper from storage/space-condition.js rather than spelling it inline, which is how the stores came to disagree about what an absent space means. Pick by the column: spaceCondition, spaceBucketCondition or spaceOrPlatformCondition for a nullable space_id, and spaceSentinelCondition for blobs, custom_types and custom_edge_types, whose space_id is NOT NULL DEFAULT '' — the other three emit IS NULL against those and match nothing, silently.",
-        },
-      ],
-    },
-  },
-  {
     // The path tag is the mechanism, and a convention nobody enforces is the
     // shape the tag was written to replace. The change that introduced it
     // converted forty-seven request paths and missed the forty-eighth, which

@@ -93,7 +93,6 @@ export function resolveStateFilter(raw: string | undefined): {
 
 export const EdgeSchema = z.object({
   id: z.string(),
-  space_id: z.string().nullable().optional(),
   source_id: z.string(),
   target_id: z.string(),
   edge_type: z.string(),
@@ -121,12 +120,6 @@ export const ItemSchema = z.object({
   state: ItemStateEnum,
   /** Optional — `system.*` items have no tier. */
   tier: z.enum(["library", "feed"]).optional(),
-  /**
-   * Space scope. Storage queries are space-scoped at the SQL layer, so
-   * for ordinary callers this always matches the caller's own space. The
-   * field is informational. Mirrors the `Edge.space_id` shape.
-   */
-  space_id: z.string().nullable().optional(),
   version: z.number(),
   schema_version: z.number().int(),
   source: z.string(),
@@ -182,21 +175,6 @@ export const VersionSchema = z.object({
   properties: z.record(z.string(), z.unknown()),
   created_at: z.string(),
   device: z.string().optional(),
-});
-
-/**
- * A space's quota row. Answered by the space's own quota route and by the
- * admin view of the same row, which is why it is here: the two are one
- * shape, and declaring it twice let them describe the same row differently.
- */
-export const QuotaSchema = z.object({
-  space_id: z.string(),
-  items_limit: z.number().int().nullable(),
-  webhooks_limit: z.number().int().nullable(),
-  blobs_limit: z.number().int().nullable(),
-  storage_bytes_limit: z.number().int().nullable(),
-  rate_per_minute_limit: z.number().int().nullable(),
-  updated_at: z.string().nullable(),
 });
 
 /**

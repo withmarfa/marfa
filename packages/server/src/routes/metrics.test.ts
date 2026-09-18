@@ -113,7 +113,6 @@ describe("GET /metrics", () => {
         default_tier: "feed",
       },
       hashApiKey(raw, "test-salt"),
-      "space-a",
     );
 
     const res = await request(ctx.app, "GET", "/metrics", { key: raw });

@@ -42,7 +42,6 @@ async function mintOAuthToken(opts: {
 }): Promise<MintedToken> {
   const { token, grantId } = await seedOauthBearer(ctx.storage, opts.scopes, {
     clientName: "Scope Enforcement Test App",
-    spaceId: opts.spaceId,
   });
   return { rawToken: token, grantId };
 }
@@ -419,7 +418,6 @@ describe("wildcard scope reaches runtime user.* types (keystone)", () => {
     await registerUserType("user.ks_write");
     const { rawToken } = await mintOAuthToken({
       scopes: ["*:write"],
-      spaceId: ctx.spaceId,
     });
     const created = await request(ctx.app, "POST", "/items", {
       key: rawToken,
@@ -437,7 +435,6 @@ describe("wildcard scope reaches runtime user.* types (keystone)", () => {
 
     const { rawToken } = await mintOAuthToken({
       scopes: ["user.*:read"],
-      spaceId: ctx.spaceId,
     });
     const list = await request(ctx.app, "GET", "/items?type=user.ks_read", {
       key: rawToken,

@@ -147,56 +147,6 @@ describe("POST /items/bulk-get", () => {
     expect(data.error.code).toBe("validation_error");
   });
 
-  // The critical security test: ids belonging to another space must never
-  // surface, even to a space-bound credential requesting them by exact id.
-  // `getMany` filters by space_id, so the cross-space rows are simply absent.
-  it("never returns items from another space (cross-space isolation)", async () => {
-    if (!ctx.storage.spaces) return;
-
-    const spaceA = await ctx.storage.spaces.create("bulk-get-space-a");
-    const spaceB = await ctx.storage.spaces.create("bulk-get-space-b");
-
-    // An item owned by space B.
-    const bItem = await ctx.storage.items.create(
-      { type: "core.note", properties: { body: "space B secret" } },
-      spaceB.id,
-    );
-    // An item owned by space A.
-    const aItem = await ctx.storage.items.create(
-      { type: "core.note", properties: { body: "space A note" } },
-      spaceA.id,
-    );
-
-    // A key bound to space A. The type map is named rather than left empty,
-    // because it is the whole of what this key can read and the case is about
-    // the space fence rather than the types: an unnamed map withholds both
-    // ids and the assertion passes for the wrong reason. No space permission
-    // is named because `bulk-get` asks for none.
-    const suffix = Math.random().toString(36).slice(2, 8);
-    const rawKey = `marfa_k1_bulkget_a_${suffix}`;
-    await ctx.storage.keys.create(
-      {
-        label: `bulkget-a-${suffix}`,
-        source: `bulkget-a-${suffix}`,
-        type_permissions: { "*": "read" },
-        default_tier: "library",
-        is_operator: false,
-      },
-      hashApiKey(rawKey, TEST_API_KEY_SALT),
-      spaceA.id,
-    );
-
-    const res = await request(ctx.app, "POST", "/items/bulk-get", {
-      key: rawKey,
-      // Ask for BOTH ids — only space A's may come back.
-      body: { ids: [aItem.id, bItem.id] },
-    });
-    expect(res.status).toBe(200);
-    const data = (await res.json()) as BulkGetResponse;
-    expect(data.items.map((i) => i.id)).toEqual([aItem.id]);
-    expect(data.items.some((i) => i.id === bItem.id)).toBe(false);
-  });
-
   it("omits items whose type the caller cannot read (implicit denial)", async () => {
     // A key that can read core.note but not core.bookmark, bound to the
     // context's space. The type map is the whole of what it can read.
@@ -211,7 +161,6 @@ describe("POST /items/bulk-get", () => {
         is_operator: false,
       },
       hashApiKey(rawKey, TEST_API_KEY_SALT),
-      ctx.spaceId,
     );
 
     const noteRes = await request(ctx.app, "POST", "/items", {
@@ -268,14 +217,11 @@ describe("POST /items/bulk-get and the system token", () => {
     // to the operator key, whose own type permissions are empty, so no
     // credential writes one. What this door does with the row afterwards is
     // the same either way.
-    const device = await ctx.storage.items.create(
-      {
-        type: "system.device",
-        properties: { name: `bulk-sys-${marker}`, kind: "laptop" },
-        source: `bulk-get-system-${marker}`,
-      },
-      ctx.spaceId,
-    );
+    const device = await ctx.storage.items.create({
+      type: "system.device",
+      properties: { name: `bulk-sys-${marker}`, kind: "laptop" },
+      source: `bulk-get-system-${marker}`,
+    });
     return { noteId: n.id, deviceId: device.id };
   }
 

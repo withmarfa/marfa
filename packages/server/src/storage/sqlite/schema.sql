@@ -7,7 +7,6 @@
 
 CREATE TABLE IF NOT EXISTS `api_keys` (
 	`id` text PRIMARY KEY NOT NULL,
-	`space_id` text,
 	`key_hash` text NOT NULL,
 	`label` text NOT NULL,
 	`source` text NOT NULL,
@@ -27,8 +26,7 @@ CREATE TABLE IF NOT EXISTS `api_keys` (
 	`expires_at` text,
 	`revoked_at` text,
 	`last_used_at` text,
-	CONSTRAINT "api_keys_operator_iff_space_less" CHECK(("api_keys"."space_id" IS NULL) = ("api_keys"."is_operator" = 1)),
-	CONSTRAINT "api_keys_space_less_holds_nothing" CHECK("api_keys"."space_id" IS NOT NULL OR (
+	CONSTRAINT "api_keys_space_less_holds_nothing" CHECK("api_keys"."is_operator" <> 1 OR (
         "api_keys"."type_permissions" = '{}' AND
         "api_keys"."edge_permissions" = '{}' AND
         "api_keys"."metadata_permissions" = '{}' AND
@@ -38,13 +36,12 @@ CREATE TABLE IF NOT EXISTS `api_keys` (
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS `api_keys_key_hash_unique` ON `api_keys` (`key_hash`);
-CREATE UNIQUE INDEX IF NOT EXISTS `idx_api_keys_source_per_space` ON `api_keys` (`space_id`,`source`) WHERE revoked_at IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS `idx_api_keys_source_per_space` ON `api_keys` (`source`) WHERE revoked_at IS NULL;
 CREATE INDEX IF NOT EXISTS `idx_api_keys_runtime_credential` ON `api_keys` (`is_runtime_credential`) WHERE is_runtime_credential;
 CREATE TABLE IF NOT EXISTS `audit_log` (
 	`id` text PRIMARY KEY NOT NULL,
 	`timestamp` text NOT NULL,
 	`key_id` text,
-	`space_id` text,
 	`action` text NOT NULL,
 	`resource_type` text NOT NULL,
 	`resource_id` text,
@@ -54,7 +51,6 @@ CREATE TABLE IF NOT EXISTS `audit_log` (
 CREATE INDEX IF NOT EXISTS `idx_audit_log_timestamp` ON `audit_log` (`timestamp`);
 CREATE INDEX IF NOT EXISTS `idx_audit_log_action` ON `audit_log` (`action`);
 CREATE INDEX IF NOT EXISTS `idx_audit_log_resource_type` ON `audit_log` (`resource_type`);
-CREATE INDEX IF NOT EXISTS `idx_audit_log_space_id` ON `audit_log` (`space_id`);
 CREATE TABLE IF NOT EXISTS `auth_account` (
 	`id` text PRIMARY KEY NOT NULL,
 	`account_id` text NOT NULL,
@@ -258,18 +254,15 @@ CREATE TABLE IF NOT EXISTS `auth_verification` (
 
 CREATE INDEX IF NOT EXISTS `idx_auth_verification_identifier` ON `auth_verification` (`identifier`);
 CREATE TABLE IF NOT EXISTS `blobs` (
-	`space_id` text DEFAULT '' NOT NULL,
-	`hash` text NOT NULL,
+	`hash` text PRIMARY KEY NOT NULL,
 	`mime_type` text NOT NULL,
 	`size` integer NOT NULL,
 	`storage_path` text NOT NULL,
-	`created_at` text NOT NULL,
-	PRIMARY KEY(`space_id`, `hash`)
+	`created_at` text NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS `bulk_action_jobs` (
 	`id` text PRIMARY KEY NOT NULL,
-	`space_id` text,
 	`api_key_id` text,
 	`status` text NOT NULL,
 	`action` text NOT NULL,
@@ -290,9 +283,8 @@ CREATE TABLE IF NOT EXISTS `bulk_action_jobs` (
 );
 
 CREATE INDEX IF NOT EXISTS `idx_bulk_action_jobs_status` ON `bulk_action_jobs` (`status`);
-CREATE INDEX IF NOT EXISTS `idx_bulk_action_jobs_space_id` ON `bulk_action_jobs` (`space_id`);
 CREATE INDEX IF NOT EXISTS `idx_bulk_action_jobs_gc` ON `bulk_action_jobs` (`status`,`finished_at`);
-CREATE UNIQUE INDEX IF NOT EXISTS `idx_bulk_action_jobs_idempotency` ON `bulk_action_jobs` (`space_id`,`idempotency_key`) WHERE idempotency_key IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS `idx_bulk_action_jobs_idempotency` ON `bulk_action_jobs` (`idempotency_key`) WHERE idempotency_key IS NOT NULL;
 CREATE TABLE IF NOT EXISTS `connection_leased_tokens` (
 	`id` text PRIMARY KEY NOT NULL,
 	`connection_id` text NOT NULL,
@@ -323,30 +315,25 @@ CREATE TABLE IF NOT EXISTS `connection_oauth_tokens` (
 
 CREATE UNIQUE INDEX IF NOT EXISTS `idx_connection_oauth_tokens_connection_id` ON `connection_oauth_tokens` (`connection_id`);
 CREATE TABLE IF NOT EXISTS `custom_edge_types` (
-	`space_id` text DEFAULT '' NOT NULL,
-	`id` text NOT NULL,
+	`id` text PRIMARY KEY NOT NULL,
 	`schema` text NOT NULL,
 	`created_at` text NOT NULL,
-	`updated_at` text NOT NULL,
-	PRIMARY KEY(`space_id`, `id`)
+	`updated_at` text NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS `custom_types` (
-	`space_id` text DEFAULT '' NOT NULL,
-	`id` text NOT NULL,
+	`id` text PRIMARY KEY NOT NULL,
 	`schema` text NOT NULL,
 	`origin` text DEFAULT 'user' NOT NULL,
 	`family` text,
 	`owner_integration` text,
 	`created_at` text NOT NULL,
-	`updated_at` text NOT NULL,
-	PRIMARY KEY(`space_id`, `id`)
+	`updated_at` text NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS `idx_custom_types_origin` ON `custom_types` (`origin`);
 CREATE TABLE IF NOT EXISTS `edges` (
 	`id` text PRIMARY KEY NOT NULL,
-	`space_id` text,
 	`source_id` text NOT NULL,
 	`target_id` text NOT NULL,
 	`edge_type` text NOT NULL,
@@ -356,12 +343,11 @@ CREATE TABLE IF NOT EXISTS `edges` (
 	`version` integer DEFAULT 1 NOT NULL
 );
 
-CREATE INDEX IF NOT EXISTS `idx_edges_source` ON `edges` (`space_id`,`source_id`,`edge_type`);
-CREATE INDEX IF NOT EXISTS `idx_edges_target` ON `edges` (`space_id`,`target_id`,`edge_type`);
+CREATE INDEX IF NOT EXISTS `idx_edges_source` ON `edges` (`source_id`,`edge_type`);
+CREATE INDEX IF NOT EXISTS `idx_edges_target` ON `edges` (`target_id`,`edge_type`);
 CREATE INDEX IF NOT EXISTS `idx_edges_updated_at_id` ON `edges` (`updated_at`,`id`);
 CREATE TABLE IF NOT EXISTS `enrichment_state` (
 	`item_id` text PRIMARY KEY NOT NULL,
-	`space_id` text,
 	`blob_ref` text NOT NULL,
 	`extractor_version` integer NOT NULL,
 	`status` text NOT NULL,
@@ -377,7 +363,6 @@ CREATE TABLE IF NOT EXISTS `event_log` (
 	`event_type` text NOT NULL,
 	`item_id` text,
 	`edge_id` text,
-	`space_id` text,
 	`payload` text NOT NULL,
 	`originating_connection_id` text,
 	`hop_count` integer DEFAULT 0 NOT NULL,
@@ -390,7 +375,6 @@ CREATE INDEX IF NOT EXISTS `idx_event_log_edge_id` ON `event_log` (`edge_id`);
 CREATE INDEX IF NOT EXISTS `idx_event_log_originating_connection_id` ON `event_log` (`originating_connection_id`,`id`);
 CREATE TABLE IF NOT EXISTS `idempotency_records` (
 	`id` text PRIMARY KEY NOT NULL,
-	`space_id` text,
 	`idempotency_key` text NOT NULL,
 	`fingerprint` text NOT NULL,
 	`state` text NOT NULL,
@@ -401,8 +385,8 @@ CREATE TABLE IF NOT EXISTS `idempotency_records` (
 	`completed_at` text
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS `idx_idempotency_records_key` ON `idempotency_records` (CASE WHEN "space_id" IS NULL THEN '' ELSE "space_id" END,`idempotency_key`);
-CREATE INDEX IF NOT EXISTS `idx_idempotency_records_gc` ON `idempotency_records` (`space_id`,`created_at`);
+CREATE UNIQUE INDEX IF NOT EXISTS `idx_idempotency_records_key` ON `idempotency_records` (`idempotency_key`);
+CREATE INDEX IF NOT EXISTS `idx_idempotency_records_gc` ON `idempotency_records` (`created_at`);
 CREATE TABLE IF NOT EXISTS `inbound_webhook_events` (
 	`id` text PRIMARY KEY NOT NULL,
 	`inbound_webhook_id` text NOT NULL,
@@ -435,7 +419,6 @@ CREATE TABLE IF NOT EXISTS `inbound_webhooks` (
 CREATE INDEX IF NOT EXISTS `idx_inbound_webhooks_connection_id` ON `inbound_webhooks` (`connection_id`);
 CREATE TABLE IF NOT EXISTS `items` (
 	`id` text PRIMARY KEY NOT NULL,
-	`space_id` text,
 	`type` text NOT NULL,
 	`state` text DEFAULT 'active' NOT NULL,
 	`tier` text DEFAULT 'library' NOT NULL,
@@ -461,9 +444,9 @@ CREATE INDEX IF NOT EXISTS `idx_items_state` ON `items` (`state`);
 CREATE INDEX IF NOT EXISTS `idx_items_created_at` ON `items` (`created_at`);
 CREATE INDEX IF NOT EXISTS `idx_items_timestamp` ON `items` (`timestamp`);
 CREATE INDEX IF NOT EXISTS `idx_items_updated_at_id` ON `items` (`updated_at`,`id`);
-CREATE UNIQUE INDEX IF NOT EXISTS `idx_items_source_dedup` ON `items` (CASE WHEN "space_id" IS NULL THEN '' ELSE "space_id" END,`source`,`source_id`) WHERE source IS NOT NULL;
-CREATE INDEX IF NOT EXISTS `idx_items_source_id_prefix` ON `items` (`space_id`,"source_id" COLLATE NOCASE) WHERE source_id IS NOT NULL;
-CREATE INDEX IF NOT EXISTS `idx_items_starts_at_utc` ON `items` (`space_id`,`starts_at_utc`) WHERE starts_at_utc IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS `idx_items_source_dedup` ON `items` (`source`,`source_id`) WHERE source IS NOT NULL;
+CREATE INDEX IF NOT EXISTS `idx_items_source_id_prefix` ON `items` ("source_id" COLLATE NOCASE) WHERE source_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS `idx_items_starts_at_utc` ON `items` (`starts_at_utc`) WHERE starts_at_utc IS NOT NULL;
 CREATE INDEX IF NOT EXISTS `idx_items_enrichment_candidates` ON `items` (`created_at`) WHERE (type = 'core.file' OR type LIKE 'core.file.%') AND state <> 'trashed' AND json_extract(properties, '$.blob_ref') IS NOT NULL;
 CREATE TABLE IF NOT EXISTS `metadata` (
 	`item_id` text PRIMARY KEY NOT NULL,
@@ -513,7 +496,6 @@ CREATE INDEX IF NOT EXISTS `idx_outbound_webhook_deliveries_webhook_id` ON `outb
 CREATE INDEX IF NOT EXISTS `idx_outbound_webhook_deliveries_pending` ON `outbound_webhook_deliveries` (`next_attempt_at`) WHERE status = 'pending';
 CREATE TABLE IF NOT EXISTS `outbound_webhooks` (
 	`id` text PRIMARY KEY NOT NULL,
-	`space_id` text,
 	`url` text NOT NULL,
 	`secret` text NOT NULL,
 	`events` text DEFAULT '[]' NOT NULL,
@@ -537,46 +519,6 @@ CREATE TABLE IF NOT EXISTS `settings` (
 	`value` text NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS `space_quotas` (
-	`space_id` text PRIMARY KEY NOT NULL,
-	`items_limit` integer,
-	`webhooks_limit` integer,
-	`blobs_limit` integer,
-	`storage_bytes_limit` integer,
-	`rate_per_minute_limit` integer,
-	`updated_at` text NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS `spaces` (
-	`id` text PRIMARY KEY NOT NULL,
-	`name` text,
-	`config` text,
-	`created_at` text NOT NULL,
-	`status` text DEFAULT 'active' NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS `users` (
-	`id` text PRIMARY KEY NOT NULL,
-	`name` text,
-	`first_name` text,
-	`last_name` text,
-	`bio` text,
-	`avatar_blob_hash` text,
-	`provider` text NOT NULL,
-	`provider_id` text NOT NULL,
-	`space_id` text NOT NULL,
-	`handle` text,
-	`auth_user_id` text,
-	`timezone` text,
-	`created_at` text NOT NULL,
-	`updated_at` text NOT NULL,
-	FOREIGN KEY (`space_id`) REFERENCES `spaces`(`id`) ON UPDATE no action ON DELETE no action,
-	FOREIGN KEY (`auth_user_id`) REFERENCES `auth_user`(`id`) ON UPDATE no action ON DELETE set null
-);
-
-CREATE UNIQUE INDEX IF NOT EXISTS `idx_users_provider` ON `users` (`provider`,`provider_id`);
-CREATE UNIQUE INDEX IF NOT EXISTS `idx_users_handle` ON `users` (`handle`);
-CREATE UNIQUE INDEX IF NOT EXISTS `idx_users_auth_user_id` ON `users` (`auth_user_id`);
 CREATE TABLE IF NOT EXISTS `versions` (
 	`id` text PRIMARY KEY NOT NULL,
 	`item_id` text NOT NULL,

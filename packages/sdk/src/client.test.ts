@@ -25,7 +25,6 @@ let client: MarfaClient;
 let testFetchFn: typeof globalThis.fetch;
 let spaceKey: string;
 let testStorage: Storage;
-let testSpaceId: string;
 let cleanup: () => void;
 
 function createTestFetch(app: {
@@ -110,19 +109,29 @@ beforeAll(async () => {
       default_tier: "feed",
     }),
   });
-  // Keys mode provisions the instance's one space at bootstrap and mints a
-  // working key into it beside the operator key; the fixture runs as that
-  // working key, which is the setup keys mode is meant to follow.
-  const bootstrap = (await bootstrapRes.json()) as {
-    key: string;
-    space?: { id: string };
-    space_key?: { key: string };
-  };
-  if (!bootstrap.space || !bootstrap.space_key) {
-    throw new Error("keys-mode bootstrap returned no space and working key");
+  // Bootstrap hands back the operator key, which is not a working key; the
+  // operator mints one through the same door, and a body naming nothing takes
+  // everything. The fixture runs as that working key, which is the setup keys
+  // mode is meant to follow.
+  const bootstrap = (await bootstrapRes.json()) as { key: string };
+  const workingRes = await testFetch("http://localhost/keys", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${bootstrap.key}`,
+    },
+    body: JSON.stringify({
+      label: "test-working",
+      source: "sdk-test",
+      default_tier: "library",
+    }),
+  });
+  if (workingRes.status !== 201) {
+    throw new Error(
+      `keys-mode working key mint answered ${String(workingRes.status)}: ${await workingRes.text()}`,
+    );
   }
-  testSpaceId = bootstrap.space.id;
-  const key = bootstrap.space_key.key;
+  const key = ((await workingRes.json()) as { key: string }).key;
   spaceKey = key;
 
   client = new MarfaClient({
@@ -2209,16 +2218,13 @@ describe("the paging helpers and the system opt-in", () => {
       properties: { body: marker },
       tags: [marker],
     });
-    const device = await testStorage.items.create(
-      {
-        type: "system.device",
-        properties: { name: marker, kind: "laptop" },
-        tags: [marker],
-        source: "sdk-test",
-        tier: "library",
-      },
-      testSpaceId,
-    );
+    const device = await testStorage.items.create({
+      type: "system.device",
+      properties: { name: marker, kind: "laptop" },
+      tags: [marker],
+      source: "sdk-test",
+      tier: "library",
+    });
     return { noteId: note.id, deviceId: device.id };
   }
 

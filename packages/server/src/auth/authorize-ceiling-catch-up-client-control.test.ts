@@ -89,7 +89,6 @@ async function seedClient(
     scopes: opts.scopes === null ? null : [...opts.scopes],
     redirectUris: [...opts.redirectUris],
     postLogoutRedirectUris: [ORIGIN + "/"],
-    referenceId: null,
   });
   return clientId;
 }

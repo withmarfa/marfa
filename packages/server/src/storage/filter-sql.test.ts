@@ -165,47 +165,12 @@ describe("filterToRawSql", () => {
   // Edge subqueries — space scoping (defense-in-depth)
   // -------------------------------------------------------------------------
 
-  describe("edge subqueries (space scoping)", () => {
-    it("outbound eq scopes by space_id when provided (sqlite)", () => {
-      const expr = parseFilter('edge[parent-of] eq "item_xyz"');
-      const result = filterToRawSql(expr, "i", "space_a");
-      expect(result.clause).toContain("e.source_id = i.id");
-      expect(result.clause).toContain("e.target_id = ?");
-      expect(result.clause).toContain("e.space_id = ?");
-      expect(result.params).toEqual(["parent-of", "item_xyz", "space_a"]);
-    });
-
-    it("backref eq scopes by space_id when provided (sqlite)", () => {
-      const expr = parseFilter('backref[parent-of] eq "item_parent"');
-      const result = filterToRawSql(expr, "i", "space_a");
-      expect(result.clause).toContain("e.target_id = i.id");
-      expect(result.clause).toContain("e.source_id = ?");
-      expect(result.clause).toContain("e.space_id = ?");
-      expect(result.params).toEqual(["parent-of", "item_parent", "space_a"]);
-    });
-
-    it("omits space_id constraint when spaceId is undefined (admin path)", () => {
+  describe("edge subqueries", () => {
+    it("binds the edge type and the endpoint, and nothing else", () => {
       const expr = parseFilter('edge[parent-of] eq "item_xyz"');
       const result = filterToRawSql(expr, "i");
       expect(result.clause).not.toContain("e.space_id");
       expect(result.params).toEqual(["parent-of", "item_xyz"]);
-    });
-
-    it("preserves param ordering when space clause is added with other filters", () => {
-      const expr = parseFilter(
-        'state eq "active" AND edge[parent-of] eq "item_xyz"',
-      );
-      const result = filterToRawSql(expr, "i", "space_a");
-      // state binds first; the edge subquery binds type, target, then space
-      expect(result.clause).toBe(
-        "(i.state = ? AND EXISTS (SELECT 1 FROM edges e WHERE e.source_id = i.id AND e.edge_type = ? AND e.target_id = ? AND e.space_id = ?))",
-      );
-      expect(result.params).toEqual([
-        "active",
-        "parent-of",
-        "item_xyz",
-        "space_a",
-      ]);
     });
   });
 

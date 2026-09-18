@@ -6,7 +6,7 @@
  * counts. Used by mode-transition flows (Local → Marfa, iCloud → Marfa) to
  * migrate edges in a second pass after items.bulk lands — items.bulk's
  * inline `edges` block only handles edges whose source and target both live
- * inside a single batch, which is not the case during multi-batch space
+ * inside a single batch, which is not the case during a multi-batch
  * migration.
  *
  * One aggregate audit row per call (never N per edge). Every created or
@@ -21,10 +21,8 @@
  * multi-batch migration does not call out once per edge it moves.
  *
  * Authorization mirrors single-edge `POST /edges`: the caller needs write
- * on the source item's type AND write on the edge type. Operates only
- * within the caller's space — every storage query is threaded with
- * `key.space_id`, so a space-scoped caller can neither resolve nor mutate
- * another space's edges. Same 5000-edge cap as items.bulk.
+ * on the source item's type AND write on the edge type. Same 5000-edge cap
+ * as items.bulk.
  */
 
 import { createRoute, z } from "@hono/zod-openapi";
@@ -100,7 +98,7 @@ const edgesBulkRoute = createRoute({
   tags: ["Edges"],
   summary: "Bulk upsert edges",
   description:
-    "Creates or upserts up to 5000 edges in one call, matching existing rows on `(source_id, target_id, edge_type)`. An entry that matches an existing row merges its properties over that row's, as `PATCH /edges/{id}` does, so an upsert naming one property leaves the others standing. Atomic by default; the items being wired together must already exist. Requires write access to each edge's source-item type and to the edge type, and operates only within the caller's space.",
+    "Creates or upserts up to 5000 edges in one call, matching existing rows on `(source_id, target_id, edge_type)`. An entry that matches an existing row merges its properties over that row's, as `PATCH /edges/{id}` does, so an upsert naming one property leaves the others standing. Atomic by default; the items being wired together must already exist. Requires write access to each edge's source-item type and to the edge type.",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -192,22 +190,19 @@ async function processBulkEdge(
   index: number,
   options: {
     mode: "upsert" | "create_only";
-    spaceId: string | undefined;
     existingByTriple: Map<string, Edge>;
     /**
      * Per-edge write authorization, mirroring single-edge `POST /edges`:
-     * write on the source item's type AND write on the edge type. The
-     * source item is resolved space-scoped, so a cross-space source returns
-     * `null` and the edge-type gate alone applies (matching
-     * `PATCH /edges/:id`, where a trashed/cross-space source skips the type
-     * gate and the space predicate remains the data-plane fence).
+     * write on the source item's type AND write on the edge type. An
+     * unknown source resolves to `null` and the edge-type gate alone
+     * applies (matching `PATCH /edges/:id`).
      * Throws on denial; the caller routes that to an `errored` outcome /
      * atomic rollback.
      */
     checkEdgeWrite: (sourceType: string | null, edgeType: string) => void;
   },
 ): Promise<{ result: BulkEdgeResult; created?: Edge; updated?: Edge }> {
-  const { mode, spaceId, existingByTriple, checkEdgeWrite } = options;
+  const { mode, existingByTriple, checkEdgeWrite } = options;
 
   if (!isValidId(raw.source_id)) {
     return {
@@ -252,14 +247,11 @@ async function processBulkEdge(
   }
 
   // Authorize the write before any mutation. Resolve the source item's
-  // type space-scoped (getIncludingTrashed so a trashed source still runs
-  // the gate, matching PATCH /edges/:id). A cross-space source resolves to
-  // null and the edge-type gate alone applies.
+  // type (getIncludingTrashed so a trashed source still runs the gate,
+  // matching PATCH /edges/:id). An unknown source resolves to null and the
+  // edge-type gate alone applies.
   try {
-    const srcItem = await storage.items.getIncludingTrashed(
-      raw.source_id,
-      spaceId,
-    );
+    const srcItem = await storage.items.getIncludingTrashed(raw.source_id);
     checkEdgeWrite(srcItem?.type ?? null, raw.edge_type);
   } catch (err) {
     if (err instanceof MarfaError) {
@@ -313,7 +305,6 @@ async function processBulkEdge(
       outcome = await storage.edges.updateProperties(
         existing.id,
         raw.properties ?? {},
-        spaceId,
       );
     } catch (err) {
       if (err instanceof MarfaError) {
@@ -348,7 +339,6 @@ async function processBulkEdge(
       source_id: raw.source_id,
       target_id: raw.target_id,
       edge_type: raw.edge_type,
-      space_id: spaceId,
     });
     const createInput = {
       source_id: raw.source_id,
@@ -357,7 +347,7 @@ async function processBulkEdge(
       ...(raw.properties !== undefined && { properties: raw.properties }),
       ...(raw.id !== undefined && { id: raw.id }),
     };
-    const created = await storage.edges.createRaw(createInput, spaceId);
+    const created = await storage.edges.createRaw(createInput);
     return {
       result: { index, outcome: "created", id: created.id },
       created,
@@ -410,8 +400,6 @@ export function edgesBulkRoutes(storage: Storage) {
         { cap: MAX_BULK_EDGES, provided: rawEdges.length },
       );
     }
-
-    const spaceId = c.get("apiKey")?.space_id;
 
     if (rawEdges.length === 0) {
       return c.json(
@@ -467,7 +455,6 @@ export function edgesBulkRoutes(storage: Storage) {
         try {
           const srcItem = await storage.items.getIncludingTrashed(
             raw.source_id,
-            spaceId,
           );
           checkEdgeWrite(srcItem?.type ?? null, raw.edge_type);
         } catch (err) {
@@ -494,7 +481,6 @@ export function edgesBulkRoutes(storage: Storage) {
         target_id: e.target_id,
         edge_type: e.edge_type,
       })),
-      spaceId,
     );
 
     const run = async (): Promise<{
@@ -512,7 +498,6 @@ export function edgesBulkRoutes(storage: Storage) {
           i,
           {
             mode,
-            spaceId,
             existingByTriple,
             checkEdgeWrite,
           },
@@ -549,15 +534,14 @@ export function edgesBulkRoutes(storage: Storage) {
     // writer happened to use. `skipped` and `errored` wrote nothing and
     // publish nothing.
     for (const edge of createdEdges) {
-      await publishEdge({ type: "edge_created", edge, spaceId, enableFanout });
+      await publishEdge({ type: "edge_created", edge, enableFanout });
     }
     for (const edge of updatedEdges) {
-      await publishEdge({ type: "edge_updated", edge, spaceId, enableFanout });
+      await publishEdge({ type: "edge_updated", edge, enableFanout });
     }
 
     await storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
-      space_id: c.get("apiKey")?.space_id ?? null,
       key_id: c.get("apiKey")?.id,
       action: "edges.bulk",
       resource_type: "edges.bulk",

@@ -180,10 +180,6 @@ describe("PATCH /keys/{id}", () => {
         is_operator: false,
       },
       hashApiKey(narrow, TEST_API_KEY_SALT),
-      // Bound to the instance's space, because an unbound non-operator key is
-      // the one shape the row constraint refuses: a space-less credential is
-      // the operator key and nothing else.
-      ctx.spaceId,
     );
 
     const res = await request(ctx.app, "PATCH", `/keys/${id}`, {
@@ -216,7 +212,7 @@ describe("PATCH /keys/{id}", () => {
   });
 });
 
-describe("PATCH /keys/{id} — a space-less target", () => {
+describe("PATCH /keys/{id} — an operator target", () => {
   /** A spare credential at the instance tier: no space, and nothing held. */
   async function mintSpacelessKey(suffix: string): Promise<string> {
     const res = await request(ctx.app, "POST", "/keys", {
@@ -224,12 +220,13 @@ describe("PATCH /keys/{id} — a space-less target", () => {
       body: {
         label: `spaceless-patch-${suffix}`,
         source: `spaceless-patch-${suffix}`,
+        is_operator: true,
       },
     });
     expect(res.status).toBe(201);
     const minted = (await res.json()) as { id: string };
     const stored = await ctx.storage.keys.get(minted.id);
-    expect(stored?.space_id ?? null).toBeNull();
+    expect(stored?.is_operator).toBe(true);
     return minted.id;
   }
 
@@ -245,7 +242,7 @@ describe("PATCH /keys/{id} — a space-less target", () => {
     });
     expect(res.status).toBe(403);
     const err = (await res.json()) as { error: { message: string } };
-    expect(err.error.message).toMatch(/POST \/admin\/spaces\/\{id\}\/keys/);
+    expect(err.error.message).toMatch(/POST \/keys/);
   });
 
   // **A body of denials is a non-empty map that names nothing.** The guard
@@ -487,13 +484,13 @@ describe("bootstrap sentinel", () => {
     }
   });
 
-  it("provisions the keys-mode space and a key that works in it", async () => {
+  it("returns the operator key only, and the operator mints the key that works", async () => {
     // **The operator key is not a working key**, so a self-host handed only
-    // that has a credential it cannot use: no space, no permissions, because
-    // running the instance sits outside the permission model. The design's
-    // setup story is mint the operator key, create a space, mint a key into
-    // it, work with that key — and this is that story shipped rather than
-    // written down.
+    // that has a credential it cannot use: no permissions, because running
+    // the instance sits outside the permission model. The setup story is
+    // mint the operator key, then mint a working key with it — and a body
+    // naming nothing takes everything, because the operator key is a seed
+    // rather than a ceiling.
     const { app, storage, bootstrapSecret, tmpDir } = await freshApp();
     try {
       const res = await request(app, "POST", "/keys", {
@@ -502,43 +499,51 @@ describe("bootstrap sentinel", () => {
       });
       expect(res.status).toBe(201);
       const body = (await res.json()) as {
+        key: string;
         is_operator: boolean;
-        space?: { id: string; name: string | null };
-        space_key?: {
-          key: string;
-          is_operator: boolean;
-          space_permissions?: string[];
-        };
+        space?: unknown;
+        space_key?: unknown;
       };
-
       expect(body.is_operator).toBe(true);
-      expect(body.space?.id).toBeTruthy();
-      expect(body.space_key?.key).toBeTruthy();
-      // The working key is an ordinary credential holding the whole space.
-      expect(body.space_key?.is_operator).toBe(false);
-      expect(body.space_key?.space_permissions).toEqual(
+      expect(body.space).toBeUndefined();
+      expect(body.space_key).toBeUndefined();
+
+      const working = await request(app, "POST", "/keys", {
+        key: body.key,
+        body: { label: "working", source: "working" },
+      });
+      expect(working.status).toBe(201);
+      const workingBody = (await working.json()) as {
+        key: string;
+        is_operator: boolean;
+        space_permissions: string[];
+        type_permissions: Record<string, string>;
+      };
+      // The working key is an ordinary credential holding the whole instance.
+      expect(workingBody.is_operator).toBe(false);
+      expect(workingBody.space_permissions).toEqual(
         expect.arrayContaining(["space.keys", "space.settings"]),
       );
+      expect(workingBody.type_permissions).toEqual({ "*": "write" });
 
-      // The row is bound to the space that was just made.
-      const keys = await storage.keys.list();
-      const spaceKey = keys.find((k) => k.source === "default-space");
-      expect(spaceKey?.space_id).toBe(body.space?.id);
-
-      // **And it works.** A key bound to a space that holds nothing it can
-      // reach would satisfy every assertion above and be useless, so the
-      // round trip is the assertion that matters.
+      // **And it works.** A key holding nothing it can reach would satisfy
+      // every assertion above and be useless, so the round trip is the
+      // assertion that matters.
       const created = await request(app, "POST", "/items", {
-        key: body.space_key?.key ?? "",
+        key: workingBody.key,
         body: { type: "core.note", properties: { body: "hello" } },
       });
       expect(created.status).toBe(201);
       const listed = await request(app, "GET", "/items?type=core.note", {
-        key: body.space_key?.key ?? "",
+        key: workingBody.key,
       });
       expect(listed.status).toBe(200);
       const page = (await listed.json()) as { data: unknown[] };
       expect(page.data).toHaveLength(1);
+      // The store holds the two rows the story produced.
+      const keys = await storage.keys.list();
+      expect(keys.filter((k) => k.is_operator)).toHaveLength(1);
+      expect(keys.filter((k) => !k.is_operator)).toHaveLength(1);
     } finally {
       await storage.close();
       rmSync(tmpDir, { recursive: true, force: true });
@@ -605,51 +610,6 @@ describe("bootstrap sentinel", () => {
     }
   });
 
-  it("keeps the claim once a credential exists, whatever fails after it", async () => {
-    // **The release is only safe while there is nothing to protect.** An
-    // instance that has minted its operator key and then failed must not
-    // reopen unauthenticated minting: a stranger winning the reopened window
-    // would hold an operator key, and an operator key reaches
-    // `POST /admin/spaces/{id}/keys`, which is deliberately unclamped and
-    // hands out the whole of a space. That is a takeover where the problem
-    // being solved was a lockout.
-    //
-    // The failure is injected after the key insert, which is the half the
-    // release-on-any-failure shape got wrong.
-    const { app, storage, bootstrapSecret, tmpDir } = await freshApp();
-    try {
-      const list = storage.spaces!.list.bind(storage.spaces);
-      storage.spaces!.list = () => {
-        throw new Error("storage is having a moment");
-      };
-
-      const res = await request(app, "POST", "/keys", {
-        key: bootstrapSecret,
-        body: { label: "first-admin", source: "first-admin" },
-      });
-
-      // The operator key is the deliverable and its plaintext lives only in
-      // this response, so a convenience failing after it must not take the
-      // response with it.
-      expect(res.status).toBe(201);
-      const body = (await res.json()) as { key: string; space?: unknown };
-      expect(body.key).toBeTruthy();
-      expect(body.space).toBeUndefined();
-
-      // And the window is shut.
-      expect(await storage.settings.get("bootstrapped")).toBe("true");
-      storage.spaces!.list = list;
-      const second = await request(app, "POST", "/keys", {
-        key: bootstrapSecret,
-        body: { label: "stranger", source: "stranger" },
-      });
-      expect(second.status).toBe(401);
-    } finally {
-      await storage.close();
-      rmSync(tmpDir, { recursive: true, force: true });
-    }
-  });
-
   it("keeps the claim when a failure does reach the release, with a key already minted", async () => {
     // The second lock, tested where the first one is deliberately absent.
     // Nothing in the handler currently throws past the key insert — the
@@ -673,40 +633,6 @@ describe("bootstrap sentinel", () => {
       // door stays shut even though the caller lost the plaintext.
       expect(await storage.keys.list()).toHaveLength(1);
       expect(await storage.settings.get("bootstrapped")).toBe("true");
-    } finally {
-      await storage.close();
-      rmSync(tmpDir, { recursive: true, force: true });
-    }
-  });
-
-  it("mints the working key into a space that is already there", async () => {
-    // A keys-mode instance migrated from before spaces arrives here with the
-    // migration's space in place. Creating a second is refused everywhere
-    // downstream, but returning nothing would hand back an operator key and
-    // call it setup — and the operator key is not a working key.
-    const { app, storage, bootstrapSecret, tmpDir } = await freshApp();
-    try {
-      const existing = await storage.spaces!.create("Already here");
-
-      const res = await request(app, "POST", "/keys", {
-        key: bootstrapSecret,
-        body: { label: "first-admin", source: "first-admin" },
-      });
-      expect(res.status).toBe(201);
-      const body = (await res.json()) as {
-        space?: { id: string };
-        space_key?: { key: string; is_operator: boolean };
-      };
-      expect(body.space?.id).toBe(existing.id);
-      expect(body.space_key?.is_operator).toBe(false);
-      expect(await storage.spaces!.list()).toHaveLength(1);
-
-      // And it works in that space.
-      const created = await request(app, "POST", "/items", {
-        key: body.space_key?.key ?? "",
-        body: { type: "core.note", properties: { body: "hello" } },
-      });
-      expect(created.status).toBe(201);
     } finally {
       await storage.close();
       rmSync(tmpDir, { recursive: true, force: true });
@@ -838,9 +764,10 @@ describe("bootstrap sentinel", () => {
       const rejected = await request(app, "POST", "/keys", {
         key: bootstrapSecret,
         body: {
-          label: "stray-field",
-          source: "stray-field",
-          space_id: "some-space",
+          label: "reserved-source",
+          // A source claiming an integration's identity is refused, so the
+          // request can never mint.
+          source: "oauth:stray",
         },
       });
       expect(rejected.status).toBe(400);
@@ -986,15 +913,10 @@ describe("bootstrap sentinel", () => {
       const stamped = await storage.settings.get("bootstrapped");
       expect(stamped).toBe("true");
 
-      // **Exactly one operator key**, which is the property. A bootstrap call
-      // also provisions the keys-mode space and mints a working key into it,
-      // so the store holds two rows and counting rows would have stopped
-      // saying anything about the race.
+      // **Exactly one operator key**, which is the property.
       const keys = await storage.keys.list();
       expect(keys.filter((k) => k.is_operator)).toHaveLength(1);
-      expect(keys.filter((k) => !k.is_operator)).toHaveLength(1);
-      // And one space, so seven losing callers provisioned nothing.
-      expect(await storage.spaces?.list()).toHaveLength(1);
+      expect(keys.filter((k) => !k.is_operator)).toHaveLength(0);
     } finally {
       await storage.close();
       rmSync(tmpDir, { recursive: true, force: true });
@@ -1009,15 +931,12 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
   // space permission gate and the breadth clamp — so each gets its own case
   // rather than one test standing for both.
   let hostedCtx: TestContext;
-  let spaceId: string;
 
   const KEYS = "space.keys";
   const grantScopes = (...extra: string[]) => ["openid", KEYS, ...extra];
 
   beforeAll(async () => {
     hostedCtx = await createTestContext({});
-    const space = await hostedCtx.storage.spaces!.create("oauth-keys-space");
-    spaceId = space.id;
   });
 
   afterAll(async () => {
@@ -1025,9 +944,7 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
   });
 
   it("refuses every keys door to a session that was not granted the space permission", async () => {
-    const { token } = await seedOauthBearer(hostedCtx.storage, ["openid"], {
-      spaceId,
-    });
+    const { token } = await seedOauthBearer(hostedCtx.storage, ["openid"], {});
     const doors: [string, string, unknown?][] = [
       ["GET", "/keys"],
       ["POST", "/keys", { label: "x", source: "x" }],
@@ -1054,7 +971,7 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
     const { token } = await seedOauthBearer(
       hostedCtx.storage,
       grantScopes("core.note:read"),
-      { spaceId },
+      {},
     );
     const res = await request(hostedCtx.app, "POST", "/keys", {
       key: token,
@@ -1070,7 +987,6 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
     expect(created.type_permissions["core.note"]).toBe("read");
 
     const stored = await hostedCtx.storage.keys.get(created.id);
-    expect(stored?.space_id).toBe(spaceId);
     expect(stored?.is_operator).toBe(false);
   });
 
@@ -1078,7 +994,7 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
     const { token } = await seedOauthBearer(
       hostedCtx.storage,
       grantScopes("core.note:read"),
-      { spaceId },
+      {},
     );
     const res = await request(hostedCtx.app, "POST", "/keys", {
       key: token,
@@ -1104,7 +1020,7 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
     const { token } = await seedOauthBearer(
       hostedCtx.storage,
       grantScopes("core.*:write"),
-      { spaceId },
+      {},
     );
     const res = await request(hostedCtx.app, "POST", "/keys", {
       key: token,
@@ -1118,9 +1034,11 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
   });
 
   it("never mints an operator key from a session, whatever the body asks", async () => {
-    const { token } = await seedOauthBearer(hostedCtx.storage, grantScopes(), {
-      spaceId,
-    });
+    const { token } = await seedOauthBearer(
+      hostedCtx.storage,
+      grantScopes(),
+      {},
+    );
     const res = await request(hostedCtx.app, "POST", "/keys", {
       key: token,
       body: {
@@ -1145,7 +1063,7 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
     const { token, clientId } = await seedOauthBearer(
       hostedCtx.storage,
       grantScopes("core.note:read"),
-      { spaceId },
+      {},
     );
     const res = await request(hostedCtx.app, "POST", "/keys", {
       key: token,
@@ -1170,9 +1088,11 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
   });
 
   it("lets a granted session read, revoke and rename", async () => {
-    const { token } = await seedOauthBearer(hostedCtx.storage, grantScopes(), {
-      spaceId,
-    });
+    const { token } = await seedOauthBearer(
+      hostedCtx.storage,
+      grantScopes(),
+      {},
+    );
     const raw = "marfa_k1_sess_" + Math.random().toString(36).slice(2);
     const target = await hostedCtx.storage.keys.create(
       {
@@ -1183,7 +1103,6 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
         is_operator: false,
       },
       hashApiKey(raw, TEST_API_KEY_SALT),
-      spaceId,
     );
 
     const list = await request(hostedCtx.app, "GET", "/keys", { key: token });
@@ -1214,7 +1133,7 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
     const { token } = await seedOauthBearer(
       hostedCtx.storage,
       grantScopes("core.note:read"),
-      { spaceId },
+      {},
     );
     const minted = await request(hostedCtx.app, "POST", "/keys", {
       key: token,
@@ -1256,13 +1175,12 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
         is_operator: false,
       },
       hashApiKey(raw, TEST_API_KEY_SALT),
-      spaceId,
     );
 
     const { token } = await seedOauthBearer(
       hostedCtx.storage,
       grantScopes("core.note:read"),
-      { spaceId },
+      {},
     );
     const widen = await request(hostedCtx.app, "PATCH", `/keys/${victim.id}`, {
       key: token,
@@ -1286,7 +1204,7 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
     const { token } = await seedOauthBearer(
       hostedCtx.storage,
       grantScopes("core.note:read"),
-      { spaceId },
+      {},
     );
     const minted = await request(hostedCtx.app, "POST", "/keys", {
       key: token,
@@ -1309,7 +1227,6 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
         is_operator: false,
       },
       hashApiKey(raw, TEST_API_KEY_SALT),
-      spaceId,
     );
     const patched = await request(
       hostedCtx.app,
@@ -1332,7 +1249,7 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
     const { token } = await seedOauthBearer(
       hostedCtx.storage,
       grantScopes("core.note:read", "edge.about:read"),
-      { spaceId },
+      {},
     );
 
     // The derive path does hand the edge map over when nothing is named.
@@ -1373,7 +1290,7 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
     const { token } = await seedOauthBearer(
       hostedCtx.storage,
       grantScopes("core.note:read", "edge.about:read"),
-      { spaceId },
+      {},
     );
     const res = await request(hostedCtx.app, "POST", "/keys", {
       key: token,
@@ -1400,7 +1317,7 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
     const { token } = await seedOauthBearer(
       hostedCtx.storage,
       grantScopes("core.note:read"),
-      { spaceId },
+      {},
     );
     const minted = await request(hostedCtx.app, "POST", "/keys", {
       key: token,
@@ -1429,7 +1346,7 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
     const contentOnly = await seedOauthBearer(
       hostedCtx.storage,
       grantScopes("content:write"),
-      { spaceId },
+      {},
     );
     const refused = await request(hostedCtx.app, "POST", "/keys", {
       key: contentOnly.token,
@@ -1450,7 +1367,7 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
     const metaHolder = await seedOauthBearer(
       hostedCtx.storage,
       grantScopes("metadata:write"),
-      { spaceId },
+      {},
     );
     const allowed = await request(hostedCtx.app, "POST", "/keys", {
       key: metaHolder.token,
@@ -1478,7 +1395,6 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
         is_operator: false,
       },
       hashApiKey(raw, TEST_API_KEY_SALT),
-      spaceId,
     );
     const res = await request(hostedCtx.app, "POST", "/keys", {
       key: raw,
@@ -1493,58 +1409,75 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
   });
 });
 
-describe("POST /keys — space binding", () => {
-  // `POST /keys` mints into the caller's space, and the operator key has none
-  // to give. A space-less credential is the instance tier — NULL space is the
-  // universal "all spaces" signal to the storage layer's space predicate —
-  // so the one credential this route can mint from
-  // an operator key is another operator key. Everything space-bound goes
-  // through `POST /admin/spaces/{id}/keys`, which names the space in the path.
+describe("POST /keys — what an operator key mints", () => {
+  // The operator key holds nothing, so nothing about it is a ceiling: a
+  // working key it mints holds what the body names, or the whole set when
+  // the body names nothing. A body naming `is_operator: true` produces a
+  // second operator key, which holds nothing.
   let hostedCtx: TestContext;
-  let spaceId: string;
 
   beforeAll(async () => {
     hostedCtx = await createTestContext({});
-    const space = await hostedCtx.storage.spaces!.create("space-binding");
-    spaceId = space.id;
   });
 
   afterAll(async () => {
     await hostedCtx.cleanup();
   });
 
-  it("refuses a space-bound mint from an operator key, naming the route that does it", async () => {
+  it("mints a working key holding everything when the body names nothing", async () => {
+    const suffix = Math.random().toString(36).slice(2, 10);
     const res = await request(hostedCtx.app, "POST", "/keys", {
       key: hostedCtx.operatorKey,
       body: {
-        label: "null-space-bound",
-        source: "null-space-bound",
+        label: `seeded-${suffix}`,
+        source: `seeded-${suffix}`,
         is_operator: false,
       },
     });
-    expect(res.status).toBe(400);
-    const err = (await res.json()) as {
-      error: { code: string; message: string };
-    };
-    expect(err.error.code).toBe("validation_error");
-    // The message must name the route that does the space-scoped mint,
-    // otherwise the caller's only recourse is to guess.
-    expect(err.error.message).toMatch(/POST \/admin\/spaces\/\{id\}\/keys/);
+    expect(res.status).toBe(201);
+    const minted = (await res.json()) as { id: string };
+    const stored = await hostedCtx.storage.keys.get(minted.id);
+    expect(stored?.is_operator).toBe(false);
+    expect(stored?.type_permissions).toEqual({ "*": "write" });
+    expect(stored?.edge_permissions).toEqual({ "*": "write" });
+    expect(stored?.metadata_permissions).toEqual({ "*": "write" });
+    expect(stored?.extension_permissions).toEqual({ "*": "write" });
+    expect(stored?.profile_permissions).toEqual({ "*": "write" });
+    expect(stored?.space_permissions).toEqual([...SPACE_PERMISSIONS]);
+  });
+
+  it("mints a working key holding only what the body names", async () => {
+    const suffix = Math.random().toString(36).slice(2, 10);
+    const res = await request(hostedCtx.app, "POST", "/keys", {
+      key: hostedCtx.operatorKey,
+      body: {
+        label: `narrow-${suffix}`,
+        source: `narrow-${suffix}`,
+        type_permissions: { "core.note": "read" },
+        space_permissions: ["space.keys"],
+      },
+    });
+    expect(res.status).toBe(201);
+    const minted = (await res.json()) as { id: string };
+    const stored = await hostedCtx.storage.keys.get(minted.id);
+    expect(stored?.is_operator).toBe(false);
+    expect(stored?.type_permissions).toEqual({ "core.note": "read" });
+    expect(stored?.edge_permissions).toEqual({});
+    expect(stored?.space_permissions).toEqual(["space.keys"]);
   });
 
   it("refuses to give the operator key it mints any reach at all", async () => {
-    // A space-less credential is the instance tier, and running the instance
-    // is not a permission: the storage layer applies no space predicate to
-    // one, so a single map entry on it is read or write over every space at
-    // once, reached without a space ever being named. The creator ceiling
-    // does not catch this, because the operator key is exempt from it by
-    // having nothing to be measured against.
+    // Running the instance is not a permission, so the tier that runs it
+    // carries none. The creator ceiling does not catch this, because the
+    // operator key is exempt from it by having nothing to be measured
+    // against.
     const suffix = Math.random().toString(36).slice(2, 10);
     const res = await request(hostedCtx.app, "POST", "/keys", {
       key: hostedCtx.operatorKey,
       body: {
         label: `null-space-narrow-${suffix}`,
         source: `null-space-narrow-${suffix}`,
+        is_operator: true,
         type_permissions: { "core.note": "read" },
       },
     });
@@ -1552,7 +1485,7 @@ describe("POST /keys — space binding", () => {
     const err = (await res.json()) as { error: { message: string } };
     // The refusal names the route that mints a working key, so the caller's
     // recourse is not a guess.
-    expect(err.error.message).toMatch(/POST \/admin\/spaces\/\{id\}\/keys/);
+    expect(err.error.message).toMatch(/POST \/keys/);
   });
 
   it("mints a spare operator key when the body names nothing", async () => {
@@ -1564,12 +1497,12 @@ describe("POST /keys — space binding", () => {
       body: {
         label: `null-space-spare-${suffix}`,
         source: `null-space-spare-${suffix}`,
+        is_operator: true,
       },
     });
     expect(res.status).toBe(201);
     const minted = (await res.json()) as { id: string };
     const stored = await hostedCtx.storage.keys.get(minted.id);
-    expect(stored?.space_id ?? null).toBeNull();
     expect(stored?.is_operator).toBe(true);
     expect(stored?.type_permissions).toEqual({});
     expect(stored?.space_permissions).toEqual([]);
@@ -1600,13 +1533,13 @@ describe("POST /keys — space binding", () => {
       body: {
         label: `null-space-denials-${suffix}`,
         source: `null-space-denials-${suffix}`,
+        is_operator: true,
         type_permissions: { "core.note": "none" },
       },
     });
     expect(res.status).toBe(201);
     const minted = (await res.json()) as { id: string };
     const stored = await hostedCtx.storage.keys.get(minted.id);
-    expect(stored?.space_id ?? null).toBeNull();
     expect(stored?.is_operator).toBe(true);
     // Empty, not the denial that was sent. `{"core.note": "none"}` grants
     // nothing either, so the difference is not what a door would read off it:
@@ -1644,7 +1577,6 @@ describe("POST /keys — space binding", () => {
           space_permissions: ["space.keys"],
         },
         hashApiKey(rawWide, TEST_API_KEY_SALT),
-        undefined,
       ),
     ).rejects.toThrow();
     // Asserted on the row rather than on the message: the driver wraps a
@@ -1664,12 +1596,12 @@ describe("POST /keys — space binding", () => {
       body: {
         label: `inherits-nothing-${suffix}`,
         source: `inherits-nothing-${suffix}`,
+        is_operator: true,
       },
     });
     expect(res.status).toBe(201);
     const minted = (await res.json()) as { id: string };
     const stored = await hostedCtx.storage.keys.get(minted.id);
-    expect(stored?.space_id ?? null).toBeNull();
     expect(stored?.type_permissions).toEqual({});
     expect(stored?.edge_permissions).toEqual({});
     expect(stored?.metadata_permissions).toEqual({});
@@ -1680,16 +1612,11 @@ describe("POST /keys — space binding", () => {
 
   it("mints the two-hop credential chain a black-box client relies on", async () => {
     // The conformance suite provisions with the operator key and then runs as
-    // a space-bound credential minted into the run's own space, which mints
-    // narrower ones from itself. Pinned here because that suite runs against a
-    // deployed server, so a regression would only surface after release.
-    //
-    // It used to run every hop space-less, minting a wide key straight from
-    // the operator key through this route. That shape is refused now, and the
-    // suite inverted to this one first: a space-less credential is the
-    // instance tier and reads no row at all.
+    // a working credential minted from it, which mints narrower ones from
+    // itself. Pinned here because that suite runs against a deployed server,
+    // so a regression would only surface after release.
     const suffix = Math.random().toString(36).slice(2, 10);
-    const harnessKey = await mintSpaceKey(hostedCtx, spaceId, {
+    const harnessKey = await mintSpaceKey(hostedCtx, {
       label: `harness-${suffix}`,
       source: `harness-${suffix}`,
       type_permissions: { "*": "write" },
@@ -1706,12 +1633,11 @@ describe("POST /keys — space binding", () => {
     expect(secondHop.status).toBe(201);
     const scoped = (await secondHop.json()) as { id: string };
     const stored = await hostedCtx.storage.keys.get(scoped.id);
-    expect(stored?.space_id).toBe(spaceId);
     expect(stored?.is_operator).toBe(false);
     expect(stored?.type_permissions).toEqual({ "core.note": "read" });
   });
 
-  it("still lets a space-bound key holding `space.keys` mint into its own space", async () => {
+  it("still lets a working key holding `space.keys` mint", async () => {
     const suffix = Math.random().toString(36).slice(2, 10);
     const raw = `marfa_k1_bound_admin_${suffix}`;
     await hostedCtx.storage.keys.create(
@@ -1724,7 +1650,6 @@ describe("POST /keys — space binding", () => {
         is_operator: false,
       },
       hashApiKey(raw, TEST_API_KEY_SALT),
-      spaceId,
     );
 
     const res = await request(hostedCtx.app, "POST", "/keys", {
@@ -1734,77 +1659,6 @@ describe("POST /keys — space binding", () => {
     expect(res.status).toBe(201);
     const minted = (await res.json()) as { id: string };
     const stored = await hostedCtx.storage.keys.get(minted.id);
-    expect(stored?.space_id).toBe(spaceId);
     expect(stored?.is_operator).toBe(false);
-  });
-
-  it("rejects a body `space_id` instead of silently dropping it", async () => {
-    const suffix = Math.random().toString(36).slice(2, 10);
-    const res = await request(hostedCtx.app, "POST", "/keys", {
-      key: hostedCtx.spaceKey,
-      body: {
-        label: `body-space-${suffix}`,
-        source: `body-space-${suffix}`,
-        space_id: spaceId,
-      },
-    });
-    expect(res.status).toBe(400);
-    const err = (await res.json()) as {
-      error: { code: string; message: string };
-    };
-    expect(err.error.code).toBe("validation_error");
-    expect(err.error.message).toMatch(/space_id/);
-  });
-});
-
-describe("POST /keys — single-space deployments keep minting space-less keys", () => {
-  // An instance with no space plane has no space rows at all (they are only ever
-  // created by the hosted sign-up flow), so every key it mints is legitimately
-  // space-less — which is to say every key it mints is an operator key. The
-  // space-bound refusal still applies here, and is not conditioned on the
-  // deployment's auth mode, so it cannot be switched off by an env var going
-  // stale.
-  it("mints a space-less key in keys mode", async () => {
-    const suffix = Math.random().toString(36).slice(2, 10);
-    const res = await request(ctx.app, "POST", "/keys", {
-      key: ctx.operatorKey,
-      body: {
-        label: `self-host-${suffix}`,
-        source: `self-host-${suffix}`,
-      },
-    });
-    expect(res.status).toBe(201);
-    const minted = (await res.json()) as { id: string };
-    const stored = await ctx.storage.keys.get(minted.id);
-    expect(stored?.space_id ?? null).toBeNull();
-    expect(stored?.is_operator).toBe(true);
-  });
-
-  it("refuses a space-bound mint here too, where no space can exist", async () => {
-    const suffix = Math.random().toString(36).slice(2, 10);
-    const res = await request(ctx.app, "POST", "/keys", {
-      key: ctx.operatorKey,
-      body: {
-        label: `self-host-bound-${suffix}`,
-        source: `self-host-bound-${suffix}`,
-        is_operator: false,
-      },
-    });
-    expect(res.status).toBe(400);
-    const err = (await res.json()) as { error: { code: string } };
-    expect(err.error.code).toBe("validation_error");
-  });
-
-  it("still rejects a body `space_id` in keys mode", async () => {
-    const suffix = Math.random().toString(36).slice(2, 10);
-    const res = await request(ctx.app, "POST", "/keys", {
-      key: ctx.spaceKey,
-      body: {
-        label: `self-host-body-${suffix}`,
-        source: `self-host-body-${suffix}`,
-        space_id: "some-space",
-      },
-    });
-    expect(res.status).toBe(400);
   });
 });

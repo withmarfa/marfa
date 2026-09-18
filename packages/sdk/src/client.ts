@@ -125,7 +125,7 @@ export interface UpdateOptions {
   /**
    * Repoint the item at a new natural-key identifier under the caller's
    * stamped `source`. The server enforces `(source, source_id)` uniqueness
-   * per space — a collision returns HTTP 409 `source_id_conflict`. PATCHing
+   * — a collision returns HTTP 409 `source_id_conflict`. PATCHing
    * the value the item already carries is a no-op success. Used by the
    * sync agent to preserve item identity through file renames.
    */
@@ -305,23 +305,6 @@ export interface MetadataInput {
 }
 
 /**
- * Compact API-key summary returned by the instance keys-list route. The
- * full `ApiKey` shape carries permission maps; the operator surface
- * deliberately surfaces only the identifying fields + timestamps needed
- * for emergency revocation.
- */
-export interface SpaceApiKeySummary {
-  id: string;
-  label: string;
-  source: string;
-  /** The space permissions the credential holds, as the literals themselves. */
-  space_permissions: string[];
-  is_operator: boolean;
-  created_at: string;
-  last_used_at: string | null;
-}
-
-/**
  * One shipped type an instance still carries that its running build no
  * longer names, as returned by the operator drift listing.
  *
@@ -332,7 +315,7 @@ export interface SpaceApiKeySummary {
  */
 export interface DriftedPlatformType {
   id: string;
-  /** Items carrying this identifier, across every space. Read live on
+  /** Items carrying this identifier. Read live on
    *  each request rather than cached at boot, because it is the part of
    *  the report that changes without a restart. */
   item_count: number;
@@ -765,7 +748,7 @@ export interface OccurrencesScan {
    * bound on how many rows to go and look at. Group on `item_id` for
    * the exact number.
    *
-   * Scoped to those types rather than to the space. A `type` on the
+   * Scoped to those types rather than to the instance. A `type` on the
    * request, or a credential permissioned for one event type, narrows
    * what was read and therefore what this counts, so a zero says the
    * rules this read looked at were fine and says nothing at all about
@@ -1093,9 +1076,8 @@ export class MarfaClient {
 
     /**
      * Read many items by id in one round-trip via `POST /items/bulk-get`.
-     * Space-scoped and permission-filtered exactly like `get`: ids the
-     * caller cannot read (other space, type not permitted, trashed, or
-     * non-existent) are silently omitted, so the returned array may be
+     * Permission-filtered exactly like `get`: ids the caller cannot read
+     * (type not permitted, trashed, or non-existent) are silently omitted, so the returned array may be
      * shorter than `ids` and is in no guaranteed order. Capped at 100 ids
      * server-side — an over-cap request throws a `validation_error`.
      *
@@ -1674,7 +1656,7 @@ export class MarfaClient {
 
     /**
      * Enumerate the distinct set of tags in use across items the caller can
-     * read. Space-scoped, type-permission scoped, excludes trashed items.
+     * read. Type-permission scoped, excludes trashed items.
      * Returns tags with usage counts, sorted by count desc then tag asc.
      */
     listTags: async (): Promise<{ tag: string; count: number }[]> => {
@@ -1741,7 +1723,7 @@ export class MarfaClient {
 
   readonly edges = {
     /**
-     * Global edge listing across the space, filtered by edge type
+     * Global edge listing across the instance, filtered by edge type
      * (comma-separated string or array of type ids). Use this when you
      * need "all edges of type X" — replaces the walk-every-item
      * pattern. Per-target filters live on `listFromSource` /
@@ -2196,14 +2178,14 @@ export class MarfaClient {
    * (`audit_retention_days`, `event_log_retention_hours`,
    * `trash_retention_days`). Both endpoints take `space.settings`. */
   readonly spaces = {
-    /** Returns the current space's config. Empty object when nothing
-     * is configured. */
+    /** Returns the instance config. Empty object when nothing is
+     * configured. */
     getConfig: async (): Promise<SpaceConfig> => {
       return this.transport.request<SpaceConfig>("GET", "/spaces/me/config");
     },
 
-    /** Replaces the current space's config (PUT semantics — full
-     * replacement, not merge). */
+    /** Replaces the instance config (PUT semantics — full replacement, not
+     * merge). */
     setConfig: async (config: SpaceConfig): Promise<SpaceConfig> => {
       return this.transport.request<SpaceConfig>("PUT", "/spaces/me/config", {
         body: config,
@@ -2244,8 +2226,8 @@ export class MarfaClient {
 
       /**
        * Remove exactly one platform type row this build no longer ships.
-       * Irreversible and instance-wide: the row is deleted across every
-       * space, and a build that no longer ships the type cannot re-seed
+       * Irreversible and instance-wide: the row is deleted, and a build
+       * that no longer ships the type cannot re-seed
        * it. The type keeps resolving until the next restart, because the
        * in-memory registry is filled from the rows at boot.
        *
@@ -2323,12 +2305,12 @@ export class MarfaClient {
      * There is no third refusal. `series_errors` is capped rather than
      * refused past `scan.max_series_errors`, because that list is a
      * diagnostic beside the calendar and nothing in `data` depends on it
-     * — the healthy series in the same space still expand and return. A
+     * — the healthy series still expand and return. A
      * capped list sets `series_errors_truncated` and
      * `scan.series_errors` keeps the true count, so a partial list is
      * never mistaken for a complete one. That count is scoped to the
      * event types this read covered, so it is a statement about what was
-     * read and not about the space: pass a `type`, or use a credential
+     * read and not about the instance: pass a `type`, or use a credential
      * permissioned for one event type, and the rules of the other type
      * are neither read nor counted.
      *
@@ -2336,7 +2318,7 @@ export class MarfaClient {
      * The passes that gather series and exceptions cannot be windowed —
      * a rule written years ago produces occurrences in any window, and
      * an exception moved out of one still shadows the slot it left — so
-     * both read the space whole however little is asked for, and a large
+     * both read the instance whole however little is asked for, and a large
      * calendar is read slowly rather than refused. `scan` on the result
      * is where that cost is visible: `events_read` grows with the
      * calendar rather than with the window, and `max_occurrences`
@@ -2347,7 +2329,7 @@ export class MarfaClient {
      * What "slowly" is bounded by is the expansion budget, and it is the
      * one place the calendar can come back partial. A read spends at
      * most `scan.max_unproductive_iterations` walking rules that produce
-     * no occurrence, and a space holding enough of them — per-minute
+     * no occurrence, and an instance holding enough of them — per-minute
      * reminders, or a long history of series that have ended — reaches
      * that before it reaches every series. Such a read succeeds with
      * `expansion_incomplete` set and `scan.series_unexpanded` above

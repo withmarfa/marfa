@@ -62,7 +62,6 @@ export async function applyInlineEdges(
   storage: Storage,
   itemId: string,
   edges: Record<string, string[]>,
-  spaceId: string | undefined,
   assertEdgeWritable: (edgeType: string) => void,
 ): Promise<InlineEdgeChanges> {
   // Permission first, before any shape validation or write. A caller with
@@ -103,29 +102,22 @@ export async function applyInlineEdges(
   // the very edges being replaced.
   const removed: Edge[] = [];
   for (const edgeType of Object.keys(edges)) {
-    removed.push(
-      ...(await storage.edges.deleteBySource(itemId, edgeType, spaceId)),
-    );
+    removed.push(...(await storage.edges.deleteBySource(itemId, edgeType)));
   }
 
   // Validate the full proposed set against the post-delete state. Throws
   // on the first violation (cardinality, type constraint, duplicate,
   // cycle), aborting the caller's transaction before any edge is recreated.
-  await assertEdgesCanBeCreated(storage.edges, storage.items, proposals, {
-    space_id: spaceId,
-  });
+  await assertEdgesCanBeCreated(storage.edges, storage.items, proposals);
 
   const created: Edge[] = [];
   for (const p of proposals) {
     created.push(
-      await storage.edges.createRaw(
-        {
-          source_id: p.source_id,
-          target_id: p.target_id,
-          edge_type: p.edge_type,
-        },
-        spaceId,
-      ),
+      await storage.edges.createRaw({
+        source_id: p.source_id,
+        target_id: p.target_id,
+        edge_type: p.edge_type,
+      }),
     );
   }
 
@@ -147,16 +139,15 @@ export async function applyInlineEdges(
  */
 export async function announceInlineEdges(
   changes: InlineEdgeChanges,
-  spaceId: string | undefined,
   /** Whether these edges drive outbound side effects. Defaults to yes, so
    *  the single-item doors read unchanged; the bulk door passes the
    *  batch's own answer, which is off unless asked for. */
   enableFanout = true,
 ): Promise<void> {
   for (const edge of changes.deleted) {
-    await publishEdge({ type: "edge_deleted", edge, spaceId, enableFanout });
+    await publishEdge({ type: "edge_deleted", edge, enableFanout });
   }
   for (const edge of changes.created) {
-    await publishEdge({ type: "edge_created", edge, spaceId, enableFanout });
+    await publishEdge({ type: "edge_created", edge, enableFanout });
   }
 }

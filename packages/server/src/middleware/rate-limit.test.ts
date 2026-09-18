@@ -75,7 +75,6 @@ async function buildCtx(): Promise<Ctx> {
 
   const suffix = Math.random().toString(36).slice(2, 14);
   const rawKey = `marfa_k1_rl_space_${suffix}`;
-  const space = await storage.spaces?.create("rate-limit");
   await storage.keys.create(
     {
       label: "rl-space",
@@ -86,7 +85,6 @@ async function buildCtx(): Promise<Ctx> {
       default_tier: "feed",
     },
     hashApiKey(rawKey, SALT),
-    space?.id,
   );
   await storage.settings.set("bootstrapped", "true");
 
@@ -283,7 +281,6 @@ async function buildAggCtx(): Promise<Ctx> {
 
   const suffix = Math.random().toString(36).slice(2, 14);
   const rawKey = `marfa_k1_rl_agg_${suffix}`;
-  const space = await storage.spaces?.create("rate-limit-aggregate");
   await storage.keys.create(
     {
       label: "rl-agg-space",
@@ -294,7 +291,6 @@ async function buildAggCtx(): Promise<Ctx> {
       default_tier: "feed",
     },
     hashApiKey(rawKey, SALT),
-    space?.id,
   );
   await storage.settings.set("bootstrapped", "true");
 

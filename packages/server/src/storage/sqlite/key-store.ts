@@ -1,5 +1,4 @@
 import { safeJsonParse } from "../json-utils.js";
-import { spaceBucketCondition, spaceCondition } from "../space-condition.js";
 import { and, count, eq, gt, isNotNull, isNull, lt, or } from "drizzle-orm";
 import { generateId, MarfaError, ErrorCode } from "@withmarfa/shared";
 import type {
@@ -28,7 +27,6 @@ const LAST_USED_DEBOUNCE_MS = 3_600_000;
 function mapRow(row: typeof apiKeys.$inferSelect): ApiKey {
   return {
     id: row.id,
-    space_id: row.space_id ?? undefined,
     label: row.label,
     source: row.source,
     default_tier: row.default_tier as Tier,
@@ -87,23 +85,16 @@ export class SqliteKeyStore implements KeyStore {
   async create(
     input: CreateKeyInput & { oauth_client_id?: string },
     keyHash: string,
-    spaceId?: string,
   ): Promise<ApiKey> {
     const collision = await this.db
       .select({ id: apiKeys.id })
       .from(apiKeys)
-      .where(
-        and(
-          spaceBucketCondition(apiKeys.space_id, spaceId),
-          eq(apiKeys.source, input.source),
-          isNull(apiKeys.revoked_at),
-        ),
-      )
+      .where(and(eq(apiKeys.source, input.source), isNull(apiKeys.revoked_at)))
       .get();
     if (collision) {
       throw new MarfaError(
         ErrorCode.CONFLICT,
-        `Source display name "${input.source}" is already in use for this space`,
+        `Source display name "${input.source}" is already in use`,
         { source: input.source },
       );
     }
@@ -111,7 +102,6 @@ export class SqliteKeyStore implements KeyStore {
     const now = new Date().toISOString();
     const row = {
       id: generateId(),
-      space_id: spaceId,
       key_hash: keyHash,
       label: input.label,
       source: input.source,
@@ -129,7 +119,6 @@ export class SqliteKeyStore implements KeyStore {
     await this.db.insert(apiKeys).values(row).run();
     return {
       id: row.id,
-      space_id: spaceId,
       label: row.label,
       source: row.source,
       default_tier: row.default_tier,
@@ -151,20 +140,6 @@ export class SqliteKeyStore implements KeyStore {
       .select()
       .from(apiKeys)
       .where(notRevokedOrExpired(new Date().toISOString()))
-      .all();
-    return rows.map(mapRow);
-  }
-
-  async listForSpace(spaceId: string): Promise<ApiKey[]> {
-    const rows = await this.db
-      .select()
-      .from(apiKeys)
-      .where(
-        and(
-          spaceCondition(apiKeys.space_id, spaceId),
-          isNull(apiKeys.revoked_at),
-        ),
-      )
       .all();
     return rows.map(mapRow);
   }

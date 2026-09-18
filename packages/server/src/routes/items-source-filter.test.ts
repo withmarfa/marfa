@@ -20,11 +20,11 @@ import {
   TEST_API_KEY_SALT,
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
+import { writeSpaceConfig } from "../storage/space-config.js";
 import { hashApiKey } from "../middleware/auth.js";
 import { SPACE_PERMISSIONS } from "@withmarfa/shared";
 
 let ctx: TestContext;
-let spaceId: string;
 let trustedKey: string;
 let untrustedKey: string;
 
@@ -47,15 +47,12 @@ async function mintSpaceKey(source: string): Promise<string> {
       is_operator: false,
     },
     hashApiKey(raw, TEST_API_KEY_SALT),
-    spaceId,
   );
   return raw;
 }
 
 beforeAll(async () => {
   ctx = await createTestContext({});
-  const space = await ctx.storage.spaces!.create("source-filter");
-  spaceId = space.id;
   trustedKey = await mintSpaceKey("trusted");
   untrustedKey = await mintSpaceKey("untrusted");
 
@@ -77,7 +74,7 @@ beforeAll(async () => {
   });
   expect(unlisted.status).toBe(201);
 
-  await ctx.storage.spaces!.updateConfig(spaceId, {
+  await writeSpaceConfig(ctx.storage.settings, {
     enforcement: {
       source_filter: { types: ["core.note"], sources: ["trusted"] },
     },

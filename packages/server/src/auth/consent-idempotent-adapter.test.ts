@@ -120,7 +120,6 @@ function consentData(
     scopes,
     createdAt: now,
     updatedAt: now,
-    referenceId: null,
   };
 }
 

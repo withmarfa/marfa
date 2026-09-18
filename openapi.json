@@ -186,10 +186,6 @@
                             "feed"
                           ]
                         },
-                        "space_id": {
-                          "type": "string",
-                          "nullable": true
-                        },
                         "version": {
                           "type": "number"
                         },
@@ -232,10 +228,6 @@
                                   "properties": {
                                     "id": {
                                       "type": "string"
-                                    },
-                                    "space_id": {
-                                      "type": "string",
-                                      "nullable": true
                                     },
                                     "source_id": {
                                       "type": "string"
@@ -402,10 +394,6 @@
                             "feed"
                           ]
                         },
-                        "space_id": {
-                          "type": "string",
-                          "nullable": true
-                        },
                         "version": {
                           "type": "number"
                         },
@@ -448,10 +436,6 @@
                                   "properties": {
                                     "id": {
                                       "type": "string"
-                                    },
-                                    "space_id": {
-                                      "type": "string",
-                                      "nullable": true
                                     },
                                     "source_id": {
                                       "type": "string"
@@ -1104,10 +1088,6 @@
                                   "feed"
                                 ]
                               },
-                              "space_id": {
-                                "type": "string",
-                                "nullable": true
-                              },
                               "version": {
                                 "type": "number"
                               },
@@ -1150,10 +1130,6 @@
                                         "properties": {
                                           "id": {
                                             "type": "string"
-                                          },
-                                          "space_id": {
-                                            "type": "string",
-                                            "nullable": true
                                           },
                                           "source_id": {
                                             "type": "string"
@@ -1282,10 +1258,6 @@
                                       "feed"
                                     ]
                                   },
-                                  "space_id": {
-                                    "type": "string",
-                                    "nullable": true
-                                  },
                                   "version": {
                                     "type": "number"
                                   },
@@ -1328,10 +1300,6 @@
                                             "properties": {
                                               "id": {
                                                 "type": "string"
-                                              },
-                                              "space_id": {
-                                                "type": "string",
-                                                "nullable": true
                                               },
                                               "source_id": {
                                                 "type": "string"
@@ -2419,10 +2387,6 @@
                             "feed"
                           ]
                         },
-                        "space_id": {
-                          "type": "string",
-                          "nullable": true
-                        },
                         "version": {
                           "type": "number"
                         },
@@ -2465,10 +2429,6 @@
                                   "properties": {
                                     "id": {
                                       "type": "string"
-                                    },
-                                    "space_id": {
-                                      "type": "string",
-                                      "nullable": true
                                     },
                                     "source_id": {
                                       "type": "string"
@@ -2581,10 +2541,6 @@
                                 "id": {
                                   "type": "string"
                                 },
-                                "space_id": {
-                                  "type": "string",
-                                  "nullable": true
-                                },
                                 "source_id": {
                                   "type": "string"
                                 },
@@ -2671,10 +2627,6 @@
                                   "feed"
                                 ]
                               },
-                              "space_id": {
-                                "type": "string",
-                                "nullable": true
-                              },
                               "version": {
                                 "type": "number"
                               },
@@ -2717,10 +2669,6 @@
                                         "properties": {
                                           "id": {
                                             "type": "string"
-                                          },
-                                          "space_id": {
-                                            "type": "string",
-                                            "nullable": true
                                           },
                                           "source_id": {
                                             "type": "string"
@@ -3209,10 +3157,6 @@
                             "feed"
                           ]
                         },
-                        "space_id": {
-                          "type": "string",
-                          "nullable": true
-                        },
                         "version": {
                           "type": "number"
                         },
@@ -3255,10 +3199,6 @@
                                   "properties": {
                                     "id": {
                                       "type": "string"
-                                    },
-                                    "space_id": {
-                                      "type": "string",
-                                      "nullable": true
                                     },
                                     "source_id": {
                                       "type": "string"
@@ -4256,10 +4196,6 @@
                             "feed"
                           ]
                         },
-                        "space_id": {
-                          "type": "string",
-                          "nullable": true
-                        },
                         "version": {
                           "type": "number"
                         },
@@ -4302,10 +4238,6 @@
                                   "properties": {
                                     "id": {
                                       "type": "string"
-                                    },
-                                    "space_id": {
-                                      "type": "string",
-                                      "nullable": true
                                     },
                                     "source_id": {
                                       "type": "string"
@@ -4763,10 +4695,6 @@
                             "feed"
                           ]
                         },
-                        "space_id": {
-                          "type": "string",
-                          "nullable": true
-                        },
                         "version": {
                           "type": "number"
                         },
@@ -4809,10 +4737,6 @@
                                   "properties": {
                                     "id": {
                                       "type": "string"
-                                    },
-                                    "space_id": {
-                                      "type": "string",
-                                      "nullable": true
                                     },
                                     "source_id": {
                                       "type": "string"
@@ -9471,10 +9395,6 @@
                               "feed"
                             ]
                           },
-                          "space_id": {
-                            "type": "string",
-                            "nullable": true
-                          },
                           "version": {
                             "type": "number"
                           },
@@ -9517,10 +9437,6 @@
                                     "properties": {
                                       "id": {
                                         "type": "string"
-                                      },
-                                      "space_id": {
-                                        "type": "string",
-                                        "nullable": true
                                       },
                                       "source_id": {
                                         "type": "string"
@@ -11250,10 +11166,6 @@
                           "id": {
                             "type": "string"
                           },
-                          "space_id": {
-                            "type": "string",
-                            "nullable": true
-                          },
                           "source_id": {
                             "type": "string"
                           },
@@ -11674,10 +11586,6 @@
                         "properties": {
                           "id": {
                             "type": "string"
-                          },
-                          "space_id": {
-                            "type": "string",
-                            "nullable": true
                           },
                           "source_id": {
                             "type": "string"
@@ -12101,10 +12009,6 @@
                           "id": {
                             "type": "string"
                           },
-                          "space_id": {
-                            "type": "string",
-                            "nullable": true
-                          },
                           "source_id": {
                             "type": "string"
                           },
@@ -12401,10 +12305,6 @@
                         "id": {
                           "type": "string"
                         },
-                        "space_id": {
-                          "type": "string",
-                          "nullable": true
-                        },
                         "source_id": {
                           "type": "string"
                         },
@@ -12482,10 +12382,6 @@
                       "properties": {
                         "id": {
                           "type": "string"
-                        },
-                        "space_id": {
-                          "type": "string",
-                          "nullable": true
                         },
                         "source_id": {
                           "type": "string"
@@ -12896,10 +12792,6 @@
                         "id": {
                           "type": "string"
                         },
-                        "space_id": {
-                          "type": "string",
-                          "nullable": true
-                        },
                         "source_id": {
                           "type": "string"
                         },
@@ -13142,10 +13034,6 @@
                         "id": {
                           "type": "string"
                         },
-                        "space_id": {
-                          "type": "string",
-                          "nullable": true
-                        },
                         "source_id": {
                           "type": "string"
                         },
@@ -13363,10 +13251,6 @@
                       "properties": {
                         "id": {
                           "type": "string"
-                        },
-                        "space_id": {
-                          "type": "string",
-                          "nullable": true
                         },
                         "source_id": {
                           "type": "string"
@@ -13689,7 +13573,7 @@
           "Edges"
         ],
         "summary": "Bulk upsert edges",
-        "description": "Creates or upserts up to 5000 edges in one call, matching existing rows on `(source_id, target_id, edge_type)`. An entry that matches an existing row merges its properties over that row's, as `PATCH /edges/{id}` does, so an upsert naming one property leaves the others standing. Atomic by default; the items being wired together must already exist. Requires write access to each edge's source-item type and to the edge type, and operates only within the caller's space.",
+        "description": "Creates or upserts up to 5000 edges in one call, matching existing rows on `(source_id, target_id, edge_type)`. An entry that matches an existing row merges its properties over that row's, as `PATCH /edges/{id}` does, so an upsert naming one property leaves the others standing. Atomic by default; the items being wired together must already exist. Requires write access to each edge's source-item type and to the edge type.",
         "security": [
           {
             "bearerAuth": []
@@ -14087,7 +13971,7 @@
           "Edge Types"
         ],
         "summary": "Register an edge type",
-        "description": "Registers a custom edge type with its cardinality, cascade behavior, type constraints, and optional property schema. Requires `metadata.edge_types:write`; the registration is scoped to the caller's space and is invisible to other spaces. The eight core edge-type names are reserved and reject with a conflict, and custom types are flat with no inheritance.",
+        "description": "Registers a custom edge type with its cardinality, cascade behavior, type constraints, and optional property schema. Requires `metadata.edge_types:write`. The eight core edge-type names are reserved and reject with a conflict, and custom types are flat with no inheritance.",
         "security": [
           {
             "bearerAuth": []
@@ -14495,7 +14379,7 @@
           "Edge Types"
         ],
         "summary": "List edge types",
-        "description": "Returns every edge type registered in the space — the eight core types plus any custom registrations — each with its cardinality, cascade behavior, and source/target type constraints.",
+        "description": "Returns every edge type registered on the instance — the eight core types plus any custom registrations — each with its cardinality, cascade behavior, and source/target type constraints.",
         "security": [
           {
             "bearerAuth": []
@@ -16679,10 +16563,6 @@
                                   "feed"
                                 ]
                               },
-                              "space_id": {
-                                "type": "string",
-                                "nullable": true
-                              },
                               "version": {
                                 "type": "number"
                               },
@@ -16725,10 +16605,6 @@
                                         "properties": {
                                           "id": {
                                             "type": "string"
-                                          },
-                                          "space_id": {
-                                            "type": "string",
-                                            "nullable": true
                                           },
                                           "source_id": {
                                             "type": "string"
@@ -17134,10 +17010,6 @@
                                   "feed"
                                 ]
                               },
-                              "space_id": {
-                                "type": "string",
-                                "nullable": true
-                              },
                               "version": {
                                 "type": "number"
                               },
@@ -17180,10 +17052,6 @@
                                         "properties": {
                                           "id": {
                                             "type": "string"
-                                          },
-                                          "space_id": {
-                                            "type": "string",
-                                            "nullable": true
                                           },
                                           "source_id": {
                                             "type": "string"
@@ -18541,7 +18409,7 @@
           "Keys"
         ],
         "summary": "Create an API key",
-        "description": "Creates a new API key in the caller's space. The plaintext `key` is returned only in this response and never shown again, so store it securely.\n\nThe new key's space is always the caller's: a `space_id` in the body is rejected. Use `POST /admin/spaces/{id}/keys` to mint into a named space.\n\nA credential is a set of permissions and nothing else. `space_permissions` names the space permissions the key holds; omitting it takes the creator's whole set, and anything named is clamped to what the creator holds, so a mint can narrow and can never widen. The content maps behave the same way, and a signed-in app must hold `space.keys` to reach this route at all.\n\nAn operator key mints another operator key here and nothing else, because the instance tier is the absence of a space binding and an operator caller has no space to hand down. Such a mint may name no reach at all: a credential with no space holds no permissions, so a body naming any map entry or space permission is refused, and one naming none produces a second operator key carrying nothing. `is_operator` is granted only when the caller is itself an operator key.\n\nOn a fresh server with zero keys this runs in bootstrap mode: the key it mints is the operator key, and the request must present the one-time secret the server printed to its log at startup, as a bearer token. That secret works once — the mint consumes it.\n\nIn keys mode the bootstrap call also provisions the instance's one space and mints a working key into it, returned as `space` and `space_key`. The operator key is not a working key — it holds no space and no permissions, because running the instance sits outside the permission model — so the space key is the one to configure a client with.",
+        "description": "Creates a new API key. The plaintext `key` is returned only in this response and never shown again, so store it securely.\n\nA credential is a set of permissions and nothing else. `space_permissions` names the space permissions the key holds; omitting it takes the creator's whole set, and anything named is clamped to what the creator holds, so a mint can narrow and can never widen. The content maps behave the same way, and a signed-in app must hold `space.keys` to reach this route at all.\n\nThe operator key holds no permissions, because running the instance sits outside the permission model, so it is not a ceiling: a working key it mints holds what the body names, or the whole set when the body names nothing. With `is_operator: true` it mints a second operator key instead, which holds nothing, so a body naming any map entry or space permission on one is refused. `is_operator` is granted only when the caller is itself an operator key.\n\nOn a fresh server with zero keys this runs in bootstrap mode: the key it mints is the operator key, and the request must present the one-time secret the server printed to its log at startup, as a bearer token. That secret works once — the mint consumes it. The operator key is not a working key, so the next call is this route again with it, minting the key to configure a client with.",
         "security": [
           {
             "bearerAuth": []
@@ -18587,10 +18455,6 @@
                   },
                   "is_operator": {
                     "type": "boolean"
-                  },
-                  "space_id": {
-                    "nullable": true,
-                    "description": "Rejected with 400. The key is always minted into the caller's space; use POST /admin/spaces/{id}/keys to target another space."
                   },
                   "type_permissions": {
                     "type": "object",
@@ -18758,139 +18622,6 @@
                     "last_used_at": {
                       "type": "string",
                       "nullable": true
-                    },
-                    "space": {
-                      "type": "object",
-                      "properties": {
-                        "id": {
-                          "type": "string"
-                        },
-                        "name": {
-                          "type": "string",
-                          "nullable": true
-                        }
-                      },
-                      "required": [
-                        "id",
-                        "name"
-                      ],
-                      "description": "The space provisioned by a keys-mode bootstrap call."
-                    },
-                    "space_key": {
-                      "type": "object",
-                      "properties": {
-                        "id": {
-                          "type": "string"
-                        },
-                        "key": {
-                          "type": "string"
-                        },
-                        "label": {
-                          "type": "string"
-                        },
-                        "source": {
-                          "type": "string"
-                        },
-                        "space_permissions": {
-                          "type": "array",
-                          "items": {
-                            "type": "string",
-                            "enum": [
-                              "space.webhooks",
-                              "space.schema",
-                              "space.usage",
-                              "space.settings",
-                              "space.audit_read",
-                              "space.item_purge",
-                              "space.keys",
-                              "space.app_grants"
-                            ]
-                          }
-                        },
-                        "oauth_client_id": {
-                          "type": "string"
-                        },
-                        "default_tier": {
-                          "type": "string",
-                          "enum": [
-                            "library",
-                            "feed"
-                          ]
-                        },
-                        "is_operator": {
-                          "type": "boolean"
-                        },
-                        "type_permissions": {
-                          "type": "object",
-                          "additionalProperties": {
-                            "type": "string",
-                            "enum": [
-                              "read",
-                              "write",
-                              "none"
-                            ]
-                          }
-                        },
-                        "extension_permissions": {
-                          "type": "object",
-                          "additionalProperties": {
-                            "type": "string",
-                            "enum": [
-                              "read",
-                              "write"
-                            ]
-                          }
-                        },
-                        "edge_permissions": {
-                          "type": "object",
-                          "additionalProperties": {
-                            "type": "string",
-                            "enum": [
-                              "read",
-                              "write"
-                            ]
-                          }
-                        },
-                        "metadata_permissions": {
-                          "type": "object",
-                          "additionalProperties": {
-                            "type": "string",
-                            "enum": [
-                              "read",
-                              "write"
-                            ]
-                          }
-                        },
-                        "profile_permissions": {
-                          "type": "object",
-                          "additionalProperties": {
-                            "type": "string",
-                            "enum": [
-                              "read",
-                              "write"
-                            ]
-                          }
-                        },
-                        "created_at": {
-                          "type": "string"
-                        },
-                        "last_used_at": {
-                          "type": "string",
-                          "nullable": true
-                        }
-                      },
-                      "required": [
-                        "id",
-                        "key",
-                        "label",
-                        "source",
-                        "default_tier",
-                        "is_operator",
-                        "type_permissions",
-                        "created_at",
-                        "last_used_at"
-                      ],
-                      "description": "A working key bound to that space, holding everything in it. The plaintext is returned only here."
                     }
                   },
                   "required": [
@@ -18923,7 +18654,7 @@
             }
           },
           "400": {
-            "description": "Body carried a `space_id`. A key is minted into its creator's space, so the space is never named in the body.",
+            "description": "Body named a reserved `source`, or the bootstrap secret was refused.",
             "content": {
               "application/json": {
                 "schema": {
@@ -19035,7 +18766,7 @@
             }
           },
           "403": {
-            "description": "Caller does not hold `space.keys`, asked for reach its own credential does not cover, asked to give reach to a credential that will have no space, or asked to mint across the instance tier in either direction. A missing permission is named in `details.required_scope`.",
+            "description": "Caller does not hold `space.keys`, asked for reach its own credential does not cover, asked to give reach to an operator key, or asked to mint an operator key without being one. A missing permission is named in `details.required_scope`.",
             "content": {
               "application/json": {
                 "schema": {
@@ -19151,7 +18882,7 @@
           "Keys"
         ],
         "summary": "List API keys",
-        "description": "Returns every API key in the caller's space without plaintext, which is only ever returned at creation time. `last_used_at` is debounced to at most one write per hour, so treat it as a coarse activity signal rather than an audit log. Requires `space.keys`, or the operator key, which reaches these doors by being the operator key rather than by holding a permission.",
+        "description": "Returns every API key without plaintext, which is only ever returned at creation time. `last_used_at` is debounced to at most one write per hour, so treat it as a coarse activity signal rather than an audit log. Requires `space.keys`, or the operator key, which reaches these doors by being the operator key rather than by holding a permission.",
         "security": [
           {
             "bearerAuth": []
@@ -19417,7 +19148,7 @@
           "Keys"
         ],
         "summary": "Revoke an API key",
-        "description": "Revokes the key immediately; the next request bearing it returns `401 unauthorized`. In-flight long-lived connections (SSE) terminate on the next heartbeat. Requires `space.keys`, or the operator key, which reaches these doors by being the operator key rather than by holding a permission. A revoke that changes no row answers `404 api_key_not_found` rather than success, for every caller: an unknown id, an id in another space, and a key already revoked are all refused, and the message says which of the three it was where the caller could already tell.",
+        "description": "Revokes the key immediately; the next request bearing it returns `401 unauthorized`. In-flight long-lived connections (SSE) terminate on the next heartbeat. Requires `space.keys`, or the operator key, which reaches these doors by being the operator key rather than by holding a permission. A revoke that changes no row answers `404 api_key_not_found` rather than success, for every caller: an unknown id and a key already revoked are both refused, and the message says which it was.",
         "security": [
           {
             "bearerAuth": []
@@ -19640,7 +19371,7 @@
             }
           },
           "404": {
-            "description": "No key was revoked: unknown, out of space, or already revoked",
+            "description": "No key was revoked: unknown or already revoked",
             "content": {
               "application/json": {
                 "schema": {
@@ -19756,7 +19487,7 @@
           "Keys"
         ],
         "summary": "Update an API key",
-        "description": "Updates a key's label, default tier, or permission maps in place. `source` is immutable and rejected with `400 validation_error` if present in the body — revoke and recreate to change it. Requires `space.keys`. A permission map may not be widened past what the calling credential itself holds. The operator key is excepted, since running the instance sits outside the permission model, but a key with no space is the operator tier and may hold nothing at all, so no map on one may be widened by any caller. A key created by an app is never widened at all, by any caller including the operator key: it holds what that app held, and may only be narrowed.",
+        "description": "Updates a key's label, default tier, or permission maps in place. `source` is immutable and rejected with `400 validation_error` if present in the body — revoke and recreate to change it. Requires `space.keys`. A permission map may not be widened past what the calling credential itself holds. The operator key is excepted, since running the instance sits outside the permission model, but an operator key holds nothing at all, so no map on one may be widened by any caller. A key created by an app is never widened at all, by any caller including the operator key: it holds what that app held, and may only be narrowed.",
         "security": [
           {
             "bearerAuth": []
@@ -20283,8 +20014,8 @@
         "tags": [
           "Spaces"
         ],
-        "summary": "Get the current space's configuration",
-        "description": "Returns the calling space's configuration — the optional `enforcement` levers plus the per-space cleanup-job retention overrides. Returns an empty object when nothing is configured. Requires `space.settings`.",
+        "summary": "Get the instance configuration",
+        "description": "Returns the instance configuration — the optional `enforcement` levers plus the cleanup-job retention overrides. Returns an empty object when nothing is configured. Requires `space.settings`.",
         "security": [
           {
             "bearerAuth": []
@@ -20292,7 +20023,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Space config",
+            "description": "Instance config",
             "content": {
               "application/json": {
                 "schema": {
@@ -20358,11 +20089,6 @@
                           ]
                         }
                       }
-                    },
-                    "max_event_hop_budget": {
-                      "type": "integer",
-                      "minimum": 0,
-                      "maximum": 100
                     },
                     "audit_retention_days": {
                       "type": "integer",
@@ -20571,8 +20297,8 @@
         "tags": [
           "Spaces"
         ],
-        "summary": "Replace the current space's configuration",
-        "description": "Overwrites the space's config with the supplied object — full replacement, not a merge. An unknown key is refused rather than dropped, because a full replacement that ignores a typo erases every override the space had. Cleanup-job retention overrides must be non-negative, where `0` disables the corresponding job for this space. Requires `space.settings`.",
+        "summary": "Replace the instance configuration",
+        "description": "Overwrites the instance config with the supplied object — full replacement, not a merge. An unknown key is refused rather than dropped, because a full replacement that ignores a typo erases every override the instance had. Cleanup-job retention overrides must be non-negative, where `0` disables the corresponding job. Requires `space.settings`.",
         "security": [
           {
             "bearerAuth": []
@@ -20649,11 +20375,6 @@
                     },
                     "additionalProperties": false
                   },
-                  "max_event_hop_budget": {
-                    "type": "integer",
-                    "minimum": 0,
-                    "maximum": 100
-                  },
                   "audit_retention_days": {
                     "type": "integer",
                     "minimum": 0
@@ -20678,7 +20399,7 @@
         },
         "responses": {
           "200": {
-            "description": "Space config updated",
+            "description": "Instance config updated",
             "content": {
               "application/json": {
                 "schema": {
@@ -20744,11 +20465,6 @@
                           ]
                         }
                       }
-                    },
-                    "max_event_hop_budget": {
-                      "type": "integer",
-                      "minimum": 0,
-                      "maximum": 100
                     },
                     "audit_retention_days": {
                       "type": "integer",
@@ -21659,16 +21375,6 @@
             "required": false,
             "description": "Output format: `ndjson` (default) or `archive`",
             "name": "format",
-            "in": "query"
-          },
-          {
-            "schema": {
-              "type": "string",
-              "description": "Must match the caller's own space when supplied; naming another space is refused"
-            },
-            "required": false,
-            "description": "Must match the caller's own space when supplied; naming another space is refused",
-            "name": "target_space_id",
             "in": "query"
           }
         ],
@@ -23923,10 +23629,6 @@
                             "type": "string",
                             "nullable": true
                           },
-                          "space_id": {
-                            "type": "string",
-                            "nullable": true
-                          },
                           "action": {
                             "type": "string"
                           },
@@ -23952,7 +23654,6 @@
                           "id",
                           "timestamp",
                           "key_id",
-                          "space_id",
                           "action",
                           "resource_type",
                           "resource_id",

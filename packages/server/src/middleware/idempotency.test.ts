@@ -773,7 +773,6 @@ describe("a claim the store did not grant", () => {
     app.use("/w", async (c, next) => {
       c.set("apiKey", {
         id: credential.id,
-        space_id: undefined,
         label: "fixture",
         source: credential.source,
         default_tier: "library",
@@ -840,7 +839,6 @@ describe("a claim the store did not grant", () => {
       claimed: false,
       held: {
         id: "held-row",
-        space_id: null,
         idempotency_key: "k",
         // The fingerprint the middleware computes for the fixture request
         // is not knowable here, so the mismatch branch has to be kept out

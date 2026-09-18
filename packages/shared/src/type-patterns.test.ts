@@ -196,15 +196,7 @@ describe("resolving names alone", () => {
  * argument.
  */
 describe("the read filter's predicate answers what its SQL twin selects", () => {
-  const SPACE = "space-predicate-parity";
   const OUTSIDE = "user.declared_note";
-  /** Registered into the NULL-space bucket, which is what makes the
-   *  `undefined` case discriminating: `resolveSchema` reads `undefined`
-   *  and `null` alike, so a predicate that forwarded the value verbatim
-   *  would resolve this one while `typeSubtreeToSql` returns no declared
-   *  extras at all. A child registered only into a named space cannot
-   *  catch that — the lookup finds nothing either way. */
-  const NULL_BUCKET_CHILD = "user.null_bucket_note";
 
   const declaredChild = (id: string): TypeSchema =>
     ({
@@ -217,20 +209,13 @@ describe("the read filter's predicate answers what its SQL twin selects", () => 
     }) as unknown as TypeSchema;
 
   afterEach(() => {
-    unregisterTypeSchema(OUTSIDE, SPACE);
-    unregisterTypeSchema(NULL_BUCKET_CHILD, null);
+    unregisterTypeSchema(OUTSIDE);
   });
 
   /** Membership as the SQL clauses decide it, for comparison. */
-  const sqlAdmits = (
-    type: string,
-    filter: string,
-    spaceId?: string | null,
-  ): boolean => {
-    const { global, exact, descendantPattern, extraTypes } = typeSubtreeToSql(
-      filter,
-      spaceId,
-    );
+  const sqlAdmits = (type: string, filter: string): boolean => {
+    const { global, exact, descendantPattern, extraTypes } =
+      typeSubtreeToSql(filter);
     if (global) return true;
     if (exact !== null && type === exact) return true;
     if (
@@ -242,39 +227,33 @@ describe("the read filter's predicate answers what its SQL twin selects", () => 
     return extraTypes.includes(type);
   };
 
-  for (const spaceId of [SPACE, null, undefined] as const) {
-    it(`agrees with the SQL decomposition for spaceId=${String(spaceId)}`, () => {
-      registerTypeSchema(declaredChild(OUTSIDE), SPACE);
-      registerTypeSchema(declaredChild(NULL_BUCKET_CHILD), null);
+  it("agrees with the SQL decomposition", () => {
+    registerTypeSchema(declaredChild(OUTSIDE));
 
-      for (const [type, filter] of [
-        ["core.note", "core.note"],
-        ["core.note.private", "core.note"],
-        ["core.note.private", "core.note.*"],
-        ["core.media", "core.note"],
-        ["anything.at.all", "*"],
-        // The two the scope argument decides: named outside the filter's
-        // namespace, reachable only through a declared parent. The
-        // null-bucket one separates `undefined` from `null`, which the
-        // registry lookup underneath does not.
-        [OUTSIDE, "core.note"],
-        [NULL_BUCKET_CHILD, "core.note"],
-      ] as const) {
-        expect({
-          type,
-          filter,
-          admitted: typeAnswersSubtreeFilter(type, filter, spaceId),
-        }).toEqual({
-          type,
-          filter,
-          admitted: sqlAdmits(type, filter, spaceId),
-        });
-      }
-    });
-  }
+    for (const [type, filter] of [
+      ["core.note", "core.note"],
+      ["core.note.private", "core.note"],
+      ["core.note.private", "core.note.*"],
+      ["core.media", "core.note"],
+      ["anything.at.all", "*"],
+      // Named outside the filter's namespace, reachable only through a
+      // declared parent.
+      [OUTSIDE, "core.note"],
+    ] as const) {
+      expect({
+        type,
+        filter,
+        admitted: typeAnswersSubtreeFilter(type, filter),
+      }).toEqual({
+        type,
+        filter,
+        admitted: sqlAdmits(type, filter),
+      });
+    }
+  });
 });
 
-describe("declared descendants are resolved per space", () => {
+describe("declared descendants", () => {
   const child = (id: string, parent: string): TypeSchema =>
     ({
       id,
@@ -286,38 +265,18 @@ describe("declared descendants are resolved per space", () => {
     }) as unknown as TypeSchema;
 
   afterEach(() => {
-    unregisterTypeSchema("user.alpha_child", "space-alpha");
-    unregisterTypeSchema("user.beta_child", "space-beta");
+    unregisterTypeSchema("user.alpha_child");
   });
 
-  it("resolves only the asking space's declared children", () => {
-    registerTypeSchema(child("user.alpha_child", "core.note"), "space-alpha");
-    registerTypeSchema(child("user.beta_child", "core.note"), "space-beta");
-
-    expect(
-      declaredDescendantsOutsideNamespace("core.note", "space-alpha"),
-    ).toEqual(["user.alpha_child"]);
-    expect(
-      declaredDescendantsOutsideNamespace("core.note", "space-beta"),
-    ).toEqual(["user.beta_child"]);
-  });
-
-  // The item store's space fence would drop another space's rows anyway, so a
-  // cross-space resolver leaks no data today. This is the second layer, and it
-  // is asserted here rather than left to the first: a resolver that reaches the
-  // global set is wrong on its own terms, and proving it through the query path
-  // only proves the fence.
-  it("does not reach another space's registry", () => {
-    registerTypeSchema(child("user.beta_child", "core.note"), "space-beta");
-    expect(
-      declaredDescendantsOutsideNamespace("core.note", "space-alpha"),
-    ).not.toContain("user.beta_child");
+  it("names a child declared outside the root's namespace", () => {
+    registerTypeSchema(child("user.alpha_child", "core.note"));
+    expect(declaredDescendantsOutsideNamespace("core.note")).toEqual([
+      "user.alpha_child",
+    ]);
   });
 
   it("returns nothing for a root nothing declares", () => {
-    registerTypeSchema(child("user.alpha_child", "core.note"), "space-alpha");
-    expect(
-      declaredDescendantsOutsideNamespace("core.bookmark", "space-alpha"),
-    ).toEqual([]);
+    registerTypeSchema(child("user.alpha_child", "core.note"));
+    expect(declaredDescendantsOutsideNamespace("core.bookmark")).toEqual([]);
   });
 });

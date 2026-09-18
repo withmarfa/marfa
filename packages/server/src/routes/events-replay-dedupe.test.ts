@@ -76,12 +76,11 @@ function gateFirstRead(): ReplayGate {
   store.getAfter = async (
     afterId: bigint,
     limit: number,
-    spaceId?: string,
   ): Promise<PersistedEvent[]> => {
-    if (!armed) return real(afterId, limit, spaceId);
+    if (!armed) return real(afterId, limit);
     armed = false;
     await opened.promise;
-    const batch = await real(afterId, limit, spaceId);
+    const batch = await real(afterId, limit);
     seen.resolve(batch);
     return batch;
   };

@@ -60,14 +60,11 @@ async function readUpdatedAt(itemId: string): Promise<string | undefined> {
 /** A fresh item, already tagged and carrying one extension, pinned to
  *  the past so any movement is the write under test. */
 async function pinnedItem(): Promise<string> {
-  const item = await ctx.storage.items.create(
-    {
-      type: "core.note",
-      properties: { body: "metadata touches item" },
-      tags: ["seed"],
-    },
-    undefined,
-  );
+  const item = await ctx.storage.items.create({
+    type: "core.note",
+    properties: { body: "metadata touches item" },
+    tags: ["seed"],
+  });
   await ctx.storage.metadata.setExtension(item.id, "testapp.state", { n: 0 });
   await forceUpdatedAt(item.id, PAST);
   return item.id;

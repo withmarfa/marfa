@@ -373,7 +373,7 @@ describe("GET /events?type= answers the spellings /items answers", () => {
 describe("the replay's two checks on a row that names no item type", () => {
   it("does not hand it to a credential the permission maps apply to", async () => {
     const suffix = Math.random().toString(36).slice(2, 10);
-    const raw = await mintSpaceKey(ctx, ctx.spaceId, {
+    const raw = await mintSpaceKey(ctx, {
       label: "type-filter member",
       source: `type-filter-member-${suffix}`,
       type_permissions: { "core.*": "read" },

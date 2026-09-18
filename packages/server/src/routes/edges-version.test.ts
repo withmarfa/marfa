@@ -22,11 +22,8 @@ import {
   createTestContext,
   request,
   nextEdgeEvent,
-  TEST_API_KEY_SALT,
   type TestContext,
 } from "../test-utils.js";
-import { hashApiKey } from "../middleware/auth.js";
-import { SPACE_PERMISSIONS } from "@withmarfa/shared";
 
 let ctx: TestContext;
 
@@ -272,91 +269,5 @@ describe("the bulk door reaches the same statement", () => {
     const stored = first(((await after.json()) as { data: WireEdge[] }).data);
     expect(stored.properties).toEqual({ note: "after bulk" });
     expect(stored.version).toBe(2);
-  });
-});
-
-describe("the precondition does not open the space fence", () => {
-  const spaceA = `edge-ver-a-${Math.random().toString(36).slice(2, 10)}`;
-  const spaceB = `edge-ver-b-${Math.random().toString(36).slice(2, 10)}`;
-  let keyA: string;
-  let keyB: string;
-
-  async function mintSpaceKey(label: string, spaceId: string): Promise<string> {
-    const suffix = Math.random().toString(36).slice(2, 14);
-    const raw = `marfa_k1_edge_ver_${suffix}`;
-    await ctx.storage.keys.create(
-      {
-        label,
-        source: `${label}-${suffix}`,
-        space_permissions: [...SPACE_PERMISSIONS],
-        default_tier: "library",
-        type_permissions: { "*": "write" },
-        edge_permissions: { "*": "write" },
-        is_operator: false,
-      },
-      hashApiKey(raw, TEST_API_KEY_SALT),
-      spaceId,
-    );
-    return raw;
-  }
-
-  beforeAll(async () => {
-    keyA = await mintSpaceKey("edge-ver-key-a", spaceA);
-    keyB = await mintSpaceKey("edge-ver-key-b", spaceB);
-  });
-
-  it("answers not-found for another space's edge, even with its real version", async () => {
-    // The version clause joins the space fence in one WHERE, and a fence
-    // rewritten to make room for it is the plausible way to lose it. A
-    // caller holding the correct version must still be told the edge does
-    // not exist, and must not learn otherwise from a 409.
-    const theirs = await edge({ note: "space B" }, keyB);
-    expect(theirs.version).toBe(1);
-
-    const res = await request(ctx.app, "PATCH", `/edges/${theirs.id}`, {
-      key: keyA,
-      body: { version: 1, properties: { note: "reached across" } },
-    });
-    expect(res.status).toBe(404);
-    expect(((await res.json()) as { error: { code: string } }).error.code).toBe(
-      "edge_not_found",
-    );
-
-    const after = await request(
-      ctx.app,
-      "GET",
-      `/items/${theirs.source_id}/edges`,
-      { key: keyB },
-    );
-    const stored = first(((await after.json()) as { data: WireEdge[] }).data);
-    expect(stored.properties).toEqual({ note: "space B" });
-    expect(stored.version).toBe(1);
-  });
-
-  it("fences the write itself, not only the route in front of it", async () => {
-    // The case above cannot see this one. `PATCH /edges/{id}` reads the edge
-    // and 404-cloaks anything outside the caller's space before the store is
-    // reached, so it passes whether or not the statement carries a space
-    // predicate of its own — which is exactly what a mutation check found.
-    //
-    // The fence is documented on the store as defense-in-depth beneath the
-    // route, and adding the version precondition rewrites the predicate it
-    // lives in. Asserting it at the store is the only place the property is
-    // observable.
-    const theirs = await edge({ note: "space B" }, keyB);
-    const spaceBId = (await ctx.storage.edges.get(theirs.id))?.space_id;
-    expect(spaceBId).toBe(spaceB);
-
-    await expect(
-      ctx.storage.edges.updateProperties(
-        theirs.id,
-        { note: "reached across" },
-        spaceA,
-      ),
-    ).rejects.toThrow(/not found/);
-
-    const untouched = await ctx.storage.edges.get(theirs.id);
-    expect(untouched?.properties).toEqual({ note: "space B" });
-    expect(untouched?.version).toBe(1);
   });
 });

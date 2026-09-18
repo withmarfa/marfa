@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   hydrateTypeRegistry,
-  unregisterTypeSchema,
+  registerTypeSchema,
   validateProperties,
 } from "@withmarfa/shared";
 import {
@@ -21,13 +21,9 @@ const CHILD = "parity.child";
 
 // `@withmarfa/shared` is external to the server's bundle, so the in-process
 // server and this file share one module-level registry: registering over HTTP
-// already puts the schemas in the registry these assertions would read.
-// Hydrating into a space of its own is what makes the local half measure the
-// hydrated copy instead of the server's own registration.
-const CLIENT_SPACE = "01a02000-0000-7000-8000-0000000000f2";
-// A space of its own for the convergence round trip, so the removal it
-// asserts cannot be the other test's registrations going away.
-const CONVERGE_SPACE = "01a02000-0000-7000-8000-0000000000f4";
+// already puts the schemas in the registry these assertions would read, and
+// hydrating re-registers the same schemas over them. What the assertions
+// measure is that the two halves agree, which is the claim.
 const TRANSIENT = "parity.transient";
 
 interface Probe {
@@ -56,8 +52,6 @@ let client: MarfaClient;
 let fetchFn: typeof globalThis.fetch;
 let spaceKey: string;
 let cleanup: () => void;
-let hydrated: string[] = [];
-let converged: string[] = [];
 
 beforeAll(async () => {
   const fixture = await createKeysModeFixture();
@@ -83,11 +77,8 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  for (const id of hydrated.reverse()) unregisterTypeSchema(id, CLIENT_SPACE);
-  for (const id of converged.reverse())
-    unregisterTypeSchema(id, CONVERGE_SPACE);
   // The registry outlives this file inside a reused worker, so the server's
-  // own registrations go too.
+  // own registrations go, and the delete unregisters them here too.
   await client.types.delete(CHILD, { force: true });
   await client.types.delete(PARENT, { force: true });
   cleanup();
@@ -141,8 +132,7 @@ describe("hydrateTypeRegistry against a live type payload", () => {
     expect(childAt).toBeGreaterThanOrEqual(0);
     expect(parentAt).toBeGreaterThan(childAt);
 
-    const result = hydrateTypeRegistry(reordered, { spaceId: CLIENT_SPACE });
-    hydrated = [...result.registered];
+    const result = hydrateTypeRegistry(reordered);
     expect(result.registered).toContain(CHILD);
     expect(result.unresolvedParents).toEqual([]);
     expect(result.cycles).toEqual([]);
@@ -155,9 +145,7 @@ describe("hydrateTypeRegistry against a live type payload", () => {
       verdicts.push({
         name: probe.name,
         server: await serverAccepts(probe.properties),
-        local: validateProperties(CHILD, probe.properties, {
-          spaceId: CLIENT_SPACE,
-        }).success,
+        local: validateProperties(CHILD, probe.properties).success,
       });
     }
 
@@ -186,10 +174,7 @@ describe("a hydration that follows a server-side delete", () => {
       fields: { headline: { type: "string", required: true } },
     });
 
-    const before = hydrateTypeRegistry(await client.types.list(), {
-      spaceId: CONVERGE_SPACE,
-    });
-    converged = [...before.registered];
+    const before = hydrateTypeRegistry(await client.types.list());
     expect(before.registered).toContain(TRANSIENT);
     expect(before.removed).toEqual([]);
 
@@ -197,25 +182,29 @@ describe("a hydration that follows a server-side delete", () => {
     // the disagreement below a change of answer rather than a constant one.
     const probe = { headline: "set" };
     expect(await serverAccepts(probe, TRANSIENT)).toBe(true);
-    expect(
-      validateProperties(TRANSIENT, probe, { spaceId: CONVERGE_SPACE }).success,
-    ).toBe(true);
+    expect(validateProperties(TRANSIENT, probe).success).toBe(true);
 
     await client.types.delete(TRANSIENT, { force: true });
-
-    const after = hydrateTypeRegistry(await client.types.list(), {
-      spaceId: CONVERGE_SPACE,
+    // The in-process server shares this registry, so its delete already
+    // evicted the type here, and it lists from the same registry. A real
+    // client holds its own copy across the deletion, which is the shape
+    // convergence exists for: take the listing, put the stale copy back, and
+    // the hydration of that listing is what has to remove it.
+    const listing = await client.types.list();
+    registerTypeSchema({
+      id: TRANSIENT,
+      version: 1,
+      fields: { headline: { type: "string", required: true } },
     });
-    converged = [...new Set([...converged, ...after.registered])];
+
+    const after = hydrateTypeRegistry(listing);
 
     expect(after.removed).toEqual([TRANSIENT]);
     // The agreement that matters. A local `true` here is a write queued
     // against a type the server has forgotten, refused on arrival, and
     // refused in a way that reads as permanent.
     const serverNow = await serverAccepts(probe, TRANSIENT);
-    const localNow = validateProperties(TRANSIENT, probe, {
-      spaceId: CONVERGE_SPACE,
-    }).success;
+    const localNow = validateProperties(TRANSIENT, probe).success;
     expect(serverNow).toBe(false);
     expect(localNow).toBe(serverNow);
   });

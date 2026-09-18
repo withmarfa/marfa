@@ -70,12 +70,8 @@ export interface ArchiveTypeResult {
  * Manifest registration is not one of them and checks nothing, which is a
  * gap in that path rather than in this one.
  */
-function assertParentChainResolves(
-  typeId: string,
-  parentId: string,
-  spaceId: string | undefined,
-): void {
-  assertParentChain(typeId, parentId, spaceId, {
+function assertParentChainResolves(typeId: string, parentId: string): void {
+  assertParentChain(typeId, parentId, {
     tooDeep: (maxDepth) =>
       `Archive type "${typeId}" has an inheritance chain deeper than ${String(maxDepth)}`,
     circular: () => `Archive type "${typeId}" declares a circular parent chain`,
@@ -102,11 +98,8 @@ function sameSchema(a: unknown, b: unknown): boolean {
  * no longer validates is left un-normalized and will simply compare
  * unequal, which is the right answer: it is not the archive's schema.
  */
-function normalizeForCompare(
-  schema: TypeSchema,
-  spaceId: string | undefined,
-): TypeSchema {
-  const result = validateTypeSchema(schema, spaceId);
+function normalizeForCompare(schema: TypeSchema): TypeSchema {
+  const result = validateTypeSchema(schema);
   return result.success ? result.data : schema;
 }
 
@@ -122,11 +115,10 @@ function normalizeForCompare(
  * hostile archive fails loudly instead of half-landing:
  *
  * - **`origin: "platform"`.** `projectPlatformRows` filters `origin !== "platform"`
- *   and does not filter `space_id`, over a `loadCustomTypes()` that reads the
- *   whole table. On a self-host a restore writes into `space_id = ""`, the same
- *   bucket the platform seed uses, so a replayed `platform` claim would seed an
- *   attacker-chosen type into the global registry at the next boot, resolving for
- *   every space, undeletable, and `default_on` in every space's connected bundle.
+ *   over a `loadCustomTypes()` that reads the whole table. A restore writes
+ *   into the same table the platform seed uses, so a replayed `platform` claim
+ *   would seed an attacker-chosen type into the registry at the next boot,
+ *   undeletable, and `default_on` in the connected bundle.
  *   A delayed fuse: `create` writes the space overlay now and nothing manifests
  *   until a restart.
  * - **`family: "core"` or `"system"`.** Family decides membership of the content
@@ -194,10 +186,10 @@ function provenanceFor(
   return { origin: "unknown" };
 }
 
-function parseTypeEntries(
-  entries: ArchiveTypeEntry[],
-  spaceId: string | undefined,
-): { types: PendingType[]; edgeTypes: EdgeTypeSchema[] } {
+function parseTypeEntries(entries: ArchiveTypeEntry[]): {
+  types: PendingType[];
+  edgeTypes: EdgeTypeSchema[];
+} {
   const types: PendingType[] = [];
   const edgeTypes: EdgeTypeSchema[] = [];
 
@@ -223,7 +215,7 @@ function parseTypeEntries(
           { namespace: tier },
         );
       }
-      const result = validateTypeSchema(entry.custom_type, spaceId);
+      const result = validateTypeSchema(entry.custom_type);
       if (!result.success) {
         throw new MarfaError(
           ErrorCode.INVALID_SCHEMA,
@@ -306,9 +298,8 @@ function parseTypeEntries(
 export async function registerArchiveTypes(
   storage: Storage,
   entries: ArchiveTypeEntry[],
-  spaceId: string | undefined,
 ): Promise<ArchiveTypeResult> {
-  const { types, edgeTypes } = parseTypeEntries(entries, spaceId);
+  const { types, edgeTypes } = parseTypeEntries(entries);
 
   if (types.length > MAX_ARCHIVE_TYPES) {
     throw new MarfaError(
@@ -325,13 +316,13 @@ export async function registerArchiveTypes(
 
   // What this space has registered is a question about this database,
   // not about the in-memory registry: the registry is process state
-  // seeded at boot and can hold entries this space never wrote. The rows
+  // seeded at boot and can hold entries this instance never wrote. The rows
   // are what a restore is reconciling against.
   const existingTypes = new Map(
-    (await storage.types.listCustom(spaceId)).map((s) => [s.id, s]),
+    (await storage.types.listCustom()).map((s) => [s.id, s]),
   );
   const existingEdgeTypes = new Map(
-    (await storage.edgeTypes.list(spaceId)).map((s) => [s.id, s]),
+    (await storage.edgeTypes.list()).map((s) => [s.id, s]),
   );
 
   const conflicts: string[] = [];
@@ -341,9 +332,7 @@ export async function registerArchiveTypes(
     const existing = existingTypes.get(entry.schema.id);
     if (!existing) {
       typesToWrite.push(entry);
-    } else if (
-      sameSchema(normalizeForCompare(existing, spaceId), entry.schema)
-    ) {
+    } else if (sameSchema(normalizeForCompare(existing), entry.schema)) {
       // A row that is already here keeps the provenance it already has.
       // Re-restoring an archive must stay a no-op, and rewriting the
       // column would let a second restore of an older copy walk a row
@@ -387,18 +376,18 @@ export async function registerArchiveTypes(
       const entry = pending[i];
       if (!entry) continue;
       const schema = entry.schema;
-      if (schema.parent && !getTypeSchema(schema.parent, spaceId)) continue;
+      if (schema.parent && !getTypeSchema(schema.parent)) continue;
       if (schema.parent) {
-        assertParentChainResolves(schema.id, schema.parent, spaceId);
+        assertParentChainResolves(schema.id, schema.parent);
       }
-      // `types.create` registers into the space overlay as part of the
-      // write, so nothing here calls the registry directly.
+      // `types.create` registers into the registry as part of the write, so
+      // nothing here calls it directly.
       //
       // Provenance is passed rather than defaulted. Defaulting is what made
       // an archive round trip launder a connected service's type into the
       // person's own: the column defaults to `user`, and `user` is the one
       // the consent screen offers a read-and-write wildcard over.
-      await storage.types.create(schema, spaceId, entry.provenance);
+      await storage.types.create(schema, entry.provenance);
       written.push(entry);
       pending.splice(i, 1);
       progress = true;
@@ -412,10 +401,10 @@ export async function registerArchiveTypes(
   }
 
   for (const schema of edgeTypesToWrite) {
-    await storage.edgeTypes.create(schema, spaceId);
+    await storage.edgeTypes.create(schema);
     // The edge-type store does not touch the registry, so the route
     // registers separately and this has to as well.
-    registerEdgeTypeSchema(schema, spaceId);
+    registerEdgeTypeSchema(schema);
   }
 
   return {

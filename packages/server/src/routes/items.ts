@@ -55,6 +55,7 @@ import type {
   ItemSortField,
   ResolvedItem,
 } from "../storage/interface.js";
+import { readSpaceConfig } from "../storage/space-config.js";
 import { planCascadeDelete } from "../storage/edge-cascade.js";
 import { assertEdgesCanBeCreated } from "../storage/edge-constraints.js";
 import { publish, publishEdge } from "../pubsub.js";
@@ -1276,7 +1277,6 @@ export function itemRoutes(storage: Storage) {
     }
 
     requireTypeAccess(c, type, "write");
-    const spaceId = c.get("apiKey")?.space_id;
 
     // The items quota is reserved around the write itself, further down,
     // rather than checked here. A count taken at this point is a check
@@ -1291,12 +1291,9 @@ export function itemRoutes(storage: Storage) {
     }
 
     // Schema-enforcement levers: source allow-list, strict-mode, and
-    // custom sources. Off by default; enabled per type via space config
-    // or per-credential override.
-    const spaceConfig =
-      spaceId && storage.spaces
-        ? await storage.spaces.getConfig(spaceId)
-        : null;
+    // custom sources. Off by default; enabled per type via the instance
+    // config or per-credential override.
+    const spaceConfig = await readSpaceConfig(storage.settings);
     const enforcement = resolveEnforcement(spaceConfig, c.get("apiKey"));
 
     // source is non-forgeable: always stamped from the credential.
@@ -1326,11 +1323,10 @@ export function itemRoutes(storage: Storage) {
     // persistence work.
     if (
       isTypeInStrictMode(enforcement, type) &&
-      getTypeSchema(type, spaceId) !== undefined
+      getTypeSchema(type) !== undefined
     ) {
       const strictResult = validateProperties(type, properties, {
         strict: true,
-        spaceId,
       });
       if (!strictResult.success) {
         throw new MarfaError(
@@ -1428,7 +1424,6 @@ export function itemRoutes(storage: Storage) {
       const existing = await storage.items.findBySourceIdIncludingTrashed(
         stampedSource,
         body.source_id,
-        spaceId,
       );
       // D63 is checked on BOTH arms below rather than once here, and the
       // difference is disclosure. This branch reasons carefully that the
@@ -1547,16 +1542,11 @@ export function itemRoutes(storage: Storage) {
         // required field at all can still be what removes one.
         if (
           body.properties !== undefined &&
-          getTypeSchema(existing.type, spaceId) !== undefined
+          getTypeSchema(existing.type) !== undefined
         ) {
           const merged = mergeUpdateProperties(
             existing.properties,
-            resolveIncomingProperties(
-              existing.type,
-              properties,
-              false,
-              spaceId,
-            ),
+            resolveIncomingProperties(existing.type, properties, false),
             false,
             // "merge", because this branch is the natural-key upsert on
             // `POST /items` and that route offers no mode. Stated rather
@@ -1564,9 +1554,7 @@ export function itemRoutes(storage: Storage) {
             // what the door it predicts can actually be asked for.
             "merge",
           );
-          const validation = validateProperties(existing.type, merged, {
-            spaceId,
-          });
+          const validation = validateProperties(existing.type, merged);
           if (!validation.success) {
             throw new MarfaError(
               ErrorCode.INVALID_PROPERTIES,
@@ -1581,17 +1569,13 @@ export function itemRoutes(storage: Storage) {
           metadata: updatedMetadata,
           edgeChanges: updatedEdgeChanges,
         } = await storage.runInTransaction(async () => {
-          const updated = await storage.items.update(
-            existing.id,
-            {
-              ...(body.properties !== undefined && { properties }),
-              ...(tierValue !== undefined && { tier: tierValue }),
-              ...(body.timestamp !== undefined && {
-                timestamp: body.timestamp,
-              }),
-            },
-            spaceId,
-          );
+          const updated = await storage.items.update(existing.id, {
+            ...(body.properties !== undefined && { properties }),
+            ...(tierValue !== undefined && { tier: tierValue }),
+            ...(body.timestamp !== undefined && {
+              timestamp: body.timestamp,
+            }),
+          });
           if ("error" in updated) {
             // No version was supplied on a POST — `ItemStore.update` only
             // returns ConflictResponse when a `version` is present in the
@@ -1613,7 +1597,6 @@ export function itemRoutes(storage: Storage) {
                 storage,
                 updated.id,
                 body.edges,
-                spaceId,
                 (edgeType) => {
                   requireEdgePermission(c, edgeType, "write");
                 },
@@ -1634,7 +1617,6 @@ export function itemRoutes(storage: Storage) {
           type: "updated",
           item: updatedItem,
           metadata: updatedMetadata,
-          spaceId,
         });
         // After the item, and after the transaction that wrote both. A
         // single-item door always announces: a subscriber cannot tell an
@@ -1642,11 +1624,10 @@ export function itemRoutes(storage: Storage) {
         // `/edges`, so silence here would make propagation depend on
         // which door the writer used.
         if (updatedEdgeChanges) {
-          await announceInlineEdges(updatedEdgeChanges, spaceId);
+          await announceInlineEdges(updatedEdgeChanges);
         }
         void storage.audit.log({
           client_ip: c.get("clientIp") ?? null,
-          space_id: c.get("apiKey")?.space_id ?? null,
           key_id: c.get("apiKey")?.id,
           action: "item.update",
           resource_type: "item",
@@ -1700,10 +1681,7 @@ export function itemRoutes(storage: Storage) {
       // row the user has since deleted would otherwise refuse this retry
       // forever, and the retry is not asking to revive it. The row comes
       // back in whatever state it holds.
-      const existing = await storage.items.getIncludingTrashed(
-        clientId,
-        spaceId,
-      );
+      const existing = await storage.items.getIncludingTrashed(clientId);
       // Nothing visible means the id belongs to a space this caller
       // cannot see. That is a genuine collision with somebody else's row
       // and stays a conflict — the caller learns only that the id it
@@ -1754,23 +1732,20 @@ export function itemRoutes(storage: Storage) {
         // The reservation is the first thing in this transaction and holds for
         // the rest of it, so the count it reads includes every create already
         // committed against this space's ceiling.
-        const created = await storage.items.create(
-          {
-            type,
-            properties,
-            id: body.id,
-            state: body.state as ItemState | undefined,
-            tier: tierValue,
-            timestamp: body.timestamp,
-            source: stampedSource,
-            source_id: body.source_id,
-            device: body.device,
-            capture_latitude: body.capture_latitude,
-            capture_longitude: body.capture_longitude,
-            tags: body.tags,
-          },
-          spaceId,
-        );
+        const created = await storage.items.create({
+          type,
+          properties,
+          id: body.id,
+          state: body.state as ItemState | undefined,
+          tier: tierValue,
+          timestamp: body.timestamp,
+          source: stampedSource,
+          source_id: body.source_id,
+          device: body.device,
+          capture_latitude: body.capture_latitude,
+          capture_longitude: body.capture_longitude,
+          tags: body.tags,
+        });
 
         // Atomic edges: for each entry, this item is the source; listed ids
         // are targets. assertEdgesCanBeCreated enforces cardinality / type
@@ -1793,18 +1768,14 @@ export function itemRoutes(storage: Storage) {
               storage.edges,
               storage.items,
               proposals,
-              { space_id: spaceId },
             );
             for (const p of proposals) {
               createdEdges.push(
-                await storage.edges.createRaw(
-                  {
-                    source_id: p.source_id,
-                    target_id: p.target_id,
-                    edge_type: p.edge_type,
-                  },
-                  spaceId,
-                ),
+                await storage.edges.createRaw({
+                  source_id: p.source_id,
+                  target_id: p.target_id,
+                  edge_type: p.edge_type,
+                }),
               );
             }
           }
@@ -1854,17 +1825,15 @@ export function itemRoutes(storage: Storage) {
       type: "created",
       item,
       metadata,
-      spaceId,
     });
     // The item's own edges, announced after the item itself so a
     // subscriber that resolves an edge's endpoints has already been told
     // the new one exists.
     for (const edge of createdEdges) {
-      await publishEdge({ type: "edge_created", edge, spaceId });
+      await publishEdge({ type: "edge_created", edge });
     }
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
-      space_id: c.get("apiKey")?.space_id ?? null,
       key_id: c.get("apiKey")?.id,
       action: "item.create",
       resource_type: "item",
@@ -1883,10 +1852,9 @@ export function itemRoutes(storage: Storage) {
   router.openapi(promoteItemRoute, async (c) => {
     requireAuth(c);
     const credential = c.get("apiKey");
-    const spaceId = credential?.space_id;
     const { id } = c.req.valid("param");
 
-    const mirror = await storage.items.get(id, spaceId);
+    const mirror = await storage.items.get(id);
     if (!mirror) {
       throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`);
     }
@@ -1912,29 +1880,23 @@ export function itemRoutes(storage: Storage) {
       async () => {
         // The copy is yours: caller-stamped provenance, no natural key (the
         // upstream record's identity stays with the mirror), library tier.
-        const created = await storage.items.create(
-          {
-            type: mirror.type,
-            properties: { ...mirror.properties },
-            tier: "library",
-            ...(itemProvenanceSource(credential) !== undefined
-              ? { source: itemProvenanceSource(credential) }
-              : {}),
-          },
-          spaceId,
-        );
+        const created = await storage.items.create({
+          type: mirror.type,
+          properties: { ...mirror.properties },
+          tier: "library",
+          ...(itemProvenanceSource(credential) !== undefined
+            ? { source: itemProvenanceSource(credential) }
+            : {}),
+        });
         // derived-from is many-to-many with orphan cascade and the source is
         // a freshly minted node, so the raw write cannot violate cardinality
         // or create a cycle.
-        const edge = await storage.edges.createRaw(
-          {
-            source_id: created.id,
-            target_id: mirror.id,
-            edge_type: "derived-from",
-            properties: {},
-          },
-          spaceId,
-        );
+        const edge = await storage.edges.createRaw({
+          source_id: created.id,
+          target_id: mirror.id,
+          edge_type: "derived-from",
+          properties: {},
+        });
         return { promoted: created, promotionEdge: edge };
       },
     );
@@ -1972,18 +1934,15 @@ export function itemRoutes(storage: Storage) {
       type: "created",
       item: promoted,
       metadata: { item_id: promoted.id, tags: [], extensions: {} },
-      spaceId,
       enableFanout: false,
     });
     await publishEdge({
       type: "edge_created",
       edge: promotionEdge,
-      spaceId,
     });
 
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
-      space_id: spaceId ?? null,
       key_id: credential?.id,
       action: "item.promote",
       resource_type: "item",
@@ -2000,11 +1959,9 @@ export function itemRoutes(storage: Storage) {
 
   router.openapi(reconcileItemRoute, async (c) => {
     requireAuth(c);
-    const credential = c.get("apiKey");
-    const spaceId = credential?.space_id;
     const { id } = c.req.valid("param");
 
-    const yours = await storage.items.get(id, spaceId);
+    const yours = await storage.items.get(id);
     if (!yours) {
       throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`);
     }
@@ -2015,7 +1972,7 @@ export function itemRoutes(storage: Storage) {
     });
     const mirrors = [];
     for (const edge of joined.data) {
-      const mirror = await storage.items.get(edge.target_id, spaceId);
+      const mirror = await storage.items.get(edge.target_id);
       // A derived-from edge can join any two items; only the ones an
       // integration owns are mirrors, and only those have anything to
       // reconcile against.
@@ -2042,17 +1999,12 @@ export function itemRoutes(storage: Storage) {
   router.openapi(getItemStatsRoute, async (c) => {
     requireAuth(c);
     const callerKey = c.get("apiKey");
-    const spaceId = callerKey?.space_id;
     const { by } = c.req.valid("query");
     const typeFilter = getTypeFilter(c);
     // These counts summarize the listing, so they narrow with it.
-    const spaceConfig =
-      spaceId && storage.spaces
-        ? await storage.spaces.getConfig(spaceId)
-        : null;
+    const spaceConfig = await readSpaceConfig(storage.settings);
     const enforcement = resolveEnforcement(spaceConfig, callerKey);
     const stats = await storage.items.stats(
-      spaceId,
       typeFilter,
       enforcement.source_filter,
       by,
@@ -2100,7 +2052,7 @@ export function itemRoutes(storage: Storage) {
     const type = query.type;
     // Grammar, the global wildcard and an unknown concrete type, decided once
     // for every list surface; the reasoning is at `assertTypeFilter`.
-    assertTypeFilter(type, c.get("apiKey")?.space_id);
+    assertTypeFilter(type);
 
     // `any` is a widening, not a state, so it never reaches the column
     // comparison. Shared with `GET /export`, which reads the same filter.
@@ -2164,18 +2116,13 @@ export function itemRoutes(storage: Storage) {
     const excludeSystemTypes = excludesSystemTypes(includeSet, type);
 
     const callerKeyForRead = c.get("apiKey");
-    const callerSpaceIdForRead = callerKeyForRead?.space_id;
-    const spaceConfigForRead =
-      callerSpaceIdForRead && storage.spaces
-        ? await storage.spaces.getConfig(callerSpaceIdForRead)
-        : null;
+    const spaceConfigForRead = await readSpaceConfig(storage.settings);
     const enforcementForRead = resolveEnforcement(
       spaceConfigForRead,
       callerKeyForRead,
     );
     const typeFilterForList = getTypeFilter(c);
     const result = await storage.items.list({
-      spaceId: c.get("apiKey")?.space_id,
       type,
       state,
       source: query.source,
@@ -2260,8 +2207,7 @@ export function itemRoutes(storage: Storage) {
     }
 
     const apiKey = c.get("apiKey");
-    const tid = apiKey?.space_id;
-    const item = await storage.items.get(id, tid);
+    const item = await storage.items.get(id);
     if (!item) {
       throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`);
     }
@@ -2330,7 +2276,7 @@ export function itemRoutes(storage: Storage) {
       if (ids.length === 0) {
         neighbors = [];
       } else {
-        const found = await storage.items.getMany(ids, tid);
+        const found = await storage.items.getMany(ids);
         const visible: Item[] = [];
         // Kept apart because they mean different things to whoever reads the
         // log: a type the credential lacks is a scope to widen, an edge whose
@@ -2450,9 +2396,7 @@ export function itemRoutes(storage: Storage) {
       }
     }
 
-    const tid = c.get("apiKey")?.space_id;
-
-    const item = await storage.items.get(id, tid);
+    const item = await storage.items.get(id);
     if (!item) {
       throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`);
     }
@@ -2507,7 +2451,6 @@ export function itemRoutes(storage: Storage) {
       const existing = await storage.items.findBySourceId(
         item.source,
         newSourceId,
-        tid,
       );
       if (existing && existing.id !== id) {
         throw new MarfaError(
@@ -2564,14 +2507,12 @@ export function itemRoutes(storage: Storage) {
       const resultingType = retypeTo ?? item.type;
       const merged = mergeUpdateProperties(
         item.properties,
-        resolveIncomingProperties(resultingType, body.properties, false, tid),
+        resolveIncomingProperties(resultingType, body.properties, false),
         false,
         body.properties_mode ?? "merge",
       );
-      if (getTypeSchema(resultingType, tid)) {
-        const validation = validateProperties(resultingType, merged, {
-          spaceId: tid,
-        });
+      if (getTypeSchema(resultingType)) {
+        const validation = validateProperties(resultingType, merged);
         if (!validation.success) {
           throw new MarfaError(
             ErrorCode.INVALID_PROPERTIES,
@@ -2591,7 +2532,7 @@ export function itemRoutes(storage: Storage) {
     // rolls back lower-level surprises on either dialect.
     if (hasEdges && body.edges) {
       for (const [edgeType, targets] of Object.entries(body.edges)) {
-        const schema = getEdgeTypeSchema(edgeType, tid);
+        const schema = getEdgeTypeSchema(edgeType);
         if (!schema) {
           throw new MarfaError(
             ErrorCode.EDGE_TYPE_NOT_FOUND,
@@ -2616,7 +2557,7 @@ export function itemRoutes(storage: Storage) {
             );
           }
           uniqueTargets.add(target);
-          const targetItem = await storage.items.get(target, tid);
+          const targetItem = await storage.items.get(target);
           if (!targetItem) {
             throw new MarfaError(
               ErrorCode.ITEM_NOT_FOUND,
@@ -2637,32 +2578,28 @@ export function itemRoutes(storage: Storage) {
       const updated:
         ResolvedItem | ConflictResponse | AncestorUnavailableResponse =
         hasProperties || hasTier || hasTimestamp || hasSourceId
-          ? await storage.items.update(
-              id,
-              {
-                properties: body.properties,
-                ...(body.properties_mode !== undefined && {
-                  properties_mode: body.properties_mode,
-                }),
-                ...(retypeTo !== undefined && { type: retypeTo }),
-                version: body.version,
-                // Who resolves a collision, and the key that makes a retry
-                // recognisable as one. Both are request-level facts rather
-                // than fields of the item, which is why they ride here
-                // rather than in the body.
-                ...(conflictMode !== undefined && {
-                  conflict_mode: conflictMode,
-                }),
-                ...(idempotencyKey !== null && {
-                  idempotency_key: idempotencyKey,
-                }),
-                force_snapshot: body.force_snapshot === true ? true : undefined,
-                tier: hasTier ? body.tier : undefined,
-                timestamp: hasTimestamp ? body.timestamp : undefined,
-                source_id: hasSourceId ? body.source_id : undefined,
-              },
-              tid,
-            )
+          ? await storage.items.update(id, {
+              properties: body.properties,
+              ...(body.properties_mode !== undefined && {
+                properties_mode: body.properties_mode,
+              }),
+              ...(retypeTo !== undefined && { type: retypeTo }),
+              version: body.version,
+              // Who resolves a collision, and the key that makes a retry
+              // recognisable as one. Both are request-level facts rather
+              // than fields of the item, which is why they ride here
+              // rather than in the body.
+              ...(conflictMode !== undefined && {
+                conflict_mode: conflictMode,
+              }),
+              ...(idempotencyKey !== null && {
+                idempotency_key: idempotencyKey,
+              }),
+              force_snapshot: body.force_snapshot === true ? true : undefined,
+              tier: hasTier ? body.tier : undefined,
+              timestamp: hasTimestamp ? body.timestamp : undefined,
+              source_id: hasSourceId ? body.source_id : undefined,
+            })
           : item;
       if (
         (hasProperties || hasTier || hasTimestamp || hasSourceId) &&
@@ -2684,7 +2621,6 @@ export function itemRoutes(storage: Storage) {
           storage,
           id,
           body.edges,
-          tid,
           // Already gated up-front, before any write. Passed again
           // because the helper requires an answer rather than a default,
           // and re-running an idempotent check costs nothing.
@@ -2728,23 +2664,20 @@ export function itemRoutes(storage: Storage) {
         type: "created",
         item: sibling,
         metadata: await storage.metadata.get(sibling.id),
-        spaceId: tid,
       });
     }
     await publish({
       type: "updated",
       item: resolvedItem,
       metadata,
-      spaceId: tid,
     });
     // After the item, and after the transaction committed. Announcing
     // from inside would describe edges a rollback then took away.
     if (patchedEdgeChanges) {
-      await announceInlineEdges(patchedEdgeChanges, tid);
+      await announceInlineEdges(patchedEdgeChanges);
     }
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
-      space_id: c.get("apiKey")?.space_id ?? null,
       key_id: c.get("apiKey")?.id,
       action: "item.update",
       resource_type: "item",
@@ -2772,9 +2705,8 @@ export function itemRoutes(storage: Storage) {
     }
 
     requireAuth(c);
-    const tid = c.get("apiKey")?.space_id;
 
-    const targetItem = await storage.items.get(id, tid);
+    const targetItem = await storage.items.get(id);
     if (!targetItem) {
       throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`);
     }
@@ -2794,9 +2726,9 @@ export function itemRoutes(storage: Storage) {
     // stronger harm being the less protected one.
     //
     const snapshots = await storage.runInTransaction(async () => {
-      const toDelete = await planCascadeDelete(storage.edges, id, tid);
+      const toDelete = await planCascadeDelete(storage.edges, id);
       const snaps = await Promise.all(
-        toDelete.map((delId) => storage.items.get(delId, tid)),
+        toDelete.map((delId) => storage.items.get(delId)),
       );
       // **Every row the cascade reaches, not just the one named in the URL.**
       // `parent-of` ships with `cascade_on_delete: "cascade"` and admits any
@@ -2817,7 +2749,7 @@ export function itemRoutes(storage: Storage) {
         refuseUnlessUninstalled(snap);
       }
       for (const delId of toDelete) {
-        await storage.items.delete(delId, tid);
+        await storage.items.delete(delId);
       }
       return snaps;
     });
@@ -2832,13 +2764,11 @@ export function itemRoutes(storage: Storage) {
           // `revoked`, so announcing `trashed` told a subscriber about a
           // state the row never entered and no transition can leave.
           item: { ...snapshot, state: softDeleteState(snapshot.type) },
-          spaceId: tid,
         });
       }
     }
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
-      space_id: c.get("apiKey")?.space_id ?? null,
       key_id: c.get("apiKey")?.id,
       action: "item.delete",
       resource_type: "item",
@@ -2861,7 +2791,7 @@ export function itemRoutes(storage: Storage) {
       throw new MarfaError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
 
-    const item = await storage.items.get(id, c.get("apiKey")?.space_id);
+    const item = await storage.items.get(id);
     if (!item) {
       throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`);
     }
@@ -2880,7 +2810,7 @@ export function itemRoutes(storage: Storage) {
       throw new MarfaError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
 
-    const item = await storage.items.get(id, c.get("apiKey")?.space_id);
+    const item = await storage.items.get(id);
     if (!item) {
       throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`);
     }
@@ -2902,13 +2832,8 @@ export function itemRoutes(storage: Storage) {
     const metadata = await storage.metadata.set(id, tags);
     await publish({
       type: "metadata_changed",
-      item: await itemAfterMetadataWrite(
-        storage,
-        item,
-        c.get("apiKey")?.space_id,
-      ),
+      item: await itemAfterMetadataWrite(storage, item),
       metadata,
-      spaceId: c.get("apiKey")?.space_id,
     });
     return c.json(
       { metadata: filterMetadataForCaller(metadata, c.get("apiKey")) },
@@ -2922,7 +2847,7 @@ export function itemRoutes(storage: Storage) {
       throw new MarfaError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
 
-    const item = await storage.items.get(id, c.get("apiKey")?.space_id);
+    const item = await storage.items.get(id);
     if (!item) {
       throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`);
     }
@@ -2964,13 +2889,8 @@ export function itemRoutes(storage: Storage) {
 
     await publish({
       type: "metadata_changed",
-      item: await itemAfterMetadataWrite(
-        storage,
-        item,
-        c.get("apiKey")?.space_id,
-      ),
+      item: await itemAfterMetadataWrite(storage, item),
       metadata,
-      spaceId: c.get("apiKey")?.space_id,
     });
     return c.json(
       { metadata: filterMetadataForCaller(metadata, c.get("apiKey")) },
@@ -2984,7 +2904,7 @@ export function itemRoutes(storage: Storage) {
       throw new MarfaError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
 
-    const item = await storage.items.get(id, c.get("apiKey")?.space_id);
+    const item = await storage.items.get(id);
     if (!item) {
       throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`);
     }
@@ -3002,7 +2922,6 @@ export function itemRoutes(storage: Storage) {
     const metadata = await storage.metadata.addTags(id, tags);
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
-      space_id: c.get("apiKey")?.space_id ?? null,
       key_id: c.get("apiKey")?.id,
       action: "item.tag",
       resource_type: "item",
@@ -3011,13 +2930,8 @@ export function itemRoutes(storage: Storage) {
     });
     await publish({
       type: "metadata_changed",
-      item: await itemAfterMetadataWrite(
-        storage,
-        item,
-        c.get("apiKey")?.space_id,
-      ),
+      item: await itemAfterMetadataWrite(storage, item),
       metadata,
-      spaceId: c.get("apiKey")?.space_id,
     });
     return c.json(
       { metadata: filterMetadataForCaller(metadata, c.get("apiKey")) },
@@ -3033,7 +2947,6 @@ export function itemRoutes(storage: Storage) {
 
     requireAuth(c);
     requireSpacePermission(c, "space.item_purge");
-    const spaceId = c.get("apiKey")?.space_id;
     // Read before removing. This door used to purge without ever looking at
     // the row, so it could not have known a connection from a note.
     //
@@ -3044,7 +2957,7 @@ export function itemRoutes(storage: Storage) {
     // because both only have anything to say about a row that is NOT
     // soft-deleted, which is exactly the shape a plain `get` does return.
     // This is the same read `items.purge` runs for its own gate.
-    const purgeTarget = await storage.items.getIncludingTrashed(id, spaceId);
+    const purgeTarget = await storage.items.getIncludingTrashed(id);
     refuseUnlessUninstalled(purgeTarget);
 
     // Two doors refuse one operation, and reading only the second one sends
@@ -3103,14 +3016,14 @@ export function itemRoutes(storage: Storage) {
     // atomicity has to open its own.
     const cascaded = await storage.runInTransaction(async () => {
       const removed = [
-        ...(await storage.edges.deleteBySource(id, undefined, spaceId)),
-        ...(await storage.edges.deleteByTarget(id, undefined, spaceId)),
+        ...(await storage.edges.deleteBySource(id)),
+        ...(await storage.edges.deleteByTarget(id)),
       ];
-      await storage.items.purge(id, spaceId);
+      await storage.items.purge(id);
       return removed;
     });
     for (const edge of cascaded) {
-      await publishEdge({ type: "edge_deleted", edge, spaceId });
+      await publishEdge({ type: "edge_deleted", edge });
     }
     // The item itself, and the cascade above is what made its absence look
     // covered. A trashed row announced `item.deleted`, which says
@@ -3127,11 +3040,10 @@ export function itemRoutes(storage: Storage) {
     // The snapshot read before the purge, because there is nothing left to
     // read afterwards.
     if (purgeTarget) {
-      await publish({ type: "purged", item: purgeTarget, spaceId });
+      await publish({ type: "purged", item: purgeTarget });
     }
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
-      space_id: c.get("apiKey")?.space_id ?? null,
       key_id: c.get("apiKey")?.id,
       action: "item.purge",
       resource_type: "item",
@@ -3152,7 +3064,7 @@ export function itemRoutes(storage: Storage) {
       throw new MarfaError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
 
-    const item = await storage.items.get(id, c.get("apiKey")?.space_id);
+    const item = await storage.items.get(id);
     if (!item) {
       throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`);
     }
@@ -3163,7 +3075,6 @@ export function itemRoutes(storage: Storage) {
     const metadata = await storage.metadata.removeTag(id, tag);
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
-      space_id: c.get("apiKey")?.space_id ?? null,
       key_id: c.get("apiKey")?.id,
       action: "item.untag",
       resource_type: "item",
@@ -3172,13 +3083,8 @@ export function itemRoutes(storage: Storage) {
     });
     await publish({
       type: "metadata_changed",
-      item: await itemAfterMetadataWrite(
-        storage,
-        item,
-        c.get("apiKey")?.space_id,
-      ),
+      item: await itemAfterMetadataWrite(storage, item),
       metadata,
-      spaceId: c.get("apiKey")?.space_id,
     });
     return c.json(
       { metadata: filterMetadataForCaller(metadata, c.get("apiKey")) },

@@ -383,7 +383,7 @@ describe("POST /edges/bulk", () => {
     // write on the source item's type AND the edge type succeeds.
     // The subject is the edge map, so the key is an ordinary space-bound one
     // holding exactly the two families the door reads.
-    const rawKey = await mintSpaceKey(ctx, ctx.spaceId, {
+    const rawKey = await mintSpaceKey(ctx, {
       label: "edges-bulk-member-ok",
       source: `edges-bulk-member-ok-${Math.random().toString(36).slice(2, 8)}`,
       type_permissions: { "*": "write" },
@@ -411,7 +411,7 @@ describe("POST /edges/bulk", () => {
   it("rejects a key lacking edge-type write (atomic 400)", async () => {
     // Has source-type write but no edge_permissions → edge_permission_denied,
     // surfaced as a bulk_atomic_rollback by the atomic pre-check.
-    const rawKey = await mintSpaceKey(ctx, ctx.spaceId, {
+    const rawKey = await mintSpaceKey(ctx, {
       label: "edges-bulk-member-noedge",
       source: `edges-bulk-member-noedge-${Math.random().toString(36).slice(2, 8)}`,
       type_permissions: { "*": "write" },

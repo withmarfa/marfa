@@ -43,9 +43,8 @@ export class SqliteSearchStore implements SearchStore {
     itemId: string,
     properties: Record<string, unknown>,
     typeId?: string,
-    spaceId?: string,
   ): Promise<void> {
-    const text = extractSearchableText(properties, typeId, spaceId);
+    const text = extractSearchableText(properties, typeId);
     await this.db.run(sql`
       INSERT INTO items_fts(item_id, title, body, description, name, extra)
       VALUES (${itemId}, ${text.title}, ${text.body}, ${text.description}, ${text.name}, ${text.extra})
@@ -63,11 +62,6 @@ export class SqliteSearchStore implements SearchStore {
     const conditions: string[] = [];
     const params: unknown[] = [escapedQuery];
 
-    if (filters.spaceId) {
-      conditions.push("AND i.space_id = ?");
-      params.push(filters.spaceId);
-    }
-
     if (filters.state) {
       conditions.push("AND i.state = ?");
       params.push(filters.state);
@@ -83,7 +77,6 @@ export class SqliteSearchStore implements SearchStore {
       // listing gets the same set.
       const { global, exact, descendantPattern, extraTypes } = typeSubtreeToSql(
         filters.type,
-        filters.spaceId ?? null,
       );
       if (!global && exact && descendantPattern) {
         const clauses = ["i.type = ?", "i.type LIKE ? ESCAPE '\\'"];
@@ -165,11 +158,7 @@ export class SqliteSearchStore implements SearchStore {
       }
     }
 
-    const sourceLever = sourceFilterToRawSql(
-      filters.source_filter,
-      "i",
-      filters.spaceId ?? null,
-    );
+    const sourceLever = sourceFilterToRawSql(filters.source_filter, "i");
     if (sourceLever) {
       conditions.push(`AND ${sourceLever.clause}`);
       params.push(...sourceLever.params);
@@ -177,11 +166,7 @@ export class SqliteSearchStore implements SearchStore {
 
     if (filters.filter) {
       const expr = parseFilter(filters.filter);
-      const { clause, params: filterParams } = filterToRawSql(
-        expr,
-        "i",
-        filters.spaceId,
-      );
+      const { clause, params: filterParams } = filterToRawSql(expr, "i");
       conditions.push(`AND ${clause}`);
       params.push(...filterParams);
     }
@@ -197,7 +182,7 @@ export class SqliteSearchStore implements SearchStore {
         i.id, i.type, i.state, json(i.properties) AS properties,
         i.created_at, i.updated_at,
         i.timestamp, i.source, i.source_id, i.version,
-        i.schema_version, i.device, i.tier, i.space_id,
+        i.schema_version, i.device, i.tier,
         i.capture_latitude, i.capture_longitude,
         m.item_id AS meta_item_id, m.tags, m.extensions
       FROM items_fts fts

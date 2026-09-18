@@ -28,13 +28,6 @@ afterEach(async () => {
   await ctx.cleanup();
 });
 
-function spaces() {
-  if (!ctx.storage.spaces) {
-    throw new Error("hosted-mode storage missing space store");
-  }
-  return ctx.storage.spaces;
-}
-
 /** Stamp `revoked` on every access token for a client, which is what the
  *  provider plugin's session-delete hook does to the tokens issued under a
  *  session that has just ended. */
@@ -59,14 +52,13 @@ async function revokeAccessTokens(clientId: string): Promise<void> {
 
 describe("a revoked OAuth access token", () => {
   it("stops authenticating, though its expiry has not passed", async () => {
-    const space = await spaces().create("revoked-token-space");
     // `space.keys` because the probe below uses `/keys` to ask whether
     // the token authenticates at all. The question is revocation; the door is
     // incidental, and it now wants the scope.
     const { token, clientId } = await seedOauthBearer(
       ctx.storage,
       ["space.keys"],
-      { spaceId: space.id },
+      {},
     );
 
     // The token is live: an hour of expiry left, and it authenticates.
@@ -83,14 +75,13 @@ describe("a revoked OAuth access token", () => {
   });
 
   it("is refused by the store itself, not only at the route", async () => {
-    const space = await spaces().create("revoked-store-space");
     // `space.keys` because the probe below uses `/keys` to ask whether
     // the token authenticates at all. The question is revocation; the door is
     // incidental, and it now wants the scope.
     const { token, clientId } = await seedOauthBearer(
       ctx.storage,
       ["space.keys"],
-      { spaceId: space.id },
+      {},
     );
 
     const { hashApiKey } = await import("../middleware/auth.js");

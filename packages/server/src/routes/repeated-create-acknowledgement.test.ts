@@ -21,23 +21,16 @@
  * other device.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import {
-  generateId,
-  MarfaError,
-  ErrorCode,
-  SPACE_PERMISSIONS,
-} from "@withmarfa/shared";
+import { generateId, MarfaError, ErrorCode } from "@withmarfa/shared";
 import {
   createTestContext,
   request,
-  TEST_API_KEY_SALT,
   collectItemEvents,
   collectEdgeEvents,
   settle,
   waitForAudit,
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
-import { hashApiKey } from "../middleware/auth.js";
 
 let ctx: TestContext;
 
@@ -143,41 +136,6 @@ describe("a repeated item create", () => {
     expect(((await repeat.json()) as ErrorBody).error.code).toBe(
       "type_mismatch",
     );
-  });
-
-  it("stays a conflict when the id belongs to a space the caller cannot see", async () => {
-    const spaces = ctx.storage.spaces;
-    if (!spaces) throw new Error("this test needs a space store");
-    const other = await spaces.create("ack-other-space");
-    const hidden = await ctx.storage.items.create(
-      { type: "core.note", properties: { body: "not yours" } },
-      other.id,
-    );
-
-    const suffix = Math.random().toString(36).slice(2, 10);
-    const mineKey = `marfa_k1_ack_${suffix}`;
-    const mine = await spaces.create("ack-my-space");
-    await ctx.storage.keys.create(
-      {
-        label: `ack-${suffix}`,
-        source: `ack-${suffix}`,
-        space_permissions: [...SPACE_PERMISSIONS],
-        type_permissions: { "*": "write" },
-        default_tier: "library",
-        is_operator: false,
-      },
-      hashApiKey(mineKey, TEST_API_KEY_SALT),
-      mine.id,
-    );
-
-    // The id is taken, but not by anything this caller may be told about.
-    // Acknowledging would confirm the existence of another space's row.
-    const res = await request(ctx.app, "POST", "/items", {
-      key: mineKey,
-      body: { type: "core.note", id: hidden.id, properties: { body: "mine" } },
-    });
-    expect(res.status).toBe(409);
-    expect(((await res.json()) as ErrorBody).error.code).toBe("conflict");
   });
 });
 
@@ -335,12 +293,12 @@ describe("a repeated edge create under concurrency", () => {
       }
       return realGet(edgeId);
     };
-    store.existsExactBatch = async (proposals, space) => {
+    store.existsExactBatch = async (proposals) => {
       if (!blindedExists) {
         blindedExists = true;
         return new Set<string>();
       }
-      return realExists(proposals, space);
+      return realExists(proposals);
     };
     let res: Response;
     try {
@@ -369,65 +327,6 @@ describe("a repeated edge create under concurrency", () => {
     });
     expect(((await listed.json()) as { data: unknown[] }).data).toHaveLength(1);
   });
-
-  it("keeps a cross-space id a conflict rather than an acknowledgement", async () => {
-    const spaces = ctx.storage.spaces;
-    if (!spaces) throw new Error("this test needs a space store");
-    const theirs = await spaces.create("edge-other-space");
-    const theirSource = await ctx.storage.items.create(
-      { type: "core.note", properties: { body: "their source" } },
-      theirs.id,
-    );
-    const theirTarget = await ctx.storage.items.create(
-      { type: "core.note", properties: { body: "their target" } },
-      theirs.id,
-    );
-    const theirEdge = await ctx.storage.edges.createRaw(
-      {
-        source_id: theirSource.id,
-        target_id: theirTarget.id,
-        edge_type: "about",
-      },
-      theirs.id,
-    );
-
-    const mine = await spaces.create("edge-my-space");
-    const suffix = Math.random().toString(36).slice(2, 10);
-    const myKey = `marfa_k1_edgeack_${suffix}`;
-    await ctx.storage.keys.create(
-      {
-        label: `edgeack-${suffix}`,
-        source: `edgeack-${suffix}`,
-        space_permissions: [...SPACE_PERMISSIONS],
-        type_permissions: { "*": "write" },
-        edge_permissions: { "*": "write" },
-        default_tier: "library",
-        is_operator: false,
-      },
-      hashApiKey(myKey, TEST_API_KEY_SALT),
-      mine.id,
-    );
-    const mySource = await ctx.storage.items.create(
-      { type: "core.note", properties: { body: "my source" } },
-      mine.id,
-    );
-    const myTarget = await ctx.storage.items.create(
-      { type: "core.note", properties: { body: "my target" } },
-      mine.id,
-    );
-
-    const res = await request(ctx.app, "POST", "/edges", {
-      key: myKey,
-      body: {
-        id: theirEdge.id,
-        source_id: mySource.id,
-        target_id: myTarget.id,
-        edge_type: "about",
-      },
-    });
-    expect(res.status).toBe(409);
-    expect(((await res.json()) as ErrorBody).error.code).toBe("conflict");
-  });
 });
 
 describe("the item door's concurrency backstop", () => {
@@ -447,12 +346,12 @@ describe("the item door's concurrency backstop", () => {
     const store = ctx.storage.items;
     const realGet = store.getIncludingTrashed.bind(store);
     let blinded = false;
-    store.getIncludingTrashed = async (itemId: string, spaceId?: string) => {
+    store.getIncludingTrashed = async (itemId: string) => {
       if (!blinded) {
         blinded = true;
         return null;
       }
-      return realGet(itemId, spaceId);
+      return realGet(itemId);
     };
     let res: Response;
     try {

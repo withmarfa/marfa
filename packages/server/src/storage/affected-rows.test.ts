@@ -46,7 +46,6 @@ describe("keys.revoke", () => {
         is_operator: true,
       },
       hashApiKey(`marfa_k1_affected_rows_${suffix}`, TEST_API_KEY_SALT),
-      undefined,
     );
 
     expect(await ctx.storage.keys.revoke(key.id)).toBe("revoked");

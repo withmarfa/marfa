@@ -784,7 +784,6 @@ describe("RESERVED_ITEM_FIELDS — freshness against Item interface", () => {
       type: "",
       state: "active",
       tier: "library",
-      space_id: null,
       properties: {},
       created_at: "",
       updated_at: "",
@@ -1364,22 +1363,26 @@ describe("validateTypeSchema — merge_policy", () => {
 });
 
 describe("directChildrenOf", () => {
-  const SPACE = "01a02000-0000-7000-8000-0000000000d1";
-
   beforeEach(() => {
-    registerTypeSchema({ id: "acme.root", version: 1, fields: {} }, SPACE);
-    registerTypeSchema(
-      { id: "acme.branch", version: 1, parent: "acme.root", fields: {} },
-      SPACE,
-    );
-    registerTypeSchema(
-      { id: "acme.sibling", version: 1, parent: "acme.root", fields: {} },
-      SPACE,
-    );
-    registerTypeSchema(
-      { id: "acme.leaf", version: 1, parent: "acme.branch", fields: {} },
-      SPACE,
-    );
+    registerTypeSchema({ id: "acme.root", version: 1, fields: {} });
+    registerTypeSchema({
+      id: "acme.branch",
+      version: 1,
+      parent: "acme.root",
+      fields: {},
+    });
+    registerTypeSchema({
+      id: "acme.sibling",
+      version: 1,
+      parent: "acme.root",
+      fields: {},
+    });
+    registerTypeSchema({
+      id: "acme.leaf",
+      version: 1,
+      parent: "acme.branch",
+      fields: {},
+    });
   });
 
   afterEach(() => {
@@ -1389,12 +1392,12 @@ describe("directChildrenOf", () => {
       "acme.branch",
       "acme.root",
     ]) {
-      unregisterTypeSchema(id, SPACE);
+      unregisterTypeSchema(id);
     }
   });
 
   it("names every type declaring this one as its parent", () => {
-    expect(directChildrenOf("acme.root", SPACE).sort()).toEqual([
+    expect(directChildrenOf("acme.root").sort()).toEqual([
       "acme.branch",
       "acme.sibling",
     ]);
@@ -1404,33 +1407,28 @@ describe("directChildrenOf", () => {
   // stops the delete. Including it would refuse for something already
   // covered by the child that does.
   it("stops at the immediate children", () => {
-    expect(directChildrenOf("acme.root", SPACE)).not.toContain("acme.leaf");
+    expect(directChildrenOf("acme.root")).not.toContain("acme.leaf");
   });
 
   it("answers nothing for a leaf", () => {
-    expect(directChildrenOf("acme.leaf", SPACE)).toEqual([]);
+    expect(directChildrenOf("acme.leaf")).toEqual([]);
   });
 
   // Custom types resolve only inside their own space, so a child in another
   // space is not a child here. Answering otherwise would refuse a delete on
   // the strength of a type this caller cannot see.
-  it("does not see a child registered by another space", () => {
-    expect(
-      directChildrenOf("acme.root", "01a02000-0000-7000-8000-0000000000d2"),
-    ).toEqual([]);
-  });
 
   it("names a child of a platform type the space registered itself", () => {
-    registerTypeSchema(
-      { id: "acme.note_subtype", version: 1, parent: "core.note", fields: {} },
-      SPACE,
-    );
+    registerTypeSchema({
+      id: "acme.note_subtype",
+      version: 1,
+      parent: "core.note",
+      fields: {},
+    });
     try {
-      expect(directChildrenOf("core.note", SPACE)).toContain(
-        "acme.note_subtype",
-      );
+      expect(directChildrenOf("core.note")).toContain("acme.note_subtype");
     } finally {
-      unregisterTypeSchema("acme.note_subtype", SPACE);
+      unregisterTypeSchema("acme.note_subtype");
     }
   });
 });
@@ -1446,60 +1444,41 @@ describe("directChildrenOf", () => {
  * and it has other callers.
  */
 describe("unregisterTypeSchema and the schemas it invalidates", () => {
-  const SPACE = "01a02000-0000-7000-8000-0000000000d3";
-
   it("stops a descendant validating against its removed ancestor's fields", () => {
-    registerTypeSchema(
-      {
-        id: "acme.cache_root",
-        version: 1,
-        fields: { inherited: { type: "string", required: true } },
-      },
-      SPACE,
-    );
-    registerTypeSchema(
-      {
-        id: "acme.cache_mid",
-        version: 1,
-        parent: "acme.cache_root",
-        fields: {},
-      },
-      SPACE,
-    );
-    registerTypeSchema(
-      {
-        id: "acme.cache_leaf",
-        version: 1,
-        parent: "acme.cache_mid",
-        fields: {},
-      },
-      SPACE,
-    );
+    registerTypeSchema({
+      id: "acme.cache_root",
+      version: 1,
+      fields: { inherited: { type: "string", required: true } },
+    });
+    registerTypeSchema({
+      id: "acme.cache_mid",
+      version: 1,
+      parent: "acme.cache_root",
+      fields: {},
+    });
+    registerTypeSchema({
+      id: "acme.cache_leaf",
+      version: 1,
+      parent: "acme.cache_mid",
+      fields: {},
+    });
 
     try {
       // Compiles and caches the leaf, inherited requirement and all.
+      expect(validateProperties("acme.cache_leaf", {}).success).toBe(false);
       expect(
-        validateProperties("acme.cache_leaf", {}, { spaceId: SPACE }).success,
-      ).toBe(false);
-      expect(
-        validateProperties(
-          "acme.cache_leaf",
-          { inherited: "present" },
-          { spaceId: SPACE },
-        ).success,
+        validateProperties("acme.cache_leaf", { inherited: "present" }).success,
       ).toBe(true);
 
-      unregisterTypeSchema("acme.cache_root", SPACE);
+      unregisterTypeSchema("acme.cache_root");
 
       // The requirement came from a type that is gone, so it cannot still be
       // enforced two levels down. A stale cache entry is what would.
-      expect(
-        validateProperties("acme.cache_leaf", {}, { spaceId: SPACE }).success,
-      ).toBe(true);
+      expect(validateProperties("acme.cache_leaf", {}).success).toBe(true);
     } finally {
-      unregisterTypeSchema("acme.cache_leaf", SPACE);
-      unregisterTypeSchema("acme.cache_mid", SPACE);
-      unregisterTypeSchema("acme.cache_root", SPACE);
+      unregisterTypeSchema("acme.cache_leaf");
+      unregisterTypeSchema("acme.cache_mid");
+      unregisterTypeSchema("acme.cache_root");
     }
   });
 
@@ -1509,21 +1488,25 @@ describe("unregisterTypeSchema and the schemas it invalidates", () => {
   // is what makes it terminate anyway. Asserted rather than reasoned about,
   // because a walk that hangs takes the request thread with it.
   it("terminates on a cycle that reached the registry", () => {
-    registerTypeSchema(
-      { id: "cyc.a", version: 1, parent: "cyc.b", fields: {} },
-      SPACE,
-    );
-    registerTypeSchema(
-      { id: "cyc.b", version: 1, parent: "cyc.a", fields: {} },
-      SPACE,
-    );
+    registerTypeSchema({
+      id: "cyc.a",
+      version: 1,
+      parent: "cyc.b",
+      fields: {},
+    });
+    registerTypeSchema({
+      id: "cyc.b",
+      version: 1,
+      parent: "cyc.a",
+      fields: {},
+    });
     try {
       expect(() => {
-        unregisterTypeSchema("cyc.a", SPACE);
+        unregisterTypeSchema("cyc.a");
       }).not.toThrow();
     } finally {
-      unregisterTypeSchema("cyc.a", SPACE);
-      unregisterTypeSchema("cyc.b", SPACE);
+      unregisterTypeSchema("cyc.a");
+      unregisterTypeSchema("cyc.b");
     }
   });
 });
@@ -1535,80 +1518,80 @@ describe("unregisterTypeSchema and the schemas it invalidates", () => {
  * one of their chains without any of them being submitted.
  */
 describe("maxDescendantDepth", () => {
-  const SPACE = "01a02000-0000-7000-8000-0000000000e1";
   const ids = ["d.root", "d.mid", "d.leaf", "d.shallow", "d.deeper"];
 
   afterEach(() => {
-    for (const id of [...ids].reverse()) unregisterTypeSchema(id, SPACE);
+    for (const id of [...ids].reverse()) unregisterTypeSchema(id);
   });
 
   it("counts edges, so a type nothing inherits from answers zero", () => {
-    registerTypeSchema({ id: "d.root", version: 1, fields: {} }, SPACE);
-    expect(maxDescendantDepth("d.root", SPACE)).toBe(0);
+    registerTypeSchema({ id: "d.root", version: 1, fields: {} });
+    expect(maxDescendantDepth("d.root")).toBe(0);
   });
 
   it("takes the longest branch, not the first or the shortest", () => {
-    registerTypeSchema({ id: "d.root", version: 1, fields: {} }, SPACE);
-    registerTypeSchema(
-      { id: "d.shallow", version: 1, parent: "d.root", fields: {} },
-      SPACE,
-    );
-    registerTypeSchema(
-      { id: "d.mid", version: 1, parent: "d.root", fields: {} },
-      SPACE,
-    );
-    registerTypeSchema(
-      { id: "d.leaf", version: 1, parent: "d.mid", fields: {} },
-      SPACE,
-    );
-    registerTypeSchema(
-      { id: "d.deeper", version: 1, parent: "d.leaf", fields: {} },
-      SPACE,
-    );
-    expect(maxDescendantDepth("d.root", SPACE)).toBe(3);
-    expect(maxDescendantDepth("d.mid", SPACE)).toBe(2);
-    expect(maxDescendantDepth("d.deeper", SPACE)).toBe(0);
+    registerTypeSchema({ id: "d.root", version: 1, fields: {} });
+    registerTypeSchema({
+      id: "d.shallow",
+      version: 1,
+      parent: "d.root",
+      fields: {},
+    });
+    registerTypeSchema({
+      id: "d.mid",
+      version: 1,
+      parent: "d.root",
+      fields: {},
+    });
+    registerTypeSchema({
+      id: "d.leaf",
+      version: 1,
+      parent: "d.mid",
+      fields: {},
+    });
+    registerTypeSchema({
+      id: "d.deeper",
+      version: 1,
+      parent: "d.leaf",
+      fields: {},
+    });
+    expect(maxDescendantDepth("d.root")).toBe(3);
+    expect(maxDescendantDepth("d.mid")).toBe(2);
+    expect(maxDescendantDepth("d.deeper")).toBe(0);
   });
 
   // The identifier and the declared parent are two different hierarchies and
   // nothing keeps them in agreement, so counting by name would miss a subtype
   // named anywhere else.
   it("counts a subtype named outside its parent's namespace", () => {
-    registerTypeSchema({ id: "d.root", version: 1, fields: {} }, SPACE);
-    registerTypeSchema(
-      { id: "elsewhere.child", version: 1, parent: "d.root", fields: {} },
-      SPACE,
-    );
+    registerTypeSchema({ id: "d.root", version: 1, fields: {} });
+    registerTypeSchema({
+      id: "elsewhere.child",
+      version: 1,
+      parent: "d.root",
+      fields: {},
+    });
     try {
-      expect(maxDescendantDepth("d.root", SPACE)).toBe(1);
+      expect(maxDescendantDepth("d.root")).toBe(1);
     } finally {
-      unregisterTypeSchema("elsewhere.child", SPACE);
-    }
-  });
-
-  it("does not count another space's subtype", () => {
-    registerTypeSchema({ id: "d.root", version: 1, fields: {} }, SPACE);
-    registerTypeSchema(
-      { id: "d.mid", version: 1, parent: "d.root", fields: {} },
-      "01a02000-0000-7000-8000-0000000000e2",
-    );
-    try {
-      expect(maxDescendantDepth("d.root", SPACE)).toBe(0);
-    } finally {
-      unregisterTypeSchema("d.mid", "01a02000-0000-7000-8000-0000000000e2");
+      unregisterTypeSchema("elsewhere.child");
     }
   });
 
   it("terminates on a cycle that reached the registry", () => {
-    registerTypeSchema(
-      { id: "d.mid", version: 1, parent: "d.leaf", fields: {} },
-      SPACE,
-    );
-    registerTypeSchema(
-      { id: "d.leaf", version: 1, parent: "d.mid", fields: {} },
-      SPACE,
-    );
-    expect(() => maxDescendantDepth("d.mid", SPACE)).not.toThrow();
+    registerTypeSchema({
+      id: "d.mid",
+      version: 1,
+      parent: "d.leaf",
+      fields: {},
+    });
+    registerTypeSchema({
+      id: "d.leaf",
+      version: 1,
+      parent: "d.mid",
+      fields: {},
+    });
+    expect(() => maxDescendantDepth("d.mid")).not.toThrow();
   });
 });
 
@@ -1618,29 +1601,29 @@ describe("maxDescendantDepth", () => {
  * stored chain did, with nothing to act on and no way back through the API.
  */
 describe("a chain past the resolution backstop", () => {
-  const SPACE = "01a02000-0000-7000-8000-0000000000e3";
   const link = (n: number): string => `deep.n${String(n)}`;
   const LENGTH = MAX_RESOLUTION_DEPTH + 5;
 
   beforeEach(() => {
-    registerTypeSchema({ id: link(0), version: 1, fields: {} }, SPACE);
+    registerTypeSchema({ id: link(0), version: 1, fields: {} });
     for (let n = 1; n < LENGTH; n += 1) {
-      registerTypeSchema(
-        { id: link(n), version: 1, parent: link(n - 1), fields: {} },
-        SPACE,
-      );
+      registerTypeSchema({
+        id: link(n),
+        version: 1,
+        parent: link(n - 1),
+        fields: {},
+      });
     }
   });
 
   afterEach(() => {
-    for (let n = LENGTH - 1; n >= 0; n -= 1)
-      unregisterTypeSchema(link(n), SPACE);
+    for (let n = LENGTH - 1; n >= 0; n -= 1) unregisterTypeSchema(link(n));
   });
 
   it("raises a coded error rather than a bare one", () => {
     let thrown: unknown;
     try {
-      getResolvedFields(link(LENGTH - 1), SPACE);
+      getResolvedFields(link(LENGTH - 1));
     } catch (err) {
       thrown = err;
     }
@@ -1649,15 +1632,13 @@ describe("a chain past the resolution backstop", () => {
   });
 
   it("raises it from the classification walk too", () => {
-    expect(() => isSubtypeOf(link(LENGTH - 1), link(0), SPACE)).toThrow(
-      MarfaError,
-    );
+    expect(() => isSubtypeOf(link(LENGTH - 1), link(0))).toThrow(MarfaError);
   });
 
   // The plain lookup is what `PUT /types/{id}` reads, so a type nothing can
   // resolve is still a type somebody can correct.
   it("leaves the stored schema readable, which is the way back", () => {
-    const schema = getTypeSchema(link(LENGTH - 1), SPACE);
+    const schema = getTypeSchema(link(LENGTH - 1));
     expect(schema?.id).toBe(link(LENGTH - 1));
     expect(schema?.parent).toBe(link(LENGTH - 2));
   });

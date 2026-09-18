@@ -60,9 +60,8 @@ export interface MarfaAuthOptions {
    *  proxy sends, so a self-hoster configures nothing. */
   trustedProxyHeader?: string | null;
   /** Storage handle threaded into the OAuth Provider plugin's
-   *  `clientReference`, `customAccessTokenClaims`, and `hooks.after`
-   *  matchers. Needed for the `system.connection` projection of the
-   *  plugin's grant lifecycle and the space_id binding on issued tokens. */
+   *  `customAccessTokenClaims` and `hooks.after` matchers. Needed for the
+   *  `system.connection` projection of the plugin's grant lifecycle. */
   storage?: Storage;
   /** Per-process API key salt — shared with the bearer middleware so the
    *  plugin's `storeTokens.hash` and the middleware's hash output match,

@@ -572,7 +572,6 @@ describe("POST /items — the operator gate", () => {
         is_operator: false,
       },
       hashApiKey(spaceKey, TEST_API_KEY_SALT),
-      "space-x",
     );
 
     const res = await request(ctx.app, "POST", "/items", {
@@ -640,7 +639,6 @@ describe("POST /items — the operator gate", () => {
         type_permissions: { "marfa.captured_email": "write" },
       },
       hashApiKey(humanKey, TEST_API_KEY_SALT),
-      "space-x",
     );
     const res = await request(ctx.app, "POST", "/items", {
       key: humanKey,
@@ -670,7 +668,6 @@ describe("POST /items — the operator gate", () => {
         is_operator: false,
       },
       hashApiKey(spaceReaderKey, TEST_API_KEY_SALT),
-      "space-x",
     );
     const res = await request(ctx.app, "GET", "/items?type=system.connection", {
       key: spaceReaderKey,
@@ -2740,13 +2737,10 @@ describe("GET /items?include=system", () => {
     // The system row goes in through the storage layer, because the reserved
     // namespace refuses a write to every credential. What this block is about
     // is who reads one back; the seed is not the claim.
-    const device = await ctx.storage.items.create(
-      {
-        type: "system.device",
-        properties: { name: `include-system-${marker}`, kind: "laptop" },
-      },
-      ctx.spaceId,
-    );
+    const device = await ctx.storage.items.create({
+      type: "system.device",
+      properties: { name: `include-system-${marker}`, kind: "laptop" },
+    });
     await ctx.storage.metadata.set(device.id, [`include-system-${marker}`]);
     return { noteId: noteItem.id, deviceId: device.id };
   }

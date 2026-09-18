@@ -19,57 +19,18 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import type { ApiKey, SpacePermission } from "@withmarfa/shared";
-import {
-  hashApiKey,
-  hasOperatorAuthority,
-  isReservedCredentialSource,
-} from "./auth.js";
+import type { SpacePermission } from "@withmarfa/shared";
+import { hashApiKey, isReservedCredentialSource } from "./auth.js";
 import {
   createTestContext,
   request,
   TEST_API_KEY_SALT,
   type TestContext,
 } from "../test-utils.js";
-import type { Storage } from "../storage/interface.js";
 
 // ---------------------------------------------------------------------------
 // Unit — the predicates the routes now share
 // ---------------------------------------------------------------------------
-
-function fakeKey(overrides: Partial<ApiKey> = {}): ApiKey {
-  return {
-    id: "key-test",
-    label: "test",
-    source: "test",
-    is_operator: false,
-    default_tier: "library",
-    type_permissions: {},
-    extension_permissions: {},
-    edge_permissions: {},
-    metadata_permissions: {},
-    created_at: new Date().toISOString(),
-    last_used_at: null,
-    ...overrides,
-  };
-}
-
-describe("hasOperatorAuthority", () => {
-  it("admits an unbound operator key", () => {
-    expect(hasOperatorAuthority(fakeKey({ is_operator: true }))).toBe(true);
-  });
-
-  it("refuses a space-bound one — the shape the escalation fix named", () => {
-    expect(
-      hasOperatorAuthority(fakeKey({ is_operator: true, space_id: "t-a" })),
-    ).toBe(false);
-  });
-
-  it("refuses a credential carrying no operator flag", () => {
-    expect(hasOperatorAuthority(fakeKey())).toBe(false);
-    expect(hasOperatorAuthority(fakeKey({ space_id: "t-a" }))).toBe(false);
-  });
-});
 
 describe("isReservedCredentialSource", () => {
   it("claims the two reserved prefixes", () => {
@@ -101,17 +62,10 @@ afterAll(async () => {
   await ctx.cleanup();
 });
 
-function spaceStore(): NonNullable<Storage["spaces"]> {
-  const spaces = ctx.storage.spaces;
-  if (!spaces) throw new Error("test context has no space store");
-  return spaces;
-}
-
 let mintCounter = 0;
 
 async function mintKey(opts: {
   spacePermissions?: SpacePermission[];
-  spaceId?: string;
   is_operator?: boolean;
   label?: string;
   source?: string;
@@ -132,26 +86,22 @@ async function mintKey(opts: {
       is_operator: opts.is_operator ?? false,
     },
     hashApiKey(raw, TEST_API_KEY_SALT),
-    opts.spaceId,
   );
   return raw;
 }
 
 /** A `system.connection` of kind integration, seeded through storage so
  *  the test doesn't depend on the install pipeline. */
-async function seedConnection(spaceId: string): Promise<string> {
-  const conn = await ctx.storage.items.create(
-    {
-      type: "system.connection",
-      properties: {
-        kind: "integration",
-        status: "active",
-        granted_at: new Date().toISOString(),
-        integration_ref: "acme.demo",
-      },
+async function seedConnection(): Promise<string> {
+  const conn = await ctx.storage.items.create({
+    type: "system.connection",
+    properties: {
+      kind: "integration",
+      status: "active",
+      granted_at: new Date().toISOString(),
+      integration_ref: "acme.demo",
     },
-    spaceId,
-  );
+  });
   return conn.id;
 }
 
@@ -159,109 +109,15 @@ async function seedConnection(spaceId: string): Promise<string> {
 // /keys — list / revoke / update
 // ---------------------------------------------------------------------------
 
-describe("/keys — the space fence keys on the binding, not on the permission", () => {
-  it("hides other spaces' keys from a space-bound holder of space.keys", async () => {
-    const spaceA = await spaceStore().create("authority-keys-A");
-    const spaceB = await spaceStore().create("authority-keys-B");
-    await mintKey({
-      spaceId: spaceB.id,
-      label: "space-b-secret-key",
-    });
-    const boundCaller = await mintKey({
-      spacePermissions: ["space.keys"],
-      spaceId: spaceA.id,
-    });
-
-    const res = await request(ctx.app, "GET", "/keys", { key: boundCaller });
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as {
-      keys: { space_id?: string | null; label: string }[];
-    };
-    // Holding the permission is not holding it everywhere.
-    expect(body.keys.every((k) => k.space_id === spaceA.id)).toBe(true);
-    expect(body.keys.some((k) => k.label === "space-b-secret-key")).toBe(false);
-  });
-
-  it("404s a space-bound holder revoking another space's key", async () => {
-    const spaceA = await spaceStore().create("authority-keys-revoke-A");
-    const spaceB = await spaceStore().create("authority-keys-revoke-B");
-    await mintKey({
-      spaceId: spaceB.id,
-      label: "victim-revoke",
-    });
-    const victim = (await ctx.storage.keys.list()).find(
-      (k) => k.label === "victim-revoke",
-    );
-    if (!victim) throw new Error("seed key not found");
-    const boundCaller = await mintKey({
-      spacePermissions: ["space.keys"],
-      spaceId: spaceA.id,
-    });
-
-    const res = await request(ctx.app, "DELETE", `/keys/${victim.id}`, {
-      key: boundCaller,
-    });
-    expect(res.status).toBe(404);
-
-    // `keys.get` filters revoked rows, so a surviving row is the proof the
-    // refused DELETE did not land.
-    const after = await ctx.storage.keys.get(victim.id);
-    expect(after).not.toBeNull();
-  });
-
-  it("404s a space-bound holder rewriting another space's key permissions", async () => {
-    const spaceA = await spaceStore().create("authority-keys-update-A");
-    const spaceB = await spaceStore().create("authority-keys-update-B");
-    await mintKey({
-      spaceId: spaceB.id,
-      label: "victim-update",
-    });
-    const victim = (await ctx.storage.keys.list()).find(
-      (k) => k.label === "victim-update",
-    );
-    if (!victim) throw new Error("seed key not found");
-    const boundCaller = await mintKey({
-      spacePermissions: ["space.keys"],
-      spaceId: spaceA.id,
-    });
-
-    const res = await request(ctx.app, "PATCH", `/keys/${victim.id}`, {
-      key: boundCaller,
-      body: { type_permissions: { "*": "write" } },
-    });
-    expect(res.status).toBe(404);
-
-    const after = await ctx.storage.keys.get(victim.id);
-    expect(after?.type_permissions).toEqual({});
-  });
-
-  it("still lets an unbound operator key see and address every space", async () => {
-    const space = await spaceStore().create("authority-keys-control");
-    await mintKey({
-      spaceId: space.id,
-      label: "control-visible",
-    });
-
-    const res = await request(ctx.app, "GET", "/keys", {
-      key: ctx.operatorKey,
-    });
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as { keys: { label: string }[] };
-    expect(body.keys.some((k) => k.label === "control-visible")).toBe(true);
-  });
-});
-
 // ---------------------------------------------------------------------------
 // POST /keys — the reserved source prefixes
 // ---------------------------------------------------------------------------
 
 describe("POST /keys — integration source prefixes are not mintable", () => {
   it("refuses a source claiming a connection's integration identity", async () => {
-    const space = await spaceStore().create("authority-source-reserve");
-    const connectionId = await seedConnection(space.id);
+    const connectionId = await seedConnection();
     const caller = await mintKey({
       spacePermissions: ["space.keys"],
-      spaceId: space.id,
     });
 
     const res = await request(ctx.app, "POST", "/keys", {
@@ -279,10 +135,8 @@ describe("POST /keys — integration source prefixes are not mintable", () => {
   });
 
   it("still accepts an ordinary source", async () => {
-    const space = await spaceStore().create("authority-source-ok");
     const caller = await mintKey({
       spacePermissions: ["space.keys"],
-      spaceId: space.id,
     });
 
     const res = await request(ctx.app, "POST", "/keys", {
@@ -299,17 +153,15 @@ describe("POST /keys — integration source prefixes are not mintable", () => {
 
 describe("extensions — the reserved namespaces are nobody's", () => {
   it("refuses a space-bound credential writing a reserved namespace", async () => {
-    const space = await spaceStore().create("authority-ext-reserved");
     const boundCaller = await mintKey({
-      spaceId: space.id,
       // Granted the namespace outright, so the refusal below can only be the
       // reserved-namespace gate rather than a missing map entry.
       extension_permissions: { "*": "write" },
     });
-    const item = await ctx.storage.items.create(
-      { type: "core.note", properties: { body: "reserved-host" } },
-      space.id,
-    );
+    const item = await ctx.storage.items.create({
+      type: "core.note",
+      properties: { body: "reserved-host" },
+    });
 
     const res = await request(
       ctx.app,
@@ -328,28 +180,14 @@ describe("extensions — the reserved namespaces are nobody's", () => {
   });
 
   it("refuses an operator key on a reserved namespace too", async () => {
-    const item = await ctx.storage.items.create(
-      { type: "core.note", properties: { body: "reserved-control" } },
-      undefined,
-    );
-    // The gate used to admit the operator tier and then ask the namespace
-    // map, which needed a credential holding both. There is none: the row
-    // constraint makes `is_operator` and space-less the same thing, and a
-    // space-less credential can hold no permissions at all, so the mint that
-    // used to build this control is itself refused now. The namespace is
-    // closed to every credential, and the platform writes it through the
-    // storage layer as it writes a `system.*` row.
-    const suffix = Math.random().toString(36).slice(2, 10);
-    const minted = await request(ctx.app, "POST", "/keys", {
-      key: ctx.operatorKey,
-      body: {
-        label: `reserved-ext-${suffix}`,
-        source: `reserved-ext-${suffix}`,
-        extension_permissions: { "*": "write" },
-      },
+    const item = await ctx.storage.items.create({
+      type: "core.note",
+      properties: { body: "reserved-control" },
     });
-    expect(minted.status).toBe(403);
-
+    // The gate used to admit the operator tier and then ask the namespace
+    // map. The operator key holds no map at all, and the namespace is closed
+    // to every credential anyway: the platform writes it through the storage
+    // layer as it writes a `system.*` row.
     const res = await request(
       ctx.app,
       "PUT",

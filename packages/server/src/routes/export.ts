@@ -2,15 +2,14 @@ import { createGzip } from "node:zlib";
 import { Readable, PassThrough } from "node:stream";
 import { createRoute, z } from "@hono/zod-openapi";
 import type { Context } from "hono";
-import { MarfaError, ErrorCode, resolveEnforcement } from "@withmarfa/shared";
+import { resolveEnforcement } from "@withmarfa/shared";
 import * as tar from "tar-stream";
-import type { ApiKey } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { assertTypeFilter } from "./_type-filter.js";
 import { withPreparedHeaders } from "../prepared-headers.js";
-import { resolveBlobForSpace } from "../storage/blob-reader.js";
 import { requireAuth, getTypeFilter } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
+import { readSpaceConfig } from "../storage/space-config.js";
 import type { SourceFilterSettings } from "../storage/filter-sql.js";
 import type { BlobBackend } from "../storage/blob-backend.js";
 import { collectBlobHashes } from "../storage/blob-utils.js";
@@ -21,42 +20,6 @@ import {
   refuseUnknownQueryParams,
   UNKNOWN_PARAM_NOTE,
 } from "./_unknown-query-keys.js";
-
-/**
- * Resolve the target space for an export request.
- *
- * An export reads the caller's own space, and `?target_space_id` is an
- * assertion about which space that is rather than a way of naming another:
- * a mismatch is refused with 403 so a client exporting the wrong space is
- * told, instead of receiving somebody else's rows under its own name.
- *
- * **The two space-less arms are gone rather than dormant.** They existed for
- * the operator key, the only credential that can be space-less, and that key
- * holds no content permissions at all: the read narrowing every export runs
- * through resolved to nothing, so both the named-space arm and the
- * whole-instance fallback streamed an empty body while writing an audit
- * record saying a space had been exported. Moving a space is a key minted
- * into it with everything, and such a key takes the ordinary path here.
- */
-function resolveExportSpace(
-  apiKey: ApiKey | undefined,
-  targetParam: string | undefined,
-): string {
-  const callerSpace = apiKey?.space_id;
-  if (!callerSpace) {
-    throw new MarfaError(
-      ErrorCode.FORBIDDEN,
-      "Export is scoped to one space and this credential is bound to none. Mint a key into the space and export with that.",
-    );
-  }
-  if (targetParam !== undefined && targetParam !== callerSpace) {
-    throw new MarfaError(
-      ErrorCode.FORBIDDEN,
-      "Cannot export another space's data — target_space_id must match caller's space_id (or be omitted).",
-    );
-  }
-  return callerSpace;
-}
 
 // ---------------------------------------------------------------------------
 // Route definition
@@ -103,14 +66,6 @@ const exportRoute = createRoute({
         .string()
         .optional()
         .describe("Output format: `ndjson` (default) or `archive`"),
-      // An assertion, not a selector: the export is always the caller's own
-      // space, and naming a different one is refused rather than honored.
-      target_space_id: z
-        .string()
-        .optional()
-        .describe(
-          "Must match the caller's own space when supplied; naming another space is refused",
-        ),
     }),
   },
   responses: {
@@ -169,55 +124,40 @@ export function exportRoutes(storage: Storage, blobBackend: BlobBackend) {
 
     const query = c.req.valid("query");
 
-    const spaceId = resolveExportSpace(c.get("apiKey"), query.target_space_id);
-
     // Audit the export attempt before streaming starts, stamped for both
-    // the archive and NDJSON paths. An export is a bulk extraction of a
-    // space, so the record has to exist whether or not the stream that
+    // the archive and NDJSON paths. An export is a bulk extraction of the
+    // instance, so the record has to exist whether or not the stream that
     // follows completes.
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
-      space_id: spaceId,
       key_id: c.get("apiKey")?.id,
       action: "export.space",
       resource_type: "space",
-      resource_id: spaceId,
+      resource_id: "me",
       details: {
         format: query.format ?? "ndjson",
         scope: "space",
-        ...(query.target_space_id !== undefined
-          ? { target_space_id: query.target_space_id }
-          : {}),
       },
     });
 
-    // An export is a list read, so the space's read-narrowing lever applies
-    // to it. Leaving it out would make the control bypassable by swapping
-    // endpoint rather than by rewording the query.
-    const spaceConfigForExport = storage.spaces
-      ? await storage.spaces.getConfig(spaceId)
-      : null;
+    // An export is a list read, so the instance's read-narrowing lever
+    // applies to it. Leaving it out would make the control bypassable by
+    // swapping endpoint rather than by rewording the query.
+    const spaceConfigForExport = await readSpaceConfig(storage.settings);
     const sourceFilter = resolveEnforcement(
       spaceConfigForExport,
       c.get("apiKey"),
     ).source_filter;
 
     if (query.format === "archive") {
-      return handleArchiveExport(
-        c,
-        storage,
-        blobBackend,
-        spaceId,
-        sourceFilter,
-      );
+      return handleArchiveExport(c, storage, blobBackend, sourceFilter);
     }
 
     // Pattern grammar, matching `GET /items` and `/search`: the parameter
     // means the type and everything under it on all three, so the explicit
     // `parent.*` spelling has to be accepted on all three too.
     const type = query.type;
-    // The space resolved once above, as the archive path passes it.
-    assertTypeFilter(type, spaceId);
+    assertTypeFilter(type);
 
     // Same resolution as `GET /items`, sentinel included. Export shares the
     // storage filter with the listing, so a door that could not name every
@@ -243,7 +183,6 @@ export function exportRoutes(storage: Storage, blobBackend: BlobBackend) {
             let cursor: string | undefined;
             do {
               const result = await storage.items.list({
-                spaceId,
                 type,
                 state,
                 all_states: allStates,
@@ -278,7 +217,6 @@ export function exportRoutes(storage: Storage, blobBackend: BlobBackend) {
             let edgeCursor: string | undefined;
             do {
               const page = await storage.edges.list({
-                spaceId,
                 limit: 200,
                 cursor: edgeCursor,
               });
@@ -324,14 +262,6 @@ interface ArchiveManifest {
   version: number;
   format: string;
   created_at: string;
-  /**
-   * space_id stamped at export time, and always a string on anything
-   * this build writes: an export is scoped to the caller's space. `null`
-   * survives on the read side for archives written before that was true,
-   * and `/admin/restore-archive` uses the field to verify cross-space
-   * restore attempts.
-   */
-  space_id: string | null;
   item_count: number;
   edge_count: number;
   blob_count: number;
@@ -350,14 +280,11 @@ async function handleArchiveExport(
   c: HonoContext,
   storage: Storage,
   blobBackend: BlobBackend,
-  /** Already resolved by the route handler — passed in rather than
-   *  re-resolved so the space decision happens exactly once per request. */
-  spaceId: string,
-  /** The space's `source_filter` lever, resolved alongside `spaceId`. */
+  /** The instance's `source_filter` lever, resolved by the route handler. */
   sourceFilter: SourceFilterSettings | undefined,
 ): Promise<Response> {
   const type = c.req.query("type");
-  assertTypeFilter(type, spaceId);
+  assertTypeFilter(type);
   // The NDJSON path's twin, and it has to read the parameter the same way:
   // the two formats are one door with one query schema, so a sentinel
   // honored by one and stripped by the other would be worse than neither.
@@ -384,7 +311,6 @@ async function handleArchiveExport(
     let cursor: string | undefined;
     do {
       const result = await storage.items.list({
-        spaceId,
         type,
         state,
         all_states: allStates,
@@ -417,7 +343,6 @@ async function handleArchiveExport(
     let edgeCursor: string | undefined;
     do {
       const page = await storage.edges.list({
-        spaceId,
         limit: 200,
         cursor: edgeCursor,
       });
@@ -446,7 +371,7 @@ async function handleArchiveExport(
     // it decides whether the consent screen offers a root read-only or
     // read-and-write. An archive that drops it makes the restore guess,
     // and the default it guessed was the permissive one.
-    for (const row of await storage.types.listCustomWithProvenance(spaceId)) {
+    for (const row of await storage.types.listCustomWithProvenance()) {
       typeLines.push(
         JSON.stringify({
           custom_type: row.schema,
@@ -461,20 +386,13 @@ async function handleArchiveExport(
       );
       customTypeCount += 1;
     }
-    for (const schema of await storage.edgeTypes.list(spaceId)) {
+    for (const schema of await storage.edgeTypes.list()) {
       typeLines.push(JSON.stringify({ custom_edge_type: schema }));
       customEdgeTypeCount += 1;
     }
 
-    // The space's own bucket and nothing else: `resolveBlobForSpace`
-    // widens only for a reader with no space, and this one always has one.
-    // A hash registered into the instance-wide `""` bucket is therefore
-    // not carried, which is the right answer for a space export and the
-    // opposite of what this used to do — it asked `""` directly, where a
-    // space's hashes do not live, and recorded `blob_count: 0` while
-    // reporting success.
     for (const hash of blobHashes) {
-      const record = await resolveBlobForSpace(storage, spaceId, hash);
+      const record = await storage.blobs.get(hash);
       if (record) {
         blobMeta[hash] = { mime_type: record.mime_type, size: record.size };
       }
@@ -486,7 +404,6 @@ async function handleArchiveExport(
     version: 1,
     format: "marfa-archive-v1",
     created_at: new Date().toISOString(),
-    space_id: spaceId,
     item_count: lines.length,
     edge_count: edgeLines.length,
     blob_count: Object.keys(blobMeta).length,

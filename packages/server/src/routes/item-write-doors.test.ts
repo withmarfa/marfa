@@ -56,10 +56,7 @@ interface Credential {
 }
 
 /** An ordinary credential, holding write on the two types the doors write. */
-async function credentialFor(
-  spaceId: string,
-  name: string,
-): Promise<Credential> {
+async function credentialFor(name: string): Promise<Credential> {
   const raw = `marfa_k1_doors_${Math.random().toString(36).slice(2, 14)}`;
   await ctx.storage.keys.create(
     {
@@ -68,7 +65,6 @@ async function credentialFor(
       type_permissions: { "core.note": "write", "core.bookmark": "write" },
     },
     hashApiKey(raw, TEST_API_KEY_SALT),
-    spaceId,
   );
   return { key: raw, itemSource: name };
 }
@@ -98,22 +94,16 @@ async function bookmarkRow(
  * nothing this server mints can be the owning integration, so the store is
  * the only writer a mirror has.
  */
-async function mirrorRow(
-  spaceId: string,
-  integration: string,
-): Promise<string> {
-  const row = await ctx.storage.items.create(
-    {
-      type: "core.bookmark",
-      source: `integration:${integration}`,
-      source_id: `mirror-${Math.random().toString(36).slice(2, 10)}`,
-      properties: {
-        url: "https://upstream.example/a",
-        title: "the owning integration's copy",
-      },
+async function mirrorRow(integration: string): Promise<string> {
+  const row = await ctx.storage.items.create({
+    type: "core.bookmark",
+    source: `integration:${integration}`,
+    source_id: `mirror-${Math.random().toString(36).slice(2, 10)}`,
+    properties: {
+      url: "https://upstream.example/a",
+      title: "the owning integration's copy",
     },
-    spaceId,
-  );
+  });
   return row.id;
 }
 
@@ -371,29 +361,26 @@ const DOORS: Door[] = [
  * these are the sibling doors it does not reach.
  */
 describe("mirror protection on the doors that resolve a row by id", () => {
-  let spaceId: string;
   let mine: Credential;
 
   beforeAll(async () => {
-    const space = await ctx.storage.spaces!.create("mirror-by-id");
-    spaceId = space.id;
-    mine = await credentialFor(spaceId, "acme/mirror-mine");
+    mine = await credentialFor("acme/mirror-mine");
   });
 
   it("refuses PATCH /items/{id} on an integration's mirror", async () => {
-    const id = await mirrorRow(spaceId, "acme/mirror-sibling");
+    const id = await mirrorRow("acme/mirror-sibling");
     const res = await request(ctx.app, "PATCH", `/items/${id}`, {
       key: mine.key,
       body: { properties: { title: "overwritten" } },
     });
     // The rule that refused, not merely that something did.
     expect(await refusalCode(res)).toBe("integration_owned");
-    const after = await ctx.storage.items.get(id, spaceId);
+    const after = await ctx.storage.items.get(id);
     expect(after?.properties.title).toBe("the owning integration's copy");
   });
 
   it("refuses POST /items/bulk (by id) on an integration's mirror", async () => {
-    const id = await mirrorRow(spaceId, "acme/mirror-sibling");
+    const id = await mirrorRow("acme/mirror-sibling");
     const res = await request(ctx.app, "POST", "/items/bulk", {
       key: mine.key,
       body: {
@@ -401,7 +388,7 @@ describe("mirror protection on the doors that resolve a row by id", () => {
       },
     });
     expect(await refusalCode(res)).toBe("integration_owned");
-    const after = await ctx.storage.items.get(id, spaceId);
+    const after = await ctx.storage.items.get(id);
     expect(after?.properties.title).toBe("the owning integration's copy");
   });
 
@@ -409,7 +396,7 @@ describe("mirror protection on the doors that resolve a row by id", () => {
     // Narrowing rather than refusing: the door takes a filter, and its
     // established answer to a row the caller may not touch is to leave it
     // out of the match set rather than fail the action over every other row.
-    const mirror = await mirrorRow(spaceId, "acme/mirror-sibling");
+    const mirror = await mirrorRow("acme/mirror-sibling");
     const own = await bookmarkRow(mine, `own-${String(Math.random())}`);
     const res = await bulkActionWrite({
       key: mine.key,
@@ -417,9 +404,9 @@ describe("mirror protection on the doors that resolve a row by id", () => {
       properties: { title: "patched by bulk action" },
     });
     expect(res.status).toBe(202);
-    const mirrorAfter = await ctx.storage.items.get(mirror, spaceId);
+    const mirrorAfter = await ctx.storage.items.get(mirror);
     expect(mirrorAfter?.properties.title).toBe("the owning integration's copy");
-    const ownAfter = await ctx.storage.items.get(own.id, spaceId);
+    const ownAfter = await ctx.storage.items.get(own.id);
     expect(ownAfter?.properties.title).toBe("patched by bulk action");
   });
 
@@ -432,7 +419,7 @@ describe("mirror protection on the doors that resolve a row by id", () => {
       body: { properties: { title: "its own update" } },
     });
     expect(res.status).toBe(200);
-    const after = await ctx.storage.items.get(own.id, spaceId);
+    const after = await ctx.storage.items.get(own.id);
     expect(after?.properties.title).toBe("its own update");
   });
 });
@@ -463,15 +450,12 @@ const NOT_A_PROPERTIES_DOOR: Record<string, string> = {
 // ---------------------------------------------------------------------------
 
 describe.each(DOORS)("$name", (door) => {
-  let spaceId: string;
   let mine: Credential;
   let seq = 0;
 
   beforeAll(async () => {
     const slug = door.name.replace(/[^a-z]+/gi, "-").toLowerCase();
-    const space = await ctx.storage.spaces!.create(slug);
-    spaceId = space.id;
-    mine = await credentialFor(spaceId, `acme/${slug}-mine`);
+    mine = await credentialFor(`acme/${slug}-mine`);
   });
 
   it("writes the row it names when it names the row's own type", async () => {
@@ -486,7 +470,7 @@ describe.each(DOORS)("$name", (door) => {
     });
     expect(res.status).toBeLessThan(400);
     if (door.name === "POST /items (create)") return;
-    const after = await ctx.storage.items.get(target.id, spaceId);
+    const after = await ctx.storage.items.get(target.id);
     expect(after?.properties.title).toBe("renamed");
   });
 
@@ -519,7 +503,7 @@ describe.each(DOORS)("$name", (door) => {
       // after writing would satisfy the line above and still have
       // corrupted the row, which is the failure this whole file exists
       // to catch.
-      const after = await ctx.storage.items.get(target.id, spaceId);
+      const after = await ctx.storage.items.get(target.id);
       expect(after?.type).toBe("core.bookmark");
       expect(after?.properties.title).toBe("as synced");
     },

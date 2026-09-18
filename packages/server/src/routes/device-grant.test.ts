@@ -1191,11 +1191,7 @@ describe("POST /auth/device/consent, approving merges into a standing grant", ()
     // refused now (it would strand the plugin's records), so the shape this
     // case needs, revoked on the state axis and still active on the status
     // axis, is written the way a misbehaving operator path would leave it.
-    await ctx.storage.items.transition(
-      grantId,
-      "revoked",
-      original.space_id ?? undefined,
-    );
+    await ctx.storage.items.transition(grantId, "revoked");
     // The fixture only means something if it is admitted by the predicate the
     // clause was added to. `status` still reads "active", so the merge would
     // take these scopes as standing were the `state` clause removed.
@@ -1467,11 +1463,9 @@ describe("POST /auth/device/consent, approving merges into a standing grant", ()
     });
     expect(items.data.length).toBe(1);
     const grant = items.data[0]!;
-    await ctx.storage.items.update(
-      grant.id,
-      { properties: { scopes: ["core.note:read"] } },
-      grant.space_id ?? undefined,
-    );
+    await ctx.storage.items.update(grant.id, {
+      properties: { scopes: ["core.note:read"] },
+    });
 
     const poll = await pollToken(ctx, wide.device_code, clientId);
     expect(poll.status).toBe(200);
@@ -1617,13 +1611,10 @@ describe("POST /auth/device/token — RFC 8628 error paths", () => {
     // Seed an item of the wrong type — a plain note — and approve the
     // device code against it, bypassing the consent UI. This simulates
     // a projection drift the type check is meant to catch.
-    const decoyNote = await ctx.storage.items.create(
-      {
-        type: "core.note",
-        properties: { body: "decoy note — must not become a grant" },
-      },
-      undefined,
-    );
+    const decoyNote = await ctx.storage.items.create({
+      type: "core.note",
+      properties: { body: "decoy note — must not become a grant" },
+    });
     const codeRow = await ctx.storage.oauth.findDeviceCodeByUserCode(
       initResult.user_code,
     );

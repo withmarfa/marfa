@@ -36,7 +36,6 @@ import {
 import type { TestContext } from "../test-utils.js";
 import * as logger from "../middleware/logger.js";
 import { resolveRevokeClientId } from "./oauth-provider.js";
-import { NO_GRANT_SPACE_MESSAGE } from "./grant-space.js";
 
 // Every case signs a user up and in and drives a full authorization-code
 // grant before asserting anything, which is more than the default budget
@@ -514,12 +513,8 @@ describe("POST /auth/oauth2/revoke with a refresh token ends the grant", () => {
 
     // The shape a hand-deleted record leaves: plugin rows, no projection.
     const grant = await onlyGrant(ctx);
-    await ctx.storage.items.transition(
-      grant.id,
-      "revoked",
-      grant.space_id ?? undefined,
-    );
-    await ctx.storage.items.purge(grant.id, grant.space_id ?? undefined);
+    await ctx.storage.items.transition(grant.id, "revoked");
+    await ctx.storage.items.purge(grant.id);
 
     const res = await revoke(ctx, tokens.refresh_token as string, clientId);
     expect(res.status).toBe(200);
@@ -626,7 +621,6 @@ async function seedUnboundTokenPair(
     ),
     clientId,
     authUserId,
-    referenceId: null,
     scopes,
     accessTtlMs: 3600_000,
   });
@@ -651,9 +645,6 @@ describe("a token minted before the grant's space resolved", () => {
 
     const grantBefore = await onlyGrant(ctx);
     expect(grantBefore.properties.status).toBe("active");
-    // The projection is in a space; the legacy token is not. That pairing is
-    // the whole case, so assert it rather than assume it.
-    expect(grantBefore.space_id).toBeTruthy();
 
     const legacy = await seedUnboundTokenPair(ctx, clientId, authUserId, [
       "core.note:read",
@@ -666,51 +657,6 @@ describe("a token minted before the grant's space resolved", () => {
     const rows = await grantRows(ctx, clientId, authUserId);
     expect(rows.consents).toBe(0);
     expect(rows.accessTokens).toBe(0);
-  });
-
-  it("is refused at the token endpoint rather than rotated into another one", async () => {
-    // The plugin copies the presented token's reference onto the rotated
-    // token instead of resolving it again, so rotating an unbound token
-    // produces another unbound token and the bearer middleware answers 401 on
-    // every request made with it, naming nothing. This is the only grant that
-    // reaches a mint without passing through a code, so no other guard sees
-    // it.
-    ctx = await createTestContext({});
-    const clientId = await seedClient(ctx, "Rotating App");
-    const cookie = await signInUser(ctx, "unbound-refresh@example.com");
-    const authUserId = await authUserIdFor(ctx, "unbound-refresh@example.com");
-    await codeGrant(ctx, clientId, cookie, "core.note:read offline_access");
-    const legacy = await seedUnboundTokenPair(ctx, clientId, authUserId, [
-      "core.note:read",
-      "offline_access",
-    ]);
-
-    // The premise: the token authenticates and is refused for its space, not
-    // for being unknown.
-    const data = await request(ctx.app, "GET", "/items?type=core.note", {
-      headers: { authorization: `Bearer ${legacy.accessToken}` },
-    });
-    expect(data.status).toBe(401);
-
-    const res = await request(ctx.app, "POST", "/auth/oauth2/token", {
-      form: {
-        grant_type: "refresh_token",
-        refresh_token: legacy.refreshToken,
-        client_id: clientId,
-      },
-      headers: { origin: ORIGIN },
-    });
-    expect(res.status).toBe(400);
-    const body = (await res.json()) as {
-      error: string;
-      error_description: string;
-    };
-    expect(body.error).toBe("invalid_grant");
-    expect(body.error_description).toBe(NO_GRANT_SPACE_MESSAGE);
-
-    // The grant itself is untouched: this refuses a credential, it does not
-    // revoke anything.
-    expect((await onlyGrant(ctx)).properties.status).toBe("active");
   });
 });
 

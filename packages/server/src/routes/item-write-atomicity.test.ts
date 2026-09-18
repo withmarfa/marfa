@@ -86,13 +86,10 @@ const uniq = (p: string): string =>
  *  reached with a space-bound credential and a row with no space of its own
  *  is outside what that credential can see. */
 async function makeNote(body: string): Promise<string> {
-  const item = await ctx.storage.items.create(
-    {
-      type: "core.note",
-      properties: { body },
-    },
-    ctx.spaceId,
-  );
+  const item = await ctx.storage.items.create({
+    type: "core.note",
+    properties: { body },
+  });
   return item.id;
 }
 
@@ -102,15 +99,12 @@ async function makeNote(body: string): Promise<string> {
  * body counts the mirror plus every copy of it that survived.
  */
 async function plantMirror(body: string): Promise<string> {
-  const mirror = await ctx.storage.items.create(
-    {
-      type: "core.note",
-      properties: { body },
-      source: "integration:promote-atomicity",
-      source_id: uniq("mirror"),
-    },
-    ctx.spaceId,
-  );
+  const mirror = await ctx.storage.items.create({
+    type: "core.note",
+    properties: { body },
+    source: "integration:promote-atomicity",
+    source_id: uniq("mirror"),
+  });
   return mirror.id;
 }
 

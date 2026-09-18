@@ -30,15 +30,10 @@ afterAll(async () => {
 
 const HOUR = 3_600_000;
 
-async function seed(opts: {
-  space_id: string | null;
-  key: string;
-  ageHours: number;
-}): Promise<string> {
+async function seed(opts: { key: string; ageHours: number }): Promise<string> {
   const id = generateId();
   const claim = await ctx.storage.idempotency.claim({
     id,
-    space_id: opts.space_id,
     idempotency_key: opts.key,
     fingerprint: "f",
     created_at: new Date(Date.now() - opts.ageHours * HOUR).toISOString(),
@@ -51,17 +46,16 @@ describe("cleanup", () => {
   it("deletes what is past the window and keeps what is not", async () => {
     const old = `old-${generateId()}`;
     const fresh = `fresh-${generateId()}`;
-    await seed({ space_id: null, key: old, ageHours: 200 });
-    await seed({ space_id: null, key: fresh, ageHours: 1 });
+    await seed({ key: old, ageHours: 200 });
+    await seed({ key: fresh, ageHours: 1 });
 
-    const deleted = await ctx.storage.idempotency.cleanup(168, null);
+    const deleted = await ctx.storage.idempotency.cleanup(168);
     expect(deleted).toBeGreaterThanOrEqual(1);
 
     // The discriminator: a sweep that deleted everything, or nothing,
     // would satisfy a one-sided assertion.
     const oldClaim = await ctx.storage.idempotency.claim({
       id: generateId(),
-      space_id: null,
       idempotency_key: old,
       fingerprint: "f",
       created_at: new Date().toISOString(),
@@ -70,39 +64,11 @@ describe("cleanup", () => {
 
     const freshClaim = await ctx.storage.idempotency.claim({
       id: generateId(),
-      space_id: null,
       idempotency_key: fresh,
       fingerprint: "f",
       created_at: new Date().toISOString(),
     });
     expect(freshClaim.claimed).toBe(false);
-  });
-
-  it("scopes to a space, and leaves the null bucket alone", async () => {
-    const key = `scoped-${generateId()}`;
-    await seed({ space_id: "space-x", key, ageHours: 200 });
-    await seed({ space_id: null, key, ageHours: 200 });
-
-    await ctx.storage.idempotency.cleanup(168, "space-x");
-
-    const inSpace = await ctx.storage.idempotency.claim({
-      id: generateId(),
-      space_id: "space-x",
-      idempotency_key: key,
-      fingerprint: "f",
-      created_at: new Date().toISOString(),
-    });
-    expect(inSpace.claimed).toBe(true);
-
-    // Untouched: the same key, swept under a different scope.
-    const inNull = await ctx.storage.idempotency.claim({
-      id: generateId(),
-      space_id: null,
-      idempotency_key: key,
-      fingerprint: "f",
-      created_at: new Date().toISOString(),
-    });
-    expect(inNull.claimed).toBe(false);
   });
 });
 
@@ -111,7 +77,6 @@ describe("claim", () => {
     const key = `claimed-${generateId()}`;
     const first = await ctx.storage.idempotency.claim({
       id: generateId(),
-      space_id: null,
       idempotency_key: key,
       fingerprint: "one",
       created_at: new Date().toISOString(),
@@ -120,7 +85,6 @@ describe("claim", () => {
 
     const second = await ctx.storage.idempotency.claim({
       id: generateId(),
-      space_id: null,
       idempotency_key: key,
       fingerprint: "two",
       created_at: new Date().toISOString(),
@@ -145,7 +109,6 @@ describe("claim", () => {
     const id = generateId();
     await ctx.storage.idempotency.claim({
       id,
-      space_id: null,
       idempotency_key: key,
       fingerprint: "dead",
       created_at: heldSince,
@@ -189,7 +152,6 @@ describe("claim", () => {
     const holderSince = new Date().toISOString();
     const first = await ctx.storage.idempotency.claim({
       id: holderId,
-      space_id: null,
       idempotency_key: key,
       fingerprint: "one",
       created_at: holderSince,
@@ -198,17 +160,14 @@ describe("claim", () => {
 
     const store = ctx.storage.idempotency;
     const seam = store as unknown as {
-      find(
-        spaceId: string | null,
-        key: string,
-      ): Promise<IdempotencyRecord | null>;
+      find(key: string): Promise<IdempotencyRecord | null>;
     };
     const realFind = seam.find.bind(store);
     let released = false;
-    seam.find = async (spaceId, k) => {
+    seam.find = async (k) => {
       await store.release(holderId, holderSince);
       released = true;
-      return realFind(spaceId, k);
+      return realFind(k);
     };
 
     const secondId = generateId();
@@ -216,7 +175,6 @@ describe("claim", () => {
     try {
       second = await store.claim({
         id: secondId,
-        space_id: null,
         idempotency_key: key,
         fingerprint: "two",
         created_at: new Date().toISOString(),
@@ -260,7 +218,6 @@ describe("claim", () => {
     const heldSince = new Date().toISOString();
     await ctx.storage.idempotency.claim({
       id,
-      space_id: null,
       idempotency_key: key,
       fingerprint: "f",
       created_at: heldSince,
@@ -293,7 +250,6 @@ describe("a displaced writer cannot touch the claim that replaced it", () => {
     const staleSince = new Date(Date.now() - 10 * 60_000).toISOString();
     await ctx.storage.idempotency.claim({
       id,
-      space_id: null,
       idempotency_key: key,
       fingerprint: "slow-writer",
       created_at: staleSince,
@@ -327,7 +283,6 @@ describe("a displaced writer cannot touch the claim that replaced it", () => {
     // asserted by asking the store rather than by trusting the boolean.
     const probe = await ctx.storage.idempotency.claim({
       id: generateId(),
-      space_id: null,
       idempotency_key: key,
       fingerprint: "third-arrival",
       created_at: new Date().toISOString(),
@@ -365,7 +320,6 @@ describe("a displaced writer cannot touch the claim that replaced it", () => {
     // carrying none of the displaced writer's body.
     const probe = await ctx.storage.idempotency.claim({
       id: generateId(),
-      space_id: null,
       idempotency_key: key,
       fingerprint: "third-arrival",
       created_at: new Date().toISOString(),
@@ -628,7 +582,7 @@ describe("retention has one owner", () => {
       indexTs.indexOf("const runEventLogCleanup"),
       indexTs.indexOf("let eventLogCleanupDelay"),
     );
-    expect(job).toContain("storage.idempotency.cleanup(retention, spaceId)");
+    expect(job).toContain("storage.idempotency.cleanup(retention)");
   });
 
   it("is swept from nowhere else", () => {

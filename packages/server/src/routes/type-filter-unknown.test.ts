@@ -31,7 +31,7 @@ beforeAll(async () => {
   // registered type it cannot read. The narrow map is the whole subject, so
   // the key is an ordinary space-bound one holding only that.
   const suffix = Math.random().toString(36).slice(2, 12);
-  narrowKey = await mintSpaceKey(ctx, ctx.spaceId, {
+  narrowKey = await mintSpaceKey(ctx, {
     label: `narrow-${suffix}`,
     source: `narrow-${suffix}`,
     type_permissions: { "core.task": "read" },

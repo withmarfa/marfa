@@ -25,18 +25,13 @@ import type { ApiKey, TypePermission } from "@withmarfa/shared";
 import { matchesTypeFilter } from "@withmarfa/shared";
 import { checkTypeAccess, computeTypeFilter } from "./auth.js";
 
-const SPACE = "space-agreement";
 const SECRET = "user.secret";
 const DIARY = "user.diary";
 const ORPHAN = "user.orphaned_widget";
 
-function memberKey(
-  type_permissions: Record<string, TypePermission>,
-  spaceId: string = SPACE,
-): ApiKey {
+function memberKey(type_permissions: Record<string, TypePermission>): ApiKey {
   return {
     id: "k1",
-    space_id: spaceId,
     label: "test",
     source: "test",
     default_tier: "library",
@@ -101,8 +96,8 @@ describe("the list filter and the point check agree", () => {
     // Instance 2. The grant carries no global wildcard, so the filter passed
     // `["user.*"]` straight through — which matches `user.secret`, the one id
     // the map exists to withhold. Mintable through POST /keys today.
-    registerTypeSchema({ id: SECRET, version: 1, fields: {} }, SPACE);
-    registerTypeSchema({ id: DIARY, version: 1, fields: {} }, SPACE);
+    registerTypeSchema({ id: SECRET, version: 1, fields: {} });
+    registerTypeSchema({ id: DIARY, version: 1, fields: {} });
 
     const perms: Record<string, TypePermission> = {
       "user.*": "read",
@@ -135,6 +130,6 @@ describe("the list filter and the point check agree", () => {
 });
 
 afterAll(() => {
-  unregisterTypeSchema(SECRET, SPACE);
-  unregisterTypeSchema(DIARY, SPACE);
+  unregisterTypeSchema(SECRET);
+  unregisterTypeSchema(DIARY);
 });

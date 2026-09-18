@@ -54,7 +54,6 @@ beforeAll(async () => {
       type_permissions: { "*": "write" },
     },
     hashApiKey(RUNTIME_KEY, TEST_API_KEY_SALT),
-    ctx.spaceId,
   );
 });
 

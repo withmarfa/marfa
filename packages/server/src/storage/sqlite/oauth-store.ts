@@ -185,13 +185,12 @@ export class SqliteOAuthStore implements OAuthStore {
    */
   updateLastUsedAt(
     connectionItemId: string,
-    spaceId: string | null,
     thresholdMs: number,
   ): Promise<void> {
     // Tracked so `close()` can drain an in-flight stamp; the returned
     // promise never rejects, matching the callers' fire-and-forget use.
     return this.stamps.track(() =>
-      this.applyLastUsedAt(connectionItemId, spaceId, thresholdMs),
+      this.applyLastUsedAt(connectionItemId, thresholdMs),
     );
   }
 
@@ -202,15 +201,10 @@ export class SqliteOAuthStore implements OAuthStore {
 
   private async applyLastUsedAt(
     connectionItemId: string,
-    spaceId: string | null,
     thresholdMs: number,
   ): Promise<void> {
     const nowIso = new Date().toISOString();
     const cutoffIso = new Date(Date.now() - thresholdMs).toISOString();
-    const spacePredicate =
-      spaceId === null
-        ? sql`${items.space_id} IS NULL`
-        : sql`${items.space_id} = ${spaceId}`;
     await this.db
       .update(items)
       .set({
@@ -221,7 +215,6 @@ export class SqliteOAuthStore implements OAuthStore {
       .where(
         and(
           eq(items.id, connectionItemId),
-          spacePredicate,
           sql`(json_extract(${items.properties}, '$.last_used_at') IS NULL OR json_extract(${items.properties}, '$.last_used_at') < ${cutoffIso})`,
         ),
       )

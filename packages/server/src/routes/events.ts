@@ -338,7 +338,6 @@ export function eventRoutes(
   // GET /events — Server-Sent Events stream with replay support
   router.get("/", (c) => {
     const apiKey = requireAuth(c);
-    const spaceId = apiKey.space_id;
     const typeParam = parseTypeFilter(c.req.query("type"));
     const edgeMode = parseEdgeMode(c.req.query("edges"));
     const lastEventId = c.req.header("Last-Event-ID");
@@ -492,7 +491,6 @@ export function eventRoutes(
           // Subscribe BEFORE replay starts to avoid gaps.
           const events = subscribe({
             typeFilter: typeParam,
-            spaceId,
             signal: subscriptionAbort.signal,
           });
           const reader = events[Symbol.asyncIterator]();
@@ -623,7 +621,6 @@ export function eventRoutes(
           pump();
 
           const edgeIter = subscribeEdges({
-            spaceId,
             signal: subscriptionAbort.signal,
           })[Symbol.asyncIterator]();
           const pumpEdges = () => {
@@ -778,12 +775,10 @@ export function eventRoutes(
               // up from the event log. Emit a terminal `catchup_too_old`
               // control event and close the stream; the client is
               // expected to re-sync state and reconnect without a
-              // Last-Event-ID. Scoped by space so a fresh space with
-              // no events never trips the check.
+              // Last-Event-ID. A fresh instance with no events never
+              // trips the check.
               {
-                const minRetained = await storage.eventLog.getMinRetainedId(
-                  spaceId ?? undefined,
-                );
+                const minRetained = await storage.eventLog.getMinRetainedId();
                 if (minRetained !== null && afterIdResolved < minRetained) {
                   const payload = JSON.stringify({
                     type: "catchup_too_old",
@@ -830,7 +825,6 @@ export function eventRoutes(
                 const batch = await storage.eventLog.getAfter(
                   lastReplayedId,
                   REPLAY_BATCH_SIZE,
-                  spaceId ?? undefined,
                 );
 
                 if (batch.length === 0) break;
@@ -938,7 +932,7 @@ export function eventRoutes(
                     // two cannot resolve the same filter differently.
                     if (
                       typeParam !== undefined &&
-                      !eventMatchesTypeFilter(named, typeParam, spaceId ?? null)
+                      !eventMatchesTypeFilter(named, typeParam)
                     ) {
                       lastReplayedId = event.id;
                       continue;
@@ -1036,7 +1030,7 @@ export function eventRoutes(
 
           /** Read the log head this stream announces. */
           const readHeadEventId = (): Promise<bigint | null> =>
-            storage.eventLog.getMaxId(spaceId ?? undefined);
+            storage.eventLog.getMaxId();
 
           /**
            * The head read, bounded.

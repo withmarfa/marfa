@@ -152,41 +152,13 @@ async function approveOnDevice(
   expect(approve.status).toBe(200);
 }
 
-/** Point the pair's row at a space it does not belong to, the shape a
- *  binding that drifted (or a row written before the binding existed)
- *  leaves behind. */
-async function driftReferenceId(
-  c: TestContext,
-  clientId: string,
-  authUserId: string,
-): Promise<void> {
-  const schema = await betterAuthSchema();
-  const { and, eq } = await import("drizzle-orm");
-  const db = c.storage.betterAuthDb as {
-    update: (table: unknown) => {
-      set: (values: Record<string, unknown>) => {
-        where: (cond: unknown) => Promise<unknown>;
-      };
-    };
-  };
-  await db
-    .update(schema.auth_oauth_consent)
-    .set({ referenceId: "space_drifted" })
-    .where(
-      and(
-        eq(schema.auth_oauth_consent.clientId, clientId),
-        eq(schema.auth_oauth_consent.userId, authUserId),
-      ),
-    );
-}
-
 /** The consent rows for the pair, scopes normalized across the array column
  *  and the JSON-string column. */
 async function consentRows(
   c: TestContext,
   clientId: string,
   authUserId: string,
-): Promise<{ scopes: string[]; referenceId: string | null }[]> {
+): Promise<{ scopes: string[] }[]> {
   const schema = await betterAuthSchema();
   const { and, eq } = await import("drizzle-orm");
   const db = c.storage.betterAuthDb as {
@@ -212,7 +184,6 @@ async function consentRows(
       ? (row.scopes as string[])
       : (JSON.parse(String(row.scopes)) as string[])
     ).sort(),
-    referenceId: row.referenceId,
   }));
 }
 
@@ -276,7 +247,7 @@ function isCallbackWithCode(location: string): boolean {
 }
 
 describe("POST /auth/device/consent writes the plugin's consent row", () => {
-  it("an approval leaves a consent row carrying the merged scopes and the grant's space", async () => {
+  it("an approval leaves a consent row carrying the merged scopes", async () => {
     ctx = await createTestContext({});
     const clientId = await seedClient(ctx);
     const cookie = await signInUser(ctx, "device@example.com");
@@ -284,14 +255,8 @@ describe("POST /auth/device/consent writes the plugin's consent row", () => {
 
     await approveOnDevice(ctx, clientId, cookie, "core.note:read");
 
-    const grant = await onlyGrant(ctx);
     const rows = await consentRows(ctx, clientId, authUserId);
-    expect(rows).toEqual([
-      {
-        scopes: ["core.note:read"],
-        referenceId: grant.space_id ?? null,
-      },
-    ]);
+    expect(rows).toEqual([{ scopes: ["core.note:read"] }]);
   });
 
   it("a browser authorize for the same app is then answered silently", async () => {
@@ -332,34 +297,6 @@ describe("POST /auth/device/consent writes the plugin's consent row", () => {
     expect(rows[0]!.scopes).toEqual(["core.note:read", "core.task:read"]);
   });
 
-  it("in hosted mode the row is bound to the grant's space, and a re-approval re-stamps a drifted binding", async () => {
-    // The plugin's own lookup filters on `reference_id` whenever the value
-    // it computes is truthy, and in hosted mode that is the space id. A row
-    // bound to nothing, or to the wrong space, is one the plugin's skip
-    // never matches; only Marfa's coverage check would still fire, and the
-    // repair the update half does is what keeps the two in step.
-    ctx = await createTestContext({});
-    const clientId = await seedClient(ctx);
-    const cookie = await signInUser(ctx, "hosted@example.com");
-    const authUserId = await authUserIdFor(ctx, "hosted@example.com");
-
-    await approveOnDevice(ctx, clientId, cookie, "core.note:read");
-    const grant = await onlyGrant(ctx);
-    expect(grant.space_id).toBeTruthy();
-    expect(await consentRows(ctx, clientId, authUserId)).toEqual([
-      { scopes: ["core.note:read"], referenceId: grant.space_id },
-    ]);
-
-    await driftReferenceId(ctx, clientId, authUserId);
-    await approveOnDevice(ctx, clientId, cookie, "core.task:read");
-    const rows = await consentRows(ctx, clientId, authUserId);
-    expect(rows).toHaveLength(1);
-    expect(rows[0]!.referenceId).toBe(grant.space_id);
-    expect(rows[0]!.scopes).toEqual(
-      expect.arrayContaining(["core.note:read", "core.task:read"]),
-    );
-  });
-
   it("a consent row standing with no projection is narrowed to the approval, deliberately", async () => {
     // The code flow logs a failed projection write and issues its code
     // anyway, so a row can stand alone holding what the browser granted.
@@ -375,7 +312,6 @@ describe("POST /auth/device/consent writes the plugin's consent row", () => {
     await ctx.storage.oauthProvider!.upsertConsent({
       clientId,
       authUserId,
-      referenceId: null,
       scopes: ["core.note:read", "core.task:write"],
     });
 

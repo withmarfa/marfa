@@ -19,9 +19,8 @@ const TEST_API_KEY_SALT = "test-salt";
  * Shared test fixtures for the SDK package.
  *
  * - `createKeysModeFixture()` — the simple bring-up. One unauthenticated
- *   `POST /keys`, which mints the operator key, provisions the instance's
- *   one space and mints a working key into it; the client bears that
- *   working key. Use for any SDK surface that doesn't depend on
+ *   `POST /keys`, which mints the operator key, then one more with it, which
+ *   mints the working key the client bears. Use for any SDK surface that doesn't depend on
  *   `auth_user` resolution. Mirrors the inline pattern in
  *   `client.test.ts`.
  */
@@ -86,19 +85,16 @@ function baseConfig(overrides?: Partial<AppConfig>): AppConfig {
 }
 
 export interface KeysModeFixture {
-  /** SDK client wired to call the in-process server via the space-bound
-   *  working key. */
+  /** SDK client wired to call the in-process server via the working key. */
   client: MarfaClient;
-  /** The space-bound working key (`marfa_k1_*`) the client bears. Holds every
-   *  space permission and the whole content set. Use to mint additional keys
-   *  in tests that need them. */
+  /** The working key (`marfa_k1_*`) the client bears. Holds every space
+   *  permission and the whole content set. Use to mint additional keys in
+   *  tests that need them. */
   spaceKey: string;
   /** The operator key minted by the first, unauthenticated request. Holds no
-   *  space and no permission: it reaches the instance routes and nothing else.
-   *  Use where a test is about the instance tier rather than about work. */
+   *  permission: it reaches the instance routes and nothing else. Use where a
+   *  test is about the instance tier rather than about work. */
   operatorKey: string;
-  /** The space the operator key created, which the working key is bound to. */
-  spaceId: string;
   /** The custom `fetch` the SDK is wired through. Pass into a second
    *  `MarfaClient` if a test needs another bearer against the same
    *  in-process app. */
@@ -159,17 +155,12 @@ export async function createKeysModeFixture(
   );
   const fetch = createTestFetch(app);
 
-  // **One call, because that is now the whole of keys-mode setup.** The first
+  // **Two calls, because that is the whole of keys-mode setup.** The first
   // unauthenticated mint produces the operator key — which is not a working
   // key: running the instance sits outside the permission model, so the row
-  // carries no space and no permission of any kind — and provisions the
-  // instance's one space with a credential that holds it.
-  //
-  // This fixture used to do those last two steps by hand, through
-  // `POST /admin/spaces` and `POST /admin/spaces/{id}/keys`. That was the
-  // right flow and the wrong test: a suite doing by hand what the product does
-  // for itself exercises a path nobody takes and leaves the shipped one
-  // uncovered.
+  // carries no permission of any kind — and the second, made with it, mints
+  // the working key. A body naming no reach takes everything, because the
+  // operator key is a seed rather than a ceiling.
   //
   // The mint presents the one-time secret the server prints to its boot log,
   // because that call is the product's one unauthenticated write and is bound
@@ -188,19 +179,26 @@ export async function createKeysModeFixture(
       default_tier: "feed",
     }),
   });
-  const bootstrap = (await bootstrapRes.json()) as {
-    key: string;
-    space?: { id: string };
-    space_key?: { key: string };
-  };
+  const bootstrap = (await bootstrapRes.json()) as { key: string };
   const operatorKey = bootstrap.key;
-  const spaceId = bootstrap.space?.id;
-  const key = bootstrap.space_key?.key;
-  if (spaceId === undefined || key === undefined) {
+  const workingRes = await fetch("http://localhost/keys", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${operatorKey}`,
+    },
+    body: JSON.stringify({
+      label: "test-working",
+      source: "sdk-test",
+      default_tier: "library",
+    }),
+  });
+  if (workingRes.status !== 201) {
     throw new Error(
-      "keys-mode bootstrap returned no space: the fixture needs a working credential, and the operator key is not one",
+      `keys-mode working key mint answered ${String(workingRes.status)}: ${await workingRes.text()}`,
     );
   }
+  const key = ((await workingRes.json()) as { key: string }).key;
 
   const client = new MarfaClient({
     url: "http://localhost",
@@ -212,7 +210,6 @@ export async function createKeysModeFixture(
     client,
     spaceKey: key,
     operatorKey,
-    spaceId,
     fetch,
     storage,
     cleanup: () => {

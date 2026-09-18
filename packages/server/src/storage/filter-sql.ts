@@ -92,11 +92,7 @@ function getSystemColumn(table: ItemsTableRef, column: string): unknown {
 // Drizzle SQL condition generator (for item stores)
 // ---------------------------------------------------------------------------
 
-function conditionToSql(
-  condition: FilterCondition,
-  table: ItemsTableRef,
-  spaceId: string | undefined,
-): SQL {
+function conditionToSql(condition: FilterCondition, table: ItemsTableRef): SQL {
   const { field, op, value } = condition;
 
   if (field.kind === "system") {
@@ -109,14 +105,7 @@ function conditionToSql(
   }
 
   if (field.kind === "edge") {
-    return edgeFieldSql(
-      table.id,
-      field.edge_type,
-      field.direction,
-      op,
-      value,
-      spaceId,
-    );
+    return edgeFieldSql(table.id, field.edge_type, field.direction, op, value);
   }
 
   // tags
@@ -127,10 +116,6 @@ function conditionToSql(
  * Edge-membership filter. Direction = "outbound" → item is the source of an
  * edge of the given type pointing to `value` (or any edge with exists op).
  * Direction = "backref" → item is the target of such an edge.
- *
- * `spaceId` (when provided) constrains the subquery to the caller's space —
- * defense-in-depth alongside the outer query's `i.space_id = ?`. When
- * undefined (admin / cross-space queries), no extra constraint is added.
  */
 function edgeFieldSql(
   idCol: unknown,
@@ -138,12 +123,7 @@ function edgeFieldSql(
   direction: "outbound" | "backref",
   op: ComparisonOp,
   value: unknown,
-  spaceId: string | undefined,
 ): SQL {
-  // Space scoping — only emit when a space is in scope. `sql.empty()` keeps
-  // the template stable when no space is set (prevents stray param binding).
-  const spaceClause = spaceId ? sql` AND e.space_id = ${spaceId}` : sql.empty();
-
   if (direction === "outbound") {
     switch (op) {
       case "eq":
@@ -151,24 +131,24 @@ function edgeFieldSql(
           SELECT 1 FROM edges e
           WHERE e.source_id = ${idCol}
             AND e.edge_type = ${edgeType}
-            AND e.target_id = ${value}${spaceClause}
+            AND e.target_id = ${value}
         )`;
       case "neq":
         return sql`NOT EXISTS (
           SELECT 1 FROM edges e
           WHERE e.source_id = ${idCol}
             AND e.edge_type = ${edgeType}
-            AND e.target_id = ${value}${spaceClause}
+            AND e.target_id = ${value}
         )`;
       case "exists":
         return sql`EXISTS (
           SELECT 1 FROM edges e
-          WHERE e.source_id = ${idCol} AND e.edge_type = ${edgeType}${spaceClause}
+          WHERE e.source_id = ${idCol} AND e.edge_type = ${edgeType}
         )`;
       case "not_exists":
         return sql`NOT EXISTS (
           SELECT 1 FROM edges e
-          WHERE e.source_id = ${idCol} AND e.edge_type = ${edgeType}${spaceClause}
+          WHERE e.source_id = ${idCol} AND e.edge_type = ${edgeType}
         )`;
       default:
         throw new Error(`Unsupported operator "${op}" for edge reference`);
@@ -181,24 +161,24 @@ function edgeFieldSql(
         SELECT 1 FROM edges e
         WHERE e.target_id = ${idCol}
           AND e.edge_type = ${edgeType}
-          AND e.source_id = ${value}${spaceClause}
+          AND e.source_id = ${value}
       )`;
     case "neq":
       return sql`NOT EXISTS (
         SELECT 1 FROM edges e
         WHERE e.target_id = ${idCol}
           AND e.edge_type = ${edgeType}
-          AND e.source_id = ${value}${spaceClause}
+          AND e.source_id = ${value}
       )`;
     case "exists":
       return sql`EXISTS (
         SELECT 1 FROM edges e
-        WHERE e.target_id = ${idCol} AND e.edge_type = ${edgeType}${spaceClause}
+        WHERE e.target_id = ${idCol} AND e.edge_type = ${edgeType}
       )`;
     case "not_exists":
       return sql`NOT EXISTS (
         SELECT 1 FROM edges e
-        WHERE e.target_id = ${idCol} AND e.edge_type = ${edgeType}${spaceClause}
+        WHERE e.target_id = ${idCol} AND e.edge_type = ${edgeType}
       )`;
     default:
       throw new Error(`Unsupported operator "${op}" for edge reference`);
@@ -316,17 +296,12 @@ function tagsFieldSql(idCol: unknown, op: ComparisonOp, value: unknown): SQL {
  * Convert a FilterExpression into Drizzle SQL conditions.
  * Returns an array of SQL conditions that should be composed with and()/or()
  * based on the expression's logical operator.
- *
- * `spaceId` (when provided) scopes edge subqueries to the caller's space —
- * defense-in-depth alongside the outer query's space filter. Pass undefined
- * for admin / cross-space queries.
  */
 export function filterToSqlConditions(
   expr: FilterExpression,
   table: ItemsTableRef,
-  spaceId?: string,
 ): SQL[] {
-  return expr.conditions.map((c) => conditionToSql(c, table, spaceId));
+  return expr.conditions.map((c) => conditionToSql(c, table));
 }
 
 // ---------------------------------------------------------------------------
@@ -337,7 +312,6 @@ function conditionToRawSql(
   condition: FilterCondition,
   tableAlias: string,
   params: unknown[],
-  spaceId: string | undefined,
 ): string {
   const { field, op, value } = condition;
 
@@ -357,7 +331,6 @@ function conditionToRawSql(
       op,
       value,
       params,
-      spaceId,
     );
   }
 
@@ -372,32 +345,21 @@ function edgeFieldRawSql(
   op: ComparisonOp,
   value: unknown,
   params: unknown[],
-  spaceId: string | undefined,
 ): string {
   const idColumn = direction === "outbound" ? "e.source_id" : "e.target_id";
   const otherColumn = direction === "outbound" ? "e.target_id" : "e.source_id";
 
   if (op === "exists" || op === "not_exists") {
     params.push(edgeType);
-    let spaceFragment = "";
-    if (spaceId !== undefined) {
-      params.push(spaceId);
-      spaceFragment = " AND e.space_id = ?";
-    }
     const prefix = op === "exists" ? "EXISTS" : "NOT EXISTS";
-    return `${prefix} (SELECT 1 FROM edges e WHERE ${idColumn} = ${alias}.id AND e.edge_type = ?${spaceFragment})`;
+    return `${prefix} (SELECT 1 FROM edges e WHERE ${idColumn} = ${alias}.id AND e.edge_type = ?)`;
   }
 
   if (op === "eq" || op === "neq") {
     params.push(edgeType);
     params.push(value);
-    let spaceFragment = "";
-    if (spaceId !== undefined) {
-      params.push(spaceId);
-      spaceFragment = " AND e.space_id = ?";
-    }
     const prefix = op === "eq" ? "EXISTS" : "NOT EXISTS";
-    return `${prefix} (SELECT 1 FROM edges e WHERE ${idColumn} = ${alias}.id AND e.edge_type = ? AND ${otherColumn} = ?${spaceFragment})`;
+    return `${prefix} (SELECT 1 FROM edges e WHERE ${idColumn} = ${alias}.id AND e.edge_type = ? AND ${otherColumn} = ?)`;
   }
 
   throw new Error(`Unsupported operator "${op}" for edge reference in raw SQL`);
@@ -527,19 +489,17 @@ function tagsFieldRawSql(
  *
  * @param expr - The parsed filter expression
  * @param tableAlias - Table alias used in the query (e.g., "i")
- * @param spaceId - Optional space scope for edge subqueries (defense-in-depth)
  * @returns The SQL clause and its positional parameter values
  */
 export function filterToRawSql(
   expr: FilterExpression,
   tableAlias: string,
-  spaceId?: string,
 ): RawSqlResult {
   const params: unknown[] = [];
   const fragments: string[] = [];
 
   for (const condition of expr.conditions) {
-    fragments.push(conditionToRawSql(condition, tableAlias, params, spaceId));
+    fragments.push(conditionToRawSql(condition, tableAlias, params));
   }
 
   const joiner = expr.logical === "OR" ? " OR " : " AND ";
@@ -573,19 +533,14 @@ export interface SourceFilterSettings {
  * `core.note.private` too, so a lever listing `core.note` that skipped the
  * subtype would narrow only part of the view it is meant to narrow.
  */
-function decomposeCoveredTypes(
-  types: string[],
-  spaceId?: string | null,
-): {
+function decomposeCoveredTypes(types: string[]): {
   global: boolean;
   pairs: { exact: string; descendantPattern: string }[];
 } {
   const pairs: { exact: string; descendantPattern: string }[] = [];
   for (const configured of types) {
-    const { global, exact, descendantPattern, extraTypes } = typeSubtreeToSql(
-      configured,
-      spaceId,
-    );
+    const { global, exact, descendantPattern, extraTypes } =
+      typeSubtreeToSql(configured);
     if (global) return { global: true, pairs: [] };
     if (exact !== null && descendantPattern !== null) {
       pairs.push({ exact, descendantPattern });
@@ -617,10 +572,9 @@ export function sourceFilterToSql(
   filter: SourceFilterSettings | undefined,
   typeCol: unknown,
   sourceCol: unknown,
-  spaceId?: string | null,
 ): SQL | undefined {
   if (!filter) return undefined;
-  const { global, pairs } = decomposeCoveredTypes(filter.types, spaceId);
+  const { global, pairs } = decomposeCoveredTypes(filter.types);
   if (!global && pairs.length === 0) return undefined;
 
   const covered = global
@@ -658,10 +612,9 @@ export function sourceFilterToSql(
 export function sourceFilterToRawSql(
   filter: SourceFilterSettings | undefined,
   tableAlias: string,
-  spaceId?: string | null,
 ): RawSqlResult | null {
   if (!filter) return null;
-  const { global, pairs } = decomposeCoveredTypes(filter.types, spaceId);
+  const { global, pairs } = decomposeCoveredTypes(filter.types);
   if (!global && pairs.length === 0) return null;
 
   const params: unknown[] = [];

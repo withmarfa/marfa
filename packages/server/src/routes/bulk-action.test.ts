@@ -152,7 +152,6 @@ describe("POST /items/bulk-actions (async)", () => {
         type_permissions: { "*": "write" },
       },
       keyHash,
-      "bulk-action-purge-space",
     );
 
     const { initialStatus } = await runBulkActionAsync(
@@ -479,7 +478,6 @@ describe("GET + DELETE /items/bulk-actions/jobs/:id", () => {
     // and an operator key reaches every job. What remains is a sibling in
     // the same space, and no permission it can hold opens another
     // credential's job to it.
-    const space = "bulk-action-foreign-space";
     const ownerKey = `marfa_k1_owner_${Math.random().toString(36).slice(2)}`;
     await ctx.storage.keys.create(
       {
@@ -488,7 +486,6 @@ describe("GET + DELETE /items/bulk-actions/jobs/:id", () => {
         type_permissions: { "*": "write" },
       },
       hashApiKey(ownerKey, "test-salt"),
-      space,
     );
 
     const postRes = await request(ctx.app, "POST", "/items/bulk-actions", {
@@ -511,7 +508,6 @@ describe("GET + DELETE /items/bulk-actions/jobs/:id", () => {
         type_permissions: { "*": "read" },
       },
       keyHash,
-      space,
     );
 
     const getRes = await request(

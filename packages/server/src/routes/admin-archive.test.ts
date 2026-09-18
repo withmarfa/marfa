@@ -118,17 +118,14 @@ describe("POST /admin/restore-archive", () => {
       [blob],
     );
 
-    const res = await ctx.app.request(
-      `/admin/restore-archive?target_space_id=${ctx.spaceId}`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${ctx.operatorKey}`,
-          "Content-Type": "application/gzip",
-        },
-        body: archive,
+    const res = await ctx.app.request(`/admin/restore-archive`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${ctx.operatorKey}`,
+        "Content-Type": "application/gzip",
       },
-    );
+      body: archive,
+    });
     expect(res.status).toBe(200);
     const data = (await res.json()) as {
       imported: number;
@@ -177,14 +174,10 @@ describe("POST /admin/restore-archive", () => {
   });
 
   it("requires the operator key", async () => {
-    // Bound to a space, because the row constraint makes a space-less
-    // credential an operator credential and this door is exactly what an
-    // operator key opens.
+    // A working credential rather than the operator key, because this door
+    // is exactly what an operator key opens.
     const rawKey = `marfa_k1_member_${Math.random().toString(36).slice(2)}`;
     const keyHash = hashApiKey(rawKey, "test-salt");
-    const space = await ctx.storage.spaces!.create(
-      `restore-member-${rawKey.slice(-6)}`,
-    );
     await ctx.storage.keys.create(
       {
         label: "restore-member",
@@ -194,7 +187,6 @@ describe("POST /admin/restore-archive", () => {
         is_operator: false,
       },
       keyHash,
-      space.id,
     );
 
     const archive = await buildArchive(
@@ -250,17 +242,14 @@ describe("POST /admin/restore-archive", () => {
     expect(exportRes.status).toBe(200);
     const archiveData = Buffer.from(await exportRes.arrayBuffer());
 
-    const restoreRes = await ctx.app.request(
-      `/admin/restore-archive?target_space_id=${ctx.spaceId}`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${ctx.operatorKey}`,
-          "Content-Type": "application/gzip",
-        },
-        body: archiveData,
+    const restoreRes = await ctx.app.request(`/admin/restore-archive`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${ctx.operatorKey}`,
+        "Content-Type": "application/gzip",
       },
-    );
+      body: archiveData,
+    });
     expect(restoreRes.status).toBe(200);
     const data = (await restoreRes.json()) as {
       imported: number;
@@ -333,17 +322,14 @@ describe("POST /admin/restore-archive — the edges it writes", () => {
     const { events, done } = collectEdgeEvents(controller.signal);
     await settle();
 
-    const res = await ctx.app.request(
-      `/admin/restore-archive?target_space_id=${ctx.spaceId}`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${ctx.operatorKey}`,
-          "Content-Type": "application/gzip",
-        },
-        body: new Uint8Array(archive),
+    const res = await ctx.app.request(`/admin/restore-archive`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${ctx.operatorKey}`,
+        "Content-Type": "application/gzip",
       },
-    );
+      body: new Uint8Array(archive),
+    });
     expect(res.status).toBe(200);
     await settle();
     controller.abort();
@@ -432,24 +418,21 @@ describe("POST /admin/restore-archive — the edges it writes", () => {
     const store = ctx.storage.edges;
     const realCreate = store.createRaw.bind(store);
     let creates = 0;
-    store.createRaw = async (input, space) => {
+    store.createRaw = async (input) => {
       creates += 1;
       if (creates === 2) throw new Error("simulated storage failure");
-      return realCreate(input, space);
+      return realCreate(input);
     };
     let res: Response;
     try {
-      res = await ctx.app.request(
-        `/admin/restore-archive?target_space_id=${ctx.spaceId}`,
-        {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${ctx.operatorKey}`,
-            "Content-Type": "application/gzip",
-          },
-          body: new Uint8Array(archive),
+      res = await ctx.app.request(`/admin/restore-archive`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${ctx.operatorKey}`,
+          "Content-Type": "application/gzip",
         },
-      );
+        body: new Uint8Array(archive),
+      });
     } finally {
       store.createRaw = realCreate;
     }
@@ -545,17 +528,14 @@ describe("POST /admin/restore-archive — the items it writes", () => {
     const { events, done } = collectItemEvents(controller.signal);
     await settle();
 
-    const res = await ctx.app.request(
-      `/admin/restore-archive?target_space_id=${ctx.spaceId}`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${ctx.operatorKey}`,
-          "Content-Type": "application/gzip",
-        },
-        body: new Uint8Array(archive),
+    const res = await ctx.app.request(`/admin/restore-archive`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${ctx.operatorKey}`,
+        "Content-Type": "application/gzip",
       },
-    );
+      body: new Uint8Array(archive),
+    });
     expect(res.status).toBe(200);
     // Waits for the frames rather than for a duration. `settle` is a fixed
     // sleep, and a positive assertion resting on one reports a busy machine
@@ -667,24 +647,21 @@ describe("POST /admin/restore-archive — the items it writes", () => {
     const store = ctx.storage.edges;
     const realCreate = store.createRaw.bind(store);
     let creates = 0;
-    store.createRaw = async (input, space) => {
+    store.createRaw = async (input) => {
       creates += 1;
       if (creates === 2) throw new Error("simulated storage failure");
-      return realCreate(input, space);
+      return realCreate(input);
     };
     let res: Response;
     try {
-      res = await ctx.app.request(
-        `/admin/restore-archive?target_space_id=${ctx.spaceId}`,
-        {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${ctx.operatorKey}`,
-            "Content-Type": "application/gzip",
-          },
-          body: new Uint8Array(archive),
+      res = await ctx.app.request(`/admin/restore-archive`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${ctx.operatorKey}`,
+          "Content-Type": "application/gzip",
         },
-      );
+        body: new Uint8Array(archive),
+      });
     } finally {
       store.createRaw = realCreate;
     }
@@ -763,17 +740,14 @@ describe("POST /admin/restore-archive — the items it writes", () => {
       [],
     );
 
-    const res = await ctx.app.request(
-      `/admin/restore-archive?target_space_id=${ctx.spaceId}`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${ctx.operatorKey}`,
-          "Content-Type": "application/gzip",
-        },
-        body: new Uint8Array(archive),
+    const res = await ctx.app.request(`/admin/restore-archive`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${ctx.operatorKey}`,
+        "Content-Type": "application/gzip",
       },
-    );
+      body: new Uint8Array(archive),
+    });
     expect(res.status).toBe(200);
 
     const stored = await ctx.storage.metadata.getExtensions(itemId);
@@ -818,17 +792,14 @@ describe("POST /admin/restore-archive — the items it writes", () => {
     const { events, done } = collectItemEvents(controller.signal);
     await settle();
 
-    const res = await ctx.app.request(
-      `/admin/restore-archive?target_space_id=${ctx.spaceId}`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${ctx.operatorKey}`,
-          "Content-Type": "application/gzip",
-        },
-        body: new Uint8Array(archive),
+    const res = await ctx.app.request(`/admin/restore-archive`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${ctx.operatorKey}`,
+        "Content-Type": "application/gzip",
       },
-    );
+      body: new Uint8Array(archive),
+    });
     expect(res.status).toBe(200);
     // A condition rather than a sleep, for the reason given above.
     await vi.waitFor(async () => {

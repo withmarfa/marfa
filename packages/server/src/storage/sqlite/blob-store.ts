@@ -1,11 +1,4 @@
-/* eslint-disable no-restricted-syntax -- Not yet on the shared space
- * fence. `storage/space-condition.ts` is the one spelling of it, and
- * this store predates it; the rule covers every store so a new file is
- * covered by default, which leaves the existing ones needing a line
- * that says so. Normalizing one is a change of its own: an absent space
- * has to be read call site by call site, and reading it wrong is the
- * defect the helper exists for. Delete this line when you do. */
-import { and, eq, sql } from "drizzle-orm";
+import { eq, lt, sql } from "drizzle-orm";
 import type { BlobStore } from "../interface.js";
 import { blobs } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
@@ -18,14 +11,11 @@ export class SqliteBlobStore implements BlobStore {
     mimeType: string,
     size: number,
     storagePath: string,
-    spaceId: string,
   ): Promise<void> {
-    // Idempotent — ignore if (space_id, hash) row already exists.
-    // Different spaces uploading the same bytes get separate rows.
+    // Idempotent — ignore if the row already exists.
     await this.db
       .insert(blobs)
       .values({
-        space_id: spaceId,
         hash,
         mime_type: mimeType,
         size,
@@ -38,29 +28,11 @@ export class SqliteBlobStore implements BlobStore {
 
   async get(
     hash: string,
-    spaceId: string,
-  ): Promise<{ mime_type: string; size: number; storage_path: string } | null> {
-    const row = await this.db
-      .select()
-      .from(blobs)
-      .where(and(eq(blobs.space_id, spaceId), eq(blobs.hash, hash)))
-      .get();
-    if (!row) return null;
-    return {
-      mime_type: row.mime_type,
-      size: row.size,
-      storage_path: row.storage_path,
-    };
-  }
-
-  async getAcrossSpaces(
-    hash: string,
   ): Promise<{ mime_type: string; size: number; storage_path: string } | null> {
     const row = await this.db
       .select()
       .from(blobs)
       .where(eq(blobs.hash, hash))
-      .limit(1)
       .get();
     if (!row) return null;
     return {
@@ -71,36 +43,20 @@ export class SqliteBlobStore implements BlobStore {
   }
 
   async listAll(): Promise<string[]> {
-    // Distinct hashes across every space — used by the admin reconcile
-    // route to find orphan files on disk. Space-scoped reads use `get`.
-    const rows = await this.db
-      .selectDistinct({ hash: blobs.hash })
-      .from(blobs)
-      .all();
+    const rows = await this.db.select({ hash: blobs.hash }).from(blobs).all();
     return rows.map((r) => r.hash);
   }
 
   async listRegisteredBefore(cutoff: string): Promise<string[]> {
-    // Grouped by hash rather than filtered row by row: a hash the sweep
-    // takes loses every space's row at once, so one space registering it
-    // a moment ago has to hold the whole hash back.
     const rows = await this.db
       .select({ hash: blobs.hash })
       .from(blobs)
-      .groupBy(blobs.hash)
-      .having(sql`max(${blobs.created_at}) < ${cutoff}`)
+      .where(lt(blobs.created_at, cutoff))
       .all();
     return rows.map((r) => r.hash);
   }
 
-  async remove(hash: string, spaceId: string): Promise<void> {
-    await this.db
-      .delete(blobs)
-      .where(and(eq(blobs.space_id, spaceId), eq(blobs.hash, hash)))
-      .run();
-  }
-
-  async removeAllForHash(hash: string): Promise<void> {
+  async remove(hash: string): Promise<void> {
     await this.db.delete(blobs).where(eq(blobs.hash, hash)).run();
   }
 

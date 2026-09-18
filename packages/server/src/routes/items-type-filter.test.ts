@@ -84,7 +84,6 @@ async function mintScopedKey(
       is_operator: false,
     },
     hashApiKey(raw, TEST_API_KEY_SALT),
-    ctx.spaceId,
   );
   return raw;
 }

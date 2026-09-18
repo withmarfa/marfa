@@ -2,7 +2,6 @@ import { EventEmitter, on } from "node:events";
 import type { Edge, Item, Metadata } from "@withmarfa/shared";
 import { typeAnswersSubtreeFilter } from "@withmarfa/shared";
 import { envNumber } from "./config.js";
-import { log } from "./middleware/logger.js";
 import type { EventLogStore } from "./storage/interface.js";
 
 /**
@@ -49,13 +48,11 @@ export interface ItemEvent extends FanoutControl {
     | "metadata_changed";
   item: Item;
   metadata?: Metadata;
-  spaceId?: string;
 }
 
 export interface EdgeEvent extends FanoutControl {
   type: "edge_created" | "edge_updated" | "edge_deleted";
   edge: Edge;
-  spaceId?: string;
 }
 
 export type PubsubEvent = ItemEvent | EdgeEvent;
@@ -123,54 +120,7 @@ function isEdgeEvent(event: PubsubEvent): event is EdgeEvent {
   return "edge" in event;
 }
 
-/**
- * The space an event belongs to: the row's own, falling back to the caller's.
- *
- * **A caller's space and its rows' space are the same thing right up until
- * they are not.** Storage is space-scoped at the SQL layer, so for an ordinary
- * space-bound credential a row it read is already in its own space and this
- * changes nothing. The operator key is not space-bound: its `space_id` is
- * null, so every door that took the space from the credential published
- * unscoped whenever it wrote to somebody else's rows.
- *
- * An unscoped event is not a broadly-delivered one. `subscribeItems` drops an
- * event whose space does not match a space-bound subscriber's, so the account
- * whose rows were written was the one account not told — while the unscoped
- * admin, matching nothing, received everything. The event log is worse than
- * the stream: its read is `space_id = ?`, which SQL never matches against
- * NULL, so a frame written unscoped can never be replayed to the owner's
- * cursor and no gap signal reports it.
- *
- * Deriving here rather than at each door is what closes the class. The
- * fallback direction is what makes it safe: a genuinely space-less row keeps
- * the caller's space, so this can only ever widen correctness and never
- * narrow an event that is delivered correctly today.
- */
-function spaceForEvent(
-  row: { space_id?: string | null },
-  declared: string | undefined,
-): string | undefined {
-  const own = row.space_id ?? undefined;
-  if (own !== undefined && declared !== undefined && own !== declared) {
-    // Neither is null, and they disagree. That is a door addressing an event
-    // somewhere its row does not live, which is always a bug — reported
-    // rather than thrown, because this runs after the write has committed and
-    // a throw would turn a mis-addressed event into a failed write.
-    log("warn", "Event addressed to a space its row does not belong to", {
-      item_id: (row as { id?: string }).id,
-      row_space: own,
-      declared_space: declared,
-    });
-  }
-  return own ?? declared;
-}
-
-export async function publish(input: ItemEvent): Promise<bigint | undefined> {
-  const spaceId = spaceForEvent(input.item, input.spaceId);
-  const event: ItemEvent = {
-    ...input,
-    ...(spaceId !== undefined && { spaceId }),
-  };
+export async function publish(event: ItemEvent): Promise<bigint | undefined> {
   const enableFanout = fansOut(event);
 
   let eventId: bigint | undefined;
@@ -184,7 +134,6 @@ export async function publish(input: ItemEvent): Promise<bigint | undefined> {
     eventId = await eventLogStore.append({
       event_type: event.type,
       item_id: event.item.id,
-      space_id: event.spaceId,
       payload,
       enable_fanout: enableFanout,
     });
@@ -212,13 +161,8 @@ export async function publish(input: ItemEvent): Promise<bigint | undefined> {
  * re-read and leaves no tombstone when it goes.
  */
 export async function publishEdge(
-  input: EdgeEvent,
+  event: EdgeEvent,
 ): Promise<bigint | undefined> {
-  const spaceId = spaceForEvent(input.edge, input.spaceId);
-  const event: EdgeEvent = {
-    ...input,
-    ...(spaceId !== undefined && { spaceId }),
-  };
   const enableFanout = fansOut(event);
 
   let eventId: bigint | undefined;
@@ -232,7 +176,6 @@ export async function publishEdge(
       event_type: event.type,
       item_id: null,
       edge_id: event.edge.id,
-      space_id: event.spaceId,
       payload,
       enable_fanout: enableFanout,
     });
@@ -268,13 +211,12 @@ export interface SubscribeOptions {
   /** One type, or several. A list is answered by any entry matching, so
    *  the subtree rule above applies per entry rather than to the list. */
   typeFilter?: string | readonly string[];
-  spaceId?: string;
   /**
    * Detaches the underlying emitter listener the moment it aborts.
    * Without it a departed subscriber's listener survives until the next
    * event MATCHING its filters arrives to resume the generator —
    * `iterator.return()` alone cannot unwind a generator suspended on an
-   * event that never comes, so a quiet space accumulates one listener
+   * event that never comes, so a quiet instance accumulates one listener
    * per departed viewer indefinitely. Long-lived per-request consumers
    * (the SSE route) pass one; process-lifetime consumers (the webhook
    * consumer, the bridges) do not need to.
@@ -315,23 +257,16 @@ export interface SubscribeOptions {
  * same parameter, and answered it with an empty stream and a 200 rather
  * than with an error.
  *
- * **`spaceId` is what makes the answer true for the caller's own types.**
- * A space's subtype of a shipped type resolves only through the space's
- * overlay, so a matcher called without one classifies core and system
- * types and quietly misses everything the space registered for itself.
- * Both delivery paths pass it, and they must keep passing the same value
- * or a reconnect narrows a view the live stream had been serving in full.
- *
  * **What resolving the registry per live event costs, and what that was
  * judged against.** The yardstick is `matchesTypeFilter`, the permission
  * projection the stream already applies to every item event on the line
  * above this one: nothing costing a fraction of a call this path is
  * already making per event needs a cache in front of it. Measured over
- * two million calls against a space holding twenty custom types, one of
+ * two million calls against an instance holding twenty custom types, one of
  * them declaring a shipped parent from outside its namespace:
  *
  *   - name clause answers (`core.media` / `core.media.song`)     ~18ns
- *   - registry walk, declared parent through the overlay         ~38ns
+ *   - registry walk, declared parent through the registry        ~38ns
  *   - registry walk, answering no                                ~30ns
  *   - `matchesTypeFilter`, already paid per event               ~146ns
  *
@@ -354,15 +289,12 @@ export interface SubscribeOptions {
 export function eventMatchesTypeFilter(
   eventType: string,
   filter: string | readonly string[] | undefined,
-  spaceId?: string | null,
 ): boolean {
   if (filter === undefined) return true;
   if (typeof filter === "string")
-    return typeAnswersSubtreeFilter(eventType, filter, spaceId);
+    return typeAnswersSubtreeFilter(eventType, filter);
   if (filter.length === 0) return true;
-  return filter.some((entry) =>
-    typeAnswersSubtreeFilter(eventType, entry, spaceId),
-  );
+  return filter.some((entry) => typeAnswersSubtreeFilter(eventType, entry));
 }
 
 export async function* subscribe(
@@ -376,26 +308,7 @@ export async function* subscribe(
   try {
     for await (const [event] of iter) {
       const itemEvent = event as ItemEventWithId;
-      // Space first, and the order matters now: this is a string
-      // comparison while the type filter below may walk a declared chain
-      // through the registry, so testing the cheap fence first keeps the
-      // expensive question off every event belonging to another space.
-      if (options?.spaceId && itemEvent.spaceId !== options.spaceId) continue;
-      // The space goes to the matcher, or a space's own subtype of a
-      // shipped type does not answer a filter naming that type. `?? null`
-      // rather than passing the value through: the list surfaces resolve
-      // a space-less caller against the null-space overlay a platform
-      // self-host registers into, and a stream resolving it against core
-      // types alone would disagree with them for exactly those
-      // deployments. It also matters that this is not `undefined`, which
-      // the matcher reads as "resolve names only".
-      if (
-        !eventMatchesTypeFilter(
-          itemEvent.item.type,
-          options?.typeFilter,
-          options?.spaceId ?? null,
-        )
-      )
+      if (!eventMatchesTypeFilter(itemEvent.item.type, options?.typeFilter))
         continue;
       yield itemEvent;
     }
@@ -412,11 +325,10 @@ export async function* subscribe(
   }
 }
 
-/** Subscribe to edge lifecycle events. Filters by space only; there is
- *  no typeFilter since edges don't carry a content type.
+/** Subscribe to edge lifecycle events. There is no typeFilter since edges
+ *  don't carry a content type.
  *  Same iterator cleanup contract as `subscribe()` above. */
 export async function* subscribeEdges(options?: {
-  spaceId?: string;
   signal?: AbortSignal;
 }): AsyncGenerator<EdgeEventWithId> {
   const iter = on(
@@ -427,7 +339,6 @@ export async function* subscribeEdges(options?: {
   try {
     for await (const [event] of iter) {
       const edgeEvent = event as EdgeEventWithId;
-      if (options?.spaceId && edgeEvent.spaceId !== options.spaceId) continue;
       yield edgeEvent;
     }
   } catch (err) {

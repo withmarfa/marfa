@@ -23,7 +23,6 @@ import { ErrorCode, MarfaError } from "./errors.js";
 
 // A space of its own per file: the registry is a module-level singleton, so a
 // leftover registration is visible to every other test in the process.
-const SPACE = "01a02000-0000-7000-8000-0000000000f1";
 
 const registered: string[] = [];
 
@@ -31,12 +30,12 @@ afterEach(() => {
   // Reverse order so a child is gone before the parent whose removal would
   // otherwise walk it.
   for (const id of registered.splice(0).reverse()) {
-    unregisterTypeSchema(id, SPACE);
+    unregisterTypeSchema(id);
   }
 });
 
 function hydrate(payload: readonly TypeSchema[]) {
-  const result = hydrateTypeRegistry(payload, { spaceId: SPACE });
+  const result = hydrateTypeRegistry(payload);
   registered.push(...result.registered);
   return result;
 }
@@ -57,14 +56,10 @@ describe("hydrateTypeRegistry", () => {
       },
     ]);
 
-    const missing = validateProperties("acme.child", {}, { spaceId: SPACE });
+    const missing = validateProperties("acme.child", {});
     expect(missing.success).toBe(false);
 
-    const present = validateProperties(
-      "acme.child",
-      { headline: "set" },
-      { spaceId: SPACE },
-    );
+    const present = validateProperties("acme.child", { headline: "set" });
     expect(present.success).toBe(true);
   });
 
@@ -95,7 +90,7 @@ describe("hydrateTypeRegistry", () => {
     // Resolution is not at risk and no assertion here pretends otherwise:
     // `resolveSchema` reads the platform registry first, so an overlay entry
     // under a shipped id is unreachable whatever it contains.
-    const before = listTypes(SPACE).length;
+    const before = listTypes().length;
 
     const result = hydrate([
       { id: "core.note", version: 1, fields: {} },
@@ -104,7 +99,7 @@ describe("hydrateTypeRegistry", () => {
 
     expect(result.skippedPlatform).toEqual(["core.note"]);
     expect(result.registered).toEqual(["acme.own"]);
-    expect(listTypes(SPACE).length).toBe(before + 1);
+    expect(listTypes().length).toBe(before + 1);
   });
 
   it("registers a closed parent chain and names its members", () => {
@@ -120,10 +115,10 @@ describe("hydrateTypeRegistry", () => {
 
     expect(result.cycles.sort()).toEqual(["acme.boros", "acme.ouro"]);
     expect(result.registered.sort()).toEqual(["acme.boros", "acme.ouro"]);
-    expect(getTypeSchema("acme.ouro", SPACE)).toBeDefined();
+    expect(getTypeSchema("acme.ouro")).toBeDefined();
 
     try {
-      validateProperties("acme.ouro", {}, { spaceId: SPACE });
+      validateProperties("acme.ouro", {});
       expect.unreachable("resolving a closed chain must raise");
     } catch (error) {
       expect(error).toBeInstanceOf(MarfaError);
@@ -162,13 +157,10 @@ describe("hydrateTypeRegistry", () => {
     expect(result.unresolvedParents).toEqual([]);
     expect(result.cycles).toEqual([]);
     // Resolution already treated it as a root; the report now agrees.
-    expect(
-      validateProperties("acme.nulled", {}, { spaceId: SPACE }).success,
-    ).toBe(false);
-    expect(
-      validateProperties("acme.nulled", { headline: "set" }, { spaceId: SPACE })
-        .success,
-    ).toBe(true);
+    expect(validateProperties("acme.nulled", {}).success).toBe(false);
+    expect(validateProperties("acme.nulled", { headline: "set" }).success).toBe(
+      true,
+    );
   });
 
   it("refuses a chain deeper than resolution will follow, by name", () => {
@@ -196,13 +188,13 @@ describe("hydrateTypeRegistry", () => {
     }
     payload.push({ id: link(0), version: 1, fields: {} });
 
-    const before = listTypes(SPACE).length;
+    const before = listTypes().length;
     let caught: unknown;
     try {
       // Not `expect(...).toThrow()`: the code carried on the error is the
       // assertion, and a bare throw check would pass on the RangeError this
       // bound exists to replace.
-      hydrateTypeRegistry(payload, { spaceId: SPACE });
+      hydrateTypeRegistry(payload);
     } catch (error) {
       caught = error;
     }
@@ -212,7 +204,7 @@ describe("hydrateTypeRegistry", () => {
     // Ordering runs to completion before anything is registered, so a refusal
     // leaves the registry untouched rather than half-filled. Nothing to clean
     // up here, and that is the property rather than an omission.
-    expect(listTypes(SPACE).length).toBe(before);
+    expect(listTypes().length).toBe(before);
   });
 
   it("does not report a parent the platform registry already ships", () => {
@@ -224,13 +216,10 @@ describe("hydrateTypeRegistry", () => {
     ]);
 
     expect(result.unresolvedParents).toEqual([]);
-    expect(
-      validateProperties("acme.memo", {}, { spaceId: SPACE }).success,
-    ).toBe(false);
-    expect(
-      validateProperties("acme.memo", { body: "text" }, { spaceId: SPACE })
-        .success,
-    ).toBe(true);
+    expect(validateProperties("acme.memo", {}).success).toBe(false);
+    expect(validateProperties("acme.memo", { body: "text" }).success).toBe(
+      true,
+    );
   });
 
   it("drops a type the listing no longer carries", () => {
@@ -247,13 +236,7 @@ describe("hydrateTypeRegistry", () => {
       },
     ]);
     expect(
-      validateProperties(
-        "acme.retired",
-        { headline: "set" },
-        {
-          spaceId: SPACE,
-        },
-      ).success,
+      validateProperties("acme.retired", { headline: "set" }).success,
     ).toBe(true);
 
     // The same space, listed again after the type was deleted server-side.
@@ -262,11 +245,7 @@ describe("hydrateTypeRegistry", () => {
     // The compiled schema goes with the registration. A stale cache entry
     // would keep answering `success` here with nothing left in the registry
     // to evict it, which is the half that makes the removal worth doing.
-    const after = validateProperties(
-      "acme.retired",
-      { headline: "set" },
-      { spaceId: SPACE },
-    );
+    const after = validateProperties("acme.retired", { headline: "set" });
     expect(after.success).toBe(false);
     // Refused as an unknown type rather than on a field, which is what tells
     // a removed registration from one still present that happens to reject
@@ -274,29 +253,10 @@ describe("hydrateTypeRegistry", () => {
     expect(after.success ? [] : after.errors.map((e) => e.field)).toEqual([
       "_type",
     ]);
-    expect(getTypeSchema("acme.retired", SPACE)).toBeUndefined();
+    expect(getTypeSchema("acme.retired")).toBeUndefined();
     // Convergence is not a purge: what the listing still carries stays.
-    expect(getTypeSchema("acme.kept", SPACE)).toBeDefined();
+    expect(getTypeSchema("acme.kept")).toBeDefined();
     expect(result.removed).toEqual(["acme.retired"]);
-  });
-
-  it("leaves another space's overlay alone when it converges", () => {
-    // Removal is scoped to the bucket `spaceId` names, the same scope
-    // registration has. A hydration that reached past it would evict a space
-    // whose listing this payload says nothing about.
-    const other = "01a02000-0000-7000-8000-0000000000f3";
-    const elsewhere = hydrateTypeRegistry(
-      [{ id: "acme.neighbor", version: 1, fields: {} }],
-      { spaceId: other },
-    );
-    expect(elsewhere.registered).toEqual(["acme.neighbor"]);
-
-    try {
-      hydrate([{ id: "acme.mine", version: 1, fields: {} }]);
-      expect(getTypeSchema("acme.neighbor", other)).toBeDefined();
-    } finally {
-      unregisterTypeSchema("acme.neighbor", other);
-    }
   });
 
   it("gives an unshipped platform type the lifecycle its own family has", () => {
@@ -349,7 +309,7 @@ describe("hydrateTypeRegistry", () => {
 
   it("names a shipped platform type the listing does not carry", () => {
     // The permissive direction, and the one convergence cannot repair: the
-    // platform map is global, so a space-scoped listing may not evict from
+    // platform map is global, so a listing may not evict from
     // it and `removed` never reaches these. A client on a newer kit than the
     // server resolves such a type through that map, validates the write
     // against it locally, and the server refuses the create as an unknown
@@ -409,10 +369,9 @@ describe("hydrateTypeRegistry", () => {
 
     let caught: unknown;
     try {
-      hydrateTypeRegistry(
-        [{ id: 7, version: 1, fields: {} }] as unknown as TypeSchema[],
-        { spaceId: SPACE },
-      );
+      hydrateTypeRegistry([
+        { id: 7, version: 1, fields: {} },
+      ] as unknown as TypeSchema[]);
     } catch (error) {
       caught = error;
     }
@@ -422,7 +381,7 @@ describe("hydrateTypeRegistry", () => {
     expect((caught as MarfaError).details?.type_id).toBe(7);
     // Raised in the collection loop, ahead of every registration and every
     // removal, so the space is left exactly as it was found.
-    expect(getTypeSchema("acme.standing_id", SPACE)).toBeDefined();
+    expect(getTypeSchema("acme.standing_id")).toBeDefined();
   });
 
   it("removes nothing when the payload is refused", () => {
@@ -440,15 +399,13 @@ describe("hydrateTypeRegistry", () => {
     }
     payload.push({ id: link(0), version: 1, fields: {} });
 
-    expect(() => hydrateTypeRegistry(payload, { spaceId: SPACE })).toThrow(
-      MarfaError,
-    );
+    expect(() => hydrateTypeRegistry(payload)).toThrow(MarfaError);
 
     // A refused payload names none of what the space already holds, so
     // convergence running ahead of the ordering walk would empty the space
     // and then throw. Registration is held behind the walk for the same
     // reason and has a test of its own; this is the other half.
-    expect(getTypeSchema("acme.standing", SPACE)).toBeDefined();
+    expect(getTypeSchema("acme.standing")).toBeDefined();
   });
 
   it("names a child whose parent the listing has dropped", () => {
@@ -460,9 +417,7 @@ describe("hydrateTypeRegistry", () => {
       },
       { id: "acme.frond", version: 1, parent: "acme.stem", fields: {} },
     ]);
-    expect(
-      validateProperties("acme.frond", {}, { spaceId: SPACE }).success,
-    ).toBe(false);
+    expect(validateProperties("acme.frond", {}).success).toBe(false);
 
     // The parent has left the listing; the child has not. This call is what
     // breaks the chain, so a report taken before the removals would say the
@@ -475,9 +430,7 @@ describe("hydrateTypeRegistry", () => {
     expect(result.unresolvedParents).toEqual(["acme.frond"]);
     // And the shortfall the entry is warning about: the requirement the
     // removed ancestor declared is no longer enforced anywhere.
-    expect(
-      validateProperties("acme.frond", {}, { spaceId: SPACE }).success,
-    ).toBe(true);
+    expect(validateProperties("acme.frond", {}).success).toBe(true);
   });
 });
 

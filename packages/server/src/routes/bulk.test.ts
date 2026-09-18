@@ -554,7 +554,6 @@ describe("POST /items/bulk", () => {
         is_operator: false,
       },
       keyHash,
-      ctx.spaceId,
     );
 
     const res = await request(ctx.app, "POST", "/items/bulk", {
@@ -581,7 +580,6 @@ describe("POST /items/bulk", () => {
         is_operator: false,
       },
       keyHash,
-      ctx.spaceId,
     );
 
     const res = await request(ctx.app, "POST", "/items/bulk", {
@@ -609,7 +607,6 @@ describe("POST /items/bulk", () => {
         is_operator: false,
       },
       keyHash,
-      ctx.spaceId,
     );
 
     const res = await request(ctx.app, "POST", "/items/bulk", {

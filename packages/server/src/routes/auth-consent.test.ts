@@ -229,7 +229,6 @@ async function seedAccessToken(
     token: tokenHash,
     clientId,
     userId: authUserId,
-    referenceId: null,
     expiresAt: new Date(Date.now() + 3600_000),
     createdAt: new Date(),
     scopes: JSON.stringify(scopes),
@@ -396,16 +395,12 @@ describe("GET /auth/authorize (consent page)", () => {
       .find((head) => head?.includes("session_token"));
     expect(cookie).toBeTruthy();
 
-    const spaceId = ctx.spaceId;
-    await ctx.storage.types.create(
-      {
-        id: "user.recipe",
-        version: 1,
-        label: "Recipes",
-        fields: { title: { type: "string", required: true } },
-      },
-      spaceId,
-    );
+    await ctx.storage.types.create({
+      id: "user.recipe",
+      version: 1,
+      label: "Recipes",
+      fields: { title: { type: "string", required: true } },
+    });
 
     const res = await request(
       ctx.app,
@@ -866,17 +861,13 @@ describe("POST /auth/authorize/decision (consent decision proxy)", () => {
     const v1 = items.data[0]!.version;
 
     // Simulate the user revoking the grant via /security (sets status=revoked).
-    const revokedUpdate = await ctx.storage.items.update(
-      grantId,
-      {
-        properties: {
-          ...items.data[0]!.properties,
-          status: "revoked",
-          revoked_at: new Date().toISOString(),
-        },
+    const revokedUpdate = await ctx.storage.items.update(grantId, {
+      properties: {
+        ...items.data[0]!.properties,
+        status: "revoked",
+        revoked_at: new Date().toISOString(),
       },
-      undefined,
-    );
+    });
     expect("error" in revokedUpdate).toBe(false);
     const revoked = await ctx.storage.items.get(grantId);
     expect(revoked!.properties.status).toBe("revoked");
@@ -971,7 +962,6 @@ describe("POST /auth/authorize/decision (consent decision proxy)", () => {
       token: tokenHash,
       clientId,
       userId: authUserId,
-      referenceId: null,
       expiresAt: new Date(now.getTime() + 3600_000),
       createdAt: now,
       scopes: JSON.stringify(wideScopes),
@@ -1099,7 +1089,6 @@ describe("POST /auth/authorize/decision (consent decision proxy)", () => {
       token: tokenHash,
       clientId,
       userId: authUserId,
-      referenceId: null,
       expiresAt: new Date(Date.now() + 3600_000),
       createdAt: new Date(),
       // JSON-serialized text.
@@ -1181,7 +1170,6 @@ describe("POST /auth/authorize/decision (consent decision proxy)", () => {
       token: tokenHash,
       clientId,
       userId: authUserId,
-      referenceId: null,
       expiresAt: new Date(Date.now() + 3600_000),
       createdAt: new Date(),
       scopes: JSON.stringify(heldScopes),

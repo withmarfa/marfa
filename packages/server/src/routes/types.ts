@@ -63,13 +63,11 @@ function isLockedPlatformType(id: string): boolean {
 function validateParentChain(
   typeId: string,
   parentId: string,
-  spaceId?: string,
   descendantDepth = 0,
 ): void {
   assertParentChain(
     typeId,
     parentId,
-    spaceId,
     {
       tooDeep: (maxDepth) =>
         descendantDepth > 0
@@ -382,11 +380,7 @@ export function typeRoutes(storage: Storage) {
 
   router.openapi(listTypesRoute, (c) => {
     requireAuth(c);
-    // Core/system types are global; custom types resolve only within the
-    // caller's space. `listTypes(spaceId)` returns core/system plus this
-    // space's own custom types — never another space's.
-    const spaceId = c.get("apiKey")?.space_id;
-    const resolve: TypeResolver = (id) => getTypeSchema(id, spaceId);
+    const resolve: TypeResolver = (id) => getTypeSchema(id);
     // Schemas come back as declared, not resolved, which is deliberate:
     // resolving fields and policies for every type in a vocabulary is work a
     // caller who wants one type should pay per type. `roles` is the exception
@@ -396,7 +390,7 @@ export function typeRoutes(storage: Storage) {
     // path accepts them. Same helper as the single read, so the two cannot
     // give different answers about the same type.
     return c.json(
-      listTypes(spaceId).map((schema) => {
+      listTypes().map((schema) => {
         const roles = resolveRoles(schema.id, resolve);
         return roles ? { ...schema, roles } : schema;
       }),
@@ -407,12 +401,7 @@ export function typeRoutes(storage: Storage) {
   router.openapi(getTypeRoute, (c) => {
     requireAuth(c);
     const { id } = c.req.valid("param");
-    // Resolve through the space-scoped lookup so a probe for another space's
-    // custom type id resolves to nothing here and 404s.
-    const spaceId = c.get("apiKey")?.space_id;
-    const schema = resolveTypeSchema(id, (typeId) =>
-      getTypeSchema(typeId, spaceId),
-    );
+    const schema = resolveTypeSchema(id, (typeId) => getTypeSchema(typeId));
     if (!schema) {
       throw new MarfaError(ErrorCode.TYPE_NOT_FOUND, `Type "${id}" not found`);
     }
@@ -422,10 +411,6 @@ export function typeRoutes(storage: Storage) {
   router.openapi(registerTypeRoute, async (c) => {
     requireMetadataPermission(c, "types", "write");
     const body = c.req.valid("json");
-    // The registration is scoped to the caller's space: every inheritance,
-    // compatible-with, parent-chain, and existence check below resolves within
-    // this space's overlay, so a custom type is isolated to it from creation.
-    const spaceId = c.get("apiKey")?.space_id;
 
     if (typeof body.id === "string" && !isValidTypeIdentifier(body.id)) {
       throw new MarfaError(
@@ -462,7 +447,7 @@ export function typeRoutes(storage: Storage) {
       );
     }
 
-    const result = validateTypeSchema(body, spaceId);
+    const result = validateTypeSchema(body);
     if (!result.success) {
       // Surface specific error codes so clients can disambiguate from generic schema failures.
       const hasPropertyShadowsField = result.errors.some(
@@ -504,20 +489,19 @@ export function typeRoutes(storage: Storage) {
     }
 
     if (schema.parent) {
-      validateParentChain(schema.id, schema.parent, spaceId);
+      validateParentChain(schema.id, schema.parent);
     }
 
-    if (getTypeSchema(schema.id, spaceId)) {
+    if (getTypeSchema(schema.id)) {
       throw new MarfaError(
         ErrorCode.TYPE_ALREADY_EXISTS,
         `Type "${schema.id}" already exists`,
       );
     }
 
-    const created = await storage.types.create(schema, spaceId);
+    const created = await storage.types.create(schema);
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
-      space_id: c.get("apiKey")?.space_id ?? null,
       key_id: c.get("apiKey")?.id,
       action: "type.register",
       resource_type: "type",
@@ -530,10 +514,6 @@ export function typeRoutes(storage: Storage) {
     requireAuth(c);
     requireSpacePermission(c, "space.schema");
     const { id } = c.req.valid("param");
-    // Scope to the caller's space: a space-bound credential sees and mutates
-    // only its own custom types. A probe for another space's id resolves to
-    // nothing and 404s.
-    const spaceId = c.get("apiKey")?.space_id;
 
     if (!isValidTypeIdentifier(id)) {
       throw new MarfaError(
@@ -549,13 +529,13 @@ export function typeRoutes(storage: Storage) {
       );
     }
 
-    const existing = getTypeSchema(id, spaceId);
+    const existing = getTypeSchema(id);
     if (!existing) {
       throw new MarfaError(ErrorCode.TYPE_NOT_FOUND, `Type "${id}" not found`);
     }
 
     const body = c.req.valid("json");
-    const result = validateTypeSchema({ ...body, id }, spaceId);
+    const result = validateTypeSchema({ ...body, id });
     if (!result.success) {
       throw new MarfaError(ErrorCode.INVALID_SCHEMA, "Invalid type schema", {
         errors: result.errors,
@@ -570,8 +550,7 @@ export function typeRoutes(storage: Storage) {
       validateParentChain(
         schema.id,
         schema.parent,
-        spaceId,
-        maxDescendantDepth(schema.id, spaceId),
+        maxDescendantDepth(schema.id),
       );
     }
 
@@ -600,10 +579,9 @@ export function typeRoutes(storage: Storage) {
       );
     }
 
-    const updated = await storage.types.update(id, schema, spaceId);
+    const updated = await storage.types.update(id, schema);
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
-      space_id: c.get("apiKey")?.space_id ?? null,
       key_id: c.get("apiKey")?.id,
       action: "type.update",
       resource_type: "type",
@@ -616,9 +594,6 @@ export function typeRoutes(storage: Storage) {
     requireAuth(c);
     requireSpacePermission(c, "space.schema");
     const { id } = c.req.valid("param");
-    // Scope to the caller's space: a space-bound credential can only delete
-    // its own custom types; another space's id resolves as not-found.
-    const spaceId = c.get("apiKey")?.space_id;
 
     if (isLockedPlatformType(id)) {
       throw new MarfaError(
@@ -627,7 +602,7 @@ export function typeRoutes(storage: Storage) {
       );
     }
 
-    const existing = getTypeSchema(id, spaceId);
+    const existing = getTypeSchema(id);
     if (!existing) {
       throw new MarfaError(ErrorCode.TYPE_NOT_FOUND, `Type "${id}" not found`);
     }
@@ -643,7 +618,7 @@ export function typeRoutes(storage: Storage) {
     // as a side effect of a command naming a different type, and it would
     // have to either bypass or silently satisfy the version bump that
     // `PUT /types/:id` requires for a parent change.
-    const subtypes = directChildrenOf(id, spaceId);
+    const subtypes = directChildrenOf(id);
     if (subtypes.length > 0) {
       throw new MarfaError(
         ErrorCode.TYPE_HAS_SUBTYPES,
@@ -659,7 +634,6 @@ export function typeRoutes(storage: Storage) {
     const { force } = c.req.valid("query");
     if (force !== "true") {
       const items = await storage.items.list({
-        spaceId,
         type: id,
         limit: 1,
       });
@@ -671,10 +645,9 @@ export function typeRoutes(storage: Storage) {
       }
     }
 
-    await storage.types.delete(id, spaceId);
+    await storage.types.delete(id);
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
-      space_id: c.get("apiKey")?.space_id ?? null,
       key_id: c.get("apiKey")?.id,
       action: "type.delete",
       resource_type: "type",

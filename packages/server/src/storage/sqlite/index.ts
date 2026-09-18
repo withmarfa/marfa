@@ -15,7 +15,6 @@ import { SqliteWebhookDeliveryStore } from "./webhook-delivery-store.js";
 import { SqliteAuditStore } from "./audit-store.js";
 import { SqliteAuthSessionStore } from "./auth-session-store.js";
 import { SqliteEventLogStore } from "./event-log-store.js";
-import { SqliteSpaceStore } from "./space-store.js";
 import { SqliteEdgeStore } from "./edge-store.js";
 import { SqliteEdgeTypeStore } from "./edge-type-store.js";
 import { SqliteEnrichmentStore } from "./enrichment-store.js";
@@ -72,10 +71,8 @@ export async function createSqliteStorage(sqlitePath: string): Promise<
   // Awaited for the same reason as the type warmup below: a registry filled
   // after storage is handed back is a registry some request can miss.
   const loadedCustomEdgeTypes = await edgeTypeStore.loadCustomEdgeTypes();
-  for (const { space_id, schema } of loadedCustomEdgeTypes) {
-    // Register into the owning space's overlay so one space's custom
-    // edge types never resolve for another space's lookups.
-    if (!isCoreEdgeType(schema.id)) registerEdgeTypeSchema(schema, space_id);
+  for (const schema of loadedCustomEdgeTypes) {
+    if (!isCoreEdgeType(schema.id)) registerEdgeTypeSchema(schema);
   }
 
   // Awaited, unlike the fire-and-forget this used to be. That was harmless
@@ -125,10 +122,7 @@ export async function createSqliteStorage(sqlitePath: string): Promise<
   );
   for (const row of loadedTypes) {
     if (row.origin === "platform") continue;
-    // Register into the owning space's overlay so one space's custom types
-    // never resolve for another space's lookups. The empty-string sentinel
-    // maps to the null-space bucket.
-    registerTypeSchema(row.schema, row.space_id);
+    registerTypeSchema(row.schema);
   }
   seedPlatformRegistry(platformRows);
 
@@ -164,9 +158,6 @@ export async function createSqliteStorage(sqlitePath: string): Promise<
     // wiring; SQLite is single-process by file lock so "cluster-shared"
     // collapses to "still correct in-process".
     rateLimits: new SqliteRateLimitStore(db),
-    // The instance's one space, provisioned at bootstrap, which the working
-    // key is minted into and a sign-in resolves its grant's space through.
-    spaces: new SqliteSpaceStore(db),
     /**
      * Genuinely transactional under libsql + ALS routing. Opens a libsql
      * `BEGIN IMMEDIATE` via Drizzle's `db.transaction(async tx => …)`,

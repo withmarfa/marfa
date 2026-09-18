@@ -8,7 +8,6 @@ import {
   requireAuth,
   hashApiKey,
   stampOAuthGrantLastUsed,
-  hasOperatorAuthority,
 } from "../middleware/auth.js";
 import {
   mergeDeviceApprovalScopes,
@@ -19,10 +18,6 @@ import {
   buildAllowedScopes,
   REFRESH_TOKEN_PREFIX,
 } from "../auth/oauth-provider.js";
-import {
-  NO_GRANT_SPACE_MESSAGE,
-  resolveSpaceIdForAuthUser,
-} from "../auth/grant-space.js";
 import {
   bundlePublishedScopes,
   catchUpClientScopeCeiling,
@@ -71,8 +66,7 @@ function sha256(input: string): string {
 /**
  * Persist (or refresh) a `kind: app` connection through `ItemStore`. Routes
  * through `ItemStore.create` on first consent and `ItemStore.update` on
- * re-consent so the row gets full ItemStore treatment: `space_id`
- * stamping, search indexing, metadata-row insertion, versions snapshot on
+ * re-consent so the row gets full ItemStore treatment: search indexing, metadata-row insertion, versions snapshot on
  * re-consent, the `created`/`updated` event emission, and `source` /
  * `origin` stamping. Returns the connection-item id, whether the call
  * created vs updated the projection, and the scope list the record now
@@ -97,19 +91,6 @@ function sha256(input: string): string {
  * tokens carrying what was dropped. Advertising this
  * function as serving both would let a future authorize caller pick it up
  * and silently disable that revoke.
- *
- * **`spaceId` comes from `resolveSpaceIdForAuthUser`, the same function
- * issuance uses.** The projection's space and the token's `reference_id`
- * have to agree or `findGrantItemId` looks in the wrong bucket and the
- * revoke cascade finds nothing to revoke, silently. They used to agree by
- * accident: in hosted mode both read the user's row, and in keys mode both
- * were nothing. Keys mode has a space now, and one resolver is what keeps
- * the agreement a fact rather than a coincidence.
- *
- * A grant with no space to scope it to is refused outright, in either mode.
- * The OAuth flow cannot honor one, and a token minted against it is refused
- * by the bearer middleware anyway, so refusing here is the difference
- * between a person being told and a device polling forever.
  */
 async function createUserAppGrant(
   storage: Storage,
@@ -121,27 +102,13 @@ async function createUserAppGrant(
   id: string;
   created: boolean;
   scopes: string[];
-  spaceId: string | undefined;
 }> {
-  // Cycle metadata flows through `cycleRequestContext` (set by
-  // `cycleMiddleware`) — `publish()` reads it automatically.
-  const spaceId = await resolveSpaceIdForAuthUser(storage);
-  if (!spaceId) {
-    // The same words the code flow refuses in, because it is the same
-    // situation and the reader has no way to tell which surface they are on.
-    // The copy this replaced named onboarding, which is true of an account
-    // with no space and simply wrong about a self-hosted server holding more
-    // than one, and it sent a self-hoster looking for a step that does not
-    // exist.
-    throw new MarfaError(ErrorCode.UNAUTHORIZED, NO_GRANT_SPACE_MESSAGE);
-  }
   const now = new Date().toISOString();
 
   // Detect re-consent — update in place if a projection exists, else insert.
   let existingItemId: string | null = null;
   if (typeof storage.oauthProvider?.findGrantItemId === "function") {
     existingItemId = await storage.oauthProvider.findGrantItemId({
-      spaceId,
       clientId,
       authUserId: consentingUser.id,
     });
@@ -150,7 +117,7 @@ async function createUserAppGrant(
   if (existingItemId) {
     // Re-consent: flip status back to "active" + clear revoked_at; same
     // rationale as projectGrantOnConsent in auth-consent.ts.
-    const existing = await storage.items.get(existingItemId, spaceId);
+    const existing = await storage.items.get(existingItemId);
     if (!existing) {
       // Race — findGrantItemId saw a row but a concurrent delete
       // raced. Fall through to insert.
@@ -207,61 +174,52 @@ async function createUserAppGrant(
           ? (existing.properties.scopes as string[])
           : [];
       const mergedScopes = mergeDeviceApprovalScopes(standingScopes, scopes);
-      const updated = await storage.items.update(
-        existingItemId,
-        {
-          properties: {
-            scopes: mergedScopes,
-            status: "active",
-            granted_at: now,
-            revoked_at: undefined,
-          },
+      const updated = await storage.items.update(existingItemId, {
+        properties: {
+          scopes: mergedScopes,
+          status: "active",
+          granted_at: now,
+          revoked_at: undefined,
         },
-        spaceId,
-      );
+      });
       if (!("error" in updated)) {
         const metadata = await storage.metadata.get(updated.id);
         await publish({
           type: "updated",
           item: updated,
           metadata,
-          spaceId,
         });
         return {
           id: updated.id,
           created: false,
           scopes: mergedScopes,
-          spaceId,
         };
       }
     }
   }
 
   // First-time consent: insert a fresh row.
-  const item = await storage.items.create(
-    {
-      type: "system.connection",
-      tier: "library",
-      state: "active",
-      properties: {
-        kind: "app",
-        client_id: clientId,
-        // Store the consenting auth_user id so cascade revoke
-        // (/auth/grants/:id/revoke → revokeTokensForGrant(clientId, userId))
-        // and the device-flow terminal step (which needs (clientId, userId)
-        // to mint tokens against the plugin's tables) can find the user.
-        user_id: consentingUser.id,
-        scopes,
-        status: "active",
-        granted_at: now,
-      },
-      source,
+  const item = await storage.items.create({
+    type: "system.connection",
+    tier: "library",
+    state: "active",
+    properties: {
+      kind: "app",
+      client_id: clientId,
+      // Store the consenting auth_user id so cascade revoke
+      // (/auth/grants/:id/revoke → revokeTokensForGrant(clientId, userId))
+      // and the device-flow terminal step (which needs (clientId, userId)
+      // to mint tokens against the plugin's tables) can find the user.
+      user_id: consentingUser.id,
+      scopes,
+      status: "active",
+      granted_at: now,
     },
-    spaceId,
-  );
+    source,
+  });
   const metadata = await storage.metadata.get(item.id);
-  await publish({ type: "created", item, metadata, spaceId });
-  return { id: item.id, created: true, scopes, spaceId };
+  await publish({ type: "created", item, metadata });
+  return { id: item.id, created: true, scopes };
 }
 
 /**
@@ -366,25 +324,15 @@ export function authRoutes(
     // operations on other principals' access — the same standing as the key
     // management routes beside them. Two axes: the permission says who may
     // act, the space fence below says where.
-    const key = requireAuth(c);
+    requireAuth(c);
     // Revoking another app's access is exactly the authority a person would
     // want to have been asked about, and `space.app_grants` is the row they
     // tick to grant it. There is nothing else to reach this on: no door admits
     // on rank, and a signed-in app holds what its grant carries.
     requireSpacePermission(c, "space.app_grants");
-    // A credential carrying a space_id is fenced by the `spaceId`
-    // argument below; one without a space would fall through to every
-    // space's grants, so only the operator key reaches here in that shape.
-    if (!key.space_id && !hasOperatorAuthority(key) && !key.is_operator) {
-      throw new MarfaError(
-        ErrorCode.FORBIDDEN,
-        "Space scope required for this credential",
-      );
-    }
     const items = await storage.items.list({
       type: "system.connection",
       state: "active",
-      spaceId: key.space_id ?? undefined,
     });
     const grants: {
       id: string;
@@ -415,20 +363,11 @@ export function authRoutes(
   });
 
   router.delete("/grants/:id", async (c) => {
-    // Same two axes as `GET /grants`: `space.app_grants` to act at all, and
-    // the space fence below, so only the operator key may resolve `spaceId`
-    // to undefined and address a grant in any space.
-    const key = requireAuth(c);
+    // The same axis as `GET /grants`: `space.app_grants` to act at all.
+    requireAuth(c);
     requireSpacePermission(c, "space.app_grants");
-    if (!key.space_id && !hasOperatorAuthority(key) && !key.is_operator) {
-      throw new MarfaError(
-        ErrorCode.FORBIDDEN,
-        "Space scope required for this credential",
-      );
-    }
-    const spaceId = key.space_id ?? undefined;
     const id = c.req.param("id");
-    const item = await storage.items.get(id, spaceId);
+    const item = await storage.items.get(id);
     if (item?.type !== "system.connection") {
       throw new MarfaError(ErrorCode.OAUTH_GRANT_NOT_FOUND, "Grant not found");
     }
@@ -447,20 +386,13 @@ export function authRoutes(
     await revokeProjectedGrant(storage, {
       itemId: id,
       properties: props,
-      spaceId,
       clientId,
       authUserId,
       // Opt-in, and never inferred. A caller here has nobody to ask, so the
       // keys the app minted survive unless this door was told to take them.
       revokeKeys: asksToRevokeKeys(c.req.query("revoke_keys")),
-      // The grant's own space rather than the caller's, which an operator key
-      // resolves to undefined. Without this the sweep would read "space-less"
-      // on a hosted instance and take nothing, or — with a looser filter —
-      // reach a second space where the same app also holds a grant.
-      keysSpaceId: item.space_id ?? undefined,
     });
     auditGrantRevoked(storage, {
-      spaceId,
       clientId,
       authUserId,
       grantItemId: id,
@@ -1132,7 +1064,6 @@ export function authRoutes(
           await provider.upsertConsent({
             clientId: row.client_id,
             authUserId: sessionResult.session.user.id,
-            referenceId: created.spaceId ?? null,
             scopes: created.scopes,
           });
         }
@@ -1147,7 +1078,6 @@ export function authRoutes(
       );
     }
     void storage.audit.log({
-      space_id: grant.spaceId ?? null,
       action: "auth.grant.created",
       resource_type: "oauth_grant",
       resource_id: row.client_id,
@@ -1309,7 +1239,7 @@ export function authRoutes(
     const accessBare = accessRaw.slice(ACCESS_TOKEN_PREFIX.length);
     const accessHash = hashApiKey(accessBare, salt);
 
-    // Resolve the grant to extract space_id + approved scopes.
+    // Resolve the grant to extract the approved scopes.
     // Type check is defense-in-depth: connection_item_id comes from a
     // server-controlled row, but a future approve-handler change could
     // stamp a wrong id and silently mint an orphan token without it.
@@ -1472,17 +1402,12 @@ export function authRoutes(
       refreshTokenHash: refreshHash,
       clientId: grantClientId,
       authUserId: grantUserId,
-      referenceId: deviceGrant.space_id ?? null,
       scopes: issuedScopes,
       accessTtlMs: ACCESS_TOKEN_TTL_MS,
     });
 
     // Stamp last_used_at on the underlying grant — best-effort.
-    await stampOAuthGrantLastUsed(
-      storage,
-      row.connection_item_id,
-      deviceGrant.space_id ?? undefined,
-    );
+    await stampOAuthGrantLastUsed(storage, row.connection_item_id);
 
     return c.json({
       access_token: accessRaw,

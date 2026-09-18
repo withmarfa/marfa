@@ -60,7 +60,7 @@ describe("BlobOrphanCleaner.runOnce", () => {
       () => now,
     );
     expect(await insideWindow.runOnce()).toBe(0);
-    expect(await ctx.storage.blobs.getAcrossSpaces(orphan)).not.toBeNull();
+    expect(await ctx.storage.blobs.get(orphan)).not.toBeNull();
 
     const pastWindow = new BlobOrphanCleaner(
       ctx.storage,
@@ -72,10 +72,10 @@ describe("BlobOrphanCleaner.runOnce", () => {
     expect(await pastWindow.runOnce()).toBe(1);
 
     // The bytes and the charge both go.
-    expect(await ctx.storage.blobs.getAcrossSpaces(orphan)).toBeNull();
+    expect(await ctx.storage.blobs.get(orphan)).toBeNull();
     expect(await ctx.blobBackend.exists(orphan)).toBe(false);
     // Age is not what condemns a blob; being unreferenced is.
-    expect(await ctx.storage.blobs.getAcrossSpaces(referenced)).not.toBeNull();
+    expect(await ctx.storage.blobs.get(referenced)).not.toBeNull();
     expect(await ctx.blobBackend.exists(referenced)).toBe(true);
     // And the sweep is idempotent.
     expect(await pastWindow.runOnce()).toBe(0);
@@ -93,6 +93,6 @@ describe("BlobOrphanCleaner.runOnce", () => {
       () => new Date(Date.now() + GRACE_MS * 24),
     );
     expect(await cleaner.runOnce()).toBe(0);
-    expect(await ctx.storage.blobs.getAcrossSpaces(orphan)).not.toBeNull();
+    expect(await ctx.storage.blobs.get(orphan)).not.toBeNull();
   });
 });

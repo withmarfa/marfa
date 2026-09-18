@@ -11,16 +11,6 @@ import {
   unregisterTypeSchema,
 } from "./type-registry.js";
 
-/** Options for {@link hydrateTypeRegistry}. */
-export interface HydrateTypeRegistryOptions {
-  /**
-   * Owning space for the registrations. Omit for the null-space bucket
-   * (the platform-registered set) — the same
-   * convention `registerTypeSchema` follows.
-   */
-  spaceId?: string | null;
-}
-
 /** What a hydration registered, and what a caller has to know about it. */
 export interface TypeRegistryHydration {
   /** Ids registered, in the order they were registered. */
@@ -28,16 +18,16 @@ export interface TypeRegistryHydration {
   /**
    * Payload entries the platform registry already ships. They are left
    * alone because `listTypes` concatenates the platform registry with the
-   * space's own map and deduplicates neither, so a shipped type written
-   * into the overlay is listed twice — once from each side. Lookups are
+   * custom map and deduplicates neither, so a shipped type written into
+   * the custom map is listed twice — once from each side. Lookups are
    * unaffected: `resolveSchema` reads the platform registry first and
-   * returns, so an overlay entry under a shipped id is unreachable rather
+   * returns, so a custom entry under a shipped id is unreachable rather
    * than authoritative.
    */
   skippedPlatform: string[];
   /**
    * Registered ids whose declared parent resolves nowhere — not in the
-   * payload, not in the platform registry, not already in this space.
+   * payload, not in the platform registry, not already registered.
    *
    * The one entry a caller must act on. Field resolution stops at the
    * break, so the type validates against a narrower field set than the
@@ -48,8 +38,8 @@ export interface TypeRegistryHydration {
    */
   unresolvedParents: string[];
   /**
-   * Ids evicted from this space's overlay because the listing no longer
-   * carries them, in the order the registry held them.
+   * Ids evicted from the custom map because the listing no longer carries
+   * them, in the order the registry held them.
    *
    * A deleted type stops appearing in the listing rather than arriving as a
    * tombstone, so nothing but absence says it is gone. Hydration that only
@@ -58,9 +48,8 @@ export interface TypeRegistryHydration {
    * arrival, and a refusal for an unknown type reads as permanent rather
    * than retryable.
    *
-   * Scoped to the bucket `spaceId` names and to types this build does not
-   * ship. Nothing global is touched: the platform map is shared by every
-   * space, so one space's listing may not evict from it.
+   * Scoped to types this build does not ship. Nothing global is touched:
+   * a listing may not evict from the platform map.
    */
   removed: string[];
   /**
@@ -73,12 +62,12 @@ export interface TypeRegistryHydration {
    *
    * An instance's shipped vocabulary is seeded data, so a listing can carry
    * platform types a client's own build never compiled in. They register into
-   * the overlay because that is the only map a client may write — the
-   * platform map is global, and a space-scoped listing may not reach it — and
+   * the custom map because that is the only map a client may write — the
+   * platform map is what the build ships, and a listing may not reach it — and
    * the lifecycle rules read the identifier rather than the map, so the type
    * still gets the lifecycle its family has.
    *
-   * Reported because the overlay is not where the server keeps them, and a
+   * Reported because the custom map is not where the server keeps them, and a
    * caller comparing its vocabulary against the server's should be able to
    * see the gap rather than infer it. A non-empty entry means the build is
    * behind the instance it is talking to.
@@ -96,7 +85,7 @@ export interface TypeRegistryHydration {
    * the server holds.
    *
    * Reported and not repaired, because nothing here can repair it. The
-   * platform map is global, so a space-scoped listing may not evict from it
+   * platform map is what the build ships, so a listing may not evict from it
    * and `removed` never reaches one of these: the type goes on resolving
    * locally, a write against it validates, and the server refuses the create
    * as an unknown type — the refusal that reads as permanent rather than
@@ -105,7 +94,7 @@ export interface TypeRegistryHydration {
    *
    * A caller passing a slice of a listing rather than the whole of one sees
    * the shipped half of that mistake here, the way `removed` shows the
-   * overlay half.
+   * custom half.
    */
   unlistedPlatform: string[];
   /**
@@ -128,10 +117,10 @@ export interface TypeRegistryHydration {
  * Not a second registration entry point. It filters the payload down to the
  * types this build does not already ship, works out an order, calls
  * `registerTypeSchema` — the one that already exists — for each, and then
- * drops whatever the space still held that the listing did not carry.
+ * drops whatever the registry still held that the listing did not carry.
  *
  * **A hydration converges on the payload rather than accumulating.** The
- * listing is the whole of what the space may see, so a type missing from it
+ * listing is the whole of what the instance holds, so a type missing from it
  * has been deleted, and the client's copy is only useful while it says the
  * same thing. Adding alone left a deleted type valid locally for ever, which
  * is the expensive direction: local validation accepted a write the server
@@ -177,14 +166,12 @@ export interface TypeRegistryHydration {
  */
 export function hydrateTypeRegistry(
   types: readonly TypeSchema[],
-  options?: HydrateTypeRegistryOptions,
 ): TypeRegistryHydration {
-  const spaceId = options?.spaceId;
   // Sets rather than arrays, because the listing repeats ids and a report
   // that counts is a report about the payload's shape rather than about the
-  // space. `GET /types` concatenates the platform map with the space's
-  // overlay and deduplicates neither, so an overlay entry shadowing a
-  // shipped id genuinely arrives twice. `custom` is keyed by id and could
+  // instance. `GET /types` concatenates the platform map with the custom
+  // map and deduplicates neither, so a custom entry shadowing a shipped id
+  // genuinely arrives twice. `custom` is keyed by id and could
   // never double, which left these two as the only arrays in the report
   // whose contents depended on how many times the listing said something —
   // and made "every `unshippedPlatform` id is also in `registered`" true of
@@ -202,7 +189,7 @@ export function hydrateTypeRegistry(
     // type and carries no code — the same failure the depth guard below
     // exists to replace, arriving through a different door. Raised here,
     // ahead of every registration and every removal, so a refusal leaves the
-    // space exactly as it found it.
+    // registry exactly as it found it.
     const id: unknown = schema.id;
     if (typeof id !== "string") {
       throw new MarfaError(
@@ -214,7 +201,7 @@ export function hydrateTypeRegistry(
     // The live platform map rather than a namespace test: an instance's
     // shipped vocabulary is seeded data, so it can hold a type this build
     // never compiled in, and membership here is exactly the question of
-    // whether the type is already resolvable without a space.
+    // whether the type is already resolvable as shipped.
     if (TYPE_REGISTRY.has(id)) {
       skippedPlatform.add(id);
       continue;
@@ -278,34 +265,34 @@ export function hydrateTypeRegistry(
 
   for (const id of custom.keys()) visit(id);
 
-  for (const schema of order) registerTypeSchema(schema, spaceId);
+  for (const schema of order) registerTypeSchema(schema);
 
   // Convergence, and it runs after the registrations rather than before them
-  // so that a payload the ordering walk refuses leaves the space exactly as
-  // it found it. Nothing is half-applied: the walk throws before the first
+  // so that a payload the ordering walk refuses leaves the registry exactly
+  // as it found it. Nothing is half-applied: the walk throws before the first
   // registration, and this loop is downstream of both.
   //
-  // Overlay ids are read as what `listTypes` returns minus what the platform
+  // Custom ids are read as what `listTypes` returns minus what the platform
   // map holds, which is the same subtraction `skippedPlatform` describes from
-  // the other side. An overlay entry shadowing a shipped id survives it and
+  // the other side. A custom entry shadowing a shipped id survives it and
   // is meant to: `resolveSchema` reads the platform map first, so such an
   // entry is unreachable rather than authoritative, and hydration leaves the
   // shipped vocabulary alone in both directions rather than only in the one
   // it adds.
   const listed = new Set(types.map((schema) => schema.id));
   const removed: string[] = [];
-  for (const schema of listTypes(spaceId)) {
+  for (const schema of listTypes()) {
     if (TYPE_REGISTRY.has(schema.id)) continue;
     if (listed.has(schema.id)) continue;
     removed.push(schema.id);
   }
   // What this loop is load-bearing for is the removed types themselves:
-  // dropping each overlay entry and evicting its own compiled schema, which
+  // dropping each custom entry and evicting its own compiled schema, which
   // is what stops a deleted type going on validating writes with nothing
   // left in the registry to answer for it.
   //
   // Not the descendant cascade `unregisterTypeSchema` also runs. A kept
-  // overlay entry is by construction a payload entry this build does not
+  // custom entry is by construction a payload entry this build does not
   // ship, so every one of them was re-registered in the pass above, and
   // `registerTypeSchema` evicts a registration's own compiled schema
   // unconditionally. A kept child of a removed ancestor has therefore
@@ -313,10 +300,10 @@ export function hydrateTypeRegistry(
   // reaches nothing hydration has not already reached. It stays because it
   // is that function's own property, correct for its other callers and held
   // by its own test; hydration does not depend on it.
-  for (const id of removed) unregisterTypeSchema(id, spaceId);
+  for (const id of removed) unregisterTypeSchema(id);
 
   // The mirror of `unshippedPlatform`, and the direction convergence cannot
-  // reach: the platform map is global, so a space-scoped listing may not
+  // reach: the platform map is what the build ships, so a listing may not
   // evict from it. A type this build ships that the instance does not name
   // goes on resolving locally whatever this helper does, so the entry is the
   // whole of the answer rather than a note beside a repair.
@@ -326,7 +313,7 @@ export function hydrateTypeRegistry(
   }
 
   // Asked after every registration AND after the removals, and of the
-  // registry rather than of the payload, so a parent this space already held
+  // registry rather than of the payload, so a parent already registered
   // counts as resolved and a parent the payload supplied is not reported
   // against its own child. Asking before the removals would miss the case
   // convergence introduces: a listing carrying a child whose parent it has
@@ -342,7 +329,7 @@ export function hydrateTypeRegistry(
     // for ever over a break that does not exist. This field is the one the
     // report tells callers to act on, so a false entry in it is expensive.
     if (!schema.parent) continue;
-    if (getTypeSchema(schema.parent, spaceId) === undefined) {
+    if (getTypeSchema(schema.parent) === undefined) {
       unresolvedParents.push(schema.id);
     }
   }

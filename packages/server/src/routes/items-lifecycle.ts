@@ -151,28 +151,25 @@ export function itemsLifecycleRoutes(storage: Storage) {
     }
 
     requireAuth(c);
-    const spaceId = c.get("apiKey")?.space_id;
     // Fetch the (trashed) item to get its type, then run the permission
     // gate BEFORE calling `restore()`. Running the write first would
     // leave the item restored with no rollback if the gate throws.
     // `getIncludingTrashed` sees past the normal trashed-is-invisible
     // filter.
-    const pending = await storage.items.getIncludingTrashed(id, spaceId);
+    const pending = await storage.items.getIncludingTrashed(id);
     if (!pending) {
       throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`);
     }
     requireTypeAccess(c, pending.type, "write");
-    const restored = await storage.items.restore(id, spaceId);
+    const restored = await storage.items.restore(id);
     const metadata = await storage.metadata.get(id);
     await publish({
       type: "restored",
       item: restored,
       metadata,
-      spaceId,
     });
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
-      space_id: c.get("apiKey")?.space_id ?? null,
       key_id: c.get("apiKey")?.id,
       action: "item.restore",
       resource_type: "item",
@@ -200,8 +197,7 @@ export function itemsLifecycleRoutes(storage: Storage) {
     // typeof / truthiness check would be unreachable.
 
     requireAuth(c);
-    const spaceId = c.get("apiKey")?.space_id;
-    const item = await storage.items.get(id, spaceId);
+    const item = await storage.items.get(id);
     if (!item) {
       throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
     }
@@ -219,17 +215,15 @@ export function itemsLifecycleRoutes(storage: Storage) {
     // is worse than none because it reads as a protection somebody is relying
     // on. `item-state-doors.test.ts` pins the lifecycle rule and
     // `auth-grant-visibility.test.ts` pins what a caller actually meets.
-    const updated = await storage.items.transition(id, state, spaceId);
+    const updated = await storage.items.transition(id, state);
     const metadata = await storage.metadata.get(id);
     await publish({
       type: "state_changed",
       item: updated,
       metadata,
-      spaceId,
     });
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
-      space_id: c.get("apiKey")?.space_id ?? null,
       key_id: c.get("apiKey")?.id,
       action: "item.transition",
       resource_type: "item",

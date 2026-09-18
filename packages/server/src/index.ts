@@ -98,18 +98,22 @@ async function main() {
   // job carries the same flag on itself.
   let shuttingDown = false;
 
-  const auditFanout: SpaceFanout | undefined = storage.spaces
-    ? { spaces: storage.spaces, configField: "audit_retention_days" }
-    : undefined;
-  const eventLogFanout: SpaceFanout | undefined = storage.spaces
-    ? { spaces: storage.spaces, configField: "event_log_retention_hours" }
-    : undefined;
-  const trashFanout: SpaceFanout | undefined = storage.spaces
-    ? { spaces: storage.spaces, configField: "trash_retention_days" }
-    : undefined;
-  const activityFanout: SpaceFanout | undefined = storage.spaces
-    ? { spaces: storage.spaces, configField: "activity_retention_days" }
-    : undefined;
+  const auditFanout: SpaceFanout = {
+    settings: storage.settings,
+    configField: "audit_retention_days",
+  };
+  const eventLogFanout: SpaceFanout = {
+    settings: storage.settings,
+    configField: "event_log_retention_hours",
+  };
+  const trashFanout: SpaceFanout = {
+    settings: storage.settings,
+    configField: "trash_retention_days",
+  };
+  const activityFanout: SpaceFanout = {
+    settings: storage.settings,
+    configField: "activity_retention_days",
+  };
 
   // Default 168h; override via MARFA_EVENT_LOG_RETENTION_HOURS or per-space config.
   const eventLogRetentionHours = config.eventLogRetentionHours ?? 168;
@@ -128,9 +132,9 @@ async function main() {
       fanout: eventLogFanout,
       instanceDefault: eventLogRetentionHours,
       unitMs: 3_600_000,
-      sweep: async (retention, spaceId) => {
-        purgedRecords += await storage.idempotency.cleanup(retention, spaceId);
-        return storage.eventLog.cleanup(retention, spaceId);
+      sweep: async (retention) => {
+        purgedRecords += await storage.idempotency.cleanup(retention);
+        return storage.eventLog.cleanup(retention);
       },
     })
       .then((deleted) => {
@@ -159,7 +163,7 @@ async function main() {
       fanout: auditFanout,
       instanceDefault: config.auditRetentionDays,
       unitMs: 86_400_000,
-      sweep: (retention, spaceId) => storage.audit.cleanup(retention, spaceId),
+      sweep: (retention) => storage.audit.cleanup(retention),
     })
       .then((deleted) => {
         if (deleted > 0)

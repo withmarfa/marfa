@@ -101,7 +101,7 @@ async function seedClient(c: TestContext): Promise<string> {
 async function signInUser(
   c: TestContext,
   email: string,
-): Promise<{ cookie: string; spaceId: string; key: string }> {
+): Promise<{ cookie: string; key: string }> {
   const password = "correct horse battery";
   await createTestAccount(c, email, password, "Tester");
   const signIn = await request(c.app, "POST", "/auth/sign-in/email", {
@@ -109,13 +109,12 @@ async function signInUser(
     headers: { origin: ORIGIN },
   });
   expect(signIn.status).toBe(200);
-  const spaceId = c.spaceId;
-  const key = await mintSpaceKey(c, spaceId);
+  const key = await mintSpaceKey(c);
   const setCookie = signIn.headers.get("set-cookie");
   if (!setCookie) throw new Error("sign-in: no Set-Cookie header");
   for (const entry of setCookie.split(/,\s*(?=[a-zA-Z0-9_-]+=)/)) {
     const head = entry.split(";")[0];
-    if (head?.includes("session_token")) return { cookie: head, spaceId, key };
+    if (head?.includes("session_token")) return { cookie: head, key };
   }
   throw new Error("sign-in: session_token cookie not found");
 }
@@ -152,7 +151,7 @@ async function approveDeviceFlow(
 async function softDeleteGrantRow(c: TestContext, id: string): Promise<void> {
   const row = await c.storage.items.get(id);
   if (!row) throw new Error(`softDeleteGrantRow: no item ${id}`);
-  await c.storage.items.transition(id, "revoked", row.space_id ?? undefined);
+  await c.storage.items.transition(id, "revoked");
 }
 
 /** Every projected grant row, whatever either axis says. */
@@ -180,13 +179,11 @@ async function listedGrants(
 /** Resolve the grant the way every production caller does. */
 function resolveGrantItemId(
   c: TestContext,
-  spaceId: string | null,
   clientId: string,
   authUserId: string,
 ): Promise<string | null | undefined> {
   return Promise.resolve(
     c.storage.oauthProvider?.findGrantItemId({
-      spaceId,
       clientId,
       authUserId,
     }),
@@ -263,23 +260,18 @@ describe("a soft-deleted grant is not resurrected by a re-approval", () => {
 
     await approveDeviceFlow(c, clientId, cookie, "core.note:read");
     const grant = (await allGrantRows(c))[0]!;
-    const spaceId = grant.space_id ?? null;
     const authUserId = grant.properties.user_id as string;
 
     // The lookup resolves it while it is reachable, so a null afterwards is
     // the predicate and not a mis-keyed probe.
-    expect(await resolveGrantItemId(c, spaceId, clientId, authUserId)).toBe(
-      grant.id,
-    );
+    expect(await resolveGrantItemId(c, clientId, authUserId)).toBe(grant.id);
 
     // The door that produced this shape now refuses a live grant; shape the
     // row through the store instead.
     await softDeleteGrantRow(c, grant.id);
     expect((await c.storage.items.get(grant.id))?.state).toBe("revoked");
 
-    expect(
-      await resolveGrantItemId(c, spaceId, clientId, authUserId),
-    ).toBeNull();
+    expect(await resolveGrantItemId(c, clientId, authUserId)).toBeNull();
   });
 });
 

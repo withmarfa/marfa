@@ -19,11 +19,6 @@ import {
   getTableColumns,
   type SQL,
 } from "drizzle-orm";
-import {
-  spaceBucketCondition,
-  spaceCondition,
-  spaceOrPlatformCondition,
-} from "../space-condition.js";
 import { softDeleteClock } from "../soft-delete-clock.js";
 import {
   generateId,
@@ -67,7 +62,6 @@ import type {
   ItemStore,
   ResolvedItem,
   ItemFilters,
-  ItemGetOptions,
   SortDirection,
   CursorSortKey,
 } from "../interface.js";
@@ -199,18 +193,16 @@ async function insertConflictedSibling(
   args: {
     siblingId: string;
     row: { type: string; source: string | null; tier: string };
-    spaceId: string | undefined;
     now: string;
     properties: Record<string, unknown>;
   },
 ): Promise<Item | null> {
-  const { siblingId, row, spaceId, now, properties } = args;
-  const schemaVersion = getTypeSchema(row.type, spaceId)?.version ?? 1;
+  const { siblingId, row, now, properties } = args;
+  const schemaVersion = getTypeSchema(row.type)?.version ?? 1;
   const inserted = await tx
     .insert(items)
     .values({
       id: siblingId,
-      space_id: spaceId ?? null,
       type: row.type,
       state: "active",
       tier: row.tier as "library" | "feed",
@@ -242,14 +234,13 @@ async function insertConflictedSibling(
   // Everything `create()` does, because this row is a create. Skipping the
   // index left the sibling unfindable by the search that is the ordinary way
   // to go looking for a conflicted copy.
-  await searchStore.index(siblingId, properties, row.type, spaceId);
+  await searchStore.index(siblingId, properties, row.type);
 
   return {
     id: siblingId,
     type: row.type,
     state: "active",
     tier: row.tier as Tier,
-    space_id: spaceId ?? null,
     properties,
     created_at: now,
     updated_at: now,
@@ -267,23 +258,7 @@ export class SqliteItemStore implements ItemStore {
     private searchStore: SqliteSearchStore,
   ) {}
 
-  private spaceWhere(
-    id: string,
-    spaceId?: string,
-    includePlatformScoped?: boolean,
-  ) {
-    // Catalog widening — see `ItemGetOptions.includePlatformScoped`.
-    // Only the public `get` path threads `true` here; every other caller
-    // (update, delete, transition, ...) leaves the equality fence in place.
-    return and(
-      eq(items.id, id),
-      includePlatformScoped
-        ? spaceOrPlatformCondition(items.space_id, spaceId)
-        : spaceCondition(items.space_id, spaceId),
-    );
-  }
-
-  async create(input: StoredCreateItemInput, spaceId?: string): Promise<Item> {
+  async create(input: StoredCreateItemInput): Promise<Item> {
     const id = input.id ?? generateId();
     if (input.id && !isValidId(input.id)) {
       throw new MarfaError(ErrorCode.VALIDATION_ERROR, "Invalid item ID");
@@ -294,10 +269,8 @@ export class SqliteItemStore implements ItemStore {
     // ad-hoc types persist with zero conformance checking — the opposite of a
     // typed data layer's promise. Reject before any write. Custom types are
     // loaded into the registry at startup and on `POST /types`, so a legitimate
-    // custom type resolves here. The registry is space-scoped: a custom type
-    // resolves only for its owning space, so a space cannot create items of
-    // another space's custom type — the create gate sees `unknown_type`.
-    const typeSchema = getTypeSchema(input.type, spaceId);
+    // custom type resolves here.
+    const typeSchema = getTypeSchema(input.type);
     if (!typeSchema) {
       throw new MarfaError(
         ErrorCode.UNKNOWN_TYPE,
@@ -311,9 +284,7 @@ export class SqliteItemStore implements ItemStore {
     // Persist the validated (coerced) properties so `null` on an optional
     // field — which validation treats as "unset" — drops out before the write
     // rather than landing as a stored null.
-    const validation = validateProperties(input.type, input.properties, {
-      spaceId,
-    });
+    const validation = validateProperties(input.type, input.properties);
     if (!validation.success) {
       // The specific code, not the generic one. A durable client's failure
       // classification is closed and keys on it: a schema refusal is
@@ -335,16 +306,9 @@ export class SqliteItemStore implements ItemStore {
 
     return await this.db.transaction(async (tx) => {
       if (input.source && input.source_id) {
-        // The space predicate is unconditional. A conditional one meant a
-        // caller with no space (the operator key)
-        // deduped against every space's rows, so the same call that
-        // collided for one caller silently reached across spaces for
-        // another. A space-less caller belongs to the null-space bucket
-        // and is deduped against that, matching the index's own COALESCE.
         const dedupConditions = [
           eq(items.source, input.source),
           eq(items.source_id, input.source_id),
-          spaceBucketCondition(items.space_id, spaceId),
         ];
         const existing = await tx
           .select({ id: items.id })
@@ -360,14 +324,13 @@ export class SqliteItemStore implements ItemStore {
         }
       }
 
-      const schemaVersion = getTypeSchema(input.type, spaceId)?.version ?? 1;
+      const schemaVersion = getTypeSchema(input.type)?.version ?? 1;
 
       try {
         await tx
           .insert(items)
           .values({
             id,
-            space_id: spaceId,
             type: input.type,
             state,
             // A create can name its own state, and an archive restore names
@@ -415,19 +378,13 @@ export class SqliteItemStore implements ItemStore {
         })
         .run();
 
-      await this.searchStore.index(id, properties, input.type, spaceId);
+      await this.searchStore.index(id, properties, input.type);
 
       return {
         id,
         type: input.type,
         state: state,
         tier: input.tier ?? "library",
-        // The row was inserted with this space, so the object describing it
-        // says so. It was omitted while every read path set it through
-        // `rowToItem`, which made a created item the one `Item` in the
-        // system whose own space was unreadable — invisible because the
-        // field is optional, so `satisfies Item` never objected.
-        space_id: spaceId ?? null,
         properties,
         created_at: now,
         updated_at: now,
@@ -447,15 +404,11 @@ export class SqliteItemStore implements ItemStore {
     });
   }
 
-  async get(
-    id: string,
-    spaceId?: string,
-    options?: ItemGetOptions,
-  ): Promise<Item | null> {
+  async get(id: string): Promise<Item | null> {
     const row = await this.db
       .select(itemColumns)
       .from(items)
-      .where(this.spaceWhere(id, spaceId, options?.includePlatformScoped))
+      .where(eq(items.id, id))
       .get();
     if (!row) return null;
     if (row.state === "trashed") return null;
@@ -463,30 +416,22 @@ export class SqliteItemStore implements ItemStore {
   }
 
   // Internal get that includes trashed items (for restore, delete, transition)
-  private async getRaw(id: string, spaceId?: string): Promise<Item | null> {
+  private async getRaw(id: string): Promise<Item | null> {
     const row = await this.db
       .select(itemColumns)
       .from(items)
-      .where(this.spaceWhere(id, spaceId))
+      .where(eq(items.id, id))
       .get();
     if (!row) return null;
     return rowToItem(row);
   }
 
-  getIncludingTrashed(id: string, spaceId?: string): Promise<Item | null> {
-    return this.getRaw(id, spaceId);
+  getIncludingTrashed(id: string): Promise<Item | null> {
+    return this.getRaw(id);
   }
 
-  async findBySourceId(
-    source: string,
-    sourceId: string,
-    spaceId?: string,
-  ): Promise<Item | null> {
-    const item = await this.findBySourceIdIncludingTrashed(
-      source,
-      sourceId,
-      spaceId,
-    );
+  async findBySourceId(source: string, sourceId: string): Promise<Item | null> {
+    const item = await this.findBySourceIdIncludingTrashed(source, sourceId);
     if (item?.state === "trashed") return null;
     return item;
   }
@@ -494,12 +439,10 @@ export class SqliteItemStore implements ItemStore {
   async findBySourceIdIncludingTrashed(
     source: string,
     sourceId: string,
-    spaceId?: string,
   ): Promise<Item | null> {
     const conditions = [
       eq(items.source, source),
       eq(items.source_id, sourceId),
-      spaceCondition(items.space_id, spaceId),
     ];
     const row = await this.db
       .select(itemColumns)
@@ -512,16 +455,12 @@ export class SqliteItemStore implements ItemStore {
 
   async getMany(
     ids: string[],
-    spaceId?: string,
     opts?: { includeTrashed?: boolean },
   ): Promise<Map<string, Item>> {
     const out = new Map<string, Item>();
     if (ids.length === 0) return out;
     const unique = Array.from(new Set(ids));
-    const where = and(
-      inArray(items.id, unique),
-      spaceCondition(items.space_id, spaceId),
-    );
+    const where = inArray(items.id, unique);
     const rows = await this.db
       .select(itemColumns)
       .from(items)
@@ -587,24 +526,10 @@ export class SqliteItemStore implements ItemStore {
     // both directions, with `id` as a stable ascending tiebreak.
     const propertySort =
       sort.kind === "property"
-        ? buildPropertySortExpr(
-            items.properties,
-            sort.field,
-            filters.type,
-            filters.spaceId,
-          )
+        ? buildPropertySortExpr(items.properties, sort.field, filters.type)
         : null;
 
-    const conditions = [];
-
-    // Opt-in widening for catalog list endpoints — see
-    // `ItemFilters.includePlatformScoped` for why platform-scoped
-    // (space_id IS NULL) rows surface to space callers in this narrow
-    // case. Default keeps the strict equality fence.
-    const spaceClause = filters.includePlatformScoped
-      ? spaceOrPlatformCondition(items.space_id, filters.spaceId)
-      : spaceCondition(items.space_id, filters.spaceId);
-    if (spaceClause) conditions.push(spaceClause);
+    const conditions: (SQL | undefined)[] = [];
 
     if (filters.state) {
       conditions.push(eq(items.state, filters.state));
@@ -623,7 +548,6 @@ export class SqliteItemStore implements ItemStore {
       // subtypes here, so the explicit wildcard must too.
       const { global, exact, descendantPattern, extraTypes } = typeSubtreeToSql(
         filters.type,
-        filters.spaceId ?? null,
       );
       if (!global && exact && descendantPattern) {
         const typeClause = or(
@@ -702,13 +626,12 @@ export class SqliteItemStore implements ItemStore {
       filters.source_filter,
       items.type,
       items.source,
-      filters.spaceId ?? null,
     );
     if (sourceLever) conditions.push(sourceLever);
 
     if (filters.filter) {
       const expr = parseFilter(filters.filter);
-      const filterConds = filterToSqlConditions(expr, items, filters.spaceId);
+      const filterConds = filterToSqlConditions(expr, items);
       if (expr.logical === "OR") {
         const orClause = or(...filterConds);
         if (orClause) conditions.push(orClause);
@@ -813,9 +736,8 @@ export class SqliteItemStore implements ItemStore {
   async update(
     id: string,
     input: StoredUpdateItemInput,
-    spaceId?: string,
   ): Promise<ResolvedItem | ConflictResponse | AncestorUnavailableResponse> {
-    const whereClause = this.spaceWhere(id, spaceId);
+    const whereClause = eq(items.id, id);
 
     return await this.db.transaction(async (tx) => {
       const row = await tx
@@ -842,7 +764,6 @@ export class SqliteItemStore implements ItemStore {
         row.type,
         input.properties,
         input.null_clears === true,
-        spaceId,
       );
       const now = new Date().toISOString();
       const deviceId = row.device ?? undefined;
@@ -915,12 +836,7 @@ export class SqliteItemStore implements ItemStore {
         }
 
         await this.searchStore.remove(id);
-        await this.searchStore.index(
-          id,
-          merged,
-          input.type ?? row.type,
-          spaceId,
-        );
+        await this.searchStore.index(id, merged, input.type ?? row.type);
 
         return rowToItem({
           ...row,
@@ -964,9 +880,7 @@ export class SqliteItemStore implements ItemStore {
         ancestorProperties: ancestor.properties,
       });
 
-      const policy = resolveMergePolicy(row.type, (id) =>
-        getTypeSchema(id, spaceId),
-      );
+      const policy = resolveMergePolicy(row.type, (id) => getTypeSchema(id));
 
       // What the row ends up holding: the detector's merge when nothing
       // collided, the policy's resolution when something did and the caller
@@ -1006,7 +920,6 @@ export class SqliteItemStore implements ItemStore {
           sibling = await insertConflictedSibling(tx, this.searchStore, {
             siblingId,
             row,
-            spaceId,
             now,
             properties: conflictedSiblingProperties({
               clientProperties: incomingProps ?? {},
@@ -1058,7 +971,7 @@ export class SqliteItemStore implements ItemStore {
       }
 
       await this.searchStore.remove(id);
-      await this.searchStore.index(id, resolvedProperties, row.type, spaceId);
+      await this.searchStore.index(id, resolvedProperties, row.type);
 
       return attachResolution(
         rowToItem({
@@ -1080,8 +993,8 @@ export class SqliteItemStore implements ItemStore {
     });
   }
 
-  async delete(id: string, spaceId?: string): Promise<void> {
-    const row = await this.getRaw(id, spaceId);
+  async delete(id: string): Promise<void> {
+    const row = await this.getRaw(id);
     if (!row) {
       throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
     }
@@ -1113,13 +1026,13 @@ export class SqliteItemStore implements ItemStore {
         // `softDeleteClock` carries why.
         ...softDeleteClock(row.type, row.state, target, now),
       })
-      .where(this.spaceWhere(id, spaceId));
+      .where(eq(items.id, id));
 
     await this.searchStore.remove(id);
   }
 
-  async purge(id: string, spaceId?: string): Promise<void> {
-    const row = await this.getRaw(id, spaceId);
+  async purge(id: string): Promise<void> {
+    const row = await this.getRaw(id);
     if (!row) {
       throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
     }
@@ -1136,19 +1049,15 @@ export class SqliteItemStore implements ItemStore {
     }
 
     // metadata and versions cascade; search index must be removed explicitly.
-    await this.db.delete(items).where(this.spaceWhere(id, spaceId)).run();
+    await this.db.delete(items).where(eq(items.id, id)).run();
 
     await this.searchStore.remove(id);
   }
 
-  async bulkPurge(ids: string[], spaceId?: string): Promise<number> {
+  async bulkPurge(ids: string[]): Promise<number> {
     if (ids.length === 0) return 0;
     const unique = Array.from(new Set(ids));
-    const conditions = [
-      inArray(items.id, unique),
-      spaceCondition(items.space_id, spaceId),
-    ];
-    const scopedWhere = and(...conditions);
+    const scopedWhere = inArray(items.id, unique);
 
     return await this.db.transaction(async (tx) => {
       const rows = await tx
@@ -1167,10 +1076,7 @@ export class SqliteItemStore implements ItemStore {
     });
   }
 
-  async purgeTrashedOlderThan(
-    beforeDate: string,
-    spaceId?: string | null,
-  ): Promise<number> {
+  async purgeTrashedOlderThan(beforeDate: string): Promise<number> {
     const baseConditions = [
       eq(items.state, "trashed"),
       // The window runs from when the row entered the bin, not from when it
@@ -1185,9 +1091,6 @@ export class SqliteItemStore implements ItemStore {
       // exactly the behavior those rows have today, which is worse than the
       // stamp and far better than a row nothing can ever purge.
       lt(sql`COALESCE(${items.trashed_at}, ${items.updated_at})`, beforeDate),
-      // Three states, not two: a named space, the space-less bucket
-      // (`null`), or every space at once (`undefined`).
-      spaceCondition(items.space_id, spaceId),
     ];
     const where = and(...baseConditions);
 
@@ -1205,10 +1108,8 @@ export class SqliteItemStore implements ItemStore {
       }
       // Edges carry no FK to items, so nothing else ever collects them —
       // without this the background sweep leaves a dangling edge row for
-      // every relationship a purged item had. Deleted by id membership
-      // rather than by space: `ids` is already space-resolved above, and
-      // an edge pointing at a purged item is garbage whatever its space
-      // stamp. Same statement shape as the bulk-action purge worker.
+      // every relationship a purged item had. Same statement shape as the
+      // bulk-action purge worker.
       // Nothing is announced for any of it, here or in the two sibling
       // sweeps: `TrashPurger` carries why, and it is a decision rather
       // than an omission.
@@ -1219,16 +1120,12 @@ export class SqliteItemStore implements ItemStore {
     });
   }
 
-  async purgeActivityOlderThan(
-    beforeDate: string,
-    spaceId?: string | null,
-  ): Promise<number> {
+  async purgeActivityOlderThan(beforeDate: string): Promise<number> {
     // The PG copy carries the reasoning: activity rows are `active` and
     // never trashed, so the trash sweep's predicate cannot serve.
     const baseConditions = [
       eq(items.type, "system.activity"),
       lt(items.created_at, beforeDate),
-      spaceCondition(items.space_id, spaceId),
     ];
     const where = and(...baseConditions);
 
@@ -1253,10 +1150,7 @@ export class SqliteItemStore implements ItemStore {
     });
   }
 
-  async purgeRevokedAppGrantsOlderThan(
-    beforeDate: string,
-    spaceId?: string | null,
-  ): Promise<number> {
+  async purgeRevokedAppGrantsOlderThan(beforeDate: string): Promise<number> {
     // The PG copy carries the reasoning: a grant revoked through the
     // user-facing path keeps `state: "active"`, so this asks `properties`
     // rather than the lifecycle, and `kind = 'app'` keeps an integration
@@ -1266,7 +1160,6 @@ export class SqliteItemStore implements ItemStore {
       sql`json_extract(${items.properties}, '$.kind') = 'app'`,
       sql`json_extract(${items.properties}, '$.status') = 'revoked'`,
       sql`json_extract(${items.properties}, '$.revoked_at') < ${beforeDate}`,
-      spaceCondition(items.space_id, spaceId),
     );
 
     return await this.db.transaction(async (tx) => {
@@ -1291,7 +1184,6 @@ export class SqliteItemStore implements ItemStore {
   async listInactiveAppGrants(cutoffIso: string): Promise<
     {
       id: string;
-      spaceId: string | null;
       clientId: string | null;
       authUserId: string | null;
       lastUsedAt: string | null;
@@ -1326,7 +1218,6 @@ export class SqliteItemStore implements ItemStore {
         typeof v === "string" ? v : null;
       return {
         id: item.id,
-        spaceId: item.space_id ?? null,
         clientId: str(props.client_id),
         authUserId: str(props.user_id),
         lastUsedAt: str(props.last_used_at),
@@ -1336,8 +1227,8 @@ export class SqliteItemStore implements ItemStore {
     });
   }
 
-  async restore(id: string, spaceId?: string): Promise<Item> {
-    const row = await this.getRaw(id, spaceId);
+  async restore(id: string): Promise<Item> {
+    const row = await this.getRaw(id);
     if (!row) {
       throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
     }
@@ -1372,20 +1263,16 @@ export class SqliteItemStore implements ItemStore {
         updated_at: now,
         ...softDeleteClock(row.type, row.state, "active", now),
       })
-      .where(this.spaceWhere(id, spaceId))
+      .where(eq(items.id, id))
       .run();
 
-    await this.searchStore.index(id, row.properties, row.type, spaceId);
+    await this.searchStore.index(id, row.properties, row.type);
 
     return { ...row, state: "active" as ItemState, updated_at: now };
   }
 
-  async transition(
-    id: string,
-    state: ItemState,
-    spaceId?: string,
-  ): Promise<Item> {
-    const row = await this.getRaw(id, spaceId);
+  async transition(id: string, state: ItemState): Promise<Item> {
+    const row = await this.getRaw(id);
     if (!row) {
       throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
     }
@@ -1411,13 +1298,13 @@ export class SqliteItemStore implements ItemStore {
         updated_at: now,
         ...softDeleteClock(row.type, row.state, state, now),
       })
-      .where(this.spaceWhere(id, spaceId))
+      .where(eq(items.id, id))
       .run();
 
     if (state === "trashed") {
       await this.searchStore.remove(id);
     } else if (row.state === "trashed") {
-      await this.searchStore.index(id, row.properties, row.type, spaceId);
+      await this.searchStore.index(id, row.properties, row.type);
     }
 
     return { ...row, state, updated_at: now };
@@ -1433,12 +1320,11 @@ export class SqliteItemStore implements ItemStore {
   }
 
   async stats(
-    spaceId?: string,
     typeFilter?: TypeFilter,
     sourceFilter?: SourceFilterSettings,
     by: ItemStatsAxis = "state",
   ): Promise<Record<string, number>> {
-    const conditions = [spaceCondition(items.space_id, spaceId)];
+    const conditions: (SQL | undefined)[] = [];
     const typeClause = allowedTypesCondition(
       typeFilter?.allowed,
       typeFilter?.excluded,
@@ -1450,7 +1336,6 @@ export class SqliteItemStore implements ItemStore {
       sourceFilter,
       items.type,
       items.source,
-      spaceId ?? null,
     );
     if (sourceLever) conditions.push(sourceLever);
 

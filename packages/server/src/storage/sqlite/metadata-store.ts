@@ -19,20 +19,15 @@ export class SqliteMetadataStore implements MetadataStore {
 
   /**
    * Aggregate distinct tags across items the caller can read. Uses
-   * `json_each` to unnest the tags JSON arrays; space + type-permission
+   * `json_each` to unnest the tags JSON arrays; type-permission
    * filtering applied via a join to `items`. Excludes trashed items.
    */
   async listTags(filters: {
-    spaceId?: string;
     allowedTypes?: string[];
     excludedTypes?: string[];
   }): Promise<{ tag: string; count: number }[]> {
     const conditions: string[] = ["i.state != 'trashed'"];
     const params: unknown[] = [];
-    if (filters.spaceId) {
-      conditions.push("i.space_id = ?");
-      params.push(filters.spaceId);
-    }
     const excludedTypes = filters.excludedTypes ?? [];
     // An empty allow-list means "no readable types", not "no restriction",
     // and every other read surface reads it that way. Guarding on a non-empty

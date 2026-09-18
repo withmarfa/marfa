@@ -1,12 +1,5 @@
-/* eslint-disable no-restricted-syntax -- Not yet on the shared space
- * fence. `storage/space-condition.ts` is the one spelling of it, and
- * this store predates it; the rule covers every store so a new file is
- * covered by default, which leaves the existing ones needing a line
- * that says so. Normalizing one is a change of its own: an absent space
- * has to be read call site by call site, and reading it wrong is the
- * defect the helper exists for. Delete this line when you do. */
 import { randomBytes } from "node:crypto";
-import { eq, and, sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { generateId, MarfaError, ErrorCode } from "@withmarfa/shared";
 import type {
   Webhook,
@@ -21,7 +14,6 @@ import type { DrizzleDb } from "./connection.js";
 function rowToWebhook(row: typeof outboundWebhooks.$inferSelect): Webhook {
   return {
     id: row.id,
-    space_id: row.space_id ?? undefined,
     url: row.url,
     secret: row.secret,
     events: safeJsonParse<string[]>(row.events, [], "webhook events"),
@@ -35,11 +27,10 @@ function rowToWebhook(row: typeof outboundWebhooks.$inferSelect): Webhook {
 export class SqliteWebhookStore implements WebhookStore {
   constructor(private db: DrizzleDb) {}
 
-  async create(input: CreateWebhookInput, spaceId?: string): Promise<Webhook> {
+  async create(input: CreateWebhookInput): Promise<Webhook> {
     const now = new Date().toISOString();
     const row = {
       id: generateId(),
-      space_id: spaceId ?? null,
       url: input.url,
       secret: input.secret ?? randomBytes(32).toString("hex"),
       events: JSON.stringify(input.events),
@@ -52,27 +43,16 @@ export class SqliteWebhookStore implements WebhookStore {
     return rowToWebhook(row);
   }
 
-  async list(spaceId?: string): Promise<Webhook[]> {
-    const rows =
-      spaceId !== undefined
-        ? await this.db
-            .select()
-            .from(outboundWebhooks)
-            .where(eq(outboundWebhooks.space_id, spaceId))
-            .all()
-        : await this.db.select().from(outboundWebhooks).all();
+  async list(): Promise<Webhook[]> {
+    const rows = await this.db.select().from(outboundWebhooks).all();
     return rows.map(rowToWebhook);
   }
 
-  async get(id: string, spaceId?: string): Promise<Webhook | null> {
-    const conditions = [eq(outboundWebhooks.id, id)];
-    if (spaceId !== undefined) {
-      conditions.push(eq(outboundWebhooks.space_id, spaceId));
-    }
+  async get(id: string): Promise<Webhook | null> {
     const row = await this.db
       .select()
       .from(outboundWebhooks)
-      .where(and(...conditions))
+      .where(eq(outboundWebhooks.id, id))
       .get();
     return row ? rowToWebhook(row) : null;
   }

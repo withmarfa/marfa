@@ -82,7 +82,6 @@ async function seedClient(
     scopes,
     redirectUris: [CALLBACK],
     postLogoutRedirectUris: [ORIGIN + "/"],
-    referenceId: null,
   });
   return clientId;
 }
@@ -147,7 +146,6 @@ async function seedClientWithRedirect(
     scopes: scopes === null ? null : [...scopes],
     redirectUris: [redirectUri],
     postLogoutRedirectUris: [ORIGIN + "/"],
-    referenceId: null,
   });
   return clientId;
 }

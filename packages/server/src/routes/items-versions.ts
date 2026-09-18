@@ -74,7 +74,7 @@ export function itemsVersionsRoutes(storage: Storage) {
       throw new MarfaError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
 
-    const item = await storage.items.get(id, c.get("apiKey")?.space_id);
+    const item = await storage.items.get(id);
     if (!item) {
       throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`);
     }

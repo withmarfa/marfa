@@ -21,7 +21,6 @@ export class SqliteEnrichmentStore implements EnrichmentStore {
     const rows = await this.db
       .select({
         item_id: items.id,
-        space_id: items.space_id,
         type: items.type,
         blob_ref: blobRef,
         mime_type: sql<
@@ -95,7 +94,6 @@ export class SqliteEnrichmentStore implements EnrichmentStore {
   async upsert(state: EnrichmentStateInput): Promise<void> {
     const row = {
       item_id: state.item_id,
-      space_id: state.space_id,
       blob_ref: state.blob_ref,
       extractor_version: state.extractor_version,
       status: state.status,

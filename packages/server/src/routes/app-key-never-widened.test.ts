@@ -29,8 +29,6 @@ import {
 import type { TestContext } from "../test-utils.js";
 import { hashApiKey } from "../middleware/auth.js";
 
-const SPACE = "spc_app_keys";
-
 let ctx: TestContext;
 /** The person's own credential: wide, and holding the permission to edit. */
 let editorKey: string;
@@ -58,7 +56,6 @@ async function seedKey(
       ...overrides,
     },
     hashApiKey(raw, TEST_API_KEY_SALT),
-    SPACE,
   );
   return { id: stored.id, raw };
 }

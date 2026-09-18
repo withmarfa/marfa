@@ -239,7 +239,6 @@ export function adminPlatformTypeRoutes(storage: Storage) {
     // rather than fire-and-forget: reporting a removal nothing recorded is
     // worse than failing the request.
     await storage.audit.logOrThrow({
-      space_id: null,
       action: "platform_type.removed",
       resource_type: "custom_type",
       resource_id: id,

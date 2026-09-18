@@ -52,18 +52,15 @@ const SYSTEM_TYPE = "system.activity";
 async function systemWriter(c: TestContext): Promise<{
   properties: () => Record<string, unknown>;
 }> {
-  const connection = await c.storage.items.create(
-    {
-      type: "system.connection",
-      properties: {
-        kind: "integration",
-        status: "active",
-        granted_at: new Date().toISOString(),
-      },
-      source: "test/lifecycle-graph",
+  const connection = await c.storage.items.create({
+    type: "system.connection",
+    properties: {
+      kind: "integration",
+      status: "active",
+      granted_at: new Date().toISOString(),
     },
-    c.spaceId,
-  );
+    source: "test/lifecycle-graph",
+  });
   return {
     properties: () => ({
       connection_id: connection.id,
@@ -94,15 +91,12 @@ describe("POST /items/:id/restore — the restore obeys the type's graph", () =>
     // is the other half of the same fix. The store stays permissive so the
     // archive restore can replay it, so it is the only way to reach the row
     // shape the restore gate exists for.
-    const trashed = await c.storage.items.create(
-      {
-        type: SYSTEM_TYPE,
-        state: "trashed",
-        properties: writer.properties(),
-        source: "test/lifecycle-graph",
-      },
-      c.spaceId,
-    );
+    const trashed = await c.storage.items.create({
+      type: SYSTEM_TYPE,
+      state: "trashed",
+      properties: writer.properties(),
+      source: "test/lifecycle-graph",
+    });
     expect(trashed.state).toBe("trashed");
 
     // Through the store: no credential writes a reserved namespace over the
@@ -113,7 +107,7 @@ describe("POST /items/:id/restore — the restore obeys the type's graph", () =>
     // `invalid_transition` for a row that is not trashed, so a code-only
     // assertion stays green with the graph check deleted — this row IS
     // trashed, and only the transition check can refuse it.
-    const error = await c.storage.items.restore(trashed.id, c.spaceId).then(
+    const error = await c.storage.items.restore(trashed.id).then(
       () => null,
       (err: unknown) => err as { code: string; message: string },
     );
@@ -246,17 +240,14 @@ describe("POST /admin/restore-archive — an archive replays a state the create 
     // in the query, which is how a caller carrying no space of its own says
     // where the rows land — the restore has to reach the same space the
     // credential below reads from.
-    const res = await c.app.request(
-      `/admin/restore-archive?target_space_id=${c.spaceId}`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${c.operatorKey}`,
-          "Content-Type": "application/gzip",
-        },
-        body: archive,
+    const res = await c.app.request(`/admin/restore-archive`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${c.operatorKey}`,
+        "Content-Type": "application/gzip",
       },
-    );
+      body: archive,
+    });
     expect(res.status).toBe(200);
     const data = (await res.json()) as { imported: number };
     expect(data.imported).toBe(1);
@@ -268,7 +259,7 @@ describe("POST /admin/restore-archive — an archive replays a state the create 
 
     // And the same chain is still closed at the other end: the row exists,
     // and the graph still refuses to walk it out to active.
-    const restore = await c.storage.items.restore(archiveId, c.spaceId).then(
+    const restore = await c.storage.items.restore(archiveId).then(
       () => null,
       (err: unknown) => err as { message: string },
     );

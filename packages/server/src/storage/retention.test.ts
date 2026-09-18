@@ -13,6 +13,7 @@ import {
 import type { SpaceFanout } from "./retention.js";
 import { TEST_API_KEY_SALT } from "../test-utils.js";
 import { hashApiKey } from "../middleware/auth.js";
+import { writeSpaceConfig } from "./space-config.js";
 
 let ctx: TestContext;
 
@@ -37,19 +38,15 @@ async function seedItemWithUpdatedAt(opts: {
   state: "active" | "archived" | "trashed";
   tier: "library" | "feed";
   updatedAtIso: string;
-  spaceId?: string;
 }): Promise<void> {
-  await ctx.storage.items.create(
-    {
-      id: opts.id,
-      type: "core.note",
-      properties: { body: `seed ${opts.id}` },
-      tier: opts.tier,
-    },
-    opts.spaceId,
-  );
+  await ctx.storage.items.create({
+    id: opts.id,
+    type: "core.note",
+    properties: { body: `seed ${opts.id}` },
+    tier: opts.tier,
+  });
   if (opts.state !== "active") {
-    await ctx.storage.items.transition(opts.id, opts.state, opts.spaceId);
+    await ctx.storage.items.transition(opts.id, opts.state);
   }
   // Force the timestamps to a contrived value via raw SQL through the
   // storage escape hatches.
@@ -216,95 +213,41 @@ describe("TrashPurger.runOnce — behavioral", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Per-space fan-out
+// The instance config override
 // ---------------------------------------------------------------------------
 
-describe("TrashPurger fan-out — per-space retention overrides", () => {
-  it("honors per-space trash_retention_days, falling back to instance default for spaces without override and the NULL bucket", async () => {
-    if (!ctx.storage.spaces) {
-      // Should always be wired in current shape but guarding defensively.
-      throw new Error("spaces store missing — test pre-condition violated");
-    }
-    const spaceA = await ctx.storage.spaces.create("space-A");
-    const spaceB = await ctx.storage.spaces.create("space-B");
-    const spaceC = await ctx.storage.spaces.create("space-C-default");
-    // Space A: aggressive 1-day retention.
-    await ctx.storage.spaces.updateConfig(spaceA.id, {
-      trash_retention_days: 1,
-    });
-    // Space B: lax 30-day retention.
-    await ctx.storage.spaces.updateConfig(spaceB.id, {
-      trash_retention_days: 30,
-    });
-    // Space C: no override → uses instance default (5 days here).
-
-    // Ten-day-old trashed items in each scope, including the NULL bucket.
-    const ids2 = {
-      a: id("fa01"),
-      b: id("fa02"),
-      c: id("fa03"),
-      none: id("fa04"),
-    };
-    const tenDaysAgo = new Date(
-      FIXED_NOW.getTime() - 10 * MS_PER_DAY,
-    ).toISOString();
+describe("TrashPurger — the instance config override", () => {
+  it("honors trash_retention_days from the instance config over the default", async () => {
+    await writeSpaceConfig(ctx.storage.settings, { trash_retention_days: 1 });
+    const itemId = id("fa01");
     await seedItemWithUpdatedAt({
-      id: ids2.a,
+      id: itemId,
       state: "trashed",
       tier: "library",
-      updatedAtIso: tenDaysAgo,
-      spaceId: spaceA.id,
-    });
-    await seedItemWithUpdatedAt({
-      id: ids2.b,
-      state: "trashed",
-      tier: "library",
-      updatedAtIso: tenDaysAgo,
-      spaceId: spaceB.id,
-    });
-    await seedItemWithUpdatedAt({
-      id: ids2.c,
-      state: "trashed",
-      tier: "library",
-      updatedAtIso: tenDaysAgo,
-      spaceId: spaceC.id,
-    });
-    await seedItemWithUpdatedAt({
-      id: ids2.none,
-      state: "trashed",
-      tier: "library",
-      updatedAtIso: tenDaysAgo,
+      updatedAtIso: new Date(
+        FIXED_NOW.getTime() - 10 * MS_PER_DAY,
+      ).toISOString(),
     });
 
     const fanout: SpaceFanout = {
-      spaces: ctx.storage.spaces,
+      settings: ctx.storage.settings,
       configField: "trash_retention_days",
     };
     const purger = new TrashPurger(
       ctx.storage.items,
-      5, // instance default — applies to space C and the NULL bucket
+      30, // the instance default the override beats
       3_600_000,
       () => FIXED_NOW,
       ctx.storage.coordination,
       fanout,
     );
-
     const deleted = await purger.runOnce();
-    // A (10 > 1) purged, B (10 < 30) survives, C (10 > 5) purged,
-    // NULL (10 > 5) purged → 3 deletions.
-    expect(deleted).toBe(3);
-    expect(await rowExists(ids2.a)).toBe(false);
-    expect(await rowExists(ids2.b)).toBe(true);
-    expect(await rowExists(ids2.c)).toBe(false);
-    expect(await rowExists(ids2.none)).toBe(false);
+    expect(deleted).toBe(1);
+    expect(await rowExists(itemId)).toBe(false);
   });
 
-  it("treats per-space trash_retention_days = 0 as 'disable for that space'", async () => {
-    if (!ctx.storage.spaces) throw new Error("spaces store missing");
-    const t = await ctx.storage.spaces.create("disabled-space");
-    await ctx.storage.spaces.updateConfig(t.id, {
-      trash_retention_days: 0,
-    });
+  it("treats trash_retention_days = 0 in the config as disabled", async () => {
+    await writeSpaceConfig(ctx.storage.settings, { trash_retention_days: 0 });
     const itemId = id("fb01");
     await seedItemWithUpdatedAt({
       id: itemId,
@@ -313,11 +256,10 @@ describe("TrashPurger fan-out — per-space retention overrides", () => {
       updatedAtIso: new Date(
         FIXED_NOW.getTime() - 365 * MS_PER_DAY,
       ).toISOString(),
-      spaceId: t.id,
     });
 
     const fanout: SpaceFanout = {
-      spaces: ctx.storage.spaces,
+      settings: ctx.storage.settings,
       configField: "trash_retention_days",
     };
     const purger = new TrashPurger(
@@ -334,98 +276,71 @@ describe("TrashPurger fan-out — per-space retention overrides", () => {
   });
 });
 
-describe("runSpaceCleanup — audit and event-log fan-out", () => {
-  it("calls the sweep function with each space's effective retention", async () => {
-    if (!ctx.storage.spaces) throw new Error("spaces store missing");
-    const tA = await ctx.storage.spaces.create("audit-space-A");
-    const tB = await ctx.storage.spaces.create("audit-space-B");
-    await ctx.storage.spaces.updateConfig(tA.id, {
-      audit_retention_days: 7,
-    });
-    await ctx.storage.spaces.updateConfig(tB.id, {
-      // No override — tB falls through to instance default.
-    });
+describe("runSpaceCleanup — audit and event-log retention", () => {
+  it("calls the sweep function with the effective retention", async () => {
+    await writeSpaceConfig(ctx.storage.settings, { audit_retention_days: 7 });
 
-    const calls: { retention: number; spaceId: string | null | undefined }[] =
-      [];
+    const calls: { retention: number }[] = [];
     const total = await runSpaceCleanup({
       jobName: "test-audit-cleanup",
       coordination: ctx.storage.coordination,
       fanout: {
-        spaces: ctx.storage.spaces,
+        settings: ctx.storage.settings,
         configField: "audit_retention_days",
       },
       instanceDefault: 30,
       unitMs: MS_PER_DAY,
-      sweep: (retention, spaceId) => {
-        calls.push({ retention, spaceId });
-        return Promise.resolve(1); // pretend each scope deleted one row
+      sweep: (retention) => {
+        calls.push({ retention });
+        return Promise.resolve(1); // pretend the sweep deleted one row
       },
     });
 
-    // tA takes its override, tB falls through to the instance default, and
-    // the space-less bucket is swept at the default too.
-    const bySpace = new Map(calls.map((c) => [c.spaceId, c.retention]));
-    expect(bySpace.get(tA.id)).toBe(7);
-    expect(bySpace.get(tB.id)).toBe(30);
-    expect(bySpace.get(null)).toBe(30);
-
-    // Every space on the instance, plus that bucket. Derived rather than
-    // written down: the context provisions a space of its own at bootstrap,
-    // so a literal count would be counting the fixture.
-    const spaces = await ctx.storage.spaces.list();
-    expect(calls.length).toBe(spaces.length + 1);
-    expect(total).toBe(calls.length);
+    // The override, once: there is one sweep on an instance.
+    expect(calls).toEqual([{ retention: 7 }]);
+    expect(total).toBe(1);
   });
 
-  it("skips spaces whose effective retention is 0 (disabled)", async () => {
-    if (!ctx.storage.spaces) throw new Error("spaces store missing");
-    const t = await ctx.storage.spaces.create("disabled-event-log");
-    await ctx.storage.spaces.updateConfig(t.id, {
+  it("skips the sweep when the effective retention is 0 (disabled)", async () => {
+    await writeSpaceConfig(ctx.storage.settings, {
       event_log_retention_hours: 0,
     });
 
-    const calls: { retention: number; spaceId: string | null | undefined }[] =
-      [];
-    await runSpaceCleanup({
+    const calls: { retention: number }[] = [];
+    const total = await runSpaceCleanup({
       jobName: "test-eventlog-cleanup",
       coordination: ctx.storage.coordination,
       fanout: {
-        spaces: ctx.storage.spaces,
+        settings: ctx.storage.settings,
         configField: "event_log_retention_hours",
       },
       instanceDefault: 168,
       unitMs: 3_600_000,
-      sweep: (retention, spaceId) => {
-        calls.push({ retention, spaceId });
+      sweep: (retention) => {
+        calls.push({ retention });
         return Promise.resolve(0);
       },
     });
 
-    // The disabled space is skipped; only the NULL-bucket sweep runs
-    // (instance default = 168h).
-    const spaces = calls.map((c) => c.spaceId);
-    expect(spaces).not.toContain(t.id);
-    expect(spaces).toContain(null);
+    expect(calls).toEqual([]);
+    expect(total).toBe(0);
   });
 
   it("falls back to a single global sweep when no fanout is provided", async () => {
-    const calls: { retention: number; spaceId: string | null | undefined }[] =
-      [];
+    const calls: { retention: number }[] = [];
     const total = await runSpaceCleanup({
       jobName: "test-no-fanout",
       coordination: ctx.storage.coordination,
       fanout: undefined,
       instanceDefault: 90,
       unitMs: MS_PER_DAY,
-      sweep: (retention, spaceId) => {
-        calls.push({ retention, spaceId });
+      sweep: (retention) => {
+        calls.push({ retention });
         return Promise.resolve(5);
       },
     });
     expect(calls.length).toBe(1);
     expect(calls[0]?.retention).toBe(90);
-    expect(calls[0]?.spaceId).toBeUndefined();
     expect(total).toBe(5);
   });
 });
@@ -552,7 +467,6 @@ async function seedOauthClient(opts: {
     tokenEndpointAuthMethod: "none",
     scopes: ["core.note:read"],
     redirectUris: ["http://localhost:5173/callback"],
-    referenceId: null,
   });
   const s = ctx.storage as unknown as {
     __sqliteRun: (sql: string, params: unknown[]) => Promise<unknown>;
@@ -615,7 +529,6 @@ describe("DcrClientCleaner.runOnce — reaps grantless DCR clients", () => {
       refreshTokenHash: hashApiKey("dcr-reaper-refresh", TEST_API_KEY_SALT),
       clientId: oldWithToken,
       authUserId: tokenUser,
-      referenceId: null,
       scopes: ["core.note:read"],
       accessTtlMs: 3_600_000,
     });
@@ -680,24 +593,20 @@ async function seedItemWithCreatedAt(opts: {
   id: string;
   type: string;
   createdAtIso: string;
-  spaceId?: string;
 }): Promise<void> {
-  await ctx.storage.items.create(
-    {
-      id: opts.id,
-      type: opts.type,
-      properties:
-        opts.type === "system.activity"
-          ? {
-              summary: `seed ${opts.id}`,
-              severity: "info",
-              connection_id: `conn_${opts.id}`,
-            }
-          : { body: `seed ${opts.id}` },
-      tier: "library",
-    },
-    opts.spaceId,
-  );
+  await ctx.storage.items.create({
+    id: opts.id,
+    type: opts.type,
+    properties:
+      opts.type === "system.activity"
+        ? {
+            summary: `seed ${opts.id}`,
+            severity: "info",
+            connection_id: `conn_${opts.id}`,
+          }
+        : { body: `seed ${opts.id}` },
+    tier: "library",
+  });
   const st = ctx.storage as unknown as {
     __sqliteRun: (sql: string, params: unknown[]) => Promise<unknown>;
   };
@@ -862,19 +771,16 @@ describe("RevokedGrantPurger.runOnce — the tombstone sweep", () => {
    * nor the activity purge can reach it.
    */
   async function seedTombstone(revokedAt: string, kind = "app") {
-    const item = await ctx.storage.items.create(
-      {
-        type: "system.connection",
-        properties: {
-          kind,
-          status: "revoked",
-          granted_at: "2019-01-01T00:00:00.000Z",
-          revoked_at: revokedAt,
-          client_id: `client-${revokedAt}-${kind}`,
-        },
+    const item = await ctx.storage.items.create({
+      type: "system.connection",
+      properties: {
+        kind,
+        status: "revoked",
+        granted_at: "2019-01-01T00:00:00.000Z",
+        revoked_at: revokedAt,
+        client_id: `client-${revokedAt}-${kind}`,
       },
-      undefined,
-    );
+    });
     return item.id;
   }
 
@@ -911,18 +817,15 @@ describe("RevokedGrantPurger.runOnce — the tombstone sweep", () => {
   });
 
   it("leaves a live grant alone, whatever its age", async () => {
-    const live = await ctx.storage.items.create(
-      {
-        type: "system.connection",
-        properties: {
-          kind: "app",
-          status: "active",
-          granted_at: "2019-01-01T00:00:00.000Z",
-          client_id: "live",
-        },
+    const live = await ctx.storage.items.create({
+      type: "system.connection",
+      properties: {
+        kind: "app",
+        status: "active",
+        granted_at: "2019-01-01T00:00:00.000Z",
+        client_id: "live",
       },
-      undefined,
-    );
+    });
     await ctx.storage.items.purgeRevokedAppGrantsOlderThan(CUTOFF);
     expect(await ctx.storage.items.get(live.id)).not.toBeNull();
   });
@@ -952,19 +855,16 @@ describe("RevokedGrantPurger.runOnce — the tombstone sweep", () => {
     // shape should not occur. That is the argument for pinning it rather than
     // against: if it ever does occur, the row is a LIVE grant and sweeping it
     // deletes an app's access with no revocation behind it.
-    const resurrected = await ctx.storage.items.create(
-      {
-        type: "system.connection",
-        properties: {
-          kind: "app",
-          status: "active",
-          granted_at: "2019-01-01T00:00:00.000Z",
-          revoked_at: OLD,
-          client_id: "revoked-then-reapproved",
-        },
+    const resurrected = await ctx.storage.items.create({
+      type: "system.connection",
+      properties: {
+        kind: "app",
+        status: "active",
+        granted_at: "2019-01-01T00:00:00.000Z",
+        revoked_at: OLD,
+        client_id: "revoked-then-reapproved",
       },
-      undefined,
-    );
+    });
     const deleted =
       await ctx.storage.items.purgeRevokedAppGrantsOlderThan(CUTOFF);
     expect(deleted).toBe(0);

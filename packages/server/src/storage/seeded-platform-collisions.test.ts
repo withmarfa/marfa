@@ -32,15 +32,12 @@ afterEach(async () => {
 const CONTESTED = "user.collides";
 
 async function registerLocally() {
-  await ctx.storage.types.create(
-    {
-      id: CONTESTED,
-      label: "Mine",
-      version: 1,
-      fields: { note: { type: "string" } },
-    },
-    undefined,
-  );
+  await ctx.storage.types.create({
+    id: CONTESTED,
+    label: "Mine",
+    version: 1,
+    fields: { note: { type: "string" } },
+  });
 }
 
 describe("seedPlatformTypes leaves a registration it did not write", () => {

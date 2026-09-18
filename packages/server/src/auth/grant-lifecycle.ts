@@ -1,7 +1,6 @@
 import type { ApiKey } from "@withmarfa/shared";
 import type { Storage } from "../storage/interface.js";
 import { withConsentLock } from "./consent-lock.js";
-import { resolveSpaceIdForAuthUser } from "./grant-space.js";
 import { log } from "../middleware/logger.js";
 
 /**
@@ -20,46 +19,22 @@ import { log } from "../middleware/logger.js";
  */
 
 /**
- * The live keys an app minted in one space.
+ * The live keys an app minted.
  *
  * A key minted through a sign-in records the app that minted it, which is what
- * lets the keys page group by app and lets a revocation offer to take them.
- * Both callers ask this rather than filtering a key list of their own, so the
- * offer counts exactly the rows the revoke would take.
- *
- * **The space is required for the answer to be safe, and an absent one means
- * space-less rather than every space.** One client can hold a grant in more
- * than one space on a hosted instance, so a filter on the client id alone
- * would let a revocation in one space reach keys in another. Callers pass the
- * space the grant resolved to, keys mode included: a sign-in binds to the
- * instance's one space there rather than to nothing.
- *
- * **The space-less arm is still reachable and answers nothing useful.** A
- * caller passes whatever the resolver returned, and `undefined` is a real
- * answer on exactly the deployments this is about: an account with no space,
- * or a self-hosted server holding more than one. What that arm sweeps is
- * empty, because the row constraint makes a space-less key the operator key
- * and no app mints one, but it is empty by that constraint rather than
- * because nothing can reach it.
- *
- * Both arms exclude revoked rows. **They differ on expiry** — `list` also
- * drops a key past its `expires_at` and `listForSpace` does not — and the
- * count is currently right anyway, because the only door that stamps a
- * lifetime is the runtime-credential mint and it never stamps an app. If an
- * app-minted key ever gains one, this is where the offer starts overstating
- * itself and the sweep starts touching dead rows.
+ * lets a revocation offer to take them. Both callers ask this rather than
+ * filtering a key list of their own, so the offer counts exactly the rows the
+ * revoke would take. `list` excludes revoked rows and rows past their
+ * `expires_at`; no door stamps a lifetime onto an app-minted key today, so
+ * the count and the sweep agree.
  */
 export async function keysMintedByApp(
   storage: Storage,
-  opts: { clientId: string | undefined; spaceId: string | undefined },
+  opts: { clientId: string | undefined },
 ): Promise<ApiKey[]> {
   if (!opts.clientId) return [];
-  if (opts.spaceId !== undefined) {
-    const keys = await storage.keys.listForSpace(opts.spaceId);
-    return keys.filter((k) => k.oauth_client_id === opts.clientId);
-  }
   const keys = await storage.keys.list();
-  return keys.filter((k) => k.oauth_client_id === opts.clientId && !k.space_id);
+  return keys.filter((k) => k.oauth_client_id === opts.clientId);
 }
 
 /**
@@ -91,11 +66,10 @@ export async function revokeProjectedGrant(
      *  through the same lock, and there is no record to rewrite. */
     itemId: string | null;
     properties?: Record<string, unknown>;
-    spaceId: string | undefined;
     clientId: string | undefined;
     authUserId: string | undefined;
     /**
-     * Also revoke the keys this app minted in the space.
+     * Also revoke the keys this app minted.
      *
      * Off unless the caller asks, because a key is not a token: it was minted
      * deliberately, it appears on the person's own keys page, and it is meant
@@ -104,17 +78,6 @@ export async function revokeProjectedGrant(
      * to ask — leaves them alone.
      */
     revokeKeys?: boolean;
-    /**
-     * The space to sweep keys in, when it is not the caller's own.
-     *
-     * `spaceId` above is the caller's scope and fences the record update, so
-     * an operator key addressing another space's grant resolves it to
-     * undefined — which is the right fence and the wrong space to sweep,
-     * because "no space" means the space-less rows. The grant's own space is
-     * passed here instead. Defaults to `spaceId`, which is what every
-     * space-bound caller wants.
-     */
-    keysSpaceId?: string;
   },
 ): Promise<void> {
   const cascade = async (): Promise<void> => {
@@ -166,21 +129,16 @@ export async function revokeProjectedGrant(
     if (opts.revokeKeys === true) {
       const keys = await keysMintedByApp(storage, {
         clientId: opts.clientId,
-        spaceId: opts.keysSpaceId ?? opts.spaceId,
       });
       for (const key of keys) await storage.keys.revoke(key.id);
     }
-    await storage.items.update(
-      opts.itemId,
-      {
-        properties: {
-          ...opts.properties,
-          status: "revoked",
-          revoked_at: new Date().toISOString(),
-        },
+    await storage.items.update(opts.itemId, {
+      properties: {
+        ...opts.properties,
+        status: "revoked",
+        revoked_at: new Date().toISOString(),
       },
-      opts.spaceId,
-    );
+    });
   };
   // Without both ids there is no consent row and nothing to race over,
   // and no key to lock on either. The state flip still stands as the
@@ -210,19 +168,14 @@ export async function auditGrantReused(
   },
 ): Promise<void> {
   try {
-    // The resolver the projection was written through, so this lookup asks
-    // the bucket the row is in.
-    const spaceId = await resolveSpaceIdForAuthUser(storage);
     let grantItemId: string | null = null;
     if (typeof storage.oauthProvider?.findGrantItemId === "function") {
       grantItemId = await storage.oauthProvider.findGrantItemId({
-        spaceId: spaceId ?? null,
         clientId: opts.clientId,
         authUserId: opts.authUserId,
       });
     }
     await storage.audit.log({
-      space_id: spaceId ?? null,
       action: "auth.grant.reused",
       resource_type: "oauth_grant",
       resource_id: opts.clientId,
@@ -255,7 +208,6 @@ export async function auditGrantReused(
 export function auditGrantRevoked(
   storage: Storage,
   opts: {
-    spaceId: string | undefined;
     clientId: string | undefined;
     authUserId: string | undefined;
     grantItemId: string | null;
@@ -263,13 +215,12 @@ export function auditGrantRevoked(
     /** Set when the revocation came from the client presenting a refresh
      *  token at the RFC 7009 endpoint rather than from the person. */
     source?: "client" | "admin";
-    /** The operator's key when an operator acted, so the space's own trail
-     *  names who, not only which surface. */
+    /** The operator's key when an operator acted, so the trail names who,
+     *  not only which surface. */
     keyId?: string;
   },
 ): void {
   void storage.audit.log({
-    space_id: opts.spaceId ?? null,
     action: "auth.grant.revoked",
     resource_type: "oauth_grant",
     resource_id: opts.clientId ?? opts.grantItemId ?? "unknown",

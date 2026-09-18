@@ -66,9 +66,8 @@ export function deriveCustomTypeNamespaces(): string[] {
  * custom type in the first place (belt: filtered anyway, since this reads
  * a table rather than the validator's output).
  *
- * With a `spaceId`, the answer is that space's own registrations and
- * nothing else — the consent screen's question, asked at render time so a
- * space's registrations are offerable without a restart. Without one, the
+ * The answer is the instance's own registrations, asked at render time so
+ * a registration is offerable without a restart. The
  * answer is the space-less bucket, which holds the platform-scoped
  * registrations and nothing a space owns. Never both at once — a space's
  * consent screen deliberately does not inherit the platform bucket, whose
@@ -95,9 +94,8 @@ export interface RuntimeNamespaceRoots {
 
 export async function resolveRuntimeCustomNamespaces(
   storage: Storage,
-  spaceId?: string,
 ): Promise<RuntimeNamespaceRoots> {
-  const rows = await storage.types.listCustomWithProvenance(spaceId);
+  const rows = await storage.types.listCustomWithProvenance();
   // Split by the stored fact, because the identifier cannot do it:
   // `readwise.book` and `jonah.reading_item` are the same shape to a
   // first-segment test, and one arrived with a connected service while

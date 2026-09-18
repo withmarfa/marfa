@@ -14,7 +14,7 @@ import type { AppEnv } from "./auth.js";
  *
  * Mounted AFTER `loggerMiddleware` (so `requestId` is set) but the
  * credential-derived attributes are stamped after `next()` resolves, since
- * auth runs later in the chain. Only `key_id` / `space_id` are recorded —
+ * auth runs later in the chain. Only `key_id` is recorded —
  * never the credential secret.
  */
 export function otelCorrelationMiddleware() {
@@ -33,7 +33,6 @@ export function otelCorrelationMiddleware() {
     const apiKey = c.get("apiKey");
     if (apiKey) {
       span.setAttribute("marfa.key_id", apiKey.id);
-      if (apiKey.space_id) span.setAttribute("marfa.space_id", apiKey.space_id);
     }
 
     if (c.res.status >= 500) {

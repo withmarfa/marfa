@@ -43,14 +43,11 @@ afterAll(async () => {
   await ctx.cleanup();
 });
 
-const SPACE_ID = "events-cursor-timeout-space";
-
 function spaceKey(): ApiKey {
   return {
     id: "key_events_cursor_timeout",
     name: "events cursor timeout",
     key_hash: "unused",
-    space_id: SPACE_ID,
     // The rank this fixture used to carry admitted it past its own maps, so
     // the map has to say what the rank granted silently.
     type_permissions: { "*": "read" },
@@ -136,7 +133,6 @@ function wake(itemId: string): void {
       type: "core.note",
       properties: {},
     } as unknown as ItemEventWithId["item"],
-    spaceId: SPACE_ID,
   });
 }
 

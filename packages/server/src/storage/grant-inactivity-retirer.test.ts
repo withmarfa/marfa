@@ -49,7 +49,6 @@ async function seedClient(c: TestContext): Promise<string> {
     scopes: null,
     redirectUris: [`${ORIGIN}/callback`],
     postLogoutRedirectUris: [`${ORIGIN}/`],
-    referenceId: null,
   });
   return clientId;
 }
@@ -148,11 +147,7 @@ async function backdate(
   const then = new Date(Date.now() - daysAgo * DAY_MS).toISOString();
   const props = { ...grant.properties };
   for (const f of fields) props[f] = then;
-  await c.storage.items.update(
-    grant.id,
-    { properties: props },
-    grant.space_id ?? undefined,
-  );
+  await c.storage.items.update(grant.id, { properties: props });
 }
 
 async function tokenRows(c: TestContext, clientId: string): Promise<number> {
@@ -261,11 +256,10 @@ describe("GrantInactivityRetirer.runOnce", () => {
       last_used_at: null,
     };
     props.granted_at = new Date(Date.now() - 400 * DAY_MS).toISOString();
-    await ctx.storage.items.update(
-      grant.id,
-      { properties: props, null_clears: true },
-      grant.space_id ?? undefined,
-    );
+    await ctx.storage.items.update(grant.id, {
+      properties: props,
+      null_clears: true,
+    });
 
     const disabled = new GrantInactivityRetirer(ctx.storage, 0, DAY_MS);
     expect(await disabled.runOnce()).toBe(0);

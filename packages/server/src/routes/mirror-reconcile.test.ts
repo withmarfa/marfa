@@ -87,15 +87,12 @@ async function createMirror(
   sourceId: string,
   properties: Record<string, unknown>,
 ): Promise<string> {
-  const row = await ctx.storage.items.create(
-    {
-      type: "core.bookmark",
-      source: MIRROR_SOURCE,
-      source_id: sourceId,
-      properties,
-    },
-    ctx.spaceId,
-  );
+  const row = await ctx.storage.items.create({
+    type: "core.bookmark",
+    source: MIRROR_SOURCE,
+    source_id: sourceId,
+    properties,
+  });
   return row.id;
 }
 
@@ -104,11 +101,7 @@ async function resyncMirror(
   id: string,
   properties: Record<string, unknown>,
 ): Promise<void> {
-  await ctx.storage.items.update(
-    id,
-    { properties, null_clears: true },
-    ctx.spaceId,
-  );
+  await ctx.storage.items.update(id, { properties, null_clears: true });
 }
 
 describe("GET /items/{id}/reconcile", () => {

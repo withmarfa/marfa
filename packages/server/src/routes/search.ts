@@ -9,6 +9,7 @@ import {
   getTypeFilter,
 } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
+import { readSpaceConfig } from "../storage/space-config.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import {
   ItemSchema as BaseItemSchema,
@@ -189,7 +190,7 @@ export function searchRoutes(storage: Storage) {
 
     // Grammar, the global wildcard and an unknown concrete type, decided once
     // for every list surface; the reasoning is at `assertTypeFilter`.
-    assertTypeFilter(type, c.get("apiKey")?.space_id);
+    assertTypeFilter(type);
 
     if (type) requireTypeAccess(c, type, "read");
 
@@ -217,17 +218,12 @@ export function searchRoutes(storage: Storage) {
     const excludeSystemTypes = excludesSystemTypes(includeSet, type);
 
     const callerKeyForSearch = c.get("apiKey");
-    const callerSpaceIdForSearch = callerKeyForSearch?.space_id;
-    const spaceConfigForSearch =
-      callerSpaceIdForSearch && storage.spaces
-        ? await storage.spaces.getConfig(callerSpaceIdForSearch)
-        : null;
+    const spaceConfigForSearch = await readSpaceConfig(storage.settings);
     const enforcementForSearch = resolveEnforcement(
       spaceConfigForSearch,
       callerKeyForSearch,
     );
     const results = await storage.search.search(q.trim(), {
-      spaceId: c.get("apiKey")?.space_id,
       type,
       state: state as ItemState | undefined,
       tier: tierFilter,

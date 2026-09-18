@@ -281,7 +281,6 @@ function syntheticRow(row: SyntheticRow): Item {
     // Not `integration:`-prefixed, so the orphan resolver answers from the
     // rows themselves and this storage needs no connection surface.
     source: "synthetic",
-    space_id: null,
     properties: row.properties,
     created_at: "2026-01-01T00:00:00.000Z",
     updated_at: "2026-01-01T00:00:00.000Z",
@@ -425,7 +424,6 @@ function appOver(
     c.set("apiKey", {
       id: "key-under-test",
       is_operator: true,
-      space_id: undefined,
       // The rank this fixture used to carry bypassed the permission maps; with
       // one permission model the map is the whole of its reach.
       type_permissions: { "*": "write" },
@@ -1418,11 +1416,9 @@ describe("the unwindowed scan", () => {
         },
       });
     }
-    const seeds = await gatherSeriesSeeds(
-      syntheticCalendar(rows).storage,
-      undefined,
-      ["core.event"],
-    );
+    const seeds = await gatherSeriesSeeds(syntheticCalendar(rows).storage, [
+      "core.event",
+    ]);
     expect(seeds).toHaveLength(3);
     expect(Object.keys(seeds[0] ?? {}).sort()).toEqual([
       "ends_at",
@@ -1437,9 +1433,7 @@ describe("the unwindowed scan", () => {
   it("reads the fixture's own series against real storage", async () => {
     // The synthetic storages above prove the loops; this proves they are
     // wired to a real store with a real narrowing behind them.
-    const seeds = await gatherSeriesSeeds(ctx.storage, undefined, [
-      "core.event",
-    ]);
+    const seeds = await gatherSeriesSeeds(ctx.storage, ["core.event"]);
     expect(seeds.length).toBeGreaterThanOrEqual(2);
     expect(seeds.every((seed) => seed.recurrence.length > 0)).toBe(true);
   });

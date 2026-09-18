@@ -105,7 +105,7 @@ export function createApp(
   // Structured logging (wraps entire request lifecycle)
   app.use("*", loggerMiddleware());
 
-  // Stamp request_id / key_id / space_id onto the active OTel span and
+  // Stamp request_id / key_id onto the active OTel span and
   // mark 5xx as span errors. Pure no-op when OpenTelemetry is disabled
   // (no active span). After the logger so `requestId` is already set.
   app.use("*", otelCorrelationMiddleware());
@@ -382,8 +382,8 @@ export function createApp(
       // told by either of them.
       trustedProxyHeader: config.trustedProxyHeader ?? null,
       // storage + salt are needed by the @better-auth/oauth-provider plugin
-      // (storeTokens.hash matches Marfa's hashApiKey, clientReference
-      // resolves space_id, hooks.after projects grants into system.connection).
+      // (storeTokens.hash matches Marfa's hashApiKey, hooks.after projects
+      // grants into system.connection).
       storage,
       apiKeySalt: config.apiKeySalt,
     });
@@ -562,12 +562,7 @@ export function createApp(
   if (storage.oauthProvider) {
     app.route(
       "/auth",
-      oauthRegisterRoutes(
-        storage,
-        storage.oauthProvider,
-        auth,
-        config.corsOrigins,
-      ),
+      oauthRegisterRoutes(storage.oauthProvider, config.corsOrigins),
     );
   }
 

@@ -146,17 +146,6 @@ export const DELIBERATELY_UNSCANNED: readonly {
   because: string;
 }[] = [
   {
-    table: "spaces",
-    column: "status",
-    castType: "SpaceStatus",
-    because:
-      "Closed. Zero bare casts remain: every read goes through " +
-      "`storage/stored-space-status.ts`, which recognizes rather than " +
-      "asserts and leans to `suspended`, and `middleware/space-suspension.ts` " +
-      "reaches the column through it. A count would report on a column that " +
-      "no longer has the failure mode.",
-  },
-  {
     table: "oauth_device_codes",
     column: "status",
     castType: "OAuthDeviceCodeStatus",

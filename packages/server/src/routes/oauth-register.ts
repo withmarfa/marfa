@@ -53,11 +53,9 @@ import { randomBytes } from "node:crypto";
 import { Hono } from "hono";
 import { z } from "@hono/zod-openapi";
 import type { AppEnv } from "../middleware/auth.js";
-import type { MarfaAuth } from "../auth/instance.js";
-import type { OauthProviderStore, Storage } from "../storage/interface.js";
+import type { OauthProviderStore } from "../storage/interface.js";
 import { dcrDefaultScopes, withSessionScopes } from "../auth/mint-ceiling.js";
 import { buildAllowedScopes } from "../auth/oauth-provider.js";
-import { resolveSpaceIdForAuthUser } from "../auth/grant-space.js";
 import { log } from "../middleware/logger.js";
 
 import { DEVICE_CODE_GRANT_TYPE as DEVICE_CODE_GRANT } from "./auth-pages.js";
@@ -192,9 +190,7 @@ function isLoopbackHost(host: string): boolean {
  * with the matching HTTP status.
  */
 export function oauthRegisterRoutes(
-  storage: Storage,
   oauthProvider: OauthProviderStore,
-  auth: MarfaAuth | undefined,
   trustedRedirectOrigins: readonly string[] = [],
 ): Hono<AppEnv> {
   const router = new Hono<AppEnv>();
@@ -361,25 +357,6 @@ export function oauthRegisterRoutes(
       );
     }
 
-    // Mirrors the plugin's `clientReference` callback. Unauthenticated DCR
-    // binds null; space accountability lands later at the consent step.
-    let referenceId: string | null = null;
-    if (auth) {
-      try {
-        const session = await auth.getSession(c.req.raw.headers);
-        if (session?.user.id) {
-          const spaceId = await resolveSpaceIdForAuthUser(storage);
-          referenceId = spaceId ?? null;
-        }
-      } catch (err) {
-        // Failure here is non-fatal — the client still registers,
-        // just unbound. Log and continue.
-        log("warn", "oauth dcr: space resolution failed", {
-          error: err instanceof Error ? err.message : String(err),
-        });
-      }
-    }
-
     let created;
     try {
       created = await oauthProvider.createClient({
@@ -392,7 +369,6 @@ export function oauthRegisterRoutes(
         scopes: requestedScopes,
         redirectUris,
         postLogoutRedirectUris,
-        referenceId,
         clientUri: body.client_uri ?? null,
         logoUri: body.logo_uri ?? null,
         tosUri: body.tos_uri ?? null,

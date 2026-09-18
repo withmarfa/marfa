@@ -41,7 +41,6 @@ import type { TestContext } from "../test-utils.js";
 function fakeKey(over: Partial<ApiKey> = {}): ApiKey {
   return {
     id: "k1",
-    space_id: "space-1",
     label: "test",
     source: "test",
     default_tier: "library",
@@ -191,14 +190,9 @@ describe("requireSpacePermission", () => {
 
 describe("the bearer middleware carries the grant onto the request", () => {
   let ctx: TestContext;
-  let spaceId: string;
 
   beforeAll(async () => {
     ctx = await createTestContext({});
-    const space = await ctx.storage.spaces!.create(
-      "space-permission-carrier-space",
-    );
-    spaceId = space.id;
   });
   afterAll(async () => {
     await ctx.cleanup();
@@ -222,7 +216,7 @@ describe("the bearer middleware carries the grant onto the request", () => {
     const seeded = await seedOauthBearer(
       ctx.storage,
       ["openid", "space.keys", "core.note:read"],
-      { spaceId },
+      {},
     );
     const res = await probeApp().request("/probe", {
       headers: { Authorization: `Bearer ${seeded.token}` },
@@ -254,7 +248,7 @@ describe("the bearer middleware carries the grant onto the request", () => {
     const seeded = await seedOauthBearer(
       ctx.storage,
       ["openid", "space.keys", "core.note:read"],
-      { spaceId },
+      {},
     );
     const app = new Hono<AppEnv>();
     app.use("*", authMiddleware(ctx.storage, TEST_API_KEY_SALT));
@@ -307,14 +301,9 @@ describe("the bearer middleware carries the grant onto the request", () => {
 
 describe("a real door reads what a real grant carries", () => {
   let ctx: TestContext;
-  let spaceId: string;
 
   beforeAll(async () => {
     ctx = await createTestContext({});
-    const space = await ctx.storage.spaces!.create(
-      "space-permission-door-space",
-    );
-    spaceId = space.id;
   });
   afterAll(async () => {
     await ctx.cleanup();
@@ -323,17 +312,17 @@ describe("a real door reads what a real grant carries", () => {
   it("admits a bearer whose grant names the permission the door asks for", async () => {
     // The unit tests above pass a hand-built context, so nothing in them
     // proves the middleware, the gate and the route agree in one request.
-    const { token } = await seedOauthBearer(ctx.storage, ["space.keys"], {
-      spaceId,
-    });
+    const { token } = await seedOauthBearer(ctx.storage, ["space.keys"], {});
     const res = await request(ctx.app, "GET", "/keys", { key: token });
     expect(res.status).toBe(200);
   });
 
   it("refuses a bearer whose grant does not", async () => {
-    const { token } = await seedOauthBearer(ctx.storage, ["core.note:read"], {
-      spaceId,
-    });
+    const { token } = await seedOauthBearer(
+      ctx.storage,
+      ["core.note:read"],
+      {},
+    );
     const res = await request(ctx.app, "GET", "/keys", { key: token });
     expect(res.status).toBe(403);
   });

@@ -12,19 +12,17 @@ import { hashApiKey } from "../middleware/auth.js";
 import type { AppEnv } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import { SPACE_PERMISSIONS } from "@withmarfa/shared";
+import { writeSpaceConfig } from "../storage/space-config.js";
 
 const SALT = "test-salt";
 
-// The default createTestContext() runs in `authMode: "keys"`, which does
-// not wire up `storage.spaces`. The handler-level fallback paths are
-// covered with that context; the happy-path space-scoped routes need a
-// hosted-mode app, built inline below.
+// A second app built inline, so the config round trips run on a database
+// the shared context does not share.
 interface HostedContext {
   app: Hono<AppEnv>;
   storage: Storage;
   operatorKey: string;
   spaceKey: string;
-  spaceId: string;
   cleanup: () => Promise<void>;
 }
 
@@ -75,10 +73,6 @@ async function createHostedContext(): Promise<HostedContext> {
   const operatorKey = `marfa_k1_operator_quotas_${suffix}`;
   const spaceKey = `marfa_k1_space_cfg_${suffix}`;
 
-  // Create the space row first (required for FK under hosted-mode pg).
-  const space = await storage.spaces!.create();
-  const spaceId = space.id;
-
   await storage.keys.create(
     {
       label: "operator-quotas",
@@ -99,7 +93,6 @@ async function createHostedContext(): Promise<HostedContext> {
       default_tier: "feed",
     },
     hashApiKey(spaceKey, SALT),
-    spaceId,
   );
   await storage.settings.set("bootstrapped", "true");
 
@@ -108,7 +101,6 @@ async function createHostedContext(): Promise<HostedContext> {
     storage,
     operatorKey,
     spaceKey,
-    spaceId,
     cleanup: async () => {
       await storage.close();
       // The directory holds this file's sqlite database and blob
@@ -135,7 +127,7 @@ describe("GET /spaces/me/config — keys-mode fallback", () => {
     expect(res.status).toBe(401);
   });
 
-  it("returns {} for a space whose config was never set", async () => {
+  it("returns {} when the config was never set", async () => {
     // An unset config reads as an empty object rather than as null, so a
     // client can merge into what it gets back without a null check.
     const res = await request(ctx.app, "GET", "/spaces/me/config", {
@@ -155,12 +147,10 @@ describe("PUT /spaces/me/config — keys-mode fallback", () => {
     expect(res.status).toBe(401);
   });
 
-  it("rejects a credential with no space to configure", async () => {
-    // The operator key is the one credential that carries no space, and
-    // `/me/config` addresses the caller's own space. It is refused at the
-    // permission gate rather than at the space check, because the instance
-    // tier holds no space permissions at all — running the instance sits
-    // outside the permission model rather than above it.
+  it("rejects the operator key", async () => {
+    // The operator key is refused at the permission gate, because the
+    // instance tier holds no space permissions at all — running the
+    // instance sits outside the permission model rather than above it.
     const res = await request(ctx.app, "PUT", "/spaces/me/config", {
       key: ctx.operatorKey,
       body: {},
@@ -174,8 +164,8 @@ describe("PUT /spaces/me/config — keys-mode fallback", () => {
   });
 });
 
-// ----- Hosted-mode context: exercises the space store happy paths -------
-describe("Space config — hosted mode", () => {
+// ----- A second context: the settings-backed round trips -------
+describe("Space config — round trips", () => {
   let hosted: HostedContext;
 
   beforeAll(async () => {
@@ -186,9 +176,8 @@ describe("Space config — hosted mode", () => {
     await hosted.cleanup();
   });
 
-  it("GET returns stored config for a space-scoped caller", async () => {
-    expect(hosted.storage.spaces).toBeDefined();
-    await hosted.storage.spaces!.updateConfig(hosted.spaceId, {
+  it("GET returns stored config for a caller holding space.settings", async () => {
+    await writeSpaceConfig(hosted.storage.settings, {
       enforcement: { strict_mode: { types: ["core.note"] } },
     });
 
@@ -215,9 +204,9 @@ describe("Space config — hosted mode", () => {
   });
 
   it("PUT persists the activity retention override rather than discarding it", async () => {
-    // The purger already fans out per space on this field, so a value the
-    // route accepts and drops is worse than one it refuses: PUT is a full
-    // replacement, so following the documentation un-sets the neighbours.
+    // The purger already reads this field, so a value the route accepts and
+    // drops is worse than one it refuses: PUT is a full replacement, so
+    // following the documentation un-sets the neighbours.
     const res = await request(hosted.app, "PUT", "/spaces/me/config", {
       key: hosted.spaceKey,
       body: { activity_retention_days: 30, trash_retention_days: 7 },
@@ -248,7 +237,7 @@ describe("Space config — hosted mode", () => {
 
   // The destructive shape. PUT is a full replacement, so a key the schema
   // did not know used to be dropped and the request answered 200 having
-  // erased everything the space had set. The test that existed round-tripped
+  // erased everything the instance had set. The test that existed round-tripped
   // a well-formed body and would pass either way.
   it("PUT refuses a mistyped key instead of dropping it", async () => {
     const good = await request(hosted.app, "PUT", "/spaces/me/config", {
@@ -265,7 +254,7 @@ describe("Space config — hosted mode", () => {
     const body = (await res.json()) as { error: { code: string } };
     expect(body.error.code).toBe("validation_error");
 
-    // And the refusal left the space's config alone, which is the whole
+    // And the refusal left the instance's config alone, which is the whole
     // point: the old behavior returned 200 with this now empty.
     const getRes = await request(hosted.app, "GET", "/spaces/me/config", {
       key: hosted.spaceKey,
@@ -298,48 +287,6 @@ describe("Space config — hosted mode", () => {
     expect(deeper.status).toBe(400);
   });
 
-  it("PUT refuses a hop budget past the ceiling", async () => {
-    const res = await request(hosted.app, "PUT", "/spaces/me/config", {
-      key: hosted.spaceKey,
-      body: { max_event_hop_budget: 101 },
-    });
-    expect(res.status).toBe(400);
-
-    // At the ceiling is fine. A bound nobody can reach is not a bound.
-    const ok = await request(hosted.app, "PUT", "/spaces/me/config", {
-      key: hosted.spaceKey,
-      body: { max_event_hop_budget: 100 },
-    });
-    expect(ok.status).toBe(200);
-  });
-
-  it("PUT accepts the hop budget the event pipeline reads", async () => {
-    const res = await request(hosted.app, "PUT", "/spaces/me/config", {
-      key: hosted.spaceKey,
-      body: { max_event_hop_budget: 9 },
-    });
-    expect(res.status).toBe(200);
-    expect((await res.json()) as { max_event_hop_budget?: number }).toEqual({
-      max_event_hop_budget: 9,
-    });
-
-    const getRes = await request(hosted.app, "GET", "/spaces/me/config", {
-      key: hosted.spaceKey,
-    });
-    expect(
-      ((await getRes.json()) as { max_event_hop_budget?: number })
-        .max_event_hop_budget,
-    ).toBe(9);
-  });
-
-  it("PUT rejects a negative hop budget with 400", async () => {
-    const res = await request(hosted.app, "PUT", "/spaces/me/config", {
-      key: hosted.spaceKey,
-      body: { max_event_hop_budget: -1 },
-    });
-    expect(res.status).toBe(400);
-  });
-
   it("PUT persists a valid config and records an audit entry", async () => {
     const config = {
       enforcement: { strict_mode: { types: ["core.note"] } },
@@ -369,7 +316,7 @@ describe("Space config — hosted mode", () => {
       () =>
         hosted.storage.audit.list({
           action: "space.config.update",
-          resource_id: hosted.spaceId,
+          resource_id: "me",
         }),
       (r) => r.data.length >= 1,
     );

@@ -43,19 +43,16 @@ afterAll(async () => {
  * the only writer a mirror has.
  */
 async function createMirror(sourceId: string): Promise<string> {
-  const row = await ctx.storage.items.create(
-    {
-      type: "core.bookmark",
-      source: MIRROR_SOURCE,
-      source_id: sourceId,
-      properties: {
-        title: "Mirrored",
-        url: "https://upstream.example/a",
-        body: "as synced",
-      },
+  const row = await ctx.storage.items.create({
+    type: "core.bookmark",
+    source: MIRROR_SOURCE,
+    source_id: sourceId,
+    properties: {
+      title: "Mirrored",
+      url: "https://upstream.example/a",
+      body: "as synced",
     },
-    ctx.spaceId,
-  );
+  });
   return row.id;
 }
 
@@ -124,11 +121,9 @@ describe("the mirror rule", () => {
     expect(edit.status).toBe(200);
 
     // The upstream moves: the owning integration re-syncs its mirror.
-    await ctx.storage.items.update(
-      id,
-      { properties: { title: "Upstream renamed again" } },
-      ctx.spaceId,
-    );
+    await ctx.storage.items.update(id, {
+      properties: { title: "Upstream renamed again" },
+    });
 
     const promotedAfter = await request(
       ctx.app,

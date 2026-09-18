@@ -68,7 +68,6 @@ async function createAndReadRawColumn(
     scopes,
     redirectUris: ["https://example.test/auth/callback"],
     postLogoutRedirectUris: ["https://example.test/"],
-    referenceId: null,
   });
 
   const query = sql`SELECT scopes FROM auth_oauth_client WHERE client_id = ${clientId}`;
@@ -152,7 +151,6 @@ describe("oauth client scope ceiling", () => {
         scopes,
         redirectUris: ["https://example.test/auth/callback"],
         postLogoutRedirectUris: ["https://example.test/"],
-        referenceId: null,
       });
       return clientId;
     };

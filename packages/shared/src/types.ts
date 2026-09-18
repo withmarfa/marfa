@@ -58,14 +58,6 @@ export interface Item {
    * high-volume capture. Optional because `system.*` items have no tier.
    */
   tier?: Tier;
-  /**
-   * Space scope. Optional because storage queries are space-scoped at
-   * the SQL layer (`spaceWhere` enforces a `WHERE space_id = ?` on every
-   * read), so for ordinary callers `space_id` always matches the caller's
-   * own space and the field is informational. The reactive-run bridge reads
-   * this to gate fanout on space match. Mirrors `Edge.space_id`.
-   */
-  space_id?: string | null;
   properties: Record<string, unknown>;
   created_at: string;
   updated_at: string;
@@ -193,7 +185,6 @@ export interface Version {
  */
 export interface Edge {
   id: string;
-  space_id?: string | null;
   source_id: string;
   target_id: string;
   edge_type: string;
@@ -267,7 +258,6 @@ export type ProfilePermission = "read" | "write";
 /** An API key record (without the key value itself). */
 export interface ApiKey {
   id: string;
-  space_id?: string;
   label: string;
   /** Human-readable display name stamped onto items this credential writes. */
   source: string;
@@ -283,9 +273,8 @@ export interface ApiKey {
    * existing operator key may mint another. Defaults to `false` for every
    * ordinary space credential.
    *
-   * Together with the absence of a `space_id` this is the whole instance
-   * tier: the routes that reach across every space take an operator key and
-   * nothing else, and no consent screen can offer one.
+   * This is the whole instance tier: the routes that run the instance take
+   * an operator key and nothing else, and no consent screen can offer one.
    */
   is_operator: boolean;
   /**
@@ -616,7 +605,6 @@ export type OAuthDeviceCodeStatus =
 /** A registered outbound webhook. */
 export interface Webhook {
   id: string;
-  space_id?: string;
   url: string;
   secret: string;
   events: string[];
@@ -655,15 +643,8 @@ export interface WebhookDelivery {
 }
 
 // ---------------------------------------------------------------------------
-// Space and instance configuration
+// Instance configuration
 // ---------------------------------------------------------------------------
-
-/** A space represents an isolated data namespace. */
-export interface Space {
-  id: string;
-  name: string | null;
-  created_at: string;
-}
 
 /**
  * Schema-enforcement levers. All three default off; flip on per-type to
@@ -683,13 +664,13 @@ export interface EnforcementSettings {
   source_filter?: { types: string[]; sources: string[] };
 }
 
-/** Space-level configuration. Written through `/spaces/me/config` on `space.settings`. */
+/** Instance configuration. Written through `/spaces/me/config` on `space.settings`. */
 export interface SpaceConfig {
   enforcement?: EnforcementSettings;
   /**
-   * Space-scoped retention overrides for the cleanup jobs. Each falls back
-   * to the instance env default when unset. Values must be non-negative; `0`
-   * disables the job for that space. Negative values are rejected at write.
+   * Retention overrides for the cleanup jobs. Each falls back to the
+   * instance env default when unset. Values must be non-negative; `0`
+   * disables the job. Negative values are rejected at write.
    */
   audit_retention_days?: number;
   event_log_retention_hours?: number;
