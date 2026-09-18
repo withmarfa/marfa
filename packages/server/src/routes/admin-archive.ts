@@ -292,10 +292,31 @@ export function adminArchiveRoutes(storage: Storage, blobBackend: BlobBackend) {
     let blobCount = 0;
     const extract = tar.extract();
     const gunzip = createGunzip();
+    const inputStream = Readable.from(Buffer.from(rawBody));
 
     const entries = new Promise<void>((resolve, reject) => {
+      // Every stream in the pipeline needs its own listener: `pipe` does not
+      // forward an error, and a stream without one re-emits it as an
+      // unhandled `error` event that ends the process. A body the
+      // decompressor or the tar reader cannot parse is a refusal, not a crash.
+      const fail = (err: unknown) => {
+        reject(
+          err instanceof MarfaError
+            ? err
+            : new MarfaError(
+                ErrorCode.VALIDATION_ERROR,
+                "Invalid archive: expected a gzip-compressed tar",
+              ),
+        );
+      };
+
+      inputStream.on("error", fail);
+      gunzip.on("error", fail);
+      extract.on("error", fail);
+
       extract.on("entry", (header, stream, next) => {
         const chunks: Buffer[] = [];
+        stream.on("error", fail);
         stream.on("data", (chunk: Buffer) => chunks.push(chunk));
         stream.on("end", () => {
           const buf = Buffer.concat(chunks);
@@ -362,12 +383,20 @@ export function adminArchiveRoutes(storage: Storage, blobBackend: BlobBackend) {
       extract.on("finish", () => {
         resolve();
       });
-      extract.on("error", reject);
     });
 
-    const inputStream = Readable.from(Buffer.from(rawBody));
     inputStream.pipe(gunzip).pipe(extract);
-    await entries;
+    try {
+      await entries;
+    } catch (err) {
+      // A refusal mid-read leaves the decompressor holding the body and the
+      // reader waiting on an entry that will never be taken; both are let go
+      // here rather than left for the collector.
+      inputStream.destroy();
+      gunzip.destroy();
+      extract.destroy();
+      throw err;
+    }
 
     const items: { item: Record<string, unknown>; metadata?: unknown }[] = [];
     for (const line of itemLines) {

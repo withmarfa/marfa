@@ -173,6 +173,48 @@ describe("POST /admin/restore-archive", () => {
     expect(res.status).toBe(400);
   });
 
+  it("refuses a body the gzip reader cannot parse and stays up", async () => {
+    const postBody = (body: Uint8Array) =>
+      ctx.app.request("/admin/restore-archive", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${ctx.operatorKey}`,
+          "Content-Type": "application/gzip",
+        },
+        body,
+      });
+
+    const notGzip = await postBody(new TextEncoder().encode("not a gzip body"));
+    expect(notGzip.status).toBe(400);
+    expect(
+      ((await notGzip.json()) as { error: { code: string } }).error.code,
+    ).toBe("validation_error");
+
+    const archive = await buildArchive(
+      {
+        version: 1,
+        format: "marfa-archive-v1",
+        created_at: new Date().toISOString(),
+        item_count: 0,
+        blob_count: 0,
+        blobs: {},
+      },
+      [],
+      [],
+    );
+    const truncated = await postBody(archive.subarray(0, archive.length - 8));
+    expect(truncated.status).toBe(400);
+    expect(
+      ((await truncated.json()) as { error: { code: string } }).error.code,
+    ).toBe("validation_error");
+
+    // The point of the case: the refusals leave the process serving.
+    const after = await request(ctx.app, "GET", "/items?limit=1", {
+      key: ctx.spaceKey,
+    });
+    expect(after.status).toBe(200);
+  });
+
   it("requires the operator key", async () => {
     // A working credential rather than the operator key, because this door
     // is exactly what an operator key opens.
