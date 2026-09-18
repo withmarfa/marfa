@@ -11,7 +11,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 marfa-core.workspace = true
-napi = { version = "3", default-features = false, features = ["napi9", "serde-json"] }
+napi = { version = "3", features = ["serde-json"] }
 napi-derive = "3"
 serde_json.workspace = true
 

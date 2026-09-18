@@ -1,19 +1,53 @@
-//! The Node-facing shape of `marfa_core`: the same calls, hydrate and catch-up
-//! off the event loop, properties as plain objects.
+//! The Node-facing shape of `marfa_core`.
 
 use std::sync::Arc;
 
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
 
+#[napi(string_enum = "snake_case")]
+pub enum Tier {
+    Library,
+    Feed,
+}
+
+#[napi(string_enum = "snake_case")]
+pub enum ItemState {
+    Active,
+    Archived,
+    Trashed,
+    Revoked,
+}
+
+#[napi(string_enum = "snake_case")]
+pub enum SortField {
+    CreatedAt,
+    UpdatedAt,
+    Timestamp,
+}
+
+#[napi(string_enum = "snake_case")]
+pub enum SortDirection {
+    Asc,
+    Desc,
+}
+
+#[napi(string_enum = "snake_case")]
+pub enum Hydration {
+    Never,
+    InProgress,
+    Complete,
+}
+
 #[napi(object)]
 pub struct Item {
     pub id: String,
     #[napi(js_name = "type")]
     pub type_: String,
+    #[napi(ts_type = "Record<string, unknown>")]
     pub properties: serde_json::Value,
-    pub state: String,
-    pub tier: Option<String>,
+    pub state: ItemState,
+    pub tier: Option<Tier>,
     pub version: i64,
     pub schema_version: i64,
     pub source: String,
@@ -31,6 +65,7 @@ pub struct Edge {
     pub source_id: String,
     pub target_id: String,
     pub edge_type: String,
+    #[napi(ts_type = "Record<string, unknown>")]
     pub properties: serde_json::Value,
     pub version: i64,
     pub created_at: String,
@@ -44,9 +79,9 @@ pub struct Edge {
 pub struct ListFilters {
     #[napi(js_name = "type")]
     pub type_: Option<String>,
-    pub state: Option<String>,
+    pub state: Option<ItemState>,
     pub include_trashed: Option<bool>,
-    pub tier: Option<String>,
+    pub tier: Option<Tier>,
     pub tags: Option<Vec<String>>,
     pub timestamp_after: Option<String>,
     pub timestamp_before: Option<String>,
@@ -56,10 +91,8 @@ pub struct ListFilters {
 
 #[napi(object)]
 pub struct Sort {
-    /// created_at, updated_at or timestamp.
-    pub field: String,
-    /// asc or desc.
-    pub direction: String,
+    pub field: SortField,
+    pub direction: SortDirection,
 }
 
 #[napi(object)]
@@ -73,7 +106,7 @@ pub struct SearchHit {
 #[napi(object)]
 pub struct HydrateReport {
     pub types: Vec<String>,
-    pub tier: String,
+    pub tier: Tier,
     pub items: i64,
     pub edges: i64,
     pub pages: i64,
@@ -92,12 +125,65 @@ pub struct CatchUpReport {
 pub struct Status {
     pub server_origin: Option<String>,
     pub slice_types: Vec<String>,
-    pub slice_tier: Option<String>,
+    pub slice_tier: Option<Tier>,
     pub event_cursor: Option<String>,
-    /// never, in_progress or complete.
-    pub hydration: String,
+    pub hydration: Hydration,
     pub items: i64,
     pub edges: i64,
+}
+
+impl From<Tier> for marfa_core::Tier {
+    fn from(tier: Tier) -> Self {
+        match tier {
+            Tier::Library => marfa_core::Tier::Library,
+            Tier::Feed => marfa_core::Tier::Feed,
+        }
+    }
+}
+
+impl From<marfa_core::Tier> for Tier {
+    fn from(tier: marfa_core::Tier) -> Self {
+        match tier {
+            marfa_core::Tier::Library => Tier::Library,
+            marfa_core::Tier::Feed => Tier::Feed,
+        }
+    }
+}
+
+impl From<ItemState> for marfa_core::ItemState {
+    fn from(state: ItemState) -> Self {
+        match state {
+            ItemState::Active => marfa_core::ItemState::Active,
+            ItemState::Archived => marfa_core::ItemState::Archived,
+            ItemState::Trashed => marfa_core::ItemState::Trashed,
+            ItemState::Revoked => marfa_core::ItemState::Revoked,
+        }
+    }
+}
+
+impl From<marfa_core::ItemState> for ItemState {
+    fn from(state: marfa_core::ItemState) -> Self {
+        match state {
+            marfa_core::ItemState::Active => ItemState::Active,
+            marfa_core::ItemState::Archived => ItemState::Archived,
+            marfa_core::ItemState::Trashed => ItemState::Trashed,
+            marfa_core::ItemState::Revoked => ItemState::Revoked,
+        }
+    }
+}
+
+impl From<marfa_core::Hydration> for Hydration {
+    fn from(hydration: marfa_core::Hydration) -> Self {
+        match hydration {
+            marfa_core::Hydration::Never => Hydration::Never,
+            marfa_core::Hydration::InProgress => Hydration::InProgress,
+            marfa_core::Hydration::Complete => Hydration::Complete,
+        }
+    }
+}
+
+fn count(value: u64) -> i64 {
+    i64::try_from(value).unwrap_or(i64::MAX)
 }
 
 fn item(item: marfa_core::Item) -> Item {
@@ -105,8 +191,8 @@ fn item(item: marfa_core::Item) -> Item {
         id: item.id,
         type_: item.r#type,
         properties: serde_json::Value::Object(item.properties),
-        state: item.state.as_str().into(),
-        tier: item.tier.map(|tier| tier.as_str().into()),
+        state: item.state.into(),
+        tier: item.tier.map(Into::into),
         version: item.version,
         schema_version: item.schema_version,
         source: item.source,
@@ -132,63 +218,63 @@ fn edge(edge: marfa_core::Edge) -> Edge {
     }
 }
 
-fn filters(filters: Option<ListFilters>) -> Result<marfa_core::ListFilters> {
+fn filters(filters: Option<ListFilters>) -> marfa_core::ListFilters {
     let filters = filters.unwrap_or_default();
-    Ok(marfa_core::ListFilters {
+    marfa_core::ListFilters {
         r#type: filters.type_,
-        state: filters
-            .state
-            .map(|text| text.parse())
-            .transpose()
-            .map_err(failure)?,
+        state: filters.state.map(Into::into),
         include_trashed: filters.include_trashed.unwrap_or(false),
-        tier: filters
-            .tier
-            .map(|text| text.parse())
-            .transpose()
-            .map_err(failure)?,
+        tier: filters.tier.map(Into::into),
         tags: filters.tags.unwrap_or_default(),
         timestamp_after: filters.timestamp_after,
         timestamp_before: filters.timestamp_before,
         limit: filters.limit,
         offset: filters.offset,
-    })
-}
-
-fn sort(sort: Option<Sort>) -> Result<marfa_core::Sort> {
-    match sort {
-        None => Ok(marfa_core::Sort::default()),
-        Some(sort) => Ok(marfa_core::Sort {
-            field: sort.field.parse().map_err(failure)?,
-            direction: sort.direction.parse().map_err(failure)?,
-        }),
     }
 }
 
-/// A core error as a JS error whose `code` names the variant and whose
-/// message carries the detail.
+fn sort(sort: Option<Sort>) -> marfa_core::Sort {
+    match sort {
+        None => marfa_core::Sort::default(),
+        Some(sort) => marfa_core::Sort {
+            field: match sort.field {
+                SortField::CreatedAt => marfa_core::SortField::CreatedAt,
+                SortField::UpdatedAt => marfa_core::SortField::UpdatedAt,
+                SortField::Timestamp => marfa_core::SortField::Timestamp,
+            },
+            direction: match sort.direction {
+                SortDirection::Asc => marfa_core::SortDirection::Ascending,
+                SortDirection::Desc => marfa_core::SortDirection::Descending,
+            },
+        },
+    }
+}
+
+/// A core error as a JS error whose message starts with the variant's code,
+/// `not_found: …`, `wrong_server: …`; the code cannot ride on `code`, which
+/// napi reserves for its own status.
 fn failure(error: marfa_core::CoreError) -> Error {
     use marfa_core::CoreError as E;
-    let code = match &error {
-        E::NotFound { .. } => "not_found",
-        E::Unauthorized { .. } => "unauthorized",
-        E::Forbidden { .. } => "forbidden",
-        E::Validation { .. } => "validation",
-        E::UnknownType { .. } => "unknown_type",
-        E::RateLimited { .. } => "rate_limited",
-        E::Server { .. } => "server",
-        E::Network(_) => "network",
-        E::Decoding(_) => "decoding",
-        E::Store(_) => "store",
-        E::NoServer => "no_server",
-        E::NoCursor => "no_cursor",
-        E::HydrationIncomplete => "hydration_incomplete",
-        E::CatchUpTooOld { .. } => "catch_up_too_old",
-        E::StreamIncomplete { .. } => "stream_incomplete",
-        E::WrongServer { .. } => "wrong_server",
-        E::Invalid(_) => "invalid",
+    let (code, detail) = match &error {
+        E::NotFound { .. } => ("not_found", error.to_string()),
+        E::Unauthorized { .. } => ("unauthorized", error.to_string()),
+        E::Forbidden { .. } => ("forbidden", error.to_string()),
+        E::Validation { .. } => ("validation", error.to_string()),
+        E::UnknownType { .. } => ("unknown_type", error.to_string()),
+        E::RateLimited { .. } => ("rate_limited", error.to_string()),
+        E::Server { .. } => ("server", error.to_string()),
+        E::Network(message) => ("network", message.clone()),
+        E::Decoding(message) => ("decoding", message.clone()),
+        E::Store(message) => ("store", message.clone()),
+        E::NoServer => ("no_server", error.to_string()),
+        E::NoCursor => ("no_cursor", error.to_string()),
+        E::HydrationIncomplete => ("hydration_incomplete", error.to_string()),
+        E::CatchUpTooOld { .. } => ("catch_up_too_old", error.to_string()),
+        E::StreamIncomplete { .. } => ("stream_incomplete", error.to_string()),
+        E::WrongServer { .. } => ("wrong_server", error.to_string()),
+        E::Invalid(message) => ("invalid", message.clone()),
     };
-    Error::new(napi::Status::GenericFailure, format!("{code}: {error}"))
+    Error::new(napi::Status::GenericFailure, format!("{code}: {detail}"))
 }
 
 /// A local copy of a slice of one server.
@@ -200,7 +286,7 @@ pub struct MarfaCore {
 pub struct Hydrate {
     core: Arc<marfa_core::Core>,
     types: Vec<String>,
-    tier: String,
+    tier: marfa_core::Tier,
 }
 
 #[napi]
@@ -209,17 +295,16 @@ impl Task for Hydrate {
     type JsValue = HydrateReport;
 
     fn compute(&mut self) -> Result<Self::Output> {
-        let tier = self.tier.parse().map_err(failure)?;
-        self.core.hydrate(&self.types, tier).map_err(failure)
+        self.core.hydrate(&self.types, self.tier).map_err(failure)
     }
 
     fn resolve(&mut self, _: Env, report: Self::Output) -> Result<Self::JsValue> {
         Ok(HydrateReport {
             types: report.types,
-            tier: report.tier.as_str().into(),
-            items: report.items as i64,
-            edges: report.edges as i64,
-            pages: report.pages as i64,
+            tier: report.tier.into(),
+            items: count(report.items),
+            edges: count(report.edges),
+            pages: count(report.pages),
             cursor: report.cursor,
         })
     }
@@ -240,8 +325,8 @@ impl Task for CatchUp {
 
     fn resolve(&mut self, _: Env, report: Self::Output) -> Result<Self::JsValue> {
         Ok(CatchUpReport {
-            applied: report.applied as i64,
-            skipped: report.skipped as i64,
+            applied: count(report.applied),
+            skipped: count(report.skipped),
             cursor: report.cursor,
             reached_head: report.reached_head,
         })
@@ -270,18 +355,17 @@ impl MarfaCore {
         })
     }
 
-    /// Replaces the local copy with the declared types at `tier`, off the
-    /// event loop.
+    /// Replaces the local copy with the declared types at `tier`.
     #[napi]
-    pub fn hydrate(&self, types: Vec<String>, tier: String) -> AsyncTask<Hydrate> {
+    pub fn hydrate(&self, types: Vec<String>, tier: Tier) -> AsyncTask<Hydrate> {
         AsyncTask::new(Hydrate {
             core: Arc::clone(&self.inner),
             types,
-            tier,
+            tier: tier.into(),
         })
     }
 
-    /// Applies every event since the stored cursor, off the event loop.
+    /// Applies every event since the stored cursor.
     #[napi]
     pub fn catch_up(&self) -> AsyncTask<CatchUp> {
         AsyncTask::new(CatchUp {
@@ -293,7 +377,7 @@ impl MarfaCore {
     pub fn list(&self, filters: Option<ListFilters>, sort: Option<Sort>) -> Result<Vec<Item>> {
         let items = self
             .inner
-            .list(&self::filters(filters)?, self::sort(sort)?)
+            .list(&self::filters(filters), self::sort(sort))
             .map_err(failure)?;
         Ok(items.into_iter().map(item).collect())
     }
@@ -336,11 +420,11 @@ impl MarfaCore {
         Ok(Status {
             server_origin: status.server_origin,
             slice_types: status.slice_types,
-            slice_tier: status.slice_tier.map(|tier| tier.as_str().into()),
+            slice_tier: status.slice_tier.map(Into::into),
             event_cursor: status.event_cursor,
-            hydration: status.hydration.as_str().into(),
-            items: status.items as i64,
-            edges: status.edges as i64,
+            hydration: status.hydration.into(),
+            items: count(status.items),
+            edges: count(status.edges),
         })
     }
 }

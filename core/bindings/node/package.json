@@ -4,6 +4,9 @@
   "private": true,
   "description": "marfa-core as a Node module.",
   "license": "Apache-2.0",
+  "engines": {
+    "node": ">=22.12.0"
+  },
   "main": "index.js",
   "types": "index.d.ts",
   "napi": {

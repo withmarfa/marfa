@@ -18,4 +18,15 @@ cargo test
 cargo clippy --all-targets -- -D warnings
 ```
 
-Bindings have their own steps in their directories.
+## Bindings
+
+Swift: `bindings/swift/build.sh` packages the FFI crate with cargo-swift into `bindings/swift/MarfaCore`; then `swift run` in `bindings/swift/Example`.
+
+Node: the package sits outside the pnpm workspace, so every pnpm call carries the flag:
+
+```sh
+cd bindings/node
+pnpm install --ignore-workspace
+pnpm --ignore-workspace run build
+pnpm --ignore-workspace run proof
+```

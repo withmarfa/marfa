@@ -1,6 +1,3 @@
-// Hydrates core.note and core.file at the library tier, lists the notes,
-// searches for a word and catches up: the same proof the CLI and the Swift
-// example run, from Node.
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
