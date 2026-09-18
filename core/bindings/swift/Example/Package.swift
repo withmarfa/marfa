@@ -3,8 +3,9 @@ import PackageDescription
 
 let package = Package(
     name: "marfa-core-example",
-    platforms: [.macOS(.v15)],
+    platforms: [.macOS(.v10_15)],
     dependencies: [
+        // build.sh output, not in the tree.
         .package(path: "../MarfaCore")
     ],
     targets: [

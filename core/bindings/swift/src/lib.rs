@@ -1,5 +1,5 @@
-//! The Swift-facing shape of `marfa_core`: the same calls, records instead of
-//! structs, one flat error enum, and properties carried as a JSON string.
+//! The Swift-facing shape of `marfa_core`. Properties cross as a JSON string
+//! because UniFFI has no arbitrary-JSON type.
 
 use std::sync::Arc;
 
@@ -137,6 +137,8 @@ pub struct Status {
     pub edges: u64,
 }
 
+/// Every variant carries `message`, the core's own sentence for it, because
+/// UniFFI renders an error's description by reflection otherwise.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Error)]
 pub enum MarfaError {
     NotFound {
@@ -177,67 +179,104 @@ pub enum MarfaError {
     Store {
         message: String,
     },
-    NoServer,
-    NoCursor,
-    HydrationIncomplete,
+    NoServer {
+        message: String,
+    },
+    NoCursor {
+        message: String,
+    },
+    HydrationIncomplete {
+        message: String,
+    },
     CatchUpTooOld {
         min_retained_id: String,
+        message: String,
     },
     StreamIncomplete {
         reason: String,
+        message: String,
     },
     WrongServer {
         expected: String,
         got: String,
+        message: String,
     },
     Invalid {
         message: String,
     },
 }
 
+impl MarfaError {
+    pub fn message(&self) -> &str {
+        match self {
+            MarfaError::NotFound { message, .. }
+            | MarfaError::Unauthorized { message, .. }
+            | MarfaError::Forbidden { message, .. }
+            | MarfaError::Validation { message, .. }
+            | MarfaError::UnknownType { message }
+            | MarfaError::RateLimited { message, .. }
+            | MarfaError::Server { message, .. }
+            | MarfaError::Network { message }
+            | MarfaError::Decoding { message }
+            | MarfaError::Store { message }
+            | MarfaError::NoServer { message }
+            | MarfaError::NoCursor { message }
+            | MarfaError::HydrationIncomplete { message }
+            | MarfaError::CatchUpTooOld { message, .. }
+            | MarfaError::StreamIncomplete { message, .. }
+            | MarfaError::WrongServer { message, .. }
+            | MarfaError::Invalid { message } => message,
+        }
+    }
+}
+
 impl std::fmt::Display for MarfaError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{self:?}")
+        f.write_str(self.message())
     }
 }
 
 impl From<marfa_core::CoreError> for MarfaError {
     fn from(error: marfa_core::CoreError) -> Self {
         use marfa_core::CoreError as E;
+        let message = error.to_string();
         match error {
-            E::NotFound { code, message } => MarfaError::NotFound { code, message },
-            E::Unauthorized { code, message } => MarfaError::Unauthorized { code, message },
-            E::Forbidden { code, message } => MarfaError::Forbidden { code, message },
-            E::Validation { code, message } => MarfaError::Validation { code, message },
-            E::UnknownType { message } => MarfaError::UnknownType { message },
+            E::NotFound { code, .. } => MarfaError::NotFound { code, message },
+            E::Unauthorized { code, .. } => MarfaError::Unauthorized { code, message },
+            E::Forbidden { code, .. } => MarfaError::Forbidden { code, message },
+            E::Validation { code, .. } => MarfaError::Validation { code, message },
+            E::UnknownType { .. } => MarfaError::UnknownType { message },
             E::RateLimited {
                 code,
-                message,
                 retry_after_seconds,
+                ..
             } => MarfaError::RateLimited {
                 code,
                 message,
                 retry_after_seconds,
             },
-            E::Server {
-                status,
-                code,
-                message,
-            } => MarfaError::Server {
+            E::Server { status, code, .. } => MarfaError::Server {
                 status,
                 code,
                 message,
             },
-            E::Network(message) => MarfaError::Network { message },
-            E::Decoding(message) => MarfaError::Decoding { message },
-            E::Store(message) => MarfaError::Store { message },
-            E::NoServer => MarfaError::NoServer,
-            E::NoCursor => MarfaError::NoCursor,
-            E::HydrationIncomplete => MarfaError::HydrationIncomplete,
-            E::CatchUpTooOld { min_retained_id } => MarfaError::CatchUpTooOld { min_retained_id },
-            E::StreamIncomplete { reason } => MarfaError::StreamIncomplete { reason },
-            E::WrongServer { expected, got } => MarfaError::WrongServer { expected, got },
-            E::Invalid(message) => MarfaError::Invalid { message },
+            E::Network(_) => MarfaError::Network { message },
+            E::Decoding(_) => MarfaError::Decoding { message },
+            E::Store(_) => MarfaError::Store { message },
+            E::NoServer => MarfaError::NoServer { message },
+            E::NoCursor => MarfaError::NoCursor { message },
+            E::HydrationIncomplete => MarfaError::HydrationIncomplete { message },
+            E::CatchUpTooOld { min_retained_id } => MarfaError::CatchUpTooOld {
+                min_retained_id,
+                message,
+            },
+            E::StreamIncomplete { reason } => MarfaError::StreamIncomplete { reason, message },
+            E::WrongServer { expected, got } => MarfaError::WrongServer {
+                expected,
+                got,
+                message,
+            },
+            E::Invalid(_) => MarfaError::Invalid { message },
         }
     }
 }
@@ -448,14 +487,5 @@ impl MarfaCore {
             items: status.items,
             edges: status.edges,
         })
-    }
-}
-
-/// The sort the server and the CLI default to: newest first.
-#[uniffi::export]
-pub fn default_sort() -> Sort {
-    Sort {
-        field: SortField::CreatedAt,
-        direction: SortDirection::Descending,
     }
 }
