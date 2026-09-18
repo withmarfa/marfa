@@ -1,0 +1,86 @@
+# Glossary
+
+The words this repository uses, and the words it does not. One name per thing. A pull request is checked against this file, and a name that is not here is either an ordinary English word or a mistake.
+
+This is the vocabulary the repository is being renamed to, and the rename pull requests land it. Where a word here is not yet what the code says, the code is what changes. A row marked **(later)** names machinery the hygiene session does not build: the name is fixed here, the thing arrives with milestone one or after it.
+
+American English throughout, as `AGENTS.md` requires.
+
+## The words
+
+| Word                    | What it means                                                                                                                                                                                                                                                                 |
+| ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **item**                | One record. The unit everything else hangs off: it has a type, a state, properties, and a time it occurred at. A tier too, except on `system.*` items, where the dimension does not apply.                                                                                    |
+| **type**                | What an item is, named in the namespace grammar — `core.note`, `user.recipe`, `<publisher>.<name>`. A type under `app.*`, `user.*` or a publisher handle is registered, versioned and enforced; `core.*`, `system.*` and `marfa.*` are shipped by the platform and immutable. |
+| **edge**                | A directed relationship between two items, named by an **edge type**. Edges carry properties and a version of their own.                                                                                                                                                      |
+| **tag**                 | A free-form label on an item. Flat, unversioned, and searched alongside the item's text.                                                                                                                                                                                      |
+| **property**            | A named value inside an item, governed by its type's schema. Never "field" for the same thing on the wire.                                                                                                                                                                    |
+| **extension**           | A namespaced object of metadata attached to an item by something other than the key that wrote the item. Read and written per namespace, and not to be confused with a blob: an extension is JSON.                                                                            |
+| **blob**                | Bytes stored by content hash, with a size in `size_bytes` and a MIME type. An item references one; it never contains one.                                                                                                                                                     |
+| **version**             | A monotonic integer on an item or an edge. A client sends the version it read or the write is refused.                                                                                                                                                                        |
+| **event**               | One entry in the log of what changed, with an `event_type`. Events are read from the stream and delivered to webhooks.                                                                                                                                                        |
+| **tier**                | Where an item sits in the reader's attention: `library` or `feed`. Not a permission and not a lifecycle. The **namespace tier** — `core`, `system`, `app`, `user`, `marfa`, publisher — is a different axis and is not this word; say "namespace" for it.                     |
+| **state**               | Where an item sits in its lifecycle: `active`, `archived`, `trashed`, `revoked`. Lists default to `active` _(later)_ — today, omitting the filter excludes trashed rows and nothing else, and closing that gap is the delivery session's.                                     |
+| **slice**               | The declared subset of a server one device holds — a type list and a tier. What a working copy is a copy of.                                                                                                                                                                  |
+| **working copy**        | A device's local replica of its slice. It is a copy, not a peer: the server is the truth.                                                                                                                                                                                     |
+| **verdict** _(later)_   | What the server answers a write with. Accepted, merged with changes, refused with reason, conflicted with a copy, blocked awaiting a dependency, dead after retries.                                                                                                          |
+| **key**                 | A credential that reaches the API. Minted by the operator, scoped by permissions, revocable.                                                                                                                                                                                  |
+| **owner**               | The person a server belongs to. One per instance.                                                                                                                                                                                                                             |
+| **instance**            | One Marfa's identity — its `instance_id`, minted at first boot, shown at the root route, at `/config` and in backup metadata. Never a prefix, never a permission, never a column on an item. **"Server" means the software.**                                                 |
+| **connector** _(later)_ | Something outside the server that reads or writes on a person's behalf. Connectors never run inside the server.                                                                                                                                                               |
+| **folder**              | A directory on a machine that a device watches and keeps in step with its working copy _(later)_ — today `marfa folders watch` prints filesystem events and writes nothing, and the write path that makes this true is the delivery session's.                                |
+| **core**                | The Rust engine every native client embeds, through UniFFI to Swift and a native module to Node.                                                                                                                                                                              |
+| **binary**              | The `marfa` command. It carries `hydrate`, `catch-up`, `items`, `search`, `status` and `folders` today; MCP joins them last.                                                                                                                                                  |
+
+## Banned
+
+These name things that were removed. None of them belongs in a tracked file, in code, a comment, a description or a document. Naming one in order to remove it is not a use, which is why they appear below and in the notes beside the permissions; the final legacy sweep greps this list and should not flag its own authority.
+
+| Banned                            | Say instead                                                                                                                     |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| **integration**                   | **connector**                                                                                                                   |
+| **space**                         | Nothing. There is no noun for the whole; permissions are named by what they permit, and the instance config lives at `/config`. |
+| **sync**, as a program or product | **folders**, for the thing that watches a directory; plain synchronization is still an ordinary English word.                   |
+| **substrate**                     | Name the thing itself — the store, the queue, the job table.                                                                    |
+| **hosted mode**                   | Nothing. There is one mode. "Self-hosted runner" and a virtual-hosted S3 URL are different words and are fine.                  |
+
+## Permissions
+
+A permission is named by what it permits, never by a noun for the whole. The mapping is fixed here so the derived names are as settled as the three the vocabulary decided.
+
+| Permission        | What it permits                                                                                                                                                                                                                                          |
+| ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `schema.write`    | Changing and removing type definitions that already exist. Registering one is separately fenced by `metadata.types:write` and `metadata.edge_types:write`, and the two never describe the same act.                                                      |
+| `keys.mint`       | Minting, listing, updating and revoking keys. Necessary for a mint and nowhere near sufficient: the route still clamps a session's mint to the reach its own grant covers.                                                                               |
+| `items.purge`     | Destroying a trashed row irrecoverably, through the single-row door and the bulk one alike.                                                                                                                                                              |
+| `webhooks.manage` | Reading, registering and removing the outbound subscriptions that send an instance's events out. Reading takes the same permission as registering.                                                                                                       |
+| `config.manage`   | Reading and replacing the instance configuration at `/config` — the enforcement levers and the cleanup-job retention overrides. **Not `config.write`**: a caller refused it cannot read the config either.                                               |
+| `audit.read`      | Reading the audit log. There is no `audit.write` beside it: the server writes the log, a caller never does.                                                                                                                                              |
+| `grants.manage`   | Listing and revoking other apps' access. Deliberately not `keys.mint`: a key is this app's own credential, a grant is another app's, and folding them together would let an app trusted to rotate a key revoke every other app the owner has authorized. |
+
+Seven, where the old family had eight. **`space.usage` is not renamed, because it permits nothing.** It appears in the union (`packages/shared/src/scopes.ts:168`), in the ordered array (`:195`), in the two consent labels, in the scope enumerations of `openapi.json`, and in `packages/shared/src/scopes.test.ts:476,485` — and in no gate anywhere: every one of the other seven reaches `requireSpacePermission` or `holdsSpacePermission` and it reaches neither. Note that `scopes.test.ts:485` asserts `SPACE_PERMISSIONS.length` is 8, so that assertion moves whichever way this is decided. There is no usage or quota route to gate, and milestone one adds none. Whether it is deleted or held for a route that does not exist yet is the owner's call, and until that is answered no name is invented for it.
+
+**Each of the seven heads its own reserved root** — `schema`, `keys`, `items`, `webhooks`, `config`, `audit` and `grants` — added to `SCOPE_FAMILY_ROOTS` in `packages/shared/src/scope-roots.ts` in place of the single `space` root they replace. Four consequences, and none is a free property of the naming:
+
+- **Seven ordinary publisher handles leave the claimable namespace.** Reserving a root is what refuses a handle claim, so nobody may register a publisher called `items` or `config` again.
+- **Existing rows and handles are stranded, and a check is owed before the reservation lands.** `packages/server/src/storage/reserved-root-rows.ts` exists for exactly this: a word can already be held by a user in another table, and after the reservation that user holds a handle nobody could claim. Seven roots means the check runs seven times, and a stored `items.*` or `config.*` type logs an error on every boot until it is dealt with.
+- **`space` stays reserved even though nothing is named for it any more.** Taking it out would let a publisher register the handle `space` and types beneath it, which is the one word this file bans outright.
+- **Reserving is not what disambiguates a scope literal.** Those are two gates on two paths, as `packages/shared/src/validation.ts:96-120` says: registration asks the reserved set, and the scope grammar asks `parseScope`. What makes a literal a permission there is that its root is **claimed whole** and the literal is a member of the closed set; anything else under that root is refused outright, which is what stops `<root>.*:read` parsing as a type grant. So the seven roots need seven claim arms in `parseScope`, not only an entry in `SCOPE_FAMILY_ROOTS`.
+
+## Time
+
+One rule across the API, with one carve-out that is named rather than implied.
+
+- Every time field is a verb plus `_at`: `occurred_at`, `created_at`, `updated_at`, `expires_at`, `revoked_at`.
+- Every range filter is that verb plus `_after` and `_before`, and **both are exclusive**.
+- An item's own time is `occurred_at`, filtered by `occurred_after` and `occurred_before`. Both are inclusive today and become exclusive with the rename, which is a real change in behaviour and is intended.
+- The audit log uses `created_at`, `created_after` and `created_before`.
+
+**`updated_after` is the carve-out, and it is not a bug.** It is the catch-up filter on `GET /items` and `GET /edges`, it is **inclusive** (`gte`, at `sqlite/item-store.ts:583` and `sqlite/edge-store.ts:180`), and it has no `_before` sibling. Inclusive because `updated_at` ties across a bulk write: a strict comparison drops every row sharing the cursor's instant, silently and unrecoverably, so a caller deduplicates by id instead. The Rust core's catch-up depends on it. **Do not make it exclusive to satisfy the rule above.**
+
+## Errors
+
+- `unknown_type` — there is no such type. A lookup answer.
+- `invalid_type` — the type exists but is not allowed here.
+- A **malformed** identifier is neither: it never reached a lookup, so it answers the generic `validation_error` with the field named.
+- `edge_cycle` — an edge that would close a cycle. A **self-loop** is refused on every edge type; a longer cycle is detected only on the cycle-prone types, `parent-of` and `supersedes`, where the graph is not acyclic by construction.

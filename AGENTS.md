@@ -15,6 +15,10 @@ Under rebuild since 17 September 2026. The decisions in force live outside this 
 
 `pnpm install`, `pnpm build`, `pnpm test` (SQLite), `pnpm typecheck`, `pnpm lint`, `pnpm format:check`. The server runs locally with `PORT` and `MARFA_AUTH_SECRET` set and `pnpm --filter @withmarfa/server dev`; `.env.example` lists every variable. An ignored `_archive/agents/` folder may hold the previous instruction files as a record of what existed; nothing in them is in force.
 
+## Words
+
+`GLOSSARY.md` at the root fixes the vocabulary: the words this repository uses, the words it does not, the seven permission names, the time rule and the error meanings. A pull request is checked against it.
+
 ## Conformance
 
 `conformance/` holds the contract: black-box fixtures driven over HTTP and the written specification under `conformance/spec/` that states what they assert. Nothing under `conformance/src/suites/` may import a workspace package; the suite reaches the server over HTTP alone.
