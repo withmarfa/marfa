@@ -1,13 +1,22 @@
 # conformance
 
-The referee for the Marfa server: black-box fixtures every implementation must
-pass, run over HTTP against a locally booted server, and the written
-specification under `spec/` that states what those fixtures assert.
+The referee for Marfa: black-box fixtures every implementation must pass and
+the written specification under `spec/` that states what those fixtures assert.
 
-The suite sits beside the server it gates, so a change to the contract and the
-change to the server that satisfies it are one pull request. It still reaches
-the server over HTTP alone: nothing under `src/suites/` imports a workspace
-package.
+It has two halves. **The server's half** runs over HTTP against a locally
+booted server. It sits beside the server it gates, so a change to the contract
+and the change to the server that satisfies it are one pull request, and it
+reaches the server over HTTP alone: nothing under `src/suites/` imports a
+workspace package.
+
+**The device's half** is `src/suites/device/`, and it gates the `marfa` binary
+rather than the server. A device holds a working copy and a queue, and the
+verdicts it has to reach include failures the real server cannot be asked for
+— a dropped connection, a server at rest, a spent credential, a refusal
+repeated until a ceiling. So those fixtures drive a server the fixture scripts
+(`src/device/scripted-server.ts`), and `device/fidelity.test.ts` holds every
+scripted answer against the real server's for the cases the real server can
+produce. `spec/device.md` lists the cases it cannot, with a reason for each.
 
 ## Quick start
 
@@ -18,7 +27,12 @@ root:
 # Boot the server in this checkout on SQLite, mint its first key, write an env file
 pnpm marfa:up
 
-# Correctness + compliance + sync against it
+# Build the device under test. The device fixtures drive this binary, and
+# `marfa:up` does not build it: it boots a server, and the device is not one.
+(cd ../core && cargo build -p marfa-cli)
+export MARFA_DEVICE_BIN="$PWD/../core/target/debug/marfa"
+
+# Correctness, compliance, the server's write contract and the device's half
 set -a; . .marfa-state/env; set +a
 pnpm test:conformance
 
@@ -45,6 +59,7 @@ and revocation, one of each per file. Nothing in the fixtures asserts either.
 | `MARFA_API_URL`      | Required. The booted server.                            |
 | `MARFA_API_KEY`      | Required. The key the bootstrap mint returns.           |
 | `MARFA_OPERATOR_KEY` | The same key, for the operator-only maintenance routes. |
+| `MARFA_DEVICE_BIN`   | The built `marfa` binary the device fixtures drive.     |
 
 The bootstrap mint returns one key, and both variables hold it.
 
@@ -66,8 +81,9 @@ There is no default target. An unset `MARFA_API_URL` stops the run.
 ```bash
 pnpm test:correctness   # data integrity: persistence, versioning, lifecycle, metadata
 pnpm test:compliance    # spec adherence: auth, types, permissions, error codes
-pnpm test:sync          # the server's half of the sync contract, over the event stream
-pnpm test:conformance   # the three above; what the gate runs
+pnpm test:sync          # the server's half of the write contract, over the event stream
+pnpm test:device        # the device's half: the binary against a scripted server
+pnpm test:conformance   # the four above; what the gate runs
 pnpm test:generators    # offline: generators, harness and boot-helper unit tests
 pnpm test:performance   # read/write latency benchmarks, off the gate
 pnpm test:load          # sustained load and concurrency benchmarks, off the gate
@@ -100,10 +116,12 @@ src/
   client/         — typed HTTP client for the Marfa API
   generators/     — synthetic test data generators
   utils/          — test context, teardown, event-stream helpers
+  device/         — the scripted server, the wire-shape builders, the adapter protocol, the CLI adapter
   suites/
     correctness/  — functional correctness tests
     compliance/   — spec adherence tests
-    sync/         — the sync contract's server half
+    sync/         — the write contract's server half
+    device/       — the device's half, driving the `marfa` binary
     performance/  — latency benchmarks
     load/         — sustained load tests
 ```
@@ -115,11 +133,13 @@ resource and revokes the key. No shared state between files.
 ## Continuous integration
 
 The `conformance` job in `.github/workflows/ci.yml` is the gate, on every pull
-request and every push to `main`. It builds the checkout, runs the offline
-lane, boots that same checkout's server on SQLite with `pnpm marfa:up`, runs
-`pnpm test:conformance` against it, and stops it whatever the result. There is
-no pinned server commit and no second checkout: the tree under test is the
-tree the suite runs against.
+request and every push to `main`. It builds the checkout, builds the
+`marfa` binary and exports `MARFA_DEVICE_BIN` for the device fixtures, runs
+the offline lane, boots that same checkout's server on SQLite with
+`pnpm marfa:up`, runs `pnpm test:conformance` against it, and stops it
+whatever the result. There is no pinned server commit and no second checkout:
+the tree under test is the tree the suite runs against, and the device under
+test is the binary built from it.
 
 Typecheck and formatting are not repeated there. The repository root's
 `pnpm typecheck` and `pnpm format:check` reach this package, and both run in

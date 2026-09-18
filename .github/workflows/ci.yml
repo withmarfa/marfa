@@ -123,6 +123,26 @@ jobs:
       # type registry from the same place.
       - run: pnpm --filter "@withmarfa/server..." build
 
+      # The device half of the contract drives the `marfa` binary as the
+      # device under test, so this job builds it. It stays in this job rather
+      # than moving to core.yml because core.yml is path-gated on `core/**`
+      # and would not run for a change to the fixtures alone, and because
+      # `publish.yml` names ci.yml as the gate a commit must be green on.
+      # The two jobs share `marfa-suite-shared-host` above, so a cargo build
+      # here never runs beside core.yml's on one machine.
+      #
+      # Homebrew's rustup is keg-only, so nothing it installs is on the
+      # default PATH.
+      - name: Put the Rust toolchain on PATH
+        run: |
+          echo "/opt/homebrew/opt/rustup/bin" >> "$GITHUB_PATH"
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+      - name: Build the device under test
+        working-directory: core
+        run: |
+          cargo build -p marfa-cli
+          echo "MARFA_DEVICE_BIN=$PWD/target/debug/marfa" >> "$GITHUB_ENV"
+
       # Typecheck, lint and format are not repeated here. The suite is a
       # workspace package, so the root's own checks reach it and they run in
       # the job above.

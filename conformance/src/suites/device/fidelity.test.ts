@@ -1,0 +1,621 @@
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { MarfaClient } from "../../client/api.js";
+import type { TestContext } from "../../client/types.js";
+import {
+  createTestContext,
+  trackItem,
+  trackKey,
+  cleanup,
+} from "../../utils/setup.js";
+import { openEventStream, parseSse } from "../../utils/sse.js";
+import { collectUntil, withStream } from "../../utils/stream.js";
+import {
+  answers,
+  itemEvent,
+  itemsPage,
+  wireItem,
+  wireType,
+} from "../../device/marfa-answers.js";
+import type { Answer } from "../../device/scripted-server.js";
+
+/**
+ * The control on the scripted server.
+ *
+ * Every other file here drives a device against answers this suite writes, and
+ * a suite that writes its own answers can write wrong ones: the device would
+ * then pass against a server nobody runs, and the contract would be describing
+ * the fixtures rather than Marfa. So for every case the real server can be
+ * made to produce, the scripted answer is held against the real one, field by
+ * field, for the fields a device reads.
+ *
+ * What the real server cannot be made to produce is listed in `spec/device.md`
+ * with a reason for each entry. Those are the cases this file cannot check,
+ * and naming them is the whole of what makes the rest of the scripting
+ * trustworthy.
+ */
+
+let client: MarfaClient;
+let ctx: TestContext;
+let apiUrl: string;
+let apiKey: string;
+
+beforeAll(async () => {
+  ({ ctx, client, apiUrl, apiKey } = await createTestContext(
+    "device",
+    "fidelity",
+  ));
+});
+
+afterAll(async () => {
+  await cleanup(ctx);
+});
+
+interface Observed {
+  status: number;
+  body: unknown;
+}
+
+function scriptedBody(answer: Answer): unknown {
+  if (answer.kind !== "json")
+    throw new Error("only a JSON answer has a body to compare");
+  return answer.body;
+}
+
+function scriptedStatus(answer: Answer): number {
+  if (answer.kind !== "json")
+    throw new Error("only a JSON answer has a status to compare");
+  return answer.status;
+}
+
+function at(value: unknown, path: string): unknown {
+  return path
+    .split(".")
+    .reduce<unknown>(
+      (node, key) => (node as Record<string, unknown> | undefined)?.[key],
+      value,
+    );
+}
+
+/** `undefined` reads as absent; everything else reads as its JSON type. */
+function kindAt(value: unknown, path: string): string {
+  const found = at(value, path);
+  if (found === undefined) return "absent";
+  if (found === null) return "null";
+  return Array.isArray(found) ? "array" : typeof found;
+}
+
+interface Fields {
+  /** Paths whose value has to be the same on both sides. */
+  same?: string[];
+  /** Paths where only the JSON kind can be compared, because a run mints the value. */
+  shape?: string[];
+}
+
+/**
+ * The scripted answer and the real one have to agree on the status, on the
+ * value of every field a device decides something by, and on the presence and
+ * kind of every field a run mints for itself.
+ *
+ * Comparing kinds alone is not enough and was the first thing wrong with this
+ * file: a scripted `error.code` of "nope" is a string, so is the server's, and
+ * the code is the one field the device classifies a refusal by. Comparing
+ * values alone is not possible either, because an id, a version and an instant
+ * differ every run — hence the two lists.
+ */
+function expectFidelity(
+  name: string,
+  real: Observed,
+  scripted: Answer,
+  fields: Fields,
+): void {
+  expect(
+    scriptedStatus(scripted),
+    `the scripted answer for ${name} carries a status the server does not give, so every fixture that reads it is testing a server nobody runs`,
+  ).toBe(real.status);
+  const body = scriptedBody(scripted);
+  for (const path of fields.same ?? []) {
+    expect(
+      at(body, path),
+      `the scripted answer for ${name} and the server disagree about the value at \`${path}\`, and a device decides on that value`,
+    ).toEqual(at(real.body, path));
+  }
+  for (const path of fields.shape ?? []) {
+    expect(
+      kindAt(body, path),
+      `the scripted answer for ${name} and the server disagree about whether \`${path}\` is there and what kind of thing it is, so a device satisfying this suite would meet something else in production`,
+    ).toBe(kindAt(real.body, path));
+  }
+}
+
+async function note(
+  properties: Record<string, unknown>,
+): Promise<{ id: string; version: number }> {
+  const created = await client.createItem({
+    type: "core.note",
+    source: ctx.source,
+    properties,
+  });
+  expect(
+    created.ok,
+    `the fixture could not seed a note: ${JSON.stringify(created.error)}`,
+  ).toBe(true);
+  trackItem(ctx, created.data.item.id);
+  return { id: created.data.item.id, version: created.data.item.version };
+}
+
+describe("the scripted answers match the server's", () => {
+  it("matches a create and an update", async () => {
+    const created = await client.createItem({
+      type: "core.note",
+      source: ctx.source,
+      properties: { title: "fidelity", body: "created" },
+    });
+    expect(created.ok).toBe(true);
+    trackItem(ctx, created.data.item.id);
+    expectFidelity(
+      "a create",
+      { status: created.status, body: created.data },
+      answers.created({ id: created.data.item.id, version: 1, properties: {} }),
+      { same: ["item.id", "metadata.tags"], shape: ["item.version"] },
+    );
+
+    const updated = await client.updateItem(created.data.item.id, {
+      properties: { body: "updated" },
+      version: created.data.item.version,
+    });
+    expect(updated.ok).toBe(true);
+    expect(
+      updated.data.item.version,
+      "an accepted update did not move the version, so nothing downstream can tell one write from the next",
+    ).toBeGreaterThan(created.data.item.version);
+    expectFidelity(
+      "an update",
+      { status: updated.status, body: updated.data },
+      answers.updated({ id: updated.data.item.id, version: 2, properties: {} }),
+      { same: ["item.id", "metadata.tags"], shape: ["item.version"] },
+    );
+  });
+
+  it("matches the version_conflict envelope, field for field", async () => {
+    const seeded = await note({ title: "base", body: "base" });
+    const winner = await client.updateItem(seeded.id, {
+      properties: { title: "winner", body: "winner" },
+      version: seeded.version,
+    });
+    expect(winner.ok).toBe(true);
+
+    const stale = await client.rawRequest(`/items/${seeded.id}`, {
+      method: "PATCH",
+      body: {
+        properties: { title: "loser", body: "loser" },
+        version: seeded.version,
+      },
+    });
+    expect(
+      stale.status,
+      "a stale write was accepted, so the envelope this case exists to compare was never produced",
+    ).toBe(409);
+
+    expectFidelity(
+      "a stale write with a retained base",
+      { status: stale.status, body: stale.error },
+      answers.versionConflict(
+        { version: 2, properties: {} },
+        { version: 1, properties: {} },
+        ["body", "title"],
+        // core.note declares both of its text fields keep-both
+        // (`versions.md` 11); a policy naming one of them would send a device
+        // looking for a sibling it was never told to expect.
+        {
+          fields: { body: "keep_both_copies", notes: "keep_both_copies" },
+          default: "last_writer_wins",
+        },
+      ),
+      {
+        same: [
+          "error.code",
+          "error.status",
+          "conflicting_fields",
+          "merge_policy.fields",
+          "merge_policy.default",
+        ],
+        shape: [
+          "current.version",
+          "current.properties",
+          "ancestor.version",
+          "ancestor.properties",
+        ],
+      },
+    );
+  });
+
+  it("matches the ancestor_unavailable envelope, including the ancestor it does not carry", async () => {
+    const seeded = await note({ title: "no ancestor", body: "no ancestor" });
+    const refused = await client.rawRequest(`/items/${seeded.id}`, {
+      method: "PATCH",
+      body: { properties: { body: "rebased" }, version: 0 },
+    });
+    expect(refused.status).toBe(409);
+
+    expectFidelity(
+      "a write naming a version with no snapshot",
+      { status: refused.status, body: refused.error },
+      answers.ancestorUnavailable({ version: 1, properties: {} }, 0),
+      {
+        same: ["error.code", "error.status", "requested_version", "ancestor"],
+        shape: ["current.version", "current.properties"],
+      },
+    );
+  });
+
+  it("matches a resolution that names a sibling and one that does not", async () => {
+    const both = await note({ title: "base", body: "base" });
+    expect(
+      (
+        await client.updateItem(both.id, {
+          properties: { title: "winner", body: "winner" },
+          version: both.version,
+        })
+      ).ok,
+    ).toBe(true);
+    const resolved = await client.rawRequest(
+      `/items/${both.id}?conflict=auto`,
+      {
+        method: "PATCH",
+        body: {
+          properties: { title: "loser", body: "loser" },
+          version: both.version,
+        },
+      },
+    );
+    expect(
+      resolved.ok,
+      `a colliding write sent with the server asked to resolve was refused: ${JSON.stringify(resolved.error)}`,
+    ).toBe(true);
+    const siblingId = (
+      resolved.data as { conflict_resolution?: { conflicted_copy_id?: string } }
+    ).conflict_resolution?.conflicted_copy_id;
+    if (siblingId !== undefined) trackItem(ctx, siblingId);
+    expectFidelity(
+      "a resolution keeping both copies",
+      { status: resolved.status, body: resolved.data },
+      answers.resolved(
+        { id: both.id, version: 3, properties: {} },
+        { body: "keep_both_copies", title: "last_writer_wins" },
+        "a-sibling-id",
+      ),
+      {
+        same: ["item.id", "conflict_resolution.strategy"],
+        shape: ["item.version", "conflict_resolution.conflicted_copy_id"],
+      },
+    );
+
+    // The other arm: a collision on a last-writer-wins field alone resolves
+    // with no sibling to name, and a device has to tell the two apart.
+    const lww = await note({ title: "base", body: "untouched" });
+    expect(
+      (
+        await client.updateItem(lww.id, {
+          properties: { title: "winner" },
+          version: lww.version,
+        })
+      ).ok,
+    ).toBe(true);
+    const resolvedLww = await client.rawRequest(
+      `/items/${lww.id}?conflict=auto`,
+      {
+        method: "PATCH",
+        body: { properties: { title: "loser" }, version: lww.version },
+      },
+    );
+    expect(resolvedLww.ok).toBe(true);
+    const lwwSibling = (
+      resolvedLww.data as {
+        conflict_resolution?: { conflicted_copy_id?: string };
+      }
+    ).conflict_resolution?.conflicted_copy_id;
+    if (lwwSibling !== undefined) trackItem(ctx, lwwSibling);
+    expectFidelity(
+      "a resolution on a last-writer-wins field alone",
+      { status: resolvedLww.status, body: resolvedLww.data },
+      answers.resolved(
+        { id: lww.id, version: 3, properties: {} },
+        { title: "last_writer_wins" },
+      ),
+      {
+        same: [
+          "item.id",
+          "conflict_resolution.strategy",
+          "conflict_resolution.conflicted_copy_id",
+        ],
+      },
+    );
+  });
+
+  it("matches the refusals a device must not retry", async () => {
+    const missing = await client.rawRequest("/items", {
+      method: "POST",
+      body: { properties: { body: "no type" } },
+    });
+    expect(missing.status).toBe(400);
+    expectFidelity(
+      "a body missing a required field",
+      { status: missing.status, body: missing.error },
+      answers.validation("missing_required_field", "type is required"),
+      { same: ["error.code"], shape: ["error.message"] },
+    );
+
+    const scoped = await client.createKey({
+      label: `${ctx.source}-scoped`,
+      source: `${ctx.source}-scoped`,
+      type_permissions: { "core.bookmark": "write" },
+    });
+    expect(
+      scoped.ok,
+      `the fixture could not mint a narrowed key: ${JSON.stringify(scoped.error)}`,
+    ).toBe(true);
+    trackKey(ctx, scoped.data.id);
+    const narrowed = new MarfaClient({
+      baseUrl: apiUrl,
+      apiKey: scoped.data.key,
+    });
+    const denied = await narrowed.createItem({
+      type: "core.note",
+      source: `${ctx.source}-scoped`,
+      properties: { body: "out of scope" },
+    });
+    expect(denied.status).toBe(403);
+    expectFidelity(
+      "a type the key does not hold",
+      { status: denied.status, body: denied.error },
+      answers.forbidden("type_not_permitted"),
+      { same: ["error.code"], shape: ["error.message"] },
+    );
+
+    const bare = new MarfaClient({ baseUrl: apiUrl, apiKey: "" });
+    const unauthorized = await bare.getItem(
+      ctx.trackedItems[0] ?? "01a00000-0000-7000-8000-000000000000",
+    );
+    expect(unauthorized.status).toBe(401);
+    expectFidelity(
+      "a request with no credential",
+      { status: unauthorized.status, body: unauthorized.error },
+      answers.unauthorized(),
+      { same: ["error.code"], shape: ["error.message"] },
+    );
+  });
+
+  it("matches the items page a hydration walks", async () => {
+    const seeded = await note({ title: "page shape", body: "page shape" });
+    const page = await client.rawRequest(
+      `/items?type=core.note&tier=library&state=any&include=edges,metadata&source=${encodeURIComponent(ctx.source)}`,
+    );
+    expect(page.ok).toBe(true);
+    expect(
+      (page.data as { data: unknown[] }).data.length,
+      "the listing answered nothing, so the comparison below is between two empty envelopes",
+    ).toBeGreaterThan(0);
+
+    expectFidelity(
+      "the items page",
+      { status: page.status, body: page.data },
+      itemsPage([{ item: wireItem({ id: seeded.id }) }]),
+      {
+        same: ["has_more", "cursor", "data.0.metadata.tags"],
+        shape: [
+          "data.0.item.id",
+          "data.0.item.type",
+          "data.0.item.properties",
+          "data.0.item.state",
+          "data.0.item.tier",
+          "data.0.item.version",
+          "data.0.item.schema_version",
+          "data.0.item.source",
+          // Absent rather than null on a row that has neither, which is a
+          // difference `kindAt` can see and a device reads as two different
+          // things.
+          "data.0.item.source_id",
+          "data.0.item.device",
+          "data.0.item.timestamp",
+          "data.0.item.created_at",
+          "data.0.item.updated_at",
+        ],
+      },
+    );
+  });
+
+  it("matches the type registry a device resolves a subtree with", async () => {
+    const registry = await client.rawRequest("/types");
+    expect(registry.ok).toBe(true);
+    const served = registry.data as unknown;
+    expect(
+      Array.isArray(served),
+      "the registry is not a bare array, so a device decoding one would read nothing at all",
+    ).toBe(true);
+    const rows = served as Array<Record<string, unknown>>;
+
+    const rootType = rows.find((row) => row.id === "core.note");
+    const childType = rows.find((row) => row.id === "core.entity.person");
+    expect(
+      [rootType, childType].every((row) => row !== undefined),
+      "the registry does not carry the two types this comparison is built on",
+    ).toBe(true);
+
+    expectFidelity(
+      "a type with no parent",
+      { status: registry.status, body: { row: rootType } },
+      {
+        kind: "json",
+        status: registry.status,
+        body: { row: wireType("core.note") },
+      },
+      {
+        same: ["row.id", "row.display_hints.title_field"],
+        // A type with no parent carries no `parent` at all. A scripted `null`
+        // there is a shape the server never sends, and a device walking a
+        // parent chain meets it on the first type it reads.
+        shape: ["row.parent", "row.label", "row.fields"],
+      },
+    );
+    expectFidelity(
+      "a type with a parent",
+      { status: registry.status, body: { row: childType } },
+      {
+        kind: "json",
+        status: registry.status,
+        body: {
+          row: wireType("core.entity.person", {
+            parent: "core.entity",
+            titleField: "name",
+          }),
+        },
+      },
+      {
+        same: ["row.id", "row.parent", "row.display_hints.title_field"],
+        shape: ["row.label"],
+      },
+    );
+  });
+
+  it("matches an item frame on the event stream", async (context) => {
+    const marker = `fidelity-frame-${ctx.runId}`;
+    const frames = await withStream(apiUrl, apiKey, {}, async (stream) => {
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      const created = await client.createItem({
+        type: "core.note",
+        source: ctx.source,
+        properties: { title: marker, body: marker },
+      });
+      expect(created.ok).toBe(true);
+      trackItem(ctx, created.data.item.id);
+      const seen = await collectUntil(
+        stream,
+        (events) =>
+          events.some(
+            (event) =>
+              event.event === "item.created" &&
+              (event.data as { item?: { properties?: { title?: string } } })
+                .item?.properties?.title === marker,
+          ),
+        `item.created for ${marker}`,
+        context.signal,
+      );
+      return seen.events;
+    });
+
+    const announced = frames.find(
+      (event) =>
+        (event.data as { item?: { properties?: { title?: string } } }).item
+          ?.properties?.title === marker,
+    );
+    expect(
+      announced,
+      "the write was never announced, so there is no frame to compare",
+    ).toBeDefined();
+    expect(
+      typeof announced!.id,
+      "the frame carried no id, so a device applying it has nothing to move its cursor to",
+    ).toBe("string");
+
+    const scripted = itemEvent(
+      announced!.id!,
+      "item.created",
+      wireItem({ id: "an-item" }),
+    );
+    expectFidelity(
+      "an item frame",
+      { status: 200, body: announced!.data },
+      { kind: "json", status: 200, body: scripted.data },
+      {
+        // The sidecar rides on every item frame. A scripted frame without it
+        // is a frame a device could never learn a cleared tag from.
+        same: ["type", "metadata.tags"],
+        shape: [
+          "item.id",
+          "item.type",
+          "item.properties",
+          "item.state",
+          "item.tier",
+          "item.version",
+          "item.source",
+          "item.source_id",
+          "item.device",
+          "item.created_at",
+          "item.updated_at",
+        ],
+      },
+    );
+  });
+
+  it("matches the refusal a spent idempotency key gets", async () => {
+    const key = `fidelity-spent-${ctx.runId}`;
+    const first = await client.rawRequest("/items", {
+      method: "POST",
+      headers: { "Idempotency-Key": key },
+      body: {
+        type: "core.note",
+        properties: { title: "first", body: "first" },
+      },
+    });
+    expect(
+      first.ok,
+      `the first write under the key was refused: ${JSON.stringify(first.error)}`,
+    ).toBe(true);
+    trackItem(ctx, (first.data as { item: { id: string } }).item.id);
+
+    const reused = await client.rawRequest("/items", {
+      method: "POST",
+      headers: { "Idempotency-Key": key },
+      body: {
+        type: "core.note",
+        properties: { title: "second", body: "second" },
+      },
+    });
+    expect(
+      reused.status,
+      "a key answered for one request served a different one, so the refusal this compares against was never produced",
+    ).toBe(422);
+
+    expectFidelity(
+      "a key answered for a different request",
+      { status: reused.status, body: reused.error },
+      answers.keyReused(),
+      { same: ["error.code"], shape: ["error.message"] },
+    );
+  });
+
+  it("matches the terminal frame an aged-out cursor gets", async () => {
+    const seeded = await note({ title: "aged out", body: "aged out" });
+    expect(seeded.id).toBeTruthy();
+
+    const stream = await openEventStream(apiUrl, apiKey, { lastEventId: "0" });
+    expect(stream.response.status).toBe(200);
+    const raw = await stream.response.text();
+    await stream.close();
+
+    const terminal = parseSse(raw).find(
+      (frame) => frame.event === "catchup_too_old",
+    );
+    expect(
+      terminal,
+      "the server did not answer an aged-out cursor with its terminal frame, so the re-hydration the device chapter demands was never produced here",
+    ).toBeDefined();
+    const payload = terminal!.data as Record<string, unknown>;
+    expect(
+      payload.type,
+      "the terminal frame named some other kind, so the scripted frame is modeled on something the server does not send",
+    ).toBe("catchup_too_old");
+    expect(
+      typeof payload.min_retained_id,
+      "the frame did not carry the oldest id the log still holds as a string, which is the field the scripted frame carries",
+    ).toBe("string");
+    expect(
+      typeof payload.requested,
+      "the frame did not echo the cursor that aged out as a string, which is the field the scripted frame carries",
+    ).toBe("string");
+    expect(
+      terminal!.id,
+      "the terminal frame did not carry the oldest retained id as its own id, so a device that stores the last id it saw comes back with a cursor the log still cannot serve",
+    ).toBe(payload.min_retained_id);
+  });
+});

@@ -27,13 +27,13 @@ function citations(): Citation[] {
     if (!name.endsWith(".md")) continue;
     const text = readFileSync(resolve(specDir, name), "utf8");
     for (const match of text.matchAll(
-      /`((?:correctness|compliance|sync)\/[a-z0-9./-]+\.test\.ts)(?: › ([^`]+))?`/g,
+      /`((?:correctness|compliance|device|sync)\/[a-z0-9./-]+\.test\.ts)(?: › ([^`]+))?`/g,
     )) {
       out.push({ spec: name, file: match[1], title: match[2] });
     }
     // Shorthand: a `› title` following a citation continues the same file.
     for (const match of text.matchAll(
-      /`((?:correctness|compliance|sync)\/[a-z0-9./-]+\.test\.ts) › [^`]+`(?:, `› ([^`]+)`)+/g,
+      /`((?:correctness|compliance|device|sync)\/[a-z0-9./-]+\.test\.ts) › [^`]+`(?:, `› ([^`]+)`)+/g,
     )) {
       const file = match[1];
       for (const cont of match[0].matchAll(/`› ([^`]+)`/g)) {

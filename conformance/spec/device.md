@@ -1,0 +1,63 @@
+# The device
+
+A device holds a working copy: a local store of one slice of one server, hydrated over HTTP, kept current from the event log, and read locally. The server reconciles; a device holds a copy and a queue. `queue-and-verdicts.md` states the queue and the answer to every write, and `folders.md` states one particular device surface.
+
+Statements here are about a device's observable behavior, asserted by the device fixtures under `src/suites/device/` against a scripted server. The server statements they depend on are the server's own chapters, asserted over HTTP.
+
+## The working copy
+
+1. A working copy holds one slice: a type list and a tier. A type is held with its subtree; a row of a type outside the list, or of the other tier, is not held. `device/working-copy.test.ts › holds the declared types and their subtrees and nothing else`, `› holds one tier and not the other`.
+2. A working copy is bound to one server by origin — scheme, host, port and path prefix — and the key is no part of that identity and is never written to the store. A store opened against a different origin is refused, and the refusal names both. `device/working-copy.test.ts › binds to one origin and refuses a store opened against another`, `› keeps the key out of the store`.
+3. One store has one writer. A second opener gets a handle that reads and refuses every write, and says which it is. `device/working-copy.test.ts › gives a second opener a reading handle that refuses writes`.
+4. A read is refused until a hydration has completed, and the refusal says so rather than answering with a partial copy. A store that has never hydrated, and one whose hydration was interrupted, both refuse. `device/working-copy.test.ts › refuses a read before any hydration`, `› refuses a read after an interrupted hydration`.
+5. A device reports its own state: the origin it is bound to, the slice, the cursor, whether it has hydrated, and what it holds. That report is answerable before a hydration and is how a caller learns a hydration is owed. `device/working-copy.test.ts › reports its slice, cursor and hydration state before it has hydrated`.
+
+## Hydration
+
+6. Hydration declares at least one type. An empty list and a bare wildcard are refused before anything is read; a name that is not a type identifier is refused rather than hydrating an empty slice. `device/hydration.test.ts › refuses an empty type list and a bare wildcard before reading anything`, `› refuses a type name outside the grammar`.
+7. **Hydration takes the log's head cursor before it reads a single row.** A row written between the read and the cursor is then replayed by the first catch-up; a cursor taken afterwards would name a point past writes the copy never saw, and nothing would report them missing. `device/hydration.test.ts › takes the cursor before the snapshot, so a write during the snapshot replays`.
+8. Hydration replaces the slice. Whatever the store held before is gone, and the type catalog is replaced with the server's. `device/hydration.test.ts › replaces what the store held`.
+9. Hydration is not resumable. An interrupted hydration leaves the store refusing reads until another hydration completes; there is no partial state a caller can accept. `device/hydration.test.ts › leaves an interrupted hydration to be run again, never resumed`.
+10. A hydration reports what it pulled: the types, the tier, the counts, the pages and the cursor it stored. `device/hydration.test.ts › reports the counts, the pages and the cursor it stored`.
+
+## Catch-up
+
+11. Catch-up resumes at the cursor the store holds, and every event the stream carries after it reaches the working copy. Which of two events touching one row wins is decided by the version each carries (13), not by the device's own ordering. `device/catch-up.test.ts › resumes at the stored cursor and applies what the stream carries`.
+12. **The cursor is the last event applied, never the highest id seen.** The server assigns an id before it commits, so a lower id can arrive after a higher one; a high-water mark would step over it and nothing would ever fetch it again. `device/catch-up.test.ts › keeps the last id applied rather than the highest, so a late lower id is not stepped over`.
+13. An event carrying a version no newer than the row held is skipped, and skipping it is a success that still advances the cursor. `device/catch-up.test.ts › skips an event older than the row it holds and still advances the cursor`.
+14. An event for a row that has left the slice — a changed type or a changed tier — removes the row from the working copy. A row that was never in the slice is not added. `device/catch-up.test.ts › evicts a row that leaves the slice`, `› does not add a row that was never in the slice`.
+15. Catch-up refreshes the type catalog before it applies anything, so a type registered while the device was away resolves. `device/catch-up.test.ts › refreshes the type catalog before applying`.
+16. **A cursor older than the log's oldest retained event ends the catch-up.** The device hydrates again rather than reconnecting, and the queue survives that hydration intact (`queue-and-verdicts.md` 30). `device/catch-up.test.ts › ends on an aged-out cursor and hydrates again rather than reconnecting`.
+17. Catch-up never advances the cursor past an event it did not apply. A stream that ends early leaves the cursor where the last applied event put it, and the next catch-up resumes from there. `device/catch-up.test.ts › leaves the cursor at the last applied event when the stream ends early`.
+18. Catch-up reports what it did: how many events it applied, how many it skipped, the cursor it reached, and whether it reached the log's head. A catch-up that stopped short of the head says so rather than reporting a clean pass. `device/catch-up.test.ts › reports reaching the head, and reports stopping short of it`.
+
+## What a device may never do locally
+
+Every statement here is a refusal, and each of them is a refusal because the silent version is a working copy that disagrees with the server with nothing anywhere to say so.
+
+19. A device never merges. Two values for one field are the server's to reconcile, and a device that picked one would have to be believed by the other devices, which nothing makes them do. `device/local-refusals.test.ts › refuses to merge two values for one field`.
+20. A device never mints or advances a version. A version comes from the server or a write does not carry one. `device/local-refusals.test.ts › refuses to advance a version of its own accord`.
+21. A device never resolves a conflict. It reports the verdict and the server's envelope and stops (`queue-and-verdicts.md` 14). `device/local-refusals.test.ts › refuses to resolve a conflict it was refused`.
+22. A local create naming tags or edges either queues them as their own writes or refuses the create. It never drops them and answers as though it had not been asked. `device/local-refusals.test.ts › refuses a local create whose tags and edges it cannot queue`.
+23. A local update never drops a field it does not recognize. It sends it or refuses the update. `device/local-refusals.test.ts › refuses an update carrying a field it cannot send`.
+24. **A filter a device does not implement is refused, never ignored.** An ignored filter answers every row, which reads as a matched filter and is the hardest kind of wrong answer to notice. `device/local-refusals.test.ts › refuses a list filter it does not implement`, `› refuses a search filter it does not implement`.
+25. A device never purges. Purging is the server's, on a credential holding it. `device/local-refusals.test.ts › refuses a local purge`.
+26. A device never writes to a store it does not hold the writer handle for, and never to one bound to another server. `device/local-refusals.test.ts › refuses a write from a reading handle`, `› refuses a write to a store bound to another server`.
+27. **A device never expires an item.** The event log has a retention and items do not. A device that swept its own copy by age would drop rows the server still holds and go on reporting the slice as complete, and the feed is not a place things fall out of. `device/working-copy.test.ts › keeps an item however old it is`.
+
+## Blobs
+
+28. A blob's bytes are fetched on demand and are not held by hydration. An item that references bytes is held with the reference and without them. `device/working-copy.test.ts › holds an item whose bytes it has not fetched`.
+29. A thumbnail, where an item's type carries one, travels with the item rather than being fetched. A phone cannot hold a library's bytes and can hold its thumbnails. `device/working-copy.test.ts › holds the thumbnail an item carries`.
+30. A device with no bytes for a blob says so rather than reporting the item incomplete. The item is whole; the bytes are absent. `device/working-copy.test.ts › says the bytes are absent rather than the item`.
+
+## What the real server cannot be made to produce
+
+The device fixtures drive a scripted server for the same reason `coverage.md` records an unreachable success path: the precondition cannot be arranged over the wire against the real one. `device/fidelity.test.ts` asserts that every answer the scripted server gives which the real server _can_ produce matches the real one's shape, and these are the entries it cannot check.
+
+- **A transport failure.** A dropped connection, a refused connection and a read that times out are properties of the network between the device and the server. Nothing the API offers provokes one.
+- **A server at rest.** Offline and reconnect need the server to stop answering and start again under a device that is still running. Stopping the suite's own server ends the run.
+- **A revoked credential mid-queue.** Revoking the running key would take the rest of the file's fixtures with it, and the refusal is asserted for its effect on the queue rather than for the server's answer, which `keys-and-oauth.md` 13 already covers.
+- **A `409 version_conflict` answered to a write that asked the server to resolve.** The server resolves such a write inside its own transaction (`versions.md` 12), so the refusal a device has to classify (`queue-and-verdicts.md` 23) is one the real server does not give.
+- **A `5xx`.** The server answers one only for a fault, and a fault it can be made to have is a defect rather than a fixture.
+- **A `429`.** Rate limiting is off for a run, because a run's own key minting exceeds the one fixed limit the server has (`README.md`).

@@ -73,6 +73,20 @@ export default defineConfig({
         },
       },
       {
+        // The device's half of the contract. Every body drives the `marfa`
+        // binary against a server the fixture scripts, so a step is a process
+        // spawn rather than an HTTP round trip and the budget matches the
+        // suites above rather than the offline lane.
+        test: {
+          name: "device",
+          include: ["src/suites/device/**/*.test.ts"],
+          // Runs in the no-network lane instead; see the generators project.
+          exclude: ["src/suites/device/**/*.decision.test.ts"],
+          testTimeout: 120_000,
+          hookTimeout: 120_000,
+        },
+      },
+      {
         test: {
           name: "load",
           include: ["src/suites/load/**/*.test.ts"],
