@@ -81,3 +81,13 @@ No fixture asserts this, and that is deliberate: a fixture that provokes it woul
 Nothing here is a contradiction of the OpenAPI document; it is the server contradicting the device half of the contract. The recommended fix is to let a folder, or any caller writing on behalf of one, name the `source` its rows are keyed by, bounded by what the credential is allowed to claim, so that the key identifies the folder rather than the credential. Until then a folder carries the item id in the file as its own identity record (`folders.md` 11), which binds a second device only for files that already have one.
 
 Out of milestone one, which has one folder and one keyed process.
+
+## 16. Contention on one row answers `500`, which a device reads as a fault
+
+Several writers patching one edge at the same time are serialized by the driver, not queued: the store opens each write with `BEGIN IMMEDIATE` and a second one meets `SQLITE_BUSY` rather than waiting. The refusal surfaces as `500 internal_error`.
+
+Measured on this build: eight concurrent `PATCH /edges/{id}` naming one version answered one `200` and seven `500 internal_error`, and not one `409 version_conflict` — the version gate is never reached, because contention refuses first.
+
+Contention is not a fault. `device.md` says the server answers a `5xx` "only for a fault, and a fault it can be made to have is a defect rather than a fixture", and `queue-and-verdicts.md` has a device treat a `5xx` as retryable, so the current answer is at least honest about being retryable and dishonest about why. A `409` or a `503` would let a caller tell a contended row from a broken server.
+
+No fixture asserts it. One did, indirectly, until `version` became required on an update: it fired eight concurrent patches to prove the row lock never loses an accepted write, and the version gate now refuses seven of them before the lock is reached, so the case was removed rather than renamed into a claim it could no longer support. `packages/server/src/routes/edges-merge-rather-than-replace.test.ts` carries the reasoning and names the fixture that would reach the lock again: writers that each read the edge and then patch with what they read, rather than several sharing one version.

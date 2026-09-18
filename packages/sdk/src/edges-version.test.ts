@@ -7,9 +7,11 @@ import { EdgeConflictError } from "./errors.js";
  * being checked is whether the precondition reaches the database and
  * whether the refusal survives the transport.
  *
- * Both halves have a silent failure mode. A version dropped on the way out
- * is invisible from the caller's side — the write simply succeeds — and it
- * is precisely the case that makes the server's refusal unreachable. A 409
+ * Both halves have a failure mode worth a fixture. A version dropped on the
+ * way out no longer passes silently — the door refuses it — but the refusal
+ * it draws is `missing_required_field`, which reads as the caller's own bug
+ * rather than as a client that lost the precondition, so nothing about the
+ * symptom points at the kit. A 409
  * that surfaces as the transport's generic error is worse than useless
  * here: it says the write failed and discards the current edge, which is
  * the only thing in the body and the cheapest route back to a version worth

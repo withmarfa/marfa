@@ -448,14 +448,11 @@ describe("a create that resolves an existing row", () => {
     });
     expect(advanced.ok).toBe(true);
 
+    // The good entry first and the stale one second, which is what makes the
+    // rollback observable. Processing stops at the first errored entry, so
+    // with the stale one leading, the good one is never attempted and its
+    // absence afterwards would prove nothing about the transaction.
     const entries = [
-      {
-        type: "core.note",
-        source: ctx.source,
-        source_id: staleId,
-        properties: { title: "from a stale writer" },
-        version: staleVersion,
-      },
       {
         type: "core.note",
         source: ctx.source,
@@ -463,6 +460,13 @@ describe("a create that resolves an existing row", () => {
         // A whole note rather than a title alone: this entry is a create,
         // so it has no stored row to merge a required field in from.
         properties: { title: "the entry beside it", body: "its body" },
+      },
+      {
+        type: "core.note",
+        source: ctx.source,
+        source_id: staleId,
+        properties: { title: "from a stale writer" },
+        version: staleVersion,
       },
     ];
 
@@ -473,13 +477,17 @@ describe("a create that resolves an existing row", () => {
     expect(atomic.status).toBe(400);
     expect(atomic.error?.error.code).toBe("bulk_atomic_rollback");
     expect(atomic.error?.error.details?.code).toBe("version_conflict");
+    expect(atomic.error?.error.details?.index).toBe(1);
 
     // And nothing landed, including the entry that was fine.
     const afterAtomic = await client.listItems({ source: ctx.source });
     expect(afterAtomic.ok).toBe(true);
+    // Asserting an absence, so the page has to be the whole of it: a
+    // truncated one makes `.some(...)` false for free and stops looking.
+    expect(afterAtomic.data.has_more).toBe(false);
     expect(
       afterAtomic.data.data.some((i) => i.source_id === freshId),
-      "the good entry landed despite the rollback",
+      "the good entry was written and not rolled back",
     ).toBe(false);
 
     // With the page non-atomic the refusal is that entry's own outcome and
@@ -491,11 +499,11 @@ describe("a create that resolves an existing row", () => {
       `a non-atomic page was refused whole: ${JSON.stringify(perEntry.error)}`,
     ).toBe(true);
 
-    const stale = perEntry.data.results.find((r) => r.index === 0);
+    const stale = perEntry.data.results.find((r) => r.index === 1);
     expect(stale?.outcome).toBe("errored");
     expect(stale?.error?.code).toBe("version_conflict");
 
-    const fresh = perEntry.data.results.find((r) => r.index === 1);
+    const fresh = perEntry.data.results.find((r) => r.index === 0);
     expect(
       fresh?.outcome,
       `the entry beside the stale one did not land: ${JSON.stringify(fresh)}`,

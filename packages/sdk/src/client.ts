@@ -452,6 +452,9 @@ export interface BulkEdgeInputItem {
   target_id: string;
   edge_type: string;
   properties?: Record<string, unknown>;
+  /** The version this entry was based on, where the triple resolves an edge
+   *  that already exists. Optional: an entry creating one has none to name. */
+  version?: number;
 }
 
 export interface BulkEdgeInput {

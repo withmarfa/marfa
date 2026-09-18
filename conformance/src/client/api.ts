@@ -49,10 +49,11 @@ export interface CreateItemInput {
   source_id?: string;
   state?: string;
   /**
-   * Only meaningful when the create resolves a row that already exists, by
-   * the `(source, source_id)` natural key or by a repeated `id`. It makes
-   * that upsert conditional and answers what the update door answers. On a
-   * genuine create the server stamps 1 and ignores this.
+   * Only meaningful when `source_id` resolves a live row: that upsert is
+   * conditional and answers what the update door answers. Ignored on a
+   * genuine create, which has no version to have read, and on a repeated
+   * `id` or a trashed natural key, which are acknowledged rather than
+   * written and so have no precondition to fail.
    */
   version?: number;
   tier?: "library" | "feed"; // Items are curated library content or transient feed content; system.* items have no tier

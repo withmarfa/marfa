@@ -229,7 +229,7 @@ const createItemRoute = createRoute({
               .min(0)
               .optional()
               .describe(
-                "Optional, and only meaningful when this create lands on a row that already exists: `source_id` or `id` naming one makes the write an upsert, and a version here makes that upsert conditional exactly as it is on the update door. On a genuine create the server stamps 1 and this is ignored, because there is no version to have read.",
+                "Optional, and meaningful on one path: a `source_id` resolving a live row makes this write an upsert, and a version here makes that upsert conditional exactly as it is on the update door. Everywhere else it is ignored, because nothing is overwritten — a genuine create has no version to have read, and a repeated `id` or a natural key resolving a trashed row is acknowledged rather than written.",
               ),
             tier: z.enum(["library", "feed"]).optional(),
             device: z.string().optional(),
@@ -824,7 +824,7 @@ const updateItemRoute = createRoute({
         },
       },
       description:
-        "Version conflict (optimistic-concurrency mismatch on `properties`), `ancestor_unavailable` (the base version's snapshot has been thinned, so the write cannot be merged and is never auto-resolved), `source_id_conflict` (target natural key already in use by another item under the item's `source`), or `type_mismatch` (the request declared a `type` that is not this item's).",
+        "Version conflict — a stale `version`, whether the write carried properties to merge or only edges, `ancestor_unavailable` (the base version's snapshot has been thinned, so the write cannot be merged and is never auto-resolved), `source_id_conflict` (target natural key already in use by another item under the item's `source`), or `type_mismatch` (the request declared a `type` that is not this item's).",
     },
   },
 });
@@ -2589,34 +2589,37 @@ export function itemRoutes(storage: Storage) {
       }
     }
 
-    // The version is enforced here for the one arm that never reaches the
-    // store. An edges-only write applies its edge changes over whatever the
-    // row has become, so without this the door would demand a precondition
-    // and then discard it — worse than not asking at all, because a caller
-    // reads a refusal that never came as proof it was current.
-    //
-    // A bare refusal rather than the three-way envelope, and deliberately:
-    // that envelope exists to hand a resolver the two property sets and the
-    // fields that collide, and a request carrying no properties has none of
-    // those. There is nothing to merge, only a precondition that failed.
-    if (
-      !hasProperties &&
-      !hasTier &&
-      !hasTimestamp &&
-      !hasSourceId &&
-      body.version !== item.version
-    ) {
-      throw new MarfaError(
-        ErrorCode.VERSION_CONFLICT,
-        `Version ${String(body.version)} is not the current version ${String(item.version)}`,
-        { current_version: item.version },
-      );
-    }
-
     // Declared outside the transaction so the announcement can happen
     // after it commits. `undefined` when the request carried no edges.
     let patchedEdgeChanges: InlineEdgeChanges | undefined;
     const txResult = await storage.runInTransaction(async () => {
+      // The version is enforced here for the one arm that never reaches the
+      // store: a write carrying only `edges`, or only `retype`, applies over
+      // whatever the row has become, so without this the door would collect
+      // a required precondition and discard it — worse than not asking at
+      // all, because a caller reads a refusal that never came as proof it
+      // was current.
+      //
+      // Inside the transaction and re-reading the row, not against the copy
+      // read before it: a check outside is advisory, and any write landing
+      // in the window between the two is exactly what the precondition
+      // exists to notice.
+      //
+      // A bare refusal rather than the three-way envelope, deliberately:
+      // that envelope hands a resolver two property sets and the fields
+      // that collide, and a request carrying no properties has none of
+      // them. There is nothing to merge, only a precondition that failed.
+      if (!hasProperties && !hasTier && !hasTimestamp && !hasSourceId) {
+        const current = await storage.items.get(id);
+        if (current && body.version !== current.version) {
+          throw new MarfaError(
+            ErrorCode.VERSION_CONFLICT,
+            `Version ${String(body.version)} is not the current version ${String(current.version)}`,
+            { current_version: current.version },
+          );
+        }
+      }
+
       // Annotated rather than inferred: the `: item` arm is a plain `Item`,
       // and left to inference the union collapses to it — losing the
       // resolution report the store attaches on the other arm.

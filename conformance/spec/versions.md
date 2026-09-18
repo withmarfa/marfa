@@ -12,7 +12,7 @@ Every item carries a `version` that starts at 1 and moves with each write, and t
 
 ## Concurrency
 
-Statements 6 to 9 are about the update door, which requires the version. Statement 10 is the create door, which does not: a create has no version to have read, and one sent there is a precondition on the single path that overwrites.
+Statements 6 to 9 and 11 are about the update door, which requires the version. Statement 10 is the create door, which does not: a create has no version to have read, and one sent there is a precondition on the single path that overwrites.
 
 6. A `PATCH /items/{id}` with no `version` is refused `400 missing_required_field`. An update names the version it is based on, or it is a blind overwrite of whatever arrived since, which the contract does not offer. `correctness/item-versioning.test.ts › an update naming no version is refused`.
 7. A `PATCH` naming the current version succeeds and advances it. `correctness/item-versioning.test.ts › a stale write answers version_conflict with a three-way envelope` (the first write), `compliance/error-codes.test.ts › rejects a stale write whose base version is retained` (the first write).
