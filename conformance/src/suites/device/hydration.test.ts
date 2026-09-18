@@ -228,6 +228,10 @@ describe("what a hydration leaves behind", () => {
       "the report did not count every row it pulled",
     ).toBe(2);
     expect(
+      [hydrated.value.types, hydrated.value.tier],
+      "the report did not name the slice it pulled, so a caller holding two devices cannot tell which one answered",
+    ).toEqual([["core.note"], "library"]);
+    expect(
       hydrated.value.pages,
       "the report counted one page for a walk that took two, so a caller cannot tell a complete walk from a truncated one",
     ).toBe(2);

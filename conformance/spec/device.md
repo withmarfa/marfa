@@ -27,13 +27,13 @@ Statements here are about a device's observable behavior, asserted by the device
 13. An event carrying a version no newer than the row held is skipped, and skipping it is a success that still advances the cursor. `device/catch-up.test.ts › skips an event older than the row it holds and still advances the cursor`.
 14. An event for a row that has left the slice — a changed type or a changed tier — removes the row from the working copy. A row that was never in the slice is not added. `device/catch-up.test.ts › evicts a row that leaves the slice`, `› does not add a row that was never in the slice`.
 15. Catch-up refreshes the type catalog before it applies anything, so a type registered while the device was away resolves. `device/catch-up.test.ts › refreshes the type catalog before applying`.
-16. **A cursor older than the log's oldest retained event ends the catch-up.** The device hydrates again rather than reconnecting, and the queue survives that hydration intact (`queue-and-verdicts.md` 21). `device/catch-up.test.ts › ends on an aged-out cursor and hydrates again rather than reconnecting`.
+16. **A cursor older than the log's oldest retained event ends the catch-up.** The device hydrates again rather than reconnecting, and the queue survives that hydration intact (`queue-and-verdicts.md` 30). `device/catch-up.test.ts › ends on an aged-out cursor and hydrates again rather than reconnecting`.
 17. Catch-up never advances the cursor past an event it did not apply. A stream that ends early leaves the cursor where the last applied event put it, and the next catch-up resumes from there. `device/catch-up.test.ts › leaves the cursor at the last applied event when the stream ends early`.
 18. Catch-up reports what it did: how many events it applied, how many it skipped, the cursor it reached, and whether it reached the log's head. A catch-up that stopped short of the head says so rather than reporting a clean pass. `device/catch-up.test.ts › reports reaching the head, and reports stopping short of it`.
 
 ## What a device may never do locally
 
-Every statement here is a refusal. Each of them was something a previous client did silently, and a silent version of any of them is a working copy that disagrees with the server with nothing to say so.
+Every statement here is a refusal, and each of them is a refusal because the silent version is a working copy that disagrees with the server with nothing anywhere to say so.
 
 19. A device never merges. Two values for one field are the server's to reconcile, and a device that picked one would have to be believed by the other devices, which nothing makes them do. `device/local-refusals.test.ts › refuses to merge two values for one field`.
 20. A device never mints or advances a version. A version comes from the server or a write does not carry one. `device/local-refusals.test.ts › refuses to advance a version of its own accord`.
@@ -43,10 +43,13 @@ Every statement here is a refusal. Each of them was something a previous client 
 24. **A filter a device does not implement is refused, never ignored.** An ignored filter answers every row, which reads as a matched filter and is the hardest kind of wrong answer to notice. `device/local-refusals.test.ts › refuses a list filter it does not implement`, `› refuses a search filter it does not implement`.
 25. A device never purges. Purging is the server's, on a credential holding it. `device/local-refusals.test.ts › refuses a local purge`.
 26. A device never writes to a store it does not hold the writer handle for, and never to one bound to another server. `device/local-refusals.test.ts › refuses a write from a reading handle`, `› refuses a write to a store bound to another server`.
+27. **A device never expires an item.** The event log has a retention and items do not. A device that swept its own copy by age would drop rows the server still holds and go on reporting the slice as complete, and the feed is not a place things fall out of. `device/working-copy.test.ts › keeps an item however old it is`.
 
 ## Blobs
 
-27. A blob's bytes are fetched on demand and are not held by hydration; an item's thumbnail, where its type carries one, travels with the item. A device with no bytes for a blob says so rather than reporting the item incomplete. `device/working-copy.test.ts › holds an item whose bytes it has not fetched`.
+28. A blob's bytes are fetched on demand and are not held by hydration. An item that references bytes is held with the reference and without them. `device/working-copy.test.ts › holds an item whose bytes it has not fetched`.
+29. A thumbnail, where an item's type carries one, travels with the item rather than being fetched. A phone cannot hold a library's bytes and can hold its thumbnails. `device/working-copy.test.ts › holds the thumbnail an item carries`.
+30. A device with no bytes for a blob says so rather than reporting the item incomplete. The item is whole; the bytes are absent. `device/working-copy.test.ts › says the bytes are absent rather than the item`.
 
 ## What the real server cannot be made to produce
 
@@ -55,6 +58,6 @@ The device fixtures drive a scripted server for the same reason `coverage.md` re
 - **A transport failure.** A dropped connection, a refused connection and a read that times out are properties of the network between the device and the server. Nothing the API offers provokes one.
 - **A server at rest.** Offline and reconnect need the server to stop answering and start again under a device that is still running. Stopping the suite's own server ends the run.
 - **A revoked credential mid-queue.** Revoking the running key would take the rest of the file's fixtures with it, and the refusal is asserted for its effect on the queue rather than for the server's answer, which `keys-and-oauth.md` 13 already covers.
-- **A retry ceiling.** Reaching it needs the same write refused five times with a failure that clears on its own, which is the transport failure above.
+- **A `409 version_conflict` answered to a write that asked the server to resolve.** The server resolves such a write inside its own transaction (`versions.md` 12), so the refusal a device has to classify (`queue-and-verdicts.md` 23) is one the real server does not give.
 - **A `5xx`.** The server answers one only for a fault, and a fault it can be made to have is a defect rather than a fixture.
 - **A `429`.** Rate limiting is off for a run, because a run's own key minting exceeds the one fixed limit the server has (`README.md`).

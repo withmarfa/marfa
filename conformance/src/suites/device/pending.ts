@@ -12,21 +12,14 @@ import { basename } from "node:path";
  * stop shrinking. The milestone is reached when it is empty.
  */
 export const PENDING: Readonly<Record<string, string>> = {
-  // The working copy takes no writes yet, so nothing needs a writer.
   "working-copy.test.ts › gives a second opener a reading handle that refuses writes":
     "device.md 3",
-
-  // A store that has never hydrated answers an empty set, so a caller cannot
-  // tell "no rows" from "no copy".
   "working-copy.test.ts › refuses a read before any hydration": "device.md 4",
-
-  // Catch-up upserts whatever the event carries, so a late event overwrites a
-  // newer row rather than being skipped.
+  "working-copy.test.ts › holds the thumbnail an item carries": "device.md 29",
+  "working-copy.test.ts › says the bytes are absent rather than the item":
+    "device.md 30",
   "catch-up.test.ts › skips an event older than the row it holds and still advances the cursor":
     "device.md 13",
-
-  // Every refusal below is a refusal of a local write, and there is no local
-  // write to refuse.
   "local-refusals.test.ts › refuses to merge two values for one field":
     "device.md 19",
   "local-refusals.test.ts › refuses to advance a version of its own accord":
@@ -39,8 +32,6 @@ export const PENDING: Readonly<Record<string, string>> = {
     "device.md 23",
   "local-refusals.test.ts › refuses a write from a reading handle":
     "device.md 26",
-
-  // The queue.
   "queue.test.ts › sends queued writes in the order they were queued":
     "queue-and-verdicts.md 1",
   "queue.test.ts › keeps the queue across a restart": "queue-and-verdicts.md 1",
@@ -57,60 +48,68 @@ export const PENDING: Readonly<Record<string, string>> = {
   "queue.test.ts › reports a verdict for every write it sent":
     "queue-and-verdicts.md 6",
   "queue.test.ts › queues writes while the server is unreachable":
-    "queue-and-verdicts.md 25",
-  "queue.test.ts › drains in order on reconnect": "queue-and-verdicts.md 26",
-  "queue.test.ts › keeps the queue through a re-hydration":
-    "queue-and-verdicts.md 27",
-  "queue.test.ts › shows an unanswered local write to a local read":
     "queue-and-verdicts.md 28",
-
-  // The verdicts.
+  "queue.test.ts › drains in order on reconnect": "queue-and-verdicts.md 29",
+  "queue.test.ts › keeps the queue through a re-hydration":
+    "queue-and-verdicts.md 30",
+  "queue.test.ts › shows an unanswered local write to a local read":
+    "queue-and-verdicts.md 31",
+  "queue.test.ts › holds one kind per write, from the closed set":
+    "queue-and-verdicts.md 32",
+  "queue.test.ts › queues an edge, a tag and an extension as writes of their own":
+    "queue-and-verdicts.md 33",
   "verdicts.test.ts › answers every write with one of the six verdicts":
     "queue-and-verdicts.md 7",
-  "verdicts.test.ts › accepted: adopts the row the server returned":
+  "verdicts.test.ts › tells the three successful verdicts apart by the resolution the answer carries":
     "queue-and-verdicts.md 8",
-  "verdicts.test.ts › merged: adopts the server's row when it differs from the one it expected":
+  "verdicts.test.ts › accepted: adopts the row the server returned":
     "queue-and-verdicts.md 9",
-  "verdicts.test.ts › merged: reports a resolution that named no conflicted copy":
+  "verdicts.test.ts › accepted: takes an upsert and a replayed repeat as accepted":
     "queue-and-verdicts.md 9",
-  "verdicts.test.ts › conflicted: names the sibling the server wrote":
+  "verdicts.test.ts › merged: adopts the row a resolution returned":
     "queue-and-verdicts.md 10",
-  "verdicts.test.ts › refused: carries the server's code and is not sent again":
+  "verdicts.test.ts › conflicted: names the sibling the server wrote":
     "queue-and-verdicts.md 11",
-  "verdicts.test.ts › blocked: is passed over by a drain and reported with its reason":
+  "verdicts.test.ts › refused: carries the server's code and is not sent again":
     "queue-and-verdicts.md 12",
-  "verdicts.test.ts › dead: is terminal once the ceiling is reached":
+  "verdicts.test.ts › blocked: is passed over by a drain and reported with its reason":
     "queue-and-verdicts.md 13",
-  "verdicts.test.ts › reports a conflict rather than resolving it":
+  "verdicts.test.ts › dead: is terminal once the ceiling is reached":
     "queue-and-verdicts.md 14",
-  "verdicts.test.ts › refuses the writes that were waiting on a create the server refused":
+  "verdicts.test.ts › reports a conflict rather than resolving it":
     "queue-and-verdicts.md 15",
-
-  // Which failures retry.
+  "verdicts.test.ts › refuses the writes that were waiting on a create the server refused":
+    "queue-and-verdicts.md 16",
+  "verdicts.test.ts › answers about whole fields, never about part of one":
+    "queue-and-verdicts.md 34",
   "classification.test.ts › retries an environmental failure past the ceiling without counting it":
-    "queue-and-verdicts.md 16",
-  "classification.test.ts › retries a 5xx and a 429 without counting them":
-    "queue-and-verdicts.md 16",
-  "classification.test.ts › refuses a contract failure on the first answer":
     "queue-and-verdicts.md 17",
-  "classification.test.ts › blocks the whole queue on a refused credential, and stops the drain":
+  "classification.test.ts › retries a 5xx and a 429 without counting them":
+    "queue-and-verdicts.md 17",
+  "classification.test.ts › refuses a contract failure on the first answer":
     "queue-and-verdicts.md 18",
-  "classification.test.ts › blocks a spent key on the first refusal rather than spending the ceiling":
+  "classification.test.ts › retries an answer it cannot read, and counts it":
     "queue-and-verdicts.md 19",
-  "classification.test.ts › blocks a write whose base version the server no longer holds":
+  "classification.test.ts › retries a key the server reports in flight, and counts it":
+    "queue-and-verdicts.md 19",
+  "classification.test.ts › blocks the whole queue on a refused credential, and stops the drain":
     "queue-and-verdicts.md 20",
-  "classification.test.ts › blocks a conflict the server declined to resolve":
+  "classification.test.ts › blocks a spent key on the first refusal rather than spending the ceiling":
     "queue-and-verdicts.md 21",
-  "classification.test.ts › releases a held write when its dependency is answered":
+  "classification.test.ts › blocks a write whose base version the server no longer holds":
     "queue-and-verdicts.md 22",
-  "classification.test.ts › counts refusals rather than attempts, so a long outage does not exhaust the ceiling":
+  "classification.test.ts › blocks a conflict the server declined to resolve":
     "queue-and-verdicts.md 23",
-  "classification.test.ts › reaches the ceiling on the fifth refusal":
-    "queue-and-verdicts.md 23",
-  "classification.test.ts › reports one of the five blocked reasons and no other":
+  "classification.test.ts › releases a held write when its dependency is answered":
     "queue-and-verdicts.md 24",
-
-  // Folders. `folders watch` prints what changes and writes nothing.
+  "classification.test.ts › counts refusals rather than attempts, so a long outage does not exhaust the ceiling":
+    "queue-and-verdicts.md 25",
+  "classification.test.ts › reaches the ceiling on the fifth refusal":
+    "queue-and-verdicts.md 25",
+  "classification.test.ts › reports one of the five blocked reasons and no other":
+    "queue-and-verdicts.md 26",
+  "classification.test.ts › sends a released row again under a fresh key":
+    "queue-and-verdicts.md 27",
   "folders.test.ts › is a view on a slice with defaults for a new file":
     "folders.md 1",
   "folders.test.ts › keeps each folder's state and queue to itself":

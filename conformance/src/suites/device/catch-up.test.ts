@@ -177,6 +177,12 @@ describe("catch-up replays from the cursor", () => {
       short.ok ? short.value.reached_head : undefined,
       "a catch-up that stopped eight events short of the head reported a clean pass, so a caller believes the copy is current when it is not",
     ).toBe(false);
+    expect(
+      short.ok
+        ? [short.value.applied, short.value.skipped, short.value.cursor]
+        : undefined,
+      "the report did not count what it applied and skipped or name where it reached, so nothing can tell a catch-up that did work from one that did none",
+    ).toEqual([1, 0, "11"]);
 
     const complete = await device.catchUp();
     expect(complete.ok).toBe(true);

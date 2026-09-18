@@ -4,17 +4,22 @@ import { notWrittenYet, skipIfPending } from "./pending.js";
 /**
  * "The server answers with a verdict."
  *
- * Six verdicts, and the set is closed. An engine with an open set has, in
- * practice, a default branch, and the default branch is where a refusal
- * becomes a retry and a merge becomes a silent overwrite. Each verdict below
- * is the one thing a caller needs in order to know what happened to a write
- * it was told had been queued.
+ * Six verdicts, and the set is closed. An open set means a default branch in
+ * practice, and a default branch is where a refusal becomes a retry and a
+ * merge becomes a silent overwrite. The three a successful answer can carry
+ * are told apart by one field rather than by comparing rows, because every
+ * answer carries fields the server stamped and the device never sent.
  */
 
 describe("the set is closed", () => {
   it("answers every write with one of the six verdicts", (context) => {
     skipIfPending(context);
     notWrittenYet("the closed verdict set");
+  });
+
+  it("tells the three successful verdicts apart by the resolution the answer carries", (context) => {
+    skipIfPending(context);
+    notWrittenYet("the discriminator between the three successful verdicts");
   });
 });
 
@@ -24,14 +29,14 @@ describe("the server took the write", () => {
     notWrittenYet("an accepted write");
   });
 
-  it("merged: adopts the server's row when it differs from the one it expected", (context) => {
+  it("accepted: takes an upsert and a replayed repeat as accepted", (context) => {
     skipIfPending(context);
-    notWrittenYet("a merged write");
+    notWrittenYet("an upsert and a replayed repeat");
   });
 
-  it("merged: reports a resolution that named no conflicted copy", (context) => {
+  it("merged: adopts the row a resolution returned", (context) => {
     skipIfPending(context);
-    notWrittenYet("a resolution with no sibling");
+    notWrittenYet("a merged write");
   });
 
   it("conflicted: names the sibling the server wrote", (context) => {
@@ -66,5 +71,10 @@ describe("a verdict is reported, not acted on", () => {
   it("refuses the writes that were waiting on a create the server refused", (context) => {
     skipIfPending(context);
     notWrittenYet("the dependants of a refused create");
+  });
+
+  it("answers about whole fields, never about part of one", (context) => {
+    skipIfPending(context);
+    notWrittenYet("a verdict about a whole field");
   });
 });

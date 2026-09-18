@@ -124,6 +124,64 @@ describe("the working copy holds one slice", () => {
     ).not.toContain("feed-row");
   });
 
+  it("keeps an item however old it is", async () => {
+    harness = await startHarness("no-expiry");
+    const { server, device } = harness;
+    // Four years before the log's retention could reach, and older than any
+    // window a sweeper would plausibly be given.
+    const ancient = "2022-01-01T00:00:00.000Z";
+    scriptHydration(server, {
+      head: "10",
+      rows: {
+        "core.note": [
+          {
+            item: {
+              id: "ancient",
+              timestamp: ancient,
+              created_at: ancient,
+              updated_at: ancient,
+            },
+          },
+          { item: { id: "recent" } },
+        ],
+      },
+    });
+    server.answer(
+      "GET",
+      "/events",
+      replay("11", [
+        itemEvent("11", "item.created", wireItem({ id: "newest" })),
+      ]),
+    );
+
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    expect((await device.catchUp()).ok).toBe(true);
+
+    const held = await device.list({ includeTrashed: true });
+    expect(held.ok).toBe(true);
+    const ids = held.ok ? held.value.map((item) => item.id).sort() : [];
+    // The control: the rows a sweeper would have kept are there, so a missing
+    // old row is an expiry rather than a copy that never landed.
+    expect(
+      ids,
+      "the recent rows are missing, so this says nothing about the old one",
+    ).toEqual(expect.arrayContaining(["newest", "recent"]));
+    expect(
+      ids,
+      "an item was dropped for being old, so a device removes rows the server still holds and goes on reporting the slice as complete",
+    ).toContain("ancient");
+  });
+
+  it("holds the thumbnail an item carries", async (context) => {
+    skipIfPending(context);
+    notWrittenYet("a thumbnail traveling with its item");
+  });
+
+  it("says the bytes are absent rather than the item", async (context) => {
+    skipIfPending(context);
+    notWrittenYet("absent bytes reported as absent bytes");
+  });
+
   it("holds an item whose bytes it has not fetched", async () => {
     harness = await startHarness("blob-ref");
     const { server, device } = harness;
@@ -238,6 +296,14 @@ describe("the working copy says what it is", () => {
     ).toBe("never");
     expect(status.value.slice_types).toEqual([]);
     expect(status.value.event_cursor ?? null).toBeNull();
+    expect(
+      status.value.server_origin ?? null,
+      "a device that has hydrated from nowhere named a server it is bound to",
+    ).toBeNull();
+    expect(
+      [status.value.items, status.value.edges],
+      "a device that holds nothing reported holding something, so the counts are not a reading of the copy",
+    ).toEqual([0, 0]);
   });
 
   it("refuses a read before any hydration", async (context) => {

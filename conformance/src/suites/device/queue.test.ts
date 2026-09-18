@@ -5,11 +5,11 @@ import { notWrittenYet, skipIfPending } from "./pending.js";
  * "A device holds a working copy and a queue."
  *
  * The queue is what makes a device usable when the server is not there, and
- * every rule in it exists because an engine got it wrong in a way nobody
- * could see: a write sent without the version it read, a retry that spent a
- * key, a write sent before the row it depends on, a queue cleared by a
- * re-hydration. A queue that drops a write reports nothing, because the
- * caller was already told the write was queued.
+ * every rule in it guards a way of losing a write that nobody can see: a write
+ * sent without the version it read, a retry that spends a key, a write sent
+ * before the row it depends on, a queue cleared by a re-hydration. A queue
+ * that drops a write reports nothing, because the caller was already told the
+ * write was queued.
  */
 
 describe("the queue keeps its order", () => {
@@ -59,6 +59,18 @@ describe("what a drain sends and reports", () => {
   it("reports a verdict for every write it sent", (context) => {
     skipIfPending(context);
     notWrittenYet("a drain's report");
+  });
+});
+
+describe("what a queue holds", () => {
+  it("holds one kind per write, from the closed set", (context) => {
+    skipIfPending(context);
+    notWrittenYet("the closed set of write kinds");
+  });
+
+  it("queues an edge, a tag and an extension as writes of their own", (context) => {
+    skipIfPending(context);
+    notWrittenYet("an edge, a tag and an extension as separate writes");
   });
 });
 

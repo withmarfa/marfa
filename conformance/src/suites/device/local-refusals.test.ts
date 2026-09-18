@@ -5,12 +5,12 @@ import { notWrittenYet, skipIfPending } from "./pending.js";
 /**
  * "What a device may never do locally, and must refuse."
  *
- * Every rule here is a refusal, and every one of them names something a
- * previous client did silently. A silently dropped filter answers every row
- * and reads as a filter that matched; a silently dropped tag reads as an item
- * that never had one; a locally resolved conflict reads as agreement. None of
- * them raises anything anywhere, which is why each is written as a refusal
- * rather than as a best effort.
+ * Every rule here is a refusal, and each is a refusal because the silent
+ * version is invisible. A dropped filter answers every row and reads as a
+ * filter that matched; a dropped tag reads as an item that never had one; a
+ * locally resolved conflict reads as agreement. None of them raises anything
+ * anywhere, which is why each is written as a refusal rather than as a best
+ * effort.
  */
 
 let harness: Harness | undefined;
@@ -102,6 +102,10 @@ describe("a device refuses a write only the server may make", () => {
 
   it("refuses a write to a store bound to another server", async () => {
     harness = await hydrated("bound-store");
+    const before = await harness.device.status();
+    expect(before.ok).toBe(true);
+    if (!before.ok) return;
+
     const elsewhere = await startHarness("bound-store-other");
     try {
       scriptHydration(elsewhere.server, { head: "10" });
@@ -118,6 +122,17 @@ describe("a device refuses a write only the server may make", () => {
         elsewhere.server.requests,
         "the device read from the second server before noticing the store was not its own",
       ).toEqual([]);
+
+      // And nothing reached the store, which is the half the rule is about:
+      // a refusal reported after a row had landed would be a refusal in name.
+      const after = await harness!.device.status();
+      expect(after.ok).toBe(true);
+      if (after.ok) {
+        expect(
+          [after.value.items, after.value.server_origin],
+          "the store changed while refusing a write from another server, so the refusal was reported and the write happened anyway",
+        ).toEqual([1, before.value.server_origin]);
+      }
     } finally {
       await elsewhere.stop();
     }

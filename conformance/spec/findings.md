@@ -1,6 +1,6 @@
 # Findings
 
-Where the server contradicts its own OpenAPI document, or where its document describes something a caller cannot observe. Each entry names the operation, what the document says, what the server does, and the fixture that shows it. The fixtures assert what the server does; nothing here is fixed on the suite's side, and nothing is a proposal. This file is the channel to the server's maintainers. One entry carries no fixture, and says why: asserting it would end the run.
+Where the server contradicts its own OpenAPI document, where its document describes something a caller cannot observe, or where it contradicts the device half of this specification. Each entry names the operation, what the document says, what the server does, and the fixture that shows it. The fixtures assert what the server does; nothing here is fixed on the suite's side, and nothing is a proposal. This file is the channel to the server's maintainers. One entry carries no fixture, and says why: asserting it would end the run.
 
 ## 1. `nullable: true` inside a 3.1 document
 
@@ -73,3 +73,17 @@ The vocabulary has `edge_cycle` for an edge that would close a cycle, and the se
 A request bearing the operator key with a body the gzip reader cannot parse kills the server: the archive reader attaches an error handler to the tar extractor and none to the decompressor, so `Z_DATA_ERROR: incorrect header check` arrives as an unhandled `error` event on the stream and the process exits. Every other request in flight dies with it, and the instance is gone until something restarts it. The door is unpublished, so no declared response is contradicted; what is contradicted is that a refusal is a refusal.
 
 No fixture asserts this, and that is deliberate: a fixture that provokes it would take the rest of the run down with the server and the gate would report the crash as dozens of unrelated failures. Reproduced by hand against a locally booted server, September 2026, with the operator key, posting fifteen bytes of text as `application/gzip`.
+
+## 15. The natural key is scoped by the credential, so two devices cannot share one
+
+`folders.md` 10 requires that the same file on two separately enrolled machines is one item. The natural key is `(source, source_id)` (`items.md` 5), `source` is stamped from the credential and a value in the body is ignored (`items.md` 4), and a second key naming a `source` already in use is refused `409 conflict` (`keys-and-oauth.md` 7). Two devices with their own keys therefore cannot present the same natural key, and the same file becomes two items on the same server with nothing recording that they are the same file.
+
+Nothing here is a contradiction of the OpenAPI document; it is the server contradicting the device half of the contract. The recommended fix is to let a folder, or any caller writing on behalf of one, name the `source` its rows are keyed by, bounded by what the credential is allowed to claim, so that the key identifies the folder rather than the credential. Until then a folder carries the item id in the file as its own identity record (`folders.md` 11), which binds a second device only for files that already have one.
+
+Out of milestone one, which has one folder and one keyed process.
+
+## 16. A version on a create is not read
+
+`POST /items` onto an existing `(source, source_id)` pair is a natural-key upsert that advances the row (`items.md` 5), and neither the route nor its schema reads a `version` from the body. So a create cannot be made conditional on the version it was based on, and a device holding a stale copy of a row replaces newer server content with no refusal and no snapshot of what it replaced.
+
+`queue-and-verdicts.md` 2 and `folders.md` 13 both require the conditional create. The recommended fix is for `POST /items` to accept an optional `version` and, where the natural key resolves to an existing row, to answer it exactly as `PATCH /items/{id}` answers one: `409 version_conflict` or `409 ancestor_unavailable` as the case requires.

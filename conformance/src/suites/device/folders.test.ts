@@ -4,13 +4,13 @@ import { notWrittenYet, skipIfPending } from "./pending.js";
 /**
  * "A folder is a view on a slice."
  *
- * Every rule here is a rule rather than the previous program's behavior: the
- * audit of that program found version-blind creates that let a stale second
- * machine replace newer server content, two identity rules on the two push
- * paths so one file became two items depending on when it appeared, and a
- * natural key scoped by credential so two enrolled machines never converged.
- * None of those raised anything. They are written below as the refusals and
- * the identities that make them impossible.
+ * Three of the rules below are refusals and the rest are identities, and each
+ * exists because its absence is silent. A create that carries no version
+ * replaces newer server content and reports success. Two identity rules on
+ * the two push paths turn one file into two items depending on when it
+ * appeared. A natural key that differs per credential does the same across two
+ * machines. None of the three raises anything anywhere, which is why each is
+ * written as a rule the folder either keeps or refuses to act.
  */
 
 describe("what a folder is", () => {
