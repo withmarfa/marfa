@@ -92,7 +92,13 @@ export { defineType } from "./define-type.js";
 // other, and every type comes back unknown with nothing anywhere reporting an
 // error. Exporting both from one entry point is what makes that unreachable
 // through the documented usage.
-export { hydrateTypeRegistry, validateProperties } from "@withmarfa/shared";
+export {
+  hydrateTypeRegistry,
+  validateProperties,
+  // The registry's two readers, from the same instance for the same reason.
+  getResolvedFields,
+  getTypeSchema,
+} from "@withmarfa/shared";
 export type {
   TypeRegistryHydration,
   // The return type of the function above. Exporting the value without the

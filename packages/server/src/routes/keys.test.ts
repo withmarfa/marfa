@@ -212,6 +212,88 @@ describe("PATCH /keys/{id}", () => {
   });
 });
 
+describe("enforcement_override — the per-credential levers", () => {
+  it("is stored on a mint, listed with the key, applied to the key's writes, and cleared by null", async () => {
+    // Documented for a long time and silently dropped: a create carrying
+    // the field answered 201 with no override on the row, so a caller
+    // believed they had tightened validation and had not.
+    const override = { strict_mode: { types: ["core.note"] } };
+    const minted = await createKey({
+      type_permissions: { "core.note": "write" },
+      enforcement_override: override,
+    });
+    const echoed = await request(ctx.app, "GET", "/keys", {
+      key: ctx.spaceKey,
+    });
+    expect(echoed.status).toBe(200);
+    const listed = (
+      (await echoed.json()) as {
+        keys: { id: string; enforcement_override?: unknown }[];
+      }
+    ).keys.find((k) => k.id === minted.id);
+    expect(listed?.enforcement_override).toEqual(override);
+
+    // Applied: an undeclared property is refused under this key and admitted
+    // under a key that inherits the instance config, which sets no lever.
+    const undeclared = {
+      type: "core.note",
+      properties: { body: "strict", not_a_field: "x" },
+    };
+    const refused = await request(ctx.app, "POST", "/items", {
+      key: minted.key,
+      body: undeclared,
+    });
+    expect(refused.status).toBe(400);
+    expect(
+      ((await refused.json()) as { error: { code: string } }).error.code,
+    ).toBe("invalid_properties");
+    const plain = await createKey({
+      type_permissions: { "core.note": "write" },
+    });
+    const admitted = await request(ctx.app, "POST", "/items", {
+      key: plain.key,
+      body: undeclared,
+    });
+    expect(admitted.status).toBe(201);
+
+    // Replaced whole by a PATCH, and cleared by null.
+    const narrowed = await request(ctx.app, "PATCH", `/keys/${minted.id}`, {
+      key: ctx.spaceKey,
+      body: {
+        enforcement_override: {
+          source_filter: { types: ["core.note"], sources: ["elsewhere"] },
+        },
+      },
+    });
+    expect(narrowed.status).toBe(200);
+    expect(
+      ((await narrowed.json()) as { enforcement_override?: unknown })
+        .enforcement_override,
+    ).toEqual({
+      source_filter: { types: ["core.note"], sources: ["elsewhere"] },
+    });
+    // The filter narrows this key's reads: nothing it wrote came from
+    // `elsewhere`.
+    const filtered = await request(ctx.app, "GET", "/items?type=core.note", {
+      key: minted.key,
+    });
+    expect(filtered.status).toBe(200);
+    expect(((await filtered.json()) as { data: unknown[] }).data).toEqual([]);
+
+    const cleared = await request(ctx.app, "PATCH", `/keys/${minted.id}`, {
+      key: ctx.spaceKey,
+      body: { enforcement_override: null },
+    });
+    expect(cleared.status).toBe(200);
+    expect(
+      "enforcement_override" in
+        ((await cleared.json()) as Record<string, unknown>),
+    ).toBe(false);
+    const stored = await ctx.storage.keys.get(minted.id);
+    expect(stored?.enforcement_override).toBeUndefined();
+  });
+});
+
 describe("PATCH /keys/{id} — an operator target", () => {
   /** A spare credential at the instance tier: no space, and nothing held. */
   async function mintSpacelessKey(suffix: string): Promise<string> {

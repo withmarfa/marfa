@@ -46,22 +46,48 @@ const RENAMED = {
  */
 export type CatchUpFilter = "updated_after" | "none";
 
+/**
+ * Whether the door has the renamed filters at all. An edge has no
+ * user-meaningful time of its own, so `GET /edges` carries neither
+ * `timestamp_after` nor `timestamp_before`, and a refusal there that named
+ * one would point at a parameter the door strips in silence, which is the
+ * failure being refused. Such a door names only what it has.
+ */
+export interface RefusalOptions {
+  catchUpFilter: CatchUpFilter;
+  /** Defaults to true; `GET /edges` passes false. */
+  hasItemTimeFilters?: boolean;
+}
+
 function refusal(
   oldName: keyof typeof RENAMED,
-  catchUpFilter: CatchUpFilter,
+  opts: RefusalOptions,
 ): MarfaError {
-  const advice =
-    catchUpFilter === "none"
+  const catchUpAdvice =
+    opts.catchUpFilter === "none"
       ? // Names the doors that have one, never the parameter itself. A
         // door name cannot be pasted into a query string; the parameter
         // can, and on this door it would be stripped in silence for a
         // 200 carrying everything — which is the failure being refused.
         `This door has no filter on when a row last changed; the item and edge listings do.`
-      : `To filter on when a row last changed, use "${catchUpFilter}".`;
+      : `To filter on when a row last changed, use "${opts.catchUpFilter}".`;
+  if (opts.hasItemTimeFilters === false) {
+    // The renamed filter does not exist here either, so the only parameter
+    // the message may name is the one the door has.
+    return new MarfaError(
+      ErrorCode.VALIDATION_ERROR,
+      `The "${oldName}" filter does not exist on this door: it read an item's own time, and an edge has none. ` +
+        catchUpAdvice,
+      {
+        renamed_from: oldName,
+        use: opts.catchUpFilter === "none" ? null : opts.catchUpFilter,
+      },
+    );
+  }
   return new MarfaError(
     ErrorCode.VALIDATION_ERROR,
     `The "${oldName}" filter was renamed to "${RENAMED[oldName]}", which reads the item's own time. ` +
-      advice,
+      catchUpAdvice,
     { renamed_from: oldName, use: RENAMED[oldName] },
   );
 }
@@ -75,11 +101,11 @@ function refusal(
  */
 export function refuseRenamedTimeQueryParams(
   rawUrl: string,
-  opts: { catchUpFilter: CatchUpFilter },
+  opts: RefusalOptions,
 ): void {
   const params = new URL(rawUrl).searchParams;
   for (const oldName of Object.keys(RENAMED) as (keyof typeof RENAMED)[]) {
-    if (params.has(oldName)) throw refusal(oldName, opts.catchUpFilter);
+    if (params.has(oldName)) throw refusal(oldName, opts);
   }
 }
 
@@ -93,12 +119,12 @@ export function refuseRenamedTimeQueryParams(
  */
 export function refuseRenamedTimeFilterKeys(
   filter: unknown,
-  opts: { catchUpFilter: CatchUpFilter },
+  opts: RefusalOptions,
 ): void {
   if (typeof filter !== "object" || filter === null) return;
   for (const oldName of Object.keys(RENAMED) as (keyof typeof RENAMED)[]) {
     if (Object.prototype.hasOwnProperty.call(filter, oldName)) {
-      throw refusal(oldName, opts.catchUpFilter);
+      throw refusal(oldName, opts);
     }
   }
 }

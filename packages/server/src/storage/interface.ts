@@ -185,12 +185,14 @@ export interface ItemFilters {
   /** Exclusive upper bound on `starts_at_utc`. Exclusive because a
    *  calendar window's end belongs to the next window. */
   startsAtUtcTo?: string;
-  /** Restrict to rows carrying this top-level property key. Serves the
-   *  calendar's series and exception discovery, both of which have to
-   *  read every matching row whatever window was asked for: an old rule
-   *  produces occurrences in any window, and an exception moved outside
-   *  one still shadows the slot it left inside it. Internal — not
-   *  reachable through the public `?filter=` grammar. */
+  /** Restrict to rows whose top-level property of this name is present
+   *  and not JSON `null`: a key written as `null` is a cleared value, and
+   *  reads as absent here. Serves the calendar's series and exception
+   *  discovery, both of which have to read every matching row whatever
+   *  window was asked for: an old rule produces occurrences in any window,
+   *  and an exception moved outside one still shadows the slot it left
+   *  inside it. Internal — not reachable through the public `?filter=`
+   *  grammar. */
   hasProperty?: string;
   limit?: number;
   cursor?: string;
@@ -997,11 +999,17 @@ export interface EdgeTypeStore {
 
 export interface SearchStore {
   search(query: string, filters: SearchFilters): Promise<SearchResult[]>;
+  /** Write the item's row: its searchable text, and the tags its sidecar
+   *  holds at the time of the write. */
   index(
     itemId: string,
     properties: Record<string, unknown>,
     typeId?: string,
   ): Promise<void>;
+  /** Replace the tags on the item's row. The metadata store calls this
+   *  from every tag write, so a tag is findable the moment it is set;
+   *  `GET /search` says it indexes tags, and this is what makes that so. */
+  setTags(itemId: string, tags: readonly string[]): Promise<void>;
   remove(itemId: string): Promise<void>;
 }
 
@@ -2240,12 +2248,6 @@ export interface EdgeStore {
 }
 
 /**
- * Cross-instance coordination primitives. On Postgres, `withJobLock` wraps
- * `pg_try_advisory_lock` so a named background job runs on at most one
- * instance per tick. On SQLite, every backing database is single-process
- * by definition, so the implementation is a pass-through.
- */
-/**
  * Cleanup hooks for the better-auth `auth_session` table. Better Auth itself
  * owns the session TTL via `expiresAt`; this store exists only to drop rows
  * past that timestamp on a periodic sweep so the table doesn't grow unbounded.
@@ -2258,80 +2260,6 @@ export interface AuthSessionStore {
   /** Delete every `auth_session` row whose `expires_at` is strictly
    *  before `now`. Returns the number of rows deleted. */
   deleteExpired(now: Date): Promise<number>;
-}
-
-export interface CoordinationStore {
-  /**
-   * Attempt to acquire a named coordination lock, run `fn`, release the
-   * lock. Returns `fn`'s result on acquisition, `undefined` when another
-   * instance already holds the lock (the caller should treat this as a
-   * no-op tick, not an error).
-   */
-  withJobLock<T>(
-    name: string,
-    fn: () => Promise<T>,
-    options?: {
-      /**
-       * How long to wait for the underlying reservation before answering
-       * `undefined`. Callers on a request path pass a tight budget — their
-       * fallback is better than their user waiting; background ticks keep
-       * the generous default and ride out load spikes. Ignored by the
-       * SQLite implementation, which has nothing to reserve.
-       */
-      reserveTimeoutMs?: number;
-    },
-  ): Promise<T | undefined>;
-  /**
-   * `withJobLock` for the one caller whose `fn` runs for the process
-   * lifetime rather than a tick — the reactive-run bridge's drainer
-   * election. Separated because a permanent holder is capacity
-   * subtracted from whatever pool serves it: on Postgres this reserves
-   * from a dedicated single-connection client so a drainer can never
-   * crowd out streams or job ticks. Same contract otherwise: `undefined`
-   * when another instance holds the lock.
-   */
-  withLongLivedJobLock<T>(
-    name: string,
-    fn: () => Promise<T>,
-  ): Promise<T | undefined>;
-  /**
-   * Acquire a named lock, waiting rather than skipping when another caller
-   * holds it. Connection mint and uninstall use this to serialize lifecycle
-   * decisions across server instances; unlike a background-job lock, either
-   * operation must eventually run and re-check state under the same lock.
-   *
-   * `fn` runs outside whatever the implementation uses to hold the lock, on
-   * the connection the storage layer would normally use. An implementation
-   * must not assume it can bracket `fn` in its own transaction: callers open
-   * transactions of their own. The Postgres implementation is transaction-
-   * scoped for the pooler reasons in `pg/coordination-store.ts`, so a lock
-   * held here survives exactly as long as this call and no longer.
-   *
-   * **An implementation must hold the lock on a connection `fn` can never
-   * need.** Holding one from the pool `fn` queries deadlocks that pool at
-   * its own size: concurrent callers each hold a slot while waiting for a
-   * slot nobody can release, and it takes no contention for the lock to do
-   * it, because the slot is taken before the key is compared. Postgres
-   * gives this its own single-connection pool; SQLite queues callers in
-   * process and reserves nothing.
-   */
-  withExclusiveLock<T>(name: string, fn: () => Promise<T>): Promise<T>;
-  /**
-   * Take a named lock on the caller's **current** transaction, releasing it
-   * when that transaction ends. Must be called inside `runInTransaction`.
-   *
-   * This exists because `withExclusiveLock` cannot guard a write, and the
-   * reason is correctness rather than capacity: it releases before the
-   * caller's transaction commits, so the next lock-holder can read a count
-   * that does not yet include the write it was meant to be excluded from.
-   * A lock that ends with the transaction cannot have that gap.
-   *
-   * It is also the cheaper shape, costing no connection of its own where
-   * `withExclusiveLock` costs one from a pool sized for holding locks and
-   * nothing else. That is a reason to prefer it on a hot path; it is not
-   * what makes it correct here.
-   */
-  lockInTransaction(name: string): Promise<void>;
 }
 
 /**
@@ -2609,7 +2537,6 @@ export interface Storage extends Partial<BetterAuthStorageAdapter> {
    *  `index.ts` is gated on this being present). */
   authSessions?: AuthSessionStore;
   settings: SettingsStore;
-  coordination: CoordinationStore;
   /** Async substrate for `POST /items/bulk-actions`. Always wired on both
    *  dialects. The worker module reads + writes through this store; the
    *  route handler creates jobs + serves GET / DELETE. */

@@ -7,7 +7,11 @@ import {
   ErrorCode,
   type Metadata,
 } from "@withmarfa/shared";
-import type { MetadataStore, SetExtensionsResult } from "../interface.js";
+import type {
+  MetadataStore,
+  SetExtensionsResult,
+  SearchStore,
+} from "../interface.js";
 import { items, metadata } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
 import type { SqliteTxContext } from "./request-context.js";
@@ -15,7 +19,11 @@ import { rowToMetadata } from "./helpers.js";
 import { MAX_TAGS_PER_ITEM } from "../../tag-limits.js";
 
 export class SqliteMetadataStore implements MetadataStore {
-  constructor(private db: DrizzleDb) {}
+  /** The search store, because every tag write is also an index write. */
+  constructor(
+    private db: DrizzleDb,
+    private searchStore: SearchStore,
+  ) {}
 
   /**
    * Aggregate distinct tags across items the caller can read. Uses
@@ -145,6 +153,28 @@ export class SqliteMetadataStore implements MetadataStore {
     return bumpedAt;
   }
 
+  /** The row after a write inside `tx`. The sidecar is updated in place
+   *  rather than upserted, so an id no item carries has no row to read
+   *  back: that is a missing item, said as one, rather than a non-null
+   *  assertion failing on the way out. */
+  private async readBack(
+    tx: SqliteTxContext,
+    itemId: string,
+  ): Promise<Metadata> {
+    const after = await tx
+      .select()
+      .from(metadata)
+      .where(eq(metadata.item_id, itemId))
+      .get();
+    if (!after) {
+      throw new MarfaError(
+        ErrorCode.ITEM_NOT_FOUND,
+        `Item ${itemId} not found`,
+      );
+    }
+    return rowToMetadata(after);
+  }
+
   async getMany(itemIds: string[]): Promise<Metadata[]> {
     if (itemIds.length === 0) return [];
     const rows = await this.db
@@ -197,6 +227,7 @@ export class SqliteMetadataStore implements MetadataStore {
         );
       }
       await this.writeSidecar(tx, itemId, { tags: JSON.stringify(tags) });
+      await this.searchStore.setTags(itemId, tags);
     });
     return this.get(itemId);
   }
@@ -229,13 +260,8 @@ export class SqliteMetadataStore implements MetadataStore {
       await this.writeSidecar(tx, itemId, {
         tags: JSON.stringify(mergedTags),
       });
-      const after = await tx
-        .select()
-        .from(metadata)
-        .where(eq(metadata.item_id, itemId))
-        .get();
-      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- the SET above guarantees the row exists inside this transaction
-      return rowToMetadata(after!);
+      await this.searchStore.setTags(itemId, mergedTags);
+      return this.readBack(tx, itemId);
     });
   }
 
@@ -263,13 +289,8 @@ export class SqliteMetadataStore implements MetadataStore {
         );
       }
       await this.writeSidecar(tx, itemId, { tags: JSON.stringify(merged) });
-      const after = await tx
-        .select()
-        .from(metadata)
-        .where(eq(metadata.item_id, itemId))
-        .get();
-      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- the SET above guarantees the row exists inside this transaction
-      return rowToMetadata(after!);
+      await this.searchStore.setTags(itemId, merged);
+      return this.readBack(tx, itemId);
     });
   }
 
@@ -287,13 +308,8 @@ export class SqliteMetadataStore implements MetadataStore {
       await this.writeSidecar(tx, itemId, {
         tags: JSON.stringify(filtered),
       });
-      const after = await tx
-        .select()
-        .from(metadata)
-        .where(eq(metadata.item_id, itemId))
-        .get();
-      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- the SET above guarantees the row exists inside this transaction
-      return rowToMetadata(after!);
+      await this.searchStore.setTags(itemId, filtered);
+      return this.readBack(tx, itemId);
     });
   }
 

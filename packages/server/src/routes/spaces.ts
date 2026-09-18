@@ -5,35 +5,15 @@ import { requireSpacePermission, requireAuth } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import { readSpaceConfig, writeSpaceConfig } from "../storage/space-config.js";
-
-const TYPE_LIST = z.array(z.string());
+import { enforcementSchema } from "./_schemas.js";
 
 /**
  * One shape, built twice: permissive for reads and strict for the write.
- *
- * `.strict()` does not recurse, so the outer object refusing an unknown key
- * while `enforcement` accepted one would leave the same silent drop a level
- * down, on the block where a dropped key means a rule nobody is enforcing.
- * Applying it at every level is the fix, and it has to be applied to the write
- * shape alone: sharing one strict `enforcement` between the two would make the
- * response strict inside and permissive outside, which is both inconsistent
- * and the wrong half to tighten.
- *
- * Taking the shape as a parameter rather than writing it out twice is what
- * stops the two drifting, which is the failure this whole change is about.
+ * `enforcementSchema` in `_schemas.ts` carries the levers, because a key's
+ * override is the same shape and the two must not drift.
  */
-const enforcementSchema = (strict: boolean) => {
-  const obj = strict ? z.strictObject : z.object;
-  const typesAndSources = { types: TYPE_LIST, sources: z.array(z.string()) };
-  return obj({
-    strict_mode: obj({ types: TYPE_LIST }).optional(),
-    source_allowlist: obj(typesAndSources).optional(),
-    source_filter: obj(typesAndSources).optional(),
-  }).optional();
-};
-
 const spaceConfigShape = (strict: boolean) => ({
-  enforcement: enforcementSchema(strict),
+  enforcement: enforcementSchema(strict).optional(),
   // Retention overrides for the cleanup jobs. Each falls back to the
   // instance env default when unset. `0` disables the job (matches
   // env-default semantics for `TRASH_RETENTION_DAYS=0`); negatives are

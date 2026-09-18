@@ -18,7 +18,6 @@ import { SqliteEdgeStore } from "./edge-store.js";
 import { SqliteEdgeTypeStore } from "./edge-type-store.js";
 import { SqliteEnrichmentStore } from "./enrichment-store.js";
 import { SqliteSettingsStore } from "./settings-store.js";
-import { SqliteCoordinationStore } from "./coordination-store.js";
 import { SqliteRateLimitStore } from "./rate-limit-store.js";
 import { SqliteBulkActionJobStore } from "./bulk-action-job-store.js";
 import { SqliteIdempotencyStore } from "./idempotency-store.js";
@@ -53,7 +52,7 @@ export async function createSqliteStorage(sqlitePath: string): Promise<
   const versionStore = new SqliteVersionStore(db);
   const searchStore = new SqliteSearchStore(db);
   const itemStore = new SqliteItemStore(db, versionStore, searchStore);
-  const metadataStore = new SqliteMetadataStore(db);
+  const metadataStore = new SqliteMetadataStore(db, searchStore);
   const typeStore = new SqliteTypeStore(db);
   const keyStore = new SqliteKeyStore(db);
   const blobStore = new SqliteBlobStore(db);
@@ -145,7 +144,6 @@ export async function createSqliteStorage(sqlitePath: string): Promise<
     eventLog: eventLogStore,
     authSessions: authSessionStore,
     settings: new SqliteSettingsStore(db),
-    coordination: new SqliteCoordinationStore(),
     // Async bulk-action substrate — single-process; see
     // bulk-action-job-store.ts for the claim-without-FOR-UPDATE path.
     bulkActionJobs: new SqliteBulkActionJobStore(db),

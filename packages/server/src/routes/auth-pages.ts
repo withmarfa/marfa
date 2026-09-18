@@ -167,10 +167,11 @@ async function createUserAppGrant(
     }
   }
 
-  // First-time consent: insert a fresh row.
+  // First-time consent: insert a fresh row. No tier named: `tier` is a
+  // server-owned field on a `system.*` row (`_tier-rules.ts`), and every
+  // writer of one leaves it to the store the way `POST /items` does.
   const item = await storage.items.create({
     type: "system.connection",
-    tier: "library",
     state: "active",
     properties: {
       kind: "app",

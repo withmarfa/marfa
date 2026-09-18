@@ -14,11 +14,14 @@ type TxOrDb =
 export class SqliteVersionStore implements VersionStore {
   constructor(private db: DrizzleDb) {}
 
+  /** `db` is the caller's transaction when the snapshot has to land with the
+   *  write it records; the store's own handle otherwise. */
   async create(
     itemId: string,
     version: number,
     properties: Record<string, unknown>,
     deviceId?: string,
+    db: TxOrDb = this.db,
   ): Promise<Version> {
     const now = new Date().toISOString();
     const row = {
@@ -29,7 +32,7 @@ export class SqliteVersionStore implements VersionStore {
       created_at: now,
       device: deviceId ?? null,
     };
-    await this.db.insert(versions).values(row).run();
+    await db.insert(versions).values(row).run();
     return {
       id: row.id,
       item_id: itemId,

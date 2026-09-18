@@ -147,6 +147,50 @@ describe("POST /items/:id/restore — the restore obeys the type's graph", () =>
   });
 });
 
+describe("POST /items/:id/transition — a transition out of the trash is judged by the graph", () => {
+  it("refuses trashed → archived by name, and admits trashed → active", async () => {
+    // The route used to read through the trashed-invisible getter, so every
+    // trashed row answered 404 and the graph's own refusal was unreachable.
+    // `trashed` admits `active` alone, and the refusal has to say so.
+    ctx = await createTestContext();
+    const c = ctx;
+
+    const created = await request(c.app, "POST", "/items", {
+      key: c.spaceKey,
+      body: { type: "core.note", properties: { body: "To move" } },
+    });
+    expect(created.status).toBe(201);
+    const { item } = (await created.json()) as { item: { id: string } };
+    const deleted = await request(c.app, "DELETE", `/items/${item.id}`, {
+      key: c.spaceKey,
+    });
+    expect(deleted.status).toBe(200);
+
+    const archived = await request(
+      c.app,
+      "POST",
+      `/items/${item.id}/transition`,
+      { key: c.spaceKey, body: { state: "archived" } },
+    );
+    expect(archived.status).toBe(400);
+    const error = await errorOf(archived);
+    expect(error.code).toBe("invalid_transition");
+    expect(error.message).toContain('Transition from "trashed" to "archived"');
+    expect((await c.storage.items.getIncludingTrashed(item.id))?.state).toBe(
+      "trashed",
+    );
+
+    const activated = await request(
+      c.app,
+      "POST",
+      `/items/${item.id}/transition`,
+      { key: c.spaceKey, body: { state: "active" } },
+    );
+    expect(activated.status).toBe(200);
+    expect((await c.storage.items.get(item.id))?.state).toBe("active");
+  });
+});
+
 describe("POST /items — a create names a state the type's lifecycle contains", () => {
   it("still admits archived and trashed for an ordinary type", async () => {
     ctx = await createTestContext();

@@ -212,6 +212,31 @@ export const ItemDetailSchema = z.object({
 });
 
 /**
+ * The three schema-enforcement levers, one shape built twice: permissive for
+ * every read and for a key's override, strict for the instance config's
+ * write. `.strict()` does not recurse, so the outer object refusing an
+ * unknown key while `enforcement` accepted one would leave a silent drop a
+ * level down, on the block where a dropped key means a rule nobody is
+ * enforcing; taking the strictness as a parameter is what stops the two
+ * drifting.
+ */
+export const enforcementSchema = (strict: boolean) => {
+  const obj = strict ? z.strictObject : z.object;
+  const typeList = z.array(z.string());
+  const typesAndSources = { types: typeList, sources: z.array(z.string()) };
+  return obj({
+    strict_mode: obj({ types: typeList }).optional(),
+    source_allowlist: obj(typesAndSources).optional(),
+    source_filter: obj(typesAndSources).optional(),
+  });
+};
+
+/** A key's per-credential override: the same levers, permissive. */
+export const EnforcementOverrideSchema = enforcementSchema(false).describe(
+  "Per-credential schema-enforcement override. A lever set here wins over the instance config for this credential, lever by lever; absent, the key inherits the instance config.",
+);
+
+/**
  * An API key as a create route answers it.
  *
  * Two doors mint a key — the space caller's own and the operator one that
@@ -254,6 +279,7 @@ export const KeyResponseSchema = z.object({
   profile_permissions: z
     .record(z.string(), z.enum(["read", "write"]))
     .optional(),
+  enforcement_override: EnforcementOverrideSchema.optional(),
   created_at: z.string(),
   last_used_at: z.string().nullable(),
 });

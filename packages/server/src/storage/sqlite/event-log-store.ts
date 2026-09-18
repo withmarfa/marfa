@@ -1,4 +1,4 @@
-import { gt, lt, sql } from "drizzle-orm";
+import { lt, sql } from "drizzle-orm";
 import type { EventLogStore, PersistedEvent } from "../interface.js";
 import { eventLog } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
@@ -17,9 +17,9 @@ export class SqliteEventLogStore implements EventLogStore {
       INSERT INTO event_log (event_type, item_id, edge_id, payload, enable_fanout, created_at)
       VALUES (${entry.event_type}, ${entry.item_id ?? null}, ${entry.edge_id ?? null}, ${entry.payload}, ${(entry.enable_fanout ?? true) ? 1 : 0}, ${new Date().toISOString()})
     `);
-    // libsql returns lastInsertRowid as `bigint`. Match better-sqlite3's prior
-    // behavior of normalizing to bigint either way so the public wire shape
-    // is identical to the PG side.
+    // libsql returns lastInsertRowid as a `bigint` or a number depending on
+    // the driver build; normalized to bigint either way so the public wire
+    // shape is one thing.
     const id = result.lastInsertRowid;
     if (id == null) {
       throw new Error("event_log insert did not return a rowid");
@@ -28,13 +28,15 @@ export class SqliteEventLogStore implements EventLogStore {
   }
 
   async getAfter(afterId: bigint, limit: number): Promise<PersistedEvent[]> {
-    // SQLite Drizzle binds JS numbers; the row's id is stored as INTEGER (i64).
-    // Convert the bigint cursor to number for the bind, then re-bigint each
-    // returned id so the public PersistedEvent shape carries a bigint.
+    // The row's id is an INTEGER (i64) and the cursor a bigint. Compared as
+    // an integer on the SQLite side rather than through a JS number, which
+    // loses precision past 2^53 and would then skip or repeat rows at the
+    // top of a long log; each returned id is re-bigint'd so the public
+    // PersistedEvent shape carries a bigint.
     const rows = await this.db
       .select()
       .from(eventLog)
-      .where(gt(eventLog.id, Number(afterId)))
+      .where(sql`${eventLog.id} > CAST(${afterId.toString()} AS INTEGER)`)
       .orderBy(eventLog.id)
       .limit(limit)
       .all();

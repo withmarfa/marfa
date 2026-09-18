@@ -238,7 +238,6 @@ describe("TrashPurger — the instance config override", () => {
       30, // the instance default the override beats
       3_600_000,
       () => FIXED_NOW,
-      ctx.storage.coordination,
       fanout,
     );
     const deleted = await purger.runOnce();
@@ -267,7 +266,6 @@ describe("TrashPurger — the instance config override", () => {
       60,
       3_600_000,
       () => FIXED_NOW,
-      ctx.storage.coordination,
       fanout,
     );
     const deleted = await purger.runOnce();
@@ -283,7 +281,6 @@ describe("runSpaceCleanup — audit and event-log retention", () => {
     const calls: { retention: number }[] = [];
     const total = await runSpaceCleanup({
       jobName: "test-audit-cleanup",
-      coordination: ctx.storage.coordination,
       fanout: {
         settings: ctx.storage.settings,
         configField: "audit_retention_days",
@@ -309,7 +306,6 @@ describe("runSpaceCleanup — audit and event-log retention", () => {
     const calls: { retention: number }[] = [];
     const total = await runSpaceCleanup({
       jobName: "test-eventlog-cleanup",
-      coordination: ctx.storage.coordination,
       fanout: {
         settings: ctx.storage.settings,
         configField: "event_log_retention_hours",
@@ -330,7 +326,6 @@ describe("runSpaceCleanup — audit and event-log retention", () => {
     const calls: { retention: number }[] = [];
     const total = await runSpaceCleanup({
       jobName: "test-no-fanout",
-      coordination: ctx.storage.coordination,
       fanout: undefined,
       instanceDefault: 90,
       unitMs: MS_PER_DAY,

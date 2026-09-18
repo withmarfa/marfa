@@ -95,18 +95,14 @@
  *     does not order against a `Z` one as text.
  */
 import { createRoute, z } from "@hono/zod-openapi";
-import {
-  MarfaError,
-  ErrorCode,
-  isValidTypePattern,
-  matchesTypeFilter,
-} from "@withmarfa/shared";
+import { MarfaError, ErrorCode, matchesTypeFilter } from "@withmarfa/shared";
 import type { Item } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { requireAuth, getTypeFilter } from "../middleware/auth.js";
 import type { ItemFilters, Storage } from "../storage/interface.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import { ItemSchema } from "./_schemas.js";
+import { assertTypeFilter } from "./_type-filter.js";
 import {
   expandSeries,
   RecurrenceExpansionError,
@@ -992,12 +988,10 @@ export function occurrenceRoutes(
         { from: query.from, to: query.to, max_days: MAX_WINDOW_DAYS },
       );
     }
-    if (query.type !== undefined && !isValidTypePattern(query.type)) {
-      throw new MarfaError(
-        ErrorCode.VALIDATION_ERROR,
-        "Invalid type identifier",
-      );
-    }
+    // The same judgement `/items`, `/search` and `/export` make: the global
+    // wildcard and a malformed pattern are refused, and a concrete id nobody
+    // has registered is `unknown_type` rather than an empty window.
+    assertTypeFilter(query.type);
 
     // The caller's own type permissions still decide what is readable;
     // this route narrows to event types on top of that rather than

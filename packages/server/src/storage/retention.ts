@@ -1,6 +1,5 @@
 import type {
   AuthSessionStore,
-  CoordinationStore,
   ItemStore,
   SettingsStore,
   Storage,
@@ -47,10 +46,6 @@ export interface SpaceFanout {
  * the deployment running with no trash purge by setting the env var to 0.
  * The default at the config layer is 60.
  *
- * When a `coordination` store is supplied, each tick is gated by a named
- * advisory lock so multi-instance deployments run the purge once per
- * tick cluster-wide instead of once per instance.
- *
  * When `fanout` is supplied, a `runOnce()` tick honors the
  * `trash_retention_days` override from the instance configuration. When
  * `fanout` is omitted the job sweeps at the instance default.
@@ -80,7 +75,6 @@ export class TrashPurger {
     private retentionDays: number,
     private intervalMs: number,
     private nowFn: () => Date = () => new Date(),
-    private coordination?: CoordinationStore,
     private fanout?: SpaceFanout,
   ) {}
 
@@ -114,7 +108,6 @@ export class TrashPurger {
     return this.fanout
       ? runSpaceFanout({
           jobName: "trash-purge",
-          coordination: this.coordination,
           fanout: this.fanout,
           nowFn: this.nowFn,
           instanceDefault: this.retentionDays,
@@ -140,14 +133,8 @@ export class TrashPurger {
 
   private async poll(): Promise<void> {
     try {
-      const deleted = this.fanout
-        ? await this.runOnce()
-        : this.coordination
-          ? await this.coordination.withJobLock("trash-purge", () =>
-              this.runOnce(),
-            )
-          : await this.runOnce();
-      if (deleted !== undefined && deleted > 0) {
+      const deleted = await this.runOnce();
+      if (deleted > 0) {
         log("info", "Trash purge", {
           deleted,
           retentionDays: this.retentionDays,
@@ -220,7 +207,6 @@ export class RevokedGrantPurger {
     private retentionDays: number,
     private intervalMs: number,
     private nowFn: () => Date = () => new Date(),
-    private coordination?: CoordinationStore,
   ) {}
 
   start(): void {
@@ -257,12 +243,8 @@ export class RevokedGrantPurger {
   private async poll(): Promise<void> {
     if (this.stopped) return;
     try {
-      const deleted = this.coordination
-        ? await this.coordination.withJobLock("revoked-grant-purge", () =>
-            this.runOnce(),
-          )
-        : await this.runOnce();
-      if (deleted !== undefined && deleted > 0) {
+      const deleted = await this.runOnce();
+      if (deleted > 0) {
         log("info", "Revoked grant tombstones purged", { deleted });
       }
     } catch (err) {
@@ -294,8 +276,7 @@ export class RevokedGrantPurger {
  * falls to `DcrClientCleaner`. Nothing here reaches into either.
  *
  * Instance-wide: the window is a property of the deployment rather than of
- * space policy. Cluster-wide coordination lock keyed
- * `"grant-inactivity-retire"`.
+ * space policy.
  */
 /** Grants retired by one tick; the remainder wait for the next. */
 const RETIRE_PER_TICK = 500;
@@ -310,7 +291,6 @@ export class GrantInactivityRetirer {
     private inactivityDays: number,
     private intervalMs: number,
     private nowFn: () => Date = () => new Date(),
-    private coordination?: CoordinationStore,
   ) {}
 
   start(): void {
@@ -396,12 +376,8 @@ export class GrantInactivityRetirer {
   private async poll(): Promise<void> {
     if (this.stopped) return;
     try {
-      const retired = this.coordination
-        ? await this.coordination.withJobLock("grant-inactivity-retire", () =>
-            this.runOnce(),
-          )
-        : await this.runOnce();
-      if (retired !== undefined && retired > 0) {
+      const retired = await this.runOnce();
+      if (retired > 0) {
         log("info", "Inactive grants retired", {
           retired,
           inactivityDays: this.inactivityDays,
@@ -423,7 +399,6 @@ export class ActivityPurger {
     private retentionDays: number,
     private intervalMs: number,
     private nowFn: () => Date = () => new Date(),
-    private coordination?: CoordinationStore,
     private fanout?: SpaceFanout,
   ) {}
 
@@ -449,7 +424,6 @@ export class ActivityPurger {
     return this.fanout
       ? runSpaceFanout({
           jobName: "activity-purge",
-          coordination: this.coordination,
           fanout: this.fanout,
           nowFn: this.nowFn,
           instanceDefault: this.retentionDays,
@@ -475,14 +449,8 @@ export class ActivityPurger {
 
   private async poll(): Promise<void> {
     try {
-      const deleted = this.fanout
-        ? await this.runOnce()
-        : this.coordination
-          ? await this.coordination.withJobLock("activity-purge", () =>
-              this.runOnce(),
-            )
-          : await this.runOnce();
-      if (deleted !== undefined && deleted > 0) {
+      const deleted = await this.runOnce();
+      if (deleted > 0) {
         log("info", "Activity purge", {
           deleted,
           retentionDays: this.retentionDays,
@@ -501,10 +469,7 @@ export class ActivityPurger {
  * (browser-side ephemeral cookies vanish on tab close, but the server-side
  * row stays around until the sweep catches up).
  *
- * Instance-wide: the deletion criterion is purely time-based. Cluster-wide
- * coordination
- * lock keyed `"auth-session-cleanup"` keeps multi-instance deployments
- * running once per tick.
+ * Instance-wide: the deletion criterion is purely time-based.
  */
 export class AuthSessionCleaner {
   private interval: ReturnType<typeof setInterval> | null = null;
@@ -515,7 +480,6 @@ export class AuthSessionCleaner {
     private store: AuthSessionStore,
     private intervalMs: number,
     private nowFn: () => Date = () => new Date(),
-    private coordination?: CoordinationStore,
   ) {}
 
   start(): void {
@@ -549,12 +513,8 @@ export class AuthSessionCleaner {
 
   private async poll(): Promise<void> {
     try {
-      const deleted = this.coordination
-        ? await this.coordination.withJobLock("auth-session-cleanup", () =>
-            this.runOnce(),
-          )
-        : await this.runOnce();
-      if (deleted !== undefined && deleted > 0) {
+      const deleted = await this.runOnce();
+      if (deleted > 0) {
         log("info", "Auth session cleanup", { deleted });
       }
     } catch (err) {
@@ -569,8 +529,7 @@ export class AuthSessionCleaner {
  * the GC just keeps the table from growing unboundedly across the long tail
  * of one-shot windows (e.g. a single IP that hit `/auth/sign-up` once).
  *
- * Instance-wide. Cluster-wide coordination lock keyed `"rate-limit-cleanup"` keeps
- * multi-instance deployments running once per tick.
+ * Instance-wide.
  */
 export class RateLimitWindowCleaner {
   private interval: ReturnType<typeof setInterval> | null = null;
@@ -581,7 +540,6 @@ export class RateLimitWindowCleaner {
     private storage: Storage,
     private intervalMs: number,
     private nowFn: () => Date = () => new Date(),
-    private coordination?: CoordinationStore,
   ) {}
 
   start(): void {
@@ -614,12 +572,8 @@ export class RateLimitWindowCleaner {
 
   private async poll(): Promise<void> {
     try {
-      const deleted = this.coordination
-        ? await this.coordination.withJobLock("rate-limit-cleanup", () =>
-            this.runOnce(),
-          )
-        : await this.runOnce();
-      if (deleted !== undefined && deleted > 0) {
+      const deleted = await this.runOnce();
+      if (deleted > 0) {
         log("info", "Rate-limit window cleanup", { deleted });
       }
     } catch (err) {
@@ -646,8 +600,7 @@ export class RateLimitWindowCleaner {
  * grant check is space-agnostic — a client with zero grants is dead
  * regardless of which space registered it — so this is an instance-wide
  * sweep (like `AuthSessionCleaner` / `RateLimitWindowCleaner`), not a
- * per-space fan-out. Cluster-wide coordination lock keyed
- * `"dcr-client-cleanup"`.
+ * per-space fan-out.
  *
  * `retentionDays <= 0` disables the job — the operator can leave the
  * deployment running with no DCR reaper by setting the env var to 0.
@@ -662,7 +615,6 @@ export class DcrClientCleaner {
     private retentionDays: number,
     private intervalMs: number,
     private nowFn: () => Date = () => new Date(),
-    private coordination?: CoordinationStore,
   ) {}
 
   start(): void {
@@ -703,12 +655,8 @@ export class DcrClientCleaner {
 
   private async poll(): Promise<void> {
     try {
-      const deleted = this.coordination
-        ? await this.coordination.withJobLock("dcr-client-cleanup", () =>
-            this.runOnce(),
-          )
-        : await this.runOnce();
-      if (deleted !== undefined && deleted > 0) {
+      const deleted = await this.runOnce();
+      if (deleted > 0) {
         log("info", "DCR client cleanup", {
           deleted,
           retentionDays: this.retentionDays,
@@ -738,7 +686,7 @@ export class DcrClientCleaner {
  * Instance-wide, like the other sweeps with no per-space fan-out: a hash
  * is deleted from the backend once and loses every space's row, so the
  * question "does anything reference this" has to be asked across all of
- * them. Cluster-wide coordination lock keyed `"blob-cleanup"`.
+ * them.
  *
  * `graceMs <= 0` disables the job. A zero window would sweep a blob the
  * instant it is unreferenced, which is the defect rather than a
@@ -755,7 +703,6 @@ export class BlobOrphanCleaner {
     private graceMs: number,
     private intervalMs: number,
     private nowFn: () => Date = () => new Date(),
-    private coordination?: CoordinationStore,
   ) {}
 
   start(): void {
@@ -797,12 +744,8 @@ export class BlobOrphanCleaner {
 
   private async poll(): Promise<void> {
     try {
-      const removed = this.coordination
-        ? await this.coordination.withJobLock("blob-cleanup", () =>
-            this.runOnce(),
-          )
-        : await this.runOnce();
-      if (removed !== undefined && removed > 0) {
+      const removed = await this.runOnce();
+      if (removed > 0) {
         log("info", "Blob cleanup", { removed, graceMs: this.graceMs });
       }
     } catch (err) {
@@ -831,9 +774,8 @@ export class BlobOrphanCleaner {
  *      credentials — a week of post-revocation visibility is plenty.
  *
  * Instance-wide, not space-scoped — expiry is a property of the row, not
- * of space policy. Cluster-wide coordination lock keyed
- * `"runtime-credential-reap"`. Disabled by wiring (interval `0` skips
- * construction in `index.ts`), matching the other cleaners.
+ * of space policy. Disabled by wiring (interval `0` skips construction in
+ * `index.ts`), matching the other cleaners.
  */
 /**
  * Hard-deletes revoked ordinary API keys once their revocation is old
@@ -869,7 +811,6 @@ export class RevokedKeyReaper {
     private storage: Storage,
     private intervalMs: number,
     private nowFn: () => Date = () => new Date(),
-    private coordination?: CoordinationStore,
   ) {}
 
   start(): void {
@@ -905,12 +846,8 @@ export class RevokedKeyReaper {
 
   private async poll(): Promise<void> {
     try {
-      const deleted = this.coordination
-        ? await this.coordination.withJobLock("revoked-key-reap", () =>
-            this.runOnce(),
-          )
-        : await this.runOnce();
-      if (deleted !== undefined && deleted > 0) {
+      const deleted = await this.runOnce();
+      if (deleted > 0) {
         log("info", "Revoked key reap", { deleted });
       }
     } catch (err) {
@@ -934,13 +871,9 @@ async function effectiveRetention(
   return typeof override === "number" ? override : instanceDefault;
 }
 
-/**
- * One sweep at the effective retention, gated by the job's coordination
- * lock when one is wired.
- */
+/** One sweep at the effective retention. */
 async function runSpaceFanout(opts: {
   jobName: string;
-  coordination: CoordinationStore | undefined;
   fanout: SpaceFanout;
   nowFn: () => Date;
   instanceDefault: number;
@@ -952,20 +885,7 @@ async function runSpaceFanout(opts: {
   const cutoff = new Date(
     opts.nowFn().getTime() - effective * opts.unitMs,
   ).toISOString();
-  return (
-    (await runOneScope(opts.coordination, opts.jobName, () =>
-      opts.sweep(cutoff),
-    )) ?? 0
-  );
-}
-
-async function runOneScope(
-  coordination: CoordinationStore | undefined,
-  lockKey: string,
-  sweep: () => Promise<number>,
-): Promise<number | undefined> {
-  if (!coordination) return sweep();
-  return coordination.withJobLock(lockKey, sweep);
+  return opts.sweep(cutoff);
 }
 
 /**
@@ -980,7 +900,6 @@ async function runOneScope(
  */
 export async function runSpaceCleanup(opts: {
   jobName: string;
-  coordination: CoordinationStore | undefined;
   fanout: SpaceFanout | undefined;
   instanceDefault: number;
   unitMs: number;
@@ -990,9 +909,5 @@ export async function runSpaceCleanup(opts: {
     ? await effectiveRetention(opts.fanout, opts.instanceDefault)
     : opts.instanceDefault;
   if (effective <= 0) return 0;
-  return (
-    (await runOneScope(opts.coordination, opts.jobName, () =>
-      opts.sweep(effective),
-    )) ?? 0
-  );
+  return opts.sweep(effective);
 }

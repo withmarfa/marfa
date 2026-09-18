@@ -87,6 +87,11 @@ export function createApp(
     const body = {
       error: { code: "not_found", message: "Not found" },
     };
+    // The header every error the handler shapes carries. This response is
+    // built here rather than thrown through the handler, so it sets the
+    // header itself, and a client keying on `X-Error-Code` reads a 404 the
+    // same way it reads every other refusal.
+    c.header("X-Error-Code", "not_found");
     if (prefersHtml(c.req.header("accept"))) {
       return c.html(renderHttpErrorPage(404), 404);
     }

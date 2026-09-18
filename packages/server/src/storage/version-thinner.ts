@@ -1,5 +1,5 @@
 import { getTypeSchema } from "@withmarfa/shared";
-import type { CoordinationStore, VersionStore } from "./interface.js";
+import type { VersionStore } from "./interface.js";
 import {
   computeVersionsToDelete,
   resolvePolicy,
@@ -20,7 +20,6 @@ export class VersionThinner {
     private versionStore: VersionStore,
     private globalDefaults: ResolvedPolicy,
     private intervalMs: number,
-    private coordination?: CoordinationStore,
   ) {}
 
   start(): void {
@@ -42,20 +41,14 @@ export class VersionThinner {
   }
 
   /** One tick, for schedulers that own the cadence themselves. Keeps the
-   *  coordination lock and failure logging the timer path applies. */
+   *  failure logging the timer path applies. */
   runOnce(): Promise<void> {
     return this.poll();
   }
 
   private async poll(): Promise<void> {
     try {
-      if (this.coordination) {
-        await this.coordination.withJobLock("version-thinning", () =>
-          this.doPoll(),
-        );
-      } else {
-        await this.doPoll();
-      }
+      await this.doPoll();
     } catch (err) {
       logJobTickFailure("Version thinning", err, this.stopped);
     }

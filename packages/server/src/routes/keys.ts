@@ -31,7 +31,7 @@ import {
   consumeBootstrapSecret,
 } from "../auth/bootstrap-secret.js";
 import type { Storage } from "../storage/interface.js";
-import { KeyResponseSchema } from "./_schemas.js";
+import { EnforcementOverrideSchema, KeyResponseSchema } from "./_schemas.js";
 import {
   createOpenAPIRouter,
   OkResponseSchema,
@@ -96,13 +96,20 @@ const KeyListItemSchema = z.object({
   metadata_permissions: z
     .record(z.string(), z.enum(["read", "write"]))
     .optional(),
+  // Declared because the handler sends them: a listing returns stored rows
+  // whole, and the published shape was short of two fields every row can
+  // carry.
+  profile_permissions: z
+    .record(z.string(), z.enum(["read", "write"]))
+    .optional(),
+  enforcement_override: EnforcementOverrideSchema.optional(),
   created_at: z.string(),
   expires_at: z
     .string()
     .nullable()
     .optional()
     .describe(
-      "Hard lifetime bound. NULL for human-minted keys, which never expire. Runtime credentials are always stamped; a key past this instant is refused exactly like a revoked one.",
+      "Hard lifetime bound. NULL for human-minted keys, which never expire. A key past this instant is refused exactly like a revoked one.",
     ),
   last_used_at: z.string().nullable(),
 });
@@ -153,6 +160,7 @@ const createKeyRoute = createRoute({
             profile_permissions: z
               .record(z.string(), z.enum(["read", "write"]))
               .optional(),
+            enforcement_override: EnforcementOverrideSchema.optional(),
           }),
         },
       },
@@ -322,6 +330,9 @@ const UpdateKeyBodySchema = z.object({
   space_permissions: z
     .array(z.enum(SPACE_PERMISSIONS as unknown as [string, ...string[]]))
     .optional(),
+  enforcement_override: EnforcementOverrideSchema.nullable()
+    .optional()
+    .describe("`null` clears the override; an object replaces it whole."),
   source: z.unknown().optional(),
 });
 
@@ -359,6 +370,7 @@ const KeyDetailSchema = z.object({
     .describe(
       "Hard lifetime bound. NULL for human-minted keys, which never expire. Runtime credentials are always stamped; a key past this instant is refused exactly like a revoked one.",
     ),
+  enforcement_override: EnforcementOverrideSchema.optional(),
   last_used_at: z.string().nullable(),
 });
 
@@ -1048,6 +1060,9 @@ export function keyRoutes(storage: Storage, salt: string) {
           edge_permissions: edgePermissions,
           metadata_permissions: metadataPermissions,
           profile_permissions: profilePermissions,
+          // Documented as the credential's own levers, and taken as sent: a
+          // lever set here wins over the instance config for this key.
+          enforcement_override: body.enforcement_override,
           // Set from who is minting, never from the body. A key an app made
           // belongs to that app: the keys page groups it there, and revoking the
           // app offers to revoke it.
@@ -1095,6 +1110,7 @@ export function keyRoutes(storage: Storage, salt: string) {
           edge_permissions: stored.edge_permissions,
           metadata_permissions: stored.metadata_permissions,
           profile_permissions: stored.profile_permissions,
+          enforcement_override: stored.enforcement_override,
           created_at: stored.created_at,
           last_used_at: stored.last_used_at,
         },
@@ -1254,6 +1270,7 @@ export function keyRoutes(storage: Storage, salt: string) {
       // already the empty one.
       space_permissions: requestedSpacePermissions,
       profile_permissions: writtenReach.profile_permissions,
+      enforcement_override: body.enforcement_override,
     });
 
     void storage.audit.log({
@@ -1280,6 +1297,8 @@ export function keyRoutes(storage: Storage, salt: string) {
         extension_permissions: updated.extension_permissions,
         edge_permissions: updated.edge_permissions,
         metadata_permissions: updated.metadata_permissions,
+        profile_permissions: updated.profile_permissions,
+        enforcement_override: updated.enforcement_override,
         created_at: updated.created_at,
         // Sent because it can be. Unlike the create routes, where the field
         // was declared and no key a door mints could ever carry one, any key

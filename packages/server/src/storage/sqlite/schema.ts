@@ -210,6 +210,13 @@ export const apiKeys = sqliteTable(
     edge_permissions: text("edge_permissions").notNull().default("{}"),
     metadata_permissions: text("metadata_permissions").notNull().default("{}"),
     /**
+     * Per-credential schema-enforcement override, the `EnforcementSettings`
+     * shape as JSON, or NULL for a key that inherits the instance config
+     * untouched. Read by `resolveEnforcement` beside the instance config at
+     * every door that enforces.
+     */
+    enforcement_override: text("enforcement_override"),
+    /**
      * Category 2 of the permission model, Your profile. Keyed on the row
      * (`name`, `email`, `avatar`) with the levelled parent keyed on `*`.
      *

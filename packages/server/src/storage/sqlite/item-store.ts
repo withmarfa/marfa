@@ -83,7 +83,7 @@ import {
   planAutoMerge,
   versionConflict,
 } from "../conflict.js";
-import { edges, items, metadata, versions } from "./schema.js";
+import { edges, items, metadata } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
 import { isPrimaryKeyViolation } from "./pk-violation.js";
 import type { SqliteVersionStore } from "./version-store.js";
@@ -768,20 +768,18 @@ export class SqliteItemStore implements ItemStore {
       const now = new Date().toISOString();
       const deviceId = row.device ?? undefined;
 
+      // The version store's own write, inside this transaction, so the
+      // snapshot and the update it records land together or not at all.
       const writeVersion = async (
         propertiesToSnapshot: Record<string, unknown>,
       ) => {
-        await tx
-          .insert(versions)
-          .values({
-            id: generateId(),
-            item_id: id,
-            version: row.version,
-            properties: JSON.stringify(propertiesToSnapshot),
-            created_at: now,
-            device: deviceId ?? null,
-          })
-          .run();
+        await this.versionStore.create(
+          id,
+          row.version,
+          propertiesToSnapshot,
+          deviceId,
+          tx,
+        );
       };
 
       if (input.version === undefined || row.version === input.version) {

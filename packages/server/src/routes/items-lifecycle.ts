@@ -197,7 +197,11 @@ export function itemsLifecycleRoutes(storage: Storage) {
     // typeof / truthiness check would be unreachable.
 
     requireAuth(c);
-    const item = await storage.items.get(id);
+    // Read past the trash, as `restore` above does, so a transition out of
+    // it is judged by the type's graph: `trashed` admits `active` alone, and
+    // the store's refusal names the move. Read through the trashed-invisible
+    // getter, every trashed row answered 404 and the graph never spoke.
+    const item = await storage.items.getIncludingTrashed(id);
     if (!item) {
       throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
     }

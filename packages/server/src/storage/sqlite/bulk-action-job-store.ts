@@ -83,9 +83,9 @@ export class SqliteBulkActionJobStore implements BulkActionJobStore {
     workerId: string,
     now: string,
   ): Promise<BulkActionJobRow | null> {
-    // Single-process: claim the oldest queued row. better-sqlite3 +
-    // Drizzle execute synchronously inside this await, so no race
-    // window across separate awaits.
+    // Single-process: claim the oldest queued row. One UPDATE ... RETURNING
+    // under SQLite's single writer, so two workers cannot claim the same
+    // row.
     const rows = await this.db
       .update(bulkActionJobs)
       .set({

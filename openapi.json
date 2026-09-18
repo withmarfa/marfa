@@ -16080,7 +16080,7 @@
           "Types"
         ],
         "summary": "Delete a custom type",
-        "description": "Removes a custom type registration. Requires `space.schema` — platform-shipped types are immutable.\n\nRejected with `409 type_has_subtypes` while another registered type declares this one as its parent, naming them in `details.subtype_ids`. `?force=true` does not cover that case: delete each subtype first, or give it a different parent through `PUT /types/{id}`.\n\nRejected with `409 type_in_use` if any item of the type still exists, unless `?force=true` orphans those rows (they persist, but new writes against the type return `400 invalid_type`).",
+        "description": "Removes a custom type registration. Requires `space.schema` — platform-shipped types are immutable.\n\nRejected with `409 type_has_subtypes` while another registered type declares this one as its parent, naming them in `details.subtype_ids`. `?force=true` does not cover that case: delete each subtype first, or give it a different parent through `PUT /types/{id}`.\n\nRejected with `409 type_in_use` if any item of the type still exists, unless `?force=true` orphans those rows (they persist, but new writes against the type return `400 unknown_type`).",
         "security": [
           {
             "bearerAuth": []
@@ -18506,6 +18506,68 @@
                         "write"
                       ]
                     }
+                  },
+                  "enforcement_override": {
+                    "type": "object",
+                    "properties": {
+                      "strict_mode": {
+                        "type": "object",
+                        "properties": {
+                          "types": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          }
+                        },
+                        "required": [
+                          "types"
+                        ]
+                      },
+                      "source_allowlist": {
+                        "type": "object",
+                        "properties": {
+                          "types": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "sources": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          }
+                        },
+                        "required": [
+                          "types",
+                          "sources"
+                        ]
+                      },
+                      "source_filter": {
+                        "type": "object",
+                        "properties": {
+                          "types": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "sources": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          }
+                        },
+                        "required": [
+                          "types",
+                          "sources"
+                        ]
+                      }
+                    },
+                    "description": "Per-credential schema-enforcement override. A lever set here wins over the instance config for this credential, lever by lever; absent, the key inherits the instance config."
                   }
                 },
                 "required": [
@@ -18615,6 +18677,68 @@
                           "write"
                         ]
                       }
+                    },
+                    "enforcement_override": {
+                      "type": "object",
+                      "properties": {
+                        "strict_mode": {
+                          "type": "object",
+                          "properties": {
+                            "types": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            }
+                          },
+                          "required": [
+                            "types"
+                          ]
+                        },
+                        "source_allowlist": {
+                          "type": "object",
+                          "properties": {
+                            "types": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            },
+                            "sources": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            }
+                          },
+                          "required": [
+                            "types",
+                            "sources"
+                          ]
+                        },
+                        "source_filter": {
+                          "type": "object",
+                          "properties": {
+                            "types": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            },
+                            "sources": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            }
+                          },
+                          "required": [
+                            "types",
+                            "sources"
+                          ]
+                        }
+                      },
+                      "description": "Per-credential schema-enforcement override. A lever set here wins over the instance config for this credential, lever by lever; absent, the key inherits the instance config."
                     },
                     "created_at": {
                       "type": "string"
@@ -18982,13 +19106,85 @@
                               ]
                             }
                           },
+                          "profile_permissions": {
+                            "type": "object",
+                            "additionalProperties": {
+                              "type": "string",
+                              "enum": [
+                                "read",
+                                "write"
+                              ]
+                            }
+                          },
+                          "enforcement_override": {
+                            "type": "object",
+                            "properties": {
+                              "strict_mode": {
+                                "type": "object",
+                                "properties": {
+                                  "types": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string"
+                                    }
+                                  }
+                                },
+                                "required": [
+                                  "types"
+                                ]
+                              },
+                              "source_allowlist": {
+                                "type": "object",
+                                "properties": {
+                                  "types": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "sources": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string"
+                                    }
+                                  }
+                                },
+                                "required": [
+                                  "types",
+                                  "sources"
+                                ]
+                              },
+                              "source_filter": {
+                                "type": "object",
+                                "properties": {
+                                  "types": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "sources": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string"
+                                    }
+                                  }
+                                },
+                                "required": [
+                                  "types",
+                                  "sources"
+                                ]
+                              }
+                            },
+                            "description": "Per-credential schema-enforcement override. A lever set here wins over the instance config for this credential, lever by lever; absent, the key inherits the instance config."
+                          },
                           "created_at": {
                             "type": "string"
                           },
                           "expires_at": {
                             "type": "string",
                             "nullable": true,
-                            "description": "Hard lifetime bound. NULL for human-minted keys, which never expire. Runtime credentials are always stamped; a key past this instant is refused exactly like a revoked one."
+                            "description": "Hard lifetime bound. NULL for human-minted keys, which never expire. A key past this instant is refused exactly like a revoked one."
                           },
                           "last_used_at": {
                             "type": "string",
@@ -19589,6 +19785,69 @@
                       ]
                     }
                   },
+                  "enforcement_override": {
+                    "type": "object",
+                    "nullable": true,
+                    "properties": {
+                      "strict_mode": {
+                        "type": "object",
+                        "properties": {
+                          "types": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          }
+                        },
+                        "required": [
+                          "types"
+                        ]
+                      },
+                      "source_allowlist": {
+                        "type": "object",
+                        "properties": {
+                          "types": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "sources": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          }
+                        },
+                        "required": [
+                          "types",
+                          "sources"
+                        ]
+                      },
+                      "source_filter": {
+                        "type": "object",
+                        "properties": {
+                          "types": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "sources": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          }
+                        },
+                        "required": [
+                          "types",
+                          "sources"
+                        ]
+                      }
+                    },
+                    "description": "`null` clears the override; an object replaces it whole."
+                  },
                   "source": {
                     "nullable": true
                   }
@@ -19693,6 +19952,68 @@
                       "type": "string",
                       "nullable": true,
                       "description": "Hard lifetime bound. NULL for human-minted keys, which never expire. Runtime credentials are always stamped; a key past this instant is refused exactly like a revoked one."
+                    },
+                    "enforcement_override": {
+                      "type": "object",
+                      "properties": {
+                        "strict_mode": {
+                          "type": "object",
+                          "properties": {
+                            "types": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            }
+                          },
+                          "required": [
+                            "types"
+                          ]
+                        },
+                        "source_allowlist": {
+                          "type": "object",
+                          "properties": {
+                            "types": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            },
+                            "sources": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            }
+                          },
+                          "required": [
+                            "types",
+                            "sources"
+                          ]
+                        },
+                        "source_filter": {
+                          "type": "object",
+                          "properties": {
+                            "types": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            },
+                            "sources": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            }
+                          },
+                          "required": [
+                            "types",
+                            "sources"
+                          ]
+                        }
+                      },
+                      "description": "Per-credential schema-enforcement override. A lever set here wins over the instance config for this credential, lever by lever; absent, the key inherits the instance config."
                     },
                     "last_used_at": {
                       "type": "string",
@@ -20972,7 +21293,7 @@
             "bearerAuth": []
           }
         ],
-        "description": "Removes exactly one platform type row this build does not ship. Refused with `409` when the identifier is one the build still ships, so this can never remove a live type, and refused with `409` when items still carry it: the row is what makes those items resolve, and orphaning readable data to tidy a registry is the wrong trade. The item count is recomputed inside the request rather than read from the boot-time report. The type stops resolving on the next restart, since the in-memory registry is filled from the rows at boot. Operator key only.",
+        "description": "Removes exactly one platform type row this build does not ship. Refused with `409` when the identifier is one the build still ships, so this can never remove a live type; refused with `409` when items still carry it, because the row is what makes those items resolve, and orphaning readable data to tidy a registry is the wrong trade; and refused with `409` when another registered type inherits from it, naming them in `details.child_types`, because a parent supplies its children's fields. The item count is recomputed inside the request rather than read from the boot-time report. The type stops resolving on the next restart, since the in-memory registry is filled from the rows at boot. Operator key only.",
         "parameters": [
           {
             "schema": {
@@ -21192,7 +21513,7 @@
             }
           },
           "409": {
-            "description": "The build still ships this type, or items still carry the identifier",
+            "description": "The build still ships this type, items still carry the identifier, or another registered type inherits from it",
             "content": {
               "application/json": {
                 "schema": {

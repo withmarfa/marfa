@@ -45,9 +45,27 @@ export class SqliteSearchStore implements SearchStore {
     typeId?: string,
   ): Promise<void> {
     const text = extractSearchableText(properties, typeId);
+    // The tags come off the sidecar in the same statement, so a re-index
+    // after a properties write keeps what a tag write put there.
     await this.db.run(sql`
-      INSERT INTO items_fts(item_id, title, body, description, name, extra)
-      VALUES (${itemId}, ${text.title}, ${text.body}, ${text.description}, ${text.name}, ${text.extra})
+      INSERT INTO items_fts(item_id, title, body, description, name, extra, tags)
+      VALUES (
+        ${itemId}, ${text.title}, ${text.body}, ${text.description}, ${text.name}, ${text.extra},
+        COALESCE(
+          (SELECT group_concat(je.value, ' ')
+             FROM metadata m, json_each(m.tags) je
+            WHERE m.item_id = ${itemId}),
+          ''
+        )
+      )
+    `);
+  }
+
+  async setTags(itemId: string, tags: readonly string[]): Promise<void> {
+    // An update rather than a delete and re-insert: the text columns are
+    // not at hand here, and an FTS5 table with its own content takes one.
+    await this.db.run(sql`
+      UPDATE items_fts SET tags = ${tags.join(" ")} WHERE item_id = ${itemId}
     `);
   }
 

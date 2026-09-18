@@ -117,6 +117,26 @@ describe("the renamed filters are refused rather than dropped", () => {
     expect(message).not.toContain("updated_after");
   });
 
+  it("refuses `since` on GET /edges and names `updated_after`, the one time filter the door has", async () => {
+    // An edge has no item time, so `timestamp_after` does not exist here
+    // either: a refusal naming it would send the caller to a parameter this
+    // door strips in silence, which is the failure being refused.
+    const res = await request(
+      ctx.app,
+      "GET",
+      `/edges?since=${encodeURIComponent(CUTOFF)}`,
+      { key: ctx.spaceKey },
+    );
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as {
+      error: { code: string; message: string; details?: { use?: unknown } };
+    };
+    expect(body.error.code).toBe("validation_error");
+    expect(body.error.message).toContain("updated_after");
+    expect(body.error.message).not.toContain("timestamp_after");
+    expect(body.error.details?.use).toBe("updated_after");
+  });
+
   for (const [oldName, newName] of [
     ["since", "timestamp_after"],
     ["until", "timestamp_before"],

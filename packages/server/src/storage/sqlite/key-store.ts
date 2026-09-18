@@ -6,6 +6,7 @@ import type {
   CreateKeyInput,
   UpdateKeyInput,
   EdgePermission,
+  EnforcementSettings,
   ExtensionPermission,
   MetadataPermission,
   ProfilePermission,
@@ -62,6 +63,13 @@ function mapRow(row: typeof apiKeys.$inferSelect): ApiKey {
       {},
       "key profile_permissions",
     ),
+    ...(row.enforcement_override != null && {
+      enforcement_override: safeJsonParse<EnforcementSettings>(
+        row.enforcement_override,
+        {},
+        "key enforcement_override",
+      ),
+    }),
     created_at: row.created_at,
     expires_at: row.expires_at ?? null,
     last_used_at: row.last_used_at ?? null,
@@ -114,6 +122,10 @@ export class SqliteKeyStore implements KeyStore {
       edge_permissions: JSON.stringify(input.edge_permissions ?? {}),
       metadata_permissions: JSON.stringify(input.metadata_permissions ?? {}),
       profile_permissions: JSON.stringify(input.profile_permissions ?? {}),
+      enforcement_override:
+        input.enforcement_override === undefined
+          ? null
+          : JSON.stringify(input.enforcement_override),
       created_at: now,
     };
     await this.db.insert(apiKeys).values(row).run();
@@ -130,6 +142,9 @@ export class SqliteKeyStore implements KeyStore {
       edge_permissions: input.edge_permissions ?? {},
       metadata_permissions: input.metadata_permissions ?? {},
       profile_permissions: input.profile_permissions ?? {},
+      ...(input.enforcement_override !== undefined && {
+        enforcement_override: input.enforcement_override,
+      }),
       created_at: now,
       last_used_at: null,
     };
@@ -183,6 +198,12 @@ export class SqliteKeyStore implements KeyStore {
       patch.space_permissions = JSON.stringify(input.space_permissions);
     if (input.profile_permissions !== undefined)
       patch.profile_permissions = JSON.stringify(input.profile_permissions);
+    // `null` clears the override; an object replaces it whole.
+    if (input.enforcement_override !== undefined)
+      patch.enforcement_override =
+        input.enforcement_override === null
+          ? null
+          : JSON.stringify(input.enforcement_override);
 
     if (Object.keys(patch).length > 0) {
       await this.db.update(apiKeys).set(patch).where(eq(apiKeys.id, id)).run();

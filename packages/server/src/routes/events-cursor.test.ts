@@ -202,3 +202,36 @@ describe("GET /events announces its cursor", () => {
     expect(text, "and the rows it admitted").toContain(note);
   });
 });
+
+describe("the event cursor is compared as the integer it is", () => {
+  it("does not round a cursor above 2^53 down onto the row it was told to resume after", async () => {
+    // A row id past the double's exact range. Compared through `Number()`,
+    // a cursor of 2^53 + 1 rounds to 2^53 and the read would repeat the row
+    // it was told to resume after. Only the exclusion is asserted: the
+    // driver reads an INTEGER as a JS number and refuses one it cannot
+    // represent, so a read that matched the row would throw rather than
+    // return it, which is also what the rounding comparison does here.
+    const s = ctx.storage as unknown as {
+      __sqliteRun: (sql: string, params: unknown[]) => Promise<unknown>;
+    };
+    const id = 2n ** 53n + 1n;
+    await s.__sqliteRun(
+      "INSERT INTO event_log (id, event_type, item_id, payload, enable_fanout, created_at) VALUES (?, ?, ?, ?, 1, ?)",
+      [
+        id.toString(),
+        "created",
+        "item-past-2-53",
+        "{}",
+        new Date().toISOString(),
+      ],
+    );
+    try {
+      const none = await ctx.storage.eventLog.getAfter(id, 10);
+      expect(none).toEqual([]);
+    } finally {
+      await s.__sqliteRun("DELETE FROM event_log WHERE id = ?", [
+        id.toString(),
+      ]);
+    }
+  });
+});

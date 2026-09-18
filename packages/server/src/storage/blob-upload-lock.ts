@@ -32,14 +32,13 @@
  * go away. One process is the deployment, so an in-process mutex covers it
  * by construction.
  *
- * A `CoordinationStore` lock is still the wrong tool here, for a concrete
- * reason rather than a stylistic one. `withExclusiveLock` holds one
- * connection of a single-connection pool for the length of its callback,
- * and this callback spans a multi-megabyte write to the blob backend. One
- * upload would therefore serialize every other lock-taker in the process
- * for as long as its bytes take to land, and uploads of unrelated content
- * would serialize against each other for no benefit at all: keying on the
- * hash is what makes this lock free to unrelated uploads, and a shared
+ * A database lock would still be the wrong tool here, for a concrete
+ * reason rather than a stylistic one: SQLite admits one writer, and this
+ * callback spans a multi-megabyte write to the blob backend. One upload
+ * would therefore serialize every other writer in the process for as long
+ * as its bytes take to land, and uploads of unrelated content would
+ * serialize against each other for no benefit at all: keying on the hash
+ * is what makes this lock free to unrelated uploads, and a shared
  * pool of one throws that away.
  */
 

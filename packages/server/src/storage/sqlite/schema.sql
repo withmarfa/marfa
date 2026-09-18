@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS `api_keys` (
 	`extension_permissions` text DEFAULT '{}' NOT NULL,
 	`edge_permissions` text DEFAULT '{}' NOT NULL,
 	`metadata_permissions` text DEFAULT '{}' NOT NULL,
+	`enforcement_override` text,
 	`profile_permissions` text DEFAULT '{}' NOT NULL,
 	`oauth_client_id` text,
 	`created_at` text NOT NULL,

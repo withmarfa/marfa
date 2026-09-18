@@ -90,7 +90,7 @@ const removeDriftedTypeRoute = createRoute({
   summary: "Remove one shipped type the build no longer carries",
   security: [{ bearerAuth: [] }],
   description:
-    "Removes exactly one platform type row this build does not ship. Refused with `409` when the identifier is one the build still ships, so this can never remove a live type, and refused with `409` when items still carry it: the row is what makes those items resolve, and orphaning readable data to tidy a registry is the wrong trade. The item count is recomputed inside the request rather than read from the boot-time report. The type stops resolving on the next restart, since the in-memory registry is filled from the rows at boot. Operator key only.",
+    "Removes exactly one platform type row this build does not ship. Refused with `409` when the identifier is one the build still ships, so this can never remove a live type; refused with `409` when items still carry it, because the row is what makes those items resolve, and orphaning readable data to tidy a registry is the wrong trade; and refused with `409` when another registered type inherits from it, naming them in `details.child_types`, because a parent supplies its children's fields. The item count is recomputed inside the request rather than read from the boot-time report. The type stops resolving on the next restart, since the in-memory registry is filled from the rows at boot. Operator key only.",
   request: {
     params: z.object({ id: z.string() }),
   },
@@ -134,7 +134,7 @@ const removeDriftedTypeRoute = createRoute({
         },
       },
       description:
-        "The build still ships this type, or items still carry the identifier",
+        "The build still ships this type, items still carry the identifier, or another registered type inherits from it",
     },
   },
 });

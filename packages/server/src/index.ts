@@ -127,7 +127,6 @@ async function main() {
     let purgedRecords = 0;
     return runSpaceCleanup({
       jobName: "event-log-cleanup",
-      coordination: storage.coordination,
       fanout: eventLogFanout,
       instanceDefault: eventLogRetentionHours,
       unitMs: 3_600_000,
@@ -158,7 +157,6 @@ async function main() {
   const runAuditCleanup = () =>
     runSpaceCleanup({
       jobName: "audit-cleanup",
-      coordination: storage.coordination,
       fanout: auditFanout,
       instanceDefault: config.auditRetentionDays,
       unitMs: 86_400_000,
@@ -209,7 +207,6 @@ async function main() {
       maxVersions: config.versionMaxVersions,
     },
     config.versionThinningIntervalMs,
-    storage.coordination,
   );
   versionThinner.start();
 
@@ -218,7 +215,6 @@ async function main() {
     config.trashRetentionDays,
     config.trashPurgeIntervalMs,
     undefined,
-    storage.coordination,
     trashFanout,
   );
   trashPurger.start();
@@ -234,7 +230,6 @@ async function main() {
           config.activityRetentionDays ?? 14,
           activityPurgeIntervalMs,
           undefined,
-          storage.coordination,
           activityFanout,
         )
       : undefined;
@@ -251,7 +246,6 @@ async function main() {
           config.revokedGrantRetentionDays ?? 90,
           revokedGrantPurgeIntervalMs,
           undefined,
-          storage.coordination,
         )
       : undefined;
   if (revokedGrantPurger) {
@@ -273,7 +267,6 @@ async function main() {
           grantInactivityDays,
           grantInactivityIntervalMs,
           undefined,
-          storage.coordination,
         )
       : undefined;
   if (grantInactivityRetirer) {
@@ -290,7 +283,6 @@ async function main() {
     storage,
     activityPurgeIntervalMs,
     undefined,
-    storage.coordination,
   );
   revokedKeyReaper.start();
 
@@ -300,7 +292,6 @@ async function main() {
         storage.authSessions,
         config.authSessionCleanupIntervalMs ?? 3_600_000,
         undefined,
-        storage.coordination,
       )
     : undefined;
   if (authSessionCleaner) {
@@ -313,7 +304,6 @@ async function main() {
     storage,
     config.rateLimitCleanupIntervalMs ?? 3_600_000,
     undefined,
-    storage.coordination,
   );
   rateLimitCleaner.start();
 
@@ -329,7 +319,6 @@ async function main() {
           dcrRetentionDays,
           config.dcrClientCleanupIntervalMs ?? 86_400_000,
           undefined,
-          storage.coordination,
         )
       : undefined;
   if (dcrClientCleaner) {
@@ -353,7 +342,6 @@ async function main() {
           blobCleanupGraceMs,
           blobCleanupIntervalMs,
           undefined,
-          storage.coordination,
         )
       : undefined;
   if (blobOrphanCleaner) {
@@ -406,7 +394,6 @@ async function main() {
     config.bulkActionJobRetentionMs ?? 7 * 24 * 3_600_000,
     config.bulkActionJobGcIntervalMs ?? 3_600_000,
     undefined,
-    storage.coordination,
   );
   // Gated the same way the sweeper's own start() gates itself: a zero or
   // negative retention disables the job.

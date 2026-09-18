@@ -389,9 +389,12 @@ export function edgeRoutes(storage: Storage) {
     // rename says otherwise: it describes the rename as covering this
     // door, so a client migrating exactly as instructed writes
     // `timestamp_after` here and, unrefused, receives a silently
-    // unfiltered page at 200 with a well-formed cursor.
+    // unfiltered page at 200 with a well-formed cursor. The refusal names
+    // `updated_after`, the one time filter this door has: an edge has no
+    // item time, so the renamed filters do not exist here either.
     refuseRenamedTimeQueryParams(c.req.raw.url, {
       catchUpFilter: "updated_after",
+      hasItemTimeFilters: false,
     });
     refuseUnknownQueryParams(c.req.raw.url, listEdgesRoute.request.query);
     const q = c.req.valid("query");

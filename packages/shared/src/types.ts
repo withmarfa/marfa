@@ -279,9 +279,10 @@ export interface ApiKey {
   is_operator: boolean;
   /**
    * Per-credential schema-enforcement override. Same shape as
-   * `SpaceConfig.enforcement`; entries here merge over the space default
-   * for this credential's writes/reads. Optional — most credentials inherit
-   * space config without override.
+   * `SpaceConfig.enforcement`; a lever set here wins over the instance
+   * config for this credential's writes and reads, lever by lever
+   * (`resolveEnforcement`). Optional — most credentials inherit the instance
+   * config without override.
    */
   enforcement_override?: EnforcementSettings;
   /** Tier stamped onto items when the client doesn't supply one. */
@@ -360,6 +361,8 @@ export interface CreateKeyInput {
   edge_permissions?: Record<string, EdgePermission>;
   metadata_permissions?: Record<string, MetadataPermission>;
   profile_permissions?: Record<string, ProfilePermission>;
+  /** Per-credential schema-enforcement override; see `ApiKey`. */
+  enforcement_override?: EnforcementSettings;
   /**
    * Optional. Only an existing operator key can set this to `true`; other
    * callers see the value silently coerced to `false`. The key minted at
@@ -386,6 +389,9 @@ export interface UpdateKeyInput {
   edge_permissions?: Record<string, EdgePermission>;
   metadata_permissions?: Record<string, MetadataPermission>;
   profile_permissions?: Record<string, ProfilePermission>;
+  /** Per-credential schema-enforcement override; `null` clears it so the
+   *  key inherits the instance config again. */
+  enforcement_override?: EnforcementSettings | null;
 }
 
 // ---------------------------------------------------------------------------

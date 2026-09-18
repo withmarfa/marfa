@@ -24,9 +24,9 @@ export class SqliteSettingsStore implements SettingsStore {
   }
 
   async claim(key: string, value: string): Promise<boolean> {
-    // INSERT ... ON CONFLICT DO NOTHING RETURNING — better-sqlite3 returns
-    // the inserted rows, or an empty array on conflict. The winner of the
-    // first concurrent insert sees length === 1; everyone else sees 0.
+    // INSERT ... ON CONFLICT DO NOTHING RETURNING — libsql returns the
+    // inserted rows, or an empty array on conflict. The winner of the first
+    // concurrent insert sees length === 1; everyone else sees 0.
     const rows = await this.db
       .insert(settings)
       .values({ key, value })

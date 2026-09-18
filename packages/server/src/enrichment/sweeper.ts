@@ -485,19 +485,16 @@ export class TextEnrichmentSweeper {
     }
   }
 
-  /** Scheduler entry point: the same locked, logged tick the timer path
-   *  drives — `runOnce()` alone is the bare test seam and has neither. */
+  /** Scheduler entry point: the same logged tick the timer path drives —
+   *  `runOnce()` alone is the bare test seam and has no logging. */
   runScheduled(): Promise<void> {
     return this.poll();
   }
 
   private async poll(): Promise<void> {
     try {
-      const result = await this.opts.storage.coordination.withJobLock(
-        "enrichment-sweep",
-        () => this.runOnce(),
-      );
-      if (result && result.extracted + result.failed > 0) {
+      const result = await this.runOnce();
+      if (result.extracted + result.failed > 0) {
         log("info", "Text enrichment sweep", result);
       }
     } catch (err) {
