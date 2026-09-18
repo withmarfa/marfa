@@ -19,7 +19,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { MockInstance } from "vitest";
-import { DELETION_STATES, ITEM_STATES, TIERS } from "@withmarfa/shared";
+import { ITEM_STATES, TIERS } from "@withmarfa/shared";
 import {
   SCANNED_COLUMNS,
   scanStoredValues,
@@ -255,7 +255,6 @@ describe("scanStoredValues", () => {
         ?.allowed;
 
     expect(allowedFor("api_keys", "default_tier")).toBe(TIERS);
-    expect(allowedFor("auth_user", "deletion_state")).toBe(DELETION_STATES);
     expect(allowedFor("items", "state")).toBe(ITEM_STATES);
     // The entry a cast-keyed roster could never have found: this column
     // was narrowed by comparison against two hardcoded literals rather

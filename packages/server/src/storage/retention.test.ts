@@ -1,7 +1,6 @@
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import { createTestContext } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
-import { MARFA_WEB_CLIENT_ID } from "../auth/first-party-clients.js";
 import {
   TrashPurger,
   ActivityPurger,
@@ -654,24 +653,6 @@ describe("DcrClientCleaner.runOnce — reaps grantless DCR clients", () => {
     expect(await oauthClientExists(recentGrantless)).toBe(true);
     expect(await oauthClientExists(oldWithToken)).toBe(true);
     expect(await oauthClientExists(oldWithAppGrant)).toBe(true);
-  });
-
-  it("never removes a first-party client, however old and grantless", async () => {
-    // The seeded browser clients are what sign-in runs through; a dormant
-    // instance whose last web grant was retired and purged must not lose
-    // them to a sweep meant for abandoned dynamic registrations.
-    await seedOauthClient({
-      clientId: MARFA_WEB_CLIENT_ID,
-      createdAt: new Date(FIXED_NOW.getTime() - 400 * MS_PER_DAY),
-    });
-    const cleaner = new DcrClientCleaner(
-      ctx.storage,
-      30,
-      3_600_000,
-      () => FIXED_NOW,
-    );
-    expect(await cleaner.runOnce()).toBe(0);
-    expect(await oauthClientExists(MARFA_WEB_CLIENT_ID)).toBe(true);
   });
 
   it("is a no-op when retentionDays <= 0", async () => {

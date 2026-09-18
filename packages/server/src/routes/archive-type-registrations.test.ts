@@ -81,12 +81,6 @@ async function newContext(): Promise<TestContext> {
   return ctx;
 }
 
-async function newHostedContext(): Promise<TestContext> {
-  const ctx = await createTestContext({ authMode: "hosted" });
-  contexts.push(ctx);
-  return ctx;
-}
-
 afterAll(async () => {
   await closeTestContexts(contexts);
 });
@@ -833,67 +827,6 @@ describe("a claimed `user` origin is checked against the handle", () => {
     const rows = await ctx.storage.types.listCustomWithProvenance(space);
     return rows.find((r) => r.schema.id === typeId)?.origin;
   }
-
-  it("degrades the claim when the space does not hold the handle", async () => {
-    // `POST /types` binds publisher-tier registration to owning the
-    // handle. This path never had that check, and `user` is the value
-    // that earns a write wildcard over the whole root, so honoring the
-    // claim unchecked would sell through a restore what that route sells
-    // only to the handle's owner.
-    const source = await newContext();
-    const destination = await newHostedContext();
-    const suffix = uniqueSuffix();
-    const typeId = `acme_${suffix}.shim`;
-
-    // The users table has a foreign key onto spaces, so the space has to
-    // be a real row rather than an arbitrary identifier.
-    const space = (await destination.storage.spaces!.create("hnd-none")).id;
-    await destination.storage.users!.create({
-      provider: "test",
-      provider_id: `p-${suffix}`,
-      space_id: space,
-      handle: `someoneelse${suffix}`,
-    });
-
-    const archive = await archiveClaiming(
-      source,
-      space,
-      `user.seed_${suffix}`,
-      typeId,
-      { origin: "user" },
-    );
-    const res = await restore(destination, space, archive);
-    expect(res.status).toBe(200);
-    expect(await storedOriginOf(destination, space, typeId)).toBe("unknown");
-  });
-
-  it("honors the claim when the space does hold the handle", async () => {
-    // The other half, so the check cannot pass by refusing everything.
-    const source = await newContext();
-    const destination = await newHostedContext();
-    const suffix = uniqueSuffix();
-    const handle = `acme_${suffix}`;
-    const typeId = `${handle}.shim`;
-
-    const space = (await destination.storage.spaces!.create("hnd-held")).id;
-    await destination.storage.users!.create({
-      provider: "test",
-      provider_id: `p-${suffix}`,
-      space_id: space,
-      handle,
-    });
-
-    const archive = await archiveClaiming(
-      source,
-      space,
-      `user.seed_${suffix}`,
-      typeId,
-      { origin: "user" },
-    );
-    const res = await restore(destination, space, archive);
-    expect(res.status).toBe(200);
-    expect(await storedOriginOf(destination, space, typeId)).toBe("user");
-  });
 
   it("refuses an archive claiming the system family", async () => {
     // The sibling of the `core` case. Both values are named in the

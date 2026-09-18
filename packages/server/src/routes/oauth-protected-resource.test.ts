@@ -35,7 +35,6 @@ describe("protected resource metadata (RFC 9728)", () => {
   it("serves the origin-level document", async () => {
     const base = "https://example.test";
     ctx = await createTestContext({
-      authAllowSignup: false,
       authBaseUrl: base,
     });
     const res = await request(
@@ -65,7 +64,7 @@ describe("authorization-server discovery at spec-formed URLs", () => {
 
   for (const path of FORMED_PATHS) {
     it(`serves the augmented discovery document at ${path}`, async () => {
-      ctx = await createTestContext({ authAllowSignup: false });
+      ctx = await createTestContext({});
       const res = await request(ctx.app, "GET", path);
       expect(res.status).toBe(200);
       const body = (await res.json()) as {

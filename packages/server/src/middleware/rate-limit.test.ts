@@ -47,7 +47,6 @@ async function buildCtx(): Promise<Ctx> {
     apiKeySalt: SALT,
     corsOrigins: [],
     cdnBaseUrl: "",
-    authMode: "keys",
     rateLimitEnabled: true,
     enableHsts: false,
     auditRetentionDays: 90,
@@ -63,10 +62,7 @@ async function buildCtx(): Promise<Ctx> {
     errorWebhookUrl: "",
     trustedProxyCidrs: [],
     authBaseUrl: "http://localhost:0",
-    authAllowSignup: true,
-    seedStarterContent: false,
     authSecret: "test-auth-secret",
-    oidcProviders: [],
     rateLimitDefaultLimit: 2,
     rateLimitWindowMs: 60_000,
     // Disable the aggregate per-identifier window for the per-path /
@@ -261,7 +257,6 @@ async function buildAggCtx(): Promise<Ctx> {
     apiKeySalt: SALT,
     corsOrigins: [],
     cdnBaseUrl: "",
-    authMode: "keys",
     rateLimitEnabled: true,
     enableHsts: false,
     auditRetentionDays: 90,
@@ -277,10 +272,7 @@ async function buildAggCtx(): Promise<Ctx> {
     errorWebhookUrl: "",
     trustedProxyCidrs: [],
     authBaseUrl: "http://localhost:0",
-    authAllowSignup: true,
-    seedStarterContent: false,
     authSecret: "test-auth-secret",
-    oidcProviders: [],
     // defaultLimit 2 → GET path window resolves to 4. Aggregate
     // multiplier 2 → aggregate cap = defaultLimit * 2 = 4, keyed on the
     // identifier alone.

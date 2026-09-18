@@ -2,14 +2,9 @@ import { createRoute, z } from "@hono/zod-openapi";
 import { ErrorCode, MarfaError } from "@withmarfa/shared";
 import type { ApiKey, SpaceConfig } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
-import {
-  requireOperatorKey,
-  requireSpacePermission,
-  requireAuth,
-} from "../middleware/auth.js";
+import { requireSpacePermission, requireAuth } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
-import { QuotaSchema } from "./_schemas.js";
 
 const TYPE_LIST = z.array(z.string());
 
@@ -168,157 +163,9 @@ const putConfigRoute = createRoute({
   },
 });
 
-// ---------------------------------------------------------------------------
-// Space quotas
-// ---------------------------------------------------------------------------
-
-const getQuotasRoute = createRoute({
-  operationId: "getSpaceQuotas",
-  method: "get",
-  path: "/{id}/quotas",
-  tags: ["Spaces"],
-  summary: "Get space quotas",
-  description:
-    "Returns the per-space quota ceilings for a specific space. A `null` field means the env default applies, and an entirely-null payload means no per-space override is configured. Operator key only — a space-bound credential holding `space.usage` uses `GET /spaces/me/quotas` to read its own ceilings without knowing its space id.",
-  security: [{ bearerAuth: [] }],
-  request: {
-    params: z.object({
-      id: z.string().describe("ID of the space whose quotas to read"),
-    }),
-  },
-  responses: {
-    200: {
-      content: { "application/json": { schema: QuotaSchema } },
-      description:
-        "Quota row. Null fields mean 'fall back to env defaults'. " +
-        "An entirely-null payload means no per-space override is set.",
-    },
-    401: {
-      content: {
-        "application/json": {
-          schema: makeErrorResponseSchema(["unauthorized"]),
-        },
-      },
-      description: "Unauthorized",
-    },
-    403: {
-      content: {
-        "application/json": {
-          schema: makeErrorResponseSchema(["forbidden"]),
-        },
-      },
-      description: "Forbidden",
-    },
-    404: {
-      content: {
-        "application/json": {
-          schema: makeErrorResponseSchema(["not_found"]),
-        },
-      },
-      description: "Space not found",
-    },
-  },
-});
-
-// `GET /spaces/me/quotas` resolves the calling key's space_id from
-// `c.var.apiKey` so a space-bound caller doesn't need to know its own
-// space_id to read its ceilings. The explicit `/{space_id}/quotas` route
-// is for the operator key.
-const getOwnQuotasRoute = createRoute({
-  operationId: "getOwnQuotas",
-  method: "get",
-  path: "/me/quotas",
-  tags: ["Spaces"],
-  summary: "Get current space quotas",
-  description:
-    "Returns the calling space's quota ceilings, resolved from the credential so the caller doesn't need to know its own space id. Requires `space.usage`, which only a space-bound credential can hold; `GET /spaces/{id}/quotas` is the route for naming a space explicitly.",
-  security: [{ bearerAuth: [] }],
-  responses: {
-    200: {
-      content: { "application/json": { schema: QuotaSchema } },
-      description: "Quota row for the calling space.",
-    },
-    401: {
-      content: {
-        "application/json": {
-          schema: makeErrorResponseSchema(["unauthorized"]),
-        },
-      },
-      description: "Unauthorized",
-    },
-    403: {
-      content: {
-        "application/json": {
-          schema: makeErrorResponseSchema(["forbidden"]),
-        },
-      },
-      description: "Forbidden",
-    },
-  },
-});
-
-const putQuotasRoute = createRoute({
-  operationId: "updateSpaceQuotas",
-  method: "put",
-  path: "/{id}/quotas",
-  tags: ["Spaces"],
-  summary: "Update space quotas",
-  description:
-    "Sets the per-space quota ceilings for a specific space. Each field is independent — a non-null value overrides the env default, while `null` resets that field to the env default. Operator key only.",
-  security: [{ bearerAuth: [] }],
-  request: {
-    params: z.object({
-      id: z.string().describe("ID of the space whose quotas to set"),
-    }),
-    body: {
-      content: {
-        "application/json": {
-          schema: z.object({
-            items_limit: z.number().int().nullable().optional(),
-            webhooks_limit: z.number().int().nullable().optional(),
-            blobs_limit: z.number().int().nullable().optional(),
-            storage_bytes_limit: z.number().int().nullable().optional(),
-            rate_per_minute_limit: z.number().int().nullable().optional(),
-          }),
-        },
-      },
-    },
-  },
-  responses: {
-    200: {
-      content: { "application/json": { schema: QuotaSchema } },
-      description: "Quota row updated.",
-    },
-    401: {
-      content: {
-        "application/json": {
-          schema: makeErrorResponseSchema(["unauthorized"]),
-        },
-      },
-      description: "Unauthorized",
-    },
-    403: {
-      content: {
-        "application/json": {
-          schema: makeErrorResponseSchema(["forbidden"]),
-        },
-      },
-      description: "Forbidden",
-    },
-    404: {
-      content: {
-        "application/json": {
-          schema: makeErrorResponseSchema(["not_found"]),
-        },
-      },
-      description: "Space not found",
-    },
-  },
-});
-
 /**
- * The space one of the three `/spaces/me/*` doors acts on: reading the
- * config, writing it, and reading the quota row.
+ * The space the two `/spaces/me/config` doors act on: reading the config
+ * and writing it.
  *
  * **A space permission implies a space.** The eleven are held on a
  * credential's row or on its grant; the operator key is the only shape that
@@ -326,7 +173,7 @@ const putQuotasRoute = createRoute({
  * the `requireSpacePermission` on each of these doors has already turned away
  * every space-less caller before this is reached.
  *
- * It is one function so that none of the three carries a refusal no caller
+ * It is one function so that neither carries a refusal no caller
  * can reach, which would read as a protection somebody is relying on.
  * Reaching the throw would mean the gate above had stopped working, which is
  * this file's mistake and not a caller's, so it stops rather than answering
@@ -391,90 +238,6 @@ export function spaceRoutes(storage: Storage) {
     });
 
     return c.json(body, 200);
-  });
-
-  // **Route order matters.** `/me/quotas` is registered BEFORE `/{id}/quotas`
-  // so a request to `GET /spaces/me/quotas` matches the own-space handler
-  // instead of the operator handler with `id="me"`. Hono dispatches in
-  // registration order; flipping these would 403 every space-bound caller.
-  router.openapi(getOwnQuotasRoute, async (c) => {
-    const key = requireAuth(c);
-    requireSpacePermission(c, "space.usage");
-    // The last space-less caller this door could meet was a keys-mode bearer
-    // holding `space.usage` and no space, which is now refused at the
-    // middleware; a space-less key is the operator tier and holds none of the
-    // eleven, so the gate above turns that away. The refusal that used to sit
-    // here can no longer answer, and `/spaces/{id}/quotas` is still the route
-    // for naming a space explicitly.
-    const spaceId = ownSpaceOfCaller(key);
-    const quota = await storage.spaceQuotas.get(spaceId);
-    return c.json(
-      {
-        space_id: spaceId,
-        items_limit: quota?.items_limit ?? null,
-        webhooks_limit: quota?.webhooks_limit ?? null,
-        blobs_limit: quota?.blobs_limit ?? null,
-        storage_bytes_limit: quota?.storage_bytes_limit ?? null,
-        rate_per_minute_limit: quota?.rate_per_minute_limit ?? null,
-        updated_at: quota?.updated_at ?? null,
-      },
-      200,
-    );
-  });
-
-  // Operator key only — reading another space's caps is cross-space
-  // authority.
-  router.openapi(getQuotasRoute, async (c) => {
-    requireOperatorKey(c);
-    const { id } = c.req.valid("param");
-    const result = await storage.spaceQuotas.getForExistingSpace(id);
-    if (!result.exists) {
-      throw new MarfaError(ErrorCode.NOT_FOUND, `Space ${id} not found`);
-    }
-    const quota = result.quota;
-    return c.json(
-      {
-        space_id: id,
-        items_limit: quota?.items_limit ?? null,
-        webhooks_limit: quota?.webhooks_limit ?? null,
-        blobs_limit: quota?.blobs_limit ?? null,
-        storage_bytes_limit: quota?.storage_bytes_limit ?? null,
-        rate_per_minute_limit: quota?.rate_per_minute_limit ?? null,
-        updated_at: quota?.updated_at ?? null,
-      },
-      200,
-    );
-  });
-
-  router.openapi(putQuotasRoute, async (c) => {
-    const key = requireOperatorKey(c);
-    const { id } = c.req.valid("param");
-    const body = c.req.valid("json");
-    const result = await storage.spaceQuotas.setForExistingSpace(id, body);
-    if (!result) {
-      throw new MarfaError(ErrorCode.NOT_FOUND, `Space ${id} not found`);
-    }
-    void storage.audit.log({
-      client_ip: c.get("clientIp") ?? null,
-      space_id: c.get("apiKey")?.space_id ?? null,
-      key_id: key.id,
-      action: "space.quotas.update",
-      resource_type: "space",
-      resource_id: id,
-      details: body,
-    });
-    return c.json(
-      {
-        space_id: id,
-        items_limit: result.items_limit ?? null,
-        webhooks_limit: result.webhooks_limit ?? null,
-        blobs_limit: result.blobs_limit ?? null,
-        storage_bytes_limit: result.storage_bytes_limit ?? null,
-        rate_per_minute_limit: result.rate_per_minute_limit ?? null,
-        updated_at: result.updated_at,
-      },
-      200,
-    );
   });
 
   return router;

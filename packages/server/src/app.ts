@@ -30,7 +30,6 @@ import { searchRoutes } from "./routes/search.js";
 import { occurrenceRoutes } from "./routes/occurrences.js";
 import { metadataRoutes } from "./routes/metadata.js";
 import { blobRoutes } from "./routes/blobs.js";
-import { profileRoutes } from "./routes/profile.js";
 import { keyRoutes } from "./routes/keys.js";
 import { exportRoutes } from "./routes/export.js";
 import { adminArchiveRoutes } from "./routes/admin-archive.js";
@@ -44,20 +43,14 @@ import {
 } from "@better-auth/oauth-provider";
 import { authStaticRoutes } from "./routes/auth-static.js";
 import { renderHttpErrorPage, prefersHtml } from "./routes/http-error-page.js";
-import type { EmailTransport as MarfaEmailTransport } from "./email/transport.js";
 import { extensionRoutes } from "./routes/extensions.js";
 import { eventRoutes } from "./routes/events.js";
 import { webhookRoutes } from "./routes/webhooks.js";
 import { auditRoutes } from "./routes/audit.js";
 import { metricsRoutes } from "./routes/metrics.js";
-import { adminRoutes } from "./routes/admin.js";
-import { userAuthRoutes } from "./routes/users.js";
 import { spaceRoutes } from "./routes/spaces.js";
 import { rateLimitMiddleware } from "./middleware/rate-limit.js";
 import { clientIpMiddleware } from "./middleware/client-ip.js";
-import { spaceSuspensionMiddleware } from "./middleware/space-suspension.js";
-import { createAccountDeletionGate } from "./middleware/account-deletion-guard.js";
-import { authAccountRoutes } from "./routes/auth-account.js";
 import { authConsentRoutes } from "./routes/auth-consent.js";
 import { authErrorRoutes } from "./routes/auth-error.js";
 import { loggerMiddleware } from "./middleware/logger.js";
@@ -71,7 +64,6 @@ export function createApp(
   storage: Storage,
   blobBackend: BlobBackend,
   config: AppConfig,
-  emailTransport?: MarfaEmailTransport,
   oidcSigner?: OidcSigner,
 ) {
   const app = new OpenAPIHono<AppEnv>();
@@ -242,9 +234,6 @@ export function createApp(
     "edges",
     "admin_archive",
   ];
-  if (config.authMode === "hosted") {
-    features.push("users");
-  }
   // §3.15: derive the deployed `version` from `version.json` (read at
   // startup by index.ts and threaded through `config.versionSha`). The
   // OpenAPI spec carries a separate, semantically-distinct API-contract
@@ -259,12 +248,7 @@ export function createApp(
       cdn_base_url: config.cdnBaseUrl || null,
     }),
   );
-  // `auth` is constructed further down, so health reads it through a
-  // closure rather than a value — the handle is resolved per request.
-  app.route(
-    "/health",
-    healthRoutes(storage, blobBackend, config, () => auth),
-  );
+  app.route("/health", healthRoutes(storage, blobBackend));
 
   // Shared auth-page stylesheet. Public — anyone landing on `/auth/sign-in`
   // must be able to fetch the CSS without a session cookie. Mounted BEFORE
@@ -290,30 +274,6 @@ export function createApp(
   // still fall through to IP-based limiting inside rateLimitMiddleware.
   app.use("*", authMiddleware(storage, config.apiKeySalt));
 
-  // Space-suspension write-guard. Sits AFTER `authMiddleware` so the
-  // credential is resolved when this runs. Rejects every non-GET request
-  // whose space is suspended with HTTP 403 `space_suspended`. Reads pass
-  // through; the operator key is let through so operators can manage a
-  // suspended space.
-  app.use("*", spaceSuspensionMiddleware(storage));
-
-  // Block sign-ins on accounts in `pending_deletion`. Mounted AFTER the
-  // space suspension guard so suspended-space rejection still wins.
-  // Only triggers on the better-auth sign-in paths — every other path
-  // is a pass-through. The gate is created once so its in-memory cancel-
-  // email cooldown is SHARED between the middleware (better-auth JSON
-  // sign-in endpoints) and the human-facing `POST /auth/sign-in` wrapper,
-  // which dispatches to `auth.handler` directly and so bypasses Hono
-  // middleware — `deletionGate.evaluatePendingDeletion` is threaded into
-  // `authRoutes` below to guard that form path too.
-  const deletionGate = createAccountDeletionGate(
-    storage,
-    emailTransport,
-    config.authBaseUrl,
-    config.accountDeletionGraceDays ?? 30,
-  );
-  app.use("*", deletionGate.middleware);
-
   // Rate limiting (defaults: 1000 req/min, configurable via RATE_LIMIT_REQUESTS
   // and RATE_LIMIT_WINDOW_MS). Protects all endpoints. Configuration flows
   // through AppConfig — the rate-limit middleware reads its settings from
@@ -329,8 +289,7 @@ export function createApp(
           // Insertion order matters: the middleware iterates and
           // takes the FIRST `path.startsWith(prefix)` match, so
           // place more-specific prefixes ahead of broader siblings
-          // (e.g. `/auth/device/token` MUST precede `/auth/device`,
-          // and `/auth/sign-in/magic-link` MUST precede `/auth/sign-in`).
+          // (e.g. `/auth/device/token` MUST precede `/auth/device`).
           //
           // Auth-endpoint caps calibrated for realistic human retry
           // patterns plus iterative smoke testing. The global default
@@ -343,20 +302,10 @@ export function createApp(
           // accommodates ~5 concurrent flows without sharing budget
           // with `/auth/oauth2/token`.
           //
-          // The per-email throttle on `/auth/forgot-password`
-          // (3/hour, in-route) is the inner cap; the per-IP cap
-          // here is the outer cap that prevents a single client
-          // botnet from running thousands of reset attempts across
-          // many addresses in one window.
           "/auth/device/token": 60,
           "/auth/device": 30,
-          "/auth/sign-in/magic-link": 15,
           "/auth/sign-in/email": 30,
           "/auth/sign-in": 30,
-          "/auth/sign-up": 15,
-          "/auth/forgot-password": 15,
-          "/auth/reset-password": 30,
-          "/auth/verify-email/resend": 15,
           // Cap the OAuth2 plugin endpoints (`/auth/oauth2/*`). Without
           // this, every plugin endpoint inherits the global default
           // (1000/min) — particularly bad for DCR (`/auth/oauth2/register`)
@@ -378,11 +327,7 @@ export function createApp(
         },
         trustedProxyCidrs: config.trustedProxyCidrs,
         trustedProxyHeader: config.trustedProxyHeader ?? null,
-        // Per-space rate ceiling on top of the per-credential window.
-        // Reads space_quotas.rate_per_minute_limit (with env fallback)
-        // via a 60s in-process cache. No-op for space-less keys.
         storage,
-        spaceDefaultRatePerMinute: config.defaultQuotaRatePerMinute ?? null,
         // Aggregate per-identifier cap (defaultLimit × multiplier),
         // keyed on the identifier with no path split, so a key's budget
         // can't multiply across path groups and space-less identifiers
@@ -423,38 +368,24 @@ export function createApp(
   // both fields are optional, so a Storage that doesn't wire better-auth
   // simply skips the auth mount.
   let auth: MarfaAuth | undefined;
-  if (storage.betterAuthDb && storage.betterAuthDialect) {
+  if (storage.betterAuthDb) {
     const trustedOrigins = [config.authBaseUrl, ...config.corsOrigins].filter(
       Boolean,
     );
     auth = createMarfaAuth({
       db: storage.betterAuthDb,
-      dialect: storage.betterAuthDialect,
       baseURL: config.authBaseUrl,
-      allowSignup: config.authAllowSignup,
-      seedStarterContent: config.seedStarterContent,
       secret: config.authSecret || undefined,
       trustedOrigins,
       // The same header `clientIpMiddleware` and `rateLimitMiddleware`
       // read. Better Auth runs a rate limiter of its own and cannot be
       // told by either of them.
       trustedProxyHeader: config.trustedProxyHeader ?? null,
-      oidcProviders: config.oidcProviders,
-      // Rich transport carries the HTML template + idempotency key
-      // for log correlation. Falls back to the basic callable for
-      // tests that don't construct a full transport.
-      marfaEmailTransport: emailTransport,
       // storage + salt are needed by the @better-auth/oauth-provider plugin
       // (storeTokens.hash matches Marfa's hashApiKey, clientReference
       // resolves space_id, hooks.after projects grants into system.connection).
       storage,
       apiKeySalt: config.apiKeySalt,
-      // Opt-in override for `requireEmailVerification`. When unset, the
-      // auth layer auto-detects from the transport (on for
-      // `cloudflare`/`smtp`, off for `none`/missing).
-      ...(config.authRequireEmailVerification !== undefined && {
-        requireEmailVerification: config.authRequireEmailVerification,
-      }),
     });
   }
 
@@ -598,52 +529,17 @@ export function createApp(
   app.route("/edges", edgeRoutes(storage));
   app.route("/edges", edgesBulkRoutes(storage));
   app.route("/edge-types", edgeTypeRoutes(storage));
-  app.route("/types", typeRoutes(storage, config.authMode));
+  app.route("/types", typeRoutes(storage));
   app.route("/search", searchRoutes(storage));
   app.route("/occurrences", occurrenceRoutes(storage));
   app.route("/metadata", metadataRoutes(storage));
   app.route("/blobs", blobRoutes(storage, blobBackend, config.maxBlobSize));
-  // Profile endpoints. Mounted after /blobs so the avatar set path can
-  // reuse the blob layer; the placeholder SVG endpoint is public (no
-  // auth) but lives under /profile for path locality.
-  app.route(
-    "/profile",
-    profileRoutes(storage, blobBackend, config.maxBlobSize),
-  );
-  app.route("/keys", keyRoutes(storage, config.apiKeySalt, config.authMode));
+  app.route("/keys", keyRoutes(storage, config.apiKeySalt));
   app.route("/spaces", spaceRoutes(storage));
-  app.route(
-    "/admin",
-    adminArchiveRoutes(storage, blobBackend, config.authMode),
-  );
+  app.route("/admin", adminArchiveRoutes(storage, blobBackend));
   app.route("/admin", adminPlatformTypeRoutes(storage));
   app.route("/export", exportRoutes(storage, blobBackend));
-  app.route(
-    "/auth",
-    authRoutes(
-      storage,
-      config.apiKeySalt,
-      auth,
-      oidcSigner,
-      deletionGate.evaluatePendingDeletion,
-    ),
-  );
-  if (config.authMode === "hosted" && storage.users && storage.spaces) {
-    app.route("/auth", userAuthRoutes(storage));
-  }
-  // Account-lifecycle routes — initiate / confirm / cancel. Mounted
-  // BEFORE the better-auth catch-all so the explicit handlers win for
-  // `/auth/account/*`.
-  app.route(
-    "/auth",
-    authAccountRoutes(
-      storage,
-      auth,
-      emailTransport,
-      config.authBaseUrl,
-      config.accountDeletionGraceDays ?? 30,
-    ),
-  );
+  app.route("/auth", authRoutes(storage, config.apiKeySalt, auth, oidcSigner));
   // `/auth/authorize` consent page (the @better-auth/oauth-provider plugin's
   // `consentPage` redirect target). Mounted BEFORE the better-auth catch-all
   // so this explicit GET handler wins over the plugin's own endpoints under
@@ -689,9 +585,8 @@ export function createApp(
   // catch-all so this GET wins.
   app.route("/auth", authErrorRoutes());
 
-  // Better-auth catch-all for unmatched /auth/* paths (sign-in, sign-up,
-  // magic-link, passkey, federated OIDC, session, plus the oauth-provider
-  // plugin's /auth/oauth2/* endpoints). Hono dispatches in registration
+  // Better-auth catch-all for unmatched /auth/* paths (sign-in, session,
+  // plus the oauth-provider plugin's /auth/oauth2/* endpoints). Hono dispatches in registration
   // order — the explicit routes above win.
   if (auth) {
     const authInstance = auth;
@@ -707,19 +602,6 @@ export function createApp(
   app.route("/webhooks", webhookRoutes(storage));
   app.route("/audit", auditRoutes(storage));
   app.route("/metrics", metricsRoutes(storage));
-  // Operator surface: the `marfa operator` CLI command tree calls into these.
-  app.route(
-    "/admin",
-    adminRoutes(storage, {
-      graceDays: config.accountDeletionGraceDays ?? 30,
-      apiKeySalt: config.apiKeySalt,
-      // `POST /admin/accounts` mints an account through Better Auth's own
-      // machinery, so it needs the instance rather than the storage
-      // handles. Absent in keys mode, where the route answers 404.
-      auth,
-    }),
-  );
-
   // OpenAPI spec — generated from route definitions
   app.openAPIRegistry.registerComponent("securitySchemes", "bearerAuth", {
     type: "http",
@@ -744,5 +626,8 @@ export function createApp(
   );
   app.get("/openapi.json", (c) => c.json(openapiDocument));
 
-  return app;
+  // The auth instance rides on the app so the test harness can reach the
+  // programmatic account seam (`createEmailAccount`) without rebuilding a
+  // second Better Auth instance against the same database.
+  return Object.assign(app, { auth });
 }

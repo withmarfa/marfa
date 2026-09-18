@@ -368,10 +368,7 @@ export function oauthRegisterRoutes(
       try {
         const session = await auth.getSession(c.req.raw.headers);
         if (session?.user.id) {
-          const spaceId = await resolveSpaceIdForAuthUser(
-            storage,
-            session.user.id,
-          );
+          const spaceId = await resolveSpaceIdForAuthUser(storage);
           referenceId = spaceId ?? null;
         }
       } catch (err) {

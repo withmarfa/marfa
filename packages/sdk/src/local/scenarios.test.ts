@@ -974,22 +974,11 @@ describe("a schema refusal from the server (seam: online)", () => {
     // configuration, and reading the vocabulary again returns exactly what
     // this client already holds. Without the guard the engine would refresh
     // on every refusal for ever and never settle the write.
-    // Creating a space and minting into it are instance-tier acts, so they go
-    // through the operator key rather than the space-bound credential the rest
-    // of this file works through.
-    const operator = new MarfaClient({
-      url: "http://localhost",
-      apiKey: fixture.operatorKey,
-      fetch: seam.fetch,
-    });
-    const space = await operator.admin.spaces.create({ name: "strict-space" });
-    const minted = await operator.admin.keys.create(space.id, {
-      label: "strict-space-key",
-      source: "sdk-test-local",
-    });
+    // The instance's one space, configured strict for the rest of this test
+    // through the working credential the fixture minted for it.
     const spaceClient = new MarfaClient({
       url: "http://localhost",
-      apiKey: minted.key,
+      apiKey: fixture.spaceKey,
       fetch: seam.fetch,
     });
     await spaceClient.spaces.setConfig({
@@ -1000,7 +989,7 @@ describe("a schema refusal from the server (seam: online)", () => {
       path: join(dir, "strict.db"),
       identity: {
         origin: "http://localhost",
-        spaceId: space.id,
+        spaceId: fixture.spaceId,
         accountId: SINGLE_ACCOUNT,
       },
     });

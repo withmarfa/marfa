@@ -21,7 +21,7 @@ import type { TestContext } from "../test-utils.js";
 let ctx: TestContext;
 
 beforeEach(async () => {
-  ctx = await createTestContext({ authMode: "hosted" });
+  ctx = await createTestContext({});
 });
 
 afterEach(async () => {
@@ -66,7 +66,7 @@ describe("a revoked OAuth access token", () => {
     const { token, clientId } = await seedOauthBearer(
       ctx.storage,
       ["space.keys"],
-      { spaceId: space.id, seedUserRow: true },
+      { spaceId: space.id },
     );
 
     // The token is live: an hour of expiry left, and it authenticates.
@@ -90,7 +90,7 @@ describe("a revoked OAuth access token", () => {
     const { token, clientId } = await seedOauthBearer(
       ctx.storage,
       ["space.keys"],
-      { spaceId: space.id, seedUserRow: true },
+      { spaceId: space.id },
     );
 
     const { hashApiKey } = await import("../middleware/auth.js");

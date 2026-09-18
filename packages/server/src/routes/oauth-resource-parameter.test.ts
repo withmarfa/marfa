@@ -26,7 +26,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { describe, it, expect, afterEach, vi } from "vitest";
 import {
   createTestContext,
-  markEmailVerified,
+  createTestAccount,
   request,
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
@@ -50,14 +50,7 @@ const SCOPE = "core.note:read";
 
 async function signInUser(c: TestContext, email: string): Promise<string> {
   const password = "correct horse battery";
-  const signUpRes = await request(c.app, "POST", "/auth/sign-up/email", {
-    body: { email, password, name: "Resource Param User" },
-    headers: { origin: ORIGIN },
-  });
-  if (signUpRes.status !== 200) {
-    throw new Error(`sign-up failed (${String(signUpRes.status)})`);
-  }
-  await markEmailVerified(c.storage, email);
+  await createTestAccount(c, email, password, "Resource Param User");
   const signInRes = await request(c.app, "POST", "/auth/sign-in/email", {
     body: { email, password },
     headers: { origin: ORIGIN },
@@ -167,8 +160,6 @@ async function signedInClient(
   email: string,
 ): Promise<{ context: TestContext; clientId: string; cookie: string }> {
   const context = await createTestContext({
-    authMode: "hosted",
-    authAllowSignup: true,
     authBaseUrl: base,
   });
   ctx = context;

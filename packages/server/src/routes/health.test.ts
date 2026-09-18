@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { healthRoutes, PROBE_TIMEOUT_MS } from "./health.js";
 import { setStoredValueScan } from "../storage/stored-value-scan.js";
-import type { AppConfig } from "../config.js";
 import type { Storage } from "../storage/interface.js";
 import type { BlobBackend } from "../storage/blob-backend.js";
 
@@ -45,8 +44,6 @@ function buildBlobs(exists: () => Promise<boolean>): BlobBackend {
   return { exists } as unknown as BlobBackend;
 }
 
-const config = { authMode: "keys" } as AppConfig;
-
 interface HealthBody {
   status: string;
   components: {
@@ -65,7 +62,6 @@ describe("GET /health", () => {
     const app = healthRoutes(
       buildStorage(() => Promise.resolve(3)),
       buildBlobs(() => Promise.resolve(false)),
-      config,
     );
 
     const res = await app.request("/");
@@ -85,7 +81,6 @@ describe("GET /health", () => {
     const app = healthRoutes(
       buildStorage(() => Promise.resolve(3)),
       buildBlobs(() => Promise.resolve(false)),
-      config,
     );
 
     const body = (await (await app.request("/")).json()) as HealthBody;
@@ -96,7 +91,6 @@ describe("GET /health", () => {
     const app = healthRoutes(
       buildStorage(() => never),
       buildBlobs(() => Promise.resolve(false)),
-      config,
     );
 
     const started = Date.now();
@@ -119,7 +113,6 @@ describe("GET /health", () => {
     const app = healthRoutes(
       buildStorage(() => Promise.resolve(3)),
       buildBlobs(() => never),
-      config,
     );
 
     const res = await app.request("/");
@@ -136,7 +129,6 @@ describe("GET /health", () => {
     const app = healthRoutes(
       buildStorage(() => Promise.reject(new Error("connection refused"))),
       buildBlobs(() => Promise.resolve(false)),
-      config,
     );
 
     const res = await app.request("/");
@@ -174,7 +166,6 @@ describe("GET /health placement", () => {
     healthRoutes(
       buildStorage(() => Promise.resolve(1)),
       buildBlobs(() => Promise.resolve(false)),
-      config,
     );
 
   it("reports what the deployment states about itself", async () => {
@@ -239,7 +230,6 @@ describe("GET /health unrecognized stored values", () => {
     return healthRoutes(
       buildStorage(() => Promise.resolve(3)),
       buildBlobs(() => Promise.resolve(false)),
-      config,
     );
   }
 

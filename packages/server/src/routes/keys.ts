@@ -920,11 +920,7 @@ async function provisionKeysModeSpace(
 // Router
 // ---------------------------------------------------------------------------
 
-export function keyRoutes(
-  storage: Storage,
-  salt: string,
-  authMode: "keys" | "hosted" = "keys",
-) {
+export function keyRoutes(storage: Storage, salt: string) {
   const router = createOpenAPIRouter<AppEnv>();
 
   router.openapi(createKeyRoute, async (c) => {
@@ -1264,7 +1260,7 @@ export function keyRoutes(
       // has one. An instance that lands here without a space still holds a
       // credential that can make one.
       let bootstrapSpace: Awaited<ReturnType<typeof provisionKeysModeSpace>>;
-      if (isBootstrap && authMode === "keys" && storage.spaces) {
+      if (isBootstrap && storage.spaces) {
         try {
           bootstrapSpace = await provisionKeysModeSpace(storage, salt);
         } catch (error) {

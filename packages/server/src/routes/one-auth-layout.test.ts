@@ -127,19 +127,4 @@ describe("every server-rendered page uses the one shared layout", () => {
       expect(files.map((f) => f.rel)).toContain(entry.file);
     }
   });
-
-  it("the email templates are deliberately out of scope", () => {
-    // Inline styles in email are an email-client constraint, not a choice:
-    // a `<link>` to a stylesheet is stripped by most clients. The templates
-    // live outside `routes/` precisely so this guard does not reach them,
-    // and that separation is asserted rather than assumed.
-    const emailDir = fileURLToPath(
-      new URL("../auth/email-templates", import.meta.url),
-    );
-    const emailFiles = walk(emailDir);
-    expect(emailFiles.length).toBeGreaterThan(0);
-    for (const abs of emailFiles) {
-      expect(relFromSrc(abs).startsWith("routes/")).toBe(false);
-    }
-  });
 });

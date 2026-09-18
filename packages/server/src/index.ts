@@ -32,7 +32,6 @@ import {
   RevokedKeyReaper,
   TrashPurger,
   AuthSessionCleaner,
-  PendingDeletePurger,
   RateLimitWindowCleaner,
   DcrClientCleaner,
   DeviceCodeCleaner,
@@ -48,8 +47,6 @@ import {
   formatErrorSummary,
   serializeError,
 } from "./middleware/logger.js";
-import { createEmailTransport } from "./email/index.js";
-import { checkCorsOrigins } from "./routes/cors-origins-check.js";
 import { OidcSigner } from "./auth/oidc-signing.js";
 import {
   BulkActionWorker,
@@ -76,9 +73,7 @@ async function main() {
     log("info", "Server version", { sha: "dev" });
   }
 
-  const storage: Storage = await createSqliteStorage(config.sqlitePath, {
-    authMode: config.authMode,
-  });
+  const storage: Storage = await createSqliteStorage(config.sqlitePath);
 
   let blobBackend: BlobBackend;
   if (config.blobBackend === "s3") {
@@ -309,20 +304,6 @@ async function main() {
     authSessionCleaner.start();
   }
 
-  // Gated on accountLifecycle being wired; test stubs that omit it skip this job.
-  const pendingDeletePurger = storage.accountLifecycle
-    ? new PendingDeletePurger(
-        storage,
-        config.accountDeletionGraceDays ?? 30,
-        config.accountDeletionPurgeIntervalMs ?? 3_600_000,
-        undefined,
-        storage.coordination,
-      )
-    : undefined;
-  if (pendingDeletePurger) {
-    pendingDeletePurger.start();
-  }
-
   // GC keeps the table bounded; expired rows are correctness-safe (upsert path
   // overwrites them transparently).
   const rateLimitCleaner = new RateLimitWindowCleaner(
@@ -444,52 +425,7 @@ async function main() {
     bulkActionGc.start();
   }
 
-  // Construct the email transport once at boot and thread it into
-  // createApp. The factory's sender-domain check fails loud here if
-  // MARFA_EMAIL_FROM doesn't end @mail.marfa.so on the Cloudflare
-  // backend, preventing bad config reaching the request loop. The
-  // `none` default returns the explicit-failure transport so
-  // email-dependent flows surface a clean
-  // `email_transport_not_configured` error instead of silently
-  // dead-lettering.
-  // Treat empty strings from `config` as "unset" — env vars come back
-  // as "" rather than undefined, but the transport expects undefined
-  // for optional fields. `emptyToUndef` is the trivial nullable cast.
-  const emptyToUndef = (v: string | undefined): string | undefined =>
-    v && v.length > 0 ? v : undefined;
-  const emailTransport = await createEmailTransport({
-    backend: config.emailBackend ?? "none",
-    authMode: config.authMode,
-    from: emptyToUndef(config.emailFrom) ?? "Marfa <hello@mail.marfa.so>",
-    replyTo: emptyToUndef(config.emailReplyTo),
-    cloudflare:
-      emptyToUndef(config.cloudflareAccountId) &&
-      emptyToUndef(config.cloudflareEmailApiToken)
-        ? {
-            accountId: config.cloudflareAccountId ?? "",
-            apiToken: config.cloudflareEmailApiToken ?? "",
-          }
-        : undefined,
-    smtp: emptyToUndef(config.smtpHost)
-      ? {
-          host: config.smtpHost ?? "",
-          port: config.smtpPort ?? 587,
-          user: emptyToUndef(config.smtpUser),
-          pass: emptyToUndef(config.smtpPass),
-          secure: config.smtpSecure ?? false,
-        }
-      : undefined,
-  });
-
   const oidcSigner = await OidcSigner.init(storage);
-
-  // Boot guard: warn loud if hosted mode runs with an empty CORS allowlist —
-  // browser clients would fail their cross-origin API calls with no obvious
-  // cause. A warning, not a hard stop (API-only hosted deployments are fine).
-  checkCorsOrigins({
-    authMode: config.authMode,
-    corsOrigins: config.corsOrigins,
-  });
 
   // Admit every space's runtime custom-namespace roots into the OAuth
   // scope allowlist, before the auth instance is built. Admission only —
@@ -547,13 +483,7 @@ async function main() {
     );
   }
 
-  const app = createApp(
-    storage,
-    blobBackend,
-    config,
-    emailTransport,
-    oidcSigner,
-  );
+  const app = createApp(storage, blobBackend, config, oidcSigner);
   const server = serve({ fetch: app.fetch, port: config.port }, (info) => {
     log("info", `Marfa server listening on port ${String(info.port)}`);
   });
@@ -584,7 +514,6 @@ async function main() {
     activityPurger?.stop();
     revokedKeyReaper.stop();
     authSessionCleaner?.stop();
-    pendingDeletePurger?.stop();
     rateLimitCleaner.stop();
     dcrClientCleaner?.stop();
     revokedGrantPurger?.stop();

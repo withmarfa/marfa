@@ -218,7 +218,7 @@ describe("every administrative door consults a space permission", () => {
       "edge-types.ts": { "space.schema": 1 },
       "items.ts": { "space.item_purge": 1 },
       "keys.ts": { "space.keys": 4 },
-      "spaces.ts": { "space.settings": 2, "space.usage": 1 },
+      "spaces.ts": { "space.settings": 2 },
       "types.ts": { "space.schema": 2 },
       "webhooks.ts": { "space.webhooks": 6 },
     };

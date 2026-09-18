@@ -1,7 +1,7 @@
 import { describe, it, expect, afterEach } from "vitest";
 import {
   createTestContext,
-  markEmailVerified,
+  createTestAccount,
   request,
   waitForAudit,
 } from "../test-utils.js";
@@ -190,16 +190,7 @@ async function signInAndCookie(
   email: string,
   password: string,
 ): Promise<string> {
-  await c.app.fetch(
-    new Request(`${ORIGIN}/auth/sign-up/email`, {
-      method: "POST",
-      headers: { "content-type": "application/json", origin: ORIGIN },
-      body: JSON.stringify({ email, password, name: "Tester" }),
-    }),
-  );
-  // requireEmailVerification blocks sign-in until the verify link is
-  // clicked. Stand-in for that here.
-  await markEmailVerified(c.storage, email);
+  await createTestAccount(c, email, password, "Tester");
   const signIn = await c.app.fetch(
     new Request(`${ORIGIN}/auth/sign-in/email`, {
       method: "POST",
@@ -220,7 +211,7 @@ async function signInAndCookie(
 
 describe("POST /auth/device — initiate", () => {
   it("returns device_code, user_code, verification URIs, expires_in, interval", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     const clientId = await createClient(ctx);
     const result = await initiate(ctx, clientId, "core.note:read");
 
@@ -238,7 +229,7 @@ describe("POST /auth/device — initiate", () => {
   });
 
   it("rejects unknown client_id with 400 INVALID_CLIENT", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     const res = await ctx.app.fetch(
       new Request(`${ORIGIN}/auth/device`, {
         method: "POST",
@@ -252,7 +243,7 @@ describe("POST /auth/device — initiate", () => {
   });
 
   it("rejects empty scope with 400 VALIDATION_ERROR", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     const clientId = await createClient(ctx);
     const res = await ctx.app.fetch(
       new Request(`${ORIGIN}/auth/device`, {
@@ -270,7 +261,7 @@ describe("POST /auth/device — initiate", () => {
   // previously routing into the user-code submission branch and
   // returning the wrong shape.
   it("accepts an RFC 8628 form-encoded init request", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     const clientId = await createClient(ctx);
     const res = await ctx.app.fetch(
       new Request(`${ORIGIN}/auth/device`, {
@@ -307,7 +298,7 @@ describe("POST /auth/device — initiate", () => {
   // The scope allowlist is the validator — the same set the code flow
   // accepts — and a wildcard is a first-class literal in it.
   it("accepts a user.* wildcard scope", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     const clientId = await createClient(ctx);
     const result = await initiate(ctx, clientId, "user.*:read");
     expect(result.device_code).toMatch(/^marfa_dc_/);
@@ -318,7 +309,7 @@ describe("POST /auth/device — initiate", () => {
   // Any disallowed scope therefore refuses the whole request rather
   // than being quietly dropped or quietly kept.
   it("rejects a scope outside the allowlist, even beside a valid one", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     const clientId = await createClient(ctx);
     const res = await ctx.app.fetch(
       new Request(`${ORIGIN}/auth/device`, {
@@ -336,7 +327,7 @@ describe("POST /auth/device — initiate", () => {
   });
 
   it("rejects a form-encoded init with unknown client_id", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     const res = await ctx.app.fetch(
       new Request(`${ORIGIN}/auth/device`, {
         method: "POST",
@@ -432,7 +423,7 @@ describe("GET /auth/device — verification form", () => {
 
 describe("POST /auth/device (form) — submit user_code", () => {
   it("redirects to consent on a valid user_code", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     const clientId = await createClient(ctx);
     const initResult = await initiate(ctx, clientId);
     const res = await ctx.app.fetch(
@@ -470,7 +461,7 @@ describe("POST /auth/device (form) — submit user_code", () => {
   });
 
   it("normalizes user_code without hyphen to canonical form", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     const clientId = await createClient(ctx);
     const initResult = await initiate(ctx, clientId);
     const stripped = initResult.user_code.replace("-", "");
@@ -493,7 +484,7 @@ describe("POST /auth/device (form) — submit user_code", () => {
 
 describe("GET /auth/device/consent — gated on session", () => {
   it("redirects to /auth/sign-in when no session cookie is present", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     const clientId = await createClient(ctx);
     const initResult = await initiate(ctx, clientId);
     const res = await ctx.app.fetch(
@@ -507,7 +498,7 @@ describe("GET /auth/device/consent — gated on session", () => {
   });
 
   it("renders the consent screen for an authenticated user", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     const clientId = await createClient(ctx);
     const initResult = await initiate(ctx, clientId);
     const cookie = await signInAndCookie(
@@ -530,7 +521,7 @@ describe("GET /auth/device/consent — gated on session", () => {
   });
 
   it("renders a wildcard scope as its own row instead of dropping it", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     const clientId = await createClient(ctx);
     const initResult = await initiate(
       ctx,
@@ -574,7 +565,7 @@ describe("GET /auth/device/consent — gated on session", () => {
   });
 
   it("describes a type in the consent screen's words, not the registry's", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     const clientId = await createClient(ctx);
     const initResult = await initiate(ctx, clientId, "core.note:read");
     const cookie = await signInAndCookie(
@@ -612,7 +603,7 @@ describe("GET /auth/device/consent — gated on session", () => {
 
 describe("POST /auth/device/consent — approve / deny", () => {
   it("approve flips device_code to approved and renders success page", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     const clientId = await createClient(ctx);
     const initResult = await initiate(ctx, clientId);
     const cookie = await signInAndCookie(
@@ -652,7 +643,7 @@ describe("POST /auth/device/consent — approve / deny", () => {
   });
 
   it("F16: approve emits auth.grant.created audit row with source='device'", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     const clientId = await createClient(ctx);
     const initResult = await initiate(ctx, clientId);
     const cookie = await signInAndCookie(
@@ -703,7 +694,7 @@ describe("POST /auth/device/consent — approve / deny", () => {
   });
 
   it("F15: re-approving the same client doesn't duplicate the system.connection row", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     const clientId = await createClient(ctx);
     const cookie = await signInAndCookie(
       ctx,
@@ -775,7 +766,7 @@ describe("POST /auth/device/consent — approve / deny", () => {
   });
 
   it("deny flips device_code to denied; polling returns access_denied", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     const clientId = await createClient(ctx);
     const initResult = await initiate(ctx, clientId);
     const cookie = await signInAndCookie(
@@ -848,7 +839,7 @@ describe("POST /auth/device/consent grants the ticked set", () => {
   }
 
   it("grants only what was ticked, dropping the rest", async () => {
-    const ctx = await createTestContext({ authMode: "hosted" });
+    const ctx = await createTestContext({});
     try {
       const clientId = await createClient(ctx);
       const cookie = await signInAndCookie(
@@ -881,7 +872,7 @@ describe("POST /auth/device/consent grants the ticked set", () => {
     // is to edit, so the submitted set is an intersection rather than a
     // substitution. Without it, a hand-edited form would grant an app more
     // than the client requested and more than the screen displayed.
-    const ctx = await createTestContext({ authMode: "hosted" });
+    const ctx = await createTestContext({});
     try {
       const clientId = await createClient(ctx);
       const cookie = await signInAndCookie(
@@ -921,7 +912,7 @@ describe("POST /auth/device/consent grants the ticked set", () => {
     // So both inputs to the token step can still carry a scope the person
     // just unticked, and the untick is a no-op for anything the standing
     // grant already holds — silently, with the audit row saying otherwise.
-    const ctx = await createTestContext({ authMode: "hosted" });
+    const ctx = await createTestContext({});
     try {
       const clientId = await createClient(ctx);
       const cookie = await signInAndCookie(
@@ -960,7 +951,7 @@ describe("POST /auth/device/consent grants the ticked set", () => {
     // the same reason: a grant of nothing is not a grant, and recording one
     // would leave a projection and a consent row standing for an app that
     // can do nothing with them.
-    const ctx = await createTestContext({ authMode: "hosted" });
+    const ctx = await createTestContext({});
     try {
       const clientId = await createClient(ctx);
       const cookie = await signInAndCookie(
@@ -1059,19 +1050,12 @@ describe("POST /auth/device/consent, approving merges into a standing grant", ()
    *  through the plugin's token tables and the consent lock are both part of
    *  what a revoke IS, and a hand-written property would test a fiction of
    *  one. */
-  async function revokeStandingGrant(
-    c: TestContext,
-    cookie: string,
-  ): Promise<void> {
+  async function revokeStandingGrant(c: TestContext): Promise<void> {
     const grant = await standingGrant(c);
-    const res = await c.app.fetch(
-      new Request(`${ORIGIN}/auth/grants/${grant.id}/revoke`, {
-        method: "POST",
-        headers: { origin: ORIGIN, cookie },
-      }),
-    );
-    expect(res.status).toBe(302);
-    expect(res.headers.get("location") ?? "").toContain("notice=grant_revoked");
+    const res = await request(c.app, "DELETE", `/auth/grants/${grant.id}`, {
+      key: c.spaceKey,
+    });
+    expect(res.status).toBe(204);
     // The revoke has to have landed for anything after it to mean
     // something. Without this the test still passes when the route quietly
     // does nothing, on the strength of a merge that had nothing to restore.
@@ -1081,7 +1065,7 @@ describe("POST /auth/device/consent, approving merges into a standing grant", ()
   }
 
   it("keeps a scope the standing grant holds and this device did not name", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     const clientId = await createClient(ctx);
     const cookie = await signInAndCookie(
       ctx,
@@ -1111,7 +1095,7 @@ describe("POST /auth/device/consent, approving merges into a standing grant", ()
   // it. A device approval never narrows a STANDING grant; a revoked grant is
   // not standing.
   it("does not restore a scope the user revoked", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     const clientId = await createClient(ctx);
     const cookie = await signInAndCookie(
       ctx,
@@ -1125,7 +1109,7 @@ describe("POST /auth/device/consent, approving merges into a standing grant", ()
       cookie,
       "core.note:read core.task:write",
     );
-    await revokeStandingGrant(ctx, cookie);
+    await revokeStandingGrant(ctx);
 
     // The device logs in again, asking for less than the revoked record
     // holds and never showing `core.task:write` on its consent screen.
@@ -1147,7 +1131,7 @@ describe("POST /auth/device/consent, approving merges into a standing grant", ()
   // The two live side by side because the fix is one predicate away from
   // taking the merge out altogether, and only this direction notices.
   it("still merges into a grant that was never revoked", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     const clientId = await createClient(ctx);
     const cookie = await signInAndCookie(
       ctx,
@@ -1186,7 +1170,7 @@ describe("POST /auth/device/consent, approving merges into a standing grant", ()
   // `active` refuses it. What a hand-stamped `state` proves, that the
   // predicate reads the field, is exactly what this case is for.
   it("does not merge into a grant whose lifecycle state is not active", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     const clientId = await createClient(ctx);
     const cookie = await signInAndCookie(
       ctx,
@@ -1247,7 +1231,7 @@ describe("POST /auth/device/consent, approving merges into a standing grant", ()
   });
 
   it("adds a scope the standing grant does not reach", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     const clientId = await createClient(ctx);
     const cookie = await signInAndCookie(
       ctx,
@@ -1275,7 +1259,7 @@ describe("POST /auth/device/consent, approving merges into a standing grant", ()
   // coverage is in `device-scope-merge.test.ts`; this pins that the route
   // actually routes through it.
   it("does not park a covered literal beside the wildcard that covers it", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     const clientId = await createClient(ctx);
     const cookie = await signInAndCookie(
       ctx,
@@ -1295,7 +1279,7 @@ describe("POST /auth/device/consent, approving merges into a standing grant", ()
   // pin the standing wildcard already covers leaves the record conferring a
   // write neither side conferred.
   it("does not confer a write neither the standing grant nor the request did", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     const clientId = await createClient(ctx);
     const cookie = await signInAndCookie(
       ctx,
@@ -1327,7 +1311,7 @@ describe("POST /auth/device/consent, approving merges into a standing grant", ()
   // two sides from the second login onward. Repeating a request the record
   // already spells identically would not exercise that.
   it("does not grow the record when a CLI signs in again and again", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     const clientId = await createClient(ctx);
     const cookie = await signInAndCookie(
       ctx,
@@ -1348,7 +1332,7 @@ describe("POST /auth/device/consent, approving merges into a standing grant", ()
   // ends up holding. Logging only the request made a grant look like it
   // acquired scopes from nowhere.
   it("audits the approved scopes and the record the merge produced", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     const clientId = await createClient(ctx);
     const cookie = await signInAndCookie(
       ctx,
@@ -1381,7 +1365,7 @@ describe("POST /auth/device/consent, approving merges into a standing grant", ()
   });
 
   it("issues the device a token for what it asked for, not for the merged grant", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     const clientId = await createClient(ctx);
     const cookie = await signInAndCookie(
       ctx,
@@ -1427,7 +1411,7 @@ describe("POST /auth/device/consent, approving merges into a standing grant", ()
   });
 
   it("withholds a refresh token from a device that did not ask to stay signed in", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     const clientId = await createClient(ctx);
     const cookie = await signInAndCookie(
       ctx,
@@ -1459,7 +1443,7 @@ describe("POST /auth/device/consent, approving merges into a standing grant", ()
   // between, and that narrowing has already revoked the live tokens. The poll
   // that follows must not hand back what was just taken away.
   it("does not reissue access the standing grant no longer reaches", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     const clientId = await createClient(ctx);
     const cookie = await signInAndCookie(
       ctx,
@@ -1507,7 +1491,7 @@ describe("POST /auth/device/consent, approving merges into a standing grant", ()
   // verbatim, so the grant and the request are the same set and the drop
   // still happened.
   it("issues a wildcard the device asked for alongside a narrower pin", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     const clientId = await createClient(ctx);
     const cookie = await signInAndCookie(
       ctx,
@@ -1561,7 +1545,7 @@ describe("POST /auth/device/consent, approving merges into a standing grant", ()
 
 describe("POST /auth/device/token — RFC 8628 error paths", () => {
   it("returns authorization_pending while user has not yet acted", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     const clientId = await createClient(ctx);
     const initResult = await initiate(ctx, clientId);
     const poll = await pollToken(ctx, initResult.device_code, clientId);
@@ -1570,7 +1554,7 @@ describe("POST /auth/device/token — RFC 8628 error paths", () => {
   });
 
   it("returns slow_down on a second poll inside the interval", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     const clientId = await createClient(ctx);
     const initResult = await initiate(ctx, clientId);
     const first = await pollToken(ctx, initResult.device_code, clientId);
@@ -1581,7 +1565,7 @@ describe("POST /auth/device/token — RFC 8628 error paths", () => {
   });
 
   it("returns invalid_grant for an unknown device_code", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     const clientId = await createClient(ctx);
     const poll = await pollToken(ctx, "marfa_dc_unknown", clientId);
     expect(poll.status).toBe(400);
@@ -1589,7 +1573,7 @@ describe("POST /auth/device/token — RFC 8628 error paths", () => {
   });
 
   it("returns invalid_grant when client_id doesn't match the device_code's client", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     const clientA = await createClient(ctx);
     const clientB = await createClient(ctx);
     const initResult = await initiate(ctx, clientA);
@@ -1599,7 +1583,7 @@ describe("POST /auth/device/token — RFC 8628 error paths", () => {
   });
 
   it("returns invalid_request when grant_type is wrong", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     const res = await ctx.app.fetch(
       new Request(`${ORIGIN}/auth/device/token`, {
         method: "POST",
@@ -1626,7 +1610,7 @@ describe("POST /auth/device/token — RFC 8628 error paths", () => {
   // `connection_item_id` pointing at any non-grant item must not silently
   // mint a token with whatever scopes that item happened to carry.
   it("rejects token issuance when connection_item_id resolves to a non-system.connection item", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     const clientId = await createClient(ctx);
     const initResult = await initiate(ctx, clientId);
 
@@ -1994,7 +1978,7 @@ describe("POST /auth/device — off-by-default scopes", () => {
         bundle("manage", false, ["core.task:write"]),
       ],
       async () => {
-        ctx = await createTestContext({ authAllowSignup: true });
+        ctx = await createTestContext({});
         const clientId = await createClient(ctx);
 
         const res = await tryInit(ctx, clientId, "core.task:write");
@@ -2027,7 +2011,7 @@ describe("POST /auth/device — off-by-default scopes", () => {
         bundle("manage", false, ["core.task:write"]),
       ],
       async () => {
-        ctx = await createTestContext({ authAllowSignup: true });
+        ctx = await createTestContext({});
         const clientId = await createClient(ctx);
 
         const html = await consentHtml(
@@ -2084,7 +2068,7 @@ describe("POST /auth/device — off-by-default scopes", () => {
 
 describe("POST /auth/device/token — a device code is exchanged once", () => {
   it("REGRESSION: a second poll with the same approved code is refused and mints nothing", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     const clientId = await createClient(ctx);
     const initResult = await initiate(ctx, clientId, "core.note:read");
     const cookie = await signInAndCookie(
@@ -2135,7 +2119,7 @@ describe("POST /auth/device/token — a device code is exchanged once", () => {
   });
 
   it("spends the code before it mints, and a spent code stays spent when the mint fails", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     const clientId = await createClient(ctx);
     const initResult = await initiate(ctx, clientId, "core.note:read");
     const cookie = await signInAndCookie(

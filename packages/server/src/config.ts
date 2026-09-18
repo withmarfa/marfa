@@ -68,7 +68,6 @@ export interface AppConfig {
    *  populates it, and readers fall back to `getPermissionBundles()`. */
   permissionBundles?: PermissionBundle[];
   cdnBaseUrl: string;
-  authMode: "hosted" | "keys";
   rateLimitEnabled: boolean;
   enableHsts: boolean;
   auditRetentionDays: number;
@@ -147,13 +146,6 @@ export interface AppConfig {
    *  86_400_000 (24h); env override `MARFA_DCR_CLIENT_CLEANUP_INTERVAL_MS`.
    *  Optional on the type; `index.ts` applies the 24h fallback. */
   dcrClientCleanupIntervalMs?: number;
-  /** Grace window (days) between `auth.account.delete_confirmed` and
-   *  the hard-delete cascade. `0` disables the purger entirely. Env
-   *  override `MARFA_ACCOUNT_DELETION_GRACE_DAYS`. Default 30. */
-  accountDeletionGraceDays?: number;
-  /** Cadence (ms) for the pending-delete purger sweep. Env override
-   *  `MARFA_ACCOUNT_DELETION_PURGE_INTERVAL_MS`. Default 1h. */
-  accountDeletionPurgeIntervalMs?: number;
   /** Cadence (ms) for the unreferenced-blob sweep. A full pass over the
    *  item corpus and the version history, so this is deliberately slow:
    *  default 86_400_000 (24h); env override
@@ -247,28 +239,9 @@ export interface AppConfig {
    *  (and port). Drives cookie domains and the OAuth issuer field on the
    *  discovery doc. Defaults to `http://localhost:<port>` if unset. */
   authBaseUrl: string;
-  /** When `true`, the email + password sign-up endpoint is enabled.
-   *  Default `false` — single-user self-hosted instances enable this
-   *  only for the initial admin account. */
-  authAllowSignup: boolean;
-  /** When `true`, a fresh sign-up's space is seeded with a few starter
-   *  items (a welcome note, a docs bookmark, a first task, one connecting
-   *  edge) so the space isn't empty on first open. Default `false`: self-host
-   *  and conformance get empty spaces; hosted deployments flip it on. */
-  seedStarterContent: boolean;
   /** Shared secret for cookie signing. Required in production; falls back
    *  to a per-process ephemeral secret in dev. */
   authSecret: string;
-  /** Explicit override for `requireEmailVerification`. When `undefined`,
-   *  the auth layer auto-detects from the configured email transport (on
-   *  for `cloudflare`/`smtp`, off for `none`/missing). When set, takes
-   *  precedence — primarily a test hook (env-driven config never sets it). */
-  authRequireEmailVerification?: boolean;
-  /** Federated OIDC providers (Google / GitHub / Authentik / etc.) wired
-   *  into the generic-oauth plugin. Parsed from the `MARFA_OIDC_PROVIDERS`
-   *  env var (JSON array of `{ providerId, clientId, clientSecret,
-   *  discoveryUrl?, scopes? }`). */
-  oidcProviders: OidcProviderConfig[];
   /** Default per-credential rate limit, requests per `rateLimitWindowMs`
    *  window. Read from `RATE_LIMIT_REQUESTS` (default 1000). Wired through
    *  the rate-limit middleware so there's a single env-read site. */
@@ -290,47 +263,6 @@ export interface AppConfig {
    *  OpenAPI spec keeps a separate, semantically-distinct
    *  API-contract version. */
   versionSha?: string;
-  /**
-   * Default per-space quota ceilings. NULL = unlimited (no enforcement).
-   * Each is read from a corresponding env var (`MARFA_DEFAULT_QUOTA_*`);
-   * per-space overrides via `space_quotas` rows take precedence.
-   * Optional on the type so existing test contexts continue to compile.
-   */
-  defaultQuotaItems?: number | null;
-  defaultQuotaWebhooks?: number | null;
-  defaultQuotaBlobs?: number | null;
-  defaultQuotaStorageBytes?: number | null;
-  defaultQuotaRatePerMinute?: number | null;
-  /**
-   * Email transport configuration.
-   *
-   * - `emailBackend` — `cloudflare | smtp | none`. Default `none` —
-   *   email-dependent flows (forgot-password, magic-link, email-verify)
-   *   return `email_transport_not_configured` until an operator picks
-   *   a backend. The factory + boot guard at `src/email/index.ts`
-   *   constructs the right transport at startup.
-   * - `emailFrom` — visible sender, e.g. `Marfa <hello@mail.marfa.so>`.
-   *   For the Cloudflare backend the domain MUST end in `@mail.marfa.so`
-   *   (the verified Cloudflare Email sending domain) —
-   *   `senderDomainCheck` enforces this at boot. Apex `marfa.so` has
-   *   no DKIM and would fail SPF.
-   * - `emailReplyTo` — monitored Reply-To. Optional; recommend a
-   *   real inbox so user replies don't bounce silently.
-   * - `cloudflareAccountId` / `cloudflareEmailApiToken` — Cloudflare
-   *   Email backend creds.
-   * - `smtpHost` / `smtpPort` / `smtpUser` / `smtpPass` /
-   *   `smtpSecure` — SMTP backend creds (self-host fallback).
-   */
-  emailBackend?: "cloudflare" | "smtp" | "none";
-  emailFrom?: string;
-  emailReplyTo?: string;
-  cloudflareAccountId?: string;
-  cloudflareEmailApiToken?: string;
-  smtpHost?: string;
-  smtpPort?: number;
-  smtpUser?: string;
-  smtpPass?: string;
-  smtpSecure?: boolean;
   /**
    * OpenTelemetry configuration. The instrumentation bootstrap
    * (`src/instrumentation.ts`) reads its toggle + exporter config from the
@@ -384,14 +316,6 @@ export interface AppConfig {
   sseMaxViewers?: number;
 }
 
-export interface OidcProviderConfig {
-  providerId: string;
-  clientId: string;
-  clientSecret: string;
-  discoveryUrl?: string;
-  scopes?: string[];
-}
-
 const DEFAULT_SALT = "dev-salt-change-in-production";
 
 const DEFAULT_EVENT_LOG_RETENTION_HOURS = 168;
@@ -403,23 +327,6 @@ const DEFAULT_EVENT_LOG_RETENTION_HOURS = 168;
  * and we'd rather run the server with sensible retention than fail boot.
  * Exported for direct unit testing.
  */
-/**
- * Parses a quota env var. Returns null for unset / empty (the
- * "unlimited" sentinel) and a parsed integer otherwise. Negative or
- * non-integer values log a warning and fall back to null.
- */
-function parseQuotaEnv(raw: string | undefined): number | null {
-  if (raw === undefined || raw === "") return null;
-  const parsed = Number(raw);
-  if (!Number.isFinite(parsed) || parsed < 0 || !Number.isInteger(parsed)) {
-    console.warn(
-      `Invalid quota env value "${raw}", treating as unlimited (null).`,
-    );
-    return null;
-  }
-  return parsed;
-}
-
 export function parseEventLogRetentionHours(raw: string | undefined): number {
   if (raw === undefined || raw === "") return DEFAULT_EVENT_LOG_RETENTION_HOURS;
   const parsed = Number(raw);
@@ -686,7 +593,6 @@ export function loadConfig(): AppConfig {
     corsOrigins: corsRaw ? corsRaw.split(",").map((s) => s.trim()) : [],
     permissionBundles: getPermissionBundles(),
     cdnBaseUrl: process.env.CDN_BASE_URL ?? "",
-    authMode: process.env.AUTH_MODE === "hosted" ? "hosted" : "keys",
     rateLimitEnabled: process.env.RATE_LIMIT_ENABLED !== "false",
     enableHsts: process.env.ENABLE_HSTS === "true",
     auditRetentionDays: envNumber(process.env.AUDIT_RETENTION_DAYS, 90),
@@ -746,14 +652,6 @@ export function loadConfig(): AppConfig {
     dcrClientCleanupIntervalMs: envNumber(
       process.env.MARFA_DCR_CLIENT_CLEANUP_INTERVAL_MS,
       86_400_000,
-    ),
-    accountDeletionGraceDays: envNumber(
-      process.env.MARFA_ACCOUNT_DELETION_GRACE_DAYS,
-      30,
-    ),
-    accountDeletionPurgeIntervalMs: envNumber(
-      process.env.MARFA_ACCOUNT_DELETION_PURGE_INTERVAL_MS,
-      3_600_000,
     ),
     rateLimitCleanupIntervalMs: envNumber(
       process.env.MARFA_RATE_LIMIT_CLEANUP_INTERVAL_MS,
@@ -830,37 +728,13 @@ export function loadConfig(): AppConfig {
     ),
     authBaseUrl:
       process.env.MARFA_AUTH_BASE_URL ?? `http://localhost:${String(port)}`,
-    authAllowSignup: process.env.MARFA_AUTH_ALLOW_SIGNUP === "true",
-    seedStarterContent: process.env.MARFA_SEED_STARTER_CONTENT === "true",
     authSecret,
-    oidcProviders: parseOidcProviders(process.env.MARFA_OIDC_PROVIDERS),
     rateLimitDefaultLimit: envNumber(process.env.RATE_LIMIT_REQUESTS, 1000),
     rateLimitWindowMs: envNumber(process.env.RATE_LIMIT_WINDOW_MS, 60_000),
     rateLimitAggregateMultiplier: envNumber(
       process.env.RATE_LIMIT_AGGREGATE_MULTIPLIER,
       4,
     ),
-    defaultQuotaItems: parseQuotaEnv(process.env.MARFA_DEFAULT_QUOTA_ITEMS),
-    defaultQuotaWebhooks: parseQuotaEnv(
-      process.env.MARFA_DEFAULT_QUOTA_WEBHOOKS,
-    ),
-    defaultQuotaBlobs: parseQuotaEnv(process.env.MARFA_DEFAULT_QUOTA_BLOBS),
-    defaultQuotaStorageBytes: parseQuotaEnv(
-      process.env.MARFA_DEFAULT_QUOTA_STORAGE_BYTES,
-    ),
-    defaultQuotaRatePerMinute: parseQuotaEnv(
-      process.env.MARFA_DEFAULT_QUOTA_RATE_PER_MINUTE,
-    ),
-    emailBackend: parseEmailBackend(process.env.MARFA_EMAIL_BACKEND),
-    emailFrom: process.env.MARFA_EMAIL_FROM ?? "",
-    emailReplyTo: process.env.MARFA_EMAIL_REPLY_TO ?? "",
-    cloudflareAccountId: process.env.CLOUDFLARE_ACCOUNT_ID ?? "",
-    cloudflareEmailApiToken: process.env.CLOUDFLARE_EMAIL_API_TOKEN ?? "",
-    smtpHost: process.env.MARFA_SMTP_HOST ?? "",
-    smtpPort: envNumber(process.env.MARFA_SMTP_PORT, 587),
-    smtpUser: process.env.MARFA_SMTP_USER ?? "",
-    smtpPass: process.env.MARFA_SMTP_PASS ?? "",
-    smtpSecure: process.env.MARFA_SMTP_SECURE === "true",
     otelEnabled: process.env.MARFA_OTEL_ENABLED === "true",
     otelServiceName: process.env.OTEL_SERVICE_NAME ?? "marfa-server",
     otelEnvironment: process.env.MARFA_OTEL_ENVIRONMENT,
@@ -921,68 +795,4 @@ export function parsePositiveIntegerEnv(
     throw new Error(`${name} must be a positive integer, got "${raw}".`);
   }
   return Number(trimmed);
-}
-
-/**
- * Parses `MARFA_EMAIL_BACKEND`. Unset / unknown → `none` (the
- * fail-loud-on-send default). Legal values: `cloudflare | smtp | none`.
- */
-function parseEmailBackend(
-  raw: string | undefined,
-): "cloudflare" | "smtp" | "none" {
-  if (raw === "cloudflare" || raw === "smtp" || raw === "none") return raw;
-  if (raw && raw.length > 0) {
-    console.warn(
-      `Unknown MARFA_EMAIL_BACKEND=${raw}; falling back to "none". ` +
-        `Legal values: cloudflare | smtp | none.`,
-    );
-  }
-  return "none";
-}
-
-function parseOidcProviders(raw: string | undefined): OidcProviderConfig[] {
-  if (!raw) return [];
-  try {
-    const parsed = JSON.parse(raw) as unknown;
-    if (!Array.isArray(parsed)) {
-      console.warn(
-        "MARFA_OIDC_PROVIDERS must be a JSON array, falling back to no federated providers",
-      );
-      return [];
-    }
-    const out: OidcProviderConfig[] = [];
-    for (const entry of parsed) {
-      if (
-        entry &&
-        typeof entry === "object" &&
-        typeof (entry as { providerId?: unknown }).providerId === "string" &&
-        typeof (entry as { clientId?: unknown }).clientId === "string" &&
-        typeof (entry as { clientSecret?: unknown }).clientSecret === "string"
-      ) {
-        const e = entry as Record<string, unknown>;
-        out.push({
-          providerId: e.providerId as string,
-          clientId: e.clientId as string,
-          clientSecret: e.clientSecret as string,
-          discoveryUrl:
-            typeof e.discoveryUrl === "string" ? e.discoveryUrl : undefined,
-          scopes: Array.isArray(e.scopes)
-            ? (e.scopes as unknown[]).filter(
-                (s): s is string => typeof s === "string",
-              )
-            : undefined,
-        });
-      } else {
-        console.warn(
-          "MARFA_OIDC_PROVIDERS entry missing providerId/clientId/clientSecret, skipping",
-        );
-      }
-    }
-    return out;
-  } catch {
-    console.warn(
-      "MARFA_OIDC_PROVIDERS is not valid JSON, falling back to no federated providers",
-    );
-    return [];
-  }
 }

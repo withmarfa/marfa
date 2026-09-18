@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach, vi } from "vitest";
 import { oauthProvider } from "@better-auth/oauth-provider";
 import {
   createTestContext,
-  markEmailVerified,
+  createTestAccount,
   request,
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
@@ -80,14 +80,7 @@ function pluginEndpoints(): PluginEndpoint[] {
 /** Sign up + verify + sign in; returns the session cookie (`name=value`). */
 async function signInUser(c: TestContext, email: string): Promise<string> {
   const password = "correct horse battery";
-  const signUpRes = await request(c.app, "POST", "/auth/sign-up/email", {
-    body: { email, password, name: "Fence Test User" },
-    headers: { origin: ORIGIN },
-  });
-  if (signUpRes.status !== 200) {
-    throw new Error(`sign-up failed (${String(signUpRes.status)})`);
-  }
-  await markEmailVerified(c.storage, email);
+  await createTestAccount(c, email, password, "Fence Test User");
   const signInRes = await request(c.app, "POST", "/auth/sign-in/email", {
     body: { email, password },
     headers: { origin: ORIGIN },
@@ -333,7 +326,7 @@ describe("the plugin's management endpoints are fenced", () => {
   });
 
   it("a signed-in session gets the Marfa 404 on every fenced path in both spellings, and neither its consent row nor the client table moves", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     const cookie = await signInUser(ctx, "fence@example.com");
     const authUserId = await authUserIdFor(ctx, "fence@example.com");
     const clientId = await seedClient(ctx);
@@ -363,7 +356,7 @@ describe("the plugin's management endpoints are fenced", () => {
   });
 
   it("the signature is the fence's alone, and every reachable path answers as itself", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     const cookie = await signInUser(ctx, "control@example.com");
 
     // An unknown `/auth/*` path is refused by the catch-all with a bare 404

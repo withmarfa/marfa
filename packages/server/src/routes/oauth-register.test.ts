@@ -33,7 +33,7 @@ describe("POST /auth/oauth2/register", () => {
   it("returns 201 for grant_types: ['authorization_code']", async () => {
     // Routes through the Marfa override; the plugin's DCR would 500 on
     // PG due to mishandled string[] columns in Better Auth's Drizzle adapter.
-    ctx = await createTestContext({ authAllowSignup: false });
+    ctx = await createTestContext({});
     const res = await request(ctx.app, "POST", "/auth/oauth2/register", {
       body: {
         redirect_uris: ["http://localhost/cb"],
@@ -54,7 +54,7 @@ describe("POST /auth/oauth2/register", () => {
   it("returns 201 for grant_types: [device_code URN]", async () => {
     // Gap 2 — the plugin's body Zod enum rejected the URN at validation
     // time; the Marfa override accepts it.
-    ctx = await createTestContext({ authAllowSignup: false });
+    ctx = await createTestContext({});
     const res = await request(ctx.app, "POST", "/auth/oauth2/register", {
       body: {
         grant_types: [DEVICE_CODE_GRANT],
@@ -73,7 +73,7 @@ describe("POST /auth/oauth2/register", () => {
     // The SDK's `startDeviceFlow` expects refresh-token rotation as a
     // first-class part of the device flow, so the device-code +
     // refresh_token combination is the common shape.
-    ctx = await createTestContext({ authAllowSignup: false });
+    ctx = await createTestContext({});
     const res = await request(ctx.app, "POST", "/auth/oauth2/register", {
       body: {
         grant_types: [DEVICE_CODE_GRANT, "refresh_token"],
@@ -95,7 +95,7 @@ describe("POST /auth/oauth2/register", () => {
     // `storage.oauthProvider.getClient` (which safeJsonParse's
     // `redirect_uris`). The Marfa override writes the column in the
     // JSON-encoded shape the reader expects.
-    ctx = await createTestContext({ authAllowSignup: false });
+    ctx = await createTestContext({});
     const regRes = await request(ctx.app, "POST", "/auth/oauth2/register", {
       body: {
         grant_types: [DEVICE_CODE_GRANT],
@@ -118,7 +118,7 @@ describe("POST /auth/oauth2/register", () => {
   });
 
   it("rejects authorization_code grant without redirect_uris", async () => {
-    ctx = await createTestContext({ authAllowSignup: false });
+    ctx = await createTestContext({});
     const res = await request(ctx.app, "POST", "/auth/oauth2/register", {
       body: {
         grant_types: ["authorization_code"],
@@ -131,7 +131,7 @@ describe("POST /auth/oauth2/register", () => {
   });
 
   it("rejects the client_credentials grant, which this server does not have", async () => {
-    ctx = await createTestContext({ authAllowSignup: false });
+    ctx = await createTestContext({});
     const res = await request(ctx.app, "POST", "/auth/oauth2/register", {
       body: {
         grant_types: ["client_credentials"],
@@ -144,7 +144,7 @@ describe("POST /auth/oauth2/register", () => {
   });
 
   it("rejects refresh_token grant in isolation", async () => {
-    ctx = await createTestContext({ authAllowSignup: false });
+    ctx = await createTestContext({});
     const res = await request(ctx.app, "POST", "/auth/oauth2/register", {
       body: {
         grant_types: ["refresh_token"],
@@ -157,7 +157,7 @@ describe("POST /auth/oauth2/register", () => {
   });
 
   it("rejects javascript: redirect URIs", async () => {
-    ctx = await createTestContext({ authAllowSignup: false });
+    ctx = await createTestContext({});
     const res = await request(ctx.app, "POST", "/auth/oauth2/register", {
       body: {
         redirect_uris: ["javascript:alert(1)"],
@@ -170,7 +170,7 @@ describe("POST /auth/oauth2/register", () => {
   });
 
   it("rejects non-loopback http:// redirect URIs", async () => {
-    ctx = await createTestContext({ authAllowSignup: false });
+    ctx = await createTestContext({});
     const res = await request(ctx.app, "POST", "/auth/oauth2/register", {
       body: {
         redirect_uris: ["http://example.com/cb"],
@@ -183,7 +183,7 @@ describe("POST /auth/oauth2/register", () => {
   });
 
   it("accepts loopback http:// redirect URIs (127.0.0.1, localhost)", async () => {
-    ctx = await createTestContext({ authAllowSignup: false });
+    ctx = await createTestContext({});
     for (const uri of [
       "http://127.0.0.1:8080/cb",
       "http://localhost:9999/cb",
@@ -200,7 +200,7 @@ describe("POST /auth/oauth2/register", () => {
   });
 
   it("persists registered post-logout redirect URIs", async () => {
-    ctx = await createTestContext({ authAllowSignup: false });
+    ctx = await createTestContext({});
     const postLogoutRedirectUri = "http://localhost:5173/";
     const res = await request(ctx.app, "POST", "/auth/oauth2/register", {
       body: {
@@ -221,7 +221,7 @@ describe("POST /auth/oauth2/register", () => {
   });
 
   it("rejects unsafe post-logout redirect URIs", async () => {
-    ctx = await createTestContext({ authAllowSignup: false });
+    ctx = await createTestContext({});
     const res = await request(ctx.app, "POST", "/auth/oauth2/register", {
       body: {
         redirect_uris: ["http://localhost:5173/auth/callback"],
@@ -241,7 +241,6 @@ describe("POST /auth/oauth2/register", () => {
     // non-loopback http redirect. The operator opts in by listing the
     // origin in CORS_ORIGINS; the DCR validator then accepts it.
     ctx = await createTestContext({
-      authAllowSignup: false,
       corsOrigins: ["http://home-server:9021"],
     });
     const res = await request(ctx.app, "POST", "/auth/oauth2/register", {
@@ -262,7 +261,6 @@ describe("POST /auth/oauth2/register", () => {
     // Same shape, but the origin is absent from CORS_ORIGINS — the
     // exemption must not fire just because some other origin is trusted.
     ctx = await createTestContext({
-      authAllowSignup: false,
       corsOrigins: ["http://home-server:9021"],
     });
     const res = await request(ctx.app, "POST", "/auth/oauth2/register", {
@@ -277,7 +275,7 @@ describe("POST /auth/oauth2/register", () => {
   });
 
   it("rejects scopes outside the server's allowed set", async () => {
-    ctx = await createTestContext({ authAllowSignup: false });
+    ctx = await createTestContext({});
     const res = await request(ctx.app, "POST", "/auth/oauth2/register", {
       body: {
         grant_types: [DEVICE_CODE_GRANT],
@@ -290,7 +288,7 @@ describe("POST /auth/oauth2/register", () => {
   });
 
   it("rejects non-JSON content-type", async () => {
-    ctx = await createTestContext({ authAllowSignup: false });
+    ctx = await createTestContext({});
     const res = await request(ctx.app, "POST", "/auth/oauth2/register", {
       headers: { "content-type": "application/x-www-form-urlencoded" },
     });

@@ -7,10 +7,11 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
   createTestContext,
+  mintSpaceKey,
   request,
   seedOauthBearer,
-  waitForAudit,
   TEST_API_KEY_SALT,
+  waitForAudit,
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import type { Storage } from "../storage/interface.js";
@@ -414,7 +415,6 @@ describe("bootstrap sentinel", () => {
       apiKeySalt: "test-salt",
       corsOrigins: [],
       cdnBaseUrl: "",
-      authMode: "keys",
       rateLimitEnabled: false,
       enableHsts: false,
       auditRetentionDays: 90,
@@ -430,10 +430,7 @@ describe("bootstrap sentinel", () => {
       errorWebhookUrl: "",
       trustedProxyCidrs: [],
       authBaseUrl: "http://localhost:0",
-      authAllowSignup: true,
-      seedStarterContent: false,
       authSecret: "test-auth-secret",
-      oidcProviders: [],
       rateLimitDefaultLimit: 1000,
       rateLimitWindowMs: 60_000,
       ...overrides,
@@ -556,9 +553,7 @@ describe("bootstrap sentinel", () => {
     // credential applies no space predicate at all, so `*: write` here is
     // read and write over every space at once, in the one row shape the
     // constraint exists to make unwritable.
-    const { app, storage, bootstrapSecret, tmpDir } = await freshApp({
-      authMode: "hosted",
-    });
+    const { app, storage, bootstrapSecret, tmpDir } = await freshApp({});
     try {
       const res = await request(app, "POST", "/keys", {
         key: bootstrapSecret,
@@ -662,9 +657,7 @@ describe("bootstrap sentinel", () => {
     // so this reaches the release the only way left, by making the audit
     // write throw synchronously. The point is not that path; it is that a
     // future step added after the insert cannot reopen the window by failing.
-    const { app, storage, bootstrapSecret, tmpDir } = await freshApp({
-      authMode: "hosted",
-    });
+    const { app, storage, bootstrapSecret, tmpDir } = await freshApp({});
     try {
       storage.audit.log = () => {
         throw new Error("storage is having a moment");
@@ -752,26 +745,6 @@ describe("bootstrap sentinel", () => {
       });
       expect(retried.status).toBe(201);
       expect(await storage.settings.get("bootstrapped")).toBe("true");
-    } finally {
-      await storage.close();
-      rmSync(tmpDir, { recursive: true, force: true });
-    }
-  });
-
-  it("provisions nothing in hosted mode, where a space belongs to an account", async () => {
-    const { app, storage, bootstrapSecret, tmpDir } = await freshApp({
-      authMode: "hosted",
-    });
-    try {
-      const res = await request(app, "POST", "/keys", {
-        key: bootstrapSecret,
-        body: { label: "first-admin", source: "first-admin" },
-      });
-      expect(res.status).toBe(201);
-      const body = (await res.json()) as { space?: unknown };
-      expect(body.space).toBeUndefined();
-      // A stray space owned by nobody is the thing to avoid here.
-      expect(await storage.spaces?.list()).toEqual([]);
     } finally {
       await storage.close();
       rmSync(tmpDir, { recursive: true, force: true });
@@ -1127,7 +1100,7 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
   const grantScopes = (...extra: string[]) => ["openid", KEYS, ...extra];
 
   beforeAll(async () => {
-    hostedCtx = await createTestContext({ authMode: "hosted" });
+    hostedCtx = await createTestContext({});
     const space = await hostedCtx.storage.spaces!.create("oauth-keys-space");
     spaceId = space.id;
   });
@@ -1138,7 +1111,6 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
 
   it("refuses every keys door to a session that was not granted the space permission", async () => {
     const { token } = await seedOauthBearer(hostedCtx.storage, ["openid"], {
-      seedUserRow: true,
       spaceId,
     });
     const doors: [string, string, unknown?][] = [
@@ -1167,7 +1139,7 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
     const { token } = await seedOauthBearer(
       hostedCtx.storage,
       grantScopes("core.note:read"),
-      { seedUserRow: true, spaceId },
+      { spaceId },
     );
     const res = await request(hostedCtx.app, "POST", "/keys", {
       key: token,
@@ -1191,7 +1163,7 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
     const { token } = await seedOauthBearer(
       hostedCtx.storage,
       grantScopes("core.note:read"),
-      { seedUserRow: true, spaceId },
+      { spaceId },
     );
     const res = await request(hostedCtx.app, "POST", "/keys", {
       key: token,
@@ -1217,7 +1189,7 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
     const { token } = await seedOauthBearer(
       hostedCtx.storage,
       grantScopes("core.*:write"),
-      { seedUserRow: true, spaceId },
+      { spaceId },
     );
     const res = await request(hostedCtx.app, "POST", "/keys", {
       key: token,
@@ -1232,7 +1204,6 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
 
   it("never mints an operator key from a session, whatever the body asks", async () => {
     const { token } = await seedOauthBearer(hostedCtx.storage, grantScopes(), {
-      seedUserRow: true,
       spaceId,
     });
     const res = await request(hostedCtx.app, "POST", "/keys", {
@@ -1259,7 +1230,7 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
     const { token, clientId } = await seedOauthBearer(
       hostedCtx.storage,
       grantScopes("core.note:read"),
-      { seedUserRow: true, spaceId },
+      { spaceId },
     );
     const res = await request(hostedCtx.app, "POST", "/keys", {
       key: token,
@@ -1285,7 +1256,6 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
 
   it("lets a granted session read, revoke and rename", async () => {
     const { token } = await seedOauthBearer(hostedCtx.storage, grantScopes(), {
-      seedUserRow: true,
       spaceId,
     });
     const raw = "marfa_k1_sess_" + Math.random().toString(36).slice(2);
@@ -1329,7 +1299,7 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
     const { token } = await seedOauthBearer(
       hostedCtx.storage,
       grantScopes("core.note:read"),
-      { seedUserRow: true, spaceId },
+      { spaceId },
     );
     const minted = await request(hostedCtx.app, "POST", "/keys", {
       key: token,
@@ -1377,7 +1347,7 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
     const { token } = await seedOauthBearer(
       hostedCtx.storage,
       grantScopes("core.note:read"),
-      { seedUserRow: true, spaceId },
+      { spaceId },
     );
     const widen = await request(hostedCtx.app, "PATCH", `/keys/${victim.id}`, {
       key: token,
@@ -1401,7 +1371,7 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
     const { token } = await seedOauthBearer(
       hostedCtx.storage,
       grantScopes("core.note:read"),
-      { seedUserRow: true, spaceId },
+      { spaceId },
     );
     const minted = await request(hostedCtx.app, "POST", "/keys", {
       key: token,
@@ -1447,7 +1417,7 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
     const { token } = await seedOauthBearer(
       hostedCtx.storage,
       grantScopes("core.note:read", "edge.about:read"),
-      { seedUserRow: true, spaceId },
+      { spaceId },
     );
 
     // The derive path does hand the edge map over when nothing is named.
@@ -1488,7 +1458,7 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
     const { token } = await seedOauthBearer(
       hostedCtx.storage,
       grantScopes("core.note:read", "edge.about:read"),
-      { seedUserRow: true, spaceId },
+      { spaceId },
     );
     const res = await request(hostedCtx.app, "POST", "/keys", {
       key: token,
@@ -1515,7 +1485,7 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
     const { token } = await seedOauthBearer(
       hostedCtx.storage,
       grantScopes("core.note:read"),
-      { seedUserRow: true, spaceId },
+      { spaceId },
     );
     const minted = await request(hostedCtx.app, "POST", "/keys", {
       key: token,
@@ -1544,7 +1514,7 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
     const contentOnly = await seedOauthBearer(
       hostedCtx.storage,
       grantScopes("content:write"),
-      { seedUserRow: true, spaceId },
+      { spaceId },
     );
     const refused = await request(hostedCtx.app, "POST", "/keys", {
       key: contentOnly.token,
@@ -1565,7 +1535,7 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
     const metaHolder = await seedOauthBearer(
       hostedCtx.storage,
       grantScopes("metadata:write"),
-      { seedUserRow: true, spaceId },
+      { spaceId },
     );
     const allowed = await request(hostedCtx.app, "POST", "/keys", {
       key: metaHolder.token,
@@ -1619,7 +1589,7 @@ describe("POST /keys — space binding", () => {
   let spaceId: string;
 
   beforeAll(async () => {
-    hostedCtx = await createTestContext({ authMode: "hosted" });
+    hostedCtx = await createTestContext({});
     const space = await hostedCtx.storage.spaces!.create("space-binding");
     spaceId = space.id;
   });
@@ -1804,24 +1774,14 @@ describe("POST /keys — space binding", () => {
     // suite inverted to this one first: a space-less credential is the
     // instance tier and reads no row at all.
     const suffix = Math.random().toString(36).slice(2, 10);
-    const firstHop = await request(
-      hostedCtx.app,
-      "POST",
-      `/admin/spaces/${spaceId}/keys`,
-      {
-        key: hostedCtx.operatorKey,
-        body: {
-          label: `harness-${suffix}`,
-          source: `harness-${suffix}`,
-          type_permissions: { "*": "write" },
-        },
-      },
-    );
-    expect(firstHop.status).toBe(201);
-    const harness = (await firstHop.json()) as { key: string };
+    const harnessKey = await mintSpaceKey(hostedCtx, spaceId, {
+      label: `harness-${suffix}`,
+      source: `harness-${suffix}`,
+      type_permissions: { "*": "write" },
+    });
 
     const secondHop = await request(hostedCtx.app, "POST", "/keys", {
-      key: harness.key,
+      key: harnessKey,
       body: {
         label: `scoped-${suffix}`,
         source: `scoped-${suffix}`,

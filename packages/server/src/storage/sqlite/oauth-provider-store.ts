@@ -7,8 +7,7 @@
  * after-hooks.
  */
 
-import { eq, and, desc, lt, isNotNull, sql, notInArray } from "drizzle-orm";
-import { FIRST_PARTY_CLIENT_IDS } from "../../auth/first-party-clients.js";
+import { eq, and, desc, lt, isNotNull, sql } from "drizzle-orm";
 import { generateId } from "@withmarfa/shared";
 import { safeJsonParse } from "../json-utils.js";
 import type {
@@ -605,8 +604,6 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
           sql`NOT EXISTS (SELECT 1 FROM ${auth_oauth_access_token} WHERE ${auth_oauth_access_token.clientId} = ${auth_oauth_client.clientId})`,
           sql`NOT EXISTS (SELECT 1 FROM ${auth_oauth_refresh_token} WHERE ${auth_oauth_refresh_token.clientId} = ${auth_oauth_client.clientId})`,
           sql`NOT EXISTS (SELECT 1 FROM ${items} WHERE ${items.type} = 'system.connection' AND json_extract(${items.properties}, '$.kind') = 'app' AND json_extract(${items.properties}, '$.client_id') = ${auth_oauth_client.clientId})`,
-          // A first-party client is seeded, not registered, and is never grantless in the sense this reaper means.
-          notInArray(auth_oauth_client.clientId, [...FIRST_PARTY_CLIENT_IDS]),
         ),
       )
       .returning({ id: auth_oauth_client.id });

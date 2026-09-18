@@ -89,7 +89,7 @@ function isAbsent(stored: unknown): boolean {
 
 describe("oauth client scope ceiling", () => {
   it("writes SQL NULL for no ceiling, on either dialect", async () => {
-    ctx = await createTestContext({ authMode: "hosted" });
+    ctx = await createTestContext({});
     const stored = await createAndReadRawColumn(ctx, null);
     // The near-miss this rules out: writing the string `"null"` from
     // `JSON.stringify(null)`. That is a present value, so the plugin's
@@ -101,7 +101,7 @@ describe("oauth client scope ceiling", () => {
   });
 
   it("keeps an empty ceiling as a present, empty value", async () => {
-    ctx = await createTestContext({ authMode: "hosted" });
+    ctx = await createTestContext({});
     const stored = await createAndReadRawColumn(ctx, []);
     // `??` does not fall through on `[]`. If this ever became NULL, a client
     // registered for nothing would silently gain the whole allowlist.
@@ -110,7 +110,7 @@ describe("oauth client scope ceiling", () => {
   });
 
   it("preserves a real ceiling verbatim", async () => {
-    ctx = await createTestContext({ authMode: "hosted" });
+    ctx = await createTestContext({});
     const scopes = ["openid", "core.note:read", "core.task:write"];
     const stored = await createAndReadRawColumn(ctx, scopes);
     expect(isAbsent(stored)).toBe(false);
@@ -118,7 +118,7 @@ describe("oauth client scope ceiling", () => {
   });
 
   it("the three values stay mutually distinguishable in the column", async () => {
-    ctx = await createTestContext({ authMode: "hosted" });
+    ctx = await createTestContext({});
     // Asserted together because the defect is always a collapse of one into
     // another, and each case passing alone does not prove they stayed apart.
     const absent = await createAndReadRawColumn(ctx, null);
@@ -132,7 +132,7 @@ describe("oauth client scope ceiling", () => {
   });
 
   it("the store's reader reports the column faithfully", async () => {
-    ctx = await createTestContext({ authMode: "hosted" });
+    ctx = await createTestContext({});
     const oauth = ctx.storage.oauthProvider;
     if (!oauth) throw new Error("storage.oauthProvider missing");
 

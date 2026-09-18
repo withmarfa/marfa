@@ -14,7 +14,7 @@
  * success. Recording the 409 is right; softening it is not.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { createTestContext, request } from "../test-utils.js";
+import { createTestContext, mintSpaceKey, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 
 let ctx: TestContext;
@@ -25,7 +25,7 @@ let spaceA: string;
 beforeAll(async () => {
   // `hosted`: a space-bound credential is what makes the scoping
   // observable at all.
-  ctx = await createTestContext({ authMode: "hosted" });
+  ctx = await createTestContext({});
   const a = await ctx.storage.spaces!.create("idempotency-a");
   const b = await ctx.storage.spaces!.create("idempotency-b");
   spaceA = a.id;
@@ -37,16 +37,15 @@ afterAll(async () => {
   await ctx.cleanup();
 });
 
-async function spaceKey(spaceId: string, label: string): Promise<string> {
-  const res = await request(ctx.app, "POST", `/admin/spaces/${spaceId}/keys`, {
-    key: ctx.operatorKey,
-    // The type grant is named rather than implied: a rank used to bypass the
-    // permission maps and there is no rank now, so a key that names nothing
-    // reaches nothing.
-    body: { label, source: label, type_permissions: { "*": "write" } },
+function spaceKey(spaceId: string, label: string): Promise<string> {
+  // The type grant is named rather than implied: a rank used to bypass the
+  // permission maps and there is no rank now, so a key that names nothing
+  // reaches nothing.
+  return mintSpaceKey(ctx, spaceId, {
+    label,
+    source: label,
+    type_permissions: { "*": "write" },
   });
-  expect(res.status).toBe(201);
-  return ((await res.json()) as { key: string }).key;
 }
 
 describe("the key is scoped to the space", () => {

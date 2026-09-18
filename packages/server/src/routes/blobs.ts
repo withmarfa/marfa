@@ -11,7 +11,6 @@ import {
   hasOperatorAuthority,
 } from "../middleware/auth.js";
 import type { ApiKey } from "@withmarfa/shared";
-import { reserveQuota } from "../middleware/quota.js";
 import { log } from "../middleware/logger.js";
 import type { Storage } from "../storage/interface.js";
 import type { BlobBackend } from "../storage/blob-backend.js";
@@ -408,10 +407,6 @@ export function blobRoutes(
       }
       try {
         await storage.runInTransaction(async () => {
-          await reserveQuota(c, storage, [
-            { resource: "blobs", increment: 1 },
-            { resource: "storage_bytes", increment: data.length },
-          ]);
           // Register the metadata row scoped to the caller's space. Empty-
           // string sentinel for instance-wide and operator-key
           // uploads. Different spaces uploading the same hash bytes get

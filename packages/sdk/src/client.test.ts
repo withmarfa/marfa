@@ -20,7 +20,6 @@ import {
 } from "./errors.js";
 import type { Storage } from "@withmarfa/server";
 import type { Item } from "@withmarfa/shared";
-import { SPACE_PERMISSIONS } from "@withmarfa/shared";
 
 let client: MarfaClient;
 let testFetchFn: typeof globalThis.fetch;
@@ -67,7 +66,6 @@ beforeAll(async () => {
     apiKeySalt: "test-salt",
     corsOrigins: [],
     cdnBaseUrl: "",
-    authMode: "keys",
     rateLimitEnabled: false,
     enableHsts: false,
     auditRetentionDays: 90,
@@ -82,10 +80,7 @@ beforeAll(async () => {
     errorWebhookUrl: "",
     trustedProxyCidrs: [],
     authBaseUrl: "http://localhost:0",
-    authAllowSignup: false,
-    seedStarterContent: false,
     authSecret: "test-secret",
-    oidcProviders: [],
     rateLimitDefaultLimit: 1000,
     rateLimitWindowMs: 60_000,
   });
@@ -115,39 +110,19 @@ beforeAll(async () => {
       default_tier: "feed",
     }),
   });
-  const { key: operatorKey } = (await bootstrapRes.json()) as { key: string };
-  const operatorHeaders = {
-    "Content-Type": "application/json",
-    Authorization: `Bearer ${operatorKey}`,
+  // Keys mode provisions the instance's one space at bootstrap and mints a
+  // working key into it beside the operator key; the fixture runs as that
+  // working key, which is the setup keys mode is meant to follow.
+  const bootstrap = (await bootstrapRes.json()) as {
+    key: string;
+    space?: { id: string };
+    space_key?: { key: string };
   };
-  const spaceRes = await testFetch("http://localhost/admin/spaces", {
-    method: "POST",
-    headers: operatorHeaders,
-    body: JSON.stringify({ name: "sdk-test" }),
-  });
-  ({ id: testSpaceId } = (await spaceRes.json()) as { id: string });
-
-  // Named rather than implied: the working key used to carry a rank that
-  // bypassed the permission maps, and the maps and the permission list are now
-  // the whole of a credential's reach.
-  const workerRes = await testFetch(
-    `http://localhost/admin/spaces/${testSpaceId}/keys`,
-    {
-      method: "POST",
-      headers: operatorHeaders,
-      body: JSON.stringify({
-        label: "test-admin",
-        source: "sdk-test-admin",
-        default_tier: "feed",
-        space_permissions: [...SPACE_PERMISSIONS],
-        type_permissions: { "*": "write" },
-        extension_permissions: { "*": "write" },
-        edge_permissions: { "*": "write" },
-        metadata_permissions: { "*": "write" },
-      }),
-    },
-  );
-  const { key } = (await workerRes.json()) as { key: string };
+  if (!bootstrap.space || !bootstrap.space_key) {
+    throw new Error("keys-mode bootstrap returned no space and working key");
+  }
+  testSpaceId = bootstrap.space.id;
+  const key = bootstrap.space_key.key;
   spaceKey = key;
 
   client = new MarfaClient({

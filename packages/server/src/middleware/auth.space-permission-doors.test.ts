@@ -23,7 +23,6 @@ import { checkTypeAccess, computeTypeFilter, hashApiKey } from "./auth.js";
 import {
   createTestContext,
   request,
-  seedOauthBearer,
   TEST_API_KEY_SALT,
   type TestContext,
 } from "../test-utils.js";
@@ -142,64 +141,6 @@ describe("computeTypeFilter", () => {
 // ---------------------------------------------------------------------------
 // Integration — one door per space permission
 // ---------------------------------------------------------------------------
-
-describe("GET /spaces/me/quotas — space.usage", () => {
-  it("returns the calling space's quota row", async () => {
-    const spaceA = `space-quota-${Math.random().toString(36).slice(2, 10)}`;
-    const caller = await mintKey(ctx, {
-      label: "usage-holder",
-      spaceId: spaceA,
-      spacePermissions: ["space.usage"],
-    });
-
-    // Pre-populate a quota row via the storage layer.
-    await ctx.storage.spaceQuotas.set(spaceA, { items_limit: 42 });
-
-    const res = await request(ctx.app, "GET", "/spaces/me/quotas", {
-      key: caller,
-    });
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as Record<string, unknown>;
-    expect(body.space_id).toBe(spaceA);
-    expect(body.items_limit).toBe(42);
-    expect(body.webhooks_limit).toBe(null);
-  });
-
-  it("has no space-less caller left to reject", async () => {
-    // This door used to answer 400 for a keys-mode bearer, which bound its
-    // tokens to no space by design and so held the permission with no "me"
-    // for the route to answer about. Issuance binds now and the middleware
-    // refuses a token that arrives unbound anyway, so such a bearer never
-    // reaches the handler: it is turned away as a credential rather than
-    // told its request makes no sense. The other space-less shape is the
-    // operator key, which holds none of the eleven and is refused by the
-    // permission gate.
-    const { token } = await seedOauthBearer(ctx.storage, ["space.usage"], {
-      spaceId: null,
-    });
-    const unbound = await request(ctx.app, "GET", "/spaces/me/quotas", {
-      key: token,
-    });
-    expect(unbound.status).toBe(401);
-
-    const asOperator = await request(ctx.app, "GET", "/spaces/me/quotas", {
-      key: ctx.operatorKey,
-    });
-    expect(asOperator.status).toBe(403);
-  });
-
-  it("rejects a credential that does not hold space.usage", async () => {
-    const spaceA = `space-quota-none-${Math.random().toString(36).slice(2, 10)}`;
-    const caller = await mintKey(ctx, {
-      label: "usage-none",
-      spaceId: spaceA,
-    });
-    const res = await request(ctx.app, "GET", "/spaces/me/quotas", {
-      key: caller,
-    });
-    expect(res.status).toBe(403);
-  });
-});
 
 describe("/keys — space.keys", () => {
   it("lists only the caller's own space's keys", async () => {

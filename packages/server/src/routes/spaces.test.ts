@@ -11,7 +11,6 @@ import { FilesystemBlobBackend } from "../storage/blob-backend.js";
 import { hashApiKey } from "../middleware/auth.js";
 import type { AppEnv } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
-import { spaceRoutes } from "./spaces.js";
 import { SPACE_PERMISSIONS } from "@withmarfa/shared";
 
 const SALT = "test-salt";
@@ -34,7 +33,7 @@ async function createHostedContext(): Promise<HostedContext> {
   const blobPath = join(tmpDir, "blobs");
 
   const dbPath = join(tmpDir, "test.db");
-  const storage = await createSqliteStorage(dbPath, { authMode: "hosted" });
+  const storage = await createSqliteStorage(dbPath);
 
   const blobBackend = new FilesystemBlobBackend(blobPath);
   const app = createApp(storage, blobBackend, {
@@ -52,7 +51,6 @@ async function createHostedContext(): Promise<HostedContext> {
     apiKeySalt: SALT,
     corsOrigins: [],
     cdnBaseUrl: "",
-    authMode: "hosted",
     rateLimitEnabled: false,
     enableHsts: false,
     auditRetentionDays: 90,
@@ -68,10 +66,7 @@ async function createHostedContext(): Promise<HostedContext> {
     errorWebhookUrl: "",
     trustedProxyCidrs: [],
     authBaseUrl: "http://localhost:0",
-    authAllowSignup: true,
-    seedStarterContent: false,
     authSecret: "test-auth-secret",
-    oidcProviders: [],
     rateLimitDefaultLimit: 1000,
     rateLimitWindowMs: 60_000,
   });
@@ -380,74 +375,5 @@ describe("Space config — hosted mode", () => {
     );
     expect(auditResult.data.length).toBeGreaterThanOrEqual(1);
     expect(auditResult.data[0]?.resource_type).toBe("space");
-  });
-
-  it("GET /spaces/:id/quotas returns not_found for an unknown space", async () => {
-    const unknownSpaceId = "space_unknown_get";
-    const res = await request(
-      hosted.app,
-      "GET",
-      `/spaces/${unknownSpaceId}/quotas`,
-      { key: hosted.operatorKey },
-    );
-
-    expect(res.status).toBe(404);
-    const body = (await res.json()) as { error: { code: string } };
-    expect(body.error.code).toBe("not_found");
-  });
-
-  it("PUT /spaces/:id/quotas returns not_found without creating an orphan quota row", async () => {
-    const unknownSpaceId = "space_unknown_put";
-    const res = await request(
-      hosted.app,
-      "PUT",
-      `/spaces/${unknownSpaceId}/quotas`,
-      {
-        key: hosted.operatorKey,
-        body: { items_limit: 10 },
-      },
-    );
-
-    expect(res.status).toBe(404);
-    const body = (await res.json()) as { error: { code: string } };
-    expect(body.error.code).toBe("not_found");
-    expect(await hosted.storage.spaceQuotas.get(unknownSpaceId)).toBeNull();
-  });
-
-  it("PUT and GET /spaces/:id/quotas preserve the known-space happy path", async () => {
-    const putRes = await request(
-      hosted.app,
-      "PUT",
-      `/spaces/${hosted.spaceId}/quotas`,
-      {
-        key: hosted.operatorKey,
-        body: { items_limit: 25 },
-      },
-    );
-    expect(putRes.status).toBe(200);
-
-    const getRes = await request(
-      hosted.app,
-      "GET",
-      `/spaces/${hosted.spaceId}/quotas`,
-      { key: hosted.operatorKey },
-    );
-    expect(getRes.status).toBe(200);
-    const body = (await getRes.json()) as { items_limit: number | null };
-    expect(body.items_limit).toBe(25);
-  });
-
-  it("documents not_found on both explicit quota operations", () => {
-    // The published and live specs intentionally filter platform-internal
-    // operations, so inspect this route group's pre-finalization document.
-    const spec = spaceRoutes(hosted.storage).getOpenAPIDocument({
-      openapi: "3.1.0",
-      info: { title: "Space route test", version: "1" },
-    });
-    const quotaPath = spec.paths["/{id}/quotas"];
-    if (!quotaPath) throw new Error("quota path missing from route document");
-
-    expect(quotaPath.get?.responses).toHaveProperty("404");
-    expect(quotaPath.put?.responses).toHaveProperty("404");
   });
 });

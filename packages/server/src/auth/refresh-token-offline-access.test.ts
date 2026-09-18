@@ -25,7 +25,7 @@ import { describe, it, expect, afterEach, vi } from "vitest";
 import { createHash, randomBytes } from "node:crypto";
 import {
   createTestContext,
-  markEmailVerified,
+  createTestAccount,
   request,
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
@@ -94,14 +94,7 @@ async function seedClient(c: TestContext): Promise<string> {
 
 async function signInUser(c: TestContext, email: string): Promise<string> {
   const password = "correct horse battery";
-  const signUpRes = await request(c.app, "POST", "/auth/sign-up/email", {
-    body: { email, password, name: "Test User" },
-    headers: { origin: ORIGIN },
-  });
-  if (signUpRes.status !== 200) {
-    throw new Error(`sign-up failed (${String(signUpRes.status)})`);
-  }
-  await markEmailVerified(c.storage, email);
+  await createTestAccount(c, email, password, "Test User");
   const signInRes = await request(c.app, "POST", "/auth/sign-in/email", {
     body: { email, password },
     headers: { origin: ORIGIN },
@@ -299,10 +292,7 @@ async function callWithAccessToken(
 
 describe("refresh-token issuance is gated on offline_access", () => {
   it("neither path hands out a refresh token when the grant did not ask to stay signed in", async () => {
-    ctx = await createTestContext({
-      authMode: "hosted",
-      authAllowSignup: true,
-    });
+    ctx = await createTestContext({});
     const cookie = await signInUser(ctx, "parity-none@marfa.so");
     const clientId = await seedClient(ctx);
 
@@ -341,10 +331,7 @@ describe("refresh-token issuance is gated on offline_access", () => {
   });
 
   it("both paths hand one out when the grant did ask", async () => {
-    ctx = await createTestContext({
-      authMode: "hosted",
-      authAllowSignup: true,
-    });
+    ctx = await createTestContext({});
     const cookie = await signInUser(ctx, "parity-offline@marfa.so");
     const clientId = await seedClient(ctx);
     const scope = "openid offline_access core.note:read";
@@ -367,10 +354,7 @@ describe("refresh-token issuance is gated on offline_access", () => {
   });
 
   it("a device refresh token rotates, and replaying the rotated-away one kills the family", async () => {
-    ctx = await createTestContext({
-      authMode: "hosted",
-      authAllowSignup: true,
-    });
+    ctx = await createTestContext({});
     const cookie = await signInUser(ctx, "device-rotate@marfa.so");
     const clientId = await seedClient(ctx);
 

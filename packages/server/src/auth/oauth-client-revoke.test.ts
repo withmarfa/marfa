@@ -29,7 +29,7 @@ import { describe, it, expect, afterEach, vi } from "vitest";
 import { createHash, randomBytes } from "node:crypto";
 import {
   createTestContext,
-  markEmailVerified,
+  createTestAccount,
   request,
   waitForAudit,
 } from "../test-utils.js";
@@ -96,14 +96,7 @@ async function seedClient(c: TestContext, name: string): Promise<string> {
 
 async function signInUser(c: TestContext, email: string): Promise<string> {
   const password = "correct horse battery";
-  const signUpRes = await request(c.app, "POST", "/auth/sign-up/email", {
-    body: { email, password, name: "Test User" },
-    headers: { origin: ORIGIN },
-  });
-  if (signUpRes.status !== 200) {
-    throw new Error(`sign-up failed (${String(signUpRes.status)})`);
-  }
-  await markEmailVerified(c.storage, email);
+  await createTestAccount(c, email, password, "Test User");
   const signInRes = await request(c.app, "POST", "/auth/sign-in/email", {
     body: { email, password },
     headers: { origin: ORIGIN },
@@ -353,7 +346,7 @@ function revokedAudits(c: TestContext) {
 
 describe("POST /auth/oauth2/revoke with a refresh token ends the grant", () => {
   it("drops the consent row, every token and the projection, writes the audit row, and the next authorize asks again", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     const clientId = await seedClient(ctx, "Revoking App");
     const cookie = await signInUser(ctx, "revoke@example.com");
     const authUserId = await authUserIdFor(ctx, "revoke@example.com");
@@ -399,7 +392,7 @@ describe("POST /auth/oauth2/revoke with a refresh token ends the grant", () => {
   });
 
   it("a refresh token presented under another registered client revokes nothing", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     const owner = await seedClient(ctx, "Owner App");
     const other = await seedClient(ctx, "Other App");
     const cookie = await signInUser(ctx, "stolen@example.com");
@@ -438,7 +431,7 @@ describe("POST /auth/oauth2/revoke with a refresh token ends the grant", () => {
   });
 
   it("a rotated-out refresh token still ends the grant, because the plugin has already ended its tokens", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     const clientId = await seedClient(ctx, "Rotating App");
     const cookie = await signInUser(ctx, "rotated@example.com");
     const authUserId = await authUserIdFor(ctx, "rotated@example.com");
@@ -477,7 +470,7 @@ describe("POST /auth/oauth2/revoke with a refresh token ends the grant", () => {
   });
 
   it("a request the plugin refuses moves nothing, even with a live token and a matching client_id", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     const clientId = await seedClient(ctx, "Refused App");
     const cookie = await signInUser(ctx, "refused@example.com");
     const authUserId = await authUserIdFor(ctx, "refused@example.com");
@@ -508,7 +501,7 @@ describe("POST /auth/oauth2/revoke with a refresh token ends the grant", () => {
   });
 
   it("a grant whose projection is already gone still loses its consent row and tokens", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     const clientId = await seedClient(ctx, "Projectionless App");
     const cookie = await signInUser(ctx, "projectionless@example.com");
     const authUserId = await authUserIdFor(ctx, "projectionless@example.com");
@@ -542,7 +535,7 @@ describe("POST /auth/oauth2/revoke with a refresh token ends the grant", () => {
   });
 
   it("a token sent with its Authorization scheme is revoked and cascaded like a bare one", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     const clientId = await seedClient(ctx, "Header Shaped App");
     const cookie = await signInUser(ctx, "scheme@example.com");
     const authUserId = await authUserIdFor(ctx, "scheme@example.com");
@@ -568,7 +561,7 @@ describe("POST /auth/oauth2/revoke with a refresh token ends the grant", () => {
   });
 
   it("an access-token revoke stays token-only", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     const clientId = await seedClient(ctx, "Signing Out App");
     const cookie = await signInUser(ctx, "signout@example.com");
     const authUserId = await authUserIdFor(ctx, "signout@example.com");
@@ -649,7 +642,7 @@ describe("a token minted before the grant's space resolved", () => {
     // the endpoint answers 200 over a grant the security page still lists as
     // active. A revoke that reports success and ends nothing is the failure
     // this whole change exists to close.
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     const clientId = await seedClient(ctx, "Upgraded App");
     const cookie = await signInUser(ctx, "unbound-revoke@example.com");
     const authUserId = await authUserIdFor(ctx, "unbound-revoke@example.com");
@@ -682,7 +675,7 @@ describe("a token minted before the grant's space resolved", () => {
     // every request made with it, naming nothing. This is the only grant that
     // reaches a mint without passing through a code, so no other guard sees
     // it.
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     const clientId = await seedClient(ctx, "Rotating App");
     const cookie = await signInUser(ctx, "unbound-refresh@example.com");
     const authUserId = await authUserIdFor(ctx, "unbound-refresh@example.com");

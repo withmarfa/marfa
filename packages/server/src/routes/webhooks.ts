@@ -8,7 +8,6 @@ import {
   requireSpacePermission,
   requireAuth,
 } from "../middleware/auth.js";
-import { reserveQuota } from "../middleware/quota.js";
 import type { Storage } from "../storage/interface.js";
 import {
   createOpenAPIRouter,
@@ -536,7 +535,6 @@ export function webhookRoutes(storage: Storage) {
     }
 
     const webhook = await storage.runInTransaction(async () => {
-      await reserveQuota(c, storage, [{ resource: "webhooks", increment: 1 }]);
       return storage.outboundWebhooks.create(
         {
           url: body.url,

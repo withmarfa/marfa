@@ -171,7 +171,7 @@ describe("an OAuth-derived subscriber", () => {
   let hosted: TestContext;
 
   beforeAll(async () => {
-    hosted = await createTestContext({ authMode: "hosted" });
+    hosted = await createTestContext({});
     initEventLog(hosted.storage.eventLog);
   });
 
@@ -199,7 +199,7 @@ describe("an OAuth-derived subscriber", () => {
     const { token } = await seedOauthBearer(
       hosted.storage,
       ["core.note:read"],
-      { spaceId: space.id, seedUserRow: true },
+      { spaceId: space.id },
     );
 
     const item = await hosted.storage.items.create(

@@ -19,13 +19,11 @@ import { describe, it, expect, afterEach } from "vitest";
 import { makeSignature } from "better-auth/crypto";
 import {
   createTestContext,
-  markEmailVerified,
+  createTestAccount,
   request,
   waitForAudit,
-  TEST_API_KEY_SALT,
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
-import { hashApiKey } from "../middleware/auth.js";
 import { __test_internals } from "./auth-consent.js";
 import { setActivePermissionBundles } from "../config.js";
 
@@ -99,17 +97,7 @@ async function seedClient(
  */
 async function signInUser(c: TestContext, email: string): Promise<string> {
   const password = "correct horse battery";
-  const signUpRes = await request(c.app, "POST", "/auth/sign-up/email", {
-    body: { email, password, name: "Test User" },
-    headers: { origin: ORIGIN },
-  });
-  if (signUpRes.status !== 200) {
-    const text = await signUpRes.text();
-    throw new Error(
-      `sign-up failed (${String(signUpRes.status)}): ${text.slice(0, 300)}`,
-    );
-  }
-  await markEmailVerified(c.storage, email);
+  await createTestAccount(c, email, password, "Test User");
   const signInRes = await request(c.app, "POST", "/auth/sign-in/email", {
     body: { email, password },
     headers: { origin: ORIGIN },
@@ -286,7 +274,7 @@ describe("GET /auth/authorize (consent page)", () => {
   });
 
   it("REGRESSION: refuses to render for a query the plugin never signed", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     // An attacker picks the client and the scope list; the page they get
     // back is served by the real issuer on the real origin, with the real
     // chrome. Rejecting the submit later does not undo that: the page is
@@ -310,7 +298,7 @@ describe("GET /auth/authorize (consent page)", () => {
   });
 
   it("REGRESSION: refuses to render a genuinely signed query past its exp", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     const clientId = await seedClient(ctx);
     const cookie = await signInUser(ctx, "expired-render@example.com");
     const oauthQuery = await buildSignedOauthQuery(clientId, "openid", {
@@ -334,7 +322,7 @@ describe("GET /auth/authorize (consent page)", () => {
   });
 
   it("REGRESSION: refuses a forged query before bouncing an anonymous visitor to sign-in", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     const clientId = await seedClient(ctx, { name: "Marfa Drive" });
 
     // No session. The sign-in bounce is reached from the same forged URL,
@@ -350,7 +338,7 @@ describe("GET /auth/authorize (consent page)", () => {
   });
 
   it("F9: sets Cache-Control: no-store on the rendered consent page", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     const clientId = await seedClient(ctx);
     const cookie = await signInUser(ctx, "f9@example.com");
 
@@ -369,7 +357,7 @@ describe("GET /auth/authorize (consent page)", () => {
   });
 
   it("F12: renders 200 for clients with null client_name (uses clientId as display)", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     const clientId = await seedClient(ctx, { name: null });
     const cookie = await signInUser(ctx, "f12@example.com");
 
@@ -388,24 +376,14 @@ describe("GET /auth/authorize (consent page)", () => {
   it("enumerates the space's custom types under a requested user.* wildcard", async () => {
     // Hosted mode: the enumeration resolves the consenting user's space
     // through the `users` store, which only hosted-mode sign-up provisions.
-    ctx = await createTestContext({
-      authMode: "hosted",
-      authAllowSignup: true,
-    });
+    ctx = await createTestContext({});
     const clientId = await seedClient(ctx, { name: "Custom Types App" });
 
     // Sign up capturing the auth user id, so the space the enumeration
     // reads from is resolvable — the shared signInUser helper discards it.
     const email = "custom-types@example.com";
     const password = "correct horse battery";
-    const signUpRes = await request(ctx.app, "POST", "/auth/sign-up/email", {
-      body: { email, password, name: "Test User" },
-      headers: { origin: ORIGIN },
-    });
-    expect(signUpRes.status).toBe(200);
-    const authUserId = ((await signUpRes.json()) as { user?: { id?: string } })
-      .user?.id;
-    await markEmailVerified(ctx.storage, email);
+    await createTestAccount(ctx, email, password, "Test User");
     const signInRes = await request(ctx.app, "POST", "/auth/sign-in/email", {
       body: { email, password },
       headers: { origin: ORIGIN },
@@ -418,9 +396,7 @@ describe("GET /auth/authorize (consent page)", () => {
       .find((head) => head?.includes("session_token"));
     expect(cookie).toBeTruthy();
 
-    const userRow = await ctx.storage.users?.getByAuthUserId(authUserId ?? "");
-    const spaceId = userRow?.space_id;
-    expect(spaceId).toBeTruthy();
+    const spaceId = ctx.spaceId;
     await ctx.storage.types.create(
       {
         id: "user.recipe",
@@ -428,7 +404,7 @@ describe("GET /auth/authorize (consent page)", () => {
         label: "Recipes",
         fields: { title: { type: "string", required: true } },
       },
-      spaceId ?? undefined,
+      spaceId,
     );
 
     const res = await request(
@@ -446,109 +422,8 @@ describe("GET /auth/authorize (consent page)", () => {
     expect(html).toContain("plus any you add later");
   });
 
-  it("offers a space's own handle namespace through the custom bundle, never a sibling's", async () => {
-    // Hosted-mode registrations never land in the space-less custom-types
-    // bucket, so a derivation reading that bucket leaves a space's
-    // registered types out of the custom tile entirely and the coverage
-    // collapses back to `user.*`.
-    // The registration goes through the real hosted path (`POST /types`
-    // under the caller's claimed handle), and the sibling space's
-    // registration proves the derivation never crosses the space fence.
-    ctx = await createTestContext({
-      authMode: "hosted",
-      authAllowSignup: true,
-    });
-    const clientId = await seedClient(ctx, { name: "Handle Types App" });
-
-    const email = "handle-types@example.com";
-    const password = "correct horse battery";
-    const signUpRes = await request(ctx.app, "POST", "/auth/sign-up/email", {
-      body: { email, password, name: "Test User" },
-      headers: { origin: ORIGIN },
-    });
-    expect(signUpRes.status).toBe(200);
-    const authUserId = ((await signUpRes.json()) as { user?: { id?: string } })
-      .user?.id;
-    await markEmailVerified(ctx.storage, email);
-    const signInRes = await request(ctx.app, "POST", "/auth/sign-in/email", {
-      body: { email, password },
-      headers: { origin: ORIGIN },
-    });
-    expect(signInRes.status).toBe(200);
-    const cookie = (signInRes.headers.get("set-cookie") ?? "")
-      .split(/,\s*(?=[a-zA-Z0-9_-]+=)/)
-      .map((c) => c.split(";")[0])
-      .find((head) => head?.includes("session_token"));
-    expect(cookie).toBeTruthy();
-
-    const userRow = await ctx.storage.users?.getByAuthUserId(authUserId ?? "");
-    expect(userRow).toBeTruthy();
-    const spaceId = userRow?.space_id;
-    expect(spaceId).toBeTruthy();
-    await ctx.storage.users?.setHandle(userRow?.id ?? "", "acme");
-
-    // Register through the API, exercising the handle-ownership gate the
-    // way a real space would.
-    const rawKey = "marfa_k1_test_handle_offer";
-    await ctx.storage.keys.create(
-      {
-        label: "handle-offer",
-        source: "test",
-        type_permissions: { "*": "write" },
-        metadata_permissions: { types: "write" },
-      },
-      hashApiKey(rawKey, TEST_API_KEY_SALT),
-      spaceId ?? undefined,
-    );
-    const registerRes = await request(ctx.app, "POST", "/types", {
-      key: rawKey,
-      body: {
-        id: "acme.gadget",
-        version: 1,
-        label: "Gadgets",
-        fields: { name: { type: "string", required: true } },
-      },
-    });
-    expect(registerRes.status).toBe(201);
-
-    // A sibling space's registration, which must stay invisible here.
-    const sibling = await ctx.storage.spaces!.create("sibling-space");
-    await ctx.storage.types.create(
-      {
-        id: "rivalco.thing",
-        version: 1,
-        fields: { name: { type: "string", required: true } },
-      },
-      sibling.id,
-    );
-
-    const res = await request(
-      ctx.app,
-      "GET",
-      `/auth/authorize?${await buildSignedOauthQuery(clientId, "acme.*:read rivalco.*:read openid")}`,
-      { headers: { cookie: cookie ?? "" } },
-    );
-    expect(res.status).toBe(200);
-    const html = await res.text();
-
-    // The space's own root groups under the custom bundle tile.
-    const customTileStart = html.indexOf("Things with your own custom types");
-    expect(customTileStart).toBeGreaterThan(-1);
-    const customTile = html.slice(
-      customTileStart,
-      html.indexOf("</details>", customTileStart),
-    );
-    expect(customTile).toContain('value="acme.*:read"');
-    expect(customTile).toContain("Today this covers Gadgets");
-    // The sibling's root renders as an ungrouped fallback row — grantable
-    // if the space ever holds such types, but never presented as the
-    // consenting space's own.
-    expect(customTile).not.toContain("rivalco");
-    expect(html).toContain('value="rivalco.*:read"');
-  });
-
   it("flags a public/DCR client as unverified on the consent screen", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     // Default seedClient shape is public (token_endpoint_auth_method: none).
     const clientId = await seedClient(ctx, { name: "Google Drive" });
     const cookie = await signInUser(ctx, "unverified-app@example.com");
@@ -566,7 +441,7 @@ describe("GET /auth/authorize (consent page)", () => {
   });
 
   it("does NOT flag a confidential client as unverified", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     const clientId = await seedClient(ctx, {
       name: "Vetted App",
       confidential: true,
@@ -586,7 +461,7 @@ describe("GET /auth/authorize (consent page)", () => {
   });
 
   it("404s when client genuinely does not exist", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     // Don't seed the client.
     const cookie = await signInUser(ctx, "missing-client@example.com");
     const res = await request(
@@ -599,7 +474,7 @@ describe("GET /auth/authorize (consent page)", () => {
   });
 
   it("renders OIDC scopes as profile toggles plus hidden mechanism fields", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     const clientId = await seedClient(ctx);
     const cookie = await signInUser(ctx, "f11-oidc@example.com");
 
@@ -625,7 +500,7 @@ describe("GET /auth/authorize (consent page)", () => {
   });
 
   it("renders an edge scope as a per-type toggle carrying the concrete literal", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     const clientId = await seedClient(ctx);
     const cookie = await signInUser(ctx, "f11-edge@example.com");
 
@@ -696,7 +571,7 @@ describe("POST /auth/authorize/decision (consent decision proxy)", () => {
   });
 
   it("F2: accept=true with zero selected scopes redirects to consent with error (no projection)", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     const clientId = await seedClient(ctx);
     const cookie = await signInUser(ctx, "f2@example.com");
     const oauthQuery = await buildSignedOauthQuery(
@@ -729,7 +604,7 @@ describe("POST /auth/authorize/decision (consent decision proxy)", () => {
   });
 
   it("REGRESSION: the zero-scope bounce keeps the signed query intact, so the retry works", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     const clientId = await seedClient(ctx);
     const cookie = await signInUser(ctx, "zero-scope-retry@example.com");
     const oauthQuery = await buildSignedOauthQuery(
@@ -770,7 +645,7 @@ describe("POST /auth/authorize/decision (consent decision proxy)", () => {
   it.each(["forged", "expired"] as const)(
     "%s oauth_query causes no projection, audit, or token-revocation side effects",
     async (failureMode) => {
-      ctx = await createTestContext({ authAllowSignup: true });
+      ctx = await createTestContext({});
       const clientId = await seedClient(ctx);
       const cookie = await signInUser(
         ctx,
@@ -865,7 +740,7 @@ describe("POST /auth/authorize/decision (consent decision proxy)", () => {
   );
 
   it("stamps Cache-Control: no-store on the redirect it hands back, accepted or refused", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     const clientId = await seedClient(ctx);
     const cookie = await signInUser(ctx, "decision-no-store@example.com");
 
@@ -908,7 +783,7 @@ describe("POST /auth/authorize/decision (consent decision proxy)", () => {
   });
 
   it("F1+F7: projection uses client_id from oauth_query (NOT the form's client_id) + audit row carries client_ip", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     const realClientId = await seedClient(ctx);
     const cookie = await signInUser(ctx, "f1@example.com");
 
@@ -963,7 +838,7 @@ describe("POST /auth/authorize/decision (consent decision proxy)", () => {
   });
 
   it("F3+F6: re-consent updates projection in place (no duplicate) + flips status to active + clears revoked_at + bumps version", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     const clientId = await seedClient(ctx);
     const cookie = await signInUser(ctx, "f3@example.com");
     const oauthQuery = await buildSignedOauthQuery(
@@ -1035,7 +910,7 @@ describe("POST /auth/authorize/decision (consent decision proxy)", () => {
   });
 
   it("F4: re-consent with narrowed scopes revokes the grant's existing access tokens", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     const clientId = await seedClient(ctx);
     const cookie = await signInUser(ctx, "f4@example.com");
 
@@ -1127,7 +1002,7 @@ describe("POST /auth/authorize/decision (consent decision proxy)", () => {
   });
 
   it("REGRESSION: a narrowing whose token revocation fails does not report success", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     const clientId = await seedClient(ctx);
     const cookie = await signInUser(ctx, "revoke-fails@example.com");
     const wide = ["openid", "core.note:read", "core.note:write"];
@@ -1182,7 +1057,7 @@ describe("POST /auth/authorize/decision (consent decision proxy)", () => {
   });
 
   it("F4: re-consent with SAME scopes leaves access tokens alone (no narrowing → no revoke)", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     const clientId = await seedClient(ctx);
     const cookie = await signInUser(ctx, "f4-same@example.com");
 
@@ -1264,7 +1139,7 @@ describe("POST /auth/authorize/decision (consent decision proxy)", () => {
    * pass either way.
    */
   it("F4: re-consent that widens a grant leaves access tokens alone", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     const clientId = await seedClient(ctx);
     const cookie = await signInUser(ctx, "f4-widen@example.com");
 
@@ -1349,7 +1224,7 @@ describe("POST /auth/authorize/decision (consent decision proxy)", () => {
   });
 
   it("F1: scopes outside the signed set are filtered (form can only narrow, not widen)", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     const clientId = await seedClient(ctx);
     const cookie = await signInUser(ctx, "f1-scope@example.com");
     const oauthQuery = await buildSignedOauthQuery(
@@ -1393,7 +1268,7 @@ describe("POST /auth/authorize/decision (consent decision proxy)", () => {
 
 describe("POST /auth/authorize/decision (Origin/Referer CSRF guard)", () => {
   it("rejects a cross-origin POST (non-allowlisted Origin) with 403, before any projection", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     const clientId = await seedClient(ctx);
     const cookie = await signInUser(ctx, "csrf-origin@example.com");
     const oauthQuery = await buildSignedOauthQuery(
@@ -1421,7 +1296,7 @@ describe("POST /auth/authorize/decision (Origin/Referer CSRF guard)", () => {
   });
 
   it("rejects a cross-origin POST inferred from Referer (no Origin header) with 403", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     const clientId = await seedClient(ctx);
     const cookie = await signInUser(ctx, "csrf-referer@example.com");
     const oauthQuery = await buildSignedOauthQuery(
@@ -1449,7 +1324,7 @@ describe("POST /auth/authorize/decision (Origin/Referer CSRF guard)", () => {
 
   it("allows a same-origin POST (Origin = authBaseUrl) through to the proxy", async () => {
     // Default test config: authBaseUrl = http://localhost:0, corsOrigins = [].
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     const clientId = await seedClient(ctx);
     const cookie = await signInUser(ctx, "csrf-same@example.com");
     const oauthQuery = await buildSignedOauthQuery(
@@ -1477,7 +1352,6 @@ describe("POST /auth/authorize/decision (Origin/Referer CSRF guard)", () => {
   it("allows a same-origin POST whose Origin is a CORS_ORIGINS entry", async () => {
     const allowedOrigin = "https://app.example.com";
     ctx = await createTestContext({
-      authAllowSignup: true,
       corsOrigins: [allowedOrigin],
     });
     const clientId = await seedClient(ctx);
@@ -1505,7 +1379,7 @@ describe("POST /auth/authorize/decision (Origin/Referer CSRF guard)", () => {
   });
 
   it("passes a POST with no Origin or Referer to the proxy hop, where Better Auth refuses it", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     const clientId = await seedClient(ctx);
     const cookie = await signInUser(ctx, "csrf-absent@example.com");
     const oauthQuery = await buildSignedOauthQuery(
@@ -1579,7 +1453,7 @@ describe("an off-by-default bundle grants nothing without a tick", () => {
   ];
 
   it("keeps the unticked bundle's scopes off the projected grant", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     setActivePermissionBundles(BUNDLES);
     try {
       const clientId = await seedClient(ctx);
@@ -1635,7 +1509,7 @@ describe("an off-by-default bundle grants nothing without a tick", () => {
     //
     // First consent ticks the off bundle by hand; the return visit touches
     // nothing. The grant has to survive it.
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     setActivePermissionBundles(BUNDLES);
     try {
       const clientId = await seedClient(ctx);

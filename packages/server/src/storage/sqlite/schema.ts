@@ -132,9 +132,9 @@ export const items = sqliteTable(
     //
     // **Not led by `space_id`, and that was measured rather than
     // assumed.** A space-leading composite is the better index for a
-    // multi-space deployment and cannot serve a self-host at all:
-    // `AUTH_MODE=keys` is the default, nothing carries a space there, so
-    // no predicate constrains the leading column and neither planner will
+    // multi-space deployment and cannot serve a self-host at all: nothing
+    // carries a space there, so no predicate constrains the leading column
+    // and neither planner will
     // walk it for the ordering — the read falls back to a scan plus a
     // sort, which is what this index exists to prevent. Leading on
     // `updated_at` serves both deployment shapes; the space becomes a

@@ -27,7 +27,6 @@ import {
   ErrorCode,
   SPACE_PERMISSIONS,
 } from "@withmarfa/shared";
-import type { TypePermission } from "@withmarfa/shared";
 import {
   createTestContext,
   request,
@@ -231,76 +230,6 @@ describe("a repeated edge create", () => {
 });
 
 describe("the gates an acknowledgement still runs", () => {
-  /**
-   * A space, and a key inside it that may write items.
-   *
-   * No space permission is named because none of these doors asks for one:
-   * `POST /items` is decided by the type map alone, and the quota the case
-   * below sets is written by the operator key.
-   */
-  async function spaceWithKey(
-    label: string,
-    permissions: Record<string, TypePermission> = { "*": "write" },
-  ): Promise<{ spaceId: string; key: string }> {
-    const spaces = ctx.storage.spaces;
-    if (!spaces) throw new Error("this test needs a space store");
-    const space = await spaces.create(label);
-    const suffix = Math.random().toString(36).slice(2, 10);
-    const key = `marfa_k1_${label.replace(/[^a-z]/g, "")}_${suffix}`;
-    await ctx.storage.keys.create(
-      {
-        label: `${label}-${suffix}`,
-        source: `${label}-${suffix}`,
-        type_permissions: permissions,
-        default_tier: "library",
-        is_operator: false,
-      },
-      hashApiKey(key, TEST_API_KEY_SALT),
-      space.id,
-    );
-    return { spaceId: space.id, key };
-  }
-
-  it("is reached even when the space is at its item ceiling", async () => {
-    // The acknowledgement used to sit behind the write transaction, whose
-    // first statement reserves quota — so a full space answered a repeat
-    // with `quota_exceeded` for a row it already held. That is the same
-    // permanent refusal the whole change exists to remove, wearing a
-    // different code.
-    const { spaceId, key } = await spaceWithKey("quotaspace");
-    const id = generateId();
-    const first = await request(ctx.app, "POST", "/items", {
-      key,
-      body: { type: "core.note", id, properties: { body: "at-ceiling" } },
-    });
-    expect(first.status).toBe(201);
-
-    // Ceiling set to exactly what the space now holds, so any genuine
-    // create is refused and only the acknowledgement can answer 200.
-    // Quotas are an operator surface: the key that sets them is the
-    // instance's, not one bound to the space being capped.
-    const quota = await request(ctx.app, "PUT", `/spaces/${spaceId}/quotas`, {
-      key: ctx.operatorKey,
-      body: { items_limit: 1 },
-    });
-    expect(quota.status).toBe(200);
-
-    const blocked = await request(ctx.app, "POST", "/items", {
-      key,
-      body: { type: "core.note", properties: { body: "a genuine create" } },
-    });
-    expect(blocked.status).toBe(429);
-
-    const repeat = await request(ctx.app, "POST", "/items", {
-      key,
-      body: { type: "core.note", id, properties: { body: "repeat" } },
-    });
-    expect(repeat.status).toBe(200);
-    expect((await repeat.json()) as ItemBody).toMatchObject({
-      acknowledged: true,
-    });
-  });
-
   it("acknowledges a trashed row, in the state it holds", async () => {
     // The retry is not asking to revive it. Hiding the row instead would
     // send the create down the insert path and refuse it forever, which

@@ -26,7 +26,7 @@ import { resolveSpaceIdForAuthUser } from "../auth/grant-space.js";
 let ctx: TestContext;
 
 beforeEach(async () => {
-  ctx = await createTestContext({ authMode: "hosted" });
+  ctx = await createTestContext({});
 });
 
 afterEach(async () => {
@@ -130,14 +130,10 @@ describe("space-less OAuth tokens in keys mode", () => {
   it("binds issuance to the instance's one space where there is no user store", async () => {
     keysCtx = await createTestContext();
     if (!keysCtx.storage.spaces) throw new Error("space store expected");
-    expect(keysCtx.storage.users).toBeUndefined();
     const [only] = await keysCtx.storage.spaces.list();
     expect(only).toBeDefined();
 
-    const resolved = await resolveSpaceIdForAuthUser(
-      keysCtx.storage,
-      "auth-user-with-no-row",
-    );
+    const resolved = await resolveSpaceIdForAuthUser(keysCtx.storage);
     expect(resolved).toBe(only?.id);
   });
 
@@ -150,10 +146,7 @@ describe("space-less OAuth tokens in keys mode", () => {
     await keysCtx.storage.spaces.create("a-second-space");
     expect((await keysCtx.storage.spaces.list()).length).toBeGreaterThan(1);
 
-    const resolved = await resolveSpaceIdForAuthUser(
-      keysCtx.storage,
-      "auth-user-with-no-row",
-    );
+    const resolved = await resolveSpaceIdForAuthUser(keysCtx.storage);
     expect(resolved).toBeUndefined();
   });
 });

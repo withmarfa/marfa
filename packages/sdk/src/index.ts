@@ -129,12 +129,5 @@ export type {
   ItemState,
   MergePolicy,
   MergeStrategy,
-  Profile,
-  UpdateProfileInput,
-  Space,
-  SpaceStatus,
-  SpaceMetrics,
-  SpaceActivityEntry,
-  SpaceQuota,
 } from "@withmarfa/shared";
 export type { TypeSchema } from "@withmarfa/shared";

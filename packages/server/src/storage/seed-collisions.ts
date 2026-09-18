@@ -5,8 +5,8 @@ import { log } from "../middleware/logger.js";
  *
  * **A collision means a self-hoster registered a type this build has since
  * started shipping.** Both registrations live in the `space_id = ''` bucket —
- * `POST /types` stores there whenever a credential carries no space, which is
- * every deployment running `AUTH_MODE=keys` — so before the seed's guard, the
+ * `POST /types` stores there whenever a credential carries no space — so
+ * before the seed's guard, the
  * shipped schema simply overwrote theirs on the next boot.
  *
  * **Reported rather than resolved, and the boot path is exactly why.** This

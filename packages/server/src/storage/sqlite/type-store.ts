@@ -125,8 +125,8 @@ export class SqliteTypeStore implements TypeStore {
       // whatever it was first seeded with.
       //
       // **The `WHERE` is the guard, and this is the dialect where it matters
-      // most.** A self-host runs `AUTH_MODE=keys`, so a credential carries no
-      // space and `POST /types` stores the registration at `space_id = ''` —
+      // most.** A self-host's credential carries no space, so `POST /types`
+      // stores the registration at `space_id = ''` —
       // the same bucket this writes to. Without it, a build that starts
       // shipping an identifier somebody already registered rewrote their
       // schema unattended on the next boot. The PG copy carries the full

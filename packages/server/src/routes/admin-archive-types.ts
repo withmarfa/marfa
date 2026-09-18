@@ -140,7 +140,6 @@ function normalizeForCompare(
 function provenanceFor(
   entry: ArchiveTypeEntry,
   typeId: string,
-  publisherHandle: PublisherHandleCheck,
 ): TypeProvenance {
   const raw = entry.provenance;
   if (raw === undefined || raw === null || typeof raw !== "object") {
@@ -183,18 +182,10 @@ function provenanceFor(
   if (claimed.origin === "user") {
     // `user` earns a read AND write wildcard over the whole namespace
     // root, which makes it the one claim in this file worth more than the
-    // two refused above. Honoring it unchecked turns a restore into a way
-    // to buy what `POST /types` sells only to the holder of a handle:
-    // that route binds publisher-tier registration to owning the handle,
-    // and this path has never had the same check.
-    //
-    // Degraded rather than refused, deliberately. Refusing would reject
-    // legitimate archives too, a space's own backup restored somewhere
-    // its handle does not resolve among them, and the rule stated for the
-    // bundles applies here: putting a type nowhere is an omission rather
-    // than a narrowing. The type still restores and its root is still
-    // offerable, without the half nobody could verify.
-    if (!publisherHandle.permits(typeId)) return { origin: "unknown" };
+    // two refused above. It is honored as claimed: there are no user
+    // accounts and so no handle system to check a publisher-tier id
+    // against, and the only party a refusal could stop is the
+    // deployment's own operator, who holds the restore door.
     return { origin: "user" };
   }
 
@@ -203,37 +194,9 @@ function provenanceFor(
   return { origin: "unknown" };
 }
 
-/**
- * Whether a claimed `user` origin is one this space could have made itself.
- *
- * Mirrors the binding `POST /types` applies: the publisher tier is the only
- * one whose first segment is a claimable handle, so registering there means
- * holding that exact handle. The rule binds only in hosted mode, because
- * keys mode has no user accounts and so no handle system to check against,
- * and the only party a refusal could stop there is the deployment's own
- * operator.
- */
-interface PublisherHandleCheck {
-  permits(typeId: string): boolean;
-}
-
-function publisherHandleCheck(
-  authMode: "keys" | "hosted",
-  handle: string | null,
-): PublisherHandleCheck {
-  return {
-    permits(typeId: string): boolean {
-      if (authMode !== "hosted") return true;
-      if (classifyNamespace(typeId) !== "publisher") return true;
-      return handle !== null && typeId.split(".")[0] === handle;
-    },
-  };
-}
-
 function parseTypeEntries(
   entries: ArchiveTypeEntry[],
   spaceId: string | undefined,
-  publisherHandle: PublisherHandleCheck,
 ): { types: PendingType[]; edgeTypes: EdgeTypeSchema[] } {
   const types: PendingType[] = [];
   const edgeTypes: EdgeTypeSchema[] = [];
@@ -270,7 +233,7 @@ function parseTypeEntries(
       }
       types.push({
         schema: result.data,
-        provenance: provenanceFor(entry, raw.id, publisherHandle),
+        provenance: provenanceFor(entry, raw.id),
       });
       continue;
     }
@@ -344,19 +307,8 @@ export async function registerArchiveTypes(
   storage: Storage,
   entries: ArchiveTypeEntry[],
   spaceId: string | undefined,
-  authMode: "keys" | "hosted",
 ): Promise<ArchiveTypeResult> {
-  // Resolved once for the batch rather than per entry: it is one row, it
-  // cannot change while the batch is parsed, and the parse is synchronous.
-  const handle =
-    authMode === "hosted" && spaceId && storage.users
-      ? ((await storage.users.getBySpaceId(spaceId))?.handle ?? null)
-      : null;
-  const { types, edgeTypes } = parseTypeEntries(
-    entries,
-    spaceId,
-    publisherHandleCheck(authMode, handle),
-  );
+  const { types, edgeTypes } = parseTypeEntries(entries, spaceId);
 
   if (types.length > MAX_ARCHIVE_TYPES) {
     throw new MarfaError(

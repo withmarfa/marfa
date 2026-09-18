@@ -15,28 +15,21 @@ import { SqliteWebhookDeliveryStore } from "./webhook-delivery-store.js";
 import { SqliteAuditStore } from "./audit-store.js";
 import { SqliteAuthSessionStore } from "./auth-session-store.js";
 import { SqliteEventLogStore } from "./event-log-store.js";
-import { SqliteUserStore } from "./user-store.js";
 import { SqliteSpaceStore } from "./space-store.js";
 import { SqliteEdgeStore } from "./edge-store.js";
 import { SqliteEdgeTypeStore } from "./edge-type-store.js";
 import { SqliteEnrichmentStore } from "./enrichment-store.js";
 import { SqliteSettingsStore } from "./settings-store.js";
 import { SqliteCoordinationStore } from "./coordination-store.js";
-import { SqliteSpaceQuotaStore } from "./space-quota-store.js";
 import { SqliteRateLimitStore } from "./rate-limit-store.js";
 import { SqliteBulkActionJobStore } from "./bulk-action-job-store.js";
 import { SqliteIdempotencyStore } from "./idempotency-store.js";
-import { SqliteAccountLifecycleStore } from "./account-lifecycle-store.js";
 import { reportSeedCollisions } from "../seed-collisions.js";
 import { projectPlatformRows } from "../platform-family.js";
 import { reportReservedRootRows } from "../reserved-root-rows.js";
 import { computePlatformDrift, setPlatformDrift } from "../platform-drift.js";
 import { scanStoredValues, setStoredValueScan } from "../stored-value-scan.js";
 import { sqliteStoredValueCounts } from "./stored-value-counts.js";
-import {
-  sqliteDeleteAccountCascade,
-  sqliteDeleteSpace,
-} from "./account-cascade.js";
 import {
   registerEdgeTypeSchema,
   isCoreEdgeType,
@@ -45,12 +38,7 @@ import {
   shippedPlatformTypes,
 } from "@withmarfa/shared";
 
-export async function createSqliteStorage(
-  sqlitePath: string,
-  options?: {
-    authMode?: "hosted" | "keys";
-  },
-): Promise<
+export async function createSqliteStorage(sqlitePath: string): Promise<
   Storage & {
     __sqliteAll(query: string): Promise<unknown[]>;
     __sqliteRun(query: string, params: unknown[]): Promise<{ changes: number }>;
@@ -58,7 +46,6 @@ export async function createSqliteStorage(
      *  always exposes a Drizzle handle for the better-auth adapter. The
      *  `Storage` interface widens to optional. */
     betterAuthDb: unknown;
-    betterAuthDialect: "sqlite";
   }
 > {
   const { db: baseDb, raw, close } = await createConnection(sqlitePath);
@@ -165,10 +152,6 @@ export async function createSqliteStorage(
     audit: auditStore,
     eventLog: eventLogStore,
     authSessions: authSessionStore,
-    // Account-lifecycle store reads/writes auth_user's deletion columns on
-    // the wrapped instance like the other auth-* stores; transactional
-    // consistency is preserved via Drizzle's ALS routing.
-    accountLifecycle: new SqliteAccountLifecycleStore(db),
     settings: new SqliteSettingsStore(db),
     coordination: new SqliteCoordinationStore(),
     // Async bulk-action substrate — single-process; see
@@ -177,20 +160,13 @@ export async function createSqliteStorage(
     // A claim has to commit whether or not the write's own transaction
     // does, and `db` is the only instance there is.
     idempotency: new SqliteIdempotencyStore(db),
-    spaceQuotas: new SqliteSpaceQuotaStore(db),
     // Rate-limit + per-email throttle counters. Same shape as the PG
     // wiring; SQLite is single-process by file lock so "cluster-shared"
     // collapses to "still correct in-process".
     rateLimits: new SqliteRateLimitStore(db),
-    // Space store is wired unconditionally so the per-space cleanup
-    // fan-out has one code path on every deployment, and because every mode
-    // has spaces now: hosted sign-up provisions one per account, and keys-mode
-    // bootstrap provisions the single space its working key is minted into.
-    // A sign-in resolves its grant's space through this store in both.
+    // The instance's one space, provisioned at bootstrap, which the working
+    // key is minted into and a sign-in resolves its grant's space through.
     spaces: new SqliteSpaceStore(db),
-    ...(options?.authMode === "hosted" && {
-      users: new SqliteUserStore(db),
-    }),
     /**
      * Genuinely transactional under libsql + ALS routing. Opens a libsql
      * `BEGIN IMMEDIATE` via Drizzle's `db.transaction(async tx => …)`,
@@ -203,19 +179,7 @@ export async function createSqliteStorage(
         return await withSqliteTx(tx, async () => fn());
       });
     },
-    deleteSpace: (
-      spaceId: string,
-    ): Promise<"deleted" | "not_found" | "has_users"> => {
-      return sqliteDeleteSpace(db, storage, spaceId);
-    },
-    deleteAccountCascade: (
-      authUserId: string,
-      cutoffIso: string,
-    ): Promise<boolean> => {
-      return sqliteDeleteAccountCascade(db, storage, authUserId, cutoffIso);
-    },
     betterAuthDb: baseDb,
-    betterAuthDialect: "sqlite" as const,
     /** Raw query escape hatch. Originally added for retention tests;
      *  now also consumed by `routes/auth-account.ts`
      *  (auth_verification probes — JSON1 operators not naturally

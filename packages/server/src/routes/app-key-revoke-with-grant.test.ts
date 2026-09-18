@@ -28,7 +28,7 @@ const CLIENT = "client_under_test";
 let ctx: TestContext;
 
 beforeEach(async () => {
-  ctx = await createTestContext({ authMode: "hosted" });
+  ctx = await createTestContext({});
 });
 
 afterEach(async () => {

@@ -21,7 +21,7 @@
  * refusal would pass a test that only checked the reserved-namespace one.
  */
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
-import { createTestContext, request } from "../test-utils.js";
+import { createTestContext, mintSpaceKey, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 
 let ctx: TestContext;
@@ -34,33 +34,18 @@ let spaceId: string;
 beforeAll(async () => {
   ctx = await createTestContext();
 
-  const spaceRes = await request(ctx.app, "POST", "/admin/spaces", {
-    key: ctx.operatorKey,
-    body: { name: "purge-refusal" },
-  });
-  const spaceBody = (await spaceRes.json()) as { id: string };
-  expect(spaceRes.status, JSON.stringify(spaceBody)).toBe(201);
-  spaceId = spaceBody.id;
+  const spaces = ctx.storage.spaces;
+  if (!spaces) throw new Error("space store expected");
+  spaceId = (await spaces.create("purge-refusal")).id;
 
-  const keyRes = await request(
-    ctx.app,
-    "POST",
-    `/admin/spaces/${spaceId}/keys`,
-    {
-      key: ctx.operatorKey,
-      // Reaches every type in its space and is still not the instance tier,
-      // which is the whole shape this file is about: the reserved namespace
-      // is fenced off a space credential however wide its maps are.
-      body: {
-        label: "purger",
-        source: "purger",
-        type_permissions: { "*": "write" },
-      },
-    },
-  );
-  const keyBody = (await keyRes.json()) as { key: string };
-  expect(keyRes.status, JSON.stringify(keyBody)).toBe(201);
-  spaceKey = keyBody.key;
+  // Reaches every type in its space and is still not the instance tier,
+  // which is the whole shape this file is about: the reserved namespace
+  // is fenced off a space credential however wide its maps are.
+  spaceKey = await mintSpaceKey(ctx, spaceId, {
+    label: "purger",
+    source: "purger",
+    type_permissions: { "*": "write" },
+  });
 });
 
 afterAll(async () => {

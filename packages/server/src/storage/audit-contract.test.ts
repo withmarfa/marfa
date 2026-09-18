@@ -13,7 +13,6 @@
  * be serialized; everything that then happens is the store's own.
  */
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
-import { readFile } from "node:fs/promises";
 import { createTestContext } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import type { AuditLogEntry } from "./interface.js";
@@ -110,16 +109,3 @@ describe("audit.logOrThrow — propagating", () => {
 // resolves its storage at construction and cannot be handed a failing audit
 // store from a test, so the shape is what is pinned.
 // ---------------------------------------------------------------------------
-
-describe("the propagating call sites", () => {
-  const PROPAGATING = ["storage/sqlite/account-cascade.ts"];
-
-  it.each(PROPAGATING)("%s writes through logOrThrow", async (relative) => {
-    const source = await readFile(
-      new URL(`../${relative}`, import.meta.url),
-      "utf8",
-    );
-    expect(source).toContain("storage.audit.logOrThrow(");
-    expect(source).not.toContain("storage.audit.log(");
-  });
-});

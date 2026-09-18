@@ -18,13 +18,11 @@ import type {
   ConflictResolutionReport,
   ConflictResponse,
   ItemState,
-  User,
   Space,
   Edge,
   CreateEdgeInput,
 } from "@withmarfa/shared";
 import type {
-  DeletionState,
   EdgeTypeSchema,
   PlatformTypeFamily,
   SeededPlatformType,
@@ -1325,46 +1323,6 @@ export interface UpdateProfileInput {
   timezone?: string | null;
 }
 
-export interface UserStore {
-  create(input: {
-    name?: string;
-    provider: string;
-    provider_id: string;
-    space_id: string;
-    /** Optional: claim a handle at creation time. The Better Auth
-     *  sign-up flow (`POST /auth/sign-up/email`) always stamps it; test
-     *  fixtures and admin tooling may leave it null. */
-    handle?: string;
-    /** Optional: bind to a Better Auth `auth_user.id`. Stamped at sign-up
-     *  time by `POST /auth/sign-up/email`. This is the canonical bridge
-     *  between Better Auth identity and the Marfa profile. Test fixtures
-     *  and admin tooling may leave it null. */
-    auth_user_id?: string;
-  }): Promise<User>;
-  getById(id: string): Promise<User | null>;
-  /** Lookup by Better Auth `auth_user.id`. The single source of truth for
-   *  email is `auth_user.email`; this is the canonical cross-table join. */
-  getByAuthUserId(authUserId: string): Promise<User | null>;
-  getByProvider(provider: string, providerId: string): Promise<User | null>;
-  getBySpaceId(spaceId: string): Promise<User | null>;
-  /** Lookup by claimed handle. Used for collision detection at claim time. */
-  getByHandle(handle: string): Promise<User | null>;
-  /** Claim or change a user's handle. Throws on collision. */
-  setHandle(id: string, handle: string): Promise<User>;
-  /** Update the editable profile fields (first/last name, bio, avatar blob
-   *  hash). Stamps `updated_at`. `undefined` keys are untouched; `null`
-   *  clears the column. */
-  updateProfile(id: string, patch: UpdateProfileInput): Promise<User>;
-  /** Read the canonical email + verification flag from the Better Auth
-   *  `auth_user` row. Returns `null` if no row matches. Used by the
-   *  profile endpoints + `/oauth/userinfo` to mirror the email field
-   *  without keeping a shadow copy on `users`. */
-  getAuthUserEmail(authUserId: string): Promise<{
-    email: string;
-    email_verified: boolean;
-  } | null>;
-}
-
 export interface SpaceStore {
   create(name?: string): Promise<Space>;
   get(id: string): Promise<Space | null>;
@@ -1390,15 +1348,6 @@ export interface SpaceStore {
    * exactly one" rather than a guess, because binding a credential to
    * whichever row a store happened to return first is how a token ends up in
    * a space nobody chose.
-   *
-   * **A suspended space still counts, deliberately.** Suspension is not
-   * deletion: it is still the instance's one space, and answering `null` for
-   * it would refuse the sign-in outright rather than admitting a credential
-   * the suspension then governs. So a grant binds to it, and the write-guard
-   * sitting after the bearer middleware turns its writes away while its reads
-   * go through -- which is exactly what an API key in that space gets. One
-   * rule covering both credential kinds beats a second one reachable only
-   * here.
    */
   soleSpaceId(): Promise<string | null>;
   getConfig(
@@ -1408,83 +1357,6 @@ export interface SpaceStore {
     id: string,
     config: import("@withmarfa/shared").SpaceConfig,
   ): Promise<void>;
-  /**
-   * Flip space status. `suspend` blocks future writes at the auth
-   * middleware (reads pass through); `unsuspend` restores. Both are no-ops
-   * when the space is already at the target status. Returns the updated
-   * row (null if the space id doesn't exist).
-   */
-  suspend(id: string): Promise<Space | null>;
-  unsuspend(id: string): Promise<Space | null>;
-  /**
-   * Cheap status read for the auth-middleware write-guard. Returns `null`
-   * when the space doesn't exist (the gate treats unknown spaces as
-   * `active` — the credential's own space_id mismatch is handled
-   * separately by the standard auth flow).
-   *
-   * **A row whose status this build cannot read answers `"suspended"`,
-   * not `null`.** Those are different questions and collapsing them would
-   * hand the gate `null` for a space that exists, which it reads as
-   * nothing to enforce. Implementations narrow through `storedSpaceStatus`,
-   * which also logs the row and the true stored value.
-   */
-  getStatus(
-    id: string,
-  ): Promise<import("@withmarfa/shared").SpaceStatus | null>;
-}
-
-/**
- * Per-space quota store. Stores ceilings; counts are computed on-demand
- * from existing tables at quota-check time.
- */
-export interface SpaceQuotaStore {
-  /** Returns the per-space ceilings; null when no row exists (use env defaults). */
-  get(spaceId: string): Promise<import("@withmarfa/shared").SpaceQuota | null>;
-  /**
-   * Reads space existence and its optional quota row in one transaction,
-   * serialized against space deletion. `exists: true, quota: null` means the
-   * space uses environment defaults; `exists: false` means the space is
-   * unknown at the read's linearization point.
-   */
-  getForExistingSpace(spaceId: string): Promise<
-    | {
-        exists: true;
-        quota: import("@withmarfa/shared").SpaceQuota | null;
-      }
-    | { exists: false; quota: null }
-  >;
-  /** Upserts ceilings. Pass null on a field to clear it (revert to env default). */
-  set(
-    spaceId: string,
-    input: {
-      items_limit?: number | null;
-      webhooks_limit?: number | null;
-      blobs_limit?: number | null;
-      storage_bytes_limit?: number | null;
-      rate_per_minute_limit?: number | null;
-    },
-  ): Promise<import("@withmarfa/shared").SpaceQuota>;
-  /**
-   * Upsert ceilings only while the space row exists. The existence read and
-   * write are serialized against account deletion, so an unknown space or a
-   * deletion that wins the space lock returns null without leaving an orphan
-   * quota row.
-   */
-  setForExistingSpace(
-    spaceId: string,
-    input: {
-      items_limit?: number | null;
-      webhooks_limit?: number | null;
-      blobs_limit?: number | null;
-      storage_bytes_limit?: number | null;
-      rate_per_minute_limit?: number | null;
-    },
-  ): Promise<import("@withmarfa/shared").SpaceQuota | null>;
-  /** Returns the current count for a resource within a space. */
-  count(
-    spaceId: string,
-    resource: import("@withmarfa/shared").QuotaResource,
-  ): Promise<number>;
 }
 
 // ---------------------------------------------------------------------------
@@ -2818,56 +2690,6 @@ export interface AuthSessionStore {
   deleteExpired(now: Date): Promise<number>;
 }
 
-/**
- * Account-lifecycle store. Surfaces the `auth_user.deletion_state` +
- * `pending_deletion_at` columns for the GDPR account-deletion lifecycle.
- * Grouped under a single sub-interface so the route layer reads as
- * `storage.accountLifecycle.markPendingDeletion(...)` and the surface
- * is greppable as a unit.
- *
- * The hard-delete cascade itself is a top-level `Storage` method
- * (`deleteAccountCascade`) because it spans every per-space table plus
- * the auth island — it doesn't sit cleanly inside one sub-store. The
- * cascade re-checks `deletion_state === 'pending_deletion'` and
- * `pending_deletion_at < cutoffIso` inside its transaction (with `FOR
- * UPDATE` on PG to serialize against the cancel route's
- * `cancelPendingDeletion` UPDATE), and short-circuits if either predicate
- * is no longer true.
- */
-export interface AccountLifecycleStore {
-  /** Flip `auth_user.deletion_state` → `'pending_deletion'`, stamp
-   *  `pending_deletion_at = nowIso`, AND inside the same transaction:
-   *  revoke every `api_keys` row for the user's space + delete every
-   *  `auth_session` for the user. Idempotent — re-running on a
-   *  pending row just re-stamps `pending_deletion_at`. */
-  markPendingDeletion(authUserId: string, nowIso: string): Promise<void>;
-  /** Flip the state back to `'active'` and clear `pending_deletion_at`.
-   *  Returns `true` when a row was actually flipped; `false` when the
-   *  UPDATE matched zero rows (account already cancelled or already
-   *  hard-deleted by a cascade that won the race). The cancel routes
-   *  branch on the return: `true` → standard "Account restored"
-   *  confirmation; `false` → "already permanently deleted" themed page +
-   *  distinct audit action so the audit trail is honest. */
-  cancelPendingDeletion(authUserId: string): Promise<boolean>;
-  /** Read the lifecycle row by `auth_user.id`. Returns null when no
-   *  matching row exists. */
-  getAccountLifecycle(authUserId: string): Promise<{
-    deletion_state: DeletionState;
-    pending_deletion_at: string | null;
-  } | null>;
-  /** Pre-sign-in middleware lookup keyed by lower-cased email. */
-  getAccountLifecycleByEmail(email: string): Promise<{
-    auth_user_id: string;
-    deletion_state: DeletionState;
-    pending_deletion_at: string | null;
-  } | null>;
-  /** Purger fan-out — every account whose `pending_deletion_at` is
-   *  strictly older than `cutoffIso` and still in `pending_deletion`. */
-  listPendingDeletionDue(
-    cutoffIso: string,
-  ): Promise<{ auth_user_id: string }[]>;
-}
-
 export interface CoordinationStore {
   /**
    * Attempt to acquire a named coordination lock, run `fn`, release the
@@ -3026,7 +2848,6 @@ export interface BetterAuthStorageAdapter {
   betterAuthDb: unknown;
   /** Dialect discriminator, kept so `auth/instance.ts` names the schema
    *  bundle it mounts. */
-  betterAuthDialect: "sqlite";
 }
 
 // ---------------------------------------------------------------------------
@@ -3222,11 +3043,6 @@ export interface Storage extends Partial<BetterAuthStorageAdapter> {
    *  test contexts that don't wire better-auth (the cleanup job in
    *  `index.ts` is gated on this being present). */
   authSessions?: AuthSessionStore;
-  /** Account-lifecycle store (delete state + pending stamp). Always wired
-   *  by both dialect factories; the route layer + the purger consult it.
-   *  Marked optional only because some in-tree test stubs do not implement
-   *  it; production Storage always exposes it. */
-  accountLifecycle?: AccountLifecycleStore;
   settings: SettingsStore;
   coordination: CoordinationStore;
   /** Async substrate for `POST /items/bulk-actions`. Always wired on both
@@ -3238,11 +3054,7 @@ export interface Storage extends Partial<BetterAuthStorageAdapter> {
    *  event-log retention sweep are its only readers. */
   idempotency: IdempotencyStore;
 
-  users?: UserStore;
   spaces?: SpaceStore;
-  /** Per-space quotas. Always present (counts even when no per-space
-   *  ceilings are set). */
-  spaceQuotas: SpaceQuotaStore;
   /**
    * Cluster-shared rate-limit + per-email throttle counters. Always wired
    * by both dialect factories; the middleware + the forgot-password route
@@ -3255,37 +3067,5 @@ export interface Storage extends Partial<BetterAuthStorageAdapter> {
    *  dialect factories; the sweeper is the only consumer. */
   enrichment: EnrichmentStore;
   runInTransaction<T>(fn: () => T | Promise<T>): Promise<T>;
-  /**
-   * Hard-delete every artifact tied to the given `auth_user.id`. Single
-   * transaction; rollback on any failure. Re-checks inside its own
-   * transaction that the account is still `pending_deletion` and
-   * `pending_deletion_at < cutoffIso` before proceeding — short-circuits
-   * and returns `false` if either is no longer true (e.g. the user clicked
-   * cancel between the purger's snapshot and the cascade). On a clean run
-   * returns `true`. The PG impl uses `SELECT ... FOR UPDATE` so a
-   * concurrent `cancelPendingDeletion` blocks until the cascade either
-   * commits or the re-check skips.
-   */
-  /**
-   * Hard-delete a space and every row scoped to it.
-   *
-   * Top-level for the same reason `deleteAccountCascade` is: it spans
-   * every per-space table and needs the store layer for the item purge's
-   * search-index cleanup, so it does not sit inside `SpaceStore`.
-   *
-   * This is the counterpart the cascade cannot serve — a space
-   * provisioned by the operator key has no `auth_user` behind it,
-   * and until this existed there was no way to remove one. Conformance
-   * creating a space per run is the standing case.
-   *
-   * Reports rather than throws, so the route maps the outcomes:
-   * - `"deleted"` — the space and its rows are gone.
-   * - `"not_found"` — no space with that id.
-   * - `"has_users"` — refused. The cascade owns the auth island, and
-   *   removing the space from under it would strand `users` and
-   *   `auth_user`. That case belongs to the account-delete route.
-   */
-  deleteSpace(spaceId: string): Promise<"deleted" | "not_found" | "has_users">;
-  deleteAccountCascade(authUserId: string, cutoffIso: string): Promise<boolean>;
   close(): Promise<void>;
 }

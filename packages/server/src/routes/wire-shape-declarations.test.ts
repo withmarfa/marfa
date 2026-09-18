@@ -165,7 +165,7 @@ describe("each wire shape is declared once", () => {
     expect(shared.map((d) => d.name)).toContain("EdgeSchema");
     expect(routes.some((r) => r.file === "edges.ts")).toBe(true);
     const declarations = routes.flatMap((r) => r.declarations);
-    expect(declarations.length).toBeGreaterThan(50);
+    expect(declarations.length).toBeGreaterThan(40);
   });
 
   it("no route file redeclares a centralized schema by name", () => {

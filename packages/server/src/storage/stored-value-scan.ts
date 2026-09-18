@@ -44,7 +44,7 @@
  * source of truth with nothing keeping it honest, and it would go stale in
  * precisely the case that matters.
  */
-import { DELETION_STATES, ITEM_STATES, TIERS } from "@withmarfa/shared";
+import { ITEM_STATES, TIERS } from "@withmarfa/shared";
 import { log } from "../middleware/logger.js";
 
 /** One column, and the set of values this build can interpret in it. */
@@ -97,12 +97,6 @@ export const SCANNED_COLUMNS: readonly ScannedColumn[] = [
     column: "default_tier",
     castType: "Tier",
     allowed: TIERS,
-  },
-  {
-    table: "auth_user",
-    column: "deletion_state",
-    castType: "DeletionState",
-    allowed: DELETION_STATES,
   },
   {
     table: "items",

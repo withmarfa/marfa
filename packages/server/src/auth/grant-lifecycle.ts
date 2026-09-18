@@ -212,7 +212,7 @@ export async function auditGrantReused(
   try {
     // The resolver the projection was written through, so this lookup asks
     // the bucket the row is in.
-    const spaceId = await resolveSpaceIdForAuthUser(storage, opts.authUserId);
+    const spaceId = await resolveSpaceIdForAuthUser(storage);
     let grantItemId: string | null = null;
     if (typeof storage.oauthProvider?.findGrantItemId === "function") {
       grantItemId = await storage.oauthProvider.findGrantItemId({

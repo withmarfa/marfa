@@ -32,7 +32,6 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import {
   createTestContext,
-  markEmailVerified,
   request,
   seedOauthBearer,
   TEST_API_KEY_SALT,
@@ -45,7 +44,7 @@ let ctx: TestContext;
 
 beforeAll(async () => {
   // Hosted: space binding and the auth surfaces only exist there.
-  ctx = await createTestContext({ authMode: "hosted", authAllowSignup: true });
+  ctx = await createTestContext({});
 });
 
 afterAll(async () => {
@@ -74,30 +73,6 @@ async function mintFullSpaceKey(spaceId: string): Promise<string> {
   return raw;
 }
 
-/** Sign up + verify + sign in; returns the session cookie. The first person
- *  in a space holds all of it, which is exactly the ceiling the console
- *  door's mint has to clamp to. */
-async function signInAndCookie(email: string): Promise<string> {
-  const password = "correct horse battery";
-  await request(ctx.app, "POST", "/auth/sign-up/email", {
-    body: { email, password, name: "Mint Door" },
-    headers: { origin: ORIGIN },
-  });
-  await markEmailVerified(ctx.storage, email);
-  const signIn = await request(ctx.app, "POST", "/auth/sign-in/email", {
-    body: { email, password },
-    headers: { origin: ORIGIN },
-  });
-  expect(signIn.status).toBe(200);
-  const setCookie = signIn.headers.get("set-cookie") ?? "";
-  const cookie = setCookie
-    .split(/,\s*(?=[a-zA-Z0-9_-]+=)/)
-    .map((chunk) => chunk.split(";")[0])
-    .find((head) => head?.includes("session_token"));
-  expect(cookie).toBeTruthy();
-  return cookie ?? "";
-}
-
 // ---------------------------------------------------------------------------
 // The doors
 // ---------------------------------------------------------------------------
@@ -114,9 +89,8 @@ interface MintDoor {
    *
    * A second axis, because the census had the right scope and exercised
    * the wrong one. Every row asserted the role ceiling and the platform
-   * flag; none asserted `source`, so `POST /auth/keys` writing its label
-   * verbatim into the column sat inside an enumerated door and read as
-   * covered.
+   * flag; none asserted `source`, so a door writing its label verbatim
+   * into the column sat inside an enumerated door and read as covered.
    *
    * `source` is not a description. `oauth:<connection-id>` is read as
    * proof that a caller IS that connection, by the connection proxy and
@@ -216,7 +190,7 @@ const DOORS: MintDoor[] = [
       const { token } = await seedOauthBearer(
         ctx.storage,
         ["openid", "space.keys"],
-        { seedUserRow: true, spaceId: space.id },
+        { spaceId: space.id },
       );
       const res = await request(ctx.app, "POST", "/keys", {
         key: token,
@@ -236,7 +210,6 @@ const DOORS: MintDoor[] = [
       // Over the ceiling: no space permission, so the door does not open at
       // all.
       const ungranted = await seedOauthBearer(ctx.storage, ["openid"], {
-        seedUserRow: true,
         spaceId: space.id,
       });
       const refused = await request(ctx.app, "POST", "/keys", {
@@ -248,7 +221,6 @@ const DOORS: MintDoor[] = [
       // Over the ceiling: reach the grant does not cover. `core.note:read`
       // does not cover `core.note:write` — the verb ranks.
       const granted = await seedOauthBearer(ctx.storage, scopes, {
-        seedUserRow: true,
         spaceId: space.id,
       });
       const wider = await request(ctx.app, "POST", "/keys", {
@@ -285,116 +257,6 @@ const DOORS: MintDoor[] = [
       expect(stored?.is_operator).toBe(false);
       expect(stored?.type_permissions["core.note"]).toBe("read");
       expect(stored?.space_permissions).toEqual(["space.keys"]);
-    },
-  },
-  {
-    name: "POST /admin/spaces/{id}/keys — platform mints space-confined authority",
-    specRoute: "post /admin/spaces/{id}/keys",
-    forgedSource: async () => {
-      const created = await request(ctx.app, "POST", "/admin/spaces", {
-        key: ctx.operatorKey,
-        body: { name: `forged-${Math.random().toString(36).slice(2, 8)}` },
-      });
-      expect(created.status).toBe(201);
-      const spaceId = ((await created.json()) as { id: string }).id;
-      const res = await request(
-        ctx.app,
-        "POST",
-        `/admin/spaces/${spaceId}/keys`,
-        {
-          key: ctx.operatorKey,
-          body: {
-            label: "forged",
-            source: `integration:${"c".repeat(8)}`,
-          },
-        },
-      );
-      expect(res.status).toBeGreaterThanOrEqual(400);
-    },
-    ceiling: async () => {
-      const created = await request(ctx.app, "POST", "/admin/spaces", {
-        key: ctx.operatorKey,
-        body: { name: "mint-door-space" },
-      });
-      expect(created.status).toBe(201);
-      const spaceId = ((await created.json()) as { id: string }).id;
-      const res = await request(
-        ctx.app,
-        "POST",
-        `/admin/spaces/${spaceId}/keys`,
-        {
-          key: ctx.operatorKey,
-          body: {
-            label: "space-scoped",
-            source: `mint-adm-${Math.random().toString(36).slice(2, 8)}`,
-            is_operator: true,
-          },
-        },
-      );
-      expect(res.status).toBe(201);
-      const body = (await res.json()) as { is_operator?: boolean };
-      // The operator flag never rides through this door, whatever the body
-      // says: a credential confined to one space is deliberately less than
-      // the instance tier, and the schema does not even accept the field.
-      expect(body.is_operator ?? false).toBe(false);
-    },
-  },
-  {
-    name: "POST /auth/keys — the console form mints inside the owner's space, never operator",
-    specRoute: null,
-    forgedSource: async () => {
-      // The console form writes its label into `source`, so the label is
-      // where a connection identity would be forged. It answers 200 with
-      // an error page rather than a status, so the row is the assertion:
-      // nothing may be minted carrying a reserved source.
-      const email = `mint-forge-${Math.random().toString(36).slice(2, 8)}@example.com`;
-      const cookie = await signInAndCookie(email);
-      const label = `oauth:${"c".repeat(8)}`;
-      await ctx.app.fetch(
-        new Request(`${ORIGIN}/auth/keys`, {
-          method: "POST",
-          headers: {
-            "content-type": "application/x-www-form-urlencoded",
-            origin: ORIGIN,
-            cookie,
-          },
-          body: new URLSearchParams({ label, full_access: "on" }).toString(),
-        }),
-      );
-      const rows = await ctx.storage.keys.list();
-      expect(rows.some((k) => k.source === label)).toBe(false);
-      expect(rows.some((k) => k.label === label)).toBe(false);
-    },
-    ceiling: async () => {
-      const email = `mint-door-${Math.random().toString(36).slice(2, 8)}@example.com`;
-      const cookie = await signInAndCookie(email);
-      const label = `console-${Math.random().toString(36).slice(2, 8)}`;
-      const res = await ctx.app.fetch(
-        new Request(`${ORIGIN}/auth/keys`, {
-          method: "POST",
-          headers: {
-            "content-type": "application/x-www-form-urlencoded",
-            origin: ORIGIN,
-            cookie,
-          },
-          body: new URLSearchParams({ label, full_access: "on" }).toString(),
-        }),
-      );
-      expect(res.status).toBe(200);
-
-      // Resolve the stored key by its label and assert the ceiling on
-      // the row itself — the response is HTML.
-      const rows = await ctx.storage.keys.list();
-      const stored = rows.find((k) => k.label === label);
-      expect(stored).toBeDefined();
-      expect(stored?.is_operator ?? false).toBe(false);
-      // The first person in a space holds every space permission in it, so
-      // full access hands that whole set down and no more — the operator
-      // flag above it is unreachable from a self-serve form.
-      expect(new Set(stored?.space_permissions)).toEqual(
-        new Set(SPACE_PERMISSIONS),
-      );
-      expect(stored?.space_id).toBeTruthy();
     },
   },
   {
@@ -535,7 +397,6 @@ const SECRET_PROPERTIES = new Set([
  *  here. Each entry is checked against the live route table so a renamed
  *  route fails as stale rather than silently unpinning. */
 const PINNED_HONO_MINT_ROUTES = [
-  "POST /auth/keys",
   "POST /auth/device/token",
   "POST /auth/oauth2/register",
 ];
@@ -634,97 +495,5 @@ describe("every way of asking for a credential is accounted for", () => {
         "urn:ietf:params:oauth:grant-type:device_code",
       ].sort(),
     );
-  });
-});
-
-describe("the console form mints no key it would describe wrongly", () => {
-  /** Post the key form as a browser would, and hand back the stored row. */
-  async function mintThroughForm(
-    cookie: string,
-    label: string,
-    fields: Record<string, string>[],
-  ): Promise<{ status: number }> {
-    const body = new URLSearchParams();
-    body.set("label", label);
-    for (const field of fields) {
-      for (const [k, v] of Object.entries(field)) body.append(k, v);
-    }
-    const res = await ctx.app.fetch(
-      new Request(`${ORIGIN}/auth/keys`, {
-        method: "POST",
-        headers: {
-          "content-type": "application/x-www-form-urlencoded",
-          origin: ORIGIN,
-          cookie,
-        },
-        body: body.toString(),
-      }),
-    );
-    return { status: res.status };
-  }
-
-  it("drops a hand-crafted content-category literal instead of minting on it", async () => {
-    // The form's picker emits `<type>:<verb>` only, so this shape takes a
-    // hand-crafted post — and it stopped being refused by the scope grammar
-    // the day the category began parsing. Admitting one mints a key whose own
-    // summary is wrong in the widest possible direction: the category
-    // projects the global wildcard, so the key writes every non-system type
-    // in the space, while the level the form reads back off the ticked type
-    // scopes is null, so the owner is told it reaches none of their content
-    // and it is minted with no edge permissions at all.
-    const email = `mint-content-${Math.random().toString(36).slice(2, 8)}@example.com`;
-    const cookie = await signInAndCookie(email);
-    const label = `content-only-${Math.random().toString(36).slice(2, 8)}`;
-
-    const res = await mintThroughForm(cookie, label, [
-      { scopes: "content:write" },
-    ]);
-    expect(res.status).toBe(200);
-
-    // The row is the assertion: the form answers 200 with an error page
-    // rather than a status, and the "pick at least one" guard is what the
-    // drop leaves the request standing in front of.
-    const rows = await ctx.storage.keys.list();
-    expect(rows.some((k) => k.label === label)).toBe(false);
-  });
-
-  it("still mints on the type scopes the picker does emit", async () => {
-    // A gate that refuses everyone is as wrong as one that refuses no one,
-    // and the drop is one clause away from taking the ordinary case with it.
-    const email = `mint-typed-${Math.random().toString(36).slice(2, 8)}@example.com`;
-    const cookie = await signInAndCookie(email);
-    const label = `typed-${Math.random().toString(36).slice(2, 8)}`;
-
-    const res = await mintThroughForm(cookie, label, [
-      { scopes: "core.note:write" },
-    ]);
-    expect(res.status).toBe(200);
-
-    const rows = await ctx.storage.keys.list();
-    const stored = rows.find((k) => k.label === label);
-    expect(stored).toBeDefined();
-    expect(stored?.type_permissions).toEqual({ "core.note": "write" });
-  });
-
-  it("mints on the ticked type scopes alone when a content literal rides along", async () => {
-    // The drop takes the literal, not the request. A post naming both leaves
-    // a key scoped to what the picker could actually have offered — which is
-    // the difference between dropping a scope and refusing a submission.
-    const email = `mint-mixed-${Math.random().toString(36).slice(2, 8)}@example.com`;
-    const cookie = await signInAndCookie(email);
-    const label = `mixed-${Math.random().toString(36).slice(2, 8)}`;
-
-    const res = await mintThroughForm(cookie, label, [
-      { scopes: "core.note:read" },
-      { scopes: "content:write" },
-    ]);
-    expect(res.status).toBe(200);
-
-    const rows = await ctx.storage.keys.list();
-    const stored = rows.find((k) => k.label === label);
-    expect(stored).toBeDefined();
-    // No global wildcard, and no `none` entries: the projection the category
-    // would have produced left no trace on the row.
-    expect(stored?.type_permissions).toEqual({ "core.note": "read" });
   });
 });

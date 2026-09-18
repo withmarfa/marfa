@@ -174,7 +174,7 @@ describe("the scanned-column roster keeps up with the storage layer", () => {
     // An absolute floor under the three the scan depends on, so a change
     // that lost a read still fails. `>=` rather than `===` so a legitimate
     // new read does not redden a test it has nothing to do with. Measured
-    // today: one, one, and two.
+    // today: one and one.
     const counts = new Map<string, number>();
     for (const { column, type } of storedValueCasts()) {
       if (NOT_A_VALUE_UNION.has(type)) continue;
@@ -184,7 +184,6 @@ describe("the scanned-column roster keeps up with the storage layer", () => {
     const total = (key: string) => counts.get(key) ?? 0;
     expect(total("state as ItemState")).toBeGreaterThanOrEqual(1);
     expect(total("default_tier as Tier")).toBeGreaterThanOrEqual(1);
-    expect(total("deletion_state as DeletionState")).toBeGreaterThanOrEqual(2);
   });
 
   it("gives a reason for every column it leaves uncounted", () => {

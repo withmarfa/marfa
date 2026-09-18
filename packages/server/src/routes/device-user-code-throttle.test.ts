@@ -49,7 +49,7 @@ async function submitUserCode(
 
 describe("device-flow per-user_code attempt throttle", () => {
   it("denies after repeated failed user_code submissions", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
 
     // A well-formed but non-existent code. The default cap is 5 failed
     // attempts; submissions 1–5 surface `invalid_code`, submission 6
@@ -72,7 +72,7 @@ describe("device-flow per-user_code attempt throttle", () => {
   });
 
   it("throttles per code — a different code is unaffected", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
 
     // Poison one code to its cap.
     const poisoned = "BCDE-3456";

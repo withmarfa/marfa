@@ -32,7 +32,6 @@ const NAMESPACES = [
   "spaces",
   "admin",
   "events",
-  "profile",
   "occurrences",
 ] as const;
 

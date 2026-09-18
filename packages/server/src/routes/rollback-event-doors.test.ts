@@ -1255,14 +1255,6 @@ const PUBLISHES_OUT_OF_SCOPE: Record<string, PublishingFile> = {
     sites: 2,
     why: "archive restore, an admin surface: the items it wrote and the edges between them, in that order",
   },
-  "auth/starter-content.ts": {
-    sites: 1,
-    why: "sign-up seeding, outside a request",
-  },
-  "routes/admin.ts": {
-    sites: 2,
-    why: "the client removal, an admin surface: each purged projection's edges and then the row, announced once the transaction that removed them has committed",
-  },
   "enrichment/sweeper.ts": {
     sites: 1,
     why: "a background sweeper, outside a request",

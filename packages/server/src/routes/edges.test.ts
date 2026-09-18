@@ -1402,7 +1402,7 @@ describe("Single-edge mutate/delete — cross-space fence", () => {
   let aTarget: string;
 
   beforeAll(async () => {
-    hostedCtx = await createTestContext({ authMode: "hosted" });
+    hostedCtx = await createTestContext({});
     const a = await hostedCtx.storage.spaces!.create("space-a");
     const b = await hostedCtx.storage.spaces!.create("space-b");
     spaceA = a.id;

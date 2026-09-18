@@ -74,7 +74,7 @@ async function newSpace(
 
 describe("declared descendants stay inside their own space", () => {
   it("does not let one space's declared child widen another space's subtree read", async () => {
-    ctx = await createTestContext({ authMode: "hosted" });
+    ctx = await createTestContext({});
     const alpha = await newSpace(ctx, "alpha", { "*": "write" });
     const beta = await newSpace(ctx, "beta", { "*": "write" });
 
@@ -118,7 +118,7 @@ describe("declared descendants stay inside their own space", () => {
   });
 
   it("registering a type does not make an existing row readable", async () => {
-    ctx = await createTestContext({ authMode: "hosted" });
+    ctx = await createTestContext({});
     const alpha = await newSpace(ctx, "alpha", { "*": "write" });
 
     // A row written before any custom type exists.

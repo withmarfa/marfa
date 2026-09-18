@@ -96,7 +96,7 @@ async function matchedIds(
 }
 
 beforeAll(async () => {
-  ctx = await createTestContext({ authMode: "hosted" });
+  ctx = await createTestContext({});
   const space = await ctx.storage.spaces!.create("bulk-action-axes");
   spaceId = space.id;
 

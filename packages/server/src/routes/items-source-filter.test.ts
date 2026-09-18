@@ -53,7 +53,7 @@ async function mintSpaceKey(source: string): Promise<string> {
 }
 
 beforeAll(async () => {
-  ctx = await createTestContext({ authMode: "hosted" });
+  ctx = await createTestContext({});
   const space = await ctx.storage.spaces!.create("source-filter");
   spaceId = space.id;
   trustedKey = await mintSpaceKey("trusted");

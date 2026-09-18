@@ -194,7 +194,7 @@ describe("the bearer middleware carries the grant onto the request", () => {
   let spaceId: string;
 
   beforeAll(async () => {
-    ctx = await createTestContext({ authMode: "hosted" });
+    ctx = await createTestContext({});
     const space = await ctx.storage.spaces!.create(
       "space-permission-carrier-space",
     );
@@ -222,7 +222,7 @@ describe("the bearer middleware carries the grant onto the request", () => {
     const seeded = await seedOauthBearer(
       ctx.storage,
       ["openid", "space.keys", "core.note:read"],
-      { seedUserRow: true, spaceId },
+      { spaceId },
     );
     const res = await probeApp().request("/probe", {
       headers: { Authorization: `Bearer ${seeded.token}` },
@@ -254,7 +254,7 @@ describe("the bearer middleware carries the grant onto the request", () => {
     const seeded = await seedOauthBearer(
       ctx.storage,
       ["openid", "space.keys", "core.note:read"],
-      { seedUserRow: true, spaceId },
+      { spaceId },
     );
     const app = new Hono<AppEnv>();
     app.use("*", authMiddleware(ctx.storage, TEST_API_KEY_SALT));
@@ -310,7 +310,7 @@ describe("a real door reads what a real grant carries", () => {
   let spaceId: string;
 
   beforeAll(async () => {
-    ctx = await createTestContext({ authMode: "hosted" });
+    ctx = await createTestContext({});
     const space = await ctx.storage.spaces!.create(
       "space-permission-door-space",
     );
@@ -325,7 +325,6 @@ describe("a real door reads what a real grant carries", () => {
     // proves the middleware, the gate and the route agree in one request.
     const { token } = await seedOauthBearer(ctx.storage, ["space.keys"], {
       spaceId,
-      seedUserRow: true,
     });
     const res = await request(ctx.app, "GET", "/keys", { key: token });
     expect(res.status).toBe(200);
@@ -334,7 +333,6 @@ describe("a real door reads what a real grant carries", () => {
   it("refuses a bearer whose grant does not", async () => {
     const { token } = await seedOauthBearer(ctx.storage, ["core.note:read"], {
       spaceId,
-      seedUserRow: true,
     });
     const res = await request(ctx.app, "GET", "/keys", { key: token });
     expect(res.status).toBe(403);

@@ -42,7 +42,6 @@ async function buildCtx(isProduction: boolean): Promise<Ctx> {
     apiKeySalt: SALT,
     corsOrigins: [ALLOWED_ORIGIN],
     cdnBaseUrl: "",
-    authMode: "keys",
     rateLimitEnabled: false,
     enableHsts: false,
     auditRetentionDays: 90,
@@ -58,10 +57,7 @@ async function buildCtx(isProduction: boolean): Promise<Ctx> {
     errorWebhookUrl: "",
     trustedProxyCidrs: [],
     authBaseUrl: "http://localhost:0",
-    authAllowSignup: true,
-    seedStarterContent: false,
     authSecret: "test-auth-secret",
-    oidcProviders: [],
     rateLimitDefaultLimit: 1000,
     rateLimitWindowMs: 60_000,
   });

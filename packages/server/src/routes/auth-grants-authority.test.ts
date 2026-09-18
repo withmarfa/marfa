@@ -22,14 +22,14 @@
  */
 
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
-import { createTestContext, request } from "../test-utils.js";
+import { createTestContext, mintSpaceKey, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import type { SpacePermission } from "@withmarfa/shared";
 
 let ctx: TestContext;
 
 beforeEach(async () => {
-  ctx = await createTestContext({ authMode: "hosted" });
+  ctx = await createTestContext({});
 });
 
 afterEach(async () => {
@@ -64,36 +64,24 @@ async function seedSpaceWithGrant() {
     space.id,
   );
 
-  // Mint through the real route so the credential is exactly what an
-  // operator's own key would be, permission maps and all.
-  const mint = async (
+  const mint = (
     name: string,
     spacePermissions: SpacePermission[],
   ): Promise<string> => {
     const suffix = Math.random().toString(36).slice(2, 10);
-    const res = await request(
-      ctx.app,
-      "POST",
-      `/admin/spaces/${space.id}/keys`,
-      {
-        key: ctx.operatorKey,
-        body: {
-          label: `grants-authority-${name}-${suffix}`,
-          source: `grants-authority-${name}-${suffix}`,
-          space_permissions: spacePermissions,
-          default_tier: "library",
-          // Deliberately narrow: the point is that a credential scoped to
-          // one read on one type still reached an account-management
-          // surface.
-          type_permissions: { "core.note": "read" },
-          extension_permissions: {},
-          edge_permissions: {},
-        },
-      },
-    );
-    expect(res.status).toBe(201);
-    const body = (await res.json()) as { key: string };
-    return body.key;
+    return mintSpaceKey(ctx, space.id, {
+      label: `grants-authority-${name}-${suffix}`,
+      source: `grants-authority-${name}-${suffix}`,
+      space_permissions: spacePermissions,
+      default_tier: "library",
+      // Deliberately narrow: the point is that a credential scoped to
+      // one read on one type still reached an account-management
+      // surface.
+      type_permissions: { "core.note": "read" },
+      extension_permissions: {},
+      edge_permissions: {},
+      metadata_permissions: {},
+    });
   };
 
   return { space, grant, mint };

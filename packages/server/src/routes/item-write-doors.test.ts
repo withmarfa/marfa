@@ -38,7 +38,7 @@ import type { TestContext } from "../test-utils.js";
 let ctx: TestContext;
 
 beforeAll(async () => {
-  ctx = await createTestContext({ authMode: "hosted" });
+  ctx = await createTestContext({});
 });
 
 afterAll(async () => {

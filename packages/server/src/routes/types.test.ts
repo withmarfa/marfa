@@ -1,9 +1,5 @@
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
-import {
-  createTestContext,
-  request,
-  TEST_API_KEY_SALT,
-} from "../test-utils.js";
+import { createTestContext, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import type { TypeSchema } from "@withmarfa/shared";
 import {
@@ -11,7 +7,6 @@ import {
   registerTypeSchema,
   unregisterTypeSchema,
 } from "@withmarfa/shared";
-import { hashApiKey } from "../middleware/auth.js";
 
 let ctx: TestContext;
 
@@ -787,157 +782,6 @@ describe("POST /types — reserved namespaces are not authored at runtime", () =
     const res = await request(ctx.app, "POST", "/types", {
       key: ctx.spaceKey,
       body: { id: "user.runtime-authored-probe", ...baseType },
-    });
-    expect(res.status).toBe(201);
-  });
-});
-
-describe("POST /types — publisher-tier handle ownership", () => {
-  // Publishing under a handle means owning it. The claim API exists and
-  // works; this gate is the one place the claim grants authority today.
-  // Hosted mode only: keys mode has no user accounts, so there is no
-  // handle system to check a publisher segment against, and the check
-  // is deliberately skipped there (covered by the last test below).
-  let hosted: TestContext;
-  let ownerKey: string;
-  let strangerKey: string;
-  let handlelessKey: string;
-
-  async function mintSpaceKey(
-    suffix: string,
-    handle: string | null,
-  ): Promise<string> {
-    const space = await hosted.storage.spaces!.create(`space-${suffix}`);
-    await hosted.storage.users!.create({
-      provider: "test",
-      provider_id: `ownership-${suffix}`,
-      space_id: space.id,
-      ...(handle ? { handle } : {}),
-    });
-    const rawKey = `marfa_k1_test_ownership_${suffix}`;
-    await hosted.storage.keys.create(
-      {
-        label: `ownership-${suffix}`,
-        source: "test",
-        type_permissions: { "*": "write" },
-        metadata_permissions: { types: "write" },
-      },
-      hashApiKey(rawKey, TEST_API_KEY_SALT),
-      space.id,
-    );
-    return rawKey;
-  }
-
-  beforeAll(async () => {
-    hosted = await createTestContext({ authMode: "hosted" });
-    ownerKey = await mintSpaceKey("owner", "acme");
-    strangerKey = await mintSpaceKey("stranger", "rivalco");
-    handlelessKey = await mintSpaceKey("handleless", null);
-  });
-
-  afterAll(async () => {
-    await hosted.cleanup();
-  });
-
-  it("refuses registration under a handle the caller's user does not hold", async () => {
-    const res = await request(hosted.app, "POST", "/types", {
-      key: strangerKey,
-      body: { id: "acme.gadget", ...baseType },
-    });
-    expect(res.status).toBe(403);
-    const body = (await res.json()) as { error: { message: string } };
-    expect(body.error.message).toContain('requires the handle "acme"');
-    expect(body.error.message).toContain('holds "rivalco"');
-  });
-
-  it("refuses registration when the caller's user holds no handle", async () => {
-    const res = await request(hosted.app, "POST", "/types", {
-      key: handlelessKey,
-      body: { id: "acme.gadget", ...baseType },
-    });
-    expect(res.status).toBe(403);
-    const body = (await res.json()) as { error: { message: string } };
-    expect(body.error.message).toContain('claiming the handle "acme"');
-  });
-
-  it("admits registration under the caller's own claimed handle", async () => {
-    const res = await request(hosted.app, "POST", "/types", {
-      key: ownerKey,
-      body: { id: "acme.gadget", ...baseType },
-    });
-    expect(res.status).toBe(201);
-  });
-
-  it("the publisher rule answers for a credential the operator key can no longer mint", async () => {
-    // The exemption was asked after the metadata map, so it needed a
-    // credential holding `metadata.types:write` and `is_operator` at once.
-    // The row constraint makes `is_operator` and space-less the same thing
-    // and a space-less credential holds nothing, so that pair cannot exist
-    // and the mint that used to build it is refused. Platform-shipped types
-    // come from the type package rather than from a registration.
-    const suffix = Math.random().toString(36).slice(2, 10);
-    const minted = await request(hosted.app, "POST", "/keys", {
-      key: hosted.operatorKey,
-      body: {
-        label: `operator-seeder-${suffix}`,
-        source: `operator-seeder-${suffix}`,
-        metadata_permissions: { types: "write" },
-      },
-    });
-    expect(minted.status).toBe(403);
-    expect(
-      ((await minted.json()) as { error: { message: string } }).error.message,
-    ).toContain("A credential with no space is the operator tier");
-
-    // Through the door with a credential that does hold `metadata.types`,
-    // which is what pins the removal: the publisher rule now answers for it
-    // rather than being skipped. The operator key would 403 at the metadata
-    // map instead, and would go on doing so if the exemption came back.
-    const res = await request(hosted.app, "POST", "/types", {
-      key: handlelessKey,
-      body: { id: "somevendor.platform-seeded", ...baseType },
-    });
-    expect(res.status).toBe(403);
-    const body = (await res.json()) as { error: { message: string } };
-    expect(body.error.message).toContain('claiming the handle "somevendor"');
-  });
-
-  it("keeps the reserved-root refusal ahead of the ownership rule", async () => {
-    const res = await request(hosted.app, "POST", "/types", {
-      key: ownerKey,
-      body: { id: "marfa.probe", ...baseType },
-    });
-    expect(res.status).toBe(403);
-    const body = (await res.json()) as { error: { message: string } };
-    expect(body.error.message).toContain("platform-shipped");
-  });
-
-  it("does not bind in keys mode, where no handle system exists", async () => {
-    // The module-level ctx runs in keys mode, and its credential has no user
-    // row at all; refusing here would break every self-hosted deployment's
-    // custom publisher types, so the exemption is a deliberate, recorded
-    // choice rather than an accident.
-    //
-    // Seeded space-bound and non-operator rather than minted through
-    // `POST /keys`, which would hand it the caller's operator flag — and a
-    // operator key is exempt from this rule for a different reason, so
-    // the test would then pass without touching the one under test.
-    const suffix = Math.random().toString(36).slice(2, 10);
-    const rawKey = `marfa_k1_test_keysmode_${suffix}`;
-    await ctx.storage.keys.create(
-      {
-        label: "keys-mode-publisher",
-        source: `keys-mode-publisher-${suffix}`,
-        type_permissions: { "*": "write" },
-        metadata_permissions: { types: "write" },
-        is_operator: false,
-      },
-      hashApiKey(rawKey, TEST_API_KEY_SALT),
-      `keys-mode-publisher-space-${suffix}`,
-    );
-    const res = await request(ctx.app, "POST", "/types", {
-      key: rawKey,
-      body: { id: "acme.keys-mode-gadget", ...baseType },
     });
     expect(res.status).toBe(201);
   });

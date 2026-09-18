@@ -5,7 +5,7 @@ import { consentLockDepth } from "./auth/consent-lock.js";
 import { OidcSigner } from "./auth/oidc-signing.js";
 import { resolveSpaceIdForAuthUser } from "./auth/grant-space.js";
 import type { AppConfig } from "./config.js";
-import type { EmailTransport } from "./email/transport.js";
+import type { MarfaAuth } from "./auth/instance.js";
 import { createSqliteStorage } from "./storage/sqlite/index.js";
 import { FilesystemBlobBackend } from "./storage/blob-backend.js";
 import type { BlobBackend } from "./storage/blob-backend.js";
@@ -83,6 +83,10 @@ export interface TestContext {
    *  cleanups queue against admin-URL DROPs from other test files and
    *  can starve afterAll hooks. Best practice: `await ctx.cleanup()`. */
   cleanup: () => Promise<void>;
+  /** The Better Auth instance the app mounted, for tests that need a
+   *  signed-in user behind the OAuth provider. `createTestAccount` is the
+   *  usual way in. */
+  auth: MarfaAuth;
 }
 
 /**
@@ -122,12 +126,6 @@ export async function closeTestContexts(
  *                           which the middleware refuses.
  * @param opts.authUserId    Better Auth user id; if absent a synthetic
  *                           one is seeded into `auth_user`.
- * @param opts.seedUserRow   Seed a `users` row bound to the `auth_user`, so
- *                           the bearer middleware can resolve the caller's
- *                           space. It used to be `userRole` and to take one
- *                           of three role strings, none of which was ever
- *                           stored — a user row carries no role and nothing
- *                           projects one. Hosted-mode storage only.
  */
 export async function seedOauthBearer(
   storage: Storage,
@@ -136,7 +134,6 @@ export async function seedOauthBearer(
     clientName?: string;
     spaceId?: string | null;
     authUserId?: string;
-    seedUserRow?: boolean;
   } = {},
 ): Promise<{ token: string; grantId: string; clientId: string }> {
   if (
@@ -250,7 +247,7 @@ export async function seedOauthBearer(
   // token.
   let boundSpaceId: string | undefined;
   if (opts.spaceId === undefined) {
-    boundSpaceId = await resolveSpaceIdForAuthUser(storage, authUserId);
+    boundSpaceId = await resolveSpaceIdForAuthUser(storage);
     if (boundSpaceId === undefined) {
       throw new Error(
         "seedOauthBearer: no space resolved for this bearer, so the token would " +
@@ -279,101 +276,30 @@ export async function seedOauthBearer(
     accessTtlMs: 3600_000,
   });
 
-  if (opts.seedUserRow) {
-    if (!storage.users) {
-      throw new Error(
-        "seedOauthBearer({ seedUserRow }) requires hosted-mode storage with a UserStore",
-      );
-    }
-    if (!opts.spaceId) {
-      throw new Error(
-        "seedOauthBearer({ seedUserRow }) requires opts.spaceId (users.space_id is FK-bound)",
-      );
-    }
-    await storage.users.create({
-      provider: "test",
-      provider_id: authUserId,
-      space_id: opts.spaceId,
-      auth_user_id: authUserId,
-    });
-  }
-
   return { token: rawToken, grantId: grant.id, clientId };
 }
 
 /**
- * Mark a user's email verified. With `requireEmailVerification: true`
- * the auth instance blocks sign-in until `auth_user.email_verified` is
- * `true`. Tests that exercise the post-sign-in flow (consent, OAuth,
- * etc.) call this between sign-up and sign-in to skip the email
- * round-trip.
+ * Put a password account behind the OAuth provider's sign-in page.
  *
- * Safe to call when the user doesn't exist — the UPDATE simply
- * affects zero rows.
+ * There is no HTTP door that creates a user: sign-up is disabled on every
+ * instance, so this goes through the programmatic seam the app exposes.
+ * The account arrives verified, so a test signs in through
+ * `POST /auth/sign-in/email` (or the form at `POST /auth/sign-in`) right
+ * away. A refusal throws rather than returning, because a fixture with no
+ * user behind it fails somewhere far from here.
  */
-export async function markEmailVerified(
-  storage: Storage,
+export async function createTestAccount(
+  ctx: { auth: MarfaAuth },
   email: string,
-): Promise<void> {
-  const lower = email.toLowerCase();
-  await requireSqliteRun(storage)(
-    "UPDATE auth_user SET email_verified = 1 WHERE LOWER(email) = ?",
-    [lower],
-  );
-}
-
-/**
- * Read the latest reset-password verification token from
- * `auth_verification`. Better-auth keys these rows as
- * `identifier = "reset-password:${token}"` and `value = userId`.
- * Returns the most-recently-created token across any user; tests
- * typically have one in flight at a time. Returns `null` when no row
- * matches.
- *
- * The hook in `instance.ts` builds the email URL itself, so tests
- * read the token from the DB and submit it directly to
- * `POST /auth/reset-password`.
- */
-export async function readLatestResetToken(
-  storage: Storage,
-): Promise<string | null> {
-  const sqlite = storage as unknown as {
-    __sqliteAll?: (q: string) => Promise<unknown[]>;
-  };
-  if (!sqlite.__sqliteAll) return null;
-  const rows = (await sqlite.__sqliteAll(
-    `SELECT identifier FROM auth_verification
-      WHERE identifier LIKE 'reset-password:%'
-      ORDER BY created_at DESC LIMIT 1`,
-  )) as { identifier: string }[];
-  if (rows.length === 0) return null;
-  return rows[0]?.identifier.slice("reset-password:".length) ?? null;
-}
-
-/**
- * True when an `auth_user` row exists for `email`.
- *
- * Every account-creating path converges on the one `databaseHooks`
- * entry that also provisions a space, so the absence of an `auth_user`
- * is what proves nothing was provisioned. Asserting on spaces alone
- * would still pass if an account were created without one.
- *
- * Reads every email and compares in JS rather than parameterizing:
- * `__sqliteAll` takes no parameters, and a test database holds a
- * handful of rows.
- */
-export async function authUserExists(
-  storage: Storage,
-  email: string,
-): Promise<boolean> {
-  const lower = email.toLowerCase();
-  const query = `SELECT email FROM auth_user`;
-  const sqlite = storage as unknown as {
-    __sqliteAll?: (q: string) => Promise<unknown[]>;
-  };
-  if (!sqlite.__sqliteAll) return false;
-  const rows = (await sqlite.__sqliteAll(query)) as { email: string }[];
-  return rows.some((r) => r.email.toLowerCase() === lower);
+  password: string,
+  name?: string,
+): Promise<{ authUserId: string; email: string }> {
+  const result = await ctx.auth.createEmailAccount({ email, password, name });
+  if (!result.ok) {
+    throw new Error(`createTestAccount(${email}) refused: ${result.reason}`);
+  }
+  return { authUserId: result.authUserId, email: result.email };
 }
 
 /**
@@ -494,18 +420,10 @@ export async function mintSpaceKey(
 
 export async function createTestContext(
   overrides?: Partial<AppConfig>,
-  /**
-   * Optional email transport. Wired into `createApp` as the 4th arg.
-   * Production boots a real transport via `createEmailTransport`; tests
-   * pass a spy to assert on send calls (e.g. the deletion-guard cancel
-   * email). Left undefined, email-dependent flows behave as if no
-   * transport is configured — the existing default for most tests.
-   */
-  emailTransport?: EmailTransport,
 ): Promise<TestContext> {
   const tmpDir = mkdtempSync(join(tmpdir(), "marfa-test-"));
   try {
-    return await buildTestContext(tmpDir, overrides, emailTransport);
+    return await buildTestContext(tmpDir, overrides);
   } catch (error) {
     // The only thing that removes this directory on the happy path is the
     // `cleanup` closure, and that closure does not exist until the build
@@ -530,20 +448,17 @@ export interface UnbootstrappedTestApp {
   config: AppConfig;
   tmpDir: string;
   cleanup: () => Promise<void>;
+  auth: MarfaAuth;
 }
 
 async function buildUnbootstrappedApp(
   tmpDir: string,
   overrides?: Partial<AppConfig>,
-  emailTransport?: EmailTransport,
 ): Promise<UnbootstrappedTestApp> {
   const blobPath = join(tmpDir, "blobs");
 
-  const storageAuthMode: "keys" | "hosted" = overrides?.authMode ?? "keys";
   const dbPath = join(tmpDir, "test.db");
-  const storage = await createSqliteStorage(dbPath, {
-    authMode: storageAuthMode,
-  });
+  const storage = await createSqliteStorage(dbPath);
 
   const blobBackend = new FilesystemBlobBackend(blobPath);
   const config: AppConfig = {
@@ -562,7 +477,6 @@ async function buildUnbootstrappedApp(
     apiKeySalt: SALT,
     corsOrigins: [],
     cdnBaseUrl: "",
-    authMode: "keys",
     rateLimitEnabled: false,
     enableHsts: false,
     auditRetentionDays: 90,
@@ -581,22 +495,16 @@ async function buildUnbootstrappedApp(
     trustedProxyCidrs: [],
     trustedProxyHeader: null,
     authBaseUrl: "http://localhost:0",
-    authAllowSignup: true,
-    seedStarterContent: false,
     authSecret: "test-auth-secret-change-in-production-not-required-here",
-    oidcProviders: [],
     rateLimitDefaultLimit: 1000,
     rateLimitWindowMs: 60_000,
     ...overrides,
   };
   const oidcSigner = await OidcSigner.init(storage);
-  const app = createApp(
-    storage,
-    blobBackend,
-    config,
-    emailTransport,
-    oidcSigner,
-  );
+  const app = createApp(storage, blobBackend, config, oidcSigner);
+  if (!app.auth) {
+    throw new Error("test-utils: createApp mounted no auth instance");
+  }
 
   return {
     app,
@@ -604,6 +512,7 @@ async function buildUnbootstrappedApp(
     blobBackend,
     config,
     tmpDir,
+    auth: app.auth,
     cleanup: async () => {
       try {
         try {
@@ -628,11 +537,10 @@ async function buildUnbootstrappedApp(
  */
 export async function createUnbootstrappedTestApp(
   overrides?: Partial<AppConfig>,
-  emailTransport?: EmailTransport,
 ): Promise<UnbootstrappedTestApp> {
   const tmpDir = mkdtempSync(join(tmpdir(), "marfa-unbootstrapped-"));
   try {
-    return await buildUnbootstrappedApp(tmpDir, overrides, emailTransport);
+    return await buildUnbootstrappedApp(tmpDir, overrides);
   } catch (error) {
     rmSync(tmpDir, { recursive: true, force: true });
     throw error;
@@ -642,13 +550,9 @@ export async function createUnbootstrappedTestApp(
 async function buildTestContext(
   tmpDir: string,
   overrides?: Partial<AppConfig>,
-  emailTransport?: EmailTransport,
 ): Promise<TestContext> {
-  const { app, storage, blobBackend, cleanup } = await buildUnbootstrappedApp(
-    tmpDir,
-    overrides,
-    emailTransport,
-  );
+  const { app, storage, blobBackend, cleanup, auth } =
+    await buildUnbootstrappedApp(tmpDir, overrides);
 
   const suffix = Math.random().toString(36).slice(2, 14);
   const rawKey = `marfa_k1_test_operator_key_${suffix}`;
@@ -724,6 +628,7 @@ async function buildTestContext(
     spaceKey: spaceRawKey,
     tmpDir,
     cleanup,
+    auth,
   };
 }
 

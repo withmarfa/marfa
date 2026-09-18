@@ -418,7 +418,7 @@ export function buildOauthProviderPlugin(
     // like "list all clients a space has registered."
     clientReference: async ({ user }) => {
       if (!user) return undefined;
-      return resolveSpaceIdForAuthUser(opts.storage, user.id);
+      return resolveSpaceIdForAuthUser(opts.storage);
     },
 
     // `postLogin.consentReferenceId` is invoked at TOKEN-ISSUANCE
@@ -453,8 +453,7 @@ export function buildOauthProviderPlugin(
     postLogin: {
       page: "/auth/post-login",
       shouldRedirect: () => false,
-      consentReferenceId: async ({ user }) =>
-        resolveSpaceIdForAuthUser(opts.storage, user.id),
+      consentReferenceId: async () => resolveSpaceIdForAuthUser(opts.storage),
     },
 
     // ----- Scope grammar -----
@@ -1166,7 +1165,7 @@ async function cascadeClientRevoke(
     // rather than off the account. Asking the resolver for that case is what
     // every other caller of the question does.
     const spaceId =
-      row.referenceId ?? (await resolveSpaceIdForAuthUser(storage, row.userId));
+      row.referenceId ?? (await resolveSpaceIdForAuthUser(storage));
     grantItemId = await provider.findGrantItemId({
       spaceId: spaceId ?? null,
       clientId: row.clientId,
@@ -2062,7 +2061,7 @@ async function guardAuthorizationCodeGrant(
   // falling through to a token nothing will accept.
   let codeGrantSpaceId: string | undefined;
   try {
-    codeGrantSpaceId = await resolveSpaceIdForAuthUser(storage, row.userId);
+    codeGrantSpaceId = await resolveSpaceIdForAuthUser(storage);
   } catch (err) {
     log("warn", "oauth authorization-code space lookup failed", {
       client_id: row.clientId,

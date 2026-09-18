@@ -26,7 +26,7 @@ import { describe, it, expect, afterEach, vi } from "vitest";
 import { createHash, randomBytes } from "node:crypto";
 import {
   createTestContext,
-  markEmailVerified,
+  createTestAccount,
   request,
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
@@ -91,14 +91,7 @@ async function seedClient(c: TestContext): Promise<string> {
 
 async function signInUser(c: TestContext, email: string): Promise<string> {
   const password = "correct horse battery";
-  const signUpRes = await request(c.app, "POST", "/auth/sign-up/email", {
-    body: { email, password, name: "Test User" },
-    headers: { origin: ORIGIN },
-  });
-  if (signUpRes.status !== 200) {
-    throw new Error(`sign-up failed (${String(signUpRes.status)})`);
-  }
-  await markEmailVerified(c.storage, email);
+  await createTestAccount(c, email, password, "Test User");
   const signInRes = await request(c.app, "POST", "/auth/sign-in/email", {
     body: { email, password },
     headers: { origin: ORIGIN },
@@ -284,7 +277,7 @@ function isCallbackWithCode(location: string): boolean {
 
 describe("POST /auth/device/consent writes the plugin's consent row", () => {
   it("an approval leaves a consent row carrying the merged scopes and the grant's space", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     const clientId = await seedClient(ctx);
     const cookie = await signInUser(ctx, "device@example.com");
     const authUserId = await authUserIdFor(ctx, "device@example.com");
@@ -302,7 +295,7 @@ describe("POST /auth/device/consent writes the plugin's consent row", () => {
   });
 
   it("a browser authorize for the same app is then answered silently", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     const clientId = await seedClient(ctx);
     const cookie = await signInUser(ctx, "browser@example.com");
 
@@ -320,7 +313,7 @@ describe("POST /auth/device/consent writes the plugin's consent row", () => {
   });
 
   it("a re-approval widens the one row rather than adding a second", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     const clientId = await seedClient(ctx);
     const cookie = await signInUser(ctx, "again@example.com");
     const authUserId = await authUserIdFor(ctx, "again@example.com");
@@ -345,10 +338,7 @@ describe("POST /auth/device/consent writes the plugin's consent row", () => {
     // bound to nothing, or to the wrong space, is one the plugin's skip
     // never matches; only Marfa's coverage check would still fire, and the
     // repair the update half does is what keeps the two in step.
-    ctx = await createTestContext({
-      authMode: "hosted",
-      authAllowSignup: true,
-    });
+    ctx = await createTestContext({});
     const clientId = await seedClient(ctx);
     const cookie = await signInUser(ctx, "hosted@example.com");
     const authUserId = await authUserIdFor(ctx, "hosted@example.com");
@@ -378,7 +368,7 @@ describe("POST /auth/device/consent writes the plugin's consent row", () => {
     // follows, which withdraws consent rather than widening it, and the
     // browser asks again for the rest. This pins that the shrink is chosen,
     // not an accident of replace-versus-merge.
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     const clientId = await seedClient(ctx);
     const cookie = await signInUser(ctx, "standalone@example.com");
     const authUserId = await authUserIdFor(ctx, "standalone@example.com");
@@ -402,7 +392,7 @@ describe("POST /auth/device/consent writes the plugin's consent row", () => {
     // Read then write on one type: the merge keeps one entry per key, so
     // the row must equal what the projection holds rather than the two
     // requests concatenated. Disjoint keys cannot tell those apart.
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     const clientId = await seedClient(ctx);
     const cookie = await signInUser(ctx, "merge@example.com");
     const authUserId = await authUserIdFor(ctx, "merge@example.com");
@@ -424,7 +414,7 @@ describe("POST /auth/device/consent writes the plugin's consent row", () => {
     // take effect, and a consent row written regardless would answer the
     // next browser authorize with a code and no screen. The bind is the
     // gate, so the row is written only behind it.
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     const clientId = await seedClient(ctx);
     const cookie = await signInUser(ctx, "loser@example.com");
     const authUserId = await authUserIdFor(ctx, "loser@example.com");
@@ -452,7 +442,7 @@ describe("POST /auth/device/consent writes the plugin's consent row", () => {
   });
 
   it("revoking the grant removes the row with the rest", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     const clientId = await seedClient(ctx);
     const cookie = await signInUser(ctx, "revoke@example.com");
     const authUserId = await authUserIdFor(ctx, "revoke@example.com");
@@ -463,12 +453,13 @@ describe("POST /auth/device/consent writes the plugin's consent row", () => {
     const grant = await onlyGrant(ctx);
     const revoke = await request(
       ctx.app,
-      "POST",
-      `/auth/grants/${grant.id}/revoke`,
-      { headers: { origin: ORIGIN, cookie } },
+      "DELETE",
+      `/auth/grants/${grant.id}`,
+      {
+        key: ctx.spaceKey,
+      },
     );
-    expect(revoke.status).toBe(302);
-    expect(revoke.headers.get("location")).toContain("notice=grant_revoked");
+    expect(revoke.status).toBe(204);
 
     expect(await consentRows(ctx, clientId, authUserId)).toEqual([]);
     expect((await onlyGrant(ctx)).properties.status).toBe("revoked");

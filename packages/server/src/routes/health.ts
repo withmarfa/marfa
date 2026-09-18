@@ -6,16 +6,11 @@ import { storedValueScan } from "../storage/stored-value-scan.js";
 import type { AppEnv } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import type { BlobBackend } from "../storage/blob-backend.js";
-import type { AppConfig } from "../config.js";
-import type { MarfaAuth } from "../auth/instance.js";
-import type { OidcProviderHealth } from "../auth/oidc-availability.js";
 
 interface ComponentStatus {
   status: "ok" | "degraded" | "down";
   latency_ms?: number;
   error?: string;
-  /** Per-provider detail, present only on `identity_providers`. */
-  providers?: OidcProviderHealth[];
 }
 
 /** Where the platform says this instance is running. */
@@ -107,8 +102,6 @@ async function withBudget<T>(work: Promise<T>): Promise<T | typeof TIMED_OUT> {
 export function healthRoutes(
   storage: Storage,
   blobBackend: BlobBackend,
-  config: AppConfig,
-  getAuth?: () => MarfaAuth | undefined,
 ): Hono<AppEnv> {
   const router = new Hono<AppEnv>();
 
@@ -180,9 +173,7 @@ export function healthRoutes(
       // Latency on every branch, for the reason the database probe gives
       // above: this is the other bounded probe, and a blob store that
       // refused after most of its budget is a different fault from one that
-      // refused at once. `identity_providers` carries none, and should not:
-      // it is not a timed round trip whose duration means anything on its
-      // own.
+      // refused at once.
       const blobLatencyMs = Math.round(performance.now() - blobStart);
       components.blob_storage =
         outcome === TIMED_OUT
@@ -200,28 +191,6 @@ export function healthRoutes(
       };
     }
     if (components.blob_storage.status !== "ok") overall = "degraded";
-
-    // Federated identity providers. A provider whose discovery could not
-    // be reached degrades rather than taking the server down, so this is
-    // the surface that says so — without it the degradation would only
-    // be visible in container output, which is the failure mode the rule
-    // against silent degradation exists to prevent. Absent entirely when
-    // no federated provider is configured. Costs nothing to read: it is a
-    // snapshot of an in-process map.
-    const providers = getAuth?.()?.oidcHealth() ?? [];
-    if (providers.length > 0) {
-      const unavailable = providers.filter((p) => p.status === "unavailable");
-      components.identity_providers = {
-        status: unavailable.length === 0 ? "ok" : "degraded",
-        providers,
-        ...(unavailable.length > 0 && {
-          error: `${String(unavailable.length)} of ${String(providers.length)} unavailable: ${unavailable
-            .map((p) => p.provider_id)
-            .join(", ")}`,
-        }),
-      };
-      if (unavailable.length > 0) overall = "degraded";
-    }
 
     // Shipped types this instance still carries that the build no longer
     // names. Derived at boot from the build and the rows, so reading it
@@ -302,7 +271,6 @@ export function healthRoutes(
 
     return c.json({
       status: overall,
-      auth_mode: config.authMode,
       components,
       platform_types: platformTypes,
       unrecognized_stored_values: storedValues,

@@ -11,7 +11,7 @@ import { describe, it, expect, afterEach, vi } from "vitest";
 import { randomBytes } from "node:crypto";
 import {
   createTestContext,
-  markEmailVerified,
+  createTestAccount,
   request,
   waitForAudit,
 } from "../test-utils.js";
@@ -56,14 +56,7 @@ async function seedClient(c: TestContext): Promise<string> {
 
 async function signInUser(c: TestContext, email: string): Promise<string> {
   const password = "correct horse battery";
-  const signUpRes = await request(c.app, "POST", "/auth/sign-up/email", {
-    body: { email, password, name: "Test User" },
-    headers: { origin: ORIGIN },
-  });
-  if (signUpRes.status !== 200) {
-    throw new Error(`sign-up failed (${String(signUpRes.status)})`);
-  }
-  await markEmailVerified(c.storage, email);
+  await createTestAccount(c, email, password, "Test User");
   const signInRes = await request(c.app, "POST", "/auth/sign-in/email", {
     body: { email, password },
     headers: { origin: ORIGIN },
@@ -183,7 +176,7 @@ async function tokenRows(c: TestContext, clientId: string): Promise<number> {
 
 describe("GrantInactivityRetirer.runOnce", () => {
   it("retires a grant unused for longer than the window, with an audit row, and leaves a recent one and an integration alone", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     const clientId = await seedClient(ctx);
     const cookie = await signInUser(ctx, "forgotten@example.com");
     const accessToken = await deviceGrant(ctx, clientId, cookie);
@@ -253,7 +246,7 @@ describe("GrantInactivityRetirer.runOnce", () => {
   });
 
   it("counts from the approval when the grant was never used, and a disabled window retires nothing", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     const clientId = await seedClient(ctx);
     const cookie = await signInUser(ctx, "never-used@example.com");
     await deviceGrant(ctx, clientId, cookie);

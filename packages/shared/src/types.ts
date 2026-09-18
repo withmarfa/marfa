@@ -380,28 +380,6 @@ export interface CreateKeyInput {
 }
 
 /**
- * Input for `POST /admin/spaces/{id}/keys`, the operator route that mints a
- * key into a named space rather than into the caller's own.
- *
- * Two deliberate differences from {@link CreateKeyInput}: the space comes
- * from the path, not the body; and there is no `is_operator`, because the
- * whole point of the route is a credential whose authority is confined to
- * one space. Omitting `space_permissions` takes everything in that space,
- * which is the seed rule for a mint no creator set bounds.
- */
-export interface CreateSpaceKeyInput {
-  label: string;
-  source: string;
-  space_permissions?: SpacePermission[];
-  default_tier?: Tier;
-  type_permissions?: Record<string, TypePermission>;
-  extension_permissions?: Record<string, ExtensionPermission>;
-  edge_permissions?: Record<string, EdgePermission>;
-  metadata_permissions?: Record<string, MetadataPermission>;
-  profile_permissions?: Record<string, ProfilePermission>;
-}
-
-/**
  * Input for in-place updating an API key (PATCH). All fields optional;
  * `source` is intentionally omitted, because it is baked into the provenance
  * of every item the credential has already written.
@@ -677,105 +655,13 @@ export interface WebhookDelivery {
 }
 
 // ---------------------------------------------------------------------------
-// User model (hosted mode only)
+// Space and instance configuration
 // ---------------------------------------------------------------------------
 
 /** A space represents an isolated data namespace. */
 export interface Space {
   id: string;
   name: string | null;
-  created_at: string;
-  /**
-   * Operator-controlled lifecycle. `'active'` (default) allows writes;
-   * `'suspended'` blocks them at the auth middleware. Reads pass through
-   * regardless. The operator key bypasses the gate, so whoever runs the
-   * instance can inspect a suspended space.
-   */
-  status: SpaceStatus;
-}
-
-/**
- * Valid space statuses, and the source the union is derived from.
- *
- * Declared as a tuple with `SpaceStatus` derived from it rather than the
- * other way round, so a status added to one cannot go missing from the
- * other. The same drift is what let a family be added to a union without
- * reaching the array that decides which set it joins.
- */
-export const SPACE_STATUSES = ["active", "suspended"] as const;
-
-export type SpaceStatus = (typeof SPACE_STATUSES)[number];
-
-/**
- * Whether a value is a space status this build recognizes.
- *
- * Exists because a status read back from storage is a bare string, the column carries no constraint in either
- * dialect, and the one gate that consumes it compares against a single
- * literal. So a value outside the union matches no branch and is refused
- * nowhere: it reads as "not suspended", and the writes the suspension
- * exists to stop are accepted.
- *
- * Kept free of any logging concern because this ships to npm and the SDK
- * consumes it. The policy for meeting a bad value lives server-side in
- * `storedSpaceStatus`.
- */
-export function isSpaceStatus(value: unknown): value is SpaceStatus {
-  return (
-    typeof value === "string" &&
-    (SPACE_STATUSES as readonly string[]).includes(value)
-  );
-}
-
-/**
- * Valid account deletion states, and the source the union is derived from.
- *
- * Declared as a tuple with `DeletionState` derived from it for the reason
- * `SPACE_STATUSES` gives one block up: so a state added to one cannot go
- * missing from the other. It was previously a bare type alias written out
- * twice, once in each dialect's account-lifecycle store, which is the
- * shape that drift starts from — two declarations of one union with
- * nothing making them agree, and nothing at all to check a stored value
- * against.
- *
- * `pending_deletion` is the state the sign-in guard intercepts on, so a
- * value outside this union is not cosmetic: it matches neither branch, and
- * an account the operator believes is scheduled for deletion is simply
- * not.
- */
-export const DELETION_STATES = ["active", "pending_deletion"] as const;
-
-export type DeletionState = (typeof DELETION_STATES)[number];
-
-/**
- * Per-space metrics snapshot. Returned by `GET /admin/spaces/:id/metrics`
- * for the named space. Same shape as the instance-wide `/metrics` endpoint,
- * scoped to one space.
- */
-export interface SpaceMetrics {
-  space_id: string;
-  items: {
-    total: number;
-    active: number;
-    archived: number;
-    trashed: number;
-  };
-  blobs: {
-    count: number;
-    total_size: number;
-  };
-  /**
-   * Best-effort recent activity. Last `system.activity` rows for the
-   * space, newest-first, capped at the route's `limit` (default 10).
-   * Empty array when the space has no activity rows.
-   */
-  recent_activity: SpaceActivityEntry[];
-  generated_at: string;
-}
-
-export interface SpaceActivityEntry {
-  id: string;
-  severity: string;
-  summary: string;
   created_at: string;
 }
 
@@ -797,31 +683,6 @@ export interface EnforcementSettings {
   source_filter?: { types: string[]; sources: string[] };
 }
 
-/**
- * Per-space resource quotas. Empty / missing limits fall back to the
- * instance defaults from env (`MARFA_DEFAULT_QUOTA_*`). Quotas are managed by
- * the operator key via `GET/PUT /admin/spaces/:id/quotas`; space-own reads
- * land via `GET /spaces/me/quotas`, on `space.usage`. Counts are computed
- * on-demand from existing tables at quota-check time.
- */
-export interface SpaceQuota {
-  space_id: string;
-  items_limit?: number | null;
-  webhooks_limit?: number | null;
-  blobs_limit?: number | null;
-  /** Storage bytes ceiling. Optional — counter + reconcile job to be
-   *  added in a follow-on. */
-  storage_bytes_limit?: number | null;
-  /** Per-space request-rate ceiling (additional to the per-credential
-   *  global rate limit). Not currently enforced. */
-  rate_per_minute_limit?: number | null;
-  updated_at: string;
-}
-
-/** Resource categories tracked for quota enforcement. */
-export type QuotaResource =
-  "items" | "webhooks" | "blobs" | "storage_bytes" | "rate_per_minute";
-
 /** Space-level configuration. Written through `/spaces/me/config` on `space.settings`. */
 export interface SpaceConfig {
   enforcement?: EnforcementSettings;
@@ -839,99 +700,4 @@ export interface SpaceConfig {
    * type by a wide margin and nothing aged it out before this existed.
    */
   activity_retention_days?: number;
-}
-
-/**
- * A user account (hosted mode). Owns exactly one space.
- *
- * The canonical email + display image lives on `auth_user`. The `email`
- * and `avatar_url` columns are not on `users` — every read of email goes
- * through `auth_user_id` → `auth_user.email`. The avatar is content-addressed
- * via `avatar_blob_hash`; the public URL is reconstructed at read time and
- * the placeholder is generated server-side from `handle`.
- *
- * The wire shape returned by the profile endpoints is `Profile`, not `User` —
- * `Profile` is the read-time projection that joins `auth_user` for email and
- * reconstructs `avatar_url`. `User` is the underlying storage shape.
- */
-export interface User {
-  id: string;
-  name: string | null;
-  first_name: string | null;
-  last_name: string | null;
-  bio: string | null;
-  /** Content-addressed blob hash (`sha256:<hex>`) for the avatar. NULL
-   *  means "no custom avatar"; the placeholder is rendered from the
-   *  handle. Wire URL is reconstructed by the profile endpoint. */
-  avatar_blob_hash: string | null;
-  provider: string;
-  provider_id: string;
-  space_id: string;
-  /**
-   * Lowercase alphanumeric + hyphens, 3–32 chars. Required at signup
-   * (nullable here because not every stored row carries one). The user id
-   * (the immutable PK) is what foreign references key off; the handle is
-   * potentially renameable. Reserved roots cannot be claimed.
-   */
-  handle: string | null;
-  /** FK to `auth_user.id`. Canonical bridge from authentication identity
-   *  to Marfa profile. NULL only on a `users` row with no matching
-   *  `auth_user`. */
-  auth_user_id: string | null;
-  /** IANA zone the account keeps its own clock in, or NULL when unstated.
-   *  A default and a display preference: it is what answers "what is on
-   *  today" for a caller that names no zone. It never anchors a
-   *  recurrence — a series expands in its own `timezone`, so an account
-   *  moving country does not reschedule its calendar. */
-  timezone: string | null;
-  created_at: string;
-  updated_at: string;
-}
-
-/**
- * Wire shape returned by the profile endpoints (`GET /profile/me`). The
- * profile's own fields are served by joining `users` to `auth_user` for the
- * canonical email, not read from an item. Avatar URL is reconstructed at
- * read time (either `/blobs/<hash>` for an uploaded avatar or
- * `/profile/placeholder/<username>.svg` when unset). Apps compose any
- * display name from `first_name` / `last_name` / `username` — there is no
- * `display_name` field by design.
- *
- * `account_holder_item_id` is the one link into the item graph: the id of
- * the `system.account_holder` row an edge can target. The fields above it
- * are still not stored there.
- */
-export interface Profile {
-  /** Same as `users.handle`. Required (the API rejects users without
-   *  one); only nullable here for migration-in-flight rows. */
-  username: string | null;
-  first_name: string | null;
-  last_name: string | null;
-  bio: string | null;
-  /** Reconstructed at read time. Always a string (placeholder URL when
-   *  no upload). */
-  avatar_url: string;
-  /** Mirrored read-only from `auth_user.email`. */
-  email: string;
-  /** Mirrored read-only from `auth_user.email_verified`. */
-  email_verified: boolean;
-  created_at: string;
-  updated_at: string;
-  /**
-   * Id of the account holder's `system.account_holder` item — the graph
-   * handle to aim an `authored-by` (or any other) edge at, so a client never
-   * has to guess or invent a stand-in. Read-only and absent only on an
-   * instance whose backfill has not run.
-   */
-  account_holder_item_id?: string;
-}
-
-/** `PATCH /profile/me` body. Every field is optional; `null` clears the
- *  column (where applicable). `username` runs through the reserved-handle
- *  and collision validators server-side. */
-export interface UpdateProfileInput {
-  username?: string;
-  first_name?: string | null;
-  last_name?: string | null;
-  bio?: string | null;
 }

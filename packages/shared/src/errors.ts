@@ -72,20 +72,6 @@ export enum ErrorCode {
   EXPIRED_TOKEN = "expired_token",
   TOKEN_REUSE_DETECTED = "token_reuse_detected",
   RATE_LIMITED = "rate_limited",
-  /**
-   * Per-space resource cap exceeded. Body details carry the resource
-   * (`items` | `webhooks` | `blobs` | `storage_bytes` | `rate_per_minute`),
-   * the configured limit, and the current count before the request was
-   * rejected — operators wire alerts off the shape so a space approaching
-   * their cap can be flagged early.
-   */
-  QUOTA_EXCEEDED = "quota_exceeded",
-  /**
-   * The operator has suspended this space. The auth middleware rejects every
-   * non-GET request with this code; reads pass through. The operator key
-   * bypasses the gate, so a suspended space can still be inspected.
-   */
-  SPACE_SUSPENDED = "space_suspended",
   CONFLICT = "conflict",
   TYPE_ALREADY_EXISTS = "type_already_exists",
   TYPE_IN_USE = "type_in_use",
@@ -199,50 +185,12 @@ export enum ErrorCode {
    * rather than the server returning an HTTP error.
    */
   BULK_JOB_NOT_FOUND = "bulk_job_not_found",
-  // ---------------------------------------------------------------------
-  // Email transport
-  // ---------------------------------------------------------------------
-  /**
-   * The server has no email backend configured (`MARFA_EMAIL_BACKEND`
-   * unset or `none`) but a flow that depends on outbound email was
-   * invoked (forgot-password, magic-link, email-verify). Operators
-   * configure a backend to enable these flows; the alternative is a
-   * silent dead-letter, which the server refuses.
-   */
-  EMAIL_TRANSPORT_NOT_CONFIGURED = "email_transport_not_configured",
   /**
    * Every streaming connection slot is in use and none freed within the
    * reservation window. Retryable by definition: streams end and slots
    * free, so a client seeing this backs off and asks again.
    */
   STREAM_CAPACITY_EXHAUSTED = "stream_capacity_exhausted",
-  /**
-   * Every consent-serialization slot is in use and none freed within the
-   * reservation window. Same retryable shape as the streaming sibling:
-   * consent flows are short, so a caller seeing this asks again.
-   */
-  CONSENT_CAPACITY_EXHAUSTED = "consent_capacity_exhausted",
-  /**
-   * The transport returned a non-retryable failure (4xx from
-   * Cloudflare Email, permanent SMTP rejection). Distinct from a
-   * transient failure (5xx / 429 / network) which the route handler
-   * may retry.
-   */
-  EMAIL_SEND_FAILED = "email_send_failed",
-  /**
-   * Handle claim was rejected because the value names a reserved root:
-   * one of the type grammar's namespace tiers, or a scope family root. A handle
-   * appears as the first segment of a type identifier, so a claim on one
-   * of these would let its holder register into the platform's own
-   * vocabulary.
-   *
-   * Distinct from `validation_error` because the two say different things
-   * to the claimant. This one means the handle is well-formed and refused
-   * for what it names; `validation_error` means it never cleared the
-   * grammar. A value that fails both reports this one, since the routes
-   * check the root before the format.
-   */
-  HANDLE_RESERVED = "handle_reserved",
   /**
    * `PATCH /items/:id` was called with a `source_id` that already belongs
    * to a different item under the caller's stamped `source`. The natural-key
@@ -365,8 +313,6 @@ const STATUS_MAP: Record<ErrorCode, number> = {
   [ErrorCode.EXPIRED_TOKEN]: 401,
   [ErrorCode.TOKEN_REUSE_DETECTED]: 400,
   [ErrorCode.RATE_LIMITED]: 429,
-  [ErrorCode.QUOTA_EXCEEDED]: 429,
-  [ErrorCode.SPACE_SUSPENDED]: 403,
   [ErrorCode.CONFLICT]: 409,
   [ErrorCode.TYPE_ALREADY_EXISTS]: 409,
   [ErrorCode.TYPE_IN_USE]: 409,
@@ -393,11 +339,7 @@ const STATUS_MAP: Record<ErrorCode, number> = {
   [ErrorCode.BULK_CAP_EXCEEDED]: 400,
   [ErrorCode.BULK_ATOMIC_ROLLBACK]: 400,
   [ErrorCode.BULK_JOB_NOT_FOUND]: 404,
-  [ErrorCode.EMAIL_TRANSPORT_NOT_CONFIGURED]: 503,
   [ErrorCode.STREAM_CAPACITY_EXHAUSTED]: 503,
-  [ErrorCode.CONSENT_CAPACITY_EXHAUSTED]: 503,
-  [ErrorCode.EMAIL_SEND_FAILED]: 502,
-  [ErrorCode.HANDLE_RESERVED]: 400,
   [ErrorCode.SOURCE_ID_CONFLICT]: 409,
   [ErrorCode.PROVENANCE_COLLISION]: 409,
   [ErrorCode.TYPE_MISMATCH]: 409,

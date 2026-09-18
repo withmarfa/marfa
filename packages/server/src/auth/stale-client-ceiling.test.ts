@@ -33,7 +33,7 @@ import { fileURLToPath } from "node:url";
 import { expandBundlesToScopes } from "@withmarfa/shared";
 import {
   createTestContext,
-  markEmailVerified,
+  createTestAccount,
   request,
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
@@ -87,12 +87,7 @@ async function seedClientWithCeiling(
 
 async function signInUser(c: TestContext, email: string): Promise<string> {
   const password = "correct horse battery";
-  const up = await request(c.app, "POST", "/auth/sign-up/email", {
-    body: { email, password, name: "Test User" },
-    headers: { origin: ORIGIN },
-  });
-  if (up.status !== 200) throw new Error(`sign-up failed ${String(up.status)}`);
-  await markEmailVerified(c.storage, email);
+  await createTestAccount(c, email, password, "Test User");
   const inRes = await request(c.app, "POST", "/auth/sign-in/email", {
     body: { email, password },
     headers: { origin: ORIGIN },
@@ -111,7 +106,7 @@ async function signInUser(c: TestContext, email: string): Promise<string> {
 
 describe("a stale client ceiling cannot strand the default-on bundle", () => {
   it("a code reaches the redirect URI despite a ceiling minted before the registry moved", async () => {
-    ctx = await createTestContext({ authMode: "hosted" });
+    ctx = await createTestContext({});
     const cookie = await signInUser(ctx, "stale-ceiling@example.com");
 
     const requested = defaultOnRequestScopes();
@@ -212,7 +207,7 @@ describe("a stale client ceiling cannot strand the default-on bundle", () => {
   });
 
   it("a client with no ceiling keeps the whole default-on set", async () => {
-    ctx = await createTestContext({ authMode: "hosted" });
+    ctx = await createTestContext({});
     const cookie = await signInUser(ctx, "no-ceiling@example.com");
 
     const requested = defaultOnRequestScopes();

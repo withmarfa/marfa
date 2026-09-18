@@ -7,22 +7,15 @@ import type {
   Version,
   ApiKey,
   CreateKeyInput,
-  CreateSpaceKeyInput,
   UpdateKeyInput,
   PaginatedResult,
   SearchResult,
   ItemState,
   Tier,
   SpaceConfig,
-  SpaceQuota,
-  Space,
-  SpaceMetrics,
-  SpaceActivityEntry,
   Edge,
   CreateEdgeInput,
   EdgeTypeSchema,
-  Profile,
-  UpdateProfileInput,
 } from "@withmarfa/shared";
 import type {
   TypeSchema,
@@ -2195,13 +2188,11 @@ export class MarfaClient {
     },
   };
 
-  // ---- Connections ----
+  // ---- Spaces ----
 
-  // ---- Spaces (admin) ----
-
-  /** Space-scoped configuration. Carries the three optional schema-
+  /** Instance configuration. Carries the three optional schema-
    * enforcement levers (`strict_mode`, `source_allowlist`,
-   * `source_filter`) and the per-space cleanup-job overrides
+   * `source_filter`) and the cleanup-job overrides
    * (`audit_retention_days`, `event_log_retention_hours`,
    * `trash_retention_days`). Both endpoints take `space.settings`. */
   readonly spaces = {
@@ -2218,204 +2209,17 @@ export class MarfaClient {
         body: config,
       });
     },
-
-    /** Per-space resource quotas. Empty / missing limits fall back to
-     *  the instance defaults from env. Quotas are operator-managed. */
-    quotas: {
-      /**
-       * Read the calling space's quota row. Takes `space.usage`, and
-       * resolves the space from the bearer's `space_id`. The operator key
-       * holds no space permission, so it is refused with 403 rather than
-       * answered here; use `getById` for another space's row.
-       *
-       * There is no 400. It used to answer one for a credential holding
-       * `space.usage` with no space, which only a space-less OAuth bearer
-       * could be, and such a bearer is now refused at the middleware in
-       * either mode.
-       */
-      getOwn: async (): Promise<SpaceQuota> => {
-        return this.transport.request<SpaceQuota>("GET", "/spaces/me/quotas");
-      },
-
-      /** Read a specific space's quota row (operator key only). */
-      getById: async (spaceId: string): Promise<SpaceQuota> => {
-        return this.transport.request<SpaceQuota>(
-          "GET",
-          path`/spaces/${spaceId}/quotas`,
-        );
-      },
-
-      /** Replace a space's quota row (operator key only). Pass null
-       *  on a field to clear it (revert to env default). */
-      set: async (
-        spaceId: string,
-        input: {
-          items_limit?: number | null;
-          webhooks_limit?: number | null;
-          blobs_limit?: number | null;
-          storage_bytes_limit?: number | null;
-          rate_per_minute_limit?: number | null;
-        },
-      ): Promise<SpaceQuota> => {
-        return this.transport.request<SpaceQuota>(
-          "PUT",
-          path`/spaces/${spaceId}/quotas`,
-          { body: input },
-        );
-      },
-    },
   };
 
   // ---- Admin ----
 
   /**
-   * The instance surface — the `marfa operator` CLI command tree's
-   * backing endpoints. Every method requires the operator key
+   * Operator maintenance. Every method requires the operator key
    * (`is_operator: true`). Every other credential gets a `403
    * forbidden`; render `"this command requires the operator key"`
    * in CLI / UI layers.
-   *
-   * Quota read/write is intentionally NOT duplicated here — it lives on
-   * `client.spaces.quotas.{getById, set}` and is already gated on the
-   * operator key. This namespace mirrors what the CLI's `marfa operator`
-   * tree exposes; quotas are reached via the existing spaces surface.
    */
   readonly admin = {
-    spaces: {
-      /**
-       * Create an empty space. Pair with `admin.keys.create(spaceId, …)` to
-       * issue a credential scoped to it.
-       *
-       * Every other operator verb on a space predates this one, so a space
-       * could previously only come into being through a hosted sign-up. That
-       * left an operator with no way to provision a space, and anything
-       * needing a space-scoped credential — a test harness, a conformance
-       * suite, a self-hoster seeding an instance — with no supported path.
-       */
-      create: async (input?: { name?: string }): Promise<Space> => {
-        return this.transport.request<Space>("POST", "/admin/spaces", {
-          body: input ?? {},
-        });
-      },
-
-      /** List every space in the instance with current status. */
-      list: async (): Promise<Space[]> => {
-        const res = await this.transport.request<{ data: Space[] }>(
-          "GET",
-          "/admin/spaces",
-        );
-        return res.data;
-      },
-
-      /**
-       * Single space + per-space quota overrides + the most-recent
-       * `system.activity` items for the space (`null` quotas when no
-       * override is configured; quota fields then resolve to instance
-       * defaults).
-       */
-      show: async (
-        spaceId: string,
-      ): Promise<{
-        space: Space;
-        quotas: SpaceQuota | null;
-        recent_activity: SpaceActivityEntry[];
-      }> => {
-        return this.transport.request<{
-          space: Space;
-          quotas: SpaceQuota | null;
-          recent_activity: SpaceActivityEntry[];
-        }>("GET", path`/admin/spaces/${spaceId}`);
-      },
-
-      /**
-       * Flip the space's status to `'suspended'`. Future non-GET
-       * requests from credentials in the space return HTTP 403
-       * `space_suspended`. Reads pass through; the operator key
-       * bypasses. Idempotent.
-       */
-      suspend: async (spaceId: string): Promise<Space> => {
-        return this.transport.request<Space>(
-          "POST",
-          path`/admin/spaces/${spaceId}/suspend`,
-        );
-      },
-
-      /** Reverse of `suspend`. Idempotent. */
-      unsuspend: async (spaceId: string): Promise<Space> => {
-        return this.transport.request<Space>(
-          "POST",
-          path`/admin/spaces/${spaceId}/unsuspend`,
-        );
-      },
-
-      /**
-       * Per-space usage snapshot — item count by state, blob count
-       * and total bytes, custom-type count, plus recent activity.
-       */
-      metrics: async (spaceId: string): Promise<SpaceMetrics> => {
-        return this.transport.request<SpaceMetrics>(
-          "GET",
-          path`/admin/spaces/${spaceId}/metrics`,
-        );
-      },
-    },
-
-    keys: {
-      /** Active (non-revoked) keys for the named space. Operator
-       *  surface for emergency revocation — pair with `client.keys.revoke`. */
-      list: async (spaceId: string): Promise<SpaceApiKeySummary[]> => {
-        const res = await this.transport.request<{
-          data: SpaceApiKeySummary[];
-        }>("GET", path`/admin/spaces/${spaceId}/keys`);
-        return res.data;
-      },
-
-      /**
-       * Mint a key bound to the named space. The raw key value is returned
-       * exactly once, same as `client.keys.create`.
-       *
-       * This is the route to reach for when the operator needs to issue a
-       * credential for someone else's space. `client.keys.create` always
-       * binds the new key to the *caller's* space, and the operator key has
-       * none, so it cannot produce a space-bound key through that route at
-       * all. The mint takes everything in the named space unless the request
-       * asks for less, and the route cannot mint another operator key.
-       */
-      create: async (
-        spaceId: string,
-        input: CreateSpaceKeyInput,
-      ): Promise<ApiKey & { key: string }> => {
-        return this.transport.request<ApiKey & { key: string }>(
-          "POST",
-          path`/admin/spaces/${spaceId}/keys`,
-          { body: input },
-        );
-      },
-    },
-
-    accountDeletion: {
-      /**
-       * Force a one-shot run of the pending-delete purger. Returns the
-       * number of accounts purged this tick. Useful when an account has
-       * just passed its grace window and the operator doesn't want to
-       * wait for the next scheduled sweep (default cadence: 1 hour).
-       *
-       * Idempotent: re-running with no eligible rows returns 0. Only
-       * sweeps accounts already past `pending_deletion_at + grace_days`
-       * — does not bypass the grace window. The `run_at` timestamp is
-       * server-stamped at the moment `runOnce()` begins.
-       */
-      purgeNow: async (): Promise<{
-        purged_count: number;
-        run_at: string;
-      }> => {
-        return this.transport.request<{
-          purged_count: number;
-          run_at: string;
-        }>("POST", "/admin/account-deletion/purge-now");
-      },
-    },
-
     platformTypes: {
       /**
        * Shipped type rows this instance still carries that the running
@@ -2458,19 +2262,6 @@ export class MarfaClient {
     },
   };
 
-  // ---- Profile ----
-
-  /**
-   * The calling user's profile. `system.profile` is a virtual type —
-   * served by a dedicated endpoint over the `users` table joined to
-   * `auth_user` for the canonical email. Username changes go through
-   * the same handle validators as `PUT /auth/me/handle`.
-   *
-   * Apps that need a third-party-OAuth-style read should use the
-   * standard OIDC `profile` / `email` scopes via `/auth/oauth2/userinfo`
-   * instead — this surface is for first-party callers (CLI, MCP, the
-   * user themselves) holding a space-scoped bearer.
-   */
   /**
    * The change stream.
    *
@@ -2490,60 +2281,6 @@ export class MarfaClient {
      */
     subscribe: (options: SubscribeOptions): Subscription => {
       return subscribeToEvents(this.transport, options);
-    },
-  };
-
-  readonly profile = {
-    /** Read the calling user's profile. */
-    get: async (): Promise<Profile> => {
-      return this.transport.request<Profile>("GET", "/profile/me");
-    },
-
-    /**
-     * Update the calling user's profile. Every field optional; `null`
-     * clears (where applicable). `username` runs through the
-     * reserved-handle / collision validators server-side.
-     */
-    update: async (input: UpdateProfileInput): Promise<Profile> => {
-      return this.transport.request<Profile>("PATCH", "/profile/me", {
-        body: input,
-      });
-    },
-
-    /**
-     * Upload an avatar. Accepts a Blob/File or a Uint8Array. The server
-     * stores the bytes in the existing R2-backed blob layer and stamps
-     * the content-addressed hash onto the user row.
-     */
-    setAvatar: async (
-      data: Blob | Uint8Array,
-      mimeType?: string,
-    ): Promise<Profile> => {
-      const form = new FormData();
-      const blob =
-        data instanceof Blob
-          ? data
-          : new Blob([new Uint8Array(data)], {
-              type: mimeType ?? "application/octet-stream",
-            });
-      form.append("file", blob, "avatar");
-      // Bypass the JSON path — multipart needs FormData on rawBody so
-      // fetch sets Content-Type: multipart/form-data with the boundary.
-      const response = await this.transport.rawRequest(
-        "POST",
-        "/profile/me/avatar",
-        { rawBody: form },
-      );
-      const result = (await response.json()) as Profile | { error?: unknown };
-      if (!response.ok) {
-        this.throwRawError(response.status, result);
-      }
-      return result as Profile;
-    },
-
-    /** Clear the avatar; reverts to the deterministic placeholder. */
-    clearAvatar: async (): Promise<Profile> => {
-      return this.transport.request<Profile>("DELETE", "/profile/me/avatar");
     },
   };
 

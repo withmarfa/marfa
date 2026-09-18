@@ -31,7 +31,7 @@ import { SPACE_PERMISSIONS } from "@withmarfa/shared";
 let ctx: TestContext;
 
 beforeEach(async () => {
-  ctx = await createTestContext({ authMode: "hosted" });
+  ctx = await createTestContext({});
 });
 
 afterEach(async () => {
@@ -57,7 +57,6 @@ describe("POST /webhooks and a credential narrower than its space", () => {
       ["space.keys", "space.webhooks"],
       {
         spaceId: space.id,
-        seedUserRow: true,
       },
     );
 
@@ -117,7 +116,6 @@ describe("POST /webhooks and a credential narrower than its space", () => {
       ["space.keys", "space.webhooks"],
       {
         spaceId: space.id,
-        seedUserRow: true,
       },
     );
     // The space permission gate admits it, so the refusal below comes from the
@@ -167,7 +165,6 @@ describe("POST /webhooks and a credential narrower than its space", () => {
       ["space.keys", "space.webhooks"],
       {
         spaceId: space.id,
-        seedUserRow: true,
       },
     );
     expect(

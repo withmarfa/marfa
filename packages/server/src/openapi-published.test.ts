@@ -1,9 +1,5 @@
 import { beforeAll, describe, expect, it } from "vitest";
-import {
-  AUTH_MODES,
-  buildPublishedOpenAPISpec,
-  buildSpecForAuthMode,
-} from "./openapi-published.js";
+import { buildPublishedOpenAPISpec } from "./openapi-published.js";
 import { EXTRA_PATHS } from "./openapi-finalize.js";
 import { createTestContext, request } from "./test-utils.js";
 
@@ -24,55 +20,22 @@ function operationKeys(spec: Record<string, unknown>): Map<string, Operation> {
 
 describe("published OpenAPI spec", () => {
   let published: Map<string, Operation>;
-  /** Operation key -> the auth modes whose app actually mounts it. */
-  let servedBy: Map<string, string[]>;
 
   beforeAll(async () => {
     published = operationKeys(await buildPublishedOpenAPISpec());
-
-    servedBy = new Map();
-    for (const mode of AUTH_MODES) {
-      for (const key of operationKeys(
-        await buildSpecForAuthMode(mode),
-      ).keys()) {
-        servedBy.set(key, [...(servedBy.get(key) ?? []), mode]);
-      }
-    }
   }, 60_000);
 
-  it("covers every operation mounted in any auth mode", () => {
-    const missing = [...servedBy.keys()]
-      .filter((key) => !published.has(key))
-      .sort();
-    expect(
-      missing,
-      `Operations mounted by the server but absent from the published spec:\n${missing
-        .map(
-          (key) =>
-            `  ${key} (served in ${(servedBy.get(key) ?? []).join(", ")} mode)`,
-        )
-        .join("\n")}`,
-    ).toEqual([]);
-  });
-
-  it("marks each mode-exclusive operation with the modes that serve it", () => {
-    const exclusive = [...servedBy.entries()].filter(
-      ([, modes]) => modes.length < AUTH_MODES.length,
-    );
-
-    for (const [key, modes] of exclusive) {
-      const operation = published.get(key);
-      expect(
-        operation,
-        `${key} is missing from the published spec`,
-      ).toBeDefined();
-      expect(
-        operation?.["x-marfa-auth-modes"],
-        `${key} auth-mode marker`,
-      ).toEqual(modes);
-      expect(String(operation?.description), `${key} description`).toContain(
-        "AUTH_MODE",
+  it("is the document the server itself serves at /openapi.json", async () => {
+    const ctx = await createTestContext();
+    try {
+      const res = await request(ctx.app, "GET", "/openapi.json");
+      expect(res.status).toBe(200);
+      const served = operationKeys(
+        (await res.json()) as Record<string, unknown>,
       );
+      expect([...served.keys()].sort()).toEqual([...published.keys()].sort());
+    } finally {
+      await ctx.cleanup();
     }
   });
 
@@ -113,20 +76,6 @@ describe("published OpenAPI spec", () => {
     expect(anonymous).toEqual([]);
   });
 
-  it("leaves operations served in every mode unmarked", () => {
-    const universal = [...servedBy.entries()].filter(
-      ([, modes]) => modes.length === AUTH_MODES.length,
-    );
-
-    // Guards against the marker degenerating into noise stamped on everything.
-    expect(universal.length).toBeGreaterThan(0);
-    for (const [key] of universal) {
-      expect(
-        published.get(key)?.["x-marfa-auth-modes"],
-        `${key} should carry no auth-mode marker`,
-      ).toBeUndefined();
-    }
-  });
   it("links only into documentation sections that exist", () => {
     // Route descriptions carry markdown links into the docs site, and the docs
     // build prerenders by crawling them, so a link to a section that does not

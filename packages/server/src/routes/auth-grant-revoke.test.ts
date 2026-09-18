@@ -31,7 +31,7 @@ import { createHash, createHmac } from "node:crypto";
 import { describe, it, expect, afterEach, vi } from "vitest";
 import {
   createTestContext,
-  markEmailVerified,
+  createTestAccount,
   request,
   waitForConsentLockDepth,
   TEST_API_KEY_SALT,
@@ -129,11 +129,7 @@ async function seedAccessToken(
 /** Sign up + verify + sign in; returns the session cookie header value. */
 async function signInUser(c: TestContext, email: string): Promise<string> {
   const password = "correct horse battery";
-  await request(c.app, "POST", "/auth/sign-up/email", {
-    body: { email, password, name: "Tester" },
-    headers: { origin: ORIGIN },
-  });
-  await markEmailVerified(c.storage, email);
+  await createTestAccount(c, email, password, "Tester");
   const signIn = await request(c.app, "POST", "/auth/sign-in/email", {
     body: { email, password },
     headers: { origin: ORIGIN },
@@ -233,9 +229,9 @@ async function onlyGrant(c: TestContext) {
   return items.data[0]!;
 }
 
-describe("POST /auth/grants/:id/revoke — the record never overstates the revoke", () => {
+describe("DELETE /auth/grants/:id — the record never overstates the revoke", () => {
   it("REGRESSION: a cascade that fails leaves the grant reading active, because it is", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     const c = ctx;
     const clientId = await seedClient(c);
     const cookie = await signInUser(c, "revoke-cascade@example.com");
@@ -256,20 +252,12 @@ describe("POST /auth/grants/:id/revoke — the record never overstates the revok
     provider.revokeTokensForGrant = () =>
       Promise.reject(new Error("token store unavailable"));
 
-    const res = await request(
-      c.app,
-      "POST",
-      `/auth/grants/${grant.id}/revoke`,
-      {
-        headers: { origin: ORIGIN, cookie },
-      },
-    );
+    const res = await request(c.app, "DELETE", `/auth/grants/${grant.id}`, {
+      key: c.spaceKey,
+    });
 
-    // Told the truth, and told it on the page the user is already on.
-    expect(res.status).toBe(302);
-    expect(res.headers.get("location") ?? "").toContain(
-      "notice=grant_revoke_failed",
-    );
+    // Told the truth: the cascade refused, and so did the door.
+    expect(res.status).toBe(500);
 
     // The record still describes the access the app really has, and the
     // token that access runs on is still there to be described.
@@ -284,7 +272,7 @@ describe("POST /auth/grants/:id/revoke — the record never overstates the revok
 
 describe("POST /auth/device/consent — the approval serializes with a revoke", () => {
   it("REGRESSION: an approval in flight cannot put back a grant revoked while it ran", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     const c = ctx;
     const clientId = await seedClient(c);
     const cookie = await signInUser(c, "device-vs-revoke@example.com");
@@ -322,9 +310,9 @@ describe("POST /auth/device/consent — the approval serializes with a revoke", 
     const approving = approveDeviceFlow(c, second, cookie);
     await reached;
 
-    // Meanwhile the user revokes the app from /auth/security.
-    const revoking = request(c.app, "POST", `/auth/grants/${grant.id}/revoke`, {
-      headers: { origin: ORIGIN, cookie },
+    // Meanwhile the app is revoked through the grants door.
+    const revoking = request(c.app, "DELETE", `/auth/grants/${grant.id}`, {
+      key: c.spaceKey,
     });
     // The revoke has to be queued on the lock before the approval is let
     // go. It does not get past the lock — that is the point — but a revoke
@@ -340,9 +328,7 @@ describe("POST /auth/device/consent — the approval serializes with a revoke", 
 
     const [approveRes, revokeRes] = await Promise.all([approving, revoking]);
     expect(approveRes.status).toBe(200);
-    expect(revokeRes.headers.get("location") ?? "").toContain(
-      "notice=grant_revoked",
-    );
+    expect(revokeRes.status).toBe(204);
 
     // The revoke ran second and is what the record has to reflect. With
     // the approval's read-modify-write outside the lock it lands after
@@ -438,7 +424,7 @@ async function seedConsent(
 
 describe("revocation reaches outstanding authorization codes", () => {
   it("REGRESSION: revoking a grant deletes its outstanding codes", async () => {
-    ctx = await createTestContext({ authMode: "hosted" });
+    ctx = await createTestContext({});
     const email = `codes-${Math.random().toString(36).slice(2, 8)}@cyzr.me`;
     await signInUser(ctx, email);
     const authUserId = await authUserIdFor(ctx, email);
@@ -462,7 +448,7 @@ describe("revocation reaches outstanding authorization codes", () => {
   });
 
   it("REGRESSION: a code whose grant is revoked cannot be redeemed", async () => {
-    ctx = await createTestContext({ authMode: "hosted" });
+    ctx = await createTestContext({});
     const email = `exch-${Math.random().toString(36).slice(2, 8)}@cyzr.me`;
     await signInUser(ctx, email);
     const authUserId = await authUserIdFor(ctx, email);
@@ -502,7 +488,7 @@ describe("revocation reaches outstanding authorization codes", () => {
     //
     // So this one drives the endpoint. The seeded identifier is the hashed
     // code, because that is what the guard looks up.
-    ctx = await createTestContext({ authMode: "hosted" });
+    ctx = await createTestContext({});
     const email = `guard-${Math.random().toString(36).slice(2, 8)}@cyzr.me`;
     await signInUser(ctx, email);
     const authUserId = await authUserIdFor(ctx, email);
@@ -553,7 +539,7 @@ describe("revocation reaches outstanding authorization codes", () => {
  * the terminal step performs passes on a revoked grant: revocation leaves
  * the scope list verbatim on the row it flips.
  *
- * Both tests revoke through `POST /auth/grants/:id/revoke` rather than
+ * Both tests revoke through `DELETE /auth/grants/:id` rather than
  * writing the item directly. A store write bypasses `revokeProjectedGrant`
  * entirely, which is where the sweep lives, so a test that took the short
  * route would exercise the poll-time guard alone while reading as though it
@@ -561,7 +547,7 @@ describe("revocation reaches outstanding authorization codes", () => {
  */
 describe("revocation reaches outstanding device codes", () => {
   it("REGRESSION: a poll after a revoke does not mint, though the device code has not expired", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     const c = ctx;
     const clientId = await seedClient(c);
     const cookie = await signInUser(c, "device-poll-after-revoke@example.com");
@@ -624,15 +610,10 @@ describe("revocation reaches outstanding device codes", () => {
       "core.note:read offline_access",
     );
 
-    const revoked = await request(
-      c.app,
-      "POST",
-      `/auth/grants/${grant.id}/revoke`,
-      { headers: { origin: ORIGIN, cookie } },
-    );
-    expect(revoked.headers.get("location") ?? "").toContain(
-      "notice=grant_revoked",
-    );
+    const revoked = await request(c.app, "DELETE", `/auth/grants/${grant.id}`, {
+      key: c.spaceKey,
+    });
+    expect(revoked.status).toBe(204);
 
     const pending = await c.storage.oauth.findDeviceCodeByHash(
       deviceCodeHash(second.device_code),
@@ -674,7 +655,7 @@ describe("revocation reaches outstanding device codes", () => {
   });
 
   it("REGRESSION: revoking a grant deletes the device codes approved against it", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     const c = ctx;
     const clientId = await seedClient(c);
     const cookie = await signInUser(c, "device-codes-swept@example.com");
@@ -691,15 +672,10 @@ describe("revocation reaches outstanding device codes", () => {
       ),
     ).not.toBeNull();
 
-    const revoked = await request(
-      c.app,
-      "POST",
-      `/auth/grants/${grant.id}/revoke`,
-      { headers: { origin: ORIGIN, cookie } },
-    );
-    expect(revoked.headers.get("location") ?? "").toContain(
-      "notice=grant_revoked",
-    );
+    const revoked = await request(c.app, "DELETE", `/auth/grants/${grant.id}`, {
+      key: c.spaceKey,
+    });
+    expect(revoked.status).toBe(204);
 
     expect(
       await c.storage.oauth.findDeviceCodeByHash(
@@ -716,7 +692,7 @@ describe("revocation reaches outstanding device codes", () => {
   });
 
   it("leaves another user's pending device code for the same client alone", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     const c = ctx;
     const clientId = await seedClient(c);
     const cookieA = await signInUser(c, "device-sweep-a@example.com");
@@ -732,15 +708,10 @@ describe("revocation reaches outstanding device codes", () => {
     // sweep keys on the grant item and not on the client.
     const flowB = await initiateDeviceFlow(c, clientId, "core.note:read");
 
-    const revoked = await request(
-      c.app,
-      "POST",
-      `/auth/grants/${grant.id}/revoke`,
-      { headers: { origin: ORIGIN, cookie: cookieA } },
-    );
-    expect(revoked.headers.get("location") ?? "").toContain(
-      "notice=grant_revoked",
-    );
+    const revoked = await request(c.app, "DELETE", `/auth/grants/${grant.id}`, {
+      key: c.spaceKey,
+    });
+    expect(revoked.status).toBe(204);
 
     // A's code went, so the sweep did run.
     expect(
@@ -782,7 +753,7 @@ describe("revocation reaches outstanding device codes", () => {
     // the app kept full access. Swept last, the same fault still kills every
     // token, and the record still honestly reads active because the user's
     // revoke did not entirely land.
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     const c = ctx;
     const clientId = await seedClient(c);
     const cookie = await signInUser(c, "device-sweep-throws@example.com");
@@ -808,16 +779,10 @@ describe("revocation reaches outstanding device codes", () => {
     c.storage.oauth.deleteDeviceCodesForGrant = () =>
       Promise.reject(new Error("device code table unavailable"));
 
-    const res = await request(
-      c.app,
-      "POST",
-      `/auth/grants/${grant.id}/revoke`,
-      { headers: { origin: ORIGIN, cookie } },
-    );
-    expect(res.status).toBe(302);
-    expect(res.headers.get("location") ?? "").toContain(
-      "notice=grant_revoke_failed",
-    );
+    const res = await request(c.app, "DELETE", `/auth/grants/${grant.id}`, {
+      key: c.spaceKey,
+    });
+    expect(res.status).toBe(500);
 
     // The property the ordering buys: the token cascade had already run, so
     // the access the user asked to withdraw is gone even though the sweep
@@ -841,7 +806,7 @@ describe("revocation reaches outstanding device codes", () => {
     // the interface built for revoking it — while its `status` still says
     // `active`. The status half of the guard passes on this row; only the
     // state half refuses it.
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     const c = ctx;
     const clientId = await seedClient(c);
     const cookie = await signInUser(c, "device-grant-soft-deleted@example.com");
@@ -899,7 +864,7 @@ describe("revocation reaches outstanding device codes", () => {
     // code pointing at nothing. That is a reachable state rather than a
     // broken invariant, and it describes a grant that no longer exists, so
     // it earns the same refusal a revoked one gets rather than a 500.
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     const c = ctx;
     const clientId = await seedClient(c);
     const cookie = await signInUser(c, "device-grant-purged@example.com");

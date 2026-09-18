@@ -93,14 +93,7 @@ import {
 import type { AppEnv } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import type { MarfaAuth } from "../auth/instance.js";
-import {
-  getPermissionBundles,
-  hasUsablePermissionBundleOverride,
-} from "../config.js";
-import {
-  buildDefaultPermissionBundles,
-  resolveRuntimeCustomNamespaces,
-} from "../auth/default-bundles.js";
+import { getPermissionBundles } from "../config.js";
 import {
   NO_GRANT_SPACE_MESSAGE,
   resolveSpaceIdForAuthUser,
@@ -387,10 +380,7 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
     // plugin has minted the code. Both ways a code is produced from this
     // route are below it: the covered-grant skip and the rendered screen the
     // decision handler answers.
-    const grantSpaceId = await resolveSpaceIdForAuthUser(
-      deps.storage,
-      session.user.id,
-    );
+    const grantSpaceId = await resolveSpaceIdForAuthUser(deps.storage);
     if (grantSpaceId === undefined) {
       // `prompt=none` promised the client an answer at its callback rather
       // than a screen, and that promise holds for a refusal too. Not
@@ -570,10 +560,9 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
     const descriptions = buildScopeDescriptions(parsed);
     const wildcardExpansions = await resolveWildcardExpansions(
       deps.storage,
-      session.user.id,
       parsed,
     );
-    const bundles = await resolveConsentBundles(deps.storage, session.user.id);
+    const bundles = resolveConsentBundles();
 
     // Optional error banner (e.g. when redirected back from a zero-scopes
     // accept). Renderer ignores undefined.
@@ -757,8 +746,7 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
     // code.
     if (
       accept &&
-      (await resolveSpaceIdForAuthUser(deps.storage, session.user.id)) ===
-        undefined
+      (await resolveSpaceIdForAuthUser(deps.storage)) === undefined
     ) {
       setNoStore(c);
       return c.html(renderAuthorizeExpiredPage("no_space"), 403);
@@ -1284,7 +1272,7 @@ async function projectGrantOnConsent(
   // bucket while the row sits in another and the revoke cascade ends nothing.
   // They agreed by accident before: hosted read the user's row on both sides,
   // and keys mode had nothing on either. Keys mode has a space now.
-  const spaceId = await resolveSpaceIdForAuthUser(storage, opts.authUserId);
+  const spaceId = await resolveSpaceIdForAuthUser(storage);
   if (spaceId === undefined) {
     // Unreachable through the route, which refuses before the code is minted,
     // and stated here anyway because the alternative is silent: a space-less
@@ -1832,39 +1820,14 @@ export const CONSENT_SCOPE_DESCRIPTIONS: Record<string, string> = {
 };
 
 /**
- * The bundle set this consent screen groups under: the consenting space's
- * own derivation, so a space's runtime-registered custom types reach the
- * custom tile. Space-scoped deliberately — bundles built from another
- * space's registrations would present namespaces the consenting space
- * cannot even resolve, and name them as the user's own.
- *
- * Falls back to the instance-wide active bundles when there is no space to
- * scope to (keys mode, or a user not yet provisioned) and when the
- * operator override is set — a curated `MARFA_PERMISSION_BUNDLES` is
- * authoritative over any derivation, per-space included.
+ * The bundle set this consent screen groups under: the instance's active
+ * bundles, which keep their `default_on` flags and carry the namespaces
+ * the instance registered, folded in at boot. A curated
+ * `MARFA_PERMISSION_BUNDLES` override is what `getPermissionBundles`
+ * already answers with when one is set and valid.
  */
-export async function resolveConsentBundles(
-  storage: Storage,
-  authUserId: string,
-): Promise<PermissionBundle[]> {
-  // Validity, not presence. A rejected override has already fallen back to
-  // the shipped bundles, so treating it as authoritative here skips the
-  // per-space derivation too and the consent screen loses the space's own
-  // handle namespaces on top of losing the override. Same distinction boot
-  // draws for the instance-wide fold; one bad environment variable should
-  // cost one thing.
-  if (hasUsablePermissionBundleOverride()) return getPermissionBundles();
-  // Deliberately the `users` row rather than the shared grant resolver: the
-  // consent screen's bundles are a hosted-mode derivation, and falling back
-  // to a keys-mode instance's one space here would replace the shipped
-  // bundles with derived ones and lose their `default_on` flags.
-  if (!storage.users) return getPermissionBundles();
-  const row = await storage.users.getByAuthUserId(authUserId);
-  const spaceId = row?.space_id;
-  if (!spaceId) return getPermissionBundles();
-  return buildDefaultPermissionBundles(
-    await resolveRuntimeCustomNamespaces(storage, spaceId),
-  );
+export function resolveConsentBundles(): PermissionBundle[] {
+  return getPermissionBundles();
 }
 
 /**
@@ -1876,13 +1839,10 @@ export async function resolveConsentBundles(
  * Reserved roots stay un-enumerated — their members are the platform's,
  * not the space's — and any other root enumerates only what the space
  * itself registered under it, so a registry-shipped root like `google.*`
- * keeps rendering without an enumeration. Hosted-mode only — in keys mode
- * there is no per-user space, and the wildcard row renders without the
- * enumeration, the same degradation as the re-consent diff.
+ * keeps rendering without an enumeration.
  */
 export async function resolveWildcardExpansions(
   storage: Storage,
-  authUserId: string,
   scopes: ParsedScope[],
 ): Promise<Record<string, string[]>> {
   const wildcardRoots = new Set<string>();
@@ -1898,9 +1858,8 @@ export async function resolveWildcardExpansions(
     if (isReservedRoot(root) && root !== "user" && root !== "app") continue;
     wildcardRoots.add(root);
   }
-  if (wildcardRoots.size === 0 || !storage.users) return {};
-  const row = await storage.users.getByAuthUserId(authUserId);
-  const spaceId = row?.space_id;
+  if (wildcardRoots.size === 0) return {};
+  const spaceId = await resolveSpaceIdForAuthUser(storage);
   if (!spaceId) return {};
   const types = await storage.types.listCustom(spaceId);
   const out: Record<string, string[]> = {};

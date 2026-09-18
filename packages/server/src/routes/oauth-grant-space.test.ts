@@ -21,7 +21,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { describe, it, expect, afterEach, vi } from "vitest";
 import {
   createTestContext,
-  markEmailVerified,
+  createTestAccount,
   request,
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
@@ -44,14 +44,7 @@ const SCOPE = "core.note:read";
 
 async function signInUser(c: TestContext, email: string): Promise<string> {
   const password = "correct horse battery";
-  const signUp = await request(c.app, "POST", "/auth/sign-up/email", {
-    body: { email, password, name: "Grant Space User" },
-    headers: { origin: ORIGIN },
-  });
-  if (signUp.status !== 200) {
-    throw new Error(`sign-up failed (${String(signUp.status)})`);
-  }
-  await markEmailVerified(c.storage, email);
+  await createTestAccount(c, email, password, "Grant Space User");
   const signIn = await request(c.app, "POST", "/auth/sign-in/email", {
     body: { email, password },
     headers: { origin: ORIGIN },
@@ -130,33 +123,6 @@ async function authorize(
   return { consent, signedQuery: query, verifier };
 }
 
-/** The plugin's own authorize endpoint, unfollowed, with the verifier the
- *  exchange will need. */
-async function authorizeRaw(
-  c: TestContext,
-  clientId: string,
-  cookie: string,
-): Promise<Response & { verifier: string }> {
-  const verifier = randomBytes(32).toString("base64url");
-  const challenge = createHash("sha256").update(verifier).digest("base64url");
-  const params = new URLSearchParams({
-    response_type: "code",
-    client_id: clientId,
-    redirect_uri: CALLBACK,
-    state: "grant-space-state",
-    scope: SCOPE,
-    code_challenge: challenge,
-    code_challenge_method: "S256",
-  });
-  const res = await request(
-    c.app,
-    "GET",
-    `/auth/oauth2/authorize?${params.toString()}`,
-    { headers: { cookie } },
-  );
-  return Object.assign(res, { verifier });
-}
-
 async function decide(
   c: TestContext,
   cookie: string,
@@ -177,9 +143,8 @@ describe("a keys-mode sign-in grants in the instance's one space", () => {
     // The whole path, on the deployment shape this change is about: no user
     // store, one space, and a grant that has to land in it. A refusal test
     // alone would pass against a guard that refused everything.
-    const context = await createTestContext({ authAllowSignup: true });
+    const context = await createTestContext({});
     ctx = context;
-    expect(context.storage.users).toBeUndefined();
     const spaces = context.storage.spaces;
     if (!spaces) throw new Error("space store expected");
     const [sole] = await spaces.list();
@@ -262,7 +227,7 @@ describe("a grant with no space to land in is refused before a code exists", () 
     // choosing between them binds somebody's grant to whichever row came
     // back first. Before this the flow carried on and wrote the grant into
     // no space at all.
-    const context = await createTestContext({ authAllowSignup: true });
+    const context = await createTestContext({});
     ctx = context;
     const spaces = context.storage.spaces;
     if (!spaces) throw new Error("space store expected");
@@ -297,143 +262,4 @@ describe("a grant with no space to land in is refused before a code exists", () 
       false,
     );
   });
-
-  it("refuses an account that has no space of its own", async () => {
-    // The hosted half. Sign-up provisions a space, and the provisioning is
-    // best-effort behind a catch, so an account without one is what a failure
-    // there leaves behind. Reproduced by removing the row rather than by
-    // breaking the hook, because the state is what the flow has to answer
-    // for however it arose.
-    const context = await createTestContext({
-      authMode: "hosted",
-      authAllowSignup: true,
-    });
-    ctx = context;
-    const cookie = await signInUser(context, "no-space@marfa.so");
-    const clientId = await registerClient(context, cookie);
-    await detachAccountFromItsSpace(context, "no-space@marfa.so");
-
-    const attempt = await authorize(context, clientId, cookie);
-    expect(attempt.consent.status).toBe(403);
-    const page = await attempt.consent.text();
-    expect(page).toContain("no space to grant access in");
-
-    const decision = await decide(context, cookie, attempt.signedQuery!);
-    expect(decision.status).toBe(403);
-  });
 });
-
-describe("a standing grant whose space stops resolving", () => {
-  it("cannot be exchanged for a token, on the path the consent route never sees", async () => {
-    // **The path the consent guards cannot see.** The plugin answers
-    // `/oauth2/authorize` itself when the standing consent already covers the
-    // request, and 302s to the callback with a code without Marfa's route
-    // running at all. So a grant made while a space resolved, on an account
-    // whose space later stops resolving, still minted a code here -- and the
-    // token behind it carried no space and was refused on every request, with
-    // nothing naming the cause. That is the symptom this whole change removes,
-    // on the one path that did not check.
-    const context = await createTestContext({
-      authMode: "hosted",
-      authAllowSignup: true,
-    });
-    ctx = context;
-    const cookie = await signInUser(context, "standing-grant@marfa.so");
-    const clientId = await registerClient(context, cookie);
-
-    // A first consent, while the account still has its space.
-    const first = await authorize(context, clientId, cookie);
-    expect(first.consent.status).toBe(200);
-    expect((await decide(context, cookie, first.signedQuery!)).status).toBe(
-      302,
-    );
-
-    // Now the space is gone. The consent row and the projection both survive.
-    await detachAccountFromItsSpace(context, "standing-grant@marfa.so");
-
-    // The plugin's already-consented check is what answers this, so the
-    // assertion below is about a request Marfa's consent route never sees.
-    // The plugin answers it directly: straight to the callback with a code,
-    // Marfa's consent route never running. Pinned rather than worked around,
-    // because it is the premise of everything below.
-    const second = await authorizeRaw(context, clientId, cookie);
-    expect(second.status).toBe(302);
-    const callback = new URL(second.headers.get("location") ?? "", ORIGIN);
-    expect(callback.pathname).toBe("/callback");
-    const code = callback.searchParams.get("code");
-    expect(code).toBeTruthy();
-
-    // And the exchange refuses, so no credential exists that mints and then
-    // reaches nothing. The reason travels with it, in the field a client
-    // reads.
-    const tokenRes = await request(context.app, "POST", "/auth/oauth2/token", {
-      form: {
-        grant_type: "authorization_code",
-        code: code!,
-        redirect_uri: CALLBACK,
-        client_id: clientId,
-        code_verifier: second.verifier,
-      },
-      headers: { origin: ORIGIN },
-    });
-    expect(tokenRes.status).toBe(400);
-    const body = (await tokenRes.json()) as Record<string, unknown>;
-    expect(body.error).toBe("invalid_grant");
-    expect(String(body.error_description)).toContain("no space");
-    expect(body.access_token).toBeUndefined();
-  });
-});
-
-/**
- * Leave the account signed in and holding no space, by deleting its `users`
- * row. That row is the only thing binding a Better Auth identity to a space
- * in hosted mode, and its absence is exactly what a failed sign-up
- * provisioning leaves. Better Auth's own session is untouched, so the person
- * is still signed in, which is the situation being tested.
- */
-async function detachAccountFromItsSpace(
-  c: TestContext,
-  email: string,
-): Promise<void> {
-  const users = c.storage.users;
-  if (!users) throw new Error("hosted-mode storage missing user store");
-  const authUserId = await authUserIdFor(c, email);
-  const row = await users.getByAuthUserId(authUserId);
-  expect(row).not.toBeNull();
-  const schema = await import("../storage/sqlite/schema.js");
-  const db = c.storage.betterAuthDb as {
-    delete: (table: unknown) => {
-      where: (clause: unknown) => {
-        run?: () => Promise<unknown>;
-        execute?: () => Promise<unknown>;
-      };
-    };
-  };
-  const { eq } = await import("drizzle-orm");
-  const op = db.delete(schema.users).where(eq(schema.users.id, row!.id));
-  await (op.execute?.() ?? op.run?.() ?? Promise.resolve());
-  expect(await users.getByAuthUserId(authUserId)).toBeNull();
-}
-
-/** The Better Auth user id behind an email, read the way the bridge reads it. */
-async function authUserIdFor(c: TestContext, email: string): Promise<string> {
-  const schema = await import("../storage/sqlite/schema.js");
-  const db = c.storage.betterAuthDb as {
-    select: (cols: unknown) => {
-      from: (table: unknown) => {
-        where: (clause: unknown) => Promise<{ id: string }[]> & {
-          all?: () => Promise<{ id: string }[]>;
-        };
-      };
-    };
-  };
-  const { eq } = await import("drizzle-orm");
-  const query = db
-    .select({ id: schema.auth_user.id })
-    .from(schema.auth_user)
-    .where(eq(schema.auth_user.email, email));
-  const rows = await (query.all?.() ?? query);
-  const id = rows[0]?.id;
-  if (!id) throw new Error(`no auth_user for ${email}`);
-  return id;
-}

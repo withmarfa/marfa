@@ -50,7 +50,6 @@ import {
   INTEGRATION_SOURCE_PREFIX,
 } from "../middleware/auth.js";
 import { compareProperties } from "./mirror-reconcile.js";
-import { reserveQuota } from "../middleware/quota.js";
 import type {
   Storage,
   ItemSortField,
@@ -1755,7 +1754,6 @@ export function itemRoutes(storage: Storage) {
         // The reservation is the first thing in this transaction and holds for
         // the rest of it, so the count it reads includes every create already
         // committed against this space's ceiling.
-        await reserveQuota(c, storage, [{ resource: "items", increment: 1 }]);
         const created = await storage.items.create(
           {
             type,

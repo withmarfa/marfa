@@ -60,7 +60,6 @@ describe("bootstrap mode", () => {
       apiKeySalt: "test-salt",
       corsOrigins: [],
       cdnBaseUrl: "",
-      authMode: "keys",
       rateLimitEnabled: false,
       enableHsts: false,
       auditRetentionDays: 90,
@@ -77,10 +76,7 @@ describe("bootstrap mode", () => {
       errorWebhookUrl: "",
       trustedProxyCidrs: [],
       authBaseUrl: "http://localhost:0",
-      authAllowSignup: true,
-      seedStarterContent: false,
       authSecret: "test-auth-secret",
-      oidcProviders: [],
       rateLimitDefaultLimit: 1000,
       rateLimitWindowMs: 60_000,
     });

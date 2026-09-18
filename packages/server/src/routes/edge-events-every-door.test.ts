@@ -29,7 +29,6 @@ import {
   runBulkActionAsync,
 } from "../test-utils.js";
 import type { EdgeEventWithId } from "../pubsub.js";
-import { seedStarterContent } from "../auth/starter-content.js";
 import { generateId } from "@withmarfa/shared";
 import type { TestContext } from "../test-utils.js";
 
@@ -496,26 +495,6 @@ describe("the two doors this suite would otherwise leave uncovered", () => {
     const event = await announced;
     expect(event.edge.source_id).toBe(source);
     expect(event.edge.target_id).toBe(target);
-    expect(event.edge.edge_type).toBe("references");
-  });
-
-  it("sign-up starter content announces the edge it seeds", async () => {
-    // Provisioning writes one `references` edge through the same shared
-    // helper. A space being provisioned has no subscribers of its own, so
-    // this is the one door whose silence nobody would ever report — which
-    // is why it gets a test rather than an assumption.
-    const spaces = ctx.storage.spaces;
-    if (!spaces) throw new Error("this test needs a space store");
-    const space = await spaces.create(
-      `starter-${Math.random().toString(36).slice(2, 8)}`,
-    );
-
-    const announced = nextEdgeEvent(
-      (e) => e.type === "edge_created" && e.edge.space_id === space.id,
-    );
-    await seedStarterContent(ctx.storage, space.id);
-
-    const event = await announced;
     expect(event.edge.edge_type).toBe("references");
   });
 });

@@ -37,8 +37,6 @@ import { constantTimeEqual } from "../utils/crypto.js";
 import { registerArchiveTypes } from "./admin-archive-types.js";
 import { assertEdgesCanBeCreated } from "../storage/edge-constraints.js";
 import { withBlobUploadLock } from "../storage/blob-upload-lock.js";
-import { reserveQuotaForSpace } from "../middleware/quota.js";
-import type { AppConfig } from "../config.js";
 import { log } from "../middleware/logger.js";
 import type { ArchiveTypeEntry } from "./admin-archive-types.js";
 
@@ -209,7 +207,6 @@ interface BlobRestore {
 async function restoreArchiveBlobs(
   storage: Storage,
   blobBackend: BlobBackend,
-  config: AppConfig,
   pending: readonly PendingBlob[],
   spaceId: string,
 ): Promise<BlobRestore> {
@@ -244,12 +241,8 @@ async function restoreArchiveBlobs(
     }
   };
 
-  // Rows and their quota reservation are one transaction: the reservation
-  // has to count under the same lock the rows commit under, and a refusal
-  // then rolls every row back at once. The caller with no space of their
-  // own is exactly why the explicit-space form exists — the context form
-  // reserved nothing for the operator key, silently, and a restore could
-  // carry the space past ceilings every other blob write enforces.
+  // The rows commit as one transaction, so a failure rolls every row back
+  // at once.
   try {
     await storage.runInTransaction(async () => {
       const planned: PendingBlob[] = [];
@@ -259,13 +252,6 @@ async function restoreArchiveBlobs(
         }
       }
       if (planned.length === 0) return;
-      await reserveQuotaForSpace(storage, config, spaceId || undefined, [
-        { resource: "blobs", increment: planned.length },
-        {
-          resource: "storage_bytes",
-          increment: planned.reduce((sum, b) => sum + b.data.length, 0),
-        },
-      ]);
       for (const blob of planned) {
         await storage.blobs.register(
           blob.hash,
@@ -306,11 +292,7 @@ async function restoreArchiveBlobs(
   };
 }
 
-export function adminArchiveRoutes(
-  storage: Storage,
-  blobBackend: BlobBackend,
-  authMode: "keys" | "hosted",
-) {
+export function adminArchiveRoutes(storage: Storage, blobBackend: BlobBackend) {
   const router = createOpenAPIRouter<AppEnv>();
 
   router.openapi(restoreArchiveRoute, async (c) => {
@@ -509,7 +491,6 @@ export function adminArchiveRoutes(
       storage,
       typeEntries,
       spaceId,
-      authMode,
     );
 
     // Blobs land only once every refusal above has passed. They used to be
@@ -523,7 +504,6 @@ export function adminArchiveRoutes(
     const blobs = await restoreArchiveBlobs(
       storage,
       blobBackend,
-      c.get("config"),
       pendingBlobs,
       restoreSpaceId,
     );

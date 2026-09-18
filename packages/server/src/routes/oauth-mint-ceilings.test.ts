@@ -109,7 +109,7 @@ async function clientCredentialsToken(
 
 describe("the client-credentials grant is not one this server has", () => {
   it("refuses the token request with unsupported_grant_type", async () => {
-    ctx = await createTestContext({ authAllowSignup: false });
+    ctx = await createTestContext({});
     const secret = `s3cret-${Math.random().toString(36).slice(2)}`;
     const clientId = await seedConfidentialClient(ctx, secret);
 
@@ -130,7 +130,7 @@ describe("the client-credentials grant is not one this server has", () => {
   });
 
   it("is not stepped around by whitespace in grant_type", async () => {
-    ctx = await createTestContext({ authAllowSignup: false });
+    ctx = await createTestContext({});
     const secret = `s3cret-${Math.random().toString(36).slice(2)}`;
     const clientId = await seedConfidentialClient(ctx, secret);
 
@@ -155,7 +155,7 @@ describe("the client-credentials grant is not one this server has", () => {
 
 describe("dynamic client registration default-scope ceiling", () => {
   it("registers the bundle expansion, not the full allowlist, on omitted scope", async () => {
-    ctx = await createTestContext({ authAllowSignup: false });
+    ctx = await createTestContext({});
     const res = await request(ctx.app, "POST", "/auth/oauth2/register", {
       body: {
         redirect_uris: ["http://localhost/cb"],
@@ -178,7 +178,7 @@ describe("dynamic client registration default-scope ceiling", () => {
   });
 
   it("still registers wider scopes when explicitly requested", async () => {
-    ctx = await createTestContext({ authAllowSignup: false });
+    ctx = await createTestContext({});
     const res = await request(ctx.app, "POST", "/auth/oauth2/register", {
       body: {
         redirect_uris: ["http://localhost/cb"],

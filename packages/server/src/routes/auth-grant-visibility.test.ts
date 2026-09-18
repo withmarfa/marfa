@@ -31,7 +31,7 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
 import {
   createTestContext,
-  markEmailVerified,
+  createTestAccount,
   mintSpaceKey,
   request,
 } from "../test-utils.js";
@@ -103,22 +103,13 @@ async function signInUser(
   email: string,
 ): Promise<{ cookie: string; spaceId: string; key: string }> {
   const password = "correct horse battery";
-  const signUp = await request(c.app, "POST", "/auth/sign-up/email", {
-    body: { email, password, name: "Tester" },
-    headers: { origin: ORIGIN },
-  });
-  const authUserId = ((await signUp.json()) as { user?: { id?: string } }).user
-    ?.id;
-  if (!authUserId) throw new Error("sign-up: no user id");
-  await markEmailVerified(c.storage, email);
+  await createTestAccount(c, email, password, "Tester");
   const signIn = await request(c.app, "POST", "/auth/sign-in/email", {
     body: { email, password },
     headers: { origin: ORIGIN },
   });
   expect(signIn.status).toBe(200);
-  const spaceId = (await c.storage.users?.getByAuthUserId(authUserId))
-    ?.space_id;
-  if (!spaceId) throw new Error("sign-up: no space provisioned");
+  const spaceId = c.spaceId;
   const key = await mintSpaceKey(c, spaceId);
   const setCookie = signIn.headers.get("set-cookie");
   if (!setCookie) throw new Error("sign-in: no Set-Cookie header");
@@ -204,10 +195,7 @@ function resolveGrantItemId(
 
 describe("a soft-deleted grant is not resurrected by a re-approval", () => {
   it("REGRESSION: a re-approval inserts a fresh grant and leaves the unreachable row revoked", async () => {
-    ctx = await createTestContext({
-      authMode: "hosted",
-      authAllowSignup: true,
-    });
+    ctx = await createTestContext({});
     const c = ctx;
     const clientId = await seedClient(c);
     const { cookie, key } = await signInUser(
@@ -265,10 +253,7 @@ describe("a soft-deleted grant is not resurrected by a re-approval", () => {
   });
 
   it("findGrantItemId returns null for a grant no read surface will list", async () => {
-    ctx = await createTestContext({
-      authMode: "hosted",
-      authAllowSignup: true,
-    });
+    ctx = await createTestContext({});
     const c = ctx;
     const clientId = await seedClient(c);
     const { cookie } = await signInUser(
@@ -300,10 +285,7 @@ describe("a soft-deleted grant is not resurrected by a re-approval", () => {
 
 describe("an ordinary revoke still re-establishes on re-approval", () => {
   it("keeps updating the same row when only properties.status was revoked", async () => {
-    ctx = await createTestContext({
-      authMode: "hosted",
-      authAllowSignup: true,
-    });
+    ctx = await createTestContext({});
     const c = ctx;
     const clientId = await seedClient(c);
     const { cookie, key } = await signInUser(
@@ -316,20 +298,14 @@ describe("an ordinary revoke still re-establishes on re-approval", () => {
     expect(listed.length).toBe(1);
     const grantId = listed[0]!.id;
 
-    // The user's own Disconnect button. It moves `properties.status` and
+    // The grants door. It moves `properties.status` and
     // deliberately leaves `state: "active"`, precisely so a later approval
     // has a row to reactivate — an app grant is a re-grantable
     // relationship, unlike an integration connection's terminal uninstall.
-    const revoked = await request(
-      c.app,
-      "POST",
-      `/auth/grants/${grantId}/revoke`,
-      { headers: { origin: ORIGIN, cookie } },
-    );
-    expect(revoked.status).toBe(302);
-    expect(revoked.headers.get("location") ?? "").toContain(
-      "notice=grant_revoked",
-    );
+    const revoked = await request(c.app, "DELETE", `/auth/grants/${grantId}`, {
+      key: c.spaceKey,
+    });
+    expect(revoked.status).toBe(204);
     const afterRevoke = await c.storage.items.get(grantId);
     expect(afterRevoke?.state).toBe("active");
     expect(afterRevoke?.properties.status).toBe("revoked");
@@ -375,10 +351,7 @@ describe("an ordinary revoke still re-establishes on re-approval", () => {
  */
 describe("a live grant cannot be stranded through the item doors", () => {
   it("DELETE /items/{id} never reaches the grant: the type gate answers first", async () => {
-    ctx = await createTestContext({
-      authMode: "hosted",
-      authAllowSignup: true,
-    });
+    ctx = await createTestContext({});
     const c = ctx;
     const clientId = await seedClient(c);
     const { cookie, key } = await signInUser(
@@ -406,10 +379,7 @@ describe("a live grant cannot be stranded through the item doors", () => {
   });
 
   it("DELETE /items/{id}/purge refuses the same grant before the trash gate can answer", async () => {
-    ctx = await createTestContext({
-      authMode: "hosted",
-      authAllowSignup: true,
-    });
+    ctx = await createTestContext({});
     const c = ctx;
     const clientId = await seedClient(c);
     const { cookie, key } = await signInUser(
@@ -436,10 +406,7 @@ describe("a live grant cannot be stranded through the item doors", () => {
     // exactly as a live grant is. Removing one is the cascade's job, which
     // is the second half of this case rather than a separate file, because
     // the pair is the whole story of how a grant row ever leaves.
-    ctx = await createTestContext({
-      authMode: "hosted",
-      authAllowSignup: true,
-    });
+    ctx = await createTestContext({});
     const c = ctx;
     const clientId = await seedClient(c);
     const { cookie, key } = await signInUser(
@@ -449,14 +416,10 @@ describe("a live grant cannot be stranded through the item doors", () => {
     await approveDeviceFlow(c, clientId, cookie, "core.note:read");
     const [grant] = await listedGrants(c, key);
 
-    const revoke = await request(
-      c.app,
-      "POST",
-      `/auth/grants/${grant!.id}/revoke`,
-      { headers: { origin: ORIGIN, cookie } },
-    );
-    expect(revoke.status).toBe(302);
-    expect(revoke.headers.get("location")).toContain("notice=grant_revoked");
+    const revoke = await request(c.app, "DELETE", `/auth/grants/${grant!.id}`, {
+      key: c.spaceKey,
+    });
+    expect(revoke.status).toBe(204);
 
     const direct = await request(c.app, "DELETE", `/items/${grant!.id}`, {
       key,
@@ -495,10 +458,7 @@ describe("a live grant cannot be stranded through the item doors", () => {
     // not a tombstone: tokens live, consent row standing, listed by neither
     // read surface. Purging it would make the strand permanent, since
     // nothing could ever run the cascade for it again.
-    ctx = await createTestContext({
-      authMode: "hosted",
-      authAllowSignup: true,
-    });
+    ctx = await createTestContext({});
     const c = ctx;
     const clientId = await seedClient(c);
     const { cookie, key } = await signInUser(
@@ -538,10 +498,7 @@ describe("a live grant cannot be stranded through the item doors", () => {
     // lifecycle table would refuse anyway: a `system.*` type admits only
     // `revoked` and this route's schema cannot name it. Neither of those is
     // what a caller meets, and the one that answers is the one pinned.
-    ctx = await createTestContext({
-      authMode: "hosted",
-      authAllowSignup: true,
-    });
+    ctx = await createTestContext({});
     const c = ctx;
     const clientId = await seedClient(c);
     const { cookie, key } = await signInUser(
@@ -567,10 +524,7 @@ describe("a live grant cannot be stranded through the item doors", () => {
   it("the delete cascade refuses a live grant reached through an edge, and the whole delete rolls back", async () => {
     // `parent-of` cascades on delete and admits any type at either end, so
     // a row anyone can write could otherwise carry the grant out with it.
-    ctx = await createTestContext({
-      authMode: "hosted",
-      authAllowSignup: true,
-    });
+    ctx = await createTestContext({});
     const c = ctx;
     const clientId = await seedClient(c);
     const { cookie, key } = await signInUser(

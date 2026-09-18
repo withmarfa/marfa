@@ -147,7 +147,7 @@ describe("runtime custom-namespace resolution", () => {
     // connected service published is in their space and is not theirs to
     // be offered wholesale — it belongs to the service, and the service's
     // own scopes are how it is reached.
-    const ctx = await createTestContext({ authMode: "hosted" });
+    const ctx = await createTestContext({});
     try {
       const baseType = {
         version: 1,
@@ -207,7 +207,7 @@ describe("runtime custom-namespace resolution", () => {
     // is "this space's roots", never the union. The space-less bucket
     // stays empty here — which is exactly why a bucket read alone made
     // the capability inert for every hosted space.
-    const ctx = await createTestContext({ authMode: "hosted" });
+    const ctx = await createTestContext({});
     try {
       const baseType = {
         version: 1,
@@ -258,7 +258,7 @@ describe("a type whose provenance nobody recorded", () => {
     // over what may be a connected service's mirror, and dropping it
     // leaves a legitimate restore of your own types in no bundle at all,
     // ungrantable to any application.
-    const ctx = await createTestContext({ authMode: "hosted" });
+    const ctx = await createTestContext({});
     try {
       const space = await ctx.storage.spaces!.create("space-unknown");
       await ctx.storage.types.create(
@@ -287,7 +287,7 @@ describe("a type whose provenance nobody recorded", () => {
     // under the same root has earned write on that root through the
     // first. Offering the same root at two levels would put a
     // contradiction on one screen, so the stronger grant wins.
-    const ctx = await createTestContext({ authMode: "hosted" });
+    const ctx = await createTestContext({});
     try {
       const space = await ctx.storage.spaces!.create("space-both");
       await ctx.storage.types.create(
