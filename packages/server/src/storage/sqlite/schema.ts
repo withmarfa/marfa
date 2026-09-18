@@ -145,12 +145,18 @@ export const items = sqliteTable(
     index("idx_items_updated_at_id").on(table.updated_at, table.id),
     // Provenance identity is per space: two spaces syncing the same
     // integration against the same upstream record are two corpora, not
-    // one. COALESCE rather than a plain (space_id, source, source_id)
-    // composite because `space_id` is nullable and NULL never equals NULL
-    // in a unique index, which would stop deduping the null-space bucket
-    // entirely — every row written with no space.
+    // one. The null space is folded to '' rather than left as a plain
+    // (space_id, source, source_id) composite because `space_id` is
+    // nullable and NULL never equals NULL in a unique index, which would
+    // stop deduping the null-space bucket entirely — every row written
+    // with no space. Spelled as CASE rather than COALESCE because the
+    // renderer splits an index expression on a comma.
     uniqueIndex("idx_items_source_dedup")
-      .on(sql`COALESCE(${table.space_id}, '')`, table.source, table.source_id)
+      .on(
+        sql`CASE WHEN ${table.space_id} IS NULL THEN '' ELSE ${table.space_id} END`,
+        table.source,
+        table.source_id,
+      )
       .where(sql`source IS NOT NULL`),
     // Serves the folder query: a folder is a path prefix, so
     // `source_id starts_with 'Notes/'` is a range scan within a space.
@@ -463,7 +469,10 @@ export const customTypes = sqliteTable(
     created_at: text("created_at").notNull(),
     updated_at: text("updated_at").notNull(),
   },
-  (t) => [primaryKey({ columns: [t.space_id, t.id] })],
+  (t) => [
+    primaryKey({ columns: [t.space_id, t.id] }),
+    index("idx_custom_types_origin").on(t.origin),
+  ],
 );
 
 // Custom edge types are namespaced per space. The composite PK on
@@ -515,6 +524,11 @@ export const outboundWebhookDeliveries = sqliteTable(
   },
   (table) => [
     index("idx_outbound_webhook_deliveries_webhook_id").on(table.webhook_id),
+    // Serves the delivery worker's claim, which is a range over
+    // `next_attempt_at` among the rows still pending.
+    index("idx_outbound_webhook_deliveries_pending")
+      .on(table.next_attempt_at)
+      .where(sql`status = 'pending'`),
   ],
 );
 
@@ -1237,16 +1251,14 @@ export const idempotencyRecords = sqliteTable(
     completed_at: text("completed_at"),
   },
   (table) => [
-    // COALESCE rather than a plain (space_id, idempotency_key) composite,
-    // mirroring `idx_items_source_dedup`: `space_id` is nullable and NULL
-    // never equals NULL in a unique index, so the plain shape would stop
-    // deduping the null-space bucket entirely — every request on a
-    // instance-wide bucket, and every operator-key request anywhere.
-    // The same defect was found and repaired on `bulk_action_jobs`, which
-    // reached for NULLS NOT DISTINCT instead; COALESCE says it once and is
-    // the same expression in both dialects.
+    // The null space folded to '' rather than a plain (space_id,
+    // idempotency_key) composite, mirroring `idx_items_source_dedup`:
+    // `space_id` is nullable and NULL never equals NULL in a unique index,
+    // so the plain shape would stop deduping the null-space bucket entirely
+    // — every request on an instance-wide bucket, and every operator-key
+    // request anywhere.
     uniqueIndex("idx_idempotency_records_key").on(
-      sql`COALESCE(${table.space_id}, '')`,
+      sql`CASE WHEN ${table.space_id} IS NULL THEN '' ELSE ${table.space_id} END`,
       table.idempotency_key,
     ),
     // Serves the retention sweep, which is a range over `created_at`

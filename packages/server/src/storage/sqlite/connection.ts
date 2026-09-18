@@ -1,11 +1,20 @@
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { createClient, type Client } from "@libsql/client";
 import { drizzle } from "drizzle-orm/libsql";
 import { sql } from "drizzle-orm";
 import * as schema from "./schema.js";
-import { stampSqliteDrizzleMigrations } from "../bootstrap-stamp.js";
-import { SCHEMA_SQL } from "./schema-sql.generated.js";
+
+/**
+ * The database's DDL, generated from `schema.ts` by
+ * `scripts/generate-schema-sql.ts` and applied in full at every open.
+ * Read from beside this module so the same file serves `tsx` on the source
+ * tree and the built bundle, which copies it into `dist/`.
+ */
+export const SCHEMA_SQL = readFileSync(
+  new URL("./schema.sql", import.meta.url),
+  "utf8",
+);
 
 // Raw SQL for tables that Drizzle cannot express (FTS5 virtual tables).
 const CREATE_FTS = `
@@ -79,12 +88,9 @@ export async function createConnection(sqlitePath: string): Promise<{
   await client.execute("PRAGMA foreign_keys = ON");
 
   // Create tables via raw SQL (idempotent — CREATE TABLE IF NOT EXISTS).
-  // SCHEMA_SQL is auto-generated from drizzle/sqlite/ migrations by
-  // scripts/generate-schema-sql.ts; see that script for details.
   await client.executeMultiple(SCHEMA_SQL);
-  // The remaining hand-written block is the FTS5 virtual table — Drizzle
-  // Kit cannot express FTS5, so it never appears in any migration and must
-  // be applied separately.
+  // The remaining hand-written block is the FTS5 virtual table — drizzle-kit
+  // cannot express FTS5, so it is applied separately.
   await client.executeMultiple(CREATE_FTS);
 
   // FTS5 doesn't support ALTER TABLE; detect missing 'extra' column and rebuild.
@@ -123,13 +129,6 @@ export async function createConnection(sqlitePath: string): Promise<{
       }
     }
   }
-
-  // Stamp Drizzle's `__drizzle_migrations` table so a follow-up
-  // `pnpm migrate` against this bootstrapped DB short-circuits as a no-op.
-  // Without this, migrate replays from 0000 and several DROP / ALTER
-  // migrations error against tables the bootstrap shape never had.
-  // Idempotent — only stamps when the table is empty.
-  await stampSqliteDrizzleMigrations(client);
 
   const db = drizzle(client, { schema });
 

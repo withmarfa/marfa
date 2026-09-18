@@ -8,7 +8,7 @@ export default defineConfig({
     // ./dist/instrumentation.js` before the main entry so HTTP
     // instrumentation patches modules before they load.
     instrumentation: "src/instrumentation.ts",
-    // Standalone migrator so a deployment can run migrations
+    // Standalone schema apply so a deployment can create a database
     // (`node dist/migrate.js`) without tsx.
     migrate: "src/storage/migrate.ts",
   },
@@ -25,4 +25,7 @@ export default defineConfig({
   clean: true,
   target: "node20",
   external: ["@withmarfa/shared"],
+  // `connection.ts` reads `schema.sql` from beside itself, and the bundles
+  // it is folded into sit at the top of `dist/`.
+  onSuccess: "cp src/storage/sqlite/schema.sql dist/schema.sql",
 });

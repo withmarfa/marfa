@@ -26,7 +26,7 @@ import { createClient } from "@libsql/client";
 import { drizzle as drizzleSqlite } from "drizzle-orm/libsql";
 import { SqliteItemStore } from "./sqlite/item-store.js";
 import { SqliteEdgeStore } from "./sqlite/edge-store.js";
-import { SCHEMA_SQL } from "./sqlite/schema-sql.generated.js";
+import { SCHEMA_SQL } from "./sqlite/connection.js";
 
 interface CapturedQuery {
   sql: string;

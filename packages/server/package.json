@@ -11,8 +11,7 @@
     }
   },
   "files": [
-    "dist",
-    "drizzle"
+    "dist"
   ],
   "scripts": {
     "build": "tsup",
@@ -22,7 +21,6 @@
     "dev": "tsx watch --import ./src/instrumentation.ts src/index.ts",
     "migrate": "tsx src/storage/migrate.ts",
     "schema-sql:generate": "tsx scripts/generate-schema-sql.ts",
-    "lint:sqlite-migrations": "tsx scripts/lint-sqlite-migrations.ts",
     "generate:openapi": "tsx scripts/generate-openapi.ts",
     "surface-lock:generate": "tsx scripts/generate-surface-lock.ts",
     "surface-lock:drift": "tsx scripts/check-surface-lock-drift.ts"
@@ -64,6 +62,7 @@
   "devDependencies": {
     "@types/node": "^26.2.0",
     "@types/tar-stream": "^3.1.4",
+    "drizzle-kit": "^0.31.10",
     "tsup": "^8.5.1",
     "tsx": "^4.23.12",
     "typescript": "^6.0.3"
