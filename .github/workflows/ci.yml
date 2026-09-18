@@ -78,6 +78,84 @@ jobs:
       # nothing here is load bearing.
       - run: MARFA_TEST_OCR=1 MARFA_ENRICHMENT_TESSDATA_DIR="$HOME/.cache/marfa-tessdata" pnpm test
 
+  # The contract, run against the server in this same checkout.
+  #
+  # No pinned server commit and no second checkout. The suite used to live in
+  # its own repository and gate a SHA somebody had to remember to move, which
+  # meant a server change and the contract change that admits it were two
+  # pull requests and the gate answered about neither tree. Here the tree
+  # under test is the tree the suite runs against.
+  #
+  # A job in this workflow rather than one of its own, because `publish.yml`
+  # names `ci.yml` as the gate a commit must be green on before it can be
+  # tagged. A published package should not be able to come from a commit the
+  # contract failed.
+  conformance:
+    name: Conformance
+    timeout-minutes: 60
+    runs-on: self-hosted
+    # The same group as the suite above, for the same reason: the resource is
+    # the machine. This job boots a server and drives it over HTTP, so a
+    # second heavy job on the box manufactures timeouts in fixtures the branch
+    # never touched. `queue: max` rather than the default, which cancels the
+    # pending entry instead of queueing it.
+    concurrency:
+      group: marfa-suite-shared-host
+      cancel-in-progress: false
+      queue: max
+    env:
+      NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          dest: ${{ runner.temp }}/setup-pnpm
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: Configure registry auth
+        env:
+          NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > .npmrc
+      - run: pnpm install --frozen-lockfile
+      # `marfa:up` runs the server through tsx, which resolves
+      # @withmarfa/shared through its dist, and the offline lane reads the
+      # type registry from the same place.
+      - run: pnpm --filter "@withmarfa/server..." build
+
+      # Typecheck, lint and format are not repeated here. The suite is a
+      # workspace package, so the root's own checks reach it and they run in
+      # the job above.
+      - name: Offline lane
+        working-directory: conformance
+        run: pnpm test:generators
+
+      - name: Boot the server from this checkout
+        working-directory: conformance
+        run: |
+          pnpm marfa:up --state "$RUNNER_TEMP/marfa"
+          cat "$RUNNER_TEMP/marfa/env" >> "$GITHUB_ENV"
+
+      - name: Run the default selection
+        working-directory: conformance
+        run: pnpm test:conformance
+
+      # Always, including when the selection failed: the server was spawned
+      # detached, so nothing else reaps it and the next run on this runner
+      # would find the state directory held by a live process.
+      - name: Stop the server
+        if: always()
+        working-directory: conformance
+        run: pnpm marfa:down --state "$RUNNER_TEMP/marfa"
+
+      - name: Keep the server log
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: marfa-server-log
+          path: ${{ runner.temp }}/marfa/server.log
+          if-no-files-found: ignore
+
   # Freshness jobs — catch generated-artifact drift, on every event. They
   # were once gated on the paths that could stale each artifact; on the pool
   # the work costs seconds, and a gate that skips is a gate that can be wrong.
