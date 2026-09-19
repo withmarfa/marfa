@@ -68,8 +68,8 @@ export async function createSqliteStorage(sqlitePath: string): Promise<
 
   // Awaited for the same reason as the type warmup below: a registry filled
   // after storage is handed back is a registry some request can miss.
-  const loadedCustomEdgeTypes = await edgeTypeStore.loadCustomEdgeTypes();
-  for (const schema of loadedCustomEdgeTypes) {
+  const loadedEdgeTypes = await edgeTypeStore.list();
+  for (const schema of loadedEdgeTypes) {
     if (!isCoreEdgeType(schema.id)) registerEdgeTypeSchema(schema);
   }
 
@@ -90,7 +90,7 @@ export async function createSqliteStorage(sqlitePath: string): Promise<
   reportSeedCollisions(
     await typeStore.seedPlatformTypes(shippedPlatformTypes()),
   );
-  const loadedTypes = await typeStore.loadCustomTypes();
+  const loadedTypes = await typeStore.loadAll();
   // A platform row whose family this build cannot read is placed at the
   // restrictive end rather than defaulted to `core`, which was the
   // permissive one. Reasoning, and why this projects rather than refusing

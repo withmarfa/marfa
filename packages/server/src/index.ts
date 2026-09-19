@@ -12,8 +12,8 @@ import {
 } from "./config.js";
 import {
   buildDefaultPermissionBundles,
-  resolveAllRuntimeCustomNamespaces,
-  resolveRuntimeCustomNamespaces,
+  resolveAllRegisteredNamespaceRoots,
+  resolveRegisteredNamespaceRoots,
 } from "./auth/default-bundles.js";
 import { setRuntimeNamespaceRoots } from "./auth/oauth-provider.js";
 import { createApp } from "./app.js";
@@ -410,7 +410,7 @@ async function main() {
   // pinned to the baseline. Installed regardless of the bundle override
   // below, because whether a space's registered namespaces are grantable
   // is not the operator's consent-curation lever.
-  setRuntimeNamespaceRoots(await resolveAllRuntimeCustomNamespaces(storage));
+  setRuntimeNamespaceRoots(await resolveAllRegisteredNamespaceRoots(storage));
 
   // Fold the runtime custom-type namespaces into the active permission
   // bundles, so a custom type under a claimed publisher handle is offerable
@@ -424,7 +424,7 @@ async function main() {
   // rather than one.
   if (!hasUsablePermissionBundleOverride()) {
     const bundles = buildDefaultPermissionBundles(
-      await resolveRuntimeCustomNamespaces(storage),
+      await resolveRegisteredNamespaceRoots(storage),
     );
     setActivePermissionBundles(bundles);
     config.permissionBundles = bundles;

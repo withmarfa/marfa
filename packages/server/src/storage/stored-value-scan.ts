@@ -191,7 +191,7 @@ export const DELIBERATELY_UNSCANNED: readonly {
       "in flight at that boot.",
   },
   {
-    table: "custom_types",
+    table: "types",
     column: "origin",
     castType: 'LoadedType["origin"]',
     because:
@@ -201,7 +201,7 @@ export const DELIBERATELY_UNSCANNED: readonly {
       "onto one.",
   },
   {
-    table: "custom_types",
+    table: "types",
     column: "family",
     castType: 'LoadedType["family"]',
     because:

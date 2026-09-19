@@ -1783,7 +1783,7 @@ export async function resolveWildcardExpansions(
     wildcardRoots.add(root);
   }
   if (wildcardRoots.size === 0) return {};
-  const types = await storage.types.listCustom();
+  const types = await storage.types.listRegistered();
   const out: Record<string, string[]> = {};
   for (const root of wildcardRoots) {
     const names = types

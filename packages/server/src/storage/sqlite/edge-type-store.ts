@@ -2,10 +2,10 @@ import { eq } from "drizzle-orm";
 import { ErrorCode, MarfaError } from "@withmarfa/shared";
 import type { EdgeTypeSchema } from "@withmarfa/shared";
 import type { EdgeTypeStore } from "../interface.js";
-import { customEdgeTypes } from "./schema.js";
+import { edgeTypes } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
 
-function parseRow(row: typeof customEdgeTypes.$inferSelect): EdgeTypeSchema {
+function parseRow(row: typeof edgeTypes.$inferSelect): EdgeTypeSchema {
   return JSON.parse(row.schema) as EdgeTypeSchema;
 }
 
@@ -13,15 +13,15 @@ export class SqliteEdgeTypeStore implements EdgeTypeStore {
   constructor(private db: DrizzleDb) {}
 
   async list(): Promise<EdgeTypeSchema[]> {
-    const rows = await this.db.select().from(customEdgeTypes).all();
+    const rows = await this.db.select().from(edgeTypes).all();
     return rows.map(parseRow);
   }
 
   async get(id: string): Promise<EdgeTypeSchema | undefined> {
     const row = await this.db
       .select()
-      .from(customEdgeTypes)
-      .where(eq(customEdgeTypes.id, id))
+      .from(edgeTypes)
+      .where(eq(edgeTypes.id, id))
       .get();
     return row ? parseRow(row) : undefined;
   }
@@ -37,7 +37,7 @@ export class SqliteEdgeTypeStore implements EdgeTypeStore {
     }
     const now = new Date().toISOString();
     await this.db
-      .insert(customEdgeTypes)
+      .insert(edgeTypes)
       .values({
         id: schema.id,
         schema: JSON.stringify(schema),
@@ -49,14 +49,6 @@ export class SqliteEdgeTypeStore implements EdgeTypeStore {
   }
 
   async delete(id: string): Promise<void> {
-    await this.db
-      .delete(customEdgeTypes)
-      .where(eq(customEdgeTypes.id, id))
-      .run();
-  }
-
-  async loadCustomEdgeTypes(): Promise<EdgeTypeSchema[]> {
-    const rows = await this.db.select().from(customEdgeTypes).all();
-    return rows.map(parseRow);
+    await this.db.delete(edgeTypes).where(eq(edgeTypes.id, id)).run();
   }
 }

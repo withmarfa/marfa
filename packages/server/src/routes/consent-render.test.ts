@@ -2005,7 +2005,7 @@ describe("buildScopeDescriptions covers every kind a person can be shown", () =>
 
   it("derives a wildcard for a root this build has never heard of", () => {
     // The property that makes the rule a rule. `buildAllowedScopes` folds in
-    // publisher roots boot installs from the `custom_types` table, so a
+    // publisher roots boot installs from the `types` table, so a
     // wildcard can reach a consent screen on a running instance that no list
     // written here could name. A table closes today's set and reopens on the
     // next integration; this is the case that tells the two apart.

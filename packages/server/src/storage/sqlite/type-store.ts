@@ -10,7 +10,7 @@ import type { SeededPlatformType, TypeSchema } from "@withmarfa/shared";
 import { and, eq, inArray, ne, sql } from "drizzle-orm";
 import type { LoadedType, TypeProvenance, TypeStore } from "../interface.js";
 import { safeJsonParse } from "../json-utils.js";
-import { customTypes } from "./schema.js";
+import { types } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
 import { toLoadedTypes } from "../loaded-types.js";
 
@@ -32,7 +32,7 @@ export class SqliteTypeStore implements TypeStore {
     const now = new Date().toISOString();
     try {
       await this.db.run(sql`
-        INSERT INTO custom_types (id, schema, origin, family, owner_integration, created_at, updated_at)
+        INSERT INTO types (id, schema, origin, family, owner_integration, created_at, updated_at)
         VALUES (${schema.id}, ${JSON.stringify(schema)}, ${provenance?.origin ?? "user"}, ${provenance?.family ?? null}, ${provenance?.owner_integration ?? null}, ${now}, ${now})
       `);
     } catch (err: unknown) {
@@ -54,7 +54,7 @@ export class SqliteTypeStore implements TypeStore {
   async update(id: string, schema: TypeSchema): Promise<TypeSchema> {
     const now = new Date().toISOString();
     await this.db.run(sql`
-      UPDATE custom_types SET schema = ${JSON.stringify(schema)}, updated_at = ${now}
+      UPDATE types SET schema = ${JSON.stringify(schema)}, updated_at = ${now}
       WHERE id = ${id}
     `);
     registerTypeSchema(schema);
@@ -62,11 +62,11 @@ export class SqliteTypeStore implements TypeStore {
   }
 
   async delete(id: string): Promise<void> {
-    await this.db.run(sql`DELETE FROM custom_types WHERE id = ${id}`);
+    await this.db.run(sql`DELETE FROM types WHERE id = ${id}`);
     unregisterTypeSchema(id);
   }
 
-  async listCustom(): Promise<TypeSchema[]> {
+  async listRegistered(): Promise<TypeSchema[]> {
     // `origin != 'platform'` is load-bearing, not a tidy-up. The shipped
     // vocabulary lives in this table now, so "the instance's own
     // registrations" has to say so explicitly. Without it an archive would
@@ -75,7 +75,7 @@ export class SqliteTypeStore implements TypeStore {
     // locked type.
     const rows = await this.db
       .select()
-      .from(customTypes)
+      .from(types)
       .where(sql`origin != 'platform'`)
       .all();
     const results: TypeSchema[] = [];
@@ -83,28 +83,28 @@ export class SqliteTypeStore implements TypeStore {
       const parsed = safeJsonParse<TypeSchema | null>(
         row.schema,
         null,
-        `custom_types.schema[${row.id}]`,
+        `types.schema[${row.id}]`,
       );
       if (parsed) results.push(parsed);
     }
     return results;
   }
 
-  async listCustomWithProvenance(): Promise<LoadedType[]> {
-    // Same row set as `listCustom`, carrying the provenance columns. The
+  async listRegisteredWithProvenance(): Promise<LoadedType[]> {
+    // Same row set as `listRegistered`, carrying the provenance columns. The
     // `origin != 'platform'` filter is load-bearing for the same reason
     // it is there: the shipped vocabulary shares this table, so "the
     // instance's own registrations" has to say so explicitly.
     const rows = await this.db
       .select()
-      .from(customTypes)
+      .from(types)
       .where(sql`origin != 'platform'`)
       .all();
     return toLoadedTypes(rows);
   }
 
-  async loadCustomTypes(): Promise<LoadedType[]> {
-    const rows = await this.db.select().from(customTypes).all();
+  async loadAll(): Promise<LoadedType[]> {
+    const rows = await this.db.select().from(types).all();
     return toLoadedTypes(rows);
   }
 
@@ -122,24 +122,24 @@ export class SqliteTypeStore implements TypeStore {
       // identifier somebody already registered rewrote their schema
       // unattended on the next boot.
       await this.db.run(sql`
-        INSERT INTO custom_types (id, schema, origin, family, owner_integration, created_at, updated_at)
+        INSERT INTO types (id, schema, origin, family, owner_integration, created_at, updated_at)
         VALUES (${schema.id}, ${JSON.stringify(schema)}, 'platform', ${family}, NULL, ${now}, ${now})
         ON CONFLICT (id) DO UPDATE SET
           schema = excluded.schema,
           origin = 'platform',
           family = excluded.family,
           updated_at = ${now}
-        WHERE custom_types.origin = 'platform'
+        WHERE types.origin = 'platform'
       `);
     }
     const rows = await this.db
-      .select({ id: customTypes.id })
-      .from(customTypes)
+      .select({ id: types.id })
+      .from(types)
       .where(
         and(
-          ne(customTypes.origin, "platform"),
+          ne(types.origin, "platform"),
           inArray(
-            customTypes.id,
+            types.id,
             seeded.map(({ schema }) => schema.id),
           ),
         ),
@@ -150,16 +150,16 @@ export class SqliteTypeStore implements TypeStore {
 
   async deletePlatformType(id: string): Promise<boolean> {
     const deleted = await this.db
-      .delete(customTypes)
-      .where(and(eq(customTypes.id, id), eq(customTypes.origin, "platform")))
-      .returning({ id: customTypes.id });
+      .delete(types)
+      .where(and(eq(types.id, id), eq(types.origin, "platform")))
+      .returning({ id: types.id });
     return deleted.length > 0;
   }
 
-  async countCustom(): Promise<number> {
+  async countRegistered(): Promise<number> {
     const row = await this.db
       .select({ count: sql<number>`count(*)` })
-      .from(customTypes)
+      .from(types)
       .where(sql`origin != 'platform'`)
       .get();
     return row?.count ?? 0;

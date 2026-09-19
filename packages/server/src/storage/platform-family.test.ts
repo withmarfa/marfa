@@ -104,7 +104,7 @@ describe("projectPlatformRows", () => {
       "error",
       expect.stringContaining("family"),
       expect.objectContaining({
-        table: "custom_types",
+        table: "types",
         column: "family",
         row_id: "system.webhook",
         projected_as: "system",

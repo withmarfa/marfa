@@ -1,13 +1,17 @@
 /**
  * An archive has to carry the registrations its items depend on.
  *
- * A space's items can be of types the space registered itself, and a
- * restore into an empty space had no way to learn about them: every such
- * item failed as an unknown type while the restore reported success on
- * whatever was left. These tests pin the round trip end to end — export a
- * space with a custom type and a custom edge type, restore onto a fresh
- * database, and create a *new* item of the restored type, which proves
- * the live registry and not just the table.
+ * A space's items can be of types the space registered itself, so a restore
+ * into an empty space that did not learn about them would fail every such
+ * item as an unknown type while reporting success on whatever was left.
+ * These tests pin the round trip end to end — export a space with its own
+ * type and edge type, restore onto a fresh database, and create a *new*
+ * item of the restored type, which proves the live registry and not just
+ * the table.
+ *
+ * The refusals matter as much as the round trip, because the failure this
+ * file guards against is quiet by construction: a registration nothing reads
+ * is not an error anywhere, it is four zeros in a `200`.
  */
 
 import { createGunzip, createGzip } from "node:zlib";
@@ -68,10 +72,10 @@ async function repack(
 
 interface RestoreResult {
   imported: number;
-  custom_types_registered: number;
-  custom_types_skipped: number;
-  custom_edge_types_registered: number;
-  custom_edge_types_skipped: number;
+  types_registered: number;
+  types_skipped: number;
+  edge_types_registered: number;
+  edge_types_skipped: number;
 }
 
 const contexts: TestContext[] = [];
@@ -114,7 +118,7 @@ async function restore(ctx: TestContext, archive: Buffer): Promise<Response> {
   });
 }
 
-describe("archives carry custom type registrations", () => {
+describe("archives carry type registrations", () => {
   it("round-trips a space whose items use its own types", async () => {
     const source = await newContext();
     const destination = await newContext();
@@ -163,11 +167,11 @@ describe("archives carry custom type registrations", () => {
     const entries = await extractArchive(archive);
     expect(entries.has("types.ndjson")).toBe(true);
     const manifest = JSON.parse(entries.get("manifest.json")!.toString()) as {
-      custom_type_count: number;
-      custom_edge_type_count: number;
+      type_count: number;
+      edge_type_count: number;
     };
-    expect(manifest.custom_type_count).toBe(1);
-    expect(manifest.custom_edge_type_count).toBe(1);
+    expect(manifest.type_count).toBe(1);
+    expect(manifest.edge_type_count).toBe(1);
 
     const res = await restore(destination, archive);
     expect(
@@ -175,8 +179,8 @@ describe("archives carry custom type registrations", () => {
       `restore -> ${String(res.status)}: ${await res.clone().text()}`,
     ).toBe(200);
     const result = (await res.json()) as RestoreResult;
-    expect(result.custom_types_registered).toBe(1);
-    expect(result.custom_edge_types_registered).toBe(1);
+    expect(result.types_registered).toBe(1);
+    expect(result.edge_types_registered).toBe(1);
     // The item of the custom type landed, which is what used to fail.
     expect(result.imported).toBe(2);
 
@@ -193,7 +197,7 @@ describe("archives carry custom type registrations", () => {
     // registry itself: it is a process-level singleton that both contexts
     // share, so it would answer for the source's registration whatever
     // the restore did. The rows are the part this test can actually own.
-    const destTypes = await destination.storage.types.listCustom();
+    const destTypes = await destination.storage.types.listRegistered();
     expect(destTypes.map((s) => s.id)).toContain(typeId);
     const destEdgeTypes = await destination.storage.edgeTypes.list();
     expect(destEdgeTypes.map((s) => s.id)).toContain(edgeTypeId);
@@ -254,7 +258,7 @@ describe("archives carry custom type registrations", () => {
       `restore -> ${String(res.status)}: ${await res.clone().text()}`,
     ).toBe(200);
     const result = (await res.json()) as RestoreResult;
-    expect(result.custom_types_registered).toBe(2);
+    expect(result.types_registered).toBe(2);
     expect(result.imported).toBe(1);
   });
 
@@ -283,14 +287,14 @@ describe("archives carry custom type registrations", () => {
     const first = (await (
       await restore(destination, archive)
     ).json()) as RestoreResult;
-    expect(first.custom_types_registered).toBe(1);
-    expect(first.custom_types_skipped).toBe(0);
+    expect(first.types_registered).toBe(1);
+    expect(first.types_skipped).toBe(0);
 
     const second = (await (
       await restore(destination, archive)
     ).json()) as RestoreResult;
-    expect(second.custom_types_registered).toBe(0);
-    expect(second.custom_types_skipped).toBe(1);
+    expect(second.types_registered).toBe(0);
+    expect(second.types_skipped).toBe(1);
   });
 
   it("refuses an archive that redefines a type the space already holds", async () => {
@@ -355,7 +359,7 @@ describe("archives carry custom type registrations", () => {
     const tampered = await repack(entries, {
       "types.ndjson":
         JSON.stringify({
-          custom_type: {
+          type: {
             id: "core.evil",
             name: "Evil",
             description: "Should never register.",
@@ -387,7 +391,7 @@ describe("archives carry custom type registrations", () => {
     const tampered = await repack(entries, {
       "types.ndjson":
         JSON.stringify({
-          custom_type: {
+          type: {
             id: `user.garbage_${uniqueSuffix()}`,
             name: "Garbage",
             description: "Field type is not a field type.",
@@ -434,7 +438,7 @@ describe("archives carry custom type registrations", () => {
     const link = (n: number): string => `user.deep${String(n)}_${suffix}`;
     const chain = Array.from({ length: 12 }, (_, n) =>
       JSON.stringify({
-        custom_type: {
+        type: {
           id: link(n),
           name: `Deep ${String(n)}`,
           description: "One link of a chain built to outrun the cap.",
@@ -470,7 +474,7 @@ describe("archives carry custom type registrations", () => {
     const tampered = await repack(entries, {
       "types.ndjson":
         JSON.stringify({
-          custom_edge_type: { id: "about", cardinality: "one-to-one" },
+          edge_type: { id: "about", cardinality: "one-to-one" },
         }) + "\n",
     });
 
@@ -478,7 +482,7 @@ describe("archives carry custom type registrations", () => {
     expect(res.status).toBe(409);
   });
 
-  it("restores an archive that predates the types member", async () => {
+  it("restores an archive carrying no registrations", async () => {
     const source = await newContext();
     const destination = await newContext();
     await source.storage.items.create({
@@ -490,14 +494,94 @@ describe("archives carry custom type registrations", () => {
 
     const entries = await extractArchive(await exportArchive(source));
     entries.delete("types.ndjson");
-    const older = await repack(entries, {});
+    const withoutTypes = await repack(entries, {});
 
-    const res = await restore(destination, older);
+    const res = await restore(destination, withoutTypes);
     expect(res.status).toBe(200);
     const result = (await res.json()) as RestoreResult;
     expect(result.imported).toBe(1);
-    expect(result.custom_types_registered).toBe(0);
-    expect(result.custom_edge_types_registered).toBe(0);
+    expect(result.types_registered).toBe(0);
+    expect(result.edge_types_registered).toBe(0);
+  });
+
+  it("refuses the archive version that spelled the registrations differently", async () => {
+    // Version 1 named them `custom_type` and `custom_edge_type`, and this
+    // build reads neither. Without the manifest gate the restore would parse
+    // such an archive to nothing and answer 200 with the counters at zero —
+    // the same response as the case directly above, which is the one shape
+    // an operator has no way to tell apart.
+    const source = await newContext();
+    const destination = await newContext();
+    await source.storage.items.create({
+      type: "core.note",
+      properties: { body: "written by an older build" },
+      source: "at-v1",
+      source_id: "v1",
+    });
+
+    const entries = await extractArchive(await exportArchive(source));
+    const manifest = JSON.parse(
+      entries.get("manifest.json")!.toString(),
+    ) as Record<string, unknown>;
+    manifest.version = 1;
+    manifest.format = "marfa-archive-v1";
+
+    const res = await restore(
+      destination,
+      await repack(entries, { "manifest.json": JSON.stringify(manifest) }),
+    );
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("validation_error");
+
+    // And nothing landed, so the refusal is not a report on a partial write.
+    const items = await destination.storage.items.list({ limit: 10 });
+    expect(items.data).toHaveLength(0);
+  });
+
+  it("refuses a types line naming neither member", async () => {
+    // Past the version gate, so this is a line the exporter did not write:
+    // hand-edited, damaged, or from a build nobody has. It has to be refused
+    // rather than skipped, because every check this file exercises — the
+    // reserved namespace, the claimed platform origin, the reserved family —
+    // lives inside one of the two branches a skipped line never enters.
+    const source = await newContext();
+    const destination = await newContext();
+    const typeId = `salvage.stray_${uniqueSuffix()}`;
+
+    await source.storage.types.create(
+      {
+        id: typeId,
+        version: 1,
+        fields: { name: { type: "string", required: true } },
+      },
+      { origin: "user" },
+    );
+
+    const entries = await extractArchive(await exportArchive(source));
+    const relabeled = (entries.get("types.ndjson")?.toString() ?? "")
+      .split("\n")
+      .filter((l) => l.trim().length > 0)
+      .map((line) => {
+        const parsed = JSON.parse(line) as Record<string, unknown>;
+        parsed.custom_type = parsed.type;
+        delete parsed.type;
+        return JSON.stringify(parsed);
+      })
+      .join("\n");
+
+    const res = await restore(
+      destination,
+      await repack(entries, { "types.ndjson": relabeled + "\n" }),
+    );
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as {
+      error: { code: string; message: string };
+    };
+    expect(body.error.code).toBe("validation_error");
+    // The message names what it found, so the operator can see the archive
+    // is carrying a member this build does not read.
+    expect(body.error.message).toContain("custom_type");
   });
 });
 
@@ -512,7 +596,7 @@ describe("an archive carries where a type came from", () => {
     ctx: TestContext,
     typeId: string,
   ): Promise<string | undefined> {
-    const rows = await ctx.storage.types.listCustomWithProvenance();
+    const rows = await ctx.storage.types.listRegisteredWithProvenance();
     return rows.find((r) => r.schema.id === typeId)?.origin;
   }
 
@@ -541,8 +625,8 @@ describe("an archive carries where a type came from", () => {
   });
 
   it("records an archive with no provenance as unrecorded", async () => {
-    // Every archive taken before exports carried provenance looks like
-    // this. `unknown` is a real answer rather than a missing one: it is
+    // A line the exporter did not write — hand-edited, or damaged in
+    // transit. `unknown` is a real answer rather than a missing one: it is
     // what lets the consent screen offer the root read-only instead of
     // guessing, and guessing defaulted to the permissive side.
     const source = await newContext();
@@ -598,7 +682,7 @@ describe("an archive carries where a type came from", () => {
       .filter((l) => l.trim().length > 0)
       .map((line) => {
         const parsed = JSON.parse(line) as Record<string, unknown>;
-        if (parsed.custom_type) {
+        if (parsed.type) {
           parsed.provenance = { origin: "something-later" };
         }
         return JSON.stringify(parsed);
@@ -635,7 +719,7 @@ describe("an archive carries where a type came from", () => {
       .filter((l) => l.trim().length > 0)
       .map((line) => {
         const parsed = JSON.parse(line) as Record<string, unknown>;
-        if (parsed.custom_type) parsed.provenance = { origin: "platform" };
+        if (parsed.type) parsed.provenance = { origin: "platform" };
         return JSON.stringify(parsed);
       })
       .join("\n");
@@ -669,7 +753,7 @@ describe("an archive carries where a type came from", () => {
       .filter((l) => l.trim().length > 0)
       .map((line) => {
         const parsed = JSON.parse(line) as Record<string, unknown>;
-        if (parsed.custom_type) {
+        if (parsed.type) {
           parsed.provenance = { origin: "user", family: "core" };
         }
         return JSON.stringify(parsed);
@@ -719,7 +803,7 @@ describe("a claimed `user` origin is checked against the handle", () => {
     ) as Record<string, unknown>;
     const line =
       JSON.stringify({
-        custom_type: { id: typeId, ...baseType },
+        type: { id: typeId, ...baseType },
         provenance,
       }) + "\n";
     return await repack(entries, {
@@ -732,7 +816,7 @@ describe("a claimed `user` origin is checked against the handle", () => {
     ctx: TestContext,
     typeId: string,
   ): Promise<string | undefined> {
-    const rows = await ctx.storage.types.listCustomWithProvenance();
+    const rows = await ctx.storage.types.listRegisteredWithProvenance();
     return rows.find((r) => r.schema.id === typeId)?.origin;
   }
 

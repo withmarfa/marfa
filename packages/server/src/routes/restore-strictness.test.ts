@@ -54,8 +54,8 @@ async function buildArchive(opts: {
   pack.pipe(gzip);
 
   const manifest = {
-    version: 1,
-    format: "marfa-archive-v1",
+    version: 2,
+    format: "marfa-archive-v2",
     created_at: new Date().toISOString(),
     item_count: opts.itemLines.length,
     edge_count: opts.edgeLines.length,

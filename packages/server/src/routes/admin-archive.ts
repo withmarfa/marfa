@@ -4,7 +4,7 @@
  * Dedicated archive-import endpoint. Content-type is
  * `application/gzip` (not JSON); response is `{imported, duplicates,
  * edges_imported, edges_skipped, blobs_imported}`. Enforces the
- * manifest v1 contract, blob-hash verification, and a single import
+ * manifest version 2 contract, blob-hash verification, and a single import
  * transaction covering items, metadata, and edges.
  *
  * Item ids are preserved from the archive so restored edges resolve;
@@ -83,8 +83,7 @@ interface ArchiveManifest {
   format: string;
   created_at: string;
   item_count: number;
-  /** Absent on archives predating edge support; those restore with zero edges. */
-  edge_count?: number;
+  edge_count: number;
   blob_count: number;
   blobs: Record<string, { mime_type: string; size: number }>;
 }
@@ -96,7 +95,7 @@ const restoreArchiveRoute = createRoute({
   tags: ["Admin"],
   summary: "Restore types, items, edges, metadata, and blobs from an archive",
   description:
-    "Ingests a `marfa-archive-v1.tar.gz` produced by `GET /export?format=archive`. The archive's custom type and edge-type registrations are validated and registered first, so a restore into an empty instance can write the items that use them; a registration the instance already holds identically is skipped, and one it holds differently fails the whole restore with `409` naming every clashing id. Item ids are preserved so restored edges resolve; an id or natural-key collision counts as a duplicate and leaves the existing row untouched. Tags and extensions restore with their items; edges restore in a second pass, skipped (and counted) when either endpoint does not resolve. A row comes back at the version it was archived at, for items and edges alike, so a client holding a version across a restore cannot have its precondition pass against content it never read. Version *history* — the per-version snapshots behind `GET /items/{id}?include=versions` — and row timestamps are re-stamped, not carried.",
+    "Ingests a `marfa-archive-v2.tar.gz` produced by `GET /export?format=archive`. The archive's type and edge-type registrations are validated and registered first, so a restore into an empty instance can write the items that use them; a registration the instance already holds identically is skipped, and one it holds differently fails the whole restore with `409` naming every clashing id. Item ids are preserved so restored edges resolve; an id or natural-key collision counts as a duplicate and leaves the existing row untouched. Tags and extensions restore with their items; edges restore in a second pass, skipped (and counted) when either endpoint does not resolve. A row comes back at the version it was archived at, for items and edges alike, so a client holding a version across a restore cannot have its precondition pass against content it never read. Version *history* — the per-version snapshots behind `GET /items/{id}?include=versions` — and row timestamps are re-stamped, not carried.",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -121,10 +120,10 @@ const restoreArchiveRoute = createRoute({
              *  tell an operator which they got. */
             edges_skipped_reasons: z.record(z.string(), z.number()),
             blobs_imported: z.number(),
-            custom_types_registered: z.number(),
-            custom_types_skipped: z.number(),
-            custom_edge_types_registered: z.number(),
-            custom_edge_types_skipped: z.number(),
+            types_registered: z.number(),
+            types_skipped: z.number(),
+            edge_types_registered: z.number(),
+            edge_types_skipped: z.number(),
           }),
         },
       },
@@ -324,11 +323,16 @@ export function adminArchiveRoutes(storage: Storage, blobBackend: BlobBackend) {
           if (header.name === "manifest.json") {
             try {
               manifest = JSON.parse(buf.toString("utf-8")) as ArchiveManifest;
-              if (manifest.version !== 1) {
+              if (manifest.version !== 2) {
                 reject(
                   new MarfaError(
                     ErrorCode.VALIDATION_ERROR,
-                    `Unsupported archive version: ${String(manifest.version)}`,
+                    // Version 1 named the registrations in `types.ndjson`
+                    // `custom_type` and `custom_edge_type`. This build reads
+                    // neither, and there is no fallback key, so the refusal
+                    // has to be here: parsing a version 1 archive would drop
+                    // every registration it carries and answer 200.
+                    `Unsupported archive version: ${String(manifest.version)}. This build reads version 2 only, and nothing converts an older one: a version 1 archive is readable by the build that wrote it and by nothing here.`,
                   ),
                 );
                 return;
@@ -601,8 +605,8 @@ export function adminArchiveRoutes(storage: Storage, blobBackend: BlobBackend) {
           // would cost the whole restore over one bad line, and this route's
           // contract is to skip and count.
           //
-          // Custom edge types resolve because the archive's own registrations
-          // are replayed before this loop runs.
+          // Registered edge types resolve because the archive's own
+          // registrations are replayed before this loop runs.
           try {
             await assertEdgesCanBeCreated(storage.edges, storage.items, [
               {
@@ -703,10 +707,10 @@ export function adminArchiveRoutes(storage: Storage, blobBackend: BlobBackend) {
         edges_skipped: result.edgesSkipped,
         edges_skipped_reasons: result.edgesSkippedReasons,
         blobs_imported: blobCount,
-        custom_types_registered: typeResult.typesRegistered,
-        custom_types_skipped: typeResult.typesSkipped,
-        custom_edge_types_registered: typeResult.edgeTypesRegistered,
-        custom_edge_types_skipped: typeResult.edgeTypesSkipped,
+        types_registered: typeResult.typesRegistered,
+        types_skipped: typeResult.typesSkipped,
+        edge_types_registered: typeResult.edgeTypesRegistered,
+        edge_types_skipped: typeResult.edgeTypesSkipped,
         total_items: items.length,
         total_edges: edges.length,
       },
@@ -720,10 +724,10 @@ export function adminArchiveRoutes(storage: Storage, blobBackend: BlobBackend) {
         edges_skipped: result.edgesSkipped,
         edges_skipped_reasons: result.edgesSkippedReasons,
         blobs_imported: blobCount,
-        custom_types_registered: typeResult.typesRegistered,
-        custom_types_skipped: typeResult.typesSkipped,
-        custom_edge_types_registered: typeResult.edgeTypesRegistered,
-        custom_edge_types_skipped: typeResult.edgeTypesSkipped,
+        types_registered: typeResult.typesRegistered,
+        types_skipped: typeResult.typesSkipped,
+        edge_types_registered: typeResult.edgeTypesRegistered,
+        edge_types_skipped: typeResult.edgeTypesSkipped,
       },
       200,
     );

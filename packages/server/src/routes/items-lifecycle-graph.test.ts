@@ -261,8 +261,8 @@ describe("POST /admin/restore-archive — an archive replays a state the create 
     const archiveId = generateId();
     const archive = await buildArchive(
       {
-        version: 1,
-        format: "marfa-archive-v1",
+        version: 2,
+        format: "marfa-archive-v2",
         created_at: new Date().toISOString(),
         item_count: 1,
         blob_count: 0,

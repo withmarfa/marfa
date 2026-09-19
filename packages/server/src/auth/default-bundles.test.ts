@@ -2,9 +2,9 @@ import { describe, expect, it } from "vitest";
 import { TYPE_REGISTRY, classifyNamespace } from "@withmarfa/shared";
 import {
   buildDefaultPermissionBundles,
-  deriveCustomTypeNamespaces,
-  resolveAllRuntimeCustomNamespaces,
-  resolveRuntimeCustomNamespaces,
+  deriveRequestableNamespaceRoots,
+  resolveAllRegisteredNamespaceRoots,
+  resolveRegisteredNamespaceRoots,
 } from "./default-bundles.js";
 import { createTestContext, request } from "../test-utils.js";
 
@@ -69,8 +69,8 @@ describe("default permission bundles derive from the registry", () => {
     expect(systemScopes).toEqual(["system.connection:read"]);
   });
 
-  it("derives the custom-namespace roots from the registry", () => {
-    const roots = deriveCustomTypeNamespaces();
+  it("derives the requestable namespace roots from the registry", () => {
+    const roots = deriveRequestableNamespaceRoots();
     expect(roots).toContain("user");
     expect(roots).toContain("app");
     for (const id of TYPE_REGISTRY.keys()) {
@@ -127,7 +127,7 @@ describe("runtime custom-namespace resolution", () => {
         });
         expect(res.status).toBe(201);
       }
-      const roots = await resolveRuntimeCustomNamespaces(ctx.storage);
+      const roots = await resolveRegisteredNamespaceRoots(ctx.storage);
       expect(roots.own).toEqual(["acme"]);
     } finally {
       await ctx.cleanup();
@@ -163,7 +163,7 @@ describe("runtime custom-namespace resolution", () => {
         },
       );
 
-      const roots = await resolveRuntimeCustomNamespaces(ctx.storage);
+      const roots = await resolveRegisteredNamespaceRoots(ctx.storage);
       expect(roots.own).toEqual(["jonah"]);
       expect(roots.connected).toEqual(["acme"]);
 
@@ -186,7 +186,7 @@ describe("runtime custom-namespace resolution", () => {
       // The allowlist is a different question and keeps both: a scope
       // outside it cannot be granted at all, so the integration's own
       // types have to be in it for the integration to reach them.
-      expect(await resolveAllRuntimeCustomNamespaces(ctx.storage)).toEqual([
+      expect(await resolveAllRegisteredNamespaceRoots(ctx.storage)).toEqual([
         "acme",
         "jonah",
       ]);
@@ -216,7 +216,7 @@ describe("a type whose provenance nobody recorded", () => {
         { origin: "unknown" },
       );
 
-      const roots = await resolveRuntimeCustomNamespaces(ctx.storage);
+      const roots = await resolveRegisteredNamespaceRoots(ctx.storage);
       expect(roots.ownReadOnly).toEqual(["salvage"]);
       expect(roots.own).toEqual([]);
       expect(roots.connected).toEqual([]);
@@ -247,7 +247,7 @@ describe("a type whose provenance nobody recorded", () => {
         { origin: "unknown" },
       );
 
-      const roots = await resolveRuntimeCustomNamespaces(ctx.storage);
+      const roots = await resolveRegisteredNamespaceRoots(ctx.storage);
       expect(roots.own).toEqual(["salvage"]);
       expect(roots.ownReadOnly).toEqual(["salvage"]);
 
@@ -272,7 +272,7 @@ describe("the read-only bucket obeys the same filters as the others", () => {
     // `connected`, and a reserved root can hold no custom type at all, so
     // either one arriving here would be offering something twice or
     // offering something that cannot exist.
-    const registryRoot = deriveCustomTypeNamespaces().find(
+    const registryRoot = deriveRequestableNamespaceRoots().find(
       (ns) => ns !== "user" && ns !== "app",
     );
     expect(registryRoot).toBeDefined();

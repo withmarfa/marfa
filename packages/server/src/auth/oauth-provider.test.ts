@@ -6,7 +6,10 @@ import {
   EDGE_TYPE_REGISTRY,
   parseScope,
 } from "@withmarfa/shared";
-import { buildAllowedScopes, customTypeNamespaces } from "./oauth-provider.js";
+import {
+  buildAllowedScopes,
+  requestableNamespaceRoots,
+} from "./oauth-provider.js";
 import {
   DEFAULT_PERMISSION_BUNDLES,
   loadPermissionBundles,
@@ -80,7 +83,7 @@ describe("buildAllowedScopes", () => {
   });
 
   it("admits runtime namespace roots for items and edges alike", () => {
-    // The roots boot installs from the custom_types table, spanning every
+    // The roots boot installs from the types table, spanning every
     // space. Admission is what lets a space's own publisher-handle scopes
     // survive the authorize narrowing at all — without it the request is
     // silently stripped before consent and the capability is inert.
@@ -188,7 +191,7 @@ describe("permission bundles bind to the type registry", () => {
     "metadata.edge_types:write",
   ]);
   const runtimeNamespaces = new Set<string>(
-    customTypeNamespaces().map((ns) => `${ns}.`),
+    requestableNamespaceRoots().map((ns) => `${ns}.`),
   );
 
   it("names only types and edge types that exist", () => {

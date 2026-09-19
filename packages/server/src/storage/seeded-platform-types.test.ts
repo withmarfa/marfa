@@ -1,16 +1,14 @@
 /**
- * The seeded platform vocabulary lives in `custom_types`, and must stay
- * invisible to every surface that means "what this space registered".
+ * The seeded platform vocabulary lives in `types`, and must stay invisible
+ * to every surface that means "what this instance was given".
  *
- * This is the sharp edge of making the shipped set data. Three surfaces read
- * that table and all three meant "custom" as "not shipped", which was true
- * for free while the shipped set was compiled in. Seeding broke that
- * assumption silently: an archive began carrying the platform set as though
- * the space had registered it, and the restore replaying it was refused for
- * registering a locked type.
- *
- * The failures were caught by unrelated suites. This one names the invariant
- * so the next change to the table meets it directly.
+ * This is the sharp edge of the shipped set being data rather than code: it
+ * shares one table with the registrations, and only the `origin` column
+ * tells them apart. A reader that forgets the column puts the platform set
+ * into an archive as though somebody had registered it, and the restore
+ * replaying that archive is then refused for registering a locked type.
+ * Nothing about the mistake is local to the reader that makes it, which is
+ * why the invariant is asserted here rather than left to each one.
  */
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import { createTestContext, type TestContext } from "../test-utils.js";
@@ -32,7 +30,7 @@ describe("the seeded platform set", () => {
   });
 
   it("is stored as rows carrying platform provenance", async () => {
-    const loaded = await ctx.storage.types.loadCustomTypes();
+    const loaded = await ctx.storage.types.loadAll();
     const note = loaded.find((row) => row.schema.id === "core.note");
     expect(note?.origin).toBe("platform");
     expect(note?.family).toBe("core");
@@ -43,14 +41,14 @@ describe("the seeded platform set", () => {
 
   it("never appears in a space's own registrations", async () => {
     // What an archive carries, and what a restore replays.
-    const own = await ctx.storage.types.listCustom();
+    const own = await ctx.storage.types.listRegistered();
     expect(own.map((t) => t.id)).not.toContain("core.note");
   });
 
-  it("is not counted as a custom type", async () => {
+  it("is not counted as a registration", async () => {
     // The operator metric answers "how many types has this instance been
     // given", not "how many does the platform ship".
-    expect(await ctx.storage.types.countCustom()).toBe(0);
+    expect(await ctx.storage.types.countRegistered()).toBe(0);
   });
 
   it("stays locked against modification and deletion", async () => {

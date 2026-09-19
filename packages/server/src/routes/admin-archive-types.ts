@@ -1,6 +1,6 @@
 /**
- * Registering the custom types an archive carries, before the restore
- * writes anything that needs them.
+ * Registering the types an archive carries, before the restore writes
+ * anything that needs them.
  *
  * A space's items can be of types the space registered itself, and until
  * the archive carried those registrations a restore into an empty space
@@ -36,11 +36,11 @@ export const MAX_ARCHIVE_TYPES = 200;
 export const MAX_ARCHIVE_EDGE_TYPES = 200;
 
 export interface ArchiveTypeEntry {
-  custom_type?: unknown;
-  custom_edge_type?: unknown;
-  /** Provenance for the `custom_type` on the same line. Absent in every
-   *  archive taken before exports carried it, which is what `unknown`
-   *  exists to record. */
+  type?: unknown;
+  edge_type?: unknown;
+  /** Provenance for the `type` on the same line. Optional because a line
+   *  can be hand-written or damaged, not because any archive this build
+   *  reads omits it. */
   provenance?: unknown;
 }
 
@@ -115,7 +115,7 @@ function normalizeForCompare(schema: TypeSchema): TypeSchema {
  * hostile archive fails loudly instead of half-landing:
  *
  * - **`origin: "platform"`.** `projectPlatformRows` filters `origin !== "platform"`
- *   over a `loadCustomTypes()` that reads the whole table. A restore writes
+ *   over a `loadAll()` that reads the whole table. A restore writes
  *   into the same table the platform seed uses, so a replayed `platform` claim
  *   would seed an attacker-chosen type into the registry at the next boot,
  *   undeletable, and `default_on` in the connected bundle.
@@ -181,8 +181,9 @@ function provenanceFor(
     return { origin: "user" };
   }
 
-  // Recorded as unrecorded. Covers an archive predating provenance, and an
-  // origin a newer build wrote that this one does not know.
+  // Recorded as unrecorded, which is the fail-closed answer: an origin a
+  // newer build wrote that this one does not know earns the read-only
+  // treatment rather than a wildcard nobody claimed.
   return { origin: "unknown" };
 }
 
@@ -194,8 +195,8 @@ function parseTypeEntries(entries: ArchiveTypeEntry[]): {
   const edgeTypes: EdgeTypeSchema[] = [];
 
   for (const entry of entries) {
-    if (entry.custom_type !== undefined) {
-      const raw = entry.custom_type as { id?: unknown };
+    if (entry.type !== undefined) {
+      const raw = entry.type as { id?: unknown };
       if (typeof raw.id !== "string" || !isValidTypeIdentifier(raw.id)) {
         throw new MarfaError(
           ErrorCode.INVALID_TYPE,
@@ -215,7 +216,7 @@ function parseTypeEntries(entries: ArchiveTypeEntry[]): {
           { namespace: tier },
         );
       }
-      const result = validateTypeSchema(entry.custom_type);
+      const result = validateTypeSchema(entry.type);
       if (!result.success) {
         throw new MarfaError(
           ErrorCode.INVALID_SCHEMA,
@@ -230,15 +231,15 @@ function parseTypeEntries(entries: ArchiveTypeEntry[]): {
       continue;
     }
 
-    if (entry.custom_edge_type !== undefined) {
-      const raw = entry.custom_edge_type as { id?: unknown };
+    if (entry.edge_type !== undefined) {
+      const raw = entry.edge_type as { id?: unknown };
       if (typeof raw.id === "string" && isCoreEdgeType(raw.id)) {
         throw new MarfaError(
           ErrorCode.CONFLICT,
           `Archive carries "${raw.id}", which is a core edge type and cannot be redefined`,
         );
       }
-      const parsed = EdgeTypeRequestSchema.safeParse(entry.custom_edge_type);
+      const parsed = EdgeTypeRequestSchema.safeParse(entry.edge_type);
       if (!parsed.success) {
         throw new MarfaError(
           ErrorCode.VALIDATION_ERROR,
@@ -273,7 +274,22 @@ function parseTypeEntries(entries: ArchiveTypeEntry[]): {
           FieldDefinition
         >,
       });
+      continue;
     }
+
+    // A line naming neither key is refused rather than skipped.
+    //
+    // Every refusal this function exists for — a reserved namespace, a
+    // claimed platform origin, a reserved family, a core edge type — lives
+    // inside one of the two branches above, so a line that falls past both
+    // is a line nothing checked. Dropping it silently is the worst of the
+    // available answers: an archive whose registrations all fall through
+    // restores as `200` with four zeros, which is exactly the shape of an
+    // archive that genuinely carried none.
+    throw new MarfaError(
+      ErrorCode.VALIDATION_ERROR,
+      `Archive carries a types.ndjson line naming neither "type" nor "edge_type": {${Object.keys(entry).join(", ")}}`,
+    );
   }
 
   return { types, edgeTypes };
@@ -304,13 +320,13 @@ export async function registerArchiveTypes(
   if (types.length > MAX_ARCHIVE_TYPES) {
     throw new MarfaError(
       ErrorCode.VALIDATION_ERROR,
-      `Maximum ${String(MAX_ARCHIVE_TYPES)} custom types per archive`,
+      `Maximum ${String(MAX_ARCHIVE_TYPES)} type registrations per archive`,
     );
   }
   if (edgeTypes.length > MAX_ARCHIVE_EDGE_TYPES) {
     throw new MarfaError(
       ErrorCode.VALIDATION_ERROR,
-      `Maximum ${String(MAX_ARCHIVE_EDGE_TYPES)} custom edge types per archive`,
+      `Maximum ${String(MAX_ARCHIVE_EDGE_TYPES)} edge-type registrations per archive`,
     );
   }
 
@@ -319,7 +335,7 @@ export async function registerArchiveTypes(
   // seeded at boot and can hold entries this instance never wrote. The rows
   // are what a restore is reconciling against.
   const existingTypes = new Map(
-    (await storage.types.listCustom()).map((s) => [s.id, s]),
+    (await storage.types.listRegistered()).map((s) => [s.id, s]),
   );
   const existingEdgeTypes = new Map(
     (await storage.edgeTypes.list()).map((s) => [s.id, s]),

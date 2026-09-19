@@ -41,7 +41,7 @@ describe("reportReservedRootRows", () => {
       "error",
       expect.stringContaining("reserved root"),
       expect.objectContaining({
-        table: "custom_types",
+        table: "types",
         row_id: "content.note",
         reserved_root: "content",
       }),

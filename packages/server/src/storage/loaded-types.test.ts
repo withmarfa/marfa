@@ -12,10 +12,10 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { MockInstance } from "vitest";
-import { toLoadedTypes, type CustomTypeRow } from "./loaded-types.js";
+import { toLoadedTypes, type TypeRow } from "./loaded-types.js";
 import * as logger from "../middleware/logger.js";
 
-function row(part: Partial<CustomTypeRow> & { id: string }): CustomTypeRow {
+function row(part: Partial<TypeRow> & { id: string }): TypeRow {
   return {
     schema: JSON.stringify({ id: part.id, version: 1, fields: {} }),
     origin: "user",
@@ -70,7 +70,7 @@ describe("toLoadedTypes", () => {
       "error",
       expect.stringContaining("origin"),
       expect.objectContaining({
-        table: "custom_types",
+        table: "types",
         column: "origin",
         row_id: "acme.widget",
         stored_origin: "Platform",

@@ -33,6 +33,22 @@ CREATE VIRTUAL TABLE IF NOT EXISTS items_fts USING fts5(
 );
 `;
 
+/**
+ * What an operator can do about a database this build will not open, and it
+ * is deliberately not "export it and load it here".
+ *
+ * That was the advice until the archive format moved with the registry
+ * rename: an export taken by the build that wrote such a database is a
+ * version 1 archive, and `POST /admin/restore-archive` refuses version 1.
+ * Naming a recovery that ends in a `400` is worse than naming none, so the
+ * sentence says what is true — the file belongs to the build that wrote it,
+ * and nothing here reads it.
+ */
+const REFUSED_DATABASE_REMEDY =
+  "Nothing is upgraded in place and no export taken from it can be loaded here, so this file is " +
+  "readable only by the build that wrote it. Keep it with that build if you need what is in it, " +
+  "point this server at a fresh file, or discard it.";
+
 export type DrizzleDb = ReturnType<typeof drizzle<typeof schema>>;
 export type RawDb = Client;
 
@@ -75,6 +91,38 @@ export async function createConnection(sqlitePath: string): Promise<{
 
   const client = createClient({ url: toLibsqlUrl(sqlitePath) });
 
+  // A database still carrying the retired registry tables is refused, not
+  // migrated.
+  //
+  // The schema is applied with CREATE TABLE IF NOT EXISTS, so renaming a
+  // table does not move its rows: it creates an empty one beside the full
+  // one, and every reader then sees an empty registry. Nothing about that
+  // is loud. A previously registered type answers `unknown_type`, the
+  // metrics count reads zero, the consent screen offers no publisher root,
+  // and re-registering the same identifier succeeds against the new table
+  // rather than conflicting — so the only place to catch it is here, before
+  // the first read.
+  //
+  // **Ahead of the PRAGMAs, which is not fussiness.** `journal_mode = WAL`
+  // rewrites the file header, so a refused database that had been probed
+  // after it would come back altered by a boot that did nothing else. This
+  // query needs neither PRAGMA, so the refusal happens while the file is
+  // still untouched, and the client is closed on the way out.
+  const retired = await client.execute(
+    "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('custom_types', 'custom_edge_types') ORDER BY name",
+  );
+  if (retired.rows.length > 0) {
+    const names = retired.rows
+      .map((row) => row.name)
+      .filter((name): name is string => typeof name === "string")
+      .join(" and ");
+    client.close();
+    throw new Error(
+      `The type registry in ${sqlitePath} is still held in ${names}, which this build does not read. ` +
+        REFUSED_DATABASE_REMEDY,
+    );
+  }
+
   // Enable WAL for better concurrent read/write performance. PRAGMA is a
   // no-op on libsql remote URLs but harmless.
   await client.execute("PRAGMA journal_mode = WAL");
@@ -95,10 +143,6 @@ export async function createConnection(sqlitePath: string): Promise<{
   // problem, because it runs silently on every boot and a half-finished
   // re-index leaves a search index nobody knows is partial.
   //
-  // **The remedy names the previous build deliberately.** This throw is on
-  // the open path, so the server that would serve `GET /export` cannot
-  // start; telling an operator to export through the API from here would
-  // name an action the refusal itself has taken away.
   //
   // FTS5 has no ALTER TABLE, so probing for the column is the only way to
   // tell an index of this shape from an older one. Only a missing column
@@ -115,8 +159,7 @@ export async function createConnection(sqlitePath: string): Promise<{
     if (!/no such column/i.test(probe.message)) throw probe;
     throw new Error(
       `The full-text index in ${sqlitePath} predates the current schema, and nothing is upgraded in place. ` +
-        "Export the instance with the build it was last opened by, then load that export into a fresh " +
-        "instance on this one — or discard it.",
+        REFUSED_DATABASE_REMEDY,
       { cause: probe },
     );
   }

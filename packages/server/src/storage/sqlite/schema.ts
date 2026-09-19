@@ -268,8 +268,8 @@ export const blobs = sqliteTable("blobs", {
 });
 
 // The instance's type registrations, the shipped set included.
-export const customTypes = sqliteTable(
-  "custom_types",
+export const types = sqliteTable(
+  "types",
   {
     id: text("id").primaryKey(),
     schema: text("schema").notNull(),
@@ -288,11 +288,11 @@ export const customTypes = sqliteTable(
     created_at: text("created_at").notNull(),
     updated_at: text("updated_at").notNull(),
   },
-  (t) => [index("idx_custom_types_origin").on(t.origin)],
+  (t) => [index("idx_types_origin").on(t.origin)],
 );
 
 // The instance's edge-type registrations.
-export const customEdgeTypes = sqliteTable("custom_edge_types", {
+export const edgeTypes = sqliteTable("edge_types", {
   id: text("id").primaryKey(),
   schema: text("schema").notNull(),
   created_at: text("created_at").notNull(),

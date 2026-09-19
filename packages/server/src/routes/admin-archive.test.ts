@@ -96,8 +96,8 @@ describe("POST /admin/restore-archive", () => {
 
     const archive = await buildArchive(
       {
-        version: 1,
-        format: "marfa-archive-v1",
+        version: 2,
+        format: "marfa-archive-v2",
         created_at: new Date().toISOString(),
         item_count: 1,
         blob_count: 1,
@@ -192,8 +192,8 @@ describe("POST /admin/restore-archive", () => {
 
     const archive = await buildArchive(
       {
-        version: 1,
-        format: "marfa-archive-v1",
+        version: 2,
+        format: "marfa-archive-v2",
         created_at: new Date().toISOString(),
         item_count: 0,
         blob_count: 0,
@@ -233,8 +233,8 @@ describe("POST /admin/restore-archive", () => {
 
     const archive = await buildArchive(
       {
-        version: 1,
-        format: "marfa-archive-v1",
+        version: 2,
+        format: "marfa-archive-v2",
         created_at: new Date().toISOString(),
         item_count: 0,
         blob_count: 0,
@@ -319,8 +319,8 @@ describe("POST /admin/restore-archive — the edges it writes", () => {
 
     const archive = await buildArchive(
       {
-        version: 1,
-        format: "marfa-archive-v1",
+        version: 2,
+        format: "marfa-archive-v2",
         created_at: new Date().toISOString(),
         item_count: 2,
         blob_count: 0,
@@ -394,8 +394,8 @@ describe("POST /admin/restore-archive — the edges it writes", () => {
 
     const archive = await buildArchive(
       {
-        version: 1,
-        format: "marfa-archive-v1",
+        version: 2,
+        format: "marfa-archive-v2",
         created_at: new Date().toISOString(),
         item_count: 2,
         blob_count: 0,
@@ -523,8 +523,8 @@ describe("POST /admin/restore-archive — the items it writes", () => {
 
     const archive = await buildArchive(
       {
-        version: 1,
-        format: "marfa-archive-v1",
+        version: 2,
+        format: "marfa-archive-v2",
         created_at: new Date().toISOString(),
         item_count: 2,
         blob_count: 0,
@@ -631,8 +631,8 @@ describe("POST /admin/restore-archive — the items it writes", () => {
 
     const archive = await buildArchive(
       {
-        version: 1,
-        format: "marfa-archive-v1",
+        version: 2,
+        format: "marfa-archive-v2",
         created_at: new Date().toISOString(),
         item_count: 2,
         blob_count: 0,
@@ -757,8 +757,8 @@ describe("POST /admin/restore-archive — the items it writes", () => {
 
     const archive = await buildArchive(
       {
-        version: 1,
-        format: "marfa-archive-v1",
+        version: 2,
+        format: "marfa-archive-v2",
         created_at: new Date().toISOString(),
         item_count: 1,
         blob_count: 0,
@@ -807,8 +807,8 @@ describe("POST /admin/restore-archive — the items it writes", () => {
 
     const archive = await buildArchive(
       {
-        version: 1,
-        format: "marfa-archive-v1",
+        version: 2,
+        format: "marfa-archive-v2",
         created_at: new Date().toISOString(),
         item_count: 1,
         blob_count: 0,
