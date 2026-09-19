@@ -315,14 +315,11 @@ function syntheticCalendar(
     }
     const startsAt = item.properties.starts_at;
     if (typeof startsAt !== "string") return false;
-    if (
-      filters.startsAtUtcFrom !== undefined &&
-      startsAt < filters.startsAtUtcFrom
-    ) {
+    if (filters.startsAtFrom !== undefined && startsAt < filters.startsAtFrom) {
       return false;
     }
     return !(
-      filters.startsAtUtcTo !== undefined && startsAt >= filters.startsAtUtcTo
+      filters.startsAtTo !== undefined && startsAt >= filters.startsAtTo
     );
   };
 

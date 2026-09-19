@@ -11,12 +11,10 @@ import { instantColumnValues } from "./instant-columns.js";
 describe("instantColumnValues", () => {
   it("normalizes an offset-bearing instant to the same instant in Z", () => {
     expect(
-      instantColumnValues({ starts_at: "2026-03-24T09:00:00+01:00" })
-        .starts_at_utc,
+      instantColumnValues({ starts_at: "2026-03-24T09:00:00+01:00" }).starts_at,
     ).toBe("2026-03-24T08:00:00.000Z");
     expect(
-      instantColumnValues({ starts_at: "2026-05-05T09:00:00-05:30" })
-        .starts_at_utc,
+      instantColumnValues({ starts_at: "2026-05-05T09:00:00-05:30" }).starts_at,
     ).toBe("2026-05-05T14:30:00.000Z");
   });
 
@@ -25,15 +23,15 @@ describe("instantColumnValues", () => {
     // re-serialization a `Z` value and a `.000Z` value would order by
     // their punctuation.
     expect(
-      instantColumnValues({ starts_at: "2026-05-05T09:00:00Z" }).starts_at_utc,
+      instantColumnValues({ starts_at: "2026-05-05T09:00:00Z" }).starts_at,
     ).toBe("2026-05-05T09:00:00.000Z");
     expect(
-      instantColumnValues({ starts_at: "2026-05-05T09:00Z" }).starts_at_utc,
+      instantColumnValues({ starts_at: "2026-05-05T09:00Z" }).starts_at,
     ).toBe("2026-05-05T09:00:00.000Z");
   });
 
   it("projects a bare calendar date to UTC midnight", () => {
-    expect(instantColumnValues({ starts_at: "2026-05-05" }).starts_at_utc).toBe(
+    expect(instantColumnValues({ starts_at: "2026-05-05" }).starts_at).toBe(
       "2026-05-05T00:00:00.000Z",
     );
   });
@@ -43,21 +41,20 @@ describe("instantColumnValues", () => {
     // interpret this: the hour has to survive unchanged whatever TZ the
     // process runs under, because the SQL backfills read it as UTC.
     expect(
-      instantColumnValues({ starts_at: "2026-05-05T09:00:00" }).starts_at_utc,
+      instantColumnValues({ starts_at: "2026-05-05T09:00:00" }).starts_at,
     ).toBe("2026-05-05T09:00:00.000Z");
     expect(
-      instantColumnValues({ starts_at: "2026-05-05 09:00:00" }).starts_at_utc,
+      instantColumnValues({ starts_at: "2026-05-05 09:00:00" }).starts_at,
     ).toBe("2026-05-05T09:00:00.000Z");
   });
 
   it("keeps millisecond fidelity and truncates below it", () => {
     expect(
-      instantColumnValues({ starts_at: "2026-05-05T09:00:00.123Z" })
-        .starts_at_utc,
+      instantColumnValues({ starts_at: "2026-05-05T09:00:00.123Z" }).starts_at,
     ).toBe("2026-05-05T09:00:00.123Z");
     expect(
       instantColumnValues({ starts_at: "2026-05-05T09:00:00.123456Z" })
-        .starts_at_utc,
+        .starts_at,
     ).toBe("2026-05-05T09:00:00.123Z");
   });
 
@@ -65,10 +62,10 @@ describe("instantColumnValues", () => {
     // `precision` exists so an event dated from memory can be stored with
     // only the year or month it is known to. Such a row still belongs on
     // a calendar, so it gets a column rather than being dropped.
-    expect(instantColumnValues({ starts_at: "2026-05" }).starts_at_utc).toBe(
+    expect(instantColumnValues({ starts_at: "2026-05" }).starts_at).toBe(
       "2026-05-01T00:00:00.000Z",
     );
-    expect(instantColumnValues({ starts_at: "1985" }).starts_at_utc).toBe(
+    expect(instantColumnValues({ starts_at: "1985" }).starts_at).toBe(
       "1985-01-01T00:00:00.000Z",
     );
   });
@@ -80,30 +77,30 @@ describe("instantColumnValues", () => {
         ends_at: "2026-05-05T10:30:00+02:00",
       }),
     ).toEqual({
-      starts_at_utc: "2026-05-05T07:00:00.000Z",
-      ends_at_utc: "2026-05-05T08:30:00.000Z",
+      starts_at: "2026-05-05T07:00:00.000Z",
+      ends_at: "2026-05-05T08:30:00.000Z",
     });
   });
 
   it("answers null for junk, absence, and non-strings", () => {
     expect(instantColumnValues({ starts_at: "next tuesday" })).toEqual({
-      starts_at_utc: null,
-      ends_at_utc: null,
+      starts_at: null,
+      ends_at: null,
     });
     expect(instantColumnValues({})).toEqual({
-      starts_at_utc: null,
-      ends_at_utc: null,
+      starts_at: null,
+      ends_at: null,
     });
     expect(instantColumnValues({ starts_at: "" })).toEqual({
-      starts_at_utc: null,
-      ends_at_utc: null,
+      starts_at: null,
+      ends_at: null,
     });
     expect(
       instantColumnValues({ starts_at: 1_767_225_600_000, ends_at: null }),
-    ).toEqual({ starts_at_utc: null, ends_at_utc: null });
+    ).toEqual({ starts_at: null, ends_at: null });
     expect(
       instantColumnValues({ starts_at: { at: "2026-05-05T09:00:00Z" } }),
-    ).toEqual({ starts_at_utc: null, ends_at_utc: null });
+    ).toEqual({ starts_at: null, ends_at: null });
   });
 
   it("orders lexically the way the instants order", () => {
@@ -113,7 +110,7 @@ describe("instantColumnValues", () => {
       "2026-08-01T01:00:00+02:00", // 2026-07-31T23:00Z
       "2026-08-01T00:30:00Z",
       "2026-07-31T20:00:00-04:00", // 2026-08-01T00:00Z
-    ].map((v) => instantColumnValues({ starts_at: v }).starts_at_utc);
+    ].map((v) => instantColumnValues({ starts_at: v }).starts_at);
 
     expect([...values].sort()).toEqual([
       "2026-07-31T23:00:00.000Z",

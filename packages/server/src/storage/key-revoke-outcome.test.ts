@@ -1,17 +1,14 @@
 /**
- * The three lifecycle mutations the connection pipelines report on answer
- * with what they changed. `keys.revoke` answers with which of its three
- * outcomes happened rather than with a boolean, because two of them are
- * misses and a caller refusing on one of them owes the person a reason.
+ * `keys.revoke` answers with which of its outcomes happened rather
+ * than with a boolean, because two of them are misses and a caller refusing
+ * on one of them owes the person a reason.
  *
- * Each of them used to return `void`, so the only thing a caller could
- * report was the read it took beforehand — a claim about the moment before
- * the write rather than about the write. `connectionLeasedTokens.revoke`
- * was the exception and, not coincidentally, the one honest counter in the
- * uninstall pipeline. These are the other three brought up to it.
+ * It used to return `void`, so the only thing a caller could report was the
+ * read it took beforehand — a claim about the moment before the write rather
+ * than about the write.
  *
- * Runs against real storage, so the `rowsAffected` shape is held to the
- * contract rather than assumed.
+ * Runs against real storage, so the outcome is held to the contract rather
+ * than assumed.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
@@ -34,7 +31,7 @@ function uniqueSuffix(): string {
 }
 
 describe("keys.revoke", () => {
-  it("answers true on the call that revokes and false on every call after", async () => {
+  it("answers `revoked` on the call that revokes and `already_revoked` after", async () => {
     const suffix = uniqueSuffix();
     const key = await ctx.storage.keys.create(
       {

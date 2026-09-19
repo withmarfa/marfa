@@ -97,15 +97,6 @@ const PUBLIC_TAGS = [
   },
   { name: "Integrations", description: "The integration manifest registry." },
   {
-    name: "Connection Leased Tokens",
-    description: "Short-lived tokens a connection leases to its runtime.",
-  },
-  {
-    name: "Inbound Webhooks",
-    description:
-      "Inbound webhook subscriptions on a connection and their delivery receipts.",
-  },
-  {
     name: "Webhooks",
     description: "Outbound webhook subscriptions and their deliveries.",
   },

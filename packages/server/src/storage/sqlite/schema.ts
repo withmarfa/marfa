@@ -43,34 +43,21 @@ export const items = sqliteTable(
     timestamp: text("timestamp").notNull(),
     source: text("source"),
     source_id: text("source_id"),
-    // The connection that wrote this row (D63). Deliberately NOT part of
-    // the natural key: `(source, source_id)` is unchanged, so D34's
-    // reinstall adoption still resolves the same row. This column decides
-    // only whether a resolved row is *refused*, and is read by the orphan
-    // resolver so removing one of two connections marks the removed one's
-    // items orphaned rather than leaving them reading live.
-    //
-    // Nullable with no backfill. Null means no connection is recorded as
-    // owning the row: it is adopted and stamped on the next write, which
-    // is also what a dead recorded writer does. No foreign key, matching
-    // this file's rule that item-to-item references are app-level; no
-    // index, because nothing queries *by* writer.
-    written_by_connection_id: text("written_by_connection_id"),
     version: integer("version").notNull().default(1),
     schema_version: integer("schema_version"),
     device: text("device"),
     capture_latitude: real("capture_latitude"),
     capture_longitude: real("capture_longitude"),
     // The `starts_at` / `ends_at` properties as normalized UTC instants,
-    // maintained by the write path. Stored times are instants written in
-    // whatever offset their upstream used, so comparing them as strings
+    // maintained by the write path. The property is an instant written in
+    // whatever offset its upstream used, so comparing those as strings
     // orders `+02:00` against `Z` wrongly and no window predicate can be
-    // pushed into SQL. These carry the exact shape
+    // pushed into SQL. These columns carry the exact shape
     // `Date.prototype.toISOString()` emits, whose fixed width is what
     // makes lexical order and instant order the same thing. Nullable
     // because most items are not events.
-    starts_at_utc: text("starts_at_utc"),
-    ends_at_utc: text("ends_at_utc"),
+    starts_at: text("starts_at"),
+    ends_at: text("ends_at"),
   },
   (table) => [
     index("idx_items_type").on(table.type),
@@ -101,9 +88,9 @@ export const items = sqliteTable(
     // Serves the calendar's window scan: a range over the normalized start
     // instant. Partial because only events carry one, which keeps the index
     // to the calendar rather than the corpus.
-    index("idx_items_starts_at_utc")
-      .on(table.starts_at_utc)
-      .where(sql`starts_at_utc IS NOT NULL`),
+    index("idx_items_starts_at")
+      .on(table.starts_at)
+      .where(sql`starts_at IS NOT NULL`),
     // Serves the enrichment candidate query, which runs on a timer forever
     // and must cost nothing once a corpus is extracted. Partial: only file
     // items with a blob are ever candidates, ordered as the query reads
@@ -178,11 +165,7 @@ export const apiKeys = sqliteTable(
     is_operator: integer("is_operator", { mode: "boolean" })
       .notNull()
       .default(false),
-    is_runtime_credential: integer("is_runtime_credential", { mode: "boolean" })
-      .notNull()
-      .default(false),
     connection_id: text("connection_id"),
-    item_source: text("item_source"),
     /**
      * The eleven space permissions this credential holds, as a JSON array of
      * the literals themselves.
@@ -245,13 +228,6 @@ export const apiKeys = sqliteTable(
     uniqueIndex("idx_api_keys_source_per_space")
       .on(table.source)
       .where(sql`revoked_at IS NULL`),
-    // Every reaper pass and the metrics counter filter on
-    // `is_runtime_credential` first. Partial on true: the runtime-credential
-    // slice is the only one anything scans by this column, and human keys are
-    // a rounding error beside a week of dispatch volume.
-    index("idx_api_keys_runtime_credential")
-      .on(table.is_runtime_credential)
-      .where(sql`is_runtime_credential`),
     // **The model's one sentence about the instance tier.** The database is
     // what refuses. Declared here so the table definition states the shape
     // it writes into: without it a reader of this file meets the rule for
@@ -362,169 +338,6 @@ export const outboundWebhookDeliveries = sqliteTable(
   ],
 );
 
-export const inboundWebhooks = sqliteTable(
-  "inbound_webhooks",
-  {
-    id: text("id").primaryKey(),
-    space_id: text("space_id"),
-    // App-level reference to a system.connection item (kind:
-    // integration). Not a DB-level FK — matches the
-    // existing pattern for other connection-referencing tables (see
-    // edges, oauth_codes).
-    connection_id: text("connection_id").notNull(),
-    // The external service's id for this subscription. We retain it so
-    // operators can correlate Marfa rows with upstream dashboards. Not
-    // unique — multiple Marfa spaces may target the same external
-    // service id in dev environments.
-    external_service_id: text("external_service_id"),
-    // AES-256-GCM(secret) under HKDF(MARFA_AUTH_SECRET,
-    // "inbound-webhook-secrets"). Per-row IV is stored in the first 12
-    // bytes of the ciphertext — see crypto/secret-encryption.ts.
-    secret_encrypted: text("secret_encrypted").notNull(),
-    // Verification method stamped at subscription time from the
-    // submitted manifest's webhook_verification.method. Each row's
-    // dispatch is keyed off this value at receipt.
-    verification_method: text("verification_method").notNull(),
-    // Intentionally nullable: only set when verification_method === 'custom',
-    // naming the adapter that resolves the handler at dispatch time. The
-    // built-in methods (hmac-sha256, slack, stripe, github) are self-describing
-    // and leave this undefined — a null here is the normal case, not missing data.
-    verification_adapter_id: text("verification_adapter_id"),
-    events: text("events").notNull().default("[]"),
-    disabled: integer("disabled").notNull().default(0),
-    created_at: text("created_at").notNull(),
-    updated_at: text("updated_at").notNull(),
-  },
-  (table) => [
-    index("idx_inbound_webhooks_connection_id").on(table.connection_id),
-  ],
-);
-
-export const inboundWebhookEvents = sqliteTable(
-  "inbound_webhook_events",
-  {
-    id: text("id").primaryKey(),
-    inbound_webhook_id: text("inbound_webhook_id").notNull(),
-    // The sender's idempotency identifier. Combined with
-    // inbound_webhook_id, this enforces at-most-once processing via the
-    // unique index below — duplicate POSTs to /webhooks/inbound/:id with
-    // the same external_delivery_id collapse to a single row.
-    external_delivery_id: text("external_delivery_id").notNull(),
-    received_at: text("received_at").notNull(),
-    payload: text("payload").notNull(),
-    verified: integer("verified").notNull(),
-    // NULL = not yet processed. Set when the reactive runner finishes
-    // work for this event. Verified-but-not-processed rows are the
-    // pending queue (see idx_inbound_webhook_events_pending).
-    processed_at: text("processed_at"),
-    // NULL = no error yet. Populated when retries are exhausted (DLQ).
-    processing_error: text("processing_error"),
-    retry_count: integer("retry_count").notNull().default(0),
-    next_attempt_at: text("next_attempt_at"),
-  },
-  (table) => [
-    uniqueIndex("idx_inbound_webhook_events_dedup").on(
-      table.inbound_webhook_id,
-      table.external_delivery_id,
-    ),
-    index("idx_inbound_webhook_events_pending")
-      .on(table.next_attempt_at)
-      .where(sql`processed_at IS NULL AND processing_error IS NULL`),
-  ],
-);
-
-// ---------------------------------------------------------------------------
-// connection_oauth_tokens
-//
-// One row per `system.connection` of kind `integration` whose
-// integration authenticates with a token-bearing OAuth grant. The proxy route
-// (`POST /connections/:id/proxy/*`) reads from this table, decrypts, and
-// stamps `Authorization: Bearer <access>` on the upstream call.
-//
-// Tokens are encrypted at rest under HKDF(MARFA_AUTH_SECRET, info=
-// "connection-oauth-tokens"); see crypto/secret-encryption.ts. Hashing won't
-// work — the proxy needs the raw token to forward upstream — so this is
-// envelope encryption, not one-way digest.
-//
-// `previous_refresh_hash` enables replay-detection forensics: when we rotate
-// (refresh-token grant returns a new refresh_token), we SHA-256 the
-// rotated-out token and store it here. If the upstream subsequently rejects
-// our refresh attempt with `invalid_grant`, the route flips the connection's
-// runtime_status to `reauth_required` and emits a system.activity row.
-// ---------------------------------------------------------------------------
-
-export const connectionOauthTokens = sqliteTable(
-  "connection_oauth_tokens",
-  {
-    id: text("id").primaryKey(),
-    // FK shape (no DB-level FK, matching project convention) to the
-    // `system.connection` item id. Unique — at most one stored token per
-    // connection. Re-authorization overwrites the row in place.
-    connection_id: text("connection_id").notNull(),
-    space_id: text("space_id"),
-    // AES-256-GCM(plaintext) hex-encoded; see crypto/secret-encryption.ts.
-    access_token_encrypted: text("access_token_encrypted").notNull(),
-    // Nullable — some OAuth flows (e.g. client_credentials) don't issue a
-    // refresh token; the proxy falls back to immediate reauth on 401.
-    refresh_token_encrypted: text("refresh_token_encrypted"),
-    expires_at: text("expires_at").notNull(),
-    scopes: text("scopes").notNull().default("[]"),
-    // SHA-256 hex of the most recent rotated-out refresh token. Set when
-    // rotation occurs; null on initial authorization. Forensic only —
-    // active enforcement of replay is the upstream's `invalid_grant`.
-    previous_refresh_hash: text("previous_refresh_hash"),
-    created_at: text("created_at").notNull(),
-    updated_at: text("updated_at").notNull(),
-  },
-  (table) => [
-    uniqueIndex("idx_connection_oauth_tokens_connection_id").on(
-      table.connection_id,
-    ),
-  ],
-);
-
-// ---------------------------------------------------------------------------
-// connection_leased_tokens
-//
-// Short-TTL bearer tokens issued for the four exception cases the OAuth
-// proxy doesn't fit (multipart streaming, WebSocket, SDK lock-in, non-HTTP).
-// Capability gating ties each lease to a manifest-declared
-// `oauth_requirements: { <capability_id>: "leased" }` entry — the lease
-// route refuses requests for capabilities the manifest doesn't list.
-//
-// Storage is hashed (SHA-256) like API keys: the lease IS a bearer token,
-// so hashing-on-storage is the right shape. Plaintext is returned ONCE on
-// issue. Validation hashes the presented bearer and looks up the row.
-//
-// Index plan:
-//   - unique on lease_token_hash (validation lookup is hash-keyed)
-//   - composite on (connection_id, expires_at) for the "active leases for
-//     this connection" listing path
-// ---------------------------------------------------------------------------
-
-export const connectionLeasedTokens = sqliteTable(
-  "connection_leased_tokens",
-  {
-    id: text("id").primaryKey(),
-    connection_id: text("connection_id").notNull(),
-    space_id: text("space_id"),
-    capability_id: text("capability_id").notNull(),
-    lease_token_hash: text("lease_token_hash").notNull(),
-    scopes: text("scopes").notNull().default("[]"),
-    expires_at: text("expires_at").notNull(),
-    revoked_at: text("revoked_at"),
-    issued_by_key_id: text("issued_by_key_id"),
-    created_at: text("created_at").notNull(),
-  },
-  (table) => [
-    uniqueIndex("idx_connection_leased_tokens_hash").on(table.lease_token_hash),
-    index("idx_connection_leased_tokens_connection_id").on(
-      table.connection_id,
-      table.expires_at,
-    ),
-  ],
-);
-
 // oauth_codes is dropped — the @better-auth/oauth-provider plugin's
 // authorization code state machine is stored in `auth_verification`
 // via the plugin's internal adapter.
@@ -609,11 +422,6 @@ export const eventLog = sqliteTable(
     item_id: text("item_id"),
     edge_id: text("edge_id"),
     payload: text("payload").notNull(),
-    // Cycle-detection metadata from the removed integration runtime. Nothing
-    // writes either column now; both stay declared until the dead-column
-    // cleanup.
-    originating_connection_id: text("originating_connection_id"),
-    hop_count: integer("hop_count").notNull().default(0),
     // Whether this event drives outbound side effects: webhook delivery and
     // the integration reactions the reactive bridge enqueues. Persisted
     // rather than carried only on the emitted event, because the bridge's
@@ -629,12 +437,6 @@ export const eventLog = sqliteTable(
   (table) => [
     index("idx_event_log_created_at").on(table.created_at),
     index("idx_event_log_edge_id").on(table.edge_id),
-    // Trace path: events originating from a single connection,
-    // ordered by id.
-    index("idx_event_log_originating_connection_id").on(
-      table.originating_connection_id,
-      table.id,
-    ),
   ],
 );
 
