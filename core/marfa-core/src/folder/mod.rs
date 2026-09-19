@@ -206,7 +206,18 @@ impl Folder {
     pub fn scan(&self) -> Result<ScanReport> {
         let mut report = ScanReport::default();
         let paths = self.files()?;
-        let identities = identity::resolve(&paths);
+        // Over the files the folder holds, not every file in the tree.
+        // Resolving is fail-closed on a shared identity, so a file the
+        // folder never touches — a hard link to a note, a copy some tool
+        // made — takes the note's identity away with it and the note's
+        // next rename becomes a second item. It is also a stat per file
+        // per scan, and the watcher scans once a second.
+        let held: Vec<PathBuf> = paths
+            .iter()
+            .filter(|path| self.holds(path))
+            .cloned()
+            .collect();
+        let identities = identity::resolve(&held);
         let mut seen: HashSet<String> = HashSet::new();
 
         for path in &paths {
@@ -405,7 +416,7 @@ impl Folder {
             .held_under_key(key)?
             .map(|item| item.version)
             .unwrap_or(0);
-        let mut properties = document.properties;
+        let mut properties = sendable(document.properties);
         for (field, value) in &self.slice.defaults {
             properties.entry(field.clone()).or_insert(value.clone());
         }
@@ -474,7 +485,7 @@ impl Folder {
             )));
         };
         let edit = Edit {
-            properties: document.properties,
+            properties: sendable(document.properties),
             base_version: Some(held.version),
         };
         self.core.update_item(item_id, &edit)?;
@@ -637,6 +648,18 @@ impl Folder {
                 report.collided += 1;
                 continue;
             }
+            let path = self.root.join(&want);
+            // Inside the folder, resolved rather than read. `path_for`
+            // refuses a key that leads out by `..` or a separator, and
+            // that is the whole guard until a directory in the folder is
+            // a symlink: `create_dir_all` and `write` both follow one,
+            // and the walk never descends one — so a file written through
+            // it is a file this folder cannot see, and the next scan
+            // journals it missing and the grace turns that into a delete.
+            if !inside(&self.root, &path) {
+                report.outside += 1;
+                continue;
+            }
             let text = self.render(item)?;
             let bytes = text.as_bytes().to_vec();
             let hash = state::hash(&bytes);
@@ -672,7 +695,6 @@ impl Folder {
                 }
             }
 
-            let path = self.root.join(&want);
             if let Some(parent) = path.parent() {
                 std::fs::create_dir_all(parent).map_err(|error| {
                     CoreError::Store(format!("cannot make {}: {error}", parent.display()))
@@ -810,10 +832,51 @@ pub struct PullReport {
     /// folder last wrote them. The next scan queues that change; writing
     /// over it here would lose it with nothing reporting it.
     pub unwritten: usize,
+    /// Items whose file would have landed outside the folder, because a
+    /// directory on the way to it is a symlink. Reported rather than
+    /// written: the folder cannot see what it writes out there, so the
+    /// write would be followed by a delete of the item it came from.
+    pub outside: usize,
     /// Items whose path another item in the same pass had already taken.
     /// Reported rather than written, because writing would destroy the
     /// file of whichever item got there first.
     pub collided: usize,
+}
+
+/// A file's frontmatter as the properties of a write, without the folder's
+/// own identity record (`folders.md` 11).
+///
+/// `render` writes the item's id into the file, so every file this folder
+/// wrote carries it back on the next scan. Sending it would store the
+/// folder's bookkeeping on the item as a property of its own, which the
+/// next render would write out again; and a file somebody copied would
+/// carry the id of the item it was copied from onto a new one.
+fn sendable(mut properties: Map<String, Value>) -> Map<String, Value> {
+    properties.remove(ID_FIELD);
+    properties
+}
+
+/// Whether a path the folder is about to write lands inside the folder.
+///
+/// Resolved, so a symlink anywhere on the way is followed here rather
+/// than by the write. The path itself does not exist yet, so the deepest
+/// ancestor that does is the one that answers; a root that cannot be
+/// resolved answers no, because a folder nobody can locate is not one
+/// anything should be written into.
+fn inside(root: &Path, path: &Path) -> bool {
+    let Ok(root) = root.canonicalize() else {
+        return false;
+    };
+    let mut ancestor = path;
+    loop {
+        if let Ok(resolved) = ancestor.canonicalize() {
+            return resolved.starts_with(&root);
+        }
+        match ancestor.parent() {
+            Some(parent) => ancestor = parent,
+            None => return false,
+        }
+    }
 }
 
 /// A title as a file name, with the separators and the dot-lead taken out.

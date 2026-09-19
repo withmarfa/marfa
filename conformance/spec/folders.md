@@ -35,6 +35,7 @@ A folder is a device surface: a directory on a machine that holds a slice as fil
 17. A dot-led directory is excluded, at any depth. `device/folders.test.ts › excludes a dot-led directory at any depth`.
 18. `.marfa/` inside the folder is the folder's own state — its mapping, its journal, its queue — and is never watched and never pushed. `device/folders.test.ts › keeps its own state in .marfa and never pushes it`.
 19. A file of a type outside the folder's slice is not pushed, and an item outside the slice does not become a file. `device/folders.test.ts › leaves a file outside the slice alone`.
+20. **A folder writes only inside itself.** A path that resolves out of the folder is reported and not written. The path rule refuses a key leading out by `..` or a separator; a directory on the way that is a symlink is the case it cannot see, and a file written through one is a file the folder's own walk never finds again. `device/folders.test.ts › refuses to write a file outside the folder`.
 
 ## What the real server cannot be made to produce
 

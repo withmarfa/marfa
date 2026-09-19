@@ -2,11 +2,14 @@ import {
   existsSync,
   linkSync,
   mkdirSync,
+  mkdtempSync,
   readFileSync,
   renameSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it, expect, afterEach, vi } from "vitest";
 import {
@@ -553,6 +556,31 @@ describe("identity", () => {
     expect(before).toBeGreaterThan(0);
   });
 
+  it("resolves identity over the files it holds, not every file in the tree", async () => {
+    harness = await folderHarness("folder-unheld-identity");
+    scriptFolderWrites(harness);
+    put(harness, "note.md", "---\ntitle: Note\n---\nsame bytes\n");
+    expect((await harness.folder.push()).ok).toBe(true);
+
+    // A hard link is the same inode under a second name, so the two paths
+    // have one identity. The folder does not hold a `.mov`, and a file it
+    // never touches should not be able to take the identity of one it does.
+    linkSync(join(harness.dir, "note.md"), join(harness.dir, "clip.mov"));
+    renameSync(join(harness.dir, "note.md"), join(harness.dir, "moved.md"));
+
+    const scanned = await harness.folder.scan();
+    expect(scanned.ok).toBe(true);
+    if (!scanned.ok) return;
+    expect(
+      scanned.value.renamed,
+      "a file the folder does not hold took the identity of one it does, so renaming the note lost it",
+    ).toBe(1);
+    expect(
+      scanned.value.created,
+      "the renamed note became a second item because an unheld file shared its identity, which is a duplicate anybody with a backup tool can make",
+    ).toBe(0);
+  });
+
   it("binds the same file to the same item whether it was present at start or arrived while running", async () => {
     // **One of these is a real watcher.** The other pushes a file that was
     // there before anything ran. Two identity rules — one on the startup
@@ -675,6 +703,36 @@ describe("identity", () => {
       invented.value.created,
       "a file carrying an id the server does not hold was bound to it, so anybody can bind a file to an item by typing its id",
     ).toBe(1);
+  });
+
+  it("keeps its own identity record out of what it sends the server", async () => {
+    harness = await folderHarness("folder-record-not-sent");
+    scriptFolderWrites(harness);
+    put(harness, "note.md", "---\ntitle: Recorded\n---\nbody\n");
+    expect((await harness.folder.push()).ok).toBe(true);
+
+    // The folder wrote its record into the file, so this is what a person
+    // opening the file and typing a line actually edits.
+    const written = read(harness, "note.md");
+    expect(written).toMatch(/marfa_id:\s*\S+/);
+    writeFileSync(join(harness.dir, "note.md"), `${written}and a line more\n`);
+    expect((await harness.folder.push()).ok).toBe(true);
+
+    const sent = harness.server.requests
+      .filter((request) => request.method === "PATCH")
+      .map(
+        (request) =>
+          (JSON.parse(request.body) as { properties: Record<string, unknown> })
+            .properties,
+      );
+    expect(
+      sent.length,
+      "the edit never reached the server, so this asserts nothing about what it carried",
+    ).toBeGreaterThan(0);
+    expect(
+      sent.filter((properties) => "marfa_id" in properties),
+      "the folder sent its own identity record as a property of the item, so its bookkeeping is now stored on the server and every later render writes it out again",
+    ).toEqual([]);
   });
 
   it("moves the file when the item is renamed on the server", async () => {
@@ -1030,6 +1088,43 @@ describe("what a folder does not watch", () => {
       sentKeys(harness),
       "the folder pushed its own state, so its mapping and its queue are items on the server",
     ).toEqual(["note.md"]);
+  });
+
+  it("refuses to write a file outside the folder", async () => {
+    const elsewhere = mkdtempSync(join(tmpdir(), "marfa-folder-elsewhere-"));
+    harness = await folderHarness("folder-outside", {
+      rows: {
+        "core.note": [
+          {
+            item: {
+              id: "01a00000-0000-7000-8000-00000000000e",
+              source_id: "out/note.md",
+              properties: { title: "Out", body: "body\n" },
+            },
+          },
+        ],
+      },
+    });
+    // A directory inside the folder that is really somewhere else. The key
+    // carries no `..` and no leading separator, so the path rule allows it;
+    // what makes it leave the folder is the link, which `create_dir_all` and
+    // the write both follow and the walk never descends.
+    symlinkSync(elsewhere, join(harness.dir, "out"));
+
+    const pulled = await harness.folder.pull();
+    expect(
+      pulled.ok,
+      `the folder could not pull: ${JSON.stringify(pulled)}`,
+    ).toBe(true);
+    if (!pulled.ok) return;
+    expect(
+      existsSync(join(elsewhere, "note.md")),
+      "a file landed outside the folder, where nothing the folder does will ever find it again",
+    ).toBe(false);
+    expect(
+      pulled.value.outside,
+      "the folder declined to write out of itself and said nothing about it, so the item has no file and the report reads as though it does",
+    ).toBeGreaterThan(0);
   });
 
   it("leaves a file outside the slice alone", async () => {

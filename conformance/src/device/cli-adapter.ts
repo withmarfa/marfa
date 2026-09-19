@@ -454,6 +454,9 @@ export interface PullReport {
   moved: number;
   unchanged: number;
   skipped: number;
+  unwritten: number;
+  collided: number;
+  outside: number;
 }
 
 export interface PushReport {
