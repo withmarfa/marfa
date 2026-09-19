@@ -184,12 +184,11 @@ describe("every door is a route the app really serves", () => {
     // to catch. Reading the table cannot separate the two.
     //
     // A request can. An unserved path falls through to Hono's bare 404,
-    // while a real door is reached and refuses — on most of these for an
-    // unparseable id or an invalid body rather than for the missing
-    // credential, since those checks come first. Which refusal it is does
-    // not matter and is deliberately not asserted: the property is that
-    // something served the path, and only a 404 says nothing did. Neither
-    // answer depends on the middleware having been mounted.
+    // while a real door is reached and refuses the credential it was not
+    // given. Which refusal it is does not matter and is deliberately not
+    // asserted: the property is that something served the path, and only a
+    // 404 says nothing did. Neither answer depends on the middleware having
+    // been mounted.
     for (const door of IDEMPOTENT_WRITE_DOORS) {
       const [method, path] = door.split(" ");
       if (method === undefined || path === undefined) continue;

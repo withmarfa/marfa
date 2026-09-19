@@ -25,8 +25,8 @@
 
 ## Authentication
 
-15. A request with no credential answers `401 unauthorized` on every published door but the registration door, given a real row and a well-formed body; an unknown or revoked credential answers the same. `compliance/unauthenticated.test.ts › answers 401 unauthorized on each of them`, `compliance/auth.test.ts › returns 401 when no auth header is provided`, `› returns 401 for an invalid API key`, `compliance/key-management.test.ts › revoke key: create, use, revoke, retry fails with 401`.
-16. On some doors the body check or the row lookup runs before the credential check, so a bare request with a malformed body answers `400` and one naming an unknown row answers `404` (`findings.md` 9). `compliance/unauthenticated.test.ts › answers 401 unauthorized on each of them` (the reason it sends real rows and well-formed bodies).
+15. A request with no credential answers `401 unauthorized` on every published door but the registration door; an unknown or revoked credential answers the same. `compliance/unauthenticated.test.ts › answers 401 unauthorized on each of them`, `compliance/auth.test.ts › returns 401 when no auth header is provided`, `› returns 401 for an invalid API key`, `compliance/key-management.test.ts › revoke key: create, use, revoke, retry fails with 401`.
+16. The credential check runs before the body check and before the row lookup, so a bare request answers `401` whatever is wrong with its body or its query and whatever rows it names, and an unknown item id is indistinguishable from a live one. `compliance/unauthenticated.test.ts › answers 401 unauthorized on each of them` (the reason it sends an unparseable body and ids nothing carries).
 17. `/health` and `/openapi.json` answer without a credential, and the document is the same one a credentialed read gets. `compliance/instance.test.ts › answers /health without a credential and names its components`, `› serves its OpenAPI document, with and without a credential`.
 
 ## Permission gates on other doors

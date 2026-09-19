@@ -264,6 +264,12 @@ export function _clearOAuthLastUsedCacheForTesting(): void {
  * **Nothing here reads how the instance was configured, and that is the
  * point.** This was the last place in this file where what a caller may do
  * turned on a deployment setting rather than on the credential in hand.
+ *
+ * **It resolves and never refuses.** This runs at `app.use("*")`, before
+ * anything has matched a route, so it cannot know whether the door the
+ * request is headed for wants a credential. Refusing belongs to the door,
+ * and every route that declares one carries
+ * {@link requireDeclaredCredential} for it.
  */
 export function authMiddleware(storage: Storage, salt: string) {
   // Bounded LRU keyed by `key:<api-key-id>` for the stored-key path.
@@ -664,6 +670,30 @@ export function requireAuth(c: Context<AppEnv>): ApiKey {
 export function requireOperatorKey(c: Context<AppEnv>): ApiKey {
   return checkOperatorKey(c.get("apiKey"));
 }
+
+/**
+ * The credential check as a route's own middleware, hung off every route
+ * whose `security` declares one by `createOpenAPIRouter`.
+ *
+ * **A door that asks for a credential must answer the missing one first.**
+ * A refusal inside a handler is reached only after the router has validated
+ * the request and after the handler has read its row, so what a bare request
+ * is told depends on what else is wrong with it — and a `404` for a row that
+ * is not there tells a caller holding nothing which ids exist. This runs
+ * ahead of the validators and ahead of the handler, so one bare request gets
+ * one answer.
+ *
+ * Bootstrap is the one credential-less caller a declared door admits: the
+ * first `POST /keys` on an instance that has never held a key presents the
+ * one-time secret from the boot log instead, and `authMiddleware` marks the
+ * request rather than resolving a credential for it.
+ */
+export const requireDeclaredCredential = createMiddleware<AppEnv>(
+  async (c, next) => {
+    if (!c.get("isBootstrap")) checkAuth(c.get("apiKey"));
+    await next();
+  },
+);
 
 export function requireTypeAccess(
   c: Context<AppEnv>,

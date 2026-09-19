@@ -111,11 +111,16 @@ describe("metadata doors", () => {
     );
   });
 
-  it("refuses every metadata door without a credential", async () => {
-    const id = await seed();
+  it("refuses every metadata door without a credential, on an id nothing carries", async () => {
+    // A row nothing carries, and an empty body where the door wants one.
+    // Both of these used to be answered first — `404` for the id on three of
+    // these doors, `400` for the body on two — which is exactly what a
+    // credential-less caller must not be able to read.
+    const unknown = "01999999-9999-7999-8999-999999999999";
     const anonymous = new MarfaClient({ baseUrl: apiUrl, apiKey: "" });
-    expect((await anonymous.getMetadata(id)).status).toBe(401);
-    expect((await anonymous.addTags(id, ["x"])).status).toBe(401);
+    expect((await anonymous.getMetadata(unknown)).status).toBe(401);
+    expect((await anonymous.addTags(unknown, [])).status).toBe(401);
+    expect((await anonymous.replaceMetadata(unknown, {})).status).toBe(401);
     expect((await anonymous.listTags()).status).toBe(401);
   });
 });

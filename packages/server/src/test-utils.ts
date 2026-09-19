@@ -48,8 +48,16 @@ function requireSqliteRun(
   return s.__sqliteRun;
 }
 
+/**
+ * What `createApp` really returns. Declared rather than narrowed to `Hono`
+ * so a test can ask the app for its OpenAPI document — the route
+ * declarations are what decides which doors take a credential, and a test
+ * that reads them needs the reflection the narrower type hides.
+ */
+export type TestApp = ReturnType<typeof createApp>;
+
 export interface TestContext {
-  app: Hono<AppEnv>;
+  app: TestApp;
   storage: Storage;
   blobBackend: BlobBackend;
   /**
@@ -379,7 +387,7 @@ export async function createTestContext(
  * what they produce.
  */
 export interface UnbootstrappedTestApp {
-  app: Hono<AppEnv>;
+  app: TestApp;
   storage: Storage;
   blobBackend: BlobBackend;
   config: AppConfig;

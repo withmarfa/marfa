@@ -103,6 +103,29 @@ interface OpenAPIDoc {
  * the type. It is a correction rather than a break, and it is here because
  * the status moves with the code and neither is declared for that case.
  *
+ * It moved to 5.8.0 for the order of the checks. A door that declares a
+ * credential refuses a bare request before the router validates it and
+ * before the handler reads a row, so one bare request gets one answer where
+ * the answer used to depend on what else was wrong with it.
+ *
+ * Twenty-seven doors answered something other than `401`, by two routes that
+ * overlap on four of them. Twenty-three answered `400`, because the route's
+ * own schemas refused the body or the query ahead of any handler: the
+ * twenty-one that take a JSON body, plus `GET /search` and `GET /occurrences`
+ * for their required query parameters. Eight answered `404 item_not_found`,
+ * because the handler read the row before it asked for a credential —
+ * `GET /items/{id}`, `PATCH /items/{id}`, `GET /items/{id}/versions`, `GET`,
+ * `PUT` and `PATCH` on `/items/{id}/metadata`, `POST /items/{id}/tags` and
+ * `DELETE /items/{id}/tags/{tag}`. That second set is the one that mattered:
+ * it is how a caller holding nothing could tell a live item id from one
+ * nothing carries.
+ *
+ * Every one of the twenty-seven already answered `401` to a bare request
+ * whose body and query the schemas accepted, so no door gains a status it
+ * could not produce, the document's shape does not move, and this note is
+ * the only record. A client branching on the `400` or the `404` it used to
+ * get without a credential reads the refusal now.
+ *
  * **One change, one number**, even where it carries several breaks. The
  * version records that the contract moved and what a caller may have been
  * reading; a second increment inside one change would say the contract moved
@@ -115,7 +138,7 @@ interface OpenAPIDoc {
  */
 export const OPENAPI_DOCUMENT_INFO = {
   title: "Marfa API",
-  version: "5.7.0",
+  version: "5.8.0",
   description: "Typed data layer for structured personal data",
 } as const;
 

@@ -1,0 +1,295 @@
+/**
+ * Every route the app serves either takes a credential or does not, and the
+ * route's own `security` declaration is what decides.
+ *
+ * `createOpenAPIRouter` hangs `requireDeclaredCredential` off each route
+ * that declares one, so the guarded set is read back out of Hono's route
+ * table by handler identity rather than kept beside it as a second list of
+ * protected paths. What that leaves is the routes registered as plain Hono
+ * handlers, which carry no declaration to read: those are named below, each
+ * with what it is, and the walk fails on a route in neither place. A door
+ * added without a declaration has to be classified here before this file
+ * goes green, which is the point — the last shape of this defect was a door
+ * whose refusal nobody had looked for.
+ */
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { requireDeclaredCredential } from "../middleware/auth.js";
+import { FENCED_PLUGIN_ENDPOINTS } from "./oauth-plugin-fence.js";
+import { ensureBootstrapSecret } from "../auth/bootstrap-secret.js";
+import {
+  createTestContext,
+  createUnbootstrappedTestApp,
+} from "../test-utils.js";
+import type { TestContext } from "../test-utils.js";
+
+let ctx: TestContext;
+
+beforeAll(async () => {
+  ctx = await createTestContext();
+});
+
+afterAll(async () => {
+  await ctx.cleanup();
+});
+
+/** Well-formed, so a door reaches its row lookup rather than refusing the id. */
+const UNKNOWN_ID = "019537a0-7b80-7000-8000-000000000000";
+
+function servedDoors(): Set<string> {
+  return new Set(ctx.app.routes.map((r) => `${r.method} ${r.path}`));
+}
+
+function guardedDoors(): Set<string> {
+  return new Set(
+    ctx.app.routes
+      .filter((r) => r.handler === requireDeclaredCredential)
+      .map((r) => `${r.method} ${r.path}`),
+  );
+}
+
+/**
+ * Every operation the registry carries, secured or not, as the router paths.
+ *
+ * `declaredDoors` and `guardedDoors` are both derived from `security`, so a
+ * route that loses the declaration leaves both sets at once and their
+ * equality still holds. This is the set that does not move when it does.
+ */
+function documentedDoors(): Set<string> {
+  const doc = ctx.app.getOpenAPIDocument({
+    openapi: "3.1.0",
+    info: { title: "census", version: "0" },
+  });
+  const out = new Set<string>();
+  for (const [path, item] of Object.entries(doc.paths)) {
+    for (const method of Object.keys(item)) {
+      if (!["get", "post", "put", "patch", "delete"].includes(method)) continue;
+      out.add(`${method.toUpperCase()} ${path.replace(/\{([^}]+)\}/g, ":$1")}`);
+    }
+  }
+  return out;
+}
+
+/**
+ * The published operations that take no credential, each with why.
+ *
+ * A caller cannot be asked for a credential in order to learn how to obtain
+ * one, so the registration door is open by construction.
+ */
+const OPEN_OPERATIONS: Record<string, string> = {
+  "POST /auth/oauth2/register":
+    "dynamic client registration, which is how a client comes to hold anything",
+};
+
+function declaredDoors(): Set<string> {
+  const doc = ctx.app.getOpenAPIDocument({
+    openapi: "3.1.0",
+    info: { title: "census", version: "0" },
+  });
+  const out = new Set<string>();
+  for (const [path, item] of Object.entries(doc.paths)) {
+    for (const [method, operation] of Object.entries(
+      item as Record<string, unknown>,
+    )) {
+      if (!["get", "post", "put", "patch", "delete"].includes(method)) continue;
+      const security = (operation as { security?: unknown[] }).security;
+      if (security === undefined || security.length === 0) continue;
+      out.add(`${method.toUpperCase()} ${path.replace(/\{([^}]+)\}/g, ":$1")}`);
+    }
+  }
+  return out;
+}
+
+/**
+ * The plugin management endpoints `oauthPluginFenceRoutes` refuses, derived
+ * from the fence's own list rather than restated: it is already paired with
+ * a test that holds it to what the plugin registers.
+ */
+function fencedDoors(): Set<string> {
+  const out = new Set<string>();
+  for (const path of FENCED_PLUGIN_ENDPOINTS) {
+    out.add(`ALL /auth${path}`);
+    out.add(`ALL /auth${path}/`);
+  }
+  return out;
+}
+
+/**
+ * Doors with no declaration to read, each with what it is.
+ *
+ * Open on purpose, all of them: a credential cannot be a precondition for
+ * learning how to present one, for signing in, or for the pages a browser
+ * lands on before it holds anything.
+ */
+const OPEN_DOORS: Record<string, string> = {
+  "GET /": "names the instance, its build and the surfaces it serves",
+  "GET /health": "liveness, read before any credential exists",
+  "GET /openapi.json":
+    "the document a client reads to learn how to authenticate",
+  "GET /.well-known/oauth-authorization-server/auth":
+    "RFC 8414 discovery, read by a client that holds nothing yet",
+  "GET /.well-known/openid-configuration/auth": "OIDC discovery, same",
+  "GET /auth/.well-known/oauth-authorization-server":
+    "the issuer-suffixed spelling of the same document",
+  "GET /auth/.well-known/openid-configuration": "and of the OIDC one",
+  "GET /.well-known/oauth-protected-resource":
+    "RFC 9728 resource metadata, which a bearer challenge points at",
+  "GET /auth/sign-in": "the sign-in page",
+  "POST /auth/sign-in": "its form post, which is how a credential is got",
+  "GET /auth/authorize": "the consent screen, gated on a session cookie",
+  "POST /auth/authorize/decision": "the consent decision, gated the same way",
+  "GET /auth/device": "the device-code entry page",
+  "POST /auth/device": "its form post",
+  "GET /auth/device/consent": "the device consent screen",
+  "POST /auth/device/consent": "its decision",
+  "GET /auth/error": "the OAuth failure page a redirect lands on",
+  "GET /auth/oauth2/end-session": "the RP-initiated logout page",
+  "GET /auth/static/auth.css": "the stylesheet those pages load",
+  "GET /auth/static/password-toggle.js": "a script those pages load",
+  "GET /auth/static/submit-state.js": "a script those pages load",
+  "GET /auth/*":
+    "the Better Auth catch-all — sign-in, session and the OAuth protocol endpoints, each gating itself",
+  "POST /auth/*": "the same catch-all",
+};
+
+/**
+ * Doors that do take a credential and have no declaration to take it from,
+ * because they are plain Hono handlers: an SSE stream and two routes that
+ * answer HTML elsewhere in their file. Each refuses as its handler's first
+ * act, which the sweep below holds them to.
+ */
+const CREDENTIAL_IN_HANDLER: Record<string, string> = {
+  "GET /events": "the event stream, which is not a `createRoute` operation",
+  "GET /auth/grants": "lists the apps the owner authorized",
+  "DELETE /auth/grants/:id": "revokes one",
+};
+
+function concrete(path: string): string {
+  return path.replace(/:[^/]+/g, UNKNOWN_ID);
+}
+
+/**
+ * A bare request carrying everything that used to be answered ahead of the
+ * credential: an unparseable body, an unknown query key, and a path naming
+ * rows nothing carries.
+ */
+async function bare(
+  door: string,
+): Promise<{ status: number; code: unknown; body: string }> {
+  const [method, path] = door.split(" ");
+  const url = `${concrete(path ?? "")}?definitely-not-a-filter=1`;
+  const res = await ctx.app.request(url, {
+    method,
+    headers: { "Content-Type": "application/json" },
+    body: method === "GET" || method === "DELETE" ? undefined : "{ not json",
+  });
+  const body = await res.text();
+  let code: unknown;
+  try {
+    code = (JSON.parse(body) as { error?: { code?: unknown } }).error?.code;
+  } catch {
+    code = undefined;
+  }
+  return { status: res.status, code, body };
+}
+
+describe("the credential gate", () => {
+  it("guards exactly the doors whose declaration asks for a credential", () => {
+    const declared = declaredDoors();
+    // The positive control. An empty declaration set would satisfy the
+    // comparison below while proving the gate is attached to nothing.
+    expect(declared.size).toBeGreaterThan(60);
+    expect([...guardedDoors()].sort()).toEqual([...declared].sort());
+  });
+
+  it("leaves no published operation ungated except the ones named open", () => {
+    // The check the equality above cannot make. Both sets there read the same
+    // `security` declaration, so a route that drops it leaves both together
+    // and the comparison stays green one door smaller. An operation exists in
+    // the registry whether or not it declares anything, so an ungated one
+    // that nobody named is visible here and nowhere else.
+    const guarded = guardedDoors();
+    const ungated = [...documentedDoors()]
+      .filter((door) => !guarded.has(door))
+      .filter((door) => !(door in OPEN_OPERATIONS));
+    expect(ungated.sort()).toEqual([]);
+  });
+
+  it("refuses a bare request before the body check and the row lookup", async () => {
+    const guarded = [...guardedDoors()];
+    expect(guarded.length).toBeGreaterThan(60);
+    const wrong: string[] = [];
+    for (const door of guarded) {
+      const { status, code, body } = await bare(door);
+      if (status !== 401 || code !== "unauthorized") {
+        wrong.push(`${door} answered ${String(status)} ${body.slice(0, 120)}`);
+      }
+    }
+    expect(wrong.sort()).toEqual([]);
+  });
+
+  it("refuses a bare request on the undeclared doors that take one", async () => {
+    const doors = Object.keys(CREDENTIAL_IN_HANDLER);
+    expect(doors.length).toBeGreaterThan(0);
+    const wrong: string[] = [];
+    for (const door of doors) {
+      const { status, code, body } = await bare(door);
+      if (status !== 401 || code !== "unauthorized") {
+        wrong.push(`${door} answered ${String(status)} ${body.slice(0, 120)}`);
+      }
+    }
+    expect(wrong.sort()).toEqual([]);
+  });
+
+  it("leaves the one credential-less mint open", async () => {
+    // `POST /keys` declares a credential like every other door, so the gate
+    // would close the first mint on a fresh instance if it read the
+    // declaration alone. Bootstrap presents the boot log's one-time secret
+    // instead, and the gate steps aside for it.
+    const fresh = await createUnbootstrappedTestApp();
+    try {
+      const secret = await ensureBootstrapSecret(fresh.storage);
+      const res = await fresh.app.request("/keys", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${secret}`,
+        },
+        body: JSON.stringify({ label: "first", source: "first" }),
+      });
+      expect(res.status).toBe(201);
+    } finally {
+      await fresh.cleanup();
+    }
+  });
+
+  it("accounts for every route the app serves", () => {
+    const served = servedDoors();
+    // Positive control: the walk is over a table that has to have filled.
+    expect(served.size).toBeGreaterThan(100);
+    const guarded = guardedDoors();
+    const fenced = fencedDoors();
+    const unclassified: string[] = [];
+    for (const door of served) {
+      // The global middleware mounts, which are not doors: nothing is
+      // served at `/*` and every request passes through them on its way to
+      // whatever is.
+      if (door === "ALL /*") continue;
+      if (guarded.has(door)) continue;
+      if (fenced.has(door)) continue;
+      if (door in OPEN_DOORS) continue;
+      if (door in CREDENTIAL_IN_HANDLER) continue;
+      unclassified.push(door);
+    }
+    expect(unclassified.sort()).toEqual([]);
+  });
+
+  it("holds every classification to a route that still exists", () => {
+    const served = servedDoors();
+    const stale = [
+      ...Object.keys(OPEN_DOORS),
+      ...Object.keys(CREDENTIAL_IN_HANDLER),
+      ...fencedDoors(),
+    ].filter((door) => !served.has(door));
+    expect(stale.sort()).toEqual([]);
+  });
+});
