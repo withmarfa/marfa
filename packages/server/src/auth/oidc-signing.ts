@@ -8,9 +8,14 @@
 //
 // The private JWK lives in the `settings` table (key
 // `oidc.signing.keypair`) — same KV the bootstrapped sentinel uses.
-// Persisting in DB rather than env keeps single-host self-hosts working
-// out of the box, and lets multi-instance deployments rotate keys by
-// updating one row.
+// Persisting in the database rather than in the environment means an
+// instance works out of the box with nothing set, and a second process
+// booting later reads the key the first one wrote instead of minting a
+// rival. Two booting at once do not converge: the upsert's loser returns
+// the keypair it generated and keeps signing with it until it restarts.
+// The row is read once at boot and cached either way, so changing it
+// takes effect at the next restart; rotation proper is unbuilt, and the
+// single-key JWKS below says so.
 
 import { generateKeyPair, exportJWK, importJWK, SignJWT } from "jose";
 import type { JWK, CryptoKey, KeyObject } from "jose";
@@ -53,9 +58,10 @@ export class OidcSigner {
   ) {}
 
   /** Loads the persisted keypair, generating + persisting one on first
-   *  boot. Idempotent across restarts. Multi-instance deployments race
-   *  on first boot but the KV row is upserted so the last writer wins
-   *  and all instances converge once the row exists. */
+   *  boot. Idempotent across restarts. Two processes booting at once both
+   *  generate, and the row's last writer wins — but each returns the
+   *  keypair it made, so the loser signs with an unpersisted key until it
+   *  restarts and reads the row. */
   static async init(storage: Storage): Promise<OidcSigner> {
     const existing = await storage.settings.get(SIGNING_KEY_SETTINGS_KEY);
     if (existing) {

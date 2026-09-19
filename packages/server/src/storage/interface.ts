@@ -957,9 +957,9 @@ export interface TypeStore {
    * Install the shipped vocabulary, and answer with any shipped id that
    * collided with a registration this seed did not write.
    *
-   * **The return value is the whole of the collision handling.** A self-host
-   * stores its own registrations in the same table the seed writes to, so a
-   * build that starts shipping an identifier somebody already
+   * **The return value is the whole of the collision handling.** An
+   * instance stores its own registrations in the same table the seed writes
+   * to, so a build that starts shipping an identifier somebody already
    * registered would otherwise rewrite their schema unattended on the next
    * boot. The seed leaves such a row alone; deciding what to do about it
    * belongs to a person, not to a boot path that runs on every instance.

@@ -68,8 +68,8 @@ export function setPlatformDrift(ids: readonly string[]): void {
 
 /**
  * What this boot found. Empty until a boot records something, which is the
- * honest answer for a process that has not looked: a self-hoster's fresh
- * instance and an instance mid-boot both genuinely know of no drift.
+ * honest answer for a process that has not looked: a fresh instance and an
+ * instance mid-boot both genuinely know of no drift.
  */
 export function platformDrift(): readonly string[] {
   return driftedIds;

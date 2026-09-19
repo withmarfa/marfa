@@ -130,8 +130,7 @@ interface ConsentParams {
    * The bundle set to group scopes under. The consent route passes a
    * derivation with the runtime custom-namespace roots folded in, so a
    * runtime-registered type groups under the custom tile rather than the
-   * fallback buckets. Absent, the instance-wide active bundles apply —
-   * correct for keys mode.
+   * fallback buckets. Absent, the instance-wide active bundles apply.
    */
   bundles?: PermissionBundle[];
 }

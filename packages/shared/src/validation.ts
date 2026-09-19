@@ -256,9 +256,9 @@ export function deriveHandleFromEmail(email: string): string {
  * Returns true if the value is a syntactically valid type identifier under
  * the five-tier namespace grammar. Authorization is enforced separately at
  * registration time: `core.*` / `system.*` / `marfa.*` are refused for
- * every credential, and publisher-tier registration requires the caller's
- * user to hold the publisher handle, in hosted mode and for every credential
- * alike.
+ * every credential. Nothing binds a `publisher.*` namespace to anyone:
+ * there are user accounts, but no handle on them and no door that compares
+ * one, so a publisher-tier identifier registers on the grammar alone.
  */
 export function isValidTypeIdentifier(value: string): boolean {
   if (value.length > 128) return false;

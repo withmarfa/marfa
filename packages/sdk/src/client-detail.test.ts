@@ -1,5 +1,8 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { createKeysModeFixture, type KeysModeFixture } from "./test-harness.js";
+import {
+  createBootstrappedFixture,
+  type BootstrappedFixture,
+} from "./test-harness.js";
 
 /**
  * `client.items.getDetail` — the bundled single-item read. Proves the SDK
@@ -8,10 +11,10 @@ import { createKeysModeFixture, type KeysModeFixture } from "./test-harness.js";
  * in-process server.
  */
 
-let fx: KeysModeFixture;
+let fx: BootstrappedFixture;
 
 beforeAll(async () => {
-  fx = await createKeysModeFixture();
+  fx = await createBootstrappedFixture();
 });
 
 afterAll(() => {

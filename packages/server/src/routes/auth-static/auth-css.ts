@@ -12,7 +12,7 @@
  * The design is a calm, monochrome "Luma" shadcn surface: a white card on
  * a soft gray canvas, soft-filled pill inputs, near-black primary buttons,
  * a quiet ghost secondary. Colors are the shadcn "neutral" ramp. Tokens
- * are CSS custom properties so a self-host operator can re-theme without
+ * are CSS custom properties so an operator can re-theme without
  * forking, and dark mode follows the device by flipping the same tokens.
  */
 

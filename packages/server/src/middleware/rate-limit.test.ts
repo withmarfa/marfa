@@ -17,7 +17,7 @@ const SALT = "test-salt";
 interface Ctx {
   app: Hono<AppEnv>;
   storage: Storage;
-  /** An ordinary working key — the shape a self-hoster is handed, and the
+  /** An ordinary working key — the shape an operator is handed, and the
    *  only shape that carries content reach. */
   workingKey: string;
   cleanup: () => Promise<void>;

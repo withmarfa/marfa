@@ -74,7 +74,7 @@ describe("createMarfaAuth client address configuration", () => {
     // Better Auth reads `x-forwarded-for` when told nothing, which is
     // what an ordinary reverse proxy sends. Emitting an empty or
     // defaulted `ipAddress` block here would take that away from every
-    // self-hoster, so the absence of the key is the assertion.
+    // operator, so the absence of the key is the assertion.
     const advanced = advancedFor({});
     expect(advanced).not.toHaveProperty("ipAddress");
     // The rest of the block still has to arrive, or the assertion above

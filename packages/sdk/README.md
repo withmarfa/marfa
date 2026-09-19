@@ -28,14 +28,14 @@ const note = await client.items.create({
 
 The SDK ships one in-process test fixture so consumers can exercise the client against a real Hono server without a network. It lives in `packages/sdk/src/test-harness.ts`.
 
-### Keys-mode fixture (`createKeysModeFixture`)
+### Bootstrapped fixture (`createBootstrappedFixture`)
 
 Bootstraps the instance over `POST /keys` and returns a client wired to the working key that mint provisions.
 
 ```ts
-import { createKeysModeFixture } from "./test-harness.js";
+import { createBootstrappedFixture } from "./test-harness.js";
 
-const { client, adminKey, cleanup } = await createKeysModeFixture();
+const { client, adminKey, cleanup } = await createBootstrappedFixture();
 try {
   const note = await client.items.create({
     type: "core.note",

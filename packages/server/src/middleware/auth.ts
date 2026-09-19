@@ -854,8 +854,9 @@ export function requireMetadataPermission(
   // as a key or projected from a grant. Namespace
   // rules are the route's, not this gate's: reserved roots (`core.*`,
   // `system.*`, `marfa.*`) are refused at registration for every
-  // credential, operator included, and publisher namespaces bind to the
-  // caller's claimed handle in hosted mode.
+  // credential, operator included. A `publisher.*` namespace binds to
+  // nobody: user accounts carry no handle and no door compares one, so it
+  // registers on the grammar alone.
   if (metadataPermissionCovers(apiKey.metadata_permissions, subresource, level))
     return;
   throw new MarfaError(

@@ -173,22 +173,6 @@ describe("metadata.changed on the live stream", () => {
 });
 
 describe("an OAuth-derived subscriber", () => {
-  // Its own context: an OAuth principal needs hosted-mode storage with a user
-  // store, which the shared context above does not have.
-  let hosted: TestContext;
-
-  beforeAll(async () => {
-    hosted = await createTestContext({});
-    initEventLog(hosted.storage.eventLog);
-  });
-
-  afterAll(async () => {
-    await hosted.cleanup();
-    // Hand the event log back to the file's main context, which the
-    // replay suite below still needs.
-    initEventLog(ctx.storage.eventLog);
-  });
-
   it("receives no extension namespace at all", async () => {
     // OAuth tokens are minted with `extension_permissions: {}`, so they hold
     // nothing on any namespace and nothing about the principal behind them
@@ -201,25 +185,27 @@ describe("an OAuth-derived subscriber", () => {
     // no scopes at all it receives no events whatever, which would make
     // the assertions below pass for the wrong reason.
     const { token } = await seedOauthBearer(
-      hosted.storage,
+      ctx.storage,
       ["core.note:read"],
       {},
     );
 
-    const item = await hosted.storage.items.create({
+    const item = await ctx.storage.items.create({
       type: "core.note",
       properties: { body: "an oauth item" },
     });
     // Distinctive values, so an assertion that they are absent cannot be
     // satisfied — or defeated — by a substring of the item itself.
-    await hosted.storage.metadata.setExtension(item.id, "mine", {
+    await ctx.storage.metadata.setExtension(item.id, "mine", {
       marker: "ZZmineZZ",
     });
-    await hosted.storage.metadata.setExtension(item.id, "theirs", {
+    await ctx.storage.metadata.setExtension(item.id, "theirs", {
       marker: "ZZtheirsZZ",
     });
 
-    const stream = await request(hosted.app, "GET", "/events", { key: token });
+    const stream = await request(ctx.app, "GET", "/events", {
+      key: token,
+    });
     expect(stream.status).toBe(200);
     const reading = readSse(stream, {
       until: (text) => text.includes("metadata.changed"),
@@ -229,7 +215,7 @@ describe("an OAuth-derived subscriber", () => {
     // own maps are empty.
     const suffix = Math.random().toString(36).slice(2, 8);
     const writerKey = `marfa_k1_oauthwriter_${suffix}`;
-    await hosted.storage.keys.create(
+    await ctx.storage.keys.create(
       {
         label: `oauthwriter-${suffix}`,
         source: `oauthwriter-${suffix}`,
@@ -245,7 +231,7 @@ describe("an OAuth-derived subscriber", () => {
       hashApiKey(writerKey, TEST_API_KEY_SALT),
     );
     const write = await request(
-      hosted.app,
+      ctx.app,
       "PUT",
       `/items/${item.id}/extensions/mine`,
       { key: writerKey, body: { marker: "ZZmineZZ" } },

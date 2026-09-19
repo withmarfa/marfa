@@ -23,8 +23,8 @@ interface Placement {
 /**
  * Read the placement this deployment states about itself. The variables are
  * platform-neutral and set per environment, so the answer describes where the
- * server actually runs rather than which provider it runs on, and a
- * self-hoster can set them without pretending to be on one. Unset means the
+ * server actually runs rather than which provider it runs on, and an
+ * operator can set them without pretending to be on one. Unset means the
  * block is absent rather than carrying empty strings that would read as a
  * real answer.
  *
@@ -163,8 +163,8 @@ export function healthRoutes(
     }
     if (components.database.status !== "ok") overall = "degraded";
 
-    // Blob storage. Same budget, and the same reason for one: on the
-    // hosted deployment this is a network call to object storage.
+    // Blob storage. Same budget, and the same reason for one: against an
+    // S3 backend this is a network call to object storage.
     const blobStart = performance.now();
     try {
       const outcome = await withBudget(

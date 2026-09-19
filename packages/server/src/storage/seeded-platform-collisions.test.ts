@@ -26,7 +26,7 @@ afterEach(async () => {
   await ctx.cleanup();
 });
 
-/** A shipped id, spelled as a self-hoster's own registration would be. */
+/** A shipped id, spelled as an operator's own registration would be. */
 const CONTESTED = "user.collides";
 
 async function registerLocally() {

@@ -20,7 +20,8 @@ export interface S3BlobConfig {
    * virtual-hosted (`<bucket>.<endpoint>/<key>`). Only consulted when an
    * endpoint is set; AWS itself is always virtual-hosted.
    *
-   * Defaults to true, because MinIO needs it and the self-host quickstart
+   * Defaults to true, because MinIO needs it and somebody following the
+   * quickstart
    * is the deployment most likely to be wrong about this. Stores that
    * present virtual-hosted URLs set it false.
    *

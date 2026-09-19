@@ -1,5 +1,8 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { createKeysModeFixture, type KeysModeFixture } from "./test-harness.js";
+import {
+  createBootstrappedFixture,
+  type BootstrappedFixture,
+} from "./test-harness.js";
 import { EdgeConflictError } from "./errors.js";
 
 /**
@@ -19,10 +22,10 @@ import { EdgeConflictError } from "./errors.js";
  * cost of losing this.
  */
 
-let fx: KeysModeFixture;
+let fx: BootstrappedFixture;
 
 beforeAll(async () => {
-  fx = await createKeysModeFixture();
+  fx = await createBootstrappedFixture();
 });
 
 afterAll(() => {

@@ -271,7 +271,8 @@ export interface AppConfig {
    * of the server can read the *resolved* OTel config from the single
    * config source — they are NOT the wiring path for the SDK itself.
    *
-   * Default OFF. Deployed hosted containers set `MARFA_OTEL_ENABLED=true`.
+   * Default OFF, so nothing is exported and the SDK is never loaded unless
+   * an operator asks for it with `MARFA_OTEL_ENABLED=true`.
    * Standard `OTEL_EXPORTER_OTLP_*` env vars carry endpoint + headers;
    * `MARFA_OTEL_*` carries Marfa policy (toggle, sampling). Optional on
    * the type so `AppConfig` literals
@@ -289,11 +290,13 @@ export interface AppConfig {
    *  start without it when telemetry is actually being exported. */
   otelEnvironment?: string;
   /** OTLP traces endpoint (`OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`). Empty in
-   *  hosted test mode — the trace pipeline is built but points at no store;
-   *  PostHog has no general-trace ingest (only logs + errors). */
+   *  A deployment exporting to PostHog leaves it unset — the trace pipeline
+   *  is built but points at no store, because PostHog has no general-trace
+   *  ingest, only logs and errors. */
   otelTracesEndpoint?: string;
-  /** OTLP logs endpoint (`OTEL_EXPORTER_OTLP_LOGS_ENDPOINT`). Hosted points
-   *  this at PostHog's `https://eu.i.posthog.com/i/v1/logs`. */
+  /** OTLP logs endpoint (`OTEL_EXPORTER_OTLP_LOGS_ENDPOINT`). A deployment
+   *  exporting to PostHog points this at
+   *  `https://eu.i.posthog.com/i/v1/logs`. */
   otelLogsEndpoint?: string;
   /** Exporter headers parsed from `OTEL_EXPORTER_OTLP_HEADERS` (`k=v,k2=v2`).
    *  Carries e.g. `Authorization=Bearer <phc_...>` for PostHog. */
@@ -559,8 +562,8 @@ export function loadConfig(): AppConfig {
     // MARFA_AUTH_SECRET derives the at-rest encryption key for every
     // stored ciphertext (OAuth tokens, webhook secrets, OAuth callback
     // state, system.credential rows). If it is unset, the crypto layer
-    // would fall back to a per-process random key, so a restart on the
-    // scale-to-zero hosted container leaves all prior ciphertexts
+    // would fall back to a per-process random key, so a restart on a
+    // scale-to-zero container leaves all prior ciphertexts
     // undecryptable. Enforce presence at boot so that never happens.
     if (!authSecret || authSecret.length < 32) {
       throw new Error(

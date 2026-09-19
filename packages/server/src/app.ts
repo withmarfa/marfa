@@ -145,7 +145,7 @@ export function createApp(
   // local dev loop (Vite on a shifting port, curl, etc.) works without
   // enumerating every port in CORS_ORIGINS. In production that
   // auto-reflect is OFF: an operator must list real dev origins in
-  // CORS_ORIGINS explicitly, so a hosted deployment can't be coerced
+  // CORS_ORIGINS explicitly, so a production server can't be coerced
   // into echoing an attacker-controlled `http://localhost:<port>`
   // Origin back as allowed.
   const reflectLocalhost = !config.isProduction;
@@ -595,10 +595,9 @@ export function createApp(
   // operations stripped, plain-Hono routes injected) — shared with the
   // committed spec in `src/openapi-published.ts` so the two never drift.
   //
-  // This document deliberately describes THIS deployment: routes mounted only
-  // under another auth mode are absent, because they are absent from the
-  // running server. The committed spec is the wider contract across every
-  // mode, and marks which operations a given mode serves.
+  // This document describes what this process serves, which is what a
+  // client reading it at runtime needs. The committed spec is generated
+  // from the same shaping and is what CI holds the source to.
   const openapiDocument = finalizeOpenAPISpec(
     app.getOpenAPIDocument({
       openapi: "3.1.0",
