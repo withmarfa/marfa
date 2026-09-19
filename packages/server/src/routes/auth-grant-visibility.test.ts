@@ -153,7 +153,15 @@ async function softDeleteGrantRow(c: TestContext, id: string): Promise<void> {
 
 /** Every projected grant row, whatever either axis says. */
 async function allGrantRows(c: TestContext) {
-  const listed = await c.storage.items.list({ type: "system.connection" });
+  // Every state, because the claim is about what storage holds rather than
+  // what a reader is answered. The listing default is the active state, and
+  // a soft-deleted grant sits at `revoked`, so a narrowed read here would
+  // count the tombstone as absent and the assertion would pass on exactly
+  // the resurrection it exists to rule out.
+  const listed = await c.storage.items.list({
+    type: "system.connection",
+    all_states: true,
+  });
   return listed.data;
 }
 

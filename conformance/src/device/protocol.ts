@@ -68,10 +68,17 @@ export interface SearchHit {
   snippet: string;
 }
 
+/** Narrowing for a local search: the state axis the list takes, and only
+ *  that, because the rest of the grammar is answered by a list. */
+export interface SearchFilters {
+  state?: string;
+  allStates?: boolean;
+}
+
 export interface ListFilters {
   type?: string;
   state?: string;
-  includeTrashed?: boolean;
+  allStates?: boolean;
   tier?: Tier;
   tags?: string[];
   limit?: number;
@@ -95,7 +102,11 @@ export interface DeviceUnderTest {
   catchUp(): Promise<Outcome<CatchUpReport>>;
   list(filters?: ListFilters): Promise<Outcome<Item[]>>;
   get(id: string): Promise<Outcome<Item>>;
-  search(query: string, limit?: number): Promise<Outcome<SearchHit[]>>;
+  search(
+    query: string,
+    filters?: SearchFilters,
+    limit?: number,
+  ): Promise<Outcome<SearchHit[]>>;
   status(): Promise<Outcome<Status>>;
 
   /** A second device over the same store, for the one-writer rule. */

@@ -11,6 +11,7 @@ import {
   type ListFilters,
   type Outcome,
   type Refusal,
+  type SearchFilters,
   type SearchHit,
   type Status,
   type Tier,
@@ -116,7 +117,7 @@ export class CliDevice implements DeviceUnderTest {
     const args = ["items", "list"];
     if (filters.type !== undefined) args.push("--type", filters.type);
     if (filters.state !== undefined) args.push("--state", filters.state);
-    if (filters.includeTrashed === true) args.push("--include-trashed");
+    if (filters.allStates === true) args.push("--all-states");
     if (filters.tier !== undefined) args.push("--tier", filters.tier);
     for (const tag of filters.tags ?? []) args.push("--tag", tag);
     if (filters.limit !== undefined)
@@ -130,8 +131,14 @@ export class CliDevice implements DeviceUnderTest {
     return this.json<Item>(["items", "get", id]);
   }
 
-  async search(query: string, limit?: number): Promise<Outcome<SearchHit[]>> {
+  async search(
+    query: string,
+    filters: SearchFilters = {},
+    limit?: number,
+  ): Promise<Outcome<SearchHit[]>> {
     const args = ["search", query];
+    if (filters.state !== undefined) args.push("--state", filters.state);
+    if (filters.allStates === true) args.push("--all-states");
     if (limit !== undefined) args.push("--limit", String(limit));
     return this.json<SearchHit[]>(args);
   }

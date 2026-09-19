@@ -58,23 +58,27 @@ export const ItemStateEnum = z.enum(
 );
 
 /**
- * The `?state=` value that means "every state, trashed included".
+ * The `?state=` value that means "every state", on every door that reads
+ * items.
  *
  * Deliberately not a member of the lifecycle vocabulary: it is a widening
  * of the default rather than a state a row can be in, and nothing may
  * compare it against the column.
+ *
+ * What it widens to is the door's own. A listing and an export reach every
+ * lifecycle state; a search reaches every state the full-text index holds,
+ * which leaves out the bin because a trashed row is removed from the index
+ * rather than narrowed out of the query.
  */
 export const ALL_STATES = "any";
 
 /**
  * Resolve a `?state=` parameter into the pair the storage filter takes.
  *
- * One implementation for every door that reads items, because the doors
- * disagreed: the item listing gained the sentinel and `GET /export` did
- * not, so the one read whose whole purpose is a complete copy was the one
- * that could not ask for every state and quietly returned everything minus
- * the bin. The archive an export writes is what a restore reads back, so
- * that omission is silently lossy in the place it matters most.
+ * One implementation for every door that reads items — the listing, the
+ * search and the export — so `any` means the same thing on all of them.
+ * What each door does with a caller who named nothing is the door's own,
+ * and this function decides only what a named value resolves to.
  *
  * The sentinel is resolved before the membership check rather than after.
  * Cast first and it would be validated as a lifecycle value and refused

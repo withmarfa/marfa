@@ -158,7 +158,7 @@ describe("the working copy holds one slice", () => {
     expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
     expect((await device.catchUp()).ok).toBe(true);
 
-    const held = await device.list({ includeTrashed: true });
+    const held = await device.list({ allStates: true });
     expect(held.ok).toBe(true);
     const ids = held.ok ? held.value.map((item) => item.id).sort() : [];
     // The control: the rows a sweeper would have kept are there, so a missing
@@ -369,5 +369,174 @@ describe("the working copy says what it is", () => {
         `the refusal did not say the hydration is incomplete: ${listed.refusal.raw}`,
       ).toBe("hydration_incomplete");
     }
+  });
+});
+
+describe("a local read answers the active state unless asked otherwise", () => {
+  /**
+   * Three rows, one per state, in one slice. Hydration asks the server for
+   * every state (`device.md` 31), so what the copy holds is not in question
+   * here and what a read answers is.
+   */
+  async function hydrateEveryState(label: string): Promise<void> {
+    harness = await startHarness(label);
+    scriptHydration(harness.server, {
+      head: "10",
+      rows: {
+        "core.note": [
+          { item: { id: "live", properties: { title: "zqlocal live" } } },
+          {
+            item: {
+              id: "filed",
+              state: "archived",
+              properties: { title: "zqlocal filed" },
+            },
+          },
+          {
+            item: {
+              id: "binned",
+              state: "trashed",
+              properties: { title: "zqlocal binned" },
+            },
+          },
+        ],
+      },
+    });
+    expect(
+      (await harness.device.hydrate(["core.note"], "library")).ok,
+      "the hydration failed, so nothing below is a statement about a read",
+    ).toBe(true);
+
+    // The slice is a type list and a tier, never a state: a hydration that
+    // asked for the default would land only active rows, and every read
+    // below would then be answered by a copy that never held the others.
+    // The scripted server honors the parameter, so this is what keeps the
+    // widening under test rather than assumed.
+    const itemReads = harness.server.requests.filter(
+      (request) => request.pathname === "/items",
+    );
+    expect(
+      itemReads.length,
+      "the hydration read no items door at all, so the assertions below are about an empty copy",
+    ).toBeGreaterThan(0);
+    for (const read of itemReads) {
+      expect(
+        read.query.get("state"),
+        "hydration stopped asking for every state, so a working copy holds only active rows and a caller can never reach the rest",
+      ).toBe("any");
+    }
+  }
+
+  /** Every id the copy holds, whatever state it is in. */
+  async function heldIds(): Promise<string[]> {
+    const everything = await harness!.device.list({ allStates: true });
+    expect(
+      everything.ok,
+      `the widened local list was refused, so the control every absence below leans on says nothing: ${JSON.stringify(everything)}`,
+    ).toBe(true);
+    return everything.ok ? everything.value.map((item) => item.id).sort() : [];
+  }
+
+  it("answers the active state on a local list that names none", async () => {
+    await hydrateEveryState("local-list-state-default");
+    const device = harness!.device;
+
+    const listed = await device.list();
+    expect(listed.ok).toBe(true);
+    const ids = listed.ok ? listed.value.map((item) => item.id).sort() : [];
+    expect(
+      ids,
+      "a local list naming no state stopped answering live rows, so an unnarrowed read reports an empty copy",
+    ).toContain("live");
+    expect(
+      ids,
+      "a local list naming no state answers archived rows, so a device and the server it copies give different answers to one question",
+    ).not.toContain("filed");
+    expect(
+      ids,
+      "a local list naming no state answers the bin, so a deleted row still reads as present on the device",
+    ).not.toContain("binned");
+
+    // The copy holds all three, so the absences above are the read's doing
+    // rather than a hydration that never landed them.
+    expect(
+      await heldIds(),
+      "the widening flag does not widen, so the rows the default hides are unreachable and the case above proves nothing",
+    ).toEqual(["binned", "filed", "live"]);
+
+    const filed = await device.list({ state: "archived" });
+    expect(filed.ok).toBe(true);
+    expect(
+      filed.ok ? filed.value.map((item) => item.id) : [],
+      "naming a state no longer reaches it, so a caller cannot ask for the rows the default hides",
+    ).toEqual(["filed"]);
+  });
+
+  it("answers the active state on a local search that names none", async () => {
+    await hydrateEveryState("local-search-state-default");
+    const device = harness!.device;
+
+    // This case's own store, so the list case's control does not carry: a
+    // hydration that stopped landing non-active rows would make both
+    // absences below true for the wrong reason.
+    expect(
+      await heldIds(),
+      "the copy does not hold the rows the search must not answer, so the absences below say nothing about the search",
+    ).toEqual(["binned", "filed", "live"]);
+
+    const hits = await device.search("zqlocal");
+    expect(hits.ok).toBe(true);
+    const ids = hits.ok ? hits.value.map((hit) => hit.item.id).sort() : [];
+    expect(
+      ids,
+      "a local search stopped matching live rows, so the local index answers nothing and the absences below are vacuous",
+    ).toContain("live");
+    expect(
+      ids,
+      "a local search answers a row a local list hides, which is two answers to one question on one device",
+    ).not.toContain("filed");
+    expect(
+      ids,
+      "a local search answers the bin, so a deleted row is still findable on the device",
+    ).not.toContain("binned");
+
+    // A caller who names a state is answered it, which is what makes the
+    // default a default rather than the only selection the door has.
+    const filed = await device.search("zqlocal", { state: "archived" });
+    expect(
+      filed.ok,
+      `naming a state on the local search door was refused outright, so the door has no setting at all: ${JSON.stringify(filed)}`,
+    ).toBe(true);
+    expect(
+      filed.ok ? filed.value.map((hit) => hit.item.id) : [],
+      "naming a state no longer reaches it on the local search door, so the rows the default hides are unreachable by any local read",
+    ).toEqual(["filed"]);
+  });
+
+  it("reads an archived row by id and reports a trashed one as absent", async () => {
+    await hydrateEveryState("local-get-state");
+    const device = harness!.device;
+
+    const filed = await device.get("filed");
+    expect(
+      filed.ok,
+      `a read by id was refused, so the assertion below is about a broken door rather than about the archive: ${JSON.stringify(filed)}`,
+    ).toBe(true);
+    expect(
+      filed.ok ? filed.value.id : undefined,
+      "an archived row is not readable by id, so a caller holding its id is told it does not exist while the server would hand it over",
+    ).toBe("filed");
+
+    const live = await device.get("live");
+    expect(
+      live.ok,
+      "an ordinary read by id was refused, so the absence below is about a broken door rather than the bin",
+    ).toBe(true);
+
+    const binned = await device.get("binned");
+    expect(
+      binned.ok && binned.value !== null,
+      "a row in the bin is readable by id, so a device hands back a row the server it copies answers 404 for",
+    ).toBe(false);
   });
 });

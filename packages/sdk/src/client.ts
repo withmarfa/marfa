@@ -140,10 +140,10 @@ export interface UpdateOptions {
 
 export interface ListFilters {
   type?: string;
-  /** Lifecycle state. `"any"` widens the listing to every state including
-   *  trashed, which a resuming client needs in order to see a row reach
-   *  the bin; omitting the field keeps the default, which excludes
-   *  trashed rows. */
+  /** Lifecycle state. Omitting the field answers the active state, which
+   *  is what a reader is working with. `"any"` widens the listing to every
+   *  state, which a resuming client needs in order to see a row leave the
+   *  active state. */
   state?: ItemState | "any";
   source?: string;
   /** Tier filter. `"library"` restricts to library items; `"feed"` restricts
@@ -283,7 +283,11 @@ export interface ItemDetail {
 
 export interface SearchFilters {
   type?: string;
-  state?: ItemState;
+  /** Lifecycle state. Omitting the field answers the active state, as a
+   *  listing does. `"any"` widens to every state the index holds, which is
+   *  every state but `trashed`: a trashed row leaves the index rather than
+   *  being narrowed out of the query. */
+  state?: ItemState | "any";
   /** Tier filter, matching `ListFilters.tier`. */
   tier?: Tier | "all";
   /** Items must have ALL specified tags (AND semantics). Matches
@@ -1665,7 +1669,8 @@ export class MarfaClient {
 
     /**
      * Enumerate the distinct set of tags in use across items the caller can
-     * read. Type-permission scoped, excludes trashed items.
+     * read. Type-permission scoped, and counted over the active state, as
+     * the item listing is, so every tag returned opens to rows.
      * Returns tags with usage counts, sorted by count desc then tag asc.
      */
     listTags: async (): Promise<{ tag: string; count: number }[]> => {

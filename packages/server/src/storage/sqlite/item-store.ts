@@ -6,7 +6,6 @@ import {
 } from "../../page-limits.js";
 import {
   eq,
-  ne,
   and,
   or,
   lt,
@@ -16,6 +15,7 @@ import {
   asc,
   sql,
   inArray,
+  notInArray,
   getTableColumns,
   type SQL,
 } from "drizzle-orm";
@@ -538,12 +538,24 @@ export class SqliteItemStore implements ItemStore {
     if (filters.state) {
       conditions.push(eq(items.state, filters.state));
     } else if (!filters.all_states) {
-      // The default hides the bin. `all_states` suppresses that and adds
-      // nothing else: a catch-up has to see a row go to the bin, because
-      // that transition is how a client learns to prune its local copy,
-      // and a listing that moves the modification time and then hides the
-      // row reports that nothing changed.
-      conditions.push(ne(items.state, "trashed"));
+      // The default is the active state. A listing answers what the reader
+      // is working with, and archived, trashed and revoked are all rows
+      // they put away. It is also the narrower of the two masks this door
+      // could carry, which is what a caller who named nothing should get:
+      // `revoked` is reachable only on a reserved type, and a default that
+      // let it through published platform rows to an ordinary query.
+      //
+      // `all_states` suppresses the narrowing and adds nothing else: a
+      // catch-up has to see a row leave the active state, because that
+      // transition is how a client learns to prune its local copy, and a
+      // listing that moves the modification time and then hides the row
+      // reports that nothing changed.
+      const excluded = filters.exclude_states;
+      if (excluded && excluded.length > 0) {
+        conditions.push(notInArray(items.state, [...excluded]));
+      } else {
+        conditions.push(eq(items.state, "active"));
+      }
     }
 
     if (filters.type) {
@@ -1012,11 +1024,10 @@ export class SqliteItemStore implements ItemStore {
     }
 
     // A soft delete is a transition, so it goes through the same gate the
-    // explicit transition route uses. Writing `trashed` unconditionally put
-    // `system.*` rows into a state their own lifecycle does not contain:
-    // no transition could produce it, no transition could leave it, and the
-    // default listing hides trashed rows, so the result was invisible until
-    // someone enumerated every state by hand.
+    // explicit transition route uses. Writing `trashed` unconditionally would
+    // put a `system.*` row into a state its own lifecycle does not contain:
+    // no transition produces it, none leaves it, and no default listing
+    // reports it, so it is reachable only by enumerating every state.
     const target = softDeleteState(row.type);
     // Idempotent: deleting something already soft-deleted is not an error,
     // and `trashed → trashed` is not a legal transition, so this has to

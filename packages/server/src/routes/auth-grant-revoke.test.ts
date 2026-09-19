@@ -287,9 +287,14 @@ function approveDeviceFlow(
   });
 }
 
-/** The single projected `system.connection` grant, whatever its state. */
+/** The single projected `system.connection` grant, in whatever lifecycle
+ *  state it sits: a revocation moves `properties.status` and a soft delete
+ *  moves `state`, and this helper has to see a row either one produced. */
 async function onlyGrant(c: TestContext) {
-  const items = await c.storage.items.list({ type: "system.connection" });
+  const items = await c.storage.items.list({
+    type: "system.connection",
+    all_states: true,
+  });
   expect(items.data.length).toBe(1);
   return items.data[0]!;
 }

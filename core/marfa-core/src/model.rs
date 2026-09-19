@@ -123,19 +123,34 @@ pub struct Edge {
     pub updated_at: String,
 }
 
-/// Narrowing for a local list. Leaving `state` unset excludes trashed rows,
-/// as the server does; `include_trashed` lifts that, and a named state wins.
+/// Narrowing for a local list. Leaving `state` unset answers the active
+/// state, as the server does; `all_states` lifts that, and a named state
+/// wins.
+///
+/// The flag is a widening rather than a list of states because the question
+/// a caller asks without one is always the same: what am I working with.
+/// Everything else is a caller naming what it wants.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ListFilters {
     pub r#type: Option<String>,
     pub state: Option<ItemState>,
-    pub include_trashed: bool,
+    pub all_states: bool,
     pub tier: Option<Tier>,
     pub tags: Vec<String>,
     pub occurred_after: Option<String>,
     pub occurred_before: Option<String>,
     pub limit: Option<u32>,
     pub offset: Option<u32>,
+}
+
+/// Narrowing for a local search. The same state rule the list takes, and
+/// the only axis a search narrows on: the rest of the listing grammar is
+/// answered by a list, and a search that took half of it would advertise a
+/// parity it does not have.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SearchFilters {
+    pub state: Option<ItemState>,
+    pub all_states: bool,
 }
 
 // Every sortable column is a verb plus `_at`, so the shared `At` suffix the

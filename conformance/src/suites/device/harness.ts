@@ -90,8 +90,19 @@ export function scriptHydration(
   server.answer("GET", "/items", (request) => {
     const type = request.query.get("type") ?? "";
     const forType = rows[type] ?? [];
+    // The state parameter is honored rather than ignored, because a
+    // scripted server more generous than the real one lets a device that
+    // stopped asking for every state stay green while a real copy silently
+    // holds only active rows (`device.md` 31). `any` is the only value
+    // hydration sends, so anything else narrows the same way the server's
+    // listing does.
+    const asked = request.query.get("state") ?? "active";
+    const visible =
+      asked === "any"
+        ? forType
+        : forType.filter((row) => (row.item.state ?? "active") === asked);
     return itemsPage(
-      forType.map((row) => ({ item: wireItem(row.item), tags: row.tags })),
+      visible.map((row) => ({ item: wireItem(row.item), tags: row.tags })),
     );
   });
 }

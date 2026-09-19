@@ -497,7 +497,7 @@ const listItemsRoute = createRoute({
         .string()
         .optional()
         .describe(
-          `Filter by lifecycle state. \`${ALL_STATES}\` returns every state including trashed, which a resuming client needs in order to see a row go to the bin; omitting the parameter keeps the default, which excludes trashed rows.`,
+          `Filter by lifecycle state. Omitting the parameter answers the active state, which is what a reader is working with. \`${ALL_STATES}\` returns every state in one pass, which a resuming client needs in order to see a row leave the active state.`,
         ),
       source: z.string().optional().describe("Filter by source credential"),
       tier: z

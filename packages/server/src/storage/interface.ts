@@ -180,14 +180,24 @@ export interface ItemFilters {
    *  applies. It does not change the ordering — only `updated_after`
    *  does that — so it can be given under any sort. */
   updated_before?: string;
-  /** Suppress the default exclusion of trashed rows and return every
-   *  lifecycle state.
+  /** Suppress the default narrowing and return every lifecycle state.
    *
    *  A separate flag rather than a sentinel value on `state`, because
    *  `state` compiles to an equality against the column and a magic
    *  string reaching that comparison would match no row while looking
    *  like a filter. A boolean cannot be passed to `eq` by accident. */
   all_states?: boolean;
+  /** Every lifecycle state except the ones named here.
+   *
+   *  The default answers the active state, which is what a reader is
+   *  working with. A copy of the corpus is a different question, and the
+   *  only door that asks it names its own selection here rather than
+   *  inheriting a reader's. Stated as an exclusion so that a state added
+   *  later joins the copy without anyone remembering to list it.
+   *
+   *  Ignored when `state` or `all_states` is set: both are the caller
+   *  naming the selection outright. */
+  exclude_states?: readonly ItemState[];
   /** Inclusive lower bound on the normalized `items.starts_at` column, and
    *  so implicitly `starts_at IS NOT NULL`. Serves the calendar's
    *  window scan: the column is written in the exact shape
@@ -217,6 +227,10 @@ export type ItemStatsAxis = "state" | "type";
 export interface SearchFilters {
   type?: string;
   state?: ItemState;
+  /** Mirrors `ItemFilters.all_states`. The search door advertises the
+   *  listing's filters, so a widening the listing offers and this door does
+   *  not is a row reachable by one read and by no other. */
+  all_states?: boolean;
   /** Tier filter, matching `/items`. Omit for unfiltered. */
   tier?: "library" | "feed";
   /** Mirrors `ItemFilters.source_filter`. */
@@ -811,7 +825,9 @@ export interface MetadataStore {
   /**
    * Enumerate the distinct set of tags in use across items visible to the
    * caller. Type-permission scoped when `allowedTypes` is provided (same
-   * pattern as `ItemStore.list`). Trashed items are excluded.
+   * pattern as `ItemStore.list`), and counted over the active state, which
+   * is the selection `ItemStore.list` answers: a tag counted on a row a
+   * listing hides opens to an empty page.
    * Returns tags with their usage counts, sorted by count descending.
    */
   listTags(filters: {

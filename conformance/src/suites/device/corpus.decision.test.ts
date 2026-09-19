@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { PENDING } from "./pending.js";
+import { ALL_PENDING, PENDING, PENDING_BEYOND_MILESTONE } from "./pending.js";
 
 /**
  * The corpus against the chapters, with no server and no device.
@@ -186,8 +186,38 @@ describe("every device statement is asserted by something", () => {
 });
 
 describe("the pending list and the fixtures agree", () => {
+  it("keeps what a later milestone covers out of the list this one empties", () => {
+    // The reason is the entry, not a comment beside it. Milestone one is
+    // reached when `PENDING` is empty, so a statement that moved here without
+    // the decision that put it here would let the milestone be declared by
+    // relabeling rather than by work. Blob work is the only thing the
+    // milestone deliberately leaves, and these are its two statements.
+    expect(
+      PENDING_BEYOND_MILESTONE,
+      "a statement was moved out of the milestone's list without the decision that allows it, so the list the milestone must empty is shrinking by bookkeeping",
+    ).toEqual({
+      "working-copy.test.ts › holds the thumbnail an item carries":
+        "device.md 29 — blob work is outside milestone one",
+      "working-copy.test.ts › says the bytes are absent rather than the item":
+        "device.md 30 — blob work is outside milestone one",
+    });
+  });
+
+  it("keeps the two registers disjoint", () => {
+    // A key in both merges into one union and the duplicate is invisible,
+    // which would let an entry sit in `PENDING_BEYOND_MILESTONE` while
+    // `PENDING` still counts it, or the reverse once one is removed.
+    const inBoth = Object.keys(PENDING).filter(
+      (key) => key in PENDING_BEYOND_MILESTONE,
+    );
+    expect(
+      inBoth,
+      "a fixture is on both registers, so removing it from one leaves it pending under the other and the milestone's list cannot be trusted to be complete",
+    ).toEqual([]);
+  });
+
   it("names a fixture that exists for every pending entry", () => {
-    const missing = Object.keys(PENDING).filter((key) => {
+    const missing = Object.keys(ALL_PENDING).filter((key) => {
       const [file, title] = key.split(" › ");
       return !titlesIn(`device/${file}`).includes(title);
     });
@@ -199,7 +229,7 @@ describe("the pending list and the fixtures agree", () => {
 
   it("names a statement that exists for every pending entry", () => {
     const unknown: string[] = [];
-    for (const [key, statement] of Object.entries(PENDING)) {
+    for (const [key, statement] of Object.entries(ALL_PENDING)) {
       const [chapter, number] = statement.split(" ");
       const match = allStatements.find(
         (candidate) =>
@@ -219,7 +249,7 @@ describe("the pending list and the fixtures agree", () => {
         bodilessTitles(file).map((title) => `${file} › ${title}`),
       ),
     );
-    const listed = new Set(Object.keys(PENDING));
+    const listed = new Set(Object.keys(ALL_PENDING));
 
     const unlisted = [...bodiless].filter((key) => !listed.has(key)).sort();
     expect(
@@ -239,7 +269,7 @@ describe("the pending list and the fixtures agree", () => {
       ),
     );
     const wrong: string[] = [];
-    for (const key of Object.keys(PENDING)) {
+    for (const key of Object.keys(ALL_PENDING)) {
       if (bodiless.has(key)) continue;
       const [file, title] = key.split(" › ");
       const block = blockFor(file, title);

@@ -82,8 +82,10 @@ export class SqliteSearchStore implements SearchStore {
     if (filters.state) {
       conditions.push("AND i.state = ?");
       params.push(filters.state);
-    } else {
-      conditions.push("AND i.state != 'trashed'");
+    } else if (!filters.all_states) {
+      // The same default the listing grammar gives, because a search that
+      // answered rows a listing hides is two answers to one question.
+      conditions.push("AND i.state = 'active'");
     }
 
     if (filters.type) {

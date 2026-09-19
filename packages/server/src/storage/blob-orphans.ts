@@ -10,8 +10,8 @@ import { collectBlobHashes } from "./blob-utils.js";
  * scheduled sweep, which answers it on a timer with a grace window. The
  * expensive half is the reference scan, and getting it wrong deletes bytes
  * something still points at, so it lives here rather than in either
- * caller. Live items, trashed items, metadata extensions and version
- * snapshots all count as references.
+ * caller. An item in any lifecycle state, a metadata extension and a
+ * version snapshot all count as references.
  */
 export interface BlobSweepResult {
   /** Candidates considered: every registered hash, or only those old
@@ -53,16 +53,12 @@ export async function sweepUnreferencedBlobs(
 
   const referencedHashes = new Set<string>();
 
-  // One pass over every lifecycle state. This walked the corpus twice —
-  // once bare and once with the state pinned to `trashed` — because the
-  // bare listing applies the default that hides the bin, and there was no
-  // way to ask for all four states at once. `all_states` is that way, and
-  // it is one filter rather than a second full scan.
-  //
-  // The union has to include the bin: a blob referenced only by a trashed
-  // item is still referenced, and removing it would strip the bytes out
-  // from under a restore. The pinned second pass was what held that, so
-  // the widening here is load-bearing rather than a tidy-up.
+  // Every lifecycle state, because a reference is a reference whatever
+  // state the row naming it sits in. A blob pointed at only by a row in
+  // the bin or the archive is still pointed at, and deleting its bytes
+  // would strip them out from under the restore the bin exists for. The
+  // widening is load-bearing rather than a tidy-up: the default answers
+  // the active state.
   let cursor: string | undefined;
   let hasMore = true;
   while (hasMore) {

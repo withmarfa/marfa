@@ -12,18 +12,19 @@ import type { Item, ItemState } from "@withmarfa/shared";
  * The bulk-action door matches what the read doors match.
  *
  * `GET /items` keeps platform-internal rows out of an ordinary query with two
- * gates. The default state mask is the weaker one: it excludes only `trashed`,
- * so a `revoked` row passes it, and `revoked` is reachable only on a `system.*`
- * type. The one that does the work is the type-column exclusion, and
- * `POST /items/bulk-actions` never passed it.
+ * gates. The state mask is the weaker one, because a caller names the state
+ * and is answered on it: `revoked` is reachable only on a `system.*` type,
+ * and a filter naming it is a filter that reaches those rows. The one that
+ * does the work is the type-column exclusion, and `POST /items/bulk-actions`
+ * never passed it.
  *
  * So a filter that named no type matched platform-internal rows, `dry_run`
  * enumerated their ids for a caller who never writes at all, and the actions
  * that are not bounded by something else acted on what it enumerated.
  *
  * **Two ways in and one flag closes both**, which is why the cases below drive
- * each separately. A caller can omit `state` and let the default mask keep
- * revoked rows, or name `state eq "revoked"` in the free-text grammar, which
+ * each separately. A caller can reach those rows through the structured
+ * `state`, or name `state eq "revoked"` in the free-text grammar, which
  * recognizes `state` as a system field with no value allowlist. Narrowing the
  * type column rather than the state column is what makes one fix cover both,
  * and a fix that closed one and not the other would close nothing.
@@ -144,14 +145,37 @@ describe("the bulk-action door and the read doors agree about system rows", () =
     // marker it was handed.
     const tag = `rev-${marker}`;
 
-    // `state` is a recognized system field in the filter grammar with no
-    // value allowlist, so this compiles straight through and would otherwise
-    // reach a row the structured `state` enum cannot name on this door.
+    // Both ways of naming the state, together. `state` is a recognized
+    // system field in the filter grammar with no value allowlist, so the
+    // free-text half compiles straight through to SQL; the structured half
+    // is what suppresses the door's own default, which answers the active
+    // state and would otherwise AND this query down to nothing and leave
+    // the absence below true whatever the type gate did.
     const ids = await matchedIds({
+      tags: [tag],
+      state: "revoked",
+      filter: 'state eq "revoked"',
+    });
+    expect(
+      ids,
+      "the bulk-action door matches a reserved row, so a dry run enumerates platform records and every unbounded action writes to them",
+    ).not.toContain(revoked.id);
+
+    // The same selection, through the store rather than the door, and
+    // carrying the free-text half as well. Without it the case above is an
+    // absence with no witness that either predicate reached a row, which is
+    // the shape this whole area keeps producing: a grammar that compiled
+    // bare `state` to something other than the column would empty the match
+    // set and satisfy the assertion for the wrong reason.
+    const reached = await ctx.storage.items.list({
+      state: "revoked",
       tags: [tag],
       filter: 'state eq "revoked"',
     });
-    expect(ids).not.toContain(revoked.id);
+    expect(
+      reached.data.map((i) => i.id),
+      "the seeded revoked row is not selectable by the two predicates the door was handed, so the door's refusal above proves nothing",
+    ).toContain(revoked.id);
   });
 
   it("refuses the opt-in to a credential the fence does not admit", async () => {
@@ -229,36 +253,49 @@ describe("the bulk-action door and the read doors agree about system rows", () =
  * later change to either one has to answer for it.
  */
 describe("the bulk-action door and the list read agree about an omitted state", () => {
-  it("excludes trashed rows on both doors when no state is named", async () => {
+  it("answers the active state on both doors when no state is named", async () => {
     const marker = Math.random().toString(36).slice(2, 8);
-    const live = await request(ctx.app, "POST", "/items", {
-      key: ctx.workingKey,
-      body: {
-        type: "core.note",
-        properties: { body: `state-${marker}` },
-        tags: [marker],
-      },
-    });
-    expect(live.status).toBe(201);
-    const binned = await request(ctx.app, "POST", "/items", {
-      key: ctx.workingKey,
-      body: {
-        type: "core.note",
-        state: "trashed",
-        properties: { body: `state-binned-${marker}` },
-        tags: [marker],
-      },
-    });
-    expect(binned.status).toBe(201);
-    const { item: liveItem } = (await live.json()) as { item: { id: string } };
-    const { item: binnedItem } = (await binned.json()) as {
-      item: { id: string };
+    const seed = async (
+      label: string,
+      state?: string,
+    ): Promise<{ id: string }> => {
+      const res = await request(ctx.app, "POST", "/items", {
+        key: ctx.workingKey,
+        body: {
+          type: "core.note",
+          ...(state === undefined ? {} : { state }),
+          properties: { body: `state-${label}-${marker}` },
+          tags: [marker],
+        },
+      });
+      expect(
+        res.status,
+        "the fixture cannot seed a row in this state, so every assertion below is about an empty set",
+      ).toBe(201);
+      return ((await res.json()) as { item: { id: string } }).item;
     };
+
+    const live = await seed("live");
+    // Both of the states a row can be put away in, because an omitted state
+    // that answered one and hid the other would pass a case that named only
+    // the bin.
+    const archived = await seed("archived", "archived");
+    const binned = await seed("binned", "trashed");
 
     // The bulk-action door, naming no state.
     const acted = await matchedIds({ tags: [marker] });
-    expect(acted).toContain(liveItem.id);
-    expect(acted).not.toContain(binnedItem.id);
+    expect(
+      acted,
+      "a bulk action naming no state stopped reaching live rows, so every unnarrowed action is now a no-op",
+    ).toContain(live.id);
+    expect(
+      acted,
+      "a bulk action naming no state reaches archived rows, so an unnarrowed write lands on rows the caller put away and cannot see in a listing",
+    ).not.toContain(archived.id);
+    expect(
+      acted,
+      "a bulk action naming no state reaches the bin, so an unnarrowed write resurrects deleted rows",
+    ).not.toContain(binned.id);
 
     // The list read, same filter, same omission. Both halves asserted, so
     // this cannot pass on a pair that agree by both matching nothing.
@@ -269,11 +306,24 @@ describe("the bulk-action door and the list read agree about an omitted state", 
     const listed = ((await list.json()) as { data: { id: string }[] }).data.map(
       (i) => i.id,
     );
-    expect(listed).toContain(liveItem.id);
-    expect(listed).not.toContain(binnedItem.id);
+    expect(
+      listed,
+      "a listing naming no state stopped answering live rows, so the default hides the corpus",
+    ).toContain(live.id);
+    expect(
+      listed,
+      "a listing naming no state answers archived rows, so the default is no longer the active state",
+    ).not.toContain(archived.id);
+    expect(
+      listed,
+      "a listing naming no state answers the bin, so a deleted row still reads as present",
+    ).not.toContain(binned.id);
 
-    // And the same two ids come back on both doors, which is the property the
+    // And the same ids come back on both doors, which is the property the
     // device's local resolve depends on.
-    expect(acted.slice().sort()).toEqual(listed.slice().sort());
+    expect(
+      acted.slice().sort(),
+      "the two doors resolve an omitted state differently, so a filter enqueued locally acts on one set and replays against another",
+    ).toEqual(listed.slice().sort());
   });
 });

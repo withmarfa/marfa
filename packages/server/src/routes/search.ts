@@ -1,6 +1,5 @@
 import { createRoute, z } from "@hono/zod-openapi";
-import { ITEM_STATES, resolveEnforcement } from "@withmarfa/shared";
-import type { ItemState } from "@withmarfa/shared";
+import { resolveEnforcement } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { assertTypeFilter } from "./_type-filter.js";
 import {
@@ -12,8 +11,10 @@ import type { Storage } from "../storage/interface.js";
 import { readInstanceConfig } from "../storage/instance-config.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import {
+  ALL_STATES,
   ItemSchema as BaseItemSchema,
   MetadataSchema as BaseMetadataSchema,
+  resolveStateFilter,
 } from "./_schemas.js";
 import { filterMetadataForCaller } from "./util.js";
 import { excludesSystemTypes } from "./_system-type-visibility.js";
@@ -56,8 +57,10 @@ const searchRoute = createRoute({
         )
         .optional(),
       state: z
-        .enum(ITEM_STATES as unknown as [string, ...string[]])
-        .describe("Filter by lifecycle state.")
+        .string()
+        .describe(
+          `Filter by lifecycle state. Omitting the parameter answers the active state, as a listing does, so a search never answers a row a listing hides. \`${ALL_STATES}\` widens to every state, the same sentinel the listing takes. A row in the bin is not indexed, so it is not matched under any value.`,
+        )
         .optional(),
       tier: z
         .enum(["library", "feed", "all"])
@@ -141,7 +144,8 @@ const searchRoute = createRoute({
       },
       description:
         "An invalid type pattern, a time bound that is not an instant, " +
-        "or an unrecognized query parameter.",
+        "a `state` that is neither a lifecycle state nor the widening " +
+        "sentinel, or an unrecognized query parameter.",
     },
     401: {
       content: {
@@ -214,6 +218,12 @@ export function searchRoutes(storage: Storage) {
     // list both wrote it out, and the bulk-action door wrote nothing.
     const excludeSystemTypes = excludesSystemTypes(includeSet, type);
 
+    // The same resolution the listing and the export doors use, so `any`
+    // means the same thing on all three. `any` is a widening rather than a
+    // state, so it never reaches the column comparison.
+    const { state: resolvedState, all_states: allStates } =
+      resolveStateFilter(state);
+
     const callerKeyForSearch = c.get("apiKey");
     const instanceConfigForSearch = await readInstanceConfig(storage.settings);
     const enforcementForSearch = resolveEnforcement(
@@ -222,7 +232,8 @@ export function searchRoutes(storage: Storage) {
     );
     const results = await storage.search.search(q.trim(), {
       type,
-      state: state as ItemState | undefined,
+      state: resolvedState,
+      all_states: allStates,
       tier: tierFilter,
       // Per row, from the row's own type — see the note on `ItemFilters`.
       source_filter: enforcementForSearch.source_filter,

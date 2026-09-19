@@ -51,6 +51,12 @@ Every statement here is a refusal, and each of them is a refusal because the sil
 29. A thumbnail, where an item's type carries one, travels with the item rather than being fetched. A phone cannot hold a library's bytes and can hold its thumbnails. `device/working-copy.test.ts › holds the thumbnail an item carries`.
 30. A device with no bytes for a blob says so rather than reporting the item incomplete. The item is whole; the bytes are absent. `device/working-copy.test.ts › says the bytes are absent rather than the item`.
 
+## Local reads
+
+31. **A local list and a local search answer the active state when the caller names none**, which is the default the server's listing grammar gives (`search-and-filters.md` 2 and 12). A working copy holds every state its slice carries, because a row leaving the active state is a change a catch-up has to see; what the default decides is which of them a read answers. A device whose default differed from the server's would answer a question the server answers differently, with nothing to say which one the caller got. `device/working-copy.test.ts › answers the active state on a local list that names none`, `› answers the active state on a local search that names none`.
+
+32. **A local read by id answers every state but the bin**, which is the server's rule on the same door (`items.md` 19 and 26). An archived row stays readable by id and a trashed one reads as absent. The default a list applies is about which rows a question with no subject returns; a read naming one row has a subject, and narrowing it further would hide a row the caller is holding the id of. `device/working-copy.test.ts › reads an archived row by id and reports a trashed one as absent`.
+
 ## What the real server cannot be made to produce
 
 The device fixtures drive a scripted server for the same reason `coverage.md` records an unreachable success path: the precondition cannot be arranged over the wire against the real one. `device/fidelity.test.ts` asserts that every answer the scripted server gives which the real server _can_ produce matches the real one's shape, and these are the entries it cannot check.

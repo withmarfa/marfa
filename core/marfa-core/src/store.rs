@@ -171,10 +171,17 @@ pub fn upsert_item(
         row.get(0)
     })?;
     conn.execute("DELETE FROM items_fts WHERE rowid = ?1", [seq])?;
-    conn.execute(
-        "INSERT INTO items_fts (rowid, title, body, tags) VALUES (?1, ?2, ?3, ?4)",
-        params![seq, title, body, tags.join(" ")],
-    )?;
+    // A row in the bin is not indexed, which is the server's own rule on
+    // the same index: it drops a trashed row from the index on the write
+    // that trashes it, and rebuilds without one. A device that indexed it
+    // would answer a search the server it copies answers nothing for, and
+    // would do it under every state value rather than one.
+    if ItemState::from_str_checked(&item.state)? != ItemState::Trashed {
+        conn.execute(
+            "INSERT INTO items_fts (rowid, title, body, tags) VALUES (?1, ?2, ?3, ?4)",
+            params![seq, title, body, tags.join(" ")],
+        )?;
+    }
     Ok(())
 }
 
@@ -225,9 +232,15 @@ pub fn delete_edge(conn: &Connection, id: &str) -> Result<bool, CoreError> {
     Ok(conn.execute("DELETE FROM edges WHERE id = ?1", [id])? > 0)
 }
 
+/// One item by id, or nothing for a row in the bin.
+///
+/// A read by id answers every state but the bin, which is the server's own
+/// rule on the same door: an archived row stays readable by id and a trashed
+/// one reads as absent. A device that answered the trashed row would give a
+/// caller a row the server it copies would refuse them.
 pub fn item_by_id(conn: &Connection, id: &str) -> Result<Option<Item>, CoreError> {
     let mut items = items_by_ids(conn, std::slice::from_ref(&id.to_string()))?;
-    Ok(items.pop())
+    Ok(items.pop().filter(|item| item.state != ItemState::Trashed))
 }
 
 /// Items for `ids`, in the order given, skipping ids not held.

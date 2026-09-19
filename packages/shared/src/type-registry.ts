@@ -1168,9 +1168,9 @@ export function hasBoundedLifecycle(typeId: string): boolean {
  * every type. `DELETE /items/:id` is a soft delete, and for most types that
  * means `trashed` — but `trashed` is not in the `system.*` lifecycle at all,
  * so a delete that assumed it put platform records into a state their own
- * type forbids, reachable by no transition and hidden from the default
- * listing that omits trashed rows. `revoked` is the terminal state the
- * bounded lifecycle actually has.
+ * type forbids, reachable by no transition and reported by no default
+ * listing. `revoked` is the terminal state the bounded lifecycle actually
+ * has.
  *
  * Read this rather than hard-coding `trashed`: it is derived from the same
  * type classification the transition graph keys on, so the two cannot drift.

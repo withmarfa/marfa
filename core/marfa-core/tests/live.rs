@@ -6,7 +6,9 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use marfa_core::{Core, CoreError, Hydration, ItemState, ListFilters, Server, Sort, Tier};
+use marfa_core::{
+    Core, CoreError, Hydration, ItemState, ListFilters, SearchFilters, Server, Sort, Tier,
+};
 
 fn server() -> Server {
     let url = std::env::var("MARFA_TEST_URL").expect("MARFA_TEST_URL names the server");
@@ -96,7 +98,7 @@ fn hydrate_list_search_and_catch_up_against_a_live_server() {
         vec![first.as_str()]
     );
 
-    let hits = core.search(&marker, 20).unwrap();
+    let hits = core.search(&marker, &SearchFilters::default(), 20).unwrap();
     let hit_ids: Vec<&str> = hits.iter().map(|hit| hit.item.id.as_str()).collect();
     assert_eq!(
         hit_ids[0], third,
@@ -111,25 +113,48 @@ fn hydrate_list_search_and_catch_up_against_a_live_server() {
     let caught = core.catch_up().unwrap();
     assert!(caught.applied >= 2, "{caught:?}");
     assert!(core.get(&fourth).unwrap().is_some(), "the new note arrived");
-    assert_eq!(core.get(&first).unwrap().unwrap().state, ItemState::Trashed);
+    // A read by id answers every state but the bin, which is the server's
+    // rule on the same door (`device.md` 32). So the trashed row is absent
+    // from `get` and present in a widened list, and those two together are
+    // what say the copy holds it rather than having dropped it.
+    assert!(
+        core.get(&first).unwrap().is_none(),
+        "a trashed row is still readable by id, where the server answers 404"
+    );
     let visible = core.list(&ListFilters::default(), Sort::default()).unwrap();
     assert!(!visible.iter().any(|item| item.id == first));
     let with_bin = core
         .list(
             &ListFilters {
-                include_trashed: true,
+                all_states: true,
                 ..Default::default()
             },
             Sort::default(),
         )
         .unwrap();
-    assert!(with_bin.iter().any(|item| item.id == first));
+    let binned = with_bin
+        .iter()
+        .find(|item| item.id == first)
+        .expect("the copy dropped the trashed row rather than holding it");
+    assert_eq!(binned.state, ItemState::Trashed);
 
     seed(&["purge", &first]);
     core.catch_up().unwrap();
+    // The purge is not the delete: the row is gone from the store, so even
+    // the widened list cannot find it. Without this the assertion above
+    // would be satisfied by a purge that merely hid the row again.
+    let after_purge = core
+        .list(
+            &ListFilters {
+                all_states: true,
+                ..Default::default()
+            },
+            Sort::default(),
+        )
+        .unwrap();
     assert!(
-        core.get(&first).unwrap().is_none(),
-        "the purge removed the row"
+        !after_purge.iter().any(|item| item.id == first),
+        "the purge left the row in the store, where the server has deleted it"
     );
 
     let quiet = core.catch_up().unwrap();

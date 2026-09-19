@@ -58,23 +58,51 @@ describe("GET /metadata/tags", () => {
     expect(alphaIdx).toBeLessThan(betaIdx);
   });
 
-  it("excludes trashed items", async () => {
-    const id = await createItemWithTags(["only-on-trashed-item"]);
-    // Confirm tag visible while active.
-    let res = await request(ctx.app, "GET", "/metadata/tags", {
+  it("counts the same rows a listing answers, and no others", async () => {
+    // Both of the states a row can be put away in. The facet is a view on
+    // the listing beside it, so a tag counted here that `GET /items?tags=`
+    // answers nothing for is a name a reader clicks through to an empty
+    // page. A case that named only the bin would not see the archive move.
+    const listed = async (tag: string): Promise<boolean> => {
+      const res = await request(ctx.app, "GET", "/metadata/tags", {
+        key: ctx.workingKey,
+      });
+      expect(res.status).toBe(200);
+      const data = (await res.json()) as { tags: { tag: string }[] };
+      return data.tags.some((t) => t.tag === tag);
+    };
+
+    const binned = await createItemWithTags(["only-on-trashed-item"]);
+    const filed = await createItemWithTags(["only-on-archived-item"]);
+
+    expect(
+      await listed("only-on-trashed-item"),
+      "a tag on a live row is not counted, so the absences below say nothing about what a delete or an archive does",
+    ).toBe(true);
+    expect(await listed("only-on-archived-item")).toBe(true);
+
+    await request(ctx.app, "DELETE", `/items/${binned}`, {
       key: ctx.workingKey,
     });
-    let data = (await res.json()) as { tags: { tag: string }[] };
-    expect(data.tags.some((t) => t.tag === "only-on-trashed-item")).toBe(true);
+    const archived = await request(
+      ctx.app,
+      "POST",
+      `/items/${filed}/transition`,
+      { key: ctx.workingKey, body: { state: "archived" } },
+    );
+    expect(
+      archived.status,
+      "the fixture cannot archive a row, so the second absence below is about a row still in the active state",
+    ).toBe(200);
 
-    // Trash the item.
-    await request(ctx.app, "DELETE", `/items/${id}`, { key: ctx.workingKey });
-
-    res = await request(ctx.app, "GET", "/metadata/tags", {
-      key: ctx.workingKey,
-    });
-    data = (await res.json()) as { tags: { tag: string }[] };
-    expect(data.tags.some((t) => t.tag === "only-on-trashed-item")).toBe(false);
+    expect(
+      await listed("only-on-trashed-item"),
+      "a tag on a row in the bin is still counted, so a deleted row keeps a name in the vocabulary that opens to nothing",
+    ).toBe(false);
+    expect(
+      await listed("only-on-archived-item"),
+      "a tag on an archived row is still counted, so the facet and the listing disagree and the count opens to an empty page",
+    ).toBe(false);
   });
 });
 
