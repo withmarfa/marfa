@@ -324,6 +324,10 @@ struct UpdateArgs {
     /// version overwrites whatever it finds.
     #[arg(long)]
     version: Option<i64>,
+    /// The natural key to move the row to. The server refuses one another
+    /// item already holds, so a rename does not take a name off a note.
+    #[arg(long, value_name = "KEY")]
+    source_id: Option<String>,
 }
 
 #[derive(Debug, Args)]
@@ -594,6 +598,7 @@ fn run(cli: Cli) -> Result<(), CliError> {
                     let edit = Edit {
                         properties: properties(&args.properties)?,
                         base_version: args.version,
+                        source_id: args.source_id,
                     };
                     output::queued_one(&core.update_item(&args.id, &edit)?, json)
                 }
