@@ -127,10 +127,8 @@ async function main() {
     // resolved here.
     let purgedRecords = 0;
     return runSweepAtRetention({
-      jobName: "event-log-cleanup",
       override: eventLogOverride,
       instanceDefault: eventLogRetentionHours,
-      unitMs: 3_600_000,
       sweep: async (retention) => {
         purgedRecords += await storage.idempotency.cleanup(retention);
         return storage.eventLog.cleanup(retention);
@@ -157,10 +155,8 @@ async function main() {
 
   const runAuditCleanup = () =>
     runSweepAtRetention({
-      jobName: "audit-cleanup",
       override: auditOverride,
       instanceDefault: config.auditRetentionDays,
-      unitMs: 86_400_000,
       sweep: (retention) => storage.audit.cleanup(retention),
     })
       .then((deleted) => {
