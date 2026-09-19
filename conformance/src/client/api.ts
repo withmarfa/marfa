@@ -665,14 +665,14 @@ export class MarfaClient {
     });
   }
 
-  async getSpaceConfig(): Promise<ApiResponse<unknown>> {
-    return this.request<unknown>("/spaces/me/config");
+  async getConfig(): Promise<ApiResponse<unknown>> {
+    return this.request<unknown>("/config");
   }
 
-  async updateSpaceConfig(
+  async updateConfig(
     config: Record<string, unknown>,
   ): Promise<ApiResponse<unknown>> {
-    return this.request<unknown>("/spaces/me/config", {
+    return this.request<unknown>("/config", {
       method: "PUT",
       body: config,
     });

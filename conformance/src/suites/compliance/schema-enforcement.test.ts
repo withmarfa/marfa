@@ -12,7 +12,7 @@ import { expectMatchesSchema } from "../../utils/openapi.js";
 let client: MarfaClient;
 let ctx: TestContext;
 let apiUrl: string;
-let originalSpaceConfig: Record<string, unknown> = {};
+let originalConfig: Record<string, unknown> = {};
 
 beforeAll(async () => {
   ({ ctx, client, apiUrl } = await createTestContext(
@@ -20,17 +20,17 @@ beforeAll(async () => {
     "schema-enforcement",
   ));
 
-  const current = await client.getSpaceConfig();
+  const current = await client.getConfig();
   expect(current.ok).toBe(true);
-  await expectMatchesSchema("GET", "/spaces/me/config", 200, current.data);
-  originalSpaceConfig = current.data as Record<string, unknown>;
+  await expectMatchesSchema("GET", "/config", 200, current.data);
+  originalConfig = current.data as Record<string, unknown>;
 });
 
 /** Replace the configuration and require the door to have accepted it. */
 async function setConfig(
   config: Record<string, unknown>,
 ): Promise<Record<string, unknown>> {
-  const r = await client.updateSpaceConfig(config);
+  const r = await client.updateConfig(config);
   expect(r.status, JSON.stringify(r.error)).toBe(200);
   return r.data as Record<string, unknown>;
 }
@@ -41,7 +41,7 @@ afterAll(async () => {
   // writes validate — and `PUT` replaces the configuration wholesale, so
   // clearing it instead of restoring it would discard settings this file never
   // set.
-  await setConfig(originalSpaceConfig);
+  await setConfig(originalConfig);
   await cleanup(ctx);
 });
 
@@ -70,20 +70,20 @@ describe("the configuration door", () => {
       enforcement: { strict_mode: { types: ["core.bookmark"] } },
     };
     const written = await setConfig(lever);
-    await expectMatchesSchema("PUT", "/spaces/me/config", 200, written);
+    await expectMatchesSchema("PUT", "/config", 200, written);
     expect(written).toEqual(lever);
-    const read = await client.getSpaceConfig();
+    const read = await client.getConfig();
     expect(read.ok).toBe(true);
     expect(read.data).toEqual(lever);
 
     const cleared = await setConfig({});
     expect(cleared).toEqual({});
-    const readAgain = await client.getSpaceConfig();
+    const readAgain = await client.getConfig();
     expect(readAgain.data).toEqual({});
   });
 
   it("refuses a lever of the wrong shape", async () => {
-    const r = await client.updateSpaceConfig({
+    const r = await client.updateConfig({
       enforcement: { strict_mode: "yes" },
     });
     expect(r.status).toBe(400);
@@ -95,11 +95,11 @@ describe("the configuration door", () => {
       "config-no-settings",
       `${ctx.source}-config-no-settings`,
     );
-    const read = await narrowed.getSpaceConfig();
+    const read = await narrowed.getConfig();
     expect(read.status).toBe(403);
     expect(read.error?.error.code).toBe("forbidden");
     expect(read.error?.error.details?.required_scope).toBe("config.manage");
-    const write = await narrowed.updateSpaceConfig({});
+    const write = await narrowed.updateConfig({});
     expect(write.status).toBe(403);
     expect(write.error?.error.code).toBe("forbidden");
   });

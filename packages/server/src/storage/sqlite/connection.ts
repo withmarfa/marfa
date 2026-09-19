@@ -167,6 +167,41 @@ export async function createConnection(sqlitePath: string): Promise<{
     );
   }
 
+  // A retired settings key is refused on the same terms, and it is the
+  // quietest of the three by some way.
+  //
+  // The instance configuration moved from the row keyed `space_config` to
+  // one keyed `instance_config`. Nothing about that fails: the table is
+  // there, the column is there, the read simply finds no row and answers an
+  // empty object, so the enforcement levers and the cleanup-job retention
+  // overrides an operator set are replaced by this build's defaults without
+  // a line in the log. A database keeping records longer than the default
+  // would start deleting them on the first sweep after an upgrade.
+  //
+  // The column is probed rather than named, for the reason the sibling check
+  // above gives: a `settings` table of some other shape would otherwise meet
+  // a `SELECT key` it cannot answer and die with a driver error carrying
+  // neither the file nor a remedy, which is the failure this whole block
+  // exists to convert into one sentence.
+  const settingsInfo = await client.execute("PRAGMA table_info(settings)");
+  const settingsHasKey = settingsInfo.rows.some((row) => row.name === "key");
+  if (settingsHasKey) {
+    const retiredSettings = await client.execute(
+      "SELECT key FROM settings WHERE key IN ('space_config') ORDER BY key",
+    );
+    if (retiredSettings.rows.length > 0) {
+      const keys = retiredSettings.rows
+        .map((row) => row.key)
+        .filter((key): key is string => typeof key === "string")
+        .join(" and ");
+      client.close();
+      throw new Error(
+        `The settings in ${sqlitePath} are still keyed ${keys}, which this build does not read. ` +
+          REFUSED_DATABASE_REMEDY,
+      );
+    }
+  }
+
   // Enable WAL for better concurrent read/write performance. PRAGMA is a
   // no-op on libsql remote URLs but harmless.
   await client.execute("PRAGMA journal_mode = WAL");

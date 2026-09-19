@@ -20,7 +20,7 @@ import {
   TEST_API_KEY_SALT,
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
-import { writeSpaceConfig } from "../storage/space-config.js";
+import { writeInstanceConfig } from "../storage/instance-config.js";
 import { hashApiKey } from "../middleware/auth.js";
 import { SPACE_PERMISSIONS } from "@withmarfa/shared";
 
@@ -74,7 +74,7 @@ beforeAll(async () => {
   });
   expect(unlisted.status).toBe(201);
 
-  await writeSpaceConfig(ctx.storage.settings, {
+  await writeInstanceConfig(ctx.storage.settings, {
     enforcement: {
       source_filter: { types: ["core.note"], sources: ["trusted"] },
     },

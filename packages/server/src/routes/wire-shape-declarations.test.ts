@@ -12,9 +12,8 @@
  * and a generated client believes whichever it was pointed at. Both are
  * valid Zod, nothing compares them, so the drift is silent.
  *
- * Two more were found the same way once this was looked for: `VersionSchema`
- * in `items-versions.ts` and `QuotaSchema` in `admin.ts` and `spaces.ts`.
- * Three instances of one defect is what a rule nothing checks looks like.
+ * Three instances of one defect turned up the first time anybody looked,
+ * which is what a rule nothing checks looks like.
  *
  * Two questions are asked, because a redeclaration can be caught by either
  * and neither catches both:
@@ -31,11 +30,10 @@
  * two things are the same shape, and a test cannot make it.
  *
  * **And neither compares one route file against another**, which is the
- * larger gap and worth stating plainly because it is counter-intuitive:
- * `QuotaSchema`, one of the three defects this file was written for, lived
- * in `admin.ts` and `spaces.ts` and in neither case in `_schemas.ts`. This
- * guard would have been silent on it. It became detectable only once
- * somebody had already centralized it, so what is held here is the
+ * larger gap and worth stating plainly because it is counter-intuitive: a
+ * shape declared twice outside `_schemas.ts` is invisible to this guard,
+ * which only sees a shape once somebody has already centralized it. What is
+ * held here is the
  * *staying* centralized, not the *becoming* it. Three names are declared in
  * more than one route file today, and `_schemas.ts` records why each is left
  * where it is. Closing any of them is a change to those files rather than to

@@ -10,7 +10,7 @@ import { withPreparedHeaders } from "../prepared-headers.js";
 import { requireAuth, getTypeFilter } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import { normalizeTimeBound } from "../storage/interface.js";
-import { readSpaceConfig } from "../storage/space-config.js";
+import { readInstanceConfig } from "../storage/instance-config.js";
 import type { SourceFilterSettings } from "../storage/filter-sql.js";
 import type { BlobBackend } from "../storage/blob-backend.js";
 import { collectBlobHashes } from "../storage/blob-utils.js";
@@ -135,9 +135,9 @@ export function exportRoutes(storage: Storage, blobBackend: BlobBackend) {
     // An export is a list read, so the instance's read-narrowing lever
     // applies to it. Leaving it out would make the control bypassable by
     // swapping endpoint rather than by rewording the query.
-    const spaceConfigForExport = await readSpaceConfig(storage.settings);
+    const instanceConfigForExport = await readInstanceConfig(storage.settings);
     const sourceFilter = resolveEnforcement(
-      spaceConfigForExport,
+      instanceConfigForExport,
       c.get("apiKey"),
     ).source_filter;
 

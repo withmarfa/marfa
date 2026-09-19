@@ -989,7 +989,7 @@ describe("error handling", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Extended SDK surface: library filter, purge, spaces, full keys.create.
+// Extended SDK surface: library filter, purge, instance config, full keys.create.
 // ---------------------------------------------------------------------------
 
 describe("Extended SDK surface", () => {
@@ -1028,17 +1028,15 @@ describe("Extended SDK surface", () => {
     await expect(client.items.get(item.id)).rejects.toThrow(NotFoundError);
   });
 
-  it("spaces.getConfig returns the empty config in non-space mode", async () => {
-    const config = await client.spaces.getConfig();
+  it("config.get returns the empty config when nothing is configured", async () => {
+    const config = await client.config.get();
     expect(typeof config).toBe("object");
   });
 
-  it("spaces.setConfig calls PUT /spaces/me/config", async () => {
-    // The fixture's credential is bound to a real space now — keys mode
-    // creates one and mints into it — so the route answers rather than
-    // refusing, and what this asserts is that the SDK reaches it and returns
-    // the config the server sent back.
-    await expect(client.spaces.setConfig({})).resolves.toEqual({});
+  it("config.set calls PUT /config", async () => {
+    // What this asserts is that the SDK reaches the door and returns the
+    // config the server sent back, not merely that it built a request.
+    await expect(client.config.set({})).resolves.toEqual({});
   });
 
   it("keys.create returns the full ApiKey shape including credential defaults", async () => {

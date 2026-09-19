@@ -60,7 +60,7 @@ import {
 import { MAX_TAGS_PER_ITEM } from "../tag-limits.js";
 import { namesSystemNamespace } from "./_system-type-visibility.js";
 import type { BulkActionJobRow, Storage } from "../storage/interface.js";
-import { readSpaceConfig } from "../storage/space-config.js";
+import { readInstanceConfig } from "../storage/instance-config.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import { publish } from "../pubsub.js";
 import { applyInlineEdges, announceInlineEdges } from "./_edges-inline.js";
@@ -1278,11 +1278,11 @@ export function bulkRoutes(storage: Storage) {
     //
     // The cost is real and worth knowing: an action aimed at a source the
     // filter excludes now matches nothing and reports `matched: 0` rather
-    // than refusing, which is the shape of a filter that found nothing. A
+    // than refusing, which is the shape of a filter that found nothing.
     // Whoever needs those rows lifts the lever, acts, and restores it.
-    const spaceConfigForAction = await readSpaceConfig(storage.settings);
+    const instanceConfigForAction = await readInstanceConfig(storage.settings);
     const enforcementForAction = resolveEnforcement(
-      spaceConfigForAction,
+      instanceConfigForAction,
       callerKey,
     );
 

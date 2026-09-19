@@ -27,7 +27,7 @@ import type {
   VersionPolicy,
 } from "@withmarfa/types";
 import { ErrorCode, MarfaError } from "./errors.js";
-import type { EnforcementSettings, SpaceConfig } from "./types.js";
+import type { EnforcementSettings, InstanceConfig } from "./types.js";
 import { isValidTypeIdentifier, RESERVED_ROOTS } from "./validation.js";
 
 // Re-export schema-shape types and the shipped registries so consumers of
@@ -314,23 +314,23 @@ export { RESERVED_ITEM_FIELDS };
 // ---------------------------------------------------------------------------
 
 /**
- * Computes the effective enforcement settings for a given (space config,
+ * Computes the effective enforcement settings for a given (instance config,
  * credential) pair. Per-credential override wins where set, falling back to
- * the space default. All three levers are independently overridable —
- * setting `strict_mode` on the credential does not clear the space
+ * the instance default. All three levers are independently overridable —
+ * setting `strict_mode` on the credential does not clear the instance
  * `source_allowlist`.
  */
 export function resolveEnforcement(
-  space: SpaceConfig | null | undefined,
+  instance: InstanceConfig | null | undefined,
   credential: { enforcement_override?: EnforcementSettings } | null | undefined,
 ): EnforcementSettings {
-  const spaceSettings = space?.enforcement ?? {};
+  const instanceSettings = instance?.enforcement ?? {};
   const override = credential?.enforcement_override ?? {};
   return {
-    strict_mode: override.strict_mode ?? spaceSettings.strict_mode,
+    strict_mode: override.strict_mode ?? instanceSettings.strict_mode,
     source_allowlist:
-      override.source_allowlist ?? spaceSettings.source_allowlist,
-    source_filter: override.source_filter ?? spaceSettings.source_filter,
+      override.source_allowlist ?? instanceSettings.source_allowlist,
+    source_filter: override.source_filter ?? instanceSettings.source_filter,
   };
 }
 

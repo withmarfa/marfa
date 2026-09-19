@@ -157,6 +157,79 @@ describe("a retired registry table is refused on open", () => {
     await expect(createConnection(path)).rejects.toThrow(path);
   });
 
+  it("refuses settings still keyed to the retired config name", async () => {
+    // The quietest of the three. Nothing fails: the table and the column are
+    // both there, the read finds no row and answers an empty object, and the
+    // operator's enforcement levers and retention overrides are replaced by
+    // this build's defaults with nothing in the log. An instance keeping
+    // records longer than the default would start deleting them on the first
+    // sweep after the upgrade.
+    const path = scratch();
+    const seed = createClient({ url: `file:${path}` });
+    await seed.execute(
+      "CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)",
+    );
+    await seed.execute(
+      "INSERT INTO settings (key, value) VALUES ('space_config', '{\"trash_retention_days\":90}')",
+    );
+    seed.close();
+
+    const before = createHash("sha256")
+      .update(readFileSync(path))
+      .digest("hex");
+    await expect(createConnection(path)).rejects.toThrow(/space_config/);
+    await expect(createConnection(path)).rejects.toThrow(path);
+    // Asserted on the bytes here as well as on the retired-table case,
+    // because this check is the one most easily moved: it reads no PRAGMA
+    // and so looks placeable anywhere. Below `journal_mode = WAL` it would
+    // still refuse, still name the key, and still pass every other
+    // assertion in this file — while handing back a database a refused boot
+    // had rewritten.
+    expect(createHash("sha256").update(readFileSync(path)).digest("hex")).toBe(
+      before,
+    );
+  });
+
+  it("does not die on a settings table of another shape", async () => {
+    // The probe asks `PRAGMA table_info` for the column it needs rather than
+    // naming it in the SELECT. Naming it answers a foreign `settings` table
+    // with libsql's own `no such column: key` — no file, no remedy, and an
+    // open client never closed — which is the failure this whole block
+    // exists to replace with one sentence.
+    //
+    // Recognizing a stranger's schema is not this check's job, so the right
+    // answer here is to say nothing and move on. Whether such a database is
+    // usable afterwards is a different question and not one a check for a
+    // retired key of our own should be answering.
+    const path = scratch();
+    const seed = createClient({ url: `file:${path}` });
+    await seed.execute(
+      "CREATE TABLE settings (name TEXT PRIMARY KEY, value TEXT NOT NULL)",
+    );
+    seed.close();
+
+    const opened = await createConnection(path);
+    await opened.close();
+  });
+
+  it("opens a database whose settings hold something else entirely", async () => {
+    // The control. A settings table is ordinary and most rows in it are not
+    // this one; refusing on the table's existence rather than on the key
+    // would refuse every database that has ever been booted.
+    const path = scratch();
+    const seed = createClient({ url: `file:${path}` });
+    await seed.execute(
+      "CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)",
+    );
+    await seed.execute(
+      "INSERT INTO settings (key, value) VALUES ('bootstrap_done', 'true')",
+    );
+    seed.close();
+
+    const opened = await createConnection(path);
+    await opened.close();
+  });
+
   it("opens a fresh database, and one it has already opened", async () => {
     const path = scratch();
     const first = await createConnection(path);

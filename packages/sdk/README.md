@@ -22,7 +22,7 @@ const note = await client.items.create({
 
 ## Surface
 
-`client.{items,types,keys,edges,search,metadata,spaces,webhooks,events,occurrences,admin}` — one nested namespace per API surface. Methods return the unwrapped resource (e.g. `client.items.get` returns `Item`, not `{ item }`); errors throw typed `MarfaError` subclasses (`NotFoundError`, `ValidationError`, `UnauthorizedError`, `ForbiddenError`, `ConflictError`).
+`client.{items,types,keys,edges,blobs,metadata,config,webhooks,events,occurrences,admin}` — one nested namespace per API surface, and `client.search` beside them as a method rather than a namespace. Methods return the unwrapped resource (e.g. `client.items.get` returns `Item`, not `{ item }`); errors throw typed `MarfaError` subclasses (`NotFoundError`, `ValidationError`, `UnauthorizedError`, `ForbiddenError`, `ConflictError`).
 
 ## Testing
 

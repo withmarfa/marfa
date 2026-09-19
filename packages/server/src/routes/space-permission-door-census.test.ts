@@ -215,10 +215,10 @@ describe("every administrative door consults a space permission", () => {
       "audit.ts": { "audit.read": 1 },
       "auth-pages.ts": { "grants.manage": 2 },
       "bulk.ts": { "items.purge": 1 },
+      "config.ts": { "config.manage": 2 },
       "edge-types.ts": { "schema.write": 1 },
       "items.ts": { "items.purge": 1 },
       "keys.ts": { "keys.mint": 4 },
-      "spaces.ts": { "config.manage": 2 },
       "types.ts": { "schema.write": 2 },
       "webhooks.ts": { "webhooks.manage": 6 },
     };
