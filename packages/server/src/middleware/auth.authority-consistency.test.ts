@@ -27,7 +27,7 @@ import {
 describe("isReservedCredentialSource", () => {
   it("claims the two reserved prefixes", () => {
     expect(isReservedCredentialSource("oauth:conn-1")).toBe(true);
-    expect(isReservedCredentialSource("integration:conn-1")).toBe(true);
+    expect(isReservedCredentialSource("connector:conn-1")).toBe(true);
   });
 
   it("is case- and whitespace-insensitive, so the prefix cannot be smuggled", () => {
@@ -82,16 +82,16 @@ async function mintKey(opts: {
   return raw;
 }
 
-/** A `system.connection` of kind integration, seeded through storage so
+/** A `system.connection` of kind connector, seeded through storage so
  *  the test doesn't depend on the install pipeline. */
 async function seedConnection(): Promise<string> {
   const conn = await ctx.storage.items.create({
     type: "system.connection",
     properties: {
-      kind: "integration",
+      kind: "connector",
       status: "active",
       granted_at: new Date().toISOString(),
-      integration_ref: "acme.demo",
+      connector_id: "acme.demo",
     },
   });
   return conn.id;
@@ -105,8 +105,8 @@ async function seedConnection(): Promise<string> {
 // POST /keys — the reserved source prefixes
 // ---------------------------------------------------------------------------
 
-describe("POST /keys — integration source prefixes are not mintable", () => {
-  it("refuses a source claiming a connection's integration identity", async () => {
+describe("POST /keys — connector source prefixes are not mintable", () => {
+  it("refuses a source claiming a connection's connector identity", async () => {
     const connectionId = await seedConnection();
     const caller = await mintKey({
       permissions: ["keys.mint"],
@@ -115,8 +115,8 @@ describe("POST /keys — integration source prefixes are not mintable", () => {
     const res = await request(ctx.app, "POST", "/keys", {
       key: caller,
       body: {
-        label: "forged-integration",
-        // Read by three connection routes as proof of integration identity.
+        label: "forged-connector",
+        // Read by three connection routes as proof of connector identity.
         source: `oauth:${connectionId}`,
       },
     });
@@ -124,6 +124,27 @@ describe("POST /keys — integration source prefixes are not mintable", () => {
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: { code: string } };
     expect(body.error.code).toBe("validation_error");
+  });
+
+  it("refuses the connector prefix itself, and the one it replaced", async () => {
+    // The `oauth:` case above is the only door-level cover this family had,
+    // so removing `connector:` from the reserved list reddened one assertion
+    // in the whole suite and no door test at all. Both prefixes belong here:
+    // `connector:` because a minted credential must not be able to claim a
+    // connector's provenance, and `integration:` because it is the spelling
+    // `connector:` replaced — a prefix that once meant connector provenance
+    // must not become claimable by falling out of the list.
+    const caller = await mintKey({ permissions: ["keys.mint"] });
+
+    for (const source of ["connector:acme/thing", "integration:acme/thing"]) {
+      const res = await request(ctx.app, "POST", "/keys", {
+        key: caller,
+        body: { label: `forged-${source}`, source },
+      });
+      expect(res.status, `${source} was accepted`).toBe(400);
+      const body = (await res.json()) as { error: { code: string } };
+      expect(body.error.code).toBe("validation_error");
+    }
   });
 
   it("still accepts an ordinary source", async () => {

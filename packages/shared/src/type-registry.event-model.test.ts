@@ -79,7 +79,7 @@ describe("an event that starts in one zone and ends in another", () => {
   });
 
   it("keeps both zones on the fidelity type too", () => {
-    // One integration writes either type depending on how its connection was
+    // One connector writes either type depending on how its connection was
     // configured, so a shape only one of them can hold is a shape the user
     // loses to a setting nobody asked them about.
     const props = accepted("google.calendar.event", {

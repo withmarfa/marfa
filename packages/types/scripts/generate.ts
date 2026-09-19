@@ -20,7 +20,7 @@ import {
 
 const typesRoot = resolve(import.meta.dirname, "..");
 const coreDir = join(typesRoot, "core");
-const integrationsDir = join(typesRoot, "integrations");
+const connectorsDir = join(typesRoot, "connectors");
 const systemDir = join(coreDir, "system");
 const edgesDir = join(coreDir, "edges");
 const outDir = join(typesRoot, "generated");
@@ -52,7 +52,7 @@ const active = (schemas: RawSchema[]): RawSchema[] =>
   schemas.filter((s) => s.data._deferred !== true);
 
 const coreRaw = active(loadDir(coreDir));
-const integrationRaw = active(loadDir(integrationsDir));
+const connectorRaw = active(loadDir(connectorsDir));
 const systemRaw = active(loadDir(systemDir));
 
 /** The declared identifier, or "" when the file omits one — the validator
@@ -62,9 +62,9 @@ function schemaId(s: RawSchema): string {
 }
 
 // Parents must be validated and registered before their children, and
-// `compatible_with` targets before the integration types that claim them. Sorting
+// `compatible_with` targets before the connector types that claim them. Sorting
 // by identifier depth puts every ancestor ahead of its descendants, and the
-// family order below puts core ahead of the integrations that reference it.
+// family order below puts core ahead of the connectors that reference it.
 function byDepth(a: RawSchema, b: RawSchema): number {
   const depth = (s: RawSchema) => schemaId(s).split(".").length;
   return depth(a) - depth(b) || schemaId(a).localeCompare(schemaId(b));
@@ -180,7 +180,7 @@ function buildFamily(raws: RawSchema[]): TypeSchema[] {
 }
 
 const coreTypes = buildFamily(coreRaw);
-const integrationTypes = buildFamily(integrationRaw);
+const connectorTypes = buildFamily(connectorRaw);
 const systemTypes = buildFamily(systemRaw);
 
 if (failures.length > 0) {
@@ -286,7 +286,7 @@ function emitSchema(schema: TypeSchema, lines: string[]): void {
 
 const lines: string[] = [];
 lines.push(
-  "// Auto-generated from core/*.json, integrations/*.json and core/system/*.json — do not edit manually.",
+  "// Auto-generated from core/*.json, connectors/*.json and core/system/*.json — do not edit manually.",
 );
 lines.push("// Run `pnpm --filter @withmarfa/types generate` to regenerate.");
 lines.push("");
@@ -299,15 +299,15 @@ for (const schema of coreTypes) lines.push(`  ${varName(schema.id)},`);
 lines.push("];");
 lines.push("");
 
-// Integration types ship in the same package but are a separate family: they
+// Connector types ship in the same package but are a separate family: they
 // describe one vendor's payload shape rather than a life-noun the whole
 // platform agrees on, and a deployment that talks to none of those vendors
 // carries them purely as a compatibility target. Emitting them separately is
 // what lets the catalog say which is which; both families register into the
 // same runtime registry, so the identifiers a caller sees are unchanged.
-for (const schema of integrationTypes) emitSchema(schema, lines);
-lines.push("export const ALL_INTEGRATION_TYPES: TypeSchema[] = [");
-for (const schema of integrationTypes) lines.push(`  ${varName(schema.id)},`);
+for (const schema of connectorTypes) emitSchema(schema, lines);
+lines.push("export const ALL_CONNECTOR_TYPES: TypeSchema[] = [");
+for (const schema of connectorTypes) lines.push(`  ${varName(schema.id)},`);
 lines.push("];");
 lines.push("");
 
@@ -325,7 +325,7 @@ lines.push("");
 // remembers to look. Four sibling repositories carried maps naming types
 // this package had already deleted; nothing failed, because a plain
 // `Record<string, …>` cannot tell a live identifier from a dead one.
-const allTypeIds = [...coreTypes, ...integrationTypes, ...systemTypes]
+const allTypeIds = [...coreTypes, ...connectorTypes, ...systemTypes]
   .map((schema) => schema.id)
   .sort();
 lines.push("export const ALL_TYPE_IDS = [");
@@ -339,7 +339,7 @@ mkdirSync(outDir, { recursive: true });
 const outPath = join(outDir, "type-registry.ts");
 writeFileSync(outPath, lines.join("\n") + "\n");
 console.log(
-  `Generated ${String(coreTypes.length)} core + ${String(integrationTypes.length)} integration + ${String(systemTypes.length)} system types -> ${outPath}`,
+  `Generated ${String(coreTypes.length)} core + ${String(connectorTypes.length)} connector + ${String(systemTypes.length)} system types -> ${outPath}`,
 );
 
 // ---------------------------------------------------------------------------

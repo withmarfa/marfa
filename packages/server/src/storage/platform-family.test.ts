@@ -56,13 +56,13 @@ describe("projectPlatformRows", () => {
         projectPlatformRows([
           row({ id: "core.note", family: "core" }),
           row({ id: "system.connection", family: "system" }),
-          row({ id: "readwise.document", family: "integration" }),
+          row({ id: "readwise.document", family: "connector" }),
         ]),
       ),
     ).toEqual([
       ["core.note", "core"],
       ["system.connection", "system"],
-      ["readwise.document", "integration"],
+      ["readwise.document", "connector"],
     ]);
     expect(logSpy).not.toHaveBeenCalled();
   });
@@ -120,7 +120,7 @@ describe("projectPlatformRows", () => {
     const rows = projectPlatformRows([
       row({ id: "core.note", family: "core" }),
       row({ id: "jonah.reading_item", origin: "user" }),
-      row({ id: "acme.widget", origin: "integration" }),
+      row({ id: "acme.widget", origin: "connector" }),
     ]);
     expect(rows.map((r) => r.schema.id)).toEqual(["core.note"]);
     expect(logSpy).not.toHaveBeenCalled();

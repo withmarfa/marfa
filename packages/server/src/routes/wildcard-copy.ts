@@ -14,7 +14,7 @@ const EDGE_PREFIX = "edge.";
  * publisher root the registry holds AND for every root boot installs from
  * the `types` table, so a root can arrive on a running instance that
  * no list written here could name. A hand-written entry per wildcard closes
- * today's set and reopens on the next integration; this closes it for roots
+ * today's set and reopens on the next connector; this closes it for roots
  * nobody has registered yet.
  *
  * That is not the same argument the curated map makes for the seven entries

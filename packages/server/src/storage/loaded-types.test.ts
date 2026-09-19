@@ -20,7 +20,7 @@ function row(part: Partial<TypeRow> & { id: string }): TypeRow {
     schema: JSON.stringify({ id: part.id, version: 1, fields: {} }),
     origin: "user",
     family: null,
-    owner_integration: null,
+    owner_connector: null,
     ...part,
   };
 }
@@ -40,14 +40,14 @@ describe("toLoadedTypes", () => {
     const [loaded] = toLoadedTypes([
       row({
         id: "acme.widget",
-        origin: "integration",
-        family: "integration",
-        owner_integration: "acme/widgets",
+        origin: "connector",
+        family: "connector",
+        owner_connector: "acme/widgets",
       }),
     ]);
-    expect(loaded?.origin).toBe("integration");
-    expect(loaded?.family).toBe("integration");
-    expect(loaded?.owner_integration).toBe("acme/widgets");
+    expect(loaded?.origin).toBe("connector");
+    expect(loaded?.family).toBe("connector");
+    expect(loaded?.owner_connector).toBe("acme/widgets");
     expect(logSpy).not.toHaveBeenCalled();
   });
 

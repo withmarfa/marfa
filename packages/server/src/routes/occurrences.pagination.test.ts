@@ -278,7 +278,7 @@ function syntheticRow(row: SyntheticRow): Item {
     id: row.id,
     type: "core.event",
     state: "active",
-    // Not `integration:`-prefixed, so the orphan resolver answers from the
+    // Not `connector:`-prefixed, so the orphan resolver answers from the
     // rows themselves and this storage needs no connection surface.
     source: "synthetic",
     properties: row.properties,

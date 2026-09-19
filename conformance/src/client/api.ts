@@ -678,7 +678,7 @@ export class MarfaClient {
     });
   }
 
-  /** `POST /items/{id}/promote`: an item that is an integration's copy becomes the caller's own. */
+  /** `POST /items/{id}/promote`: an item that is a connector's copy becomes the caller's own. */
   async promoteItem(id: string): Promise<ApiResponse<{ item: MarfaItem }>> {
     return this.request<{ item: MarfaItem }>(`/items/${id}/promote`, {
       method: "POST",

@@ -1,5 +1,5 @@
 /**
- * Storage-primitive coverage for the OAuth Provider integration.
+ * Storage-primitive coverage for the OAuth Provider connector.
  *
  * Three things to pin:
  *   1. `findGrantItemId` resolves the projected system.connection by

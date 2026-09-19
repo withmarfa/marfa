@@ -101,7 +101,7 @@ async function plantMirror(body: string): Promise<string> {
   const mirror = await ctx.storage.items.create({
     type: "core.note",
     properties: { body },
-    source: "integration:promote-atomicity",
+    source: "connector:promote-atomicity",
     source_id: uniq("mirror"),
   });
   return mirror.id;

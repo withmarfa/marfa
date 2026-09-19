@@ -62,7 +62,7 @@ const restoreItemRoute = createRoute({
         },
       },
       description:
-        "An integration may only destroy what it wrote. The row's recorded writer is another connection that is still installed, so the gesture is refused; the response names the owning connection. A row whose writer has been uninstalled is not refused.",
+        "A connector may only destroy what it wrote. The row's recorded writer is another connection that is still installed, so the gesture is refused; the response names the owning connection. A row whose writer has been uninstalled is not refused.",
     },
   },
 });
@@ -131,7 +131,7 @@ const transitionItemRoute = createRoute({
         },
       },
       description:
-        "An integration may only destroy what it wrote. The row's recorded writer is another connection that is still installed, so the gesture is refused; the response names the owning connection. A row whose writer has been uninstalled is not refused.",
+        "A connector may only destroy what it wrote. The row's recorded writer is another connection that is still installed, so the gesture is refused; the response names the owning connection. A row whose writer has been uninstalled is not refused.",
     },
   },
 });

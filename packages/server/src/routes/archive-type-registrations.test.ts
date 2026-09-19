@@ -600,7 +600,7 @@ describe("an archive carries where a type came from", () => {
     return rows.find((r) => r.schema.id === typeId)?.origin;
   }
 
-  it("replays an integration's provenance instead of defaulting it", async () => {
+  it("replays a connector's provenance instead of defaulting it", async () => {
     // The laundering this exists to stop. The column defaults to `user`,
     // and `user` is what the consent screen offers a read-and-write
     // wildcard over, so a type a connected service published came back
@@ -613,15 +613,15 @@ describe("an archive carries where a type came from", () => {
     await source.storage.types.create(
       { id: typeId, ...baseType },
       {
-        origin: "integration",
-        family: "integration",
-        owner_integration: "acme/widgets",
+        origin: "connector",
+        family: "connector",
+        owner_connector: "acme/widgets",
       },
     );
 
     const res = await restore(destination, await exportArchive(source));
     expect(res.status).toBe(200);
-    expect(await storedOrigin(destination, typeId)).toBe("integration");
+    expect(await storedOrigin(destination, typeId)).toBe("connector");
   });
 
   it("records an archive with no provenance as unrecorded", async () => {
@@ -833,7 +833,7 @@ describe("a claimed `user` origin is checked against the handle", () => {
   it("does not rewrite the provenance of a row that already exists", async () => {
     // Re-restoring must stay a no-op. If the skip branch ever started
     // refreshing the column, a second restore of an older copy would walk
-    // a row an integration had claimed back to `unknown`.
+    // a row a connector had claimed back to `unknown`.
     const source = await newContext();
     const destination = await newContext();
     const suffix = uniqueSuffix();
@@ -842,8 +842,8 @@ describe("a claimed `user` origin is checked against the handle", () => {
     await destination.storage.types.create(
       { id: typeId, ...baseType },
       {
-        origin: "integration",
-        family: "integration",
+        origin: "connector",
+        family: "connector",
       },
     );
 
@@ -855,6 +855,6 @@ describe("a claimed `user` origin is checked against the handle", () => {
     );
     const res = await restore(destination, archive);
     expect(res.status).toBe(200);
-    expect(await storedOriginOf(destination, typeId)).toBe("integration");
+    expect(await storedOriginOf(destination, typeId)).toBe("connector");
   });
 });

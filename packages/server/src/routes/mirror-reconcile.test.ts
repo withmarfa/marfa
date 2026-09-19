@@ -54,7 +54,7 @@ describe("compareProperties", () => {
 let ctx: TestContext;
 let memberKey: string;
 
-const MIRROR_SOURCE = "integration:acme.reconcile";
+const MIRROR_SOURCE = "connector:acme.reconcile";
 
 beforeAll(async () => {
   ctx = await createTestContext();
@@ -79,8 +79,8 @@ afterAll(async () => {
 });
 
 /**
- * An integration's mirror of an external record, written through the store:
- * nothing this server mints can be the owning integration, so the store is
+ * A connector's mirror of an external record, written through the store:
+ * nothing this server mints can be the owning connector, so the store is
  * the only writer a mirror has.
  */
 async function createMirror(
@@ -96,7 +96,7 @@ async function createMirror(
   return row.id;
 }
 
-/** The upstream moves: the owning integration re-syncs its mirror. */
+/** The upstream moves: the owning connector re-syncs its mirror. */
 async function resyncMirror(
   id: string,
   properties: Record<string, unknown>,
@@ -175,9 +175,9 @@ describe("GET /items/{id}/reconcile", () => {
     expect(res.status).toBe(400);
   });
 
-  it("ignores a derived-from join to something no integration owns", async () => {
-    // derived-from is an ordinary edge anyone can draw; only the ends an
-    // integration owns are mirrors.
+  it("ignores a derived-from join to something no connector owns", async () => {
+    // derived-from is an ordinary edge anyone can draw; only the ends a
+    // connector owns are mirrors.
     const a = await request(ctx.app, "POST", "/items", {
       key: memberKey,
       body: { type: "core.note", properties: { body: "source" } },

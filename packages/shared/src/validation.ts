@@ -197,9 +197,9 @@ const HANDLE_RE = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/;
  * without the reserved-root refusal**, and both had been open-coding it.
  * `marfa` is a reserved root, so `isValidHandle("marfa")` is false — which
  * is correct for a claim, since nobody may take the platform's own name,
- * and wrong for every other question about the string. An integration
+ * and wrong for every other question about the string. A connector
  * identifier's first segment and a manifest's `publisher` are both that
- * other question: the platform's own integrations live under `marfa/` and
+ * other question: the platform's own connectors live under `marfa/` and
  * are published by `marfa`, so a validator carrying the reserved-root
  * check would refuse the entire first-party set.
  */
@@ -287,17 +287,17 @@ export function isValidTypeIdentifier(value: string): boolean {
   }
 }
 
-// The name half of an integration identifier: one or more dot-joined
+// The name half of a connector identifier: one or more dot-joined
 // segments, so a family can carry a sub-namespace the way types do.
-const INTEGRATION_NAME = /^[a-z][a-z0-9_-]*(\.[a-z][a-z0-9_-]*)*$/;
+const CONNECTOR_NAME = /^[a-z][a-z0-9_-]*(\.[a-z][a-z0-9_-]*)*$/;
 
 /**
- * Returns true if the value is a syntactically valid integration
+ * Returns true if the value is a syntactically valid connector
  * identifier: `<namespace>/<name>`, for example `readwise/reader` or
  * `marfa/rss-watcher`.
  *
  * **Dots name data; the slash names an installable.** A type identifier is
- * dotted all the way down and never carries a slash; an integration is the
+ * dotted all the way down and never carries a slash; a connector is the
  * one thing a person installs, so it gets the character that says so. The
  * two grammars are deliberately separate functions rather than one loosened
  * regex, because a slash admitted into `isValidTypeIdentifier` would reach
@@ -307,13 +307,13 @@ const INTEGRATION_NAME = /^[a-z][a-z0-9_-]*(\.[a-z][a-z0-9_-]*)*$/;
  * `isValidTypeIdentifier`: whether a caller may publish under a given
  * handle is an authorization question answered at registration, where the
  * credential is in hand. A syntactic validator that refused reserved roots
- * would refuse the platform's own integrations, which live under `marfa/`.
+ * would refuse the platform's own connectors, which live under `marfa/`.
  *
  * The slash is required. An earlier dot form existed while installed
  * connections were migrated onto this grammar; every stored name now carries
- * the slash, so a dotted value names a type and never an integration.
+ * the slash, so a dotted value names a type and never a connector.
  */
-export function isValidIntegrationIdentifier(value: string): boolean {
+export function isValidConnectorIdentifier(value: string): boolean {
   if (typeof value !== "string") return false;
   if (value.length > 128) return false;
   const slash = value.indexOf("/");
@@ -326,7 +326,7 @@ export function isValidIntegrationIdentifier(value: string): boolean {
   // `isValidHandleGrammar`. Written out here for years, which is how the
   // rule came to have two copies free to disagree.
   if (!isValidHandleGrammar(handle)) return false;
-  return INTEGRATION_NAME.test(name);
+  return CONNECTOR_NAME.test(name);
 }
 
 // A dotted run of identifier segments with no arity rule — the prefix half of
@@ -491,7 +491,7 @@ export function filterExtensionsByPermission(
  * `Europe/Kyiv` are what upstream calendars send, and this runtime's ICU
  * canonicalizes them to `Asia/Calcutta` and `Europe/Kiev`. Storing the
  * canonical form would hand a user back a zone name they did not choose and
- * would round-trip a different string than the one an integration wrote.
+ * would round-trip a different string than the one a connector wrote.
  */
 export function isValidTimeZone(value: string): boolean {
   if (typeof value !== "string" || value.length === 0) return false;

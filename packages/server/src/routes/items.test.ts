@@ -171,7 +171,7 @@ describe("POST /items", () => {
 
     // Whole-batch retry shape: a third POST is also idempotent — no new row
     // is created, the existing row keeps being updated. This is the contract
-    // inbound integration handlers (rss-watcher / Calendar) rely on to recover
+    // inbound connector handlers (rss-watcher / Calendar) rely on to recover
     // from createItem-success / cursor-write-fail without producing duplicates.
     const third = await request(ctx.app, "POST", "/items", {
       key: ctx.workingKey,
@@ -969,7 +969,7 @@ describe("PATCH /items/:id — properties_mode", () => {
    * The clearing itself was reachable before this, but only by naming every
    * field to be removed — which puts the type's shape into every call site
    * and leaves the next one written from scratch with nothing. Nine such
-   * lists were about to be hand-maintained across the integration estate,
+   * lists were about to be hand-maintained across the connector estate,
    * which is the every-caller-must-remember shape rather than one mechanism.
    */
   async function bookmark(ctx: TestContext): Promise<string> {
@@ -1040,7 +1040,7 @@ describe("PATCH /items/:id — properties_mode", () => {
   });
 
   it("refuses a replace that drops a field the type requires", async () => {
-    // The property that makes this safe to hand an integration: a replace is
+    // The property that makes this safe to hand a connector: a replace is
     // validated like any other write, so it cannot quietly produce a row the
     // type says is invalid. `core.entity` requires `name`, and this replace
     // does not name it.

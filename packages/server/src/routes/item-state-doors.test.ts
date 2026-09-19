@@ -17,8 +17,8 @@
  * refused.
  *
  * **Two credential shapes, deliberately.** The doors are reachable by an
- * ordinary working credential for the types its maps admit, and by an
- * integration runtime credential for `system.activity`, through the carve-out
+ * ordinary working credential for the types its maps admit, and by a
+ * connector credential for `system.activity`, through the carve-out
  * in `checkTypeAccess`. A suite written entirely with one shape pins the check
  * for that shape and is blind to the other, which is how a guard goes missing
  * on a door somebody believed was covered.

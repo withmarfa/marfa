@@ -44,7 +44,7 @@ import { assertParentChain } from "./_parent-chain.js";
  * registration lives in the runtime overlay and never appears in it — so
  * membership is exactly the "shipped, not yours to edit" question.
  *
- * The lock spans core, integration and system alike. An integration type is
+ * The lock spans core, connector and system alike. A connector type is
  * no more mutable than a core one.
  */
 function isLockedPlatformType(id: string): boolean {

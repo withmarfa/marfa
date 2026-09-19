@@ -2,7 +2,7 @@
  * `in-collection` admits any type declaring the `container` role.
  *
  * The edge used to name three permitted targets, all of them platform types,
- * so an integration writing its own vocabulary had nothing it was allowed to
+ * so a connector writing its own vocabulary had nothing it was allowed to
  * point at: a publisher could have a container and members and no supported
  * way to say one held the other. Naming the vendor type in the core edge would
  * have fixed one publisher and left every later one — including publishers who
@@ -21,13 +21,13 @@ import type { TestContext } from "../test-utils.js";
 let ctx: TestContext;
 
 /**
- * The credential a shipped integration actually holds. `marfa.*` is a
+ * The credential a shipped connector actually holds. `marfa.*` is a
  * reserved namespace, so an ordinary key cannot write a podcast row or an
- * edge whose source is one; a runtime credential naming those literals can,
+ * edge whose source is one; a connector credential naming those literals can,
  * which is the only shape the cases below can be driven through.
  */
 
-// A publisher who is not us, registering the pair an integration would ship.
+// A publisher who is not us, registering the pair a connector would ship.
 const suffix = Math.random().toString(36).slice(2, 8);
 const PUBLISHER_CONTAINER = `acme${suffix}.library`;
 const PUBLISHER_SUBTYPE = `acme${suffix}.library.curated`;

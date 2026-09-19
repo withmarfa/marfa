@@ -63,7 +63,7 @@ async function promoteAMirror(): Promise<{
   const mirror = await ctx.storage.items.create({
     type: "core.note",
     properties: { body: "upstream copy" },
-    source: "integration:promote-announcement",
+    source: "connector:promote-announcement",
     source_id: `mirror-${String(Date.now())}-${String(Math.random())}`,
   });
   const cursor = await logCursor();
@@ -103,7 +103,7 @@ describe("a promotion's announcement", () => {
 
     // `publish` omits the key entirely when the event carries no metadata,
     // so an event without it is not "metadata: null" on the wire — the
-    // webhook sends null and the integration envelope sends nothing, and a
+    // webhook sends null and the connector envelope sends nothing, and a
     // handler reading `payload.metadata.tags` throws on this event alone
     // while being safe on every other create.
     const payload = JSON.parse(created!.payload) as {
@@ -119,14 +119,14 @@ describe("a promotion's announcement", () => {
     expect(payload.metadata?.tags).toEqual([]);
   });
 
-  it("does not push the copy back out through the integrations watching", async () => {
+  it("does not push the copy back out through the connectors watching", async () => {
     const { rows, promotedId } = await promoteAMirror();
     const created = rows.find(
       (r) => r.event_type === "created" && r.item_id === promotedId,
     );
     expect(created).toBeDefined();
 
-    // The mirror is an integration's reflection of an upstream record. Fan
+    // The mirror is a connector's reflection of an upstream record. Fan
     // this out and every bidirectional connection targeting the type writes
     // the copy upstream as a NEW record, so the thing the mirror already
     // reflects exists twice — the duplication the mirror-and-promote split

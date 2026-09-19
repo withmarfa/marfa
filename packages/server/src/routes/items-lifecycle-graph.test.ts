@@ -55,7 +55,7 @@ async function systemWriter(c: TestContext): Promise<{
   const connection = await c.storage.items.create({
     type: "system.connection",
     properties: {
-      kind: "integration",
+      kind: "connector",
       status: "active",
       granted_at: new Date().toISOString(),
     },

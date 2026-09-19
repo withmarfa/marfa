@@ -30,9 +30,9 @@ import type { Item, ItemState } from "@withmarfa/shared";
  *
  * **The reserved row here is a `system.activity` one, because the opt-in has
  * exactly one holder.** Widening this door asks `mayWriteReserved`, and that
- * fence admits the operator key or a runtime credential writing its own
+ * fence admits the operator key or a connector credential writing its own
  * connection's activity. The operator key holds no type at all, so the type
- * filter empties its match set before the fence is reached; a runtime
+ * filter empties its match set before the fence is reached; a connector
  * credential is the only credential that both passes the fence and holds a
  * reserved type. Any other reserved type is therefore unopenable on this door
  * by anybody, which is a property of the fence rather than of the row.

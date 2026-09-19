@@ -36,10 +36,10 @@ export enum ErrorCode {
   UNAUTHORIZED = "unauthorized",
   FORBIDDEN = "forbidden",
   /**
-   * The row is an integration's copy of an external record; only the
-   * owning integration writes it. Promote it to edit your own copy.
+   * The row is a connector's copy of an external record; only the
+   * owning connector writes it. Promote it to edit your own copy.
    */
-  INTEGRATION_OWNED = "integration_owned",
+  CONNECTOR_OWNED = "connector_owned",
   TYPE_NOT_PERMITTED = "type_not_permitted",
   /**
    * A credential that cannot read everything stored attempted an operation
@@ -204,12 +204,12 @@ export enum ErrorCode {
   SOURCE_ID_CONFLICT = "source_id_conflict",
   /**
    * A write resolved a row that a *different, still-installed* connection
-   * of the same integration wrote. Refused rather than merged.
+   * of the same connector wrote. Refused rather than merged.
    *
-   * `source` is stamped `integration:<manifest name>` and is deliberately
-   * one value for the whole integration (D34), so that
+   * `source` is stamped `connector:<manifest name>` and is deliberately
+   * one value for the whole connector (D34), so that
    * reinstalling adopts the corpus it created rather than duplicating it.
-   * The cost is that two live connections of one integration share a
+   * The cost is that two live connections of one connector share a
    * natural-key namespace, and nothing in `(source, source_id)` tells them
    * apart. The row's recorded writer is what does.
    *
@@ -300,7 +300,7 @@ const STATUS_MAP: Record<ErrorCode, number> = {
   [ErrorCode.ANCESTOR_UNAVAILABLE]: 409,
   [ErrorCode.UNAUTHORIZED]: 401,
   [ErrorCode.FORBIDDEN]: 403,
-  [ErrorCode.INTEGRATION_OWNED]: 403,
+  [ErrorCode.CONNECTOR_OWNED]: 403,
   [ErrorCode.TYPE_NOT_PERMITTED]: 403,
   [ErrorCode.SCOPED_CREDENTIAL_NOT_PERMITTED]: 403,
   [ErrorCode.INVALID_TRANSITION]: 400,

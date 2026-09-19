@@ -5,9 +5,9 @@
  * and nothing here covered the walk itself: the cap, the cycle check and
  * the registry resolution were all untested at every door.
  *
- * Manifest registration is the third caller. Its own ordering and its
- * stalled-batch refusal are covered where they live, in
- * `integrations-travelling-types.test.ts`.
+ * Manifest registration is the third caller, and nothing covers its own
+ * ordering or its stalled-batch refusal: the fixture that did left with the
+ * in-server connector runtime.
  */
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import {

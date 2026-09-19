@@ -47,7 +47,7 @@ import {
   checkTypeAccess,
   requireEdgePermission,
   getTypeFilter,
-  INTEGRATION_SOURCE_PREFIX,
+  CONNECTOR_SOURCE_PREFIX,
 } from "../middleware/auth.js";
 import { compareProperties } from "./mirror-reconcile.js";
 import type {
@@ -345,9 +345,9 @@ const promoteItemRoute = createRoute({
   method: "post",
   path: "/{id}/promote",
   tags: ["Items"],
-  summary: "Promote an integration's copy into your own item",
+  summary: "Promote a connector's copy into your own item",
   description:
-    "Mints a new item you own from an integration's mirror of an external record, joined back to the mirror by a `derived-from` edge. The mirror stays a faithful copy the integration keeps re-syncing; the promoted item is yours to edit and is never touched by a re-sync. Only items an integration owns can be promoted.",
+    "Mints a new item you own from a connector's mirror of an external record, joined back to the mirror by a `derived-from` edge. The mirror stays a faithful copy the connector keeps re-syncing; the promoted item is yours to edit and is never touched by a re-sync. Only items a connector owns can be promoted.",
   security: [{ bearerAuth: [] }],
   request: { params: IdParam },
   responses: {
@@ -374,7 +374,7 @@ const promoteItemRoute = createRoute({
         },
       },
       description:
-        "The item is not an integration's copy, or its properties no longer satisfy its type",
+        "The item is not a connector's copy, or its properties no longer satisfy its type",
     },
     404: {
       content: {
@@ -413,7 +413,7 @@ const reconcileItemRoute = createRoute({
   tags: ["Items"],
   summary: "Compare your item against the mirror it was promoted from",
   description:
-    "Reports, field by field, where your item and the integration's mirror now differ. Promotion forks a copy; the mirror keeps re-syncing, so this is how you see what moved upstream since. Accepting a field is an ordinary `PATCH` on your own item, so nothing here writes. Reports against every mirror the item is joined to by `derived-from`.",
+    "Reports, field by field, where your item and the connector's mirror now differ. Promotion forks a copy; the mirror keeps re-syncing, so this is how you see what moved upstream since. Accepting a field is an ordinary `PATCH` on your own item, so nothing here writes. Reports against every mirror the item is joined to by `derived-from`.",
   security: [{ bearerAuth: [] }],
   request: { params: IdParam },
   responses: {
@@ -429,7 +429,7 @@ const reconcileItemRoute = createRoute({
           schema: makeErrorResponseSchema(["validation_error"]),
         },
       },
-      description: "The item was not promoted from an integration's copy",
+      description: "The item was not promoted from a connector's copy",
     },
     404: {
       content: {
@@ -878,7 +878,7 @@ const deleteItemRoute = createRoute({
         },
       },
       description:
-        "An integration may only destroy what it wrote. The row's recorded writer is another connection that is still installed, so the gesture is refused; the response names the owning connection. A row whose writer has been uninstalled is not refused.",
+        "A connector may only destroy what it wrote. The row's recorded writer is another connection that is still installed, so the gesture is refused; the response names the owning connection. A row whose writer has been uninstalled is not refused.",
     },
   },
 });
@@ -1434,7 +1434,7 @@ export function itemRoutes(storage: Storage) {
     // and request `source_id` are present, look up an existing non-trashed
     // row by (source, source_id). If one matches,
     // short-circuit to update so `POST /items` is idempotent on re-sync —
-    // the contract that lets inbound integration handlers recover from
+    // the contract that lets inbound connector handlers recover from
     // whole-batch retries (createItem-success / cursor-write-fail) without
     // producing duplicates. Returns 200 on this branch (vs 201 on create) so
     // the caller can distinguish the realized effect.
@@ -1449,7 +1449,7 @@ export function itemRoutes(storage: Storage) {
       // create path, where `create`'s own dedup pre-check — which does not
       // filter state — found the same row and refused with a 409. That 409
       // never clears: the row stays trashed, so every subsequent sync
-      // fails the same way and the integration is wedged on one item.
+      // fails the same way and the connector is wedged on one item.
       const existing = await storage.items.findBySourceIdIncludingTrashed(
         stampedSource,
         body.source_id,
@@ -1518,15 +1518,15 @@ export function itemRoutes(storage: Storage) {
         requireTypeAccess(c, existing.type, "write");
         // **No mirror check here, and its absence is the honest shape.**
         // Every other door that resolves a row calls
-        // `requireMirrorProtection`; this one cannot be reached by an
-        // integration's mirror at all, so a call would be a guard that can
+        // `requireMirrorProtection`; this one cannot be reached by a
+        // connector's mirror at all, so a call would be a guard that can
         // never refuse — which reads as protection while making no claim.
         //
         // The lookup is what provides the property. `stampedSource` is the
         // credential's own `source` and `findBySourceIdIncludingTrashed`
         // keys on it, so a row resolved here carries this credential's own
         // source by construction, and `isReservedCredentialSource` refuses
-        // an `integration:` source at every mint. The answer is decided
+        // a `connector:` source at every mint. The answer is decided
         // before the row is read.
         //
         // **A lookup that ever resolves a row by something other than the
@@ -1899,10 +1899,10 @@ export function itemRoutes(storage: Storage) {
     if (!mirror) {
       throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`);
     }
-    if (!mirror.source.startsWith("integration:")) {
+    if (!mirror.source.startsWith("connector:")) {
       throw new MarfaError(
         ErrorCode.VALIDATION_ERROR,
-        "Only an integration's copy can be promoted; this item is already yours",
+        "Only a connector's copy can be promoted; this item is already yours",
         { item_id: id, source: mirror.source },
       );
     }
@@ -1958,13 +1958,13 @@ export function itemRoutes(storage: Storage) {
     // a fresh row's metadata layer is exactly what the write put there, and
     // a promotion writes no tags. Carrying it is not tidiness. `publish`
     // omits the key entirely when it is absent, so the webhook sends
-    // `metadata: null` and the integration envelope sends nothing at all —
+    // `metadata: null` and the connector envelope sends nothing at all —
     // a handler reading `payload.metadata.tags`, which is safe on every
     // other `item.created`, would throw on this one alone.
     //
     // `enableFanout: false`, which is the one thing a promotion must not do.
-    // The mirror is an integration's reflection of an upstream record;
-    // pushing the copy back out makes that integration create a SECOND
+    // The mirror is a connector's reflection of an upstream record;
+    // pushing the copy back out makes that connector create a SECOND
     // upstream record for the thing the mirror already reflects, which is
     // the duplication the mirror-and-promote split exists to prevent.
     // Dispatch has nothing left to suppress a write on, so nothing else
@@ -2014,10 +2014,10 @@ export function itemRoutes(storage: Storage) {
     const mirrors = [];
     for (const edge of joined.data) {
       const mirror = await storage.items.get(edge.target_id);
-      // A derived-from edge can join any two items; only the ones an
-      // integration owns are mirrors, and only those have anything to
+      // A derived-from edge can join any two items; only the ones a
+      // connector owns are mirrors, and only those have anything to
       // reconcile against.
-      if (!mirror?.source.startsWith(INTEGRATION_SOURCE_PREFIX)) continue;
+      if (!mirror?.source.startsWith(CONNECTOR_SOURCE_PREFIX)) continue;
       requireTypeAccess(c, mirror.type, "read");
       mirrors.push({
         mirror_id: mirror.id,
@@ -2030,7 +2030,7 @@ export function itemRoutes(storage: Storage) {
     if (mirrors.length === 0) {
       throw new MarfaError(
         ErrorCode.VALIDATION_ERROR,
-        "This item was not promoted from an integration's copy, so there is nothing to reconcile against",
+        "This item was not promoted from a connector's copy, so there is nothing to reconcile against",
         { item_id: id },
       );
     }
@@ -2771,7 +2771,7 @@ export function itemRoutes(storage: Storage) {
     // The check itself stays where the cascade is, and has to: the type gate
     // above ran against the named row alone, and a `parent-of` edge can carry
     // a connection out through a delete of something else entirely.
-    // D64: an integration may only destroy what it wrote. Trashing a sibling
+    // D64: a connector may only destroy what it wrote. Trashing a sibling
     // connection's corpus was the destructive half D63 left open — the
     // property write was refused and the delete was not, which is the
     // stronger harm being the less protected one.
@@ -3040,14 +3040,14 @@ export function itemRoutes(storage: Storage) {
     }
 
     // **No provenance guard here**, and that is a finding rather than an
-    // omission: `items.purge` is asked above, and a runtime credential's
+    // omission: `items.purge` is asked above, and a connector credential's
     // permissions are projected from its manifest and carry no
-    // permission at all, so an integration is refused before it reaches the
+    // permission at all, so a connector is refused before it reaches the
     // point where provenance would be consulted. A guard here would be
     // unreachable code no test could pin, which is worse than none because it
     // reads as a protection somebody is relying on.
     // `item-write-doors.test.ts` asserts the permission gate instead, so the
-    // day this door widens, the case saying an integration cannot purge is
+    // day this door widens, the case saying a connector cannot purge is
     // the one that reddens.
     // Edges have no FK to items — explicit cleanup required before purge.
     // Every edge the purge takes with it, announced individually. A

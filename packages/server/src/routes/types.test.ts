@@ -173,8 +173,8 @@ describe("GET /types", () => {
 describe("PUT / DELETE /types/:id — platform-shipped types are immutable", () => {
   const SHIPPED = [
     ["core", "core.note"],
-    ["integration", "todoist.task"],
-    ["integration", "google.calendar.event"],
+    ["connector", "todoist.task"],
+    ["connector", "google.calendar.event"],
     ["system", "system.connection"],
   ] as const;
 

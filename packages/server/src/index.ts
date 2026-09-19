@@ -276,7 +276,6 @@ async function main() {
     activityPurger.start();
   }
 
-  // The runtime reaper below covers machine-minted credentials only.
   // Ordinary revoked keys had nothing sweeping them, which is how staging
   // reached 3,044 older than a week.
   const revokedKeyReaper = new RevokedKeyReaper(

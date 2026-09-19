@@ -27,7 +27,7 @@
  * they are not.
  */
 
-/** Largest page any item, audit, integration or webhook door will return. */
+/** Largest page any item, audit, connector or webhook door will return. */
 export const MAX_PAGE_LIMIT = 200;
 
 /** What a door returns when the caller names no limit. */

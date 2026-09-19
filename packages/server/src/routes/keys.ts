@@ -45,7 +45,7 @@ function generateRawKey(): string {
 }
 
 /**
- * Refuse a caller-supplied `source` that claims an integration shape.
+ * Refuse a caller-supplied `source` that claims a connector shape.
  *
  * `source` is otherwise free text, but two prefixes are read elsewhere as
  * proof of an identity a caller cannot earn by naming it: see
@@ -109,7 +109,7 @@ const KeyListItemSchema = z.object({
     .nullable()
     .optional()
     .describe(
-      "Hard lifetime bound. NULL for human-minted keys, which never expire. A key past this instant is refused exactly like a revoked one.",
+      "Hard lifetime bound, and NULL on every key a door mints. A key past this instant is refused at the bearer gate exactly like a revoked one.",
     ),
   last_used_at: z.string().nullable(),
 });
@@ -374,7 +374,7 @@ const KeyDetailSchema = z.object({
     .nullable()
     .optional()
     .describe(
-      "Hard lifetime bound. NULL for human-minted keys, which never expire. Runtime credentials are always stamped; a key past this instant is refused exactly like a revoked one.",
+      "Hard lifetime bound, and NULL on every key a door mints. A key past this instant is refused at the bearer gate exactly like a revoked one.",
     ),
   enforcement_override: EnforcementOverrideSchema.optional(),
   last_used_at: z.string().nullable(),
@@ -1302,8 +1302,7 @@ export function keyRoutes(storage: Storage, salt: string) {
         created_at: updated.created_at,
         // Sent because it can be. Unlike the create routes, where the field
         // was declared and no key a door mints could ever carry one, any key
-        // is patchable — a runtime credential included, and those always
-        // carry a hard lifetime bound. A caller updating a credential's
+        // is patchable — a stamped row included. A caller updating a credential's
         // permissions asked for the key, and when it stops working is part of
         // the key, so the honest fix was to make the handler match the
         // declaration rather than the other way round.

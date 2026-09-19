@@ -533,7 +533,7 @@ const WORDS = [
   "annual",
   "daily",
   "regular",
-  // Adverbs and integrations
+  // Adverbs
   "also",
   "however",
   "therefore",

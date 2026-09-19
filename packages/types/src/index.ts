@@ -38,7 +38,7 @@ export {
 
 export {
   ALL_TYPES,
-  ALL_INTEGRATION_TYPES,
+  ALL_CONNECTOR_TYPES,
   ALL_SYSTEM_TYPES,
   ALL_TYPE_IDS,
 } from "../generated/type-registry.js";

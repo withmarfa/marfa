@@ -1492,7 +1492,7 @@ describe("an off-by-default bundle grants nothing without a tick", () => {
     // is a choice nobody sees. The decision route reads the resulting
     // submission as a narrowing, and a narrowing is treated as a promise
     // that the removed access stops working, so it revokes the client's live
-    // tokens. An untouched Continue killed a working integration, and a
+    // tokens. An untouched Continue killed a working connector, and a
     // permission granted once would evaporate at the next re-consent.
     //
     // First consent ticks the off bundle by hand; the return visit touches

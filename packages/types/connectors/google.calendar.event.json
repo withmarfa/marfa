@@ -1,7 +1,7 @@
 {
   "id": "google.calendar.event",
   "label": "Google Calendar Event",
-  "description": "An event on a Google Calendar, captured with upstream fidelity. Mirrors the Calendar API event resource closely so a round-trip preserves the fields Google considers authoritative. For cross-app interop with non-Google consumers, the Google Calendar integration can also be configured to write to `core.event` instead, but the default and the fidelity choice is this type.",
+  "description": "An event on a Google Calendar, captured with upstream fidelity. Mirrors the Calendar API event resource closely so a round-trip preserves the fields Google considers authoritative. For cross-app interop with non-Google consumers, the Google Calendar connector can also be configured to write to `core.event` instead, but the default and the fidelity choice is this type.",
   "version": 2,
   "compatible_with": ["core.event"],
   "fields": {

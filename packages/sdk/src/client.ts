@@ -421,7 +421,7 @@ export interface BulkInput {
    *  batch continues past failures. */
   atomic?: boolean;
   /** Default: `false`. Whether the batch's writes also drive outbound work
-   *  — webhook delivery and integration reactions. Never governs the event
+   *  — webhook delivery and connector reactions. Never governs the event
    *  log: every bulk write is logged, so a client replaying the stream sees
    *  the batch whatever this is set to. */
   enable_fanout?: boolean;
@@ -472,7 +472,7 @@ export interface BulkEdgeInput {
    *  batch continues past failures. */
   atomic?: boolean;
   /** Default: `false`. Whether the batch's writes also drive outbound work
-   *  — webhook delivery and integration reactions. Never governs the event
+   *  — webhook delivery and connector reactions. Never governs the event
    *  log: every bulk write is logged, so a client replaying the stream sees
    *  the batch whatever this is set to. */
   enable_fanout?: boolean;
@@ -533,7 +533,7 @@ interface BulkActionBase {
   dry_run?: boolean;
   max_items?: number;
   /** Default: `false`. Whether the action's writes also drive outbound work
-   *  — webhook delivery and integration reactions. Never governs the event
+   *  — webhook delivery and connector reactions. Never governs the event
    *  log: every write the action makes is logged either way. */
   enable_fanout?: boolean;
 }

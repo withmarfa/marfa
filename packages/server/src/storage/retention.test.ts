@@ -803,17 +803,17 @@ describe("RevokedGrantPurger.runOnce — the tombstone sweep", () => {
     expect(await ctx.storage.items.get(id)).not.toBeNull();
   });
 
-  it("leaves an integration's revoked connection alone", async () => {
+  it("leaves a connector's revoked connection alone", async () => {
     // **Demonstrated rather than assumed.** An uninstall writes the same
     // `revoked` status as a matter of routine onto a row somebody may
     // reinstall against. Widening the predicate to every revoked connection
     // reddens this and nothing else.
-    const integration = await seedTombstone(OLD, "integration");
+    const connector = await seedTombstone(OLD, "connector");
     const app = await seedTombstone(OLD, "app");
     const deleted =
       await ctx.storage.items.purgeRevokedAppGrantsOlderThan(CUTOFF);
     expect(deleted).toBe(1);
-    expect(await ctx.storage.items.get(integration)).not.toBeNull();
+    expect(await ctx.storage.items.get(connector)).not.toBeNull();
     await expect(ctx.storage.items.get(app)).resolves.toBeNull();
   });
 

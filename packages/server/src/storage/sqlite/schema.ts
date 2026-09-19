@@ -219,9 +219,9 @@ export const apiKeys = sqliteTable(
      */
     oauth_client_id: text("oauth_client_id"),
     created_at: text("created_at").notNull(),
-    // Hard lifetime bound. NULL means the key never expires (human-minted
-    // keys); runtime credentials are always stamped so the bearer gate and
-    // the reaper can retire them without an explicit revoke.
+    // Hard lifetime bound. NULL means the key never expires, which is
+    // every key a door mints; a stamped row is refused at the bearer gate
+    // once it passes.
     expires_at: text("expires_at"),
     revoked_at: text("revoked_at"),
     last_used_at: text("last_used_at"),
@@ -276,17 +276,17 @@ export const types = sqliteTable(
     id: text("id").primaryKey(),
     schema: text("schema").notNull(),
     // Where the type came from, and who may change it. `platform` is the
-    // seeded vocabulary and is locked; `integration` belongs to the manifest
-    // named in `owner_integration` and only that package may update it;
+    // seeded vocabulary and is locked; `connector` belongs to the manifest
+    // named in `owner_connector` and only that package may update it;
     // `user` is a registration through the API. `family` carries the split the
-    // identifier cannot express (core / integration / system). It began as
-    // a property of the shipped set and is written for an integration's
+    // identifier cannot express (core / connector / system). It began as
+    // a property of the shipped set and is written for a connector's
     // own types too, so a row's family says what kind of type it is
     // rather than which build shipped it. Absent for `user` rows, which
     // belong to no platform family and never did.
     origin: text("origin").notNull().default("user"),
     family: text("family"),
-    owner_integration: text("owner_integration"),
+    owner_connector: text("owner_connector"),
     created_at: text("created_at").notNull(),
     updated_at: text("updated_at").notNull(),
   },
@@ -423,7 +423,7 @@ export const eventLog = sqliteTable(
     edge_id: text("edge_id"),
     payload: text("payload").notNull(),
     // Whether this event drives outbound side effects: webhook delivery and
-    // the integration reactions the reactive bridge enqueues. Persisted
+    // the connector reactions the reactive bridge enqueues. Persisted
     // rather than carried only on the emitted event, because the bridge's
     // drainer is elected across the cluster and may be a different process
     // from the writer — it rebuilds the event from this row, so the

@@ -9,7 +9,7 @@
  * schema in the registry and then uses the family to decide two things:
  * whether the id joins `SYSTEM_TYPE_IDS`, which rejects a caller-supplied
  * `tier` and pins the type to the bounded `active`/`revoked` lifecycle,
- * and whether it joins `INTEGRATION_TYPE_IDS`.
+ * and whether it joins `CONNECTOR_TYPE_IDS`.
  *
  * `core` is the family that joins neither set. So defaulting an unreadable
  * row to `core` was not a neutral guess, it was the most permissive answer

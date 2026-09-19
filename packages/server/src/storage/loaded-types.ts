@@ -35,7 +35,7 @@ export interface TypeRow {
   /** `NOT NULL DEFAULT 'user'`, so never absent. */
   origin: string;
   family: string | null;
-  owner_integration: string | null;
+  owner_connector: string | null;
 }
 
 /**
@@ -76,8 +76,8 @@ export function toLoadedTypes(rows: readonly TypeRow[]): LoadedType[] {
       ...(row.family !== null && {
         family: row.family as LoadedType["family"],
       }),
-      ...(row.owner_integration !== null && {
-        owner_integration: row.owner_integration,
+      ...(row.owner_connector !== null && {
+        owner_connector: row.owner_connector,
       }),
     });
   }

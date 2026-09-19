@@ -149,13 +149,13 @@ export class TrashPurger {
 /**
  * Ages out `system.activity` items.
  *
- * An integration reports what a run did, and a run that did nothing is
+ * A connector reports what a run did, and a run that did nothing is
  * supposed to say nothing. That convention arrived after this job did, and
- * before it one integration's reactive path wrote a row per upstream write,
+ * before it one connector's reactive path wrote a row per upstream write,
  * which alone made this the fastest-growing item type by a wide margin.
  *
- * Retention existed for trash, audit rows, the event log, versions,
- * sessions and runtime credentials; activity is an ordinary item and had no
+ * Retention existed for trash, audit rows, the event log, versions and
+ * sessions; activity is an ordinary item and had no
  * job at all, so the table only ever grew. Production reached 6,015
  * activity items against 805 of everything else before this landed, and was
  * still above six thousand five days later.
@@ -165,7 +165,7 @@ export class TrashPurger {
  * instance default otherwise.
  *
  * **This job bounds the rows; it does not decide whether a run deserves
- * one.** That is the integration's call, and the authoring guide carries
+ * one.** That is the connector's call, and the authoring guide carries
  * the rule. Retention on its own was never going to be enough:
  * it caps how many rows exist at once, not how many get written, and each
  * one costs a transaction, a quota reservation, an index update and a
@@ -192,7 +192,7 @@ export class TrashPurger {
  * about whether a revocation is still visible. Ninety days, matching
  * `AUDIT_RETENTION_DAYS`, and `0` disables the job as it does for the others.
  *
- * **An integration's revoked connection is not a tombstone and is not swept.**
+ * **A connector's revoked connection is not a tombstone and is not swept.**
  * The uninstall path writes the same `revoked` status as a matter of routine,
  * onto a row somebody may reinstall against. The store predicate asks
  * `kind = 'app'`.
@@ -753,56 +753,24 @@ export class BlobOrphanCleaner {
 }
 
 /**
- * Retires runtime credentials. The runtime substrates mint one short-TTL
- * credential per dispatch; the mint path revokes superseded siblings and
- * the bearer gate refuses expired rows, but neither touches credentials
- * for connections that stop dispatching, nor rows minted before expiry
- * stamping existed. This sweep is the backstop that keeps `api_keys`
- * bounded. Three passes per tick:
- *
- *   1. Revoke runtime credentials past their `expires_at` — the bearer
- *      gate already refuses them, this makes the state visible and
- *      starts the hard-delete clock.
- *   2. Revoke legacy runtime credentials with no `expires_at` whose
- *      `created_at` is older than the default TTL + one-TTL grace. Rows
- *      minted before expiry stamping never age out on their own; any of
- *      them older than the grace window is long dead operationally.
- *   3. Hard-delete revoked runtime-credential rows whose `revoked_at` is
- *      older than seven days. Per-dispatch machine artifacts, not human
- *      credentials — a week of post-revocation visibility is plenty.
- *
- * Instance-wide and not configurable — expiry is a property of the row.
- * Disabled by wiring (interval `0` skips construction in
- * `index.ts`), matching the other cleaners.
- */
-/**
  * Hard-deletes revoked ordinary API keys once their revocation is old
  * enough to stop being interesting.
- *
- * A sibling of `RuntimeCredentialReaper` rather than a fourth pass inside
- * it, and the reason is in that class's own docblock: its seven-day
- * window is reasoned as "per-dispatch machine artifacts, not human
- * credentials". An ordinary key is minted by a person or a test suite,
- * so how long its revocation stays visible is a different judgment, and
- * folding the two together would leave that class's name describing half
- * of what it does.
  *
  * Nothing swept these at all before. Staging reached 3,044 revoked
  * ordinary keys older than a week, against six on production — the
  * difference being that staging is where every suite and probe mints one.
  *
  * Instance-wide and not configurable: revocation age is a property of the
- * row. Matches the runtime reaper on that point.
+ * row.
  */
 export class RevokedKeyReaper {
   private interval: ReturnType<typeof setInterval> | null = null;
   private startupTimeout: ReturnType<typeof setTimeout> | null = null;
   private stopped = false;
 
-  /** Post-revocation retention before hard delete. Longer than the
-   *  runtime reaper's seven days because a revoked human credential is
-   *  worth more to an operator reading back than a machine artifact is,
-   *  and there are orders of magnitude fewer of them. */
+  /** Post-revocation retention before hard delete. Generous because a
+   *  revoked human credential is worth reading back, and there are few
+   *  enough of them that keeping a month of them costs nothing. */
   static readonly REVOKED_RETENTION_MS = 30 * MS_PER_DAY;
 
   constructor(

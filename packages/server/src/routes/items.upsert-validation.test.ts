@@ -1,12 +1,12 @@
 /**
  * The natural-key upsert is the one write path that skipped validation, and
  * it is also the one where an explicit null clears a value rather than
- * setting it. So an integration re-sync sending a null title removed a field
+ * setting it. So a connector re-sync sending a null title removed a field
  * the type declares required, leaving an item that could not have been
  * created in the state it now sat in, and nothing said so.
  *
- * These drive the integration path specifically: the null-clearing branch is
- * reachable only for a runtime credential re-syncing its own connection's
+ * These drive the connector path specifically: the null-clearing branch is
+ * reachable only for a connector credential re-syncing its own connection's
  * rows, so the existing validation tests over `POST /items` and
  * `PATCH /items/:id` never touch it.
  */
@@ -40,7 +40,7 @@ afterAll(async () => {
   await ctx.cleanup();
 });
 
-/** First sync of an upstream record, through the door the integration uses. */
+/** First sync of an upstream record, through the door the connector uses. */
 async function seed(
   sourceId: string,
   properties: Record<string, unknown>,

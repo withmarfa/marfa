@@ -140,7 +140,7 @@ function provenanceFor(
   const claimed = raw as {
     origin?: unknown;
     family?: unknown;
-    owner_integration?: unknown;
+    owner_connector?: unknown;
   };
 
   if (claimed.origin === "platform") {
@@ -158,16 +158,16 @@ function provenanceFor(
     );
   }
 
-  if (claimed.origin === "integration") {
+  if (claimed.origin === "connector") {
     return {
-      origin: "integration",
+      origin: "connector",
       // The family that travels with a manifest-declared type, and the only
       // one a restore may write. Anything else was refused above or is
       // absent.
-      family: "integration",
-      ...(typeof claimed.owner_integration === "string" &&
-        claimed.owner_integration.length > 0 && {
-          owner_integration: claimed.owner_integration,
+      family: "connector",
+      ...(typeof claimed.owner_connector === "string" &&
+        claimed.owner_connector.length > 0 && {
+          owner_connector: claimed.owner_connector,
         }),
     };
   }
@@ -352,7 +352,7 @@ export async function registerArchiveTypes(
       // A row that is already here keeps the provenance it already has.
       // Re-restoring an archive must stay a no-op, and rewriting the
       // column would let a second restore of an older copy walk a row
-      // back to `unknown` after an integration had claimed it.
+      // back to `unknown` after a connector had claimed it.
       typesSkipped += 1;
     } else {
       conflicts.push(entry.schema.id);

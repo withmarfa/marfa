@@ -40,7 +40,7 @@ import { withPreparedHeaders } from "../prepared-headers.js";
  * `items.update`, `items.delete`, `edges.createRaw`,
  * `edges.updateProperties` and `edges.delete` with no HTTP request at all
  * — the sign-up provisioner, the connection lifecycle pipelines, the
- * integration supervisor, the enrichment sweeper, the bulk-action worker.
+ * connector supervisor, the enrichment sweeper, the bulk-action worker.
  * A route walk sees none of those, and cannot show that they are excluded
  * deliberately rather than missed. Every storage-layer write call site was
  * read; the ones with a request behind them are here, and the ones without

@@ -382,8 +382,8 @@ async function handleArchiveExport(
           provenance: {
             origin: row.origin,
             ...(row.family !== undefined && { family: row.family }),
-            ...(row.owner_integration !== undefined && {
-              owner_integration: row.owner_integration,
+            ...(row.owner_connector !== undefined && {
+              owner_connector: row.owner_connector,
             }),
           },
         }),

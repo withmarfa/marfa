@@ -7,7 +7,7 @@ import {
 import type { TestContext } from "../test-utils.js";
 
 /**
- * Smoke tests for the better-auth integration mounted at /auth/*.
+ * Smoke tests for the better-auth handler mounted at /auth/*.
  *
  * Coverage:
  *   - sign-up is refused; accounts come from the programmatic seam

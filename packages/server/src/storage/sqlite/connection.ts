@@ -68,6 +68,7 @@ const RENAMED_COLUMNS: readonly (readonly [string, string])[] = [
   ["items", "occurred_at"],
   ["audit_log", "created_at"],
   ["api_keys", "permissions"],
+  ["types", "owner_connector"],
 ];
 
 export type DrizzleDb = ReturnType<typeof drizzle<typeof schema>>;
@@ -200,6 +201,31 @@ export async function createConnection(sqlitePath: string): Promise<{
           REFUSED_DATABASE_REMEDY,
       );
     }
+  }
+
+  // A stored provenance prefix this build no longer writes is refused, and
+  // this one is a security regression rather than a broken read.
+  //
+  // Mirror protection is decided by the prefix on `items.source` alone: a
+  // connector's copy of an external record is refused to every other
+  // credential. The prefix moved from `integration:` to `connector:`, so a
+  // row stamped by an earlier build reads as a mirror to `GET /items` and is
+  // writable by anyone. The gate itself now knows both spellings, so the
+  // refusal here is not what closes the hole — it is what stops an operator
+  // running an instance whose provenance vocabulary is half one thing and
+  // half another, and finding out from a row that changed under them.
+  for (const table of ["items", "api_keys"] as const) {
+    const info = await client.execute(`PRAGMA table_info(${table})`);
+    if (!info.rows.some((row) => row.name === "source")) continue;
+    const stamped = await client.execute(
+      `SELECT 1 FROM ${table} WHERE source LIKE 'integration:%' LIMIT 1`,
+    );
+    if (stamped.rows.length === 0) continue;
+    client.close();
+    throw new Error(
+      `${table} in ${sqlitePath} carries rows stamped with the retired 'integration:' provenance prefix, which this build does not write. ` +
+        REFUSED_DATABASE_REMEDY,
+    );
   }
 
   // Enable WAL for better concurrent read/write performance. PRAGMA is a

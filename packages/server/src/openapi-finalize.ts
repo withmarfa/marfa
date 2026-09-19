@@ -102,9 +102,8 @@ const PUBLIC_TAGS = [
   },
   {
     name: "Connections",
-    description: "Installed integration connections and their lifecycle.",
+    description: "Installed connections and their lifecycle.",
   },
-  { name: "Integrations", description: "The integration manifest registry." },
   {
     name: "Webhooks",
     description: "Outbound webhook subscriptions and their deliveries.",

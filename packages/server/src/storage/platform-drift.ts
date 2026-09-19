@@ -39,8 +39,8 @@ import type { LoadedType } from "./interface.js";
  *
  * Scoped to `origin === "platform"` rather than to family or namespace: a
  * runtime registration is not the build's to have an opinion about, and a
- * travelling integration type is registered into the runtime overlay under
- * `origin = "integration"` and must never be caught here.
+ * traveling connector type is registered into the runtime overlay under
+ * `origin = "connector"` and must never be caught here.
  */
 export function computePlatformDrift(
   shipped: readonly SeededPlatformType[],

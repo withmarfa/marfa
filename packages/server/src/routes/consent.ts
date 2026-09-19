@@ -28,7 +28,7 @@
  * than offered. Rendering one unticked there would put the choice inside a
  * collapsed tile the reader never opens, and the decision route reads the
  * resulting submission as a narrowing, which revokes the client's live
- * tokens. An untouched Continue would kill a working integration.
+ * tokens. An untouched Continue would kill a working connector.
  *
  * **This screen is one of two, and both express the flag now.** The
  * device-approval screen confirmed a scope list with no per-scope toggle, so
@@ -203,7 +203,7 @@ function buildGroups(
    * route reads a narrowing rather than a no-op. A narrowing is treated as a
    * promise that the removed access stops working, so it revokes the
    * client's live tokens. The user is shown nothing and a working
-   * integration dies.
+   * connector dies.
    *
    * A parameter here rather than a post-hoc rewrite of the built groups,
    * which is what it was: that rewrite could only speak at group
@@ -649,7 +649,7 @@ export const SCOPE_LABELS: Record<string, string> = {
   // toggle label, the shape `PERMISSION_SHORT` already takes for exactly this
   // reason. That is a map, not a word, so it is not in this pass.
   "system.connection": "Connections",
-  "system.integration": "Available integrations",
+  "system.connector": "Available connectors",
   "system.device": "Devices",
   "system.webhook": "Webhooks",
   "system.activity": "Activity and notifications",

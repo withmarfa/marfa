@@ -291,7 +291,7 @@ describe("live frames held past the limit while the catch-up runs", () => {
  * Both probes below are the shapes a real client takes. `edges: "none"`
  * is what a subscriber that holds items asks for, because it would
  * discard every edge frame anyway; a credential scoped to a single type
- * is the ordinary shape of a narrow integration credential. Neither
+ * is the ordinary shape of a narrow connector credential. Neither
  * should be reachable by the traffic it opted out of.
  *
  * Asserted by completion rather than by absence: the catch-up finishes,
