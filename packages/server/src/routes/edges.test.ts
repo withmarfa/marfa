@@ -506,7 +506,7 @@ describe("GET /items/:id/edges + /backrefs", () => {
         body: {
           label: `edge-read-${suffix}`,
           source: `edge-read-${suffix}`,
-          space_permissions: [],
+          permissions: [],
           default_tier: "library",
           type_permissions: typePermissions,
           edge_permissions: { "*": "write" },
@@ -742,7 +742,7 @@ describe("Edge permission enforcement", () => {
       body: {
         label: "member-no-edge",
         source: `member-no-edge-${String(Math.random())}`,
-        space_permissions: [],
+        permissions: [],
         default_tier: "library",
         type_permissions: { "core.note": "write" },
         edge_permissions: {},
@@ -772,7 +772,7 @@ describe("Edge permission enforcement", () => {
       body: {
         label: "member-edge-all",
         source: `member-edge-all-${String(Math.random())}`,
-        space_permissions: [],
+        permissions: [],
         default_tier: "library",
         type_permissions: { "core.note": "write" },
         edge_permissions: { "*": "write" },
@@ -995,7 +995,7 @@ describe("PATCH /items/:id with edges (replace-all-for-specified-types)", () => 
       body: {
         label: "patch-edge-denied",
         source: `patch-edge-denied-${String(Math.random())}`,
-        space_permissions: [],
+        permissions: [],
         default_tier: "library",
         type_permissions: { "*": "write" },
         edge_permissions: {}, // explicitly denies edges
@@ -1023,7 +1023,7 @@ describe("Edge permission matrix (all-granted / type-only / edge-only / both / n
       body: {
         label: `matrix-${String(Math.random())}`,
         source: `matrix-${String(Math.random())}`,
-        space_permissions: [],
+        permissions: [],
         default_tier: "library",
         ...(typePerms && { type_permissions: typePerms }),
         ...(edgePerms && { edge_permissions: edgePerms }),
@@ -1272,7 +1272,7 @@ describe("PATCH/DELETE /edges/:id — source-type gate on trashed source", () =>
       body: {
         label: `edge-gate-${suffix}`,
         source: `edge-gate-${suffix}`,
-        space_permissions: [],
+        permissions: [],
         default_tier: "feed",
         type_permissions: typePermissions,
         extension_permissions: {},

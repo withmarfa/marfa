@@ -48,7 +48,7 @@ const getConfigRoute = createRoute({
   tags: ["Spaces"],
   summary: "Get the instance configuration",
   description:
-    "Returns the instance configuration — the optional `enforcement` levers plus the cleanup-job retention overrides. Returns an empty object when nothing is configured. Requires `space.settings`.",
+    "Returns the instance configuration — the optional `enforcement` levers plus the cleanup-job retention overrides. Returns an empty object when nothing is configured. Requires `config.manage`.",
   security: [{ bearerAuth: [] }],
   responses: {
     200: {
@@ -83,7 +83,7 @@ const putConfigRoute = createRoute({
   tags: ["Spaces"],
   summary: "Replace the instance configuration",
   description:
-    "Overwrites the instance config with the supplied object — full replacement, not a merge. An unknown key is refused rather than dropped, because a full replacement that ignores a typo erases every override the instance had. Cleanup-job retention overrides must be non-negative, where `0` disables the corresponding job. Requires `space.settings`.",
+    "Overwrites the instance config with the supplied object — full replacement, not a merge. An unknown key is refused rather than dropped, because a full replacement that ignores a typo erases every override the instance had. Cleanup-job retention overrides must be non-negative, where `0` disables the corresponding job. Requires `config.manage`.",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -132,18 +132,18 @@ const putConfigRoute = createRoute({
 export function spaceRoutes(storage: Storage) {
   const router = createOpenAPIRouter<AppEnv>();
 
-  // `/me/config` is the instance config door, gated on `space.settings`
+  // `/me/config` is the instance config door, gated on `config.manage`
   // and backed by the settings table.
   router.openapi(getConfigRoute, async (c) => {
     requireAuth(c);
-    requireSpacePermission(c, "space.settings");
+    requireSpacePermission(c, "config.manage");
     const config = await readSpaceConfig(storage.settings);
     return c.json(config ?? {}, 200);
   });
 
   router.openapi(putConfigRoute, async (c) => {
     const key = requireAuth(c);
-    requireSpacePermission(c, "space.settings");
+    requireSpacePermission(c, "config.manage");
     // No cast. The validated shape and `SpaceConfig` are the same type now
     // that the schema declares every field the interface does, and the cast
     // that used to bridge them was hiding exactly the field this route could

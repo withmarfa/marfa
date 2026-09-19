@@ -309,7 +309,7 @@ function buildGroups(
     // preference. `default_on` is a bundle's opinion about its own contents
     // and this is the platform's about the scope, so a configuration cannot
     // put administrative authority behind a content heading or inherit that
-    // heading's tick. Asked after, a bundle naming `space.keys` rendered
+    // heading's tick. Asked after, a bundle naming `keys.mint` rendered
     // it inside that bundle's group, pre-ticked, and the bucket built to say
     // otherwise never fired — the fallback only sees a literal no bundle
     // claimed. `forceDefaultOn` still outranks both, because a scope already
@@ -732,7 +732,7 @@ const CHEVRON = `<svg class="gchev" viewBox="0 0 24 24" fill="none" stroke="curr
  * nothing and reads as the user having unticked it.
  *
  * The verb-less families are named rather than defaulted. Appending
- * `:${operation}` to one produces `space.webhooks:none`, a literal
+ * `:${operation}` to one produces `webhooks.manage:none`, a literal
  * nothing signed and no parser accepts, and the failure is silent all the
  * way to a token that is missing the permission the user just approved.
  */

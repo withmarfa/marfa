@@ -35,7 +35,7 @@ interface ErrorBody {
 /**
  * A key that reaches items and edges freely but holds nothing on the two doors
  * that guard the edge-type registry: no `metadata.edge_types:write` for
- * registration, and no `space.schema` for deletion. `space_permissions` is
+ * registration, and no `schema.write` for deletion. `permissions` is
  * named explicitly because omitting it mints a copy of the caller's set, which
  * here is all eleven.
  */
@@ -45,7 +45,7 @@ async function createNarrowKey(label: string): Promise<string> {
     body: {
       label,
       source: `${label}-${Math.random().toString(36).slice(2, 10)}`,
-      space_permissions: [],
+      permissions: [],
       default_tier: "library",
       type_permissions: { "*": "write" },
       edge_permissions: { "*": "write" },
@@ -81,7 +81,7 @@ describe("Edge-type endpoints — schema gate", () => {
     expect(body.error.code).toBe("forbidden");
   });
 
-  it("DELETE /edge-types/:id rejects a key without space.schema", async () => {
+  it("DELETE /edge-types/:id rejects a key without schema.write", async () => {
     const memberKey = await createNarrowKey("et-delete-member");
     const res = await request(ctx.app, "DELETE", `/edge-types/${NS}.x`, {
       key: memberKey,

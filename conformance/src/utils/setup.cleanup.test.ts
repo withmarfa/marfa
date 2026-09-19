@@ -87,7 +87,7 @@ const scopedStub = {
     calls.push(`webhook:${id}`);
     return Promise.resolve(webhookDeleteResult);
   },
-  // Schema removal is gated on `space.schema`, which the file's own key holds
+  // Schema removal is gated on `schema.write`, which the file's own key holds
   // and the provisioning client is not assumed to.
   deleteEdgeType: (id: string) => {
     calls.push(`scoped-edge-type:${id}`);

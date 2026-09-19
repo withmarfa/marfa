@@ -38,7 +38,7 @@ async function makeKey(
     source: `${ctx.source}-${label}`,
     type_permissions: opts.type_permissions,
     edge_permissions: opts.edge_permissions,
-    space_permissions: opts.spacePermissions ?? [],
+    permissions: opts.spacePermissions ?? [],
   });
   expect(resp.ok).toBe(true);
   trackKey(ctx, resp.data.id);

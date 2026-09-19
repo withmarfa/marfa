@@ -123,7 +123,7 @@ function openEndedSuffixed(scope: ParsedScope, base: string): string {
  * The verb-less families are named rather than defaulted, because the
  * fallback is a literal this function rebuilds and the naive rebuild is
  * wrong for them. Appending `:${operation}` to a space permission produces
- * `space.webhooks:none`, which no parser accepts and nobody signed, and
+ * `webhooks.manage:none`, which no parser accepts and nobody signed, and
  * this string is what a person reads on the device-approval screen when no
  * description resolves. Nothing is granted from it, so the failure is
  * cosmetic, but it is cosmetic on a screen whose only job is telling someone

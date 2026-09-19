@@ -101,7 +101,7 @@ describe("custom edge-type registration", () => {
     const noSchemaResp = await client.createKey({
       label: "edge-types-no-schema",
       source: `${ctx.source}-no-schema`,
-      space_permissions: [],
+      permissions: [],
       type_permissions: { "*": "write" },
     });
     expect(noSchemaResp.ok).toBe(true);

@@ -53,13 +53,21 @@ const REFUSED_DATABASE_REMEDY =
  * Columns whose absence means the file predates a rename, checked by table
  * so a fresh database — which has neither table yet — is not refused.
  *
- * Only the columns an index in `schema.sql` is built over need to be here:
- * those are the ones that fail the DDL, and a column nothing indexes would
- * be read as missing rather than as a file to refuse.
+ * **Every renamed column belongs here, not only the indexed ones.** An
+ * earlier draft of this list reasoned that a column an index is built over
+ * fails the DDL anyway, so only those need naming. That is true and it is
+ * the wrong conclusion: a column nothing indexes passes the DDL silently,
+ * because `CREATE TABLE IF NOT EXISTS` no-ops against the old table and a
+ * CHECK constraint is never re-evaluated. The boot then succeeds, `GET /`
+ * answers 200, and the first read of that column throws — for
+ * `api_keys.permissions` that read is in the bearer middleware, so every
+ * authenticated request on the instance answers `500 internal_error` after
+ * a boot that said nothing was wrong.
  */
 const RENAMED_COLUMNS: readonly (readonly [string, string])[] = [
   ["items", "occurred_at"],
   ["audit_log", "created_at"],
+  ["api_keys", "permissions"],
 ];
 
 export type DrizzleDb = ReturnType<typeof drizzle<typeof schema>>;

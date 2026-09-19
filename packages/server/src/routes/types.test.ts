@@ -28,14 +28,14 @@ const baseType = {
 describe("POST /types — metadata.types:write gating", () => {
   it("blocks a key without metadata.types:write", async () => {
     // Registering a custom type is gated on the metadata map alone, and no
-    // credential is exempt from it. `space_permissions` is named because
+    // credential is exempt from it. `permissions` is named because
     // omitting it mints a copy of the caller's set, which here is all eleven.
     const createKeyRes = await request(ctx.app, "POST", "/keys", {
       key: ctx.spaceKey,
       body: {
         label: "no-types-key",
         source: "no-types-key-src",
-        space_permissions: [],
+        permissions: [],
         type_permissions: { "*": "write" },
         // metadata_permissions intentionally omitted — defaults to {}.
       },
@@ -61,7 +61,7 @@ describe("POST /types — metadata.types:write gating", () => {
       body: {
         label: "types-writer-key",
         source: "types-writer-key-src",
-        space_permissions: [],
+        permissions: [],
         type_permissions: { "*": "write" },
         metadata_permissions: { types: "write" },
       },
@@ -725,7 +725,7 @@ describe("compatible_with at the gate and on the wire", () => {
       body: {
         label: "compat-member",
         source: "compat-member-src",
-        space_permissions: [],
+        permissions: [],
         type_permissions: { "*": "write" },
       },
     });

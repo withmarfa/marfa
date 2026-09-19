@@ -9,6 +9,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { MockInstance } from "vitest";
 import type { TypeSchema } from "@withmarfa/shared";
+import { PERMISSION_FAMILY_ROOTS } from "@withmarfa/shared";
 import { reportReservedRootRows } from "./reserved-root-rows.js";
 import type { LoadedType } from "./interface.js";
 import * as logger from "../middleware/logger.js";
@@ -34,9 +35,9 @@ describe("reportReservedRootRows", () => {
     expect(
       reportReservedRootRows([
         row({ id: "content.note" }),
-        row({ id: "space.webhooks" }),
+        row({ id: "webhooks.manage" }),
       ]),
-    ).toEqual(["content.note", "space.webhooks"]);
+    ).toEqual(["content.note", "webhooks.manage"]);
     expect(logSpy).toHaveBeenCalledWith(
       "error",
       expect.stringContaining("reserved root"),
@@ -46,6 +47,35 @@ describe("reportReservedRootRows", () => {
         reserved_root: "content",
       }),
     );
+  });
+
+  /**
+   * The check runs once per permission root, not once for the family.
+   *
+   * Seven roots were reserved together, and a scan that recognized six of
+   * them would leave one word claimable and one stored row unreported — the
+   * failure that reads as coverage, because the six that work are the ones
+   * anybody spot-checks. Driven off `PERMISSION_FAMILY_ROOTS` so a root added
+   * there arrives here without a second edit remembering to add it.
+   */
+  it("reports a row under every permission root, one per root", () => {
+    const rows = PERMISSION_FAMILY_ROOTS.map((r) => row({ id: `${r}.stored` }));
+    expect(reportReservedRootRows(rows)).toEqual(
+      PERMISSION_FAMILY_ROOTS.map((r) => `${r}.stored`),
+    );
+    for (const root of PERMISSION_FAMILY_ROOTS) {
+      expect(logSpy).toHaveBeenCalledWith(
+        "error",
+        expect.stringContaining("reserved root"),
+        expect.objectContaining({
+          row_id: `${root}.stored`,
+          reserved_root: root,
+        }),
+      );
+    }
+    // The control. Without it this case passes against a scan that reports
+    // every row it is handed, which is the other way to be wrong seven times.
+    expect(reportReservedRootRows([row({ id: "jonah.stored" })])).toEqual([]);
   });
 
   it("is unmoved by the reserved roots that name a tier", () => {
@@ -67,7 +97,13 @@ describe("reportReservedRootRows", () => {
   });
 
   it("is not fooled by a publisher handle that merely starts the same way", () => {
-    expect(reportReservedRootRows([row({ id: "contented.note" })])).toEqual([]);
+    expect(
+      reportReservedRootRows([
+        row({ id: "contented.note" }),
+        row({ id: "keysmith.blank" }),
+        row({ id: "configurator.preset" }),
+      ]),
+    ).toEqual([]);
     expect(logSpy).not.toHaveBeenCalled();
   });
 });

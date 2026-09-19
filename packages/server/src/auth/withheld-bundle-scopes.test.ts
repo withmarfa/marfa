@@ -42,7 +42,7 @@ const OPERATOR_BUNDLE: PermissionBundle = {
   id: "operator-custom",
   label: "Operator custom",
   description: "Configured, not shipped.",
-  scopes: ["core.note:read", "space.keys", "metadata.types:write"],
+  scopes: ["core.note:read", "keys.mint", "metadata.types:write"],
   default_on: false,
 };
 
@@ -62,8 +62,8 @@ describe("a configured bundle cannot publish a withheld scope", () => {
     // because a space permission literal is grammatically valid. If
     // `isValidScope` ever starts refusing it, every case below passes for the
     // wrong reason.
-    expect(isValidScope("space.keys")).toBe(true);
-    expect(isWithheldFromAllowlist("space.keys")).toBe(true);
+    expect(isValidScope("keys.mint")).toBe(true);
+    expect(isWithheldFromAllowlist("keys.mint")).toBe(true);
   });
 
   it("still warns when a bundle names one, even though it is published anyway", () => {
@@ -72,11 +72,11 @@ describe("a configured bundle cannot publish a withheld scope", () => {
     // assertion. The warning is what survives at this door, and it is what
     // tells an operator their bundle is not doing what it looks like it does.
     const scopes = new Set(buildAllowedScopes([OPERATOR_BUNDLE]));
-    expect(scopes.has("space.keys")).toBe(true);
+    expect(scopes.has("keys.mint")).toBe(true);
     const named = logSpy.mock.calls.filter(
       ([level, , data]) =>
         level === "warn" &&
-        (data as { scope?: string } | undefined)?.scope === "space.keys",
+        (data as { scope?: string } | undefined)?.scope === "keys.mint",
     );
     expect(named.length).toBeGreaterThanOrEqual(1);
   });
@@ -85,7 +85,7 @@ describe("a configured bundle cannot publish a withheld scope", () => {
     // The subtler of the two doors: this set is what a stored registration row
     // is widened by, so a literal admitted here outlives the configuration
     // that introduced it.
-    expect(bundlePublishedScopes([OPERATOR_BUNDLE]).has("space.keys")).toBe(
+    expect(bundlePublishedScopes([OPERATOR_BUNDLE]).has("keys.mint")).toBe(
       false,
     );
   });
@@ -101,7 +101,7 @@ describe("a configured bundle cannot publish a withheld scope", () => {
     const named = logSpy.mock.calls.filter(
       ([level, , data]) =>
         level === "warn" &&
-        (data as { scope?: string } | undefined)?.scope === "space.keys",
+        (data as { scope?: string } | undefined)?.scope === "keys.mint",
     );
     expect(named.length).toBeGreaterThanOrEqual(1);
   });

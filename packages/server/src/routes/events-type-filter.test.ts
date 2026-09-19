@@ -381,7 +381,7 @@ describe("the replay's two checks on a row that names no item type", () => {
       metadata_permissions: {},
       extension_permissions: {},
       profile_permissions: {},
-      space_permissions: [],
+      permissions: [],
     });
 
     await createItem("core.note", { body: "narrowing seed" });

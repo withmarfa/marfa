@@ -140,6 +140,23 @@ describe("a retired registry table is refused on open", () => {
     await expect(createConnection(path)).rejects.toThrow(/no created_at/);
   });
 
+  it("refuses an api_keys that predates the permissions rename", async () => {
+    // The column no index is built over, which is why it has to be named
+    // explicitly: the DDL passes against an old table, the boot succeeds,
+    // and the first authenticated request throws out of the bearer
+    // middleware. A refusal that only covered indexed columns would let this
+    // through as a 500 per request after a silent start.
+    const path = scratch();
+    const seed = createClient({ url: `file:${path}` });
+    await seed.execute(
+      "CREATE TABLE api_keys (id TEXT PRIMARY KEY, space_permissions TEXT NOT NULL)",
+    );
+    seed.close();
+
+    await expect(createConnection(path)).rejects.toThrow(/no permissions/);
+    await expect(createConnection(path)).rejects.toThrow(path);
+  });
+
   it("opens a fresh database, and one it has already opened", async () => {
     const path = scratch();
     const first = await createConnection(path);

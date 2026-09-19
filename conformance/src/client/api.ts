@@ -621,7 +621,7 @@ export class MarfaClient {
   }
 
   /**
-   * Remove an outbound webhook subscription. Needs `space.webhooks`. The route
+   * Remove an outbound webhook subscription. Needs `webhooks.manage`. The route
    * answers 404 to a credential that cannot see the row, so it takes the
    * credential that registered it.
    */

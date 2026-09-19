@@ -264,7 +264,7 @@ describe("type-scoped permissions", () => {
     expect(backrefs.error?.error.code).toBe("type_not_permitted");
   });
 
-  it("a key without space.item_purge cannot purge", async () => {
+  it("a key without items.purge cannot purge", async () => {
     const note = await client.createItem(createNote({ source: ctx.source }));
     expect(note.ok).toBe(true);
     trackItem(ctx, note.data.item.id);
@@ -273,7 +273,7 @@ describe("type-scoped permissions", () => {
     const keyResp = await client.createKey({
       label: "no-purge",
       source: `${ctx.source}-no-purge`,
-      space_permissions: [],
+      permissions: [],
       type_permissions: { "*": "write" },
     });
     expect(keyResp.ok).toBe(true);
@@ -286,8 +286,6 @@ describe("type-scoped permissions", () => {
     const purged = await scopedClient.purgeItem(note.data.item.id);
     expect(purged.status).toBe(403);
     expect(purged.error?.error.code).toBe("forbidden");
-    expect(purged.error?.error.details?.required_scope).toBe(
-      "space.item_purge",
-    );
+    expect(purged.error?.error.details?.required_scope).toBe("items.purge");
   });
 });

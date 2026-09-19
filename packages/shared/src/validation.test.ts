@@ -17,7 +17,11 @@ import {
   matchesTypePattern,
   resolveTypePermission,
 } from "./validation.js";
-import { NAMESPACE_TIER_ROOTS, SCOPE_FAMILY_ROOTS } from "./scope-roots.js";
+import {
+  NAMESPACE_TIER_ROOTS,
+  SCOPE_FAMILY_ROOTS,
+  RETIRED_ROOT,
+} from "./scope-roots.js";
 
 describe("isValidTimestamp", () => {
   it("accepts full ISO 8601 with Z", () => {
@@ -580,10 +584,20 @@ describe("the reserved roots are derived rather than typed out", () => {
   // needed a second edit to be protected: `capability` got one, `content` got
   // one, and `metadata` and `edge` never did. This pins the derivation so the
   // next family is protected by having been declared.
-  it("is exactly the namespace tiers plus every scope-family root", () => {
+  it("is exactly the namespace tiers, every scope-family root, and the retired one", () => {
     expect([...RESERVED_ROOTS].sort()).toEqual(
-      [...NAMESPACE_TIER_ROOTS, ...SCOPE_FAMILY_ROOTS].sort(),
+      [...NAMESPACE_TIER_ROOTS, ...SCOPE_FAMILY_ROOTS, RETIRED_ROOT].sort(),
     );
+  });
+
+  it("keeps the retired root reserved although nothing is named for it", () => {
+    // It heads no permission, no scope family and no tier, so every other
+    // assertion in this file passes with it removed. What removing it would
+    // do is let a publisher claim the one word `GLOSSARY.md` bans outright
+    // and register types beneath it.
+    expect(RESERVED_ROOTS.has(RETIRED_ROOT)).toBe(true);
+    expect(isValidHandle(RETIRED_ROOT)).toBe(false);
+    expect(isValidTypeIdentifier(`${RETIRED_ROOT}.anything`)).toBe(false);
   });
 
   it("holds every scope-family root, which is the property that was missing", () => {

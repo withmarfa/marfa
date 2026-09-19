@@ -1,5 +1,5 @@
 /**
- * The bearer grants API takes `space.app_grants`, and holding content
+ * The bearer grants API takes `grants.manage`, and holding content
  * permissions is not it.
  *
  * `GET /auth/grants` enumerates every OAuth app a space has authorized —
@@ -61,7 +61,7 @@ async function seedSpaceWithGrant() {
     return mintSpaceKey(ctx, {
       label: `grants-authority-${name}-${suffix}`,
       source: `grants-authority-${name}-${suffix}`,
-      space_permissions: spacePermissions,
+      permissions: spacePermissions,
       default_tier: "library",
       // Deliberately narrow: the point is that a credential scoped to
       // one read on one type still reached an account-management
@@ -76,7 +76,7 @@ async function seedSpaceWithGrant() {
   return { grant, mint };
 }
 
-describe("the bearer grants API refuses a key without `space.app_grants`", () => {
+describe("the bearer grants API refuses a key without `grants.manage`", () => {
   it("refuses a key holding no space permissions listing the space's grants", async () => {
     const { mint } = await seedSpaceWithGrant();
     const memberKey = await mint("narrow", []);
@@ -101,9 +101,9 @@ describe("the bearer grants API refuses a key without `space.app_grants`", () =>
     expect(after?.properties.status).toBe("active");
   });
 
-  it("still admits the holder of `space.app_grants`, whose job this is", async () => {
+  it("still admits the holder of `grants.manage`, whose job this is", async () => {
     const { grant, mint } = await seedSpaceWithGrant();
-    const adminKey = await mint("granted", ["space.app_grants"]);
+    const adminKey = await mint("granted", ["grants.manage"]);
 
     const list = await request(ctx.app, "GET", "/auth/grants", {
       key: adminKey,

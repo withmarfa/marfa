@@ -4,7 +4,12 @@ import type {
   TypePermission,
 } from "./types.js";
 import { isValidTypePattern, resolveTypePermission } from "./validation.js";
-import { SPACE_ROOT, CONTENT_ROOT, PROFILE_ROOT } from "./scope-roots.js";
+import {
+  PERMISSION_FAMILY_ROOTS,
+  RETIRED_ROOT,
+  CONTENT_ROOT,
+  PROFILE_ROOT,
+} from "./scope-roots.js";
 import { SYSTEM_TYPE_IDS } from "./type-registry.js";
 import {
   GLOBAL_TYPE_WILDCARD,
@@ -26,7 +31,7 @@ import {
  *   - metadata sub:     "metadata.types:write" → kind="metadata", subresource="types"
  *   - edge scope:       "edge.parent-of:write" or "edge.*:write"
  *                       → kind="edge", edgeType="parent-of" or "*"
- *   - space permission: "space.webhooks"
+ *   - space permission: "webhooks.manage"
  *                       → kind="space", permission=<literal>, no operation suffix
  *   - OIDC literal:     "openid" / "profile" / "email"
  *                       → kind="oidc", oidcScope=<literal>, no operation suffix
@@ -49,16 +54,24 @@ export type OidcScope = "openid" | "profile" | "email" | "offline_access";
 // ---------------------------------------------------------------------------
 
 /**
- * The reserved root every space permission lives under. Reserved in
- * `RESERVED_ROOTS`, so `POST /types` refuses to register anything beneath it
- * and no publisher handle can claim the word — a space-permission literal and
- * an item-type identifier can never name the same thing.
+ * The reserved roots the space permissions live under — one per permission,
+ * because each is named for the surface it permits rather than for a noun
+ * covering all of them. Every one is in `RESERVED_ROOTS`, so `POST /types`
+ * refuses to register anything beneath any of them and no publisher handle
+ * can claim the words: a space-permission literal and an item-type
+ * identifier can never name the same thing.
  *
- * Reserving a root that names no type tier is deliberate and is the whole
- * point: the other five roots classify types, this one exists so that
- * nothing ever does.
+ * Reserving roots that name no type tier is deliberate and is the whole
+ * point. The tier roots classify types; these exist so that nothing ever
+ * does.
+ *
+ * **Reserving is not what makes a literal a permission**, and the two gates
+ * sit on two paths: registration asks the reserved set, and the scope
+ * grammar asks {@link parseScope}. Each root below is separately claimed
+ * whole there, and the claim is what refuses `<root>.*:read` — see the
+ * comment on that claim.
  */
-export { SPACE_ROOT } from "./scope-roots.js";
+export { PERMISSION_FAMILY_ROOTS } from "./scope-roots.js";
 
 /**
  * Authority over one administrative surface, handed over by being named and
@@ -76,10 +89,10 @@ export { SPACE_ROOT } from "./scope-roots.js";
  * permission beside it is indistinguishable from a type grant by inspection.
  *
  * **Why no verb.** A space permission is one authority, not a read/write axis
- * over a resource: `space.item_purge:read` names nothing, and admitting the
+ * over a resource: `items.purge:read` names nothing, and admitting the
  * suffix would mean inventing a rule to refuse the halves that have no
  * meaning. Where a surface genuinely splits, the split is in the surface name
- * — `audit_read` grants reading the audit log and nothing writes it. The
+ * — `audit.read` grants reading the audit log and nothing writes it. The
  * consequence to know is that such a literal carries no colon, so anything
  * deriving a verb by splitting on one sees a space permission as verb-less
  * rather than as a read.
@@ -89,52 +102,33 @@ export { SPACE_ROOT } from "./scope-roots.js";
  * your audit log" — so a person can grant an app the one power it needs.
  * A single "administer everything" toggle is the thing this replaces.
  *
- * Six boundaries in the set are decisions rather than groupings, and each
+ * Three boundaries in the set are decisions rather than groupings, and each
  * exists because the obvious grouping would hand a holder something wider
  * than the name implies.
  *
- * - **`app_grants` is not `keys`.** The routes sit beside each other and the
- *   code calls them the same tier, which is exactly why they are split: a
- *   key is this app's own credential, and a grant is another app's access.
- *   Folding them together would let an app trusted to rotate a key
- *   enumerate and revoke every other app the space has authorized, which is
+ * - **`grants.manage` is not `keys.mint`.** The routes sit beside each other
+ *   and the code calls them the same tier, which is exactly why they are
+ *   split: a key is this app's own credential, and a grant is another app's
+ *   access. Folding them together would let an app trusted to rotate a key
+ *   enumerate and revoke every other app the owner has authorized, which is
  *   the escalation this whole model exists to fence.
- * - **`upstream_access` is not `connections`.** The connection proxy spends a
- *   connection's live upstream token against the third-party service, so a
- *   holder reads and writes the person's actual Google or Todoist account
- *   rather than Marfa's record of it. That is a different order of magnitude
- *   from installing and removing a connection, and no sentence covering both
- *   is honest about either.
- * - **`credentials` is not `connections` either.** Registering and removing
- *   the upstream client secrets and API tokens a connection is installed
- *   against is its own authority, and so is starting the OAuth bootstrap
- *   that obtains one: that route takes a caller-supplied scope override
- *   straight into the upstream authorize URL, so it decides how much the
- *   credential it is about to fetch will be able to do. Leased tokens are
- *   deliberately NOT here: one carries no reach of its own beyond the
- *   connection that minted it, so it is part of operating a connection
- *   rather than a credential to hold.
- * - **`schema` is not registration.** Registering a type is already fenced
- *   by `metadata.types:write` and `metadata.edge_types:write`. This covers
- *   only what that grammar does not — changing and removing definitions that
- *   already exist — so the two never describe the same act. A space
- *   permission duplicating an existing scope would put two names on one
+ * - **`schema.write` is not registration.** Registering a type is already
+ *   fenced by `metadata.types:write` and `metadata.edge_types:write`. This
+ *   covers only what that grammar does not — changing and removing
+ *   definitions that already exist — so the two never describe the same act.
+ *   A permission duplicating an existing scope would put two names on one
  *   authority and leave a consent screen unable to tell a reader which one it
  *   is showing.
- * - **`space_usage` is not `space_settings`.** Reading how much room is left
- *   is what an app doing ordinary work wants; changing a space's enforcement
- *   policy is not, and one of the things that policy sets is how long the
- *   audit trail survives.
- * - **Outbound and inbound webhooks are not the same word.** `webhooks`
- *   covers the subscriptions that send a space's events out. A connection's
- *   inbound receipt endpoints belong to that connection and sit under
- *   `connections`.
+ * - **`config.manage` is not `config.write`.** The config door reads on the
+ *   same permission it writes on, so a caller refused it cannot read the
+ *   instance configuration either, and a name carrying a verb would promise
+ *   a read half that does not exist.
  *
  * **Three things a gate must not infer from this set**, recorded here
  * because each is a boundary that already exists in the routes and would be
  * lost by wiring a space-permission check onto the shared authority helper:
  *
- * - **`keys` names who may manage keys, never who may escape the scope
+ * - **`keys.mint` names who may manage keys, never who may escape the scope
  *   system.** A key is a durable credential and an app that could mint an
  *   unscoped one would no longer need its grant at all, so the permission is
  *   necessary for the mint and nowhere near sufficient. The route holds a
@@ -144,7 +138,7 @@ export { SPACE_ROOT } from "./scope-roots.js";
  *   until the key is first used. `server/src/auth/mint-clamp.ts` carries the
  *   reasoning; the route used to refuse an OAuth bearer outright, and that
  *   refusal was doing this job by removing the surface.
- * - **`item_purge` covers both purge doors.** The bulk one asks for it as the
+ * - **`items.purge` covers both purge doors.** The bulk one asks for it as the
  *   single-row one does: the same act on more rows, and a caller that may
  *   destroy one row irrecoverably may destroy a hundred. A second, stricter
  *   gate there would only mean the permission a person granted did not mean
@@ -161,14 +155,13 @@ export { SPACE_ROOT } from "./scope-roots.js";
  * administrative permission to sit in front of a listing.
  */
 export type SpacePermission =
-  | "space.webhooks"
-  | "space.keys"
-  | "space.app_grants"
-  | "space.settings"
-  | "space.usage"
-  | "space.schema"
-  | "space.item_purge"
-  | "space.audit_read";
+  | "webhooks.manage"
+  | "keys.mint"
+  | "grants.manage"
+  | "config.manage"
+  | "schema.write"
+  | "items.purge"
+  | "audit.read";
 
 /**
  * Every space permission, in the order a consent screen should offer them:
@@ -190,17 +183,38 @@ export type SpacePermission =
  * bundles has an instance whose gates nobody can satisfy.
  */
 export const SPACE_PERMISSIONS: readonly SpacePermission[] = [
-  "space.webhooks",
-  "space.schema",
-  "space.usage",
-  "space.settings",
-  "space.audit_read",
-  "space.item_purge",
-  "space.keys",
-  "space.app_grants",
+  "webhooks.manage",
+  "schema.write",
+  "config.manage",
+  "audit.read",
+  "items.purge",
+  "keys.mint",
+  "grants.manage",
 ];
 
 const SPACE_PERMISSION_SET: ReadonlySet<string> = new Set(SPACE_PERMISSIONS);
+
+/**
+ * The roots the claim in {@link parseScope} and the refusal in
+ * {@link scopeCovers} are both asked of.
+ *
+ * One set read twice rather than two lists, because the two answers have to
+ * agree: a root the parser claims and the coverage helper does not would make
+ * `scopeCovers` answer a permission question through the item-type axis,
+ * which is the fail-open this family exists to remove.
+ *
+ * **`RETIRED_ROOT` is claimed here although it heads no member**, so the
+ * membership test below refuses everything beneath it. Reservation alone
+ * would not: `isValidTypePattern` consults the prefix grammar and not the
+ * reserved roots, so an unclaimed retired root leaves `space.*:read` parsing
+ * as an ordinary item-type grant over a namespace no type may ever occupy —
+ * a literal a bundle could publish and a person could be asked to consent to,
+ * naming the one word `GLOSSARY.md` bans and resolving against nothing.
+ */
+const PERMISSION_ROOT_SET: ReadonlySet<string> = new Set([
+  ...PERMISSION_FAMILY_ROOTS,
+  RETIRED_ROOT,
+]);
 
 /** Returns true if the literal names a space permission this build recognizes. */
 export function isSpacePermission(scope: string): scope is SpacePermission {
@@ -263,7 +277,7 @@ export function requiresExplicitConsent(scope: string): boolean {
  * refuses one outright, and this one is what replaces it.
  *
  * **Both kinds of credential reach it through one carrier.** A key holds its
- * set on `space_permissions`; a sign-in holds it on the grant the request
+ * set on `permissions`; a sign-in holds it on the grant the request
  * carries. Neither enters the content permission maps, deliberately, because a
  * space permission names a surface rather than a type — so the wrong repair,
  * if this ever seems not to reach far enough, is to project one into those
@@ -290,7 +304,7 @@ export function hasSpacePermission(
  * `RESERVED_ROOTS`, so `POST /types` refuses to register anything beneath
  * it and no publisher handle can claim the word.
  *
- * Claimed WHOLE, exactly as {@link SPACE_ROOT} is, and for the same
+ * Claimed WHOLE, exactly as each permission root is, and for the same
  * reason rather than for symmetry. The claim does two things and the second
  * is the one worth writing down.
  *
@@ -557,16 +571,30 @@ export function parseScope(scope: string): ParsedScope | null {
       oidcScope: scope as OidcScope,
     };
   }
-  // The space root is claimed whole, not matched shape-first: anything
-  // under it that is not a member of the closed set is refused here rather
-  // than left to fall through. That matters for one literal in particular.
-  // `space.*:read` satisfies `isValidTypePattern` — the subtree-wildcard
+  // Every permission root is claimed whole, not matched shape-first: anything
+  // under one that is not a member of the closed set is refused here rather
+  // than left to fall through. That matters for one shape in particular.
+  // `schema.*:read` satisfies `isValidTypePattern` — the subtree-wildcard
   // branch checks the prefix grammar and not the reserved roots, which is
   // why `core.*:read` is a scope the server issues — so without this claim it
-  // would parse as an item-type grant that reads like a space permission and
-  // is neither. Refusing the whole namespace except its members is the only
+  // would parse as an item-type grant that reads like a permission and is
+  // neither. Refusing the whole namespace except its members is the only
   // reading with no second interpretation.
-  if (scope === SPACE_ROOT || scope.startsWith(`${SPACE_ROOT}.`)) {
+  //
+  // **One claim over a set of roots, rather than seven claims.** The
+  // alternative is seven copies of this block, and a root added to
+  // `PERMISSION_FAMILY_ROOTS` with no copy beside it would be reserved
+  // against registration and unclaimed in the grammar — protected in one
+  // direction and open in the other, which is the exact defect
+  // `scope-roots.ts` exists to prevent.
+  //
+  // The head is taken before the colon, as the content claim below does, so
+  // `keys:read` is refused here rather than falling through to be refused by
+  // the identifier grammar's arity rule for a reason that has nothing to do
+  // with this family. A root merely starting with the same letters is not
+  // swallowed: `keysmith.note:read` has root `keysmith` and falls through.
+  const permissionRoot = (scope.split(":", 1)[0] ?? "").split(".", 1)[0] ?? "";
+  if (PERMISSION_ROOT_SET.has(permissionRoot)) {
     if (!isSpacePermission(scope)) return null;
     return {
       typePattern: scope,
@@ -576,8 +604,8 @@ export function parseScope(scope: string): ParsedScope | null {
     };
   }
   // The content root is claimed whole, on the same reasoning as the
-  // space root above: `content.*:read` clears `isValidTypePattern` for
-  // exactly the reason `space.*:read` does, and would otherwise parse
+  // permission roots above: `content.*:read` clears `isValidTypePattern` for
+  // exactly the reason `schema.*:read` does, and would otherwise parse
   // as an item-type grant that reads like the category grant and is neither.
   // The claim is also what admits the two members, since `content` is one
   // segment and the concrete-identifier branch requires two.
@@ -913,10 +941,7 @@ export function scopeCovers(
   // one that holds exactly the permission being asked about. A gate reaching
   // for the nearest helper would have inherited a fail-open one level above
   // the one the space kind exists to remove. Ask {@link hasSpacePermission}.
-  if (
-    requiredType === SPACE_ROOT ||
-    requiredType.startsWith(`${SPACE_ROOT}.`)
-  ) {
+  if (PERMISSION_ROOT_SET.has(requiredType.split(".", 1)[0] ?? "")) {
     return false;
   }
 

@@ -141,7 +141,7 @@ describe("a permission map is resolved by name, and the gate agrees", () => {
       metadata_permissions: {},
       extension_permissions: {},
       profile_permissions: {},
-      space_permissions: [],
+      permissions: [],
     });
 
     // Expanding grants through declared parentage put these two in

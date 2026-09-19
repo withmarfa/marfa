@@ -8,7 +8,7 @@
  * to narrow a payload against, so the only thing that can bound what a
  * webhook delivers is the reach of whoever registered it.
  *
- * Holding `space.webhooks` alone does not give that, and the two are separate
+ * Holding `webhooks.manage` alone does not give that, and the two are separate
  * axes: a credential can hold the permission to set up webhooks and hold read
  * on one type. Such a credential could otherwise leave behind a standing
  * subscription delivering more than it could ever fetch itself, with nothing
@@ -46,7 +46,7 @@ describe("POST /webhooks and a credential narrower than its space", () => {
   it("refuses a session holding a subset of the space", async () => {
     const { token } = await seedOauthBearer(
       ctx.storage,
-      ["space.keys", "space.webhooks"],
+      ["keys.mint", "webhooks.manage"],
       {},
     );
 
@@ -83,7 +83,7 @@ describe("POST /webhooks and a credential narrower than its space", () => {
       {
         label: `wh-admin-${suffix}`,
         source: `wh-admin-${suffix}`,
-        space_permissions: [...SPACE_PERMISSIONS],
+        permissions: [...SPACE_PERMISSIONS],
         type_permissions: { "*": "write" },
         default_tier: "library",
         is_operator: false,
@@ -101,7 +101,7 @@ describe("POST /webhooks and a credential narrower than its space", () => {
 
     const { token } = await seedOauthBearer(
       ctx.storage,
-      ["space.keys", "space.webhooks"],
+      ["keys.mint", "webhooks.manage"],
       {},
     );
     // The space permission gate admits it, so the refusal below comes from the
@@ -130,7 +130,7 @@ describe("POST /webhooks and a credential narrower than its space", () => {
       {
         label: `wh-del-${suffix}`,
         source: `wh-del-${suffix}`,
-        space_permissions: [...SPACE_PERMISSIONS],
+        permissions: [...SPACE_PERMISSIONS],
         type_permissions: { "*": "write" },
         default_tier: "library",
         is_operator: false,
@@ -146,7 +146,7 @@ describe("POST /webhooks and a credential narrower than its space", () => {
 
     const { token } = await seedOauthBearer(
       ctx.storage,
-      ["space.keys", "space.webhooks"],
+      ["keys.mint", "webhooks.manage"],
       {},
     );
     expect(
@@ -178,7 +178,7 @@ describe("POST /webhooks and a credential narrower than its space", () => {
       {
         label: `wh-ok-${suffix}`,
         source: `wh-ok-${suffix}`,
-        space_permissions: [...SPACE_PERMISSIONS],
+        permissions: [...SPACE_PERMISSIONS],
         type_permissions: { "*": "write" },
         default_tier: "library",
         is_operator: false,

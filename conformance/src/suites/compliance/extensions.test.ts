@@ -157,7 +157,7 @@ describe("metadata extensions", () => {
     const keyResp = await client.createKey({
       label: "extensions-narrow",
       source: `${ctx.source}-extensions-narrow`,
-      space_permissions: [],
+      permissions: [],
       type_permissions: { "core.note": "read" },
     });
     expect(keyResp.ok).toBe(true);

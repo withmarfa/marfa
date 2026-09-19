@@ -84,12 +84,12 @@ describe("PATCH /keys/{id}", () => {
     expect(row?.type_permissions).toEqual({ "core.note": "read" });
   });
 
-  it("refuses a caller without space.keys", async () => {
+  it("refuses a caller without keys.mint", async () => {
     const target = await narrowKey("ku-target");
     const noKeys = await client.createKey({
       label: "ku-no-keys",
       source: `${ctx.source}-ku-no-keys`,
-      space_permissions: [],
+      permissions: [],
       type_permissions: { "*": "write" },
     });
     expect(noKeys.ok).toBe(true);
@@ -98,7 +98,7 @@ describe("PATCH /keys/{id}", () => {
     const r = await other.updateKey(target.id, { label: "taken over" });
     expect(r.status).toBe(403);
     expect(r.error?.error.code).toBe("forbidden");
-    expect(r.error?.error.details?.required_scope).toBe("space.keys");
+    expect(r.error?.error.details?.required_scope).toBe("keys.mint");
   });
 
   it("answers 404 for an unknown key and 400 for a malformed id", async () => {

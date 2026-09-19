@@ -53,7 +53,7 @@ beforeAll(async () => {
     edge_permissions: {},
     metadata_permissions: {},
     profile_permissions: {},
-    space_permissions: [],
+    permissions: [],
   });
 });
 
@@ -235,7 +235,7 @@ describe("an OAuth-derived subscriber", () => {
       {
         label: `oauthwriter-${suffix}`,
         source: `oauthwriter-${suffix}`,
-        space_permissions: [...SPACE_PERMISSIONS],
+        permissions: [...SPACE_PERMISSIONS],
         type_permissions: { "*": "write" },
         // Named, because the extension door reads this map and nothing else:
         // the implicit own-namespace write follows the key's label, which is

@@ -68,7 +68,7 @@ const ROUTE_STARTS: readonly RegExp[] = [
  * wraps a gate has to be declared before the census will credit it.
  */
 const GATE_HELPERS: Readonly<Record<string, string>> = {
-  requireSpaceKeysOrOperator: "space.keys",
+  requireSpaceKeysOrOperator: "keys.mint",
 };
 
 function routeStart(line: string): string | null {
@@ -212,15 +212,15 @@ describe("every administrative door consults a space permission", () => {
     // here rather than left as an absence, because an absence reads as
     // coverage.
     const expected: Record<string, Record<string, number>> = {
-      "audit.ts": { "space.audit_read": 1 },
-      "auth-pages.ts": { "space.app_grants": 2 },
-      "bulk.ts": { "space.item_purge": 1 },
-      "edge-types.ts": { "space.schema": 1 },
-      "items.ts": { "space.item_purge": 1 },
-      "keys.ts": { "space.keys": 4 },
-      "spaces.ts": { "space.settings": 2 },
-      "types.ts": { "space.schema": 2 },
-      "webhooks.ts": { "space.webhooks": 6 },
+      "audit.ts": { "audit.read": 1 },
+      "auth-pages.ts": { "grants.manage": 2 },
+      "bulk.ts": { "items.purge": 1 },
+      "edge-types.ts": { "schema.write": 1 },
+      "items.ts": { "items.purge": 1 },
+      "keys.ts": { "keys.mint": 4 },
+      "spaces.ts": { "config.manage": 2 },
+      "types.ts": { "schema.write": 2 },
+      "webhooks.ts": { "webhooks.manage": 6 },
     };
 
     const actual: Record<string, Record<string, number>> = {};

@@ -11,7 +11,7 @@ import {
   edgePermissionCovers,
   metadataPermissionCovers,
   isTypeScope,
-  SPACE_ROOT,
+  PERMISSION_FAMILY_ROOTS,
   SPACE_PERMISSIONS,
   hasSpacePermission,
   requiresExplicitConsent,
@@ -429,7 +429,7 @@ describe("space permissions", () => {
 
   it("carries no verb, and that is pinned rather than incidental", () => {
     // Verb-lessness is a property of the literal, not of the parser: the
-    // prefix claim in `parseScope` is what refuses `space.webhooks:read`,
+    // prefix claim in `parseScope` is what refuses `webhooks.manage:read`,
     // and it would go on refusing it if a member of this set grew a colon.
     // The member would then be unparseable and the grant silently dead, so
     // the shape of the set is the thing to hold.
@@ -440,27 +440,31 @@ describe("space permissions", () => {
   });
 
   it("is granted by naming it, and by nothing else", () => {
-    // `hasSpacePermission` exists because the neighboring helper answered this
-    // question backwards. `*:write` is the full-access path the consent
-    // screen offers under Customize, and a pattern match admitted it against
-    // anything type-shaped, so the wrong tool said yes to a token holding no
-    // capability at all. These two assertions are the pair that catches it.
-    expect(hasSpacePermission(["*:write"], "space.item_purge")).toBe(false);
-    expect(hasSpacePermission(["*:read"], "space.webhooks")).toBe(false);
-    expect(hasSpacePermission(["space.webhooks"], "space.webhooks")).toBe(true);
+    // A permission is granted by its own literal and by no pattern. `*:write`
+    // is the full-access path the consent screen offers under Customize, and
+    // it is type-shaped, so a pattern match would admit it here and hand
+    // administrative authority to a token that holds no such capability. The
+    // first two assertions are what stop that; the third is the control,
+    // because a helper that answered `false` to everything would satisfy
+    // them both.
+    expect(hasSpacePermission(["*:write"], "items.purge")).toBe(false);
+    expect(hasSpacePermission(["*:read"], "webhooks.manage")).toBe(false);
+    expect(hasSpacePermission(["webhooks.manage"], "webhooks.manage")).toBe(
+      true,
+    );
     // Holding every other capability implies nothing about this one.
-    const others = SPACE_PERMISSIONS.filter((c) => c !== "space.keys");
-    expect(hasSpacePermission(others, "space.keys")).toBe(false);
-    expect(hasSpacePermission([], "space.keys")).toBe(false);
+    const others = SPACE_PERMISSIONS.filter((c) => c !== "keys.mint");
+    expect(hasSpacePermission(others, "keys.mint")).toBe(false);
+    expect(hasSpacePermission([], "keys.mint")).toBe(false);
   });
 
   it("refuses to answer a capability question through scopeCovers", () => {
     // The wrong tool must not answer yes. A capability is never a point on
     // the item-type axis, so the category error answers false rather than
     // matching a wildcard.
-    expect(scopeCovers(["*:read"], "space.webhooks", "read")).toBe(false);
-    expect(scopeCovers(["*:write"], "space.item_purge", "write")).toBe(false);
-    expect(scopeCovers(["*:write"], "space", "write")).toBe(false);
+    expect(scopeCovers(["*:read"], "webhooks.manage", "read")).toBe(false);
+    expect(scopeCovers(["*:write"], "items.purge", "write")).toBe(false);
+    expect(scopeCovers(["*:write"], "keys", "write")).toBe(false);
     // And it still answers ordinary type questions the same way.
     expect(scopeCovers(["*:write"], "core.note", "write")).toBe(true);
   });
@@ -470,11 +474,14 @@ describe("space permissions", () => {
     // collapse, pinned so collapsing one is a test failure rather than a
     // judgement call made again from scratch. Managing this app's own keys
     // must not carry the power to revoke every other app's access.
-    const keys = ["space.keys"];
-    expect(hasSpacePermission(keys, "space.app_grants")).toBe(false);
-    // And reading how full a space is must not carry rewriting its policy.
-    const usage = ["space.usage"];
-    expect(hasSpacePermission(usage, "space.settings")).toBe(false);
+    const keys = ["keys.mint"];
+    expect(hasSpacePermission(keys, "grants.manage")).toBe(false);
+    // And reading the audit log must not carry rewriting the policy that
+    // decides how long the audit log survives: `config.manage` sets the
+    // cleanup-job retention overrides, so collapsing the two would let a
+    // reader shorten the trail it is reading.
+    const audit = ["audit.read"];
+    expect(hasSpacePermission(audit, "config.manage")).toBe(false);
   });
 
   it("names one surface per admin gate, so consent reads as sentences", () => {
@@ -482,7 +489,7 @@ describe("space permissions", () => {
     // the whole point is that a person grants webhooks without granting
     // credentials. The count is the cheapest statement of that.
     expect(new Set(SPACE_PERMISSIONS).size).toBe(SPACE_PERMISSIONS.length);
-    expect(SPACE_PERMISSIONS.length).toBe(8);
+    expect(SPACE_PERMISSIONS.length).toBe(7);
   });
 
   it("claims its whole namespace, members or nothing", () => {
@@ -491,27 +498,67 @@ describe("space permissions", () => {
     // an unknown surface, a verb the grammar does not carry here, the bare
     // root, and the wildcard that `isValidTypePattern` would otherwise
     // accept as an item-type pattern.
-    expect(parseScope("space.everything")).toBeNull();
-    // The name the previous draft of this set used. A retired member has to
-    // fail rather than linger as a literal nothing enforces.
-    expect(parseScope("space.types")).toBeNull();
-    expect(parseScope("space.webhooks:read")).toBeNull();
-    expect(parseScope("space.webhooks:write")).toBeNull();
-    expect(parseScope("space")).toBeNull();
-    expect(parseScope("space.*")).toBeNull();
-    expect(parseScope("space.*:read")).toBeNull();
-    expect(parseScope("space.")).toBeNull();
-    expect(parseScope("Space.webhooks")).toBeNull();
-    expect(parseScope("space.web hooks")).toBeNull();
+    expect(parseScope("webhooks.everything")).toBeNull();
+    // The names the previous draft of this set used. A retired member has to
+    // fail rather than linger as a literal nothing enforces, and `space` is
+    // the root the family was named after before it was named for what it
+    // permits.
+    expect(parseScope("schema.types")).toBeNull();
+    expect(parseScope("space.webhooks")).toBeNull();
+    expect(parseScope("space.usage")).toBeNull();
+    expect(parseScope("webhooks.manage:read")).toBeNull();
+    expect(parseScope("webhooks.manage:write")).toBeNull();
+    expect(parseScope("webhooks.")).toBeNull();
+    expect(parseScope("Webhooks.manage")).toBeNull();
+    expect(parseScope("webhooks.man age")).toBeNull();
   });
+
+  /**
+   * Every root is claimed WHOLE, not merely reserved — one case per root.
+   *
+   * This is the assertion the reservation alone passes without: a root in
+   * `RESERVED_ROOTS` and absent from the parser's claim refuses a handle and
+   * still parses `<root>.*:read` as an item-type grant over a namespace,
+   * which reads on a consent screen as the permission it is not. Driven off
+   * `PERMISSION_FAMILY_ROOTS` so a root added there is claimed here or the
+   * suite reddens.
+   */
+  for (const root of PERMISSION_FAMILY_ROOTS) {
+    it(`claims the whole of ${root}, not only its members`, () => {
+      // The bare root, with and without a verb.
+      expect(parseScope(root)).toBeNull();
+      expect(parseScope(`${root}:read`)).toBeNull();
+      expect(parseScope(`${root}:write`)).toBeNull();
+      // The wildcard shapes `isValidTypePattern` would otherwise accept.
+      expect(parseScope(`${root}.*`)).toBeNull();
+      expect(parseScope(`${root}.*:read`)).toBeNull();
+      expect(parseScope(`${root}.*:write`)).toBeNull();
+      // A non-member under the root, which is the shape a typo takes.
+      expect(parseScope(`${root}.not_a_surface`)).toBeNull();
+      expect(parseScope(`${root}.not_a_surface:read`)).toBeNull();
+      // Nothing downstream reinstates the refused literal on the type axis.
+      expect(scopesToTypePermissions([`${root}.*:read`])).toEqual({});
+      // The positive control. Without it every line above passes against a
+      // parser that refuses everything, which is the failure that reads as
+      // coverage.
+      const member = SPACE_PERMISSIONS.find((p) => p.startsWith(`${root}.`));
+      expect(member).toBeDefined();
+      expect(parseScope(member ?? "")?.kind).toBe("space");
+      // And a handle merely starting with the same letters still parses as
+      // the ordinary item-type grant it is.
+      expect(parseScope(`${root}zz.thing:read`)?.kind).toBe("type");
+    });
+  }
 
   it("does not admit a near-miss on the item-type axis either", () => {
     // The refusal above is only worth anything if nothing downstream
-    // reinstates the literal. `space.*:read` is the one that matters:
+    // reinstates the literal. `webhooks.*:read` is the one that matters:
     // parsed as an item-type pattern it would resolve against the live
     // registry rather than naming a capability at all.
-    expect(scopesToTypePermissions(["space.*:read"])).toEqual({});
-    expect(scopeCovers(["space.*:read"], "space.webhooks", "read")).toBe(false);
+    expect(scopesToTypePermissions(["webhooks.*:read"])).toEqual({});
+    expect(scopeCovers(["webhooks.*:read"], "webhooks.manage", "read")).toBe(
+      false,
+    );
   });
 
   for (const literal of SPACE_PERMISSIONS) {
@@ -530,8 +577,8 @@ describe("space permissions", () => {
       "core.note:read",
       "edge.parent-of:write",
       "metadata.types:write",
-      "space.webhooks",
-      "space.keys",
+      "webhooks.manage",
+      "keys.mint",
     ];
     expect(scopesToTypePermissions(held)).toEqual({ "core.note": "read" });
     expect(scopesToEdgePermissions(held)).toEqual({ "parent-of": "write" });
@@ -543,23 +590,41 @@ describe("space permissions", () => {
     // must not drop the literal on its way to the consent screen.
     expect(
       expandWildcardScopes(
-        ["space.webhooks", "core.media.*:read"],
+        ["webhooks.manage", "core.media.*:read"],
         ["core.media", "core.media.book"],
       ),
-    ).toEqual(["space.webhooks", "core.media:read", "core.media.book:read"]);
+    ).toEqual(["webhooks.manage", "core.media:read", "core.media.book:read"]);
   });
 
   it("keeps the root out of the type grammar", () => {
     // The reservation is what stops a publisher registering a type whose
     // identifier is a capability literal. Without it the grant and the type
     // would be the same string with two meanings.
-    expect(isReservedRoot(SPACE_ROOT)).toBe(true);
+    for (const root of PERMISSION_FAMILY_ROOTS) {
+      expect(isReservedRoot(root)).toBe(true);
+      expect(isValidHandle(root)).toBe(false);
+      expect(isValidTypeIdentifier(`${root}.anything`)).toBe(false);
+    }
     for (const literal of SPACE_PERMISSIONS) {
       expect(isValidTypeIdentifier(literal)).toBe(false);
       expect(isValidTypePattern(literal)).toBe(false);
     }
+    // The retired root stays reserved although nothing is named for it: were
+    // it claimable, a publisher could take the one word `GLOSSARY.md` bans
+    // and register types beneath it. It is also claimed whole by the parser,
+    // which reservation does not buy — `isValidTypePattern` never consults
+    // the reserved roots, so an unclaimed `space.*:read` would parse as an
+    // item-type grant over a namespace no type may occupy.
+    expect(isReservedRoot("space")).toBe(true);
+    expect(isValidHandle("space")).toBe(false);
     expect(isValidTypeIdentifier("space.anything")).toBe(false);
-    expect(isValidHandle(SPACE_ROOT)).toBe(false);
+    expect(parseScope("space")).toBeNull();
+    expect(parseScope("space.*:read")).toBeNull();
+    expect(parseScope("space.anything")).toBeNull();
+    expect(parseScope("space.anything:read")).toBeNull();
+    // And the near-miss still parses, so the claim is a root match rather
+    // than a prefix one.
+    expect(parseScope("spacely.thing:read")?.kind).toBe("type");
   });
 });
 
@@ -819,7 +884,7 @@ describe("only type scopes reach the item-type axis", () => {
     edge: "edge.parent-of:write",
     metadata: "metadata.types:write",
     oidc: "openid",
-    space: "space.webhooks",
+    space: "webhooks.manage",
     content: "content:read",
     profile: "profile.name:write",
   };
@@ -981,9 +1046,9 @@ describe("scopesOfferedOffByDefaultOnly", () => {
     // apply: a sibling root and a capability are both still withheld.
     const out = scopesOfferedOffByDefaultOnly([
       bundle("write", true, ["core.*:write"]),
-      bundle("manage", false, ["user.secret:write", "space.keys"]),
+      bundle("manage", false, ["user.secret:write", "keys.mint"]),
     ]);
-    expect([...out].sort()).toEqual(["space.keys", "user.secret:write"]);
+    expect([...out].sort()).toEqual(["keys.mint", "user.secret:write"]);
   });
 
   it("keeps a scope an on-by-default bundle names outright", () => {
@@ -1179,7 +1244,7 @@ describe("grantCoversScope", () => {
    */
   describe("capabilities, reachable only by name", () => {
     it("covers a capability the grant names", () => {
-      expect(grantCoversScope(["space.keys"], "space.keys")).toBe(true);
+      expect(grantCoversScope(["keys.mint"], "keys.mint")).toBe(true);
     });
 
     it("is not reached by the global write wildcard", () => {
@@ -1197,16 +1262,24 @@ describe("grantCoversScope", () => {
       // down before any held scope is read, AND the held literals do not
       // parse at all, so they contribute nothing on any axis either. The
       // second is the one worth stating, because it is not obvious:
-      // `space.*:read` satisfies the type-pattern grammar, so without
+      // `keys.*:read` satisfies the type-pattern grammar, so without
       // `parseScope` claiming the whole root it would parse as an item-type
       // grant that reads like a capability grant and is neither.
-      expect(
-        grantCoversScope(["space.*:read", "space.*:write"], "space.keys"),
-      ).toBe(false);
+      //
+      // Every root, not one of them. A root claimed in the reserved set and
+      // missed in the parser passes every other case in this file.
+      for (const root of PERMISSION_FAMILY_ROOTS) {
+        for (const capability of SPACE_PERMISSIONS) {
+          expect(
+            grantCoversScope([`${root}.*:read`, `${root}.*:write`], capability),
+            `${root}.* vs ${capability}`,
+          ).toBe(false);
+        }
+      }
     });
 
     it("does not let one capability cover another", () => {
-      expect(grantCoversScope(["space.webhooks"], "space.keys")).toBe(false);
+      expect(grantCoversScope(["webhooks.manage"], "keys.mint")).toBe(false);
     });
 
     it("refuses a capability-shaped literal that names no capability", () => {
@@ -1216,8 +1289,8 @@ describe("grantCoversScope", () => {
       // the capability arm turned it down — would be wrong about where the
       // guarantee lives.
 
-      expect(grantCoversScope(["*:write"], "space.not_a_thing")).toBe(false);
-      expect(grantCoversScope(["space.keys"], "space.not_a_thing")).toBe(false);
+      expect(grantCoversScope(["*:write"], "keys.not_a_thing")).toBe(false);
+      expect(grantCoversScope(["keys.mint"], "keys.not_a_thing")).toBe(false);
     });
   });
 
@@ -1350,7 +1423,7 @@ describe("grantCoversScope", () => {
       for (const required of [
         "core.note:read",
         "openid",
-        "space.keys",
+        "keys.mint",
         "edge.parent-of:read",
         "metadata.types:read",
       ]) {
@@ -1626,8 +1699,8 @@ describe("the content category is covered by holding it and by nothing else", ()
   });
 
   it("still reaches a capability only by naming it", () => {
-    expect(grantCoversScope(["content:write"], "space.webhooks")).toBe(false);
-    expect(grantCoversScope(["space.webhooks"], "space.webhooks")).toBe(true);
+    expect(grantCoversScope(["content:write"], "webhooks.manage")).toBe(false);
+    expect(grantCoversScope(["webhooks.manage"], "webhooks.manage")).toBe(true);
   });
 
   it("covers a named type forward, through the type arm and no new code", () => {
@@ -1688,7 +1761,7 @@ describe("requiresExplicitConsent", () => {
     // earlier by `isValidScope`. Answering true here would make a typo
     // un-grantable-by-silence rather than refused, which reads as the rule
     // working while the real check is the one that fired.
-    expect(requiresExplicitConsent("space.not_a_real_one")).toBe(false);
+    expect(requiresExplicitConsent("keys.not_a_real_one")).toBe(false);
     expect(requiresExplicitConsent("")).toBe(false);
   });
 });

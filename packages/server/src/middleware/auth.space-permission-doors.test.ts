@@ -85,7 +85,7 @@ async function mintKey(
     {
       label: opts.label,
       source: `${opts.label}-${suffix}`,
-      space_permissions: opts.spacePermissions ?? [],
+      permissions: opts.spacePermissions ?? [],
       default_tier: "library",
       type_permissions: opts.typePermissions ?? {},
     },
@@ -136,14 +136,43 @@ describe("computeTypeFilter", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Integration — one door per space permission
+// Integration — a door per permission, each with the pass and the refusal
+//
+// The pair is the point. A refusal on its own passes identically against a
+// gate that refuses everybody, and a pass on its own against one that admits
+// everybody, so a permission covered in one direction is covered by nothing.
+// `grants.manage` is the exception here and is paired in
+// `auth-grants-authority.test.ts` instead, where its two refusals already sit.
 // ---------------------------------------------------------------------------
 
-describe("/keys — space.keys", () => {
+describe("/keys — keys.mint", () => {
+  it("mints for a credential that holds keys.mint", async () => {
+    // The pass direction, which the case below cannot stand in for: that one
+    // is refused by the `is_operator` rule and would answer 403 whatever the
+    // permission gate decided.
+    const caller = await mintKey(ctx, {
+      label: "mint-holder-pass",
+      spacePermissions: ["keys.mint"],
+    });
+
+    const res = await request(ctx.app, "POST", "/keys", {
+      key: caller,
+      body: {
+        label: "child-key-minted",
+        source: `child-minted-${Math.random().toString(36).slice(2, 10)}`,
+        default_tier: "library",
+      },
+    });
+
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { key: string; id: string };
+    expect(body.key).toBeTruthy();
+  });
+
   it("mints into the caller's own space and cannot claim the operator flag", async () => {
     const caller = await mintKey(ctx, {
       label: "mint-holder",
-      spacePermissions: ["space.keys"],
+      spacePermissions: ["keys.mint"],
     });
 
     const res = await request(ctx.app, "POST", "/keys", {
@@ -161,7 +190,7 @@ describe("/keys — space.keys", () => {
     expect(res.status).toBe(403);
   });
 
-  it("refuses a mint from a credential that does not hold space.keys", async () => {
+  it("refuses a mint from a credential that does not hold keys.mint", async () => {
     const caller = await mintKey(ctx, {
       label: "mint-none",
     });
@@ -179,11 +208,11 @@ describe("/keys — space.keys", () => {
   });
 });
 
-describe("DELETE /items/:id/purge — space.item_purge", () => {
+describe("DELETE /items/:id/purge — items.purge", () => {
   it("purges an item in the caller's own space", async () => {
     const caller = await mintKey(ctx, {
       label: "purge-holder",
-      spacePermissions: ["space.item_purge"],
+      spacePermissions: ["items.purge"],
       typePermissions: { "*": "write" },
     });
 
@@ -204,7 +233,7 @@ describe("DELETE /items/:id/purge — space.item_purge", () => {
     expect(after).toBeNull();
   });
 
-  it("refuses a credential that does not hold space.item_purge", async () => {
+  it("refuses a credential that does not hold items.purge", async () => {
     const caller = await mintKey(ctx, {
       label: "purge-none",
       typePermissions: { "*": "write" },
@@ -222,8 +251,22 @@ describe("DELETE /items/:id/purge — space.item_purge", () => {
   });
 });
 
-describe("/webhooks — space.webhooks", () => {
-  it("refuses a credential that does not hold space.webhooks", async () => {
+describe("/webhooks — webhooks.manage", () => {
+  it("lists the subscriptions for a credential that holds webhooks.manage", async () => {
+    // The read, not the register: reading a webhook configuration takes the
+    // same permission as registering one, and the register door has a second
+    // gate of its own on content reach, so a pass there would not isolate
+    // this permission.
+    const caller = await mintKey(ctx, {
+      label: "wh-holder",
+      spacePermissions: ["webhooks.manage"],
+    });
+
+    const res = await request(ctx.app, "GET", "/webhooks", { key: caller });
+    expect(res.status).toBe(200);
+  });
+
+  it("refuses a credential that does not hold webhooks.manage", async () => {
     const caller = await mintKey(ctx, {
       label: "wh-none",
       typePermissions: { "*": "write" },
@@ -234,5 +277,110 @@ describe("/webhooks — space.webhooks", () => {
       body: { url: "https://example.com/hook", events: ["item.created"] },
     });
     expect(res.status).toBe(403);
+  });
+
+  it("refuses the same read to a credential that does not hold it", async () => {
+    // The control for the pass above. Without it that case passes against a
+    // door standing open to any authenticated caller, which is exactly the
+    // shape a dropped gate takes.
+    const caller = await mintKey(ctx, { label: "wh-read-none" });
+
+    const res = await request(ctx.app, "GET", "/webhooks", { key: caller });
+    expect(res.status).toBe(403);
+  });
+});
+
+describe("/audit — audit.read", () => {
+  it("reads the trail for a credential that holds audit.read", async () => {
+    const caller = await mintKey(ctx, {
+      label: "audit-holder",
+      spacePermissions: ["audit.read"],
+    });
+
+    const res = await request(ctx.app, "GET", "/audit", { key: caller });
+    expect(res.status).toBe(200);
+  });
+
+  it("refuses a credential that does not hold audit.read", async () => {
+    const caller = await mintKey(ctx, {
+      label: "audit-none",
+      typePermissions: { "*": "write" },
+    });
+
+    const res = await request(ctx.app, "GET", "/audit", { key: caller });
+    expect(res.status).toBe(403);
+  });
+});
+
+describe("/spaces/me/config — config.manage", () => {
+  it("reads the instance config for a credential that holds config.manage", async () => {
+    // The read door, deliberately: `config.manage` is not `config.write`, so
+    // a caller refused it cannot read the configuration either, and a pass
+    // asserted only on the write door would leave that half unstated.
+    const caller = await mintKey(ctx, {
+      label: "config-holder",
+      spacePermissions: ["config.manage"],
+    });
+
+    const res = await request(ctx.app, "GET", "/spaces/me/config", {
+      key: caller,
+    });
+    expect(res.status).toBe(200);
+  });
+
+  it("refuses a credential that does not hold config.manage", async () => {
+    const caller = await mintKey(ctx, {
+      label: "config-none",
+      typePermissions: { "*": "write" },
+    });
+
+    const res = await request(ctx.app, "GET", "/spaces/me/config", {
+      key: caller,
+    });
+    expect(res.status).toBe(403);
+  });
+});
+
+describe("DELETE /types/:id — schema.write", () => {
+  async function seedType(id: string): Promise<void> {
+    await ctx.storage.types.create(
+      {
+        id,
+        version: 1,
+        fields: { name: { type: "string", required: true } },
+      },
+      { origin: "user" },
+    );
+  }
+
+  it("removes a registration for a credential that holds schema.write", async () => {
+    const id = `jonah.gone_${Math.random().toString(36).slice(2, 10)}`;
+    await seedType(id);
+    const caller = await mintKey(ctx, {
+      label: "schema-holder",
+      spacePermissions: ["schema.write"],
+    });
+
+    const res = await request(ctx.app, "DELETE", `/types/${id}`, {
+      key: caller,
+    });
+    expect(res.status).toBe(200);
+    expect(await ctx.storage.types.get(id)).toBeUndefined();
+  });
+
+  it("refuses a credential that does not hold schema.write", async () => {
+    const id = `jonah.kept_${Math.random().toString(36).slice(2, 10)}`;
+    await seedType(id);
+    const caller = await mintKey(ctx, {
+      label: "schema-none",
+      typePermissions: { "*": "write" },
+    });
+
+    const res = await request(ctx.app, "DELETE", `/types/${id}`, {
+      key: caller,
+    });
+    expect(res.status).toBe(403);
+    // The refusal left the registration where it was.
+    expect(await ctx.storage.types.get(id)).toBeDefined();
   });
 });

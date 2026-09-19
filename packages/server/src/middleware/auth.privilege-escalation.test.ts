@@ -93,7 +93,7 @@ async function mintKey(
     {
       label: opts.label,
       source: `${opts.label}-${suffix}`,
-      space_permissions: opts.spacePermissions ?? [],
+      permissions: opts.spacePermissions ?? [],
       default_tier: "library",
       type_permissions: {},
       is_operator: opts.is_operator ?? false,
@@ -114,7 +114,7 @@ describe("the mint never exceeds the caller", () => {
     ctx = await createTestContext();
     const caller = await mintKey(ctx, {
       label: "clamp-caller",
-      spacePermissions: ["space.keys", "space.webhooks"],
+      spacePermissions: ["keys.mint", "webhooks.manage"],
     });
 
     const res = await request(ctx.app, "POST", "/keys", {
@@ -123,7 +123,7 @@ describe("the mint never exceeds the caller", () => {
         label: "escalated",
         source: `escalated-${Math.random().toString(36).slice(2, 10)}`,
         default_tier: "library",
-        space_permissions: ["space.settings"],
+        permissions: ["config.manage"],
       },
     });
 
@@ -134,14 +134,14 @@ describe("the mint never exceeds the caller", () => {
     expect(body.error.code).toBe("forbidden");
     // The refusal names the literal, so a client can narrow toward something
     // it could actually be granted.
-    expect(body.error.details?.required_scope).toBe("space.settings");
+    expect(body.error.details?.required_scope).toBe("config.manage");
   });
 
   it("permits a peer mint of what the caller already holds", async () => {
     ctx = await createTestContext();
     const caller = await mintKey(ctx, {
       label: "peer-caller",
-      spacePermissions: ["space.keys", "space.webhooks"],
+      spacePermissions: ["keys.mint", "webhooks.manage"],
     });
 
     const res = await request(ctx.app, "POST", "/keys", {
@@ -150,7 +150,7 @@ describe("the mint never exceeds the caller", () => {
         label: "peer",
         source: `peer-${Math.random().toString(36).slice(2, 10)}`,
         default_tier: "library",
-        space_permissions: ["space.webhooks"],
+        permissions: ["webhooks.manage"],
       },
     });
 
@@ -160,22 +160,22 @@ describe("the mint never exceeds the caller", () => {
     // Read back from the store rather than from the response: the stored row
     // is what the credential actually holds, and it is what a later gate asks.
     const stored = await ctx.storage.keys.get(minted.id);
-    expect(stored?.space_permissions).toEqual(["space.webhooks"]);
+    expect(stored?.permissions).toEqual(["webhooks.manage"]);
   });
 });
 
-describe("instance config is self-service behind space.settings", () => {
+describe("instance config is self-service behind config.manage", () => {
   let ctx: TestContext;
 
   afterEach(async () => {
     await ctx.cleanup();
   });
 
-  it("a holder of space.settings reads and writes the instance config", async () => {
+  it("a holder of config.manage reads and writes the instance config", async () => {
     ctx = await createTestContext();
     const caller = await mintKey(ctx, {
       label: "config-holder",
-      spacePermissions: ["space.settings"],
+      spacePermissions: ["config.manage"],
     });
 
     const put = await request(ctx.app, "PUT", "/spaces/me/config", {
@@ -197,7 +197,7 @@ describe("instance config is self-service behind space.settings", () => {
     expect(stored?.trash_retention_days).toBe(7);
   });
 
-  it("refuses a credential that does not hold space.settings", async () => {
+  it("refuses a credential that does not hold config.manage", async () => {
     ctx = await createTestContext();
     const caller = await mintKey(ctx, {
       label: "config-none",

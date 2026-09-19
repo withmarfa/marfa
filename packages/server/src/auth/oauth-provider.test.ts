@@ -132,18 +132,20 @@ describe("a bundle is not a way around the scope grammar", () => {
   });
 
   it("drops a near-miss under a reserved prefix", () => {
-    // The shape a space permission typo takes. `space.webhooks:write` reads
-    // as a space permission grant and is not one, and `space.*:read` is the
-    // literal the parser has to claim so it cannot be read as an item-type
-    // pattern instead.
+    // Two near misses under claimed roots. `webhooks.manage:write` reads as
+    // a permission grant and is not one — a permission is named by its
+    // literal and carries no verb. `space.*:read` is under the root kept
+    // reserved after its family was renamed away, and the parser has to
+    // claim it too: reserved alone would leave it parsing as an item-type
+    // pattern over a namespace no type may ever occupy.
     const scopes = new Set(
       buildAllowedScopes(
-        bundleOf(["space.webhook", "space.webhooks:write", "space.*:read"]),
+        bundleOf(["space.webhook", "webhooks.manage:write", "space.*:read"]),
         [],
       ),
     );
     expect(scopes.has("space.webhook")).toBe(false);
-    expect(scopes.has("space.webhooks:write")).toBe(false);
+    expect(scopes.has("webhooks.manage:write")).toBe(false);
     expect(scopes.has("space.*:read")).toBe(false);
   });
 

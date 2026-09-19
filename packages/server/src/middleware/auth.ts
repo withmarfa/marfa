@@ -830,32 +830,6 @@ export function requireMetadataPermission(
 }
 
 /**
- * Predicate form of {@link requireSpacePermission}, for the doors that combine
- * a permission with an arm of their own.
- *
- * The connection surfaces are the reason it exists: a caller reaches them
- * either by holding the space permission or by *being* the connection, as an
- * OAuth grant or as a runtime credential stamped with the connection id. That
- * is an `||`, not a gate, so it needs an answer rather than a throw.
- *
- * Exported so no call site re-derives it. The two forms read the same list
- * through the same helper, which is what keeps a predicate from drifting into
- * a second, laxer definition of the same question.
- */
-export function holdsSpacePermission(
-  c: Context<AppEnv>,
-  permission: SpacePermission,
-): boolean {
-  const key = c.get("apiKey");
-  if (!key) return false;
-  const held =
-    c.get("authType") === "oauth"
-      ? (c.get("oauthGrant")?.scopes ?? [])
-      : (key.space_permissions ?? []);
-  return hasSpacePermission(held, permission);
-}
-
-/**
  * Authority over one administrative surface, asked of the credential's own
  * permission set. A key carries its space permissions on its row and a
  * sign-in carries them on its grant; nothing here reads what kind of
@@ -901,7 +875,7 @@ export function requireSpacePermission(
   const held =
     c.get("authType") === "oauth"
       ? (c.get("oauthGrant")?.scopes ?? [])
-      : (key.space_permissions ?? []);
+      : (key.permissions ?? []);
   if (hasSpacePermission(held, permission)) return;
   throw new MarfaError(
     ErrorCode.FORBIDDEN,

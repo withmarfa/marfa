@@ -50,7 +50,7 @@ async function keyWithoutEdgePermissions(): Promise<string> {
     body: {
       label: `edge-door-${suffix}`,
       source: `edge-door-${suffix}`,
-      space_permissions: [],
+      permissions: [],
       default_tier: "library",
       type_permissions: { "core.note": "write" },
       edge_permissions: {},
@@ -245,7 +245,7 @@ describe.each(DOORS)("$name", (door) => {
       body: {
         label: `edge-door-allowed-${suffix}`,
         source: `edge-door-allowed-${suffix}`,
-        space_permissions: [],
+        permissions: [],
         default_tier: "library",
         type_permissions: { "core.note": "write" },
         edge_permissions: { about: "write" },

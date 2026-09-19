@@ -6,7 +6,7 @@
  * could reach `POST /keys` already reached everything, so "wider than its
  * creator" described no reachable state and the clamp was written for the one
  * caller that could be narrow: a session. Under one permission model a narrow
- * key is ordinary — `space.keys` says a credential may mint, and says nothing
+ * key is ordinary — `keys.mint` says a credential may mint, and says nothing
  * about how far what it mints may go — so the same question has to be asked of
  * a key, and these are the cases that ask it.
  *
@@ -27,14 +27,14 @@ import { scopesToTypePermissions } from "@withmarfa/shared";
 let ctx: TestContext;
 let narrowKey: string;
 
-/** Holds `space.keys` and read on one type. A coherent credential now. */
+/** Holds `keys.mint` and read on one type. A coherent credential now. */
 async function mintNarrow(): Promise<string> {
   const raw = `marfa_k1_narrow_${Math.random().toString(36).slice(2, 12)}`;
   await ctx.storage.keys.create(
     {
       label: "narrow",
       source: "ceiling-test",
-      space_permissions: ["space.keys"],
+      permissions: ["keys.mint"],
       type_permissions: { "core.note": "read" },
       extension_permissions: {},
       edge_permissions: {},
@@ -72,7 +72,7 @@ describe("a creator whose own map carries denials", () => {
       {
         label: "content-read",
         source: "ceiling-content-read",
-        space_permissions: ["space.keys"],
+        permissions: ["keys.mint"],
         type_permissions: scopesToTypePermissions(["content:read"]),
         extension_permissions: {},
         edge_permissions: {},
@@ -189,10 +189,10 @@ describe("a key minting a key", () => {
     expect(res.status).toBe(201);
     const body = (await res.json()) as {
       type_permissions: Record<string, string>;
-      space_permissions: string[];
+      permissions: string[];
     };
     expect(body.type_permissions).toEqual({ "core.note": "read" });
-    expect(body.space_permissions).toEqual(["space.keys"]);
+    expect(body.permissions).toEqual(["keys.mint"]);
   });
 });
 
@@ -229,7 +229,7 @@ describe("a key editing a key", () => {
 
     const res = await request(ctx.app, "PATCH", `/keys/${id}`, {
       key: narrowKey,
-      body: { space_permissions: ["space.keys", "space.settings"] },
+      body: { permissions: ["keys.mint", "config.manage"] },
     });
     expect(res.status).toBe(403);
   });

@@ -259,7 +259,7 @@ export const KeyResponseSchema = z.object({
   key: z.string(),
   label: z.string(),
   source: z.string(),
-  space_permissions: z
+  permissions: z
     .array(z.enum(SPACE_PERMISSIONS as unknown as [string, ...string[]]))
     .optional(),
   oauth_client_id: z.string().optional(),

@@ -1451,7 +1451,7 @@ describe("a grant that reaches things not yet created says so", () => {
 // The label maps, which exist for one reason.
 //
 // `humanizeType` takes the last dotted segment, so an unnamed
-// `space.webhooks` renders as "Webhooks" — byte-identical to what
+// `webhooks.manage` renders as "Webhooks" — byte-identical to what
 // `system.webhook:read` gets from the same fallback. One grant is sight of a
 // webhook row and the other is the power to point a new webhook anywhere.
 // ---------------------------------------------------------------------------
@@ -1477,7 +1477,7 @@ describe("space permission labels", () => {
       expect(spacePermissionLabel(literal)).not.toBe(humanizeType(literal));
     }
     // The specific pair that motivated the map.
-    expect(spacePermissionLabel("space.webhooks")).not.toBe(
+    expect(spacePermissionLabel("webhooks.manage")).not.toBe(
       SCOPE_LABELS["system.webhook"],
     );
   });

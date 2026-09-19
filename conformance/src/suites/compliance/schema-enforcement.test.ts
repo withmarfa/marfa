@@ -56,7 +56,7 @@ async function clientWithSource(
   const keyResp = await client.createKey({
     label,
     source,
-    space_permissions: [],
+    permissions: [],
     type_permissions: { "*": "write" },
   });
   expect(keyResp.ok).toBe(true);
@@ -90,7 +90,7 @@ describe("the configuration door", () => {
     expect(r.error?.error.code).toBe("validation_error");
   });
 
-  it("refuses both doors to a key without space.settings", async () => {
+  it("refuses both doors to a key without config.manage", async () => {
     const narrowed = await clientWithSource(
       "config-no-settings",
       `${ctx.source}-config-no-settings`,
@@ -98,7 +98,7 @@ describe("the configuration door", () => {
     const read = await narrowed.getSpaceConfig();
     expect(read.status).toBe(403);
     expect(read.error?.error.code).toBe("forbidden");
-    expect(read.error?.error.details?.required_scope).toBe("space.settings");
+    expect(read.error?.error.details?.required_scope).toBe("config.manage");
     const write = await narrowed.updateSpaceConfig({});
     expect(write.status).toBe(403);
     expect(write.error?.error.code).toBe("forbidden");

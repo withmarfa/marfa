@@ -780,7 +780,7 @@ describe("a claim the store did not grant", () => {
         source: credential.source,
         default_tier: "library",
         is_operator: false,
-        space_permissions: [],
+        permissions: [],
         type_permissions: {},
         extension_permissions: {},
         edge_permissions: {},

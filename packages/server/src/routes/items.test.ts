@@ -568,7 +568,7 @@ describe("POST /items — the operator gate", () => {
       {
         label: "space-bound-not-operator",
         source: "space-bound-not-operator",
-        space_permissions: [...SPACE_PERMISSIONS],
+        permissions: [...SPACE_PERMISSIONS],
         type_permissions: { "system.connection": "write" },
         default_tier: "library",
         is_operator: false,
@@ -664,7 +664,7 @@ describe("POST /items — the operator gate", () => {
       {
         label: "space-reader",
         source: "space-reader",
-        space_permissions: [...SPACE_PERMISSIONS],
+        permissions: [...SPACE_PERMISSIONS],
         type_permissions: { "system.connection": "read" },
         default_tier: "library",
         is_operator: false,

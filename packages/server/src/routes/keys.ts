@@ -74,7 +74,7 @@ const KeyListItemSchema = z.object({
   id: z.string(),
   label: z.string(),
   source: z.string(),
-  space_permissions: z
+  permissions: z
     .array(z.enum(SPACE_PERMISSIONS as unknown as [string, ...string[]]))
     .optional()
     .describe(
@@ -125,20 +125,28 @@ const createKeyRoute = createRoute({
   tags: ["Keys"],
   summary: "Create an API key",
   description:
-    "Creates a new API key. The plaintext `key` is returned only in this response and never shown again, so store it securely.\n\nA credential is a set of permissions and nothing else. `space_permissions` names the space permissions the key holds; omitting it takes the creator's whole set, and anything named is clamped to what the creator holds, so a mint can narrow and can never widen. The content maps behave the same way, and a signed-in app must hold `space.keys` to reach this route at all.\n\nThe operator key holds no permissions, because running the instance sits outside the permission model, so it is not a ceiling: a working key it mints holds what the body names, or the whole set when the body names nothing. With `is_operator: true` it mints a second operator key instead, which holds nothing, so a body naming any map entry or space permission on one is refused. `is_operator` is granted only when the caller is itself an operator key.\n\nOn a fresh server with zero keys this runs in bootstrap mode: the key it mints is the operator key, and the request must present the one-time secret the server printed to its log at startup, as a bearer token. That secret works once — the mint consumes it. The operator key is not a working key, so the next call is this route again with it, minting the key to configure a client with.",
+    "Creates a new API key. The plaintext `key` is returned only in this response and never shown again, so store it securely.\n\nA credential is a set of permissions and nothing else. `permissions` names the space permissions the key holds; omitting it takes the creator's whole set, and anything named is clamped to what the creator holds, so a mint can narrow and can never widen. The content maps behave the same way, and a signed-in app must hold `keys.mint` to reach this route at all.\n\nThe operator key holds no permissions, because running the instance sits outside the permission model, so it is not a ceiling: a working key it mints holds what the body names, or the whole set when the body names nothing. With `is_operator: true` it mints a second operator key instead, which holds nothing, so a body naming any map entry or space permission on one is refused. `is_operator` is granted only when the caller is itself an operator key.\n\nOn a fresh server with zero keys this runs in bootstrap mode: the key it mints is the operator key, and the request must present the one-time secret the server printed to its log at startup, as a bearer token. That secret works once — the mint consumes it. The operator key is not a working key, so the next call is this route again with it, minting the key to configure a client with.",
 
   security: [{ bearerAuth: [] }],
   request: {
+    // Strict, and that is load-bearing rather than tidiness. A field this
+    // body does not declare is stripped by an ordinary object, and
+    // `permissions` omitted does not mean "none": it means the creator's
+    // whole set, or every permission when the operator seeds. So a caller
+    // spelling the field wrong — including one written against the name this
+    // field used to have — asks to narrow and is answered with a credential
+    // wider than the one it asked for, which on a mint hands on the power to
+    // mint again.
     body: {
       content: {
         "application/json": {
-          schema: z.object({
+          schema: z.strictObject({
             label: z.string().min(1, "label is required"),
             source: z
               .string()
               .min(1, "source display name is required")
               .max(200),
-            space_permissions: z
+            permissions: z
               .array(
                 z.enum(SPACE_PERMISSIONS as unknown as [string, ...string[]]),
               )
@@ -199,7 +207,7 @@ const createKeyRoute = createRoute({
         },
       },
       description:
-        "Caller does not hold `space.keys`, asked for reach its own credential does not cover, asked to give reach to an operator key, or asked to mint an operator key without being one. A missing permission is named in `details.required_scope`.",
+        "Caller does not hold `keys.mint`, asked for reach its own credential does not cover, asked to give reach to an operator key, or asked to mint an operator key without being one. A missing permission is named in `details.required_scope`.",
     },
   },
 });
@@ -211,7 +219,7 @@ const listKeysRoute = createRoute({
   tags: ["Keys"],
   summary: "List API keys",
   description:
-    "Returns every API key without plaintext, which is only ever returned at creation time. `last_used_at` is debounced to at most one write per hour, so treat it as a coarse activity signal rather than an audit log. Requires `space.keys`, or the operator key, which reaches these doors by being the operator key rather than by holding a permission.",
+    "Returns every API key without plaintext, which is only ever returned at creation time. `last_used_at` is debounced to at most one write per hour, so treat it as a coarse activity signal rather than an audit log. Requires `keys.mint`, or the operator key, which reaches these doors by being the operator key rather than by holding a permission.",
   security: [{ bearerAuth: [] }],
   responses: {
     200: {
@@ -242,7 +250,7 @@ const revokeKeyRoute = createRoute({
   tags: ["Keys"],
   summary: "Revoke an API key",
   description:
-    "Revokes the key immediately; the next request bearing it returns `401 unauthorized`. In-flight long-lived connections (SSE) terminate on the next heartbeat. Requires `space.keys`, or the operator key, which reaches these doors by being the operator key rather than by holding a permission. A revoke that changes no row answers `404 api_key_not_found` rather than success, for every caller: an unknown id and a key already revoked are both refused, and the message says which it was.",
+    "Revokes the key immediately; the next request bearing it returns `401 unauthorized`. In-flight long-lived connections (SSE) terminate on the next heartbeat. Requires `keys.mint`, or the operator key, which reaches these doors by being the operator key rather than by holding a permission. A revoke that changes no row answers `404 api_key_not_found` rather than success, for every caller: an unknown id and a key already revoked are both refused, and the message says which it was.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({
@@ -281,7 +289,7 @@ const revokeKeyRoute = createRoute({
         },
       },
       description:
-        "`space.keys` required, unless the caller is the operator key",
+        "`keys.mint` required, unless the caller is the operator key",
     },
     404: {
       content: {
@@ -302,16 +310,16 @@ const revokeKeyRoute = createRoute({
  * the only answer it could ever give is no, because running the instance is
  * deliberately not expressible as a permission.
  *
- * Everything else is held to `space.keys`.
+ * Everything else is held to `keys.mint`.
  */
 function requireSpaceKeysOrOperator(c: Context<AppEnv>): void {
   if (requireAuth(c).is_operator) return;
-  requireSpacePermission(c, "space.keys");
+  requireSpacePermission(c, "keys.mint");
 }
 
 // Passthrough — `source` is immutable and rejected explicitly in the handler
 // with a readable error instead of a generic "unrecognized keys".
-const UpdateKeyBodySchema = z.object({
+const UpdateKeyBodySchema = z.strictObject({
   label: z.string().min(1).optional(),
   default_tier: z.enum(["library", "feed"]).optional(),
   type_permissions: z
@@ -327,7 +335,7 @@ const UpdateKeyBodySchema = z.object({
   profile_permissions: z
     .record(z.string(), z.enum(["read", "write"]))
     .optional(),
-  space_permissions: z
+  permissions: z
     .array(z.enum(SPACE_PERMISSIONS as unknown as [string, ...string[]]))
     .optional(),
   enforcement_override: EnforcementOverrideSchema.nullable()
@@ -340,7 +348,7 @@ const KeyDetailSchema = z.object({
   id: z.string(),
   label: z.string(),
   source: z.string(),
-  space_permissions: z
+  permissions: z
     .array(z.enum(SPACE_PERMISSIONS as unknown as [string, ...string[]]))
     .optional()
     .describe(
@@ -381,7 +389,7 @@ const updateKeyRoute = createRoute({
   tags: ["Keys"],
   summary: "Update an API key",
   description:
-    "Updates a key's label, default tier, or permission maps in place. `source` is immutable and rejected with `400 validation_error` if present in the body — revoke and recreate to change it. Requires `space.keys`. A permission map may not be widened past what the calling credential itself holds. The operator key is excepted, since running the instance sits outside the permission model, but an operator key holds nothing at all, so no map on one may be widened by any caller. A key created by an app is never widened at all, by any caller including the operator key: it holds what that app held, and may only be narrowed.",
+    "Updates a key's label, default tier, or permission maps in place. `source` is immutable and rejected with `400 validation_error` if present in the body — revoke and recreate to change it. Requires `keys.mint`. A permission map may not be widened past what the calling credential itself holds. The operator key is excepted, since running the instance sits outside the permission model, but an operator key holds nothing at all, so no map on one may be widened by any caller. A key created by an app is never widened at all, by any caller including the operator key: it holds what that app held, and may only be narrowed.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({
@@ -426,7 +434,7 @@ const updateKeyRoute = createRoute({
         },
       },
       description:
-        "`space.keys` required, unless the caller is the operator key",
+        "`keys.mint` required, unless the caller is the operator key",
     },
     404: {
       content: {
@@ -729,7 +737,7 @@ function refuseWideningAnAppsKey(
     );
   }
 
-  const held = existing.space_permissions ?? [];
+  const held = existing.permissions ?? [];
   const beyond = requestedSpacePermissions?.find((p) => !held.includes(p));
   if (beyond !== undefined) {
     throw new MarfaError(
@@ -811,7 +819,7 @@ export function keyRoutes(storage: Storage, salt: string) {
       requireAuth(c);
       // A session may mint, if it was granted the permission to and the key it
       // asks for does not reach past the session's own grant. Holding
-      // `space.keys` says a credential may mint; the clamp below says how far
+      // `keys.mint` says a credential may mint; the clamp below says how far
       // what it mints may reach.
       //
       // The blanket refusal that used to stand here was doing two jobs at once
@@ -936,9 +944,9 @@ export function keyRoutes(storage: Storage, salt: string) {
         ? []
         : mintingFromSession
           ? (c.get("oauthGrant")?.scopes ?? []).filter(isSpacePermission)
-          : (c.get("apiKey")?.space_permissions ?? []);
+          : (c.get("apiKey")?.permissions ?? []);
       const requestedSpacePermissions =
-        body.space_permissions?.filter(isSpacePermission);
+        body.permissions?.filter(isSpacePermission);
 
       // **An operator key holds nothing**, so a body naming reach for one is
       // refused. Asked ahead of the two ceilings below because it is the more
@@ -1054,7 +1062,7 @@ export function keyRoutes(storage: Storage, salt: string) {
           source: body.source.trim(),
           default_tier: body.default_tier,
           is_operator: mintsOperatorKey,
-          space_permissions: spacePermissions,
+          permissions: spacePermissions,
           type_permissions: typePermissions,
           extension_permissions: extensionPermissions,
           edge_permissions: edgePermissions,
@@ -1103,7 +1111,7 @@ export function keyRoutes(storage: Storage, salt: string) {
           source: stored.source,
           default_tier: stored.default_tier,
           is_operator: stored.is_operator,
-          space_permissions: stored.space_permissions,
+          permissions: stored.permissions,
           oauth_client_id: stored.oauth_client_id,
           type_permissions: stored.type_permissions,
           extension_permissions: stored.extension_permissions,
@@ -1194,7 +1202,7 @@ export function keyRoutes(storage: Storage, salt: string) {
     // one instead — including a key it did not create.
     //
     // Asked of every editor rather than only of a session, for the reason the
-    // mint states: a key holding `space.keys` and read on one type is an
+    // mint states: a key holding `keys.mint` and read on one type is an
     // ordinary credential now, and nothing about holding the permission to
     // edit says how far what it edits may reach.
     const requestedReach = {
@@ -1205,7 +1213,7 @@ export function keyRoutes(storage: Storage, salt: string) {
       profile_permissions: body.profile_permissions,
     };
     const requestedSpacePermissions =
-      body.space_permissions?.filter(isSpacePermission);
+      body.permissions?.filter(isSpacePermission);
 
     // Before the caller's own ceiling, because it is the more specific answer:
     // a caller who both lacks the reach and is editing an app's key is better
@@ -1242,9 +1250,9 @@ export function keyRoutes(storage: Storage, salt: string) {
 
     // **The space permissions are clamped here too, and were not.** They are
     // editable through this door like any other family, so a key holding one
-    // permission could have given itself the other ten.
+    // permission could have given itself every other one in the set.
     if (requestedSpacePermissions !== undefined && !key.is_operator) {
-      const held = key.space_permissions ?? [];
+      const held = key.permissions ?? [];
       const beyond = requestedSpacePermissions.find(
         (permission) => !held.includes(permission),
       );
@@ -1268,7 +1276,7 @@ export function keyRoutes(storage: Storage, salt: string) {
       // non-empty list outright, because no entry in one is a denial the way a
       // `none` map entry is, so the only list that reaches an operator row is
       // already the empty one.
-      space_permissions: requestedSpacePermissions,
+      permissions: requestedSpacePermissions,
       profile_permissions: writtenReach.profile_permissions,
       enforcement_override: body.enforcement_override,
     });
@@ -1291,7 +1299,7 @@ export function keyRoutes(storage: Storage, salt: string) {
         source: updated.source,
         default_tier: updated.default_tier,
         is_operator: updated.is_operator,
-        space_permissions: updated.space_permissions,
+        permissions: updated.permissions,
         oauth_client_id: updated.oauth_client_id,
         type_permissions: updated.type_permissions,
         extension_permissions: updated.extension_permissions,

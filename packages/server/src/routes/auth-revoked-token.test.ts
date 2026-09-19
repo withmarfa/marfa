@@ -52,12 +52,12 @@ async function revokeAccessTokens(clientId: string): Promise<void> {
 
 describe("a revoked OAuth access token", () => {
   it("stops authenticating, though its expiry has not passed", async () => {
-    // `space.keys` because the probe below uses `/keys` to ask whether
+    // `keys.mint` because the probe below uses `/keys` to ask whether
     // the token authenticates at all. The question is revocation; the door is
     // incidental, and it now wants the scope.
     const { token, clientId } = await seedOauthBearer(
       ctx.storage,
-      ["space.keys"],
+      ["keys.mint"],
       {},
     );
 
@@ -75,12 +75,12 @@ describe("a revoked OAuth access token", () => {
   });
 
   it("is refused by the store itself, not only at the route", async () => {
-    // `space.keys` because the probe below uses `/keys` to ask whether
+    // `keys.mint` because the probe below uses `/keys` to ask whether
     // the token authenticates at all. The question is revocation; the door is
     // incidental, and it now wants the scope.
     const { token, clientId } = await seedOauthBearer(
       ctx.storage,
-      ["space.keys"],
+      ["keys.mint"],
       {},
     );
 

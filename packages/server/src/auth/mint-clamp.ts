@@ -3,7 +3,7 @@
  *
  * `POST /keys` used to refuse an OAuth caller outright, and that refusal was
  * the enforcement: a session could not mint, so it could not mint something
- * wider than itself. Replacing it with `space.keys` removes the refusal
+ * wider than itself. Replacing it with `keys.mint` removes the refusal
  * and leaves the escalation, so the clamp is what takes its place. Without it
  * an app granted `core.note:read` plus the permission could mint a key whose
  * own maps reach every type — a durable credential wider than the grant it
@@ -13,7 +13,7 @@
  * a role admitted a credential past its own maps, every caller that could
  * reach this route already reached everything, so "wider than its creator" had
  * nothing to bite on. Under one permission model a narrow credential is an
- * ordinary thing: a key holding `space.keys` and read on one type is a
+ * ordinary thing: a key holding `keys.mint` and read on one type is a
  * coherent credential, and nothing about holding the permission to mint says
  * anything about how far what it mints may reach. So the ceiling is asked of
  * every creator, and `firstReachBeyondCredential` is what lets a key's own

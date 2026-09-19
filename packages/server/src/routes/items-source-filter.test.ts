@@ -39,7 +39,7 @@ async function mintSpaceKey(source: string): Promise<string> {
     {
       label: `source-filter-${source}`,
       source,
-      space_permissions: [...SPACE_PERMISSIONS],
+      permissions: [...SPACE_PERMISSIONS],
       // The rank this fixture carried admitted it past its own map, so the
       // map has to say what the rank granted silently.
       type_permissions: { "*": "write" },

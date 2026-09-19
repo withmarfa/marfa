@@ -391,7 +391,7 @@ describe("POST /edges/bulk", () => {
       metadata_permissions: {},
       extension_permissions: {},
       profile_permissions: {},
-      space_permissions: [],
+      permissions: [],
     });
     const { sourceId, targetId } = await makePair();
 
@@ -419,7 +419,7 @@ describe("POST /edges/bulk", () => {
       metadata_permissions: {},
       extension_permissions: {},
       profile_permissions: {},
-      space_permissions: [],
+      permissions: [],
     });
     const { sourceId, targetId } = await makePair();
 

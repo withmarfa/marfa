@@ -169,8 +169,8 @@ export const apiKeys = sqliteTable(
       .default(false),
     connection_id: text("connection_id"),
     /**
-     * The eleven space permissions this credential holds, as a JSON array of
-     * the literals themselves.
+     * The space permissions this credential holds, as a JSON array of the
+     * literals themselves.
      *
      * A list rather than a map, because a space permission has no read/write
      * axis: it is held or it is not. The same shape a grant carries, so one
@@ -180,7 +180,7 @@ export const apiKeys = sqliteTable(
      * running the instance is fenced outside the permission model rather than
      * expressed inside it.
      */
-    space_permissions: text("space_permissions").notNull().default("[]"),
+    permissions: text("permissions").notNull().default("[]"),
     /**
      * **The wildcard default is legal only on a working key.** An operator
      * row holds nothing on any axis, which `api_keys_space_less_holds_nothing`
@@ -250,7 +250,7 @@ export const apiKeys = sqliteTable(
         ${table.metadata_permissions} = '{}' AND
         ${table.extension_permissions} = '{}' AND
         ${table.profile_permissions} = '{}' AND
-        ${table.space_permissions} = '[]')`,
+        ${table.permissions} = '[]')`,
     ),
   ],
 );

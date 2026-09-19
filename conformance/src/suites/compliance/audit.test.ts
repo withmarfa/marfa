@@ -187,11 +187,11 @@ describe("audit log", () => {
     }
   });
 
-  it("refuses a key without space.audit_read", async () => {
+  it("refuses a key without audit.read", async () => {
     const keyResp = await client.createKey({
       label: "no-audit",
       source: `${ctx.source}-no-audit`,
-      space_permissions: [],
+      permissions: [],
       type_permissions: { "*": "read" },
     });
     expect(keyResp.ok).toBe(true);

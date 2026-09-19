@@ -292,7 +292,7 @@ describe("a consent row states the operation, not only the type", () => {
 
 describe("a scope family with no read/write axis is given none", () => {
   it("attaches nothing to an OIDC literal or a space permission", () => {
-    const scopes = [parse("profile"), parse("space.webhooks")];
+    const scopes = [parse("profile"), parse("webhooks.manage")];
     const rendered = [
       ...rowLabels(authorize(scopes)),
       ...deviceLines(device(scopes)),
@@ -309,7 +309,7 @@ describe("a scope family with no read/write axis is given none", () => {
     // without asking the kind would attach an operation to a space permission
     // the moment the value moved. Asked here of the discriminant.
     expect(scopeOperation(parse("profile"))).toBeUndefined();
-    expect(scopeOperation(parse("space.webhooks"))).toBeUndefined();
+    expect(scopeOperation(parse("webhooks.manage"))).toBeUndefined();
     expect(scopeOperation(parse("core.note:read"))).toBe("read");
     expect(scopeOperation(parse("edge.about:write"))).toBe("write");
     expect(scopeOperation(parse("metadata.types:write"))).toBe("write");

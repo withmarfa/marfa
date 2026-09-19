@@ -174,7 +174,7 @@ describe("the bulk-action door and the read doors agree about system rows", () =
     // reserved row.
     const raw = await mintSpaceKey(ctx, {
       label: "reads-everything",
-      space_permissions: [],
+      permissions: [],
       type_permissions: { "*": "write" },
     });
 

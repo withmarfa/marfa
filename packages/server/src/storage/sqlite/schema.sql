@@ -13,7 +13,7 @@ CREATE TABLE IF NOT EXISTS `api_keys` (
 	`default_tier` text DEFAULT 'library' NOT NULL,
 	`is_operator` integer DEFAULT false NOT NULL,
 	`connection_id` text,
-	`space_permissions` text DEFAULT '[]' NOT NULL,
+	`permissions` text DEFAULT '[]' NOT NULL,
 	`type_permissions` text DEFAULT '{"*":"write"}' NOT NULL,
 	`extension_permissions` text DEFAULT '{}' NOT NULL,
 	`edge_permissions` text DEFAULT '{}' NOT NULL,
@@ -31,7 +31,7 @@ CREATE TABLE IF NOT EXISTS `api_keys` (
         "api_keys"."metadata_permissions" = '{}' AND
         "api_keys"."extension_permissions" = '{}' AND
         "api_keys"."profile_permissions" = '{}' AND
-        "api_keys"."space_permissions" = '[]'))
+        "api_keys"."permissions" = '[]'))
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS `api_keys_key_hash_unique` ON `api_keys` (`key_hash`);

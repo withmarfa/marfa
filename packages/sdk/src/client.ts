@@ -2188,7 +2188,7 @@ export class MarfaClient {
    * enforcement levers (`strict_mode`, `source_allowlist`,
    * `source_filter`) and the cleanup-job overrides
    * (`audit_retention_days`, `event_log_retention_hours`,
-   * `trash_retention_days`). Both endpoints take `space.settings`. */
+   * `trash_retention_days`). Both endpoints take `config.manage`. */
   readonly spaces = {
     /** Returns the instance config. Empty object when nothing is
      * configured. */

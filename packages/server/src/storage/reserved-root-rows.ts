@@ -2,22 +2,25 @@
  * Reports a stored type whose identifier sits under a namespace nothing is
  * allowed to occupy.
  *
- * Two of the reserved roots name no namespace tier: `space`, which holds
- * the space-permission literals, and `content`, which holds the two
- * content-category scopes. Reserving them is what stops a registered type
- * ever sharing a first segment with a grant, so a row under either is a type
- * whose identifier collides with a permission literal — the one collision the
- * reservation exists to make impossible.
+ * Some of the reserved roots name no namespace tier: every root a scope
+ * family lives under, and the retired one kept reserved so nobody may claim
+ * it. How many there are is not written down here — the scan below derives
+ * them, and a count in prose is the thing that goes stale when the set grows.
+ * Reserving them is what stops a registered type ever sharing a first segment
+ * with a grant, so a row under one is a type whose identifier collides with a
+ * permission literal — the one collision the reservation exists to make
+ * impossible.
  *
  * **Registration cannot produce one, which is why this reports rather than
  * refuses.** `isValidTypeIdentifier` consults `RESERVED_ROOTS`, so every
  * credential is turned down at `POST /types`. What can produce one is a root
- * being reserved after the fact: a row written while the word was ordinary,
- * or restored from an archive taken then. Both environments were checked
- * before `content` was reserved and neither held such a row, so this is
- * expected to stay silent — and that is precisely the state in which a
- * silent check is worth having, because the only thing it can ever report is
- * something nobody predicted.
+ * being reserved after the fact: a row written while the word was ordinary.
+ * An archive cannot carry one in, because the restore validates each
+ * identifier against the same reserved set. Every deployment is checked before
+ * a root is reserved — most recently for the seven permission roots — and
+ * none held such a row, so this is expected to stay silent, and that is
+ * precisely the state in which a silent check is worth having, because the
+ * only thing it can ever report is something nobody predicted.
  *
  * It follows `platform-family.ts`: recognize, say so loudly enough that the
  * report cannot be mistaken for normal, and let the server start. Refusing to
@@ -36,9 +39,9 @@
  * same word can already be held by a user, in a different table, and after
  * the reservation that user holds a handle nobody could claim today. Nothing
  * here would ever say so — it is handed `types` rows and has no view
- * of accounts. Every deployment was checked for both before `content` was
- * reserved and held neither, so the gap is in what would be noticed later
- * rather than in what shipped.
+ * of accounts. Every deployment is checked for both before a root is
+ * reserved and none has held either, so the gap is in what would be noticed
+ * later rather than in what shipped.
  *
  * It is left as a gap deliberately. Widening this to accounts would make a
  * boot-time log the place a person first learns their handle was taken from

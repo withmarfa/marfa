@@ -261,7 +261,7 @@ describe("outbound webhooks", () => {
     expect(noEvents.status).toBe(400);
   });
 
-  it("refuses a key without space.webhooks", async () => {
+  it("refuses a key without webhooks.manage", async () => {
     const mine = await client.createWebhook({
       url: receiver.hookUrl("permission"),
       events: ["item.created"],
@@ -272,7 +272,7 @@ describe("outbound webhooks", () => {
     const keyResp = await client.createKey({
       label: "no-webhooks",
       source: `${ctx.source}-no-webhooks`,
-      space_permissions: [],
+      permissions: [],
       type_permissions: { "*": "write" },
     });
     expect(keyResp.ok).toBe(true);
@@ -288,10 +288,10 @@ describe("outbound webhooks", () => {
     });
     expect(create.status).toBe(403);
     expect(create.error?.error.code).toBe("forbidden");
-    expect(create.error?.error.details?.required_scope).toBe("space.webhooks");
+    expect(create.error?.error.details?.required_scope).toBe("webhooks.manage");
     const list = await narrowed.listWebhooks();
     expect(list.status).toBe(403);
-    expect(list.error?.error.details?.required_scope).toBe("space.webhooks");
+    expect(list.error?.error.details?.required_scope).toBe("webhooks.manage");
 
     // Against a subscription that exists and belongs to another credential,
     // so a 403 here is the permission gate rather than a miss the row-scoped
@@ -305,7 +305,7 @@ describe("outbound webhooks", () => {
       expect(refused.status).toBe(403);
       expect(refused.error?.error.code).toBe("forbidden");
       expect(refused.error?.error.details?.required_scope).toBe(
-        "space.webhooks",
+        "webhooks.manage",
       );
     }
 

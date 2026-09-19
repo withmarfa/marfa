@@ -1,6 +1,11 @@
 import { safeJsonParse } from "../json-utils.js";
 import { and, count, eq, gt, isNotNull, isNull, lt, or } from "drizzle-orm";
-import { generateId, MarfaError, ErrorCode } from "@withmarfa/shared";
+import {
+  generateId,
+  MarfaError,
+  ErrorCode,
+  isSpacePermission,
+} from "@withmarfa/shared";
 import type {
   ApiKey,
   CreateKeyInput,
@@ -12,7 +17,6 @@ import type {
   ProfilePermission,
   Tier,
   TypePermission,
-  SpacePermission,
 } from "@withmarfa/shared";
 import type { KeyRevokeOutcome, KeyStore } from "../interface.js";
 import { apiKeys } from "./schema.js";
@@ -32,11 +36,17 @@ function mapRow(row: typeof apiKeys.$inferSelect): ApiKey {
     source: row.source,
     default_tier: row.default_tier as Tier,
     is_operator: row.is_operator,
-    space_permissions: safeJsonParse<SpacePermission[]>(
-      row.space_permissions,
+    // Narrowed to the literals this build knows, because the column is text
+    // and a stored value outside the set is not a permission — it grants
+    // nothing, and echoing it back would put a value off the route's own
+    // declared enum into a 200 nobody validates. The filter also stops a
+    // mint that names no permissions from copying such a value forward into
+    // the row it writes.
+    permissions: safeJsonParse<string[]>(
+      row.permissions,
       [],
-      "key space_permissions",
-    ),
+      "key permissions",
+    ).filter(isSpacePermission),
     oauth_client_id: row.oauth_client_id ?? undefined,
     type_permissions: safeJsonParse<Record<string, TypePermission>>(
       row.type_permissions,
@@ -115,7 +125,7 @@ export class SqliteKeyStore implements KeyStore {
       source: input.source,
       default_tier: input.default_tier ?? "library",
       is_operator: input.is_operator ?? false,
-      space_permissions: JSON.stringify(input.space_permissions ?? []),
+      permissions: JSON.stringify(input.permissions ?? []),
       oauth_client_id: input.oauth_client_id ?? null,
       type_permissions: JSON.stringify(input.type_permissions ?? {}),
       extension_permissions: JSON.stringify(input.extension_permissions ?? {}),
@@ -135,7 +145,7 @@ export class SqliteKeyStore implements KeyStore {
       source: row.source,
       default_tier: row.default_tier,
       is_operator: row.is_operator,
-      space_permissions: input.space_permissions ?? [],
+      permissions: input.permissions ?? [],
       oauth_client_id: input.oauth_client_id,
       type_permissions: input.type_permissions ?? {},
       extension_permissions: input.extension_permissions ?? {},
@@ -194,8 +204,8 @@ export class SqliteKeyStore implements KeyStore {
     // `UpdateKeyInput` and silently dropped here, so a caller narrowing a key
     // through the SDK got a 200 and no change on exactly the two axes the
     // model is about.
-    if (input.space_permissions !== undefined)
-      patch.space_permissions = JSON.stringify(input.space_permissions);
+    if (input.permissions !== undefined)
+      patch.permissions = JSON.stringify(input.permissions);
     if (input.profile_permissions !== undefined)
       patch.profile_permissions = JSON.stringify(input.profile_permissions);
     // `null` clears the override; an object replaces it whole.

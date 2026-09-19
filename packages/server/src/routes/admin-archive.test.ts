@@ -224,7 +224,7 @@ describe("POST /admin/restore-archive", () => {
       {
         label: "restore-member",
         source: `restore-member-${rawKey.slice(-6)}`,
-        space_permissions: [...SPACE_PERMISSIONS],
+        permissions: [...SPACE_PERMISSIONS],
         type_permissions: { "*": "write" },
         is_operator: false,
       },
