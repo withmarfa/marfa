@@ -8,7 +8,7 @@ Where the server contradicts its own OpenAPI document, where its document descri
 
 The document declares `openapi: "3.1.0"` and marks nullable positions with `nullable: true`, a 3.0 keyword that a 2020-12 schema reader ignores. Where a position also carries a type, a strict reader rejects the `null` the server sends. The suite's validator widens every such position to a null-admitting type before checking a body, which is the one place it reads the document more charitably than written. Shown by every fixture that calls `expectMatchesSchema`, for example `compliance/key-management.test.ts › lists keys and includes a newly created key`, where `POST /keys` declares `last_used_at` as `{ type: string, nullable: true }` and sends `null`.
 
-## 2. `POST /admin/platform-types/{id}/remove`: 409 where the document declares 404
+## 2. `DELETE /admin/platform-types/{id}`: 409 where the document declares 404
 
 The document declares 404 for an identifier no platform row carries. The server answers 409 `conflict` with the same refusal it gives a type the build still ships. `compliance/platform-types.test.ts › answers 409 for an identifier no platform row carries`.
 

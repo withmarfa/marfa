@@ -76,6 +76,12 @@ interface OpenAPIDoc {
  * ships no alias to bridge either. So there is one break, named here,
  * instead of one break and a header still saying the old word.
  *
+ * It moved to 5.6.0 for the one door that spelled its verb in its path:
+ * removing a platform type was `POST /admin/platform-types/{id}/remove` and
+ * is `DELETE /admin/platform-types/{id}`. Method and path move together on
+ * one operation, which is one break; the old path is gone rather than
+ * redirected, so a caller still on it gets `404`.
+ *
  * **One change, one number**, even where it carries several breaks. The
  * version records that the contract moved and what a caller may have been
  * reading; a second increment inside one change would say the contract moved
@@ -88,7 +94,7 @@ interface OpenAPIDoc {
  */
 export const OPENAPI_DOCUMENT_INFO = {
   title: "Marfa API",
-  version: "5.5.0",
+  version: "5.6.0",
   description: "Typed data layer for structured personal data",
 } as const;
 

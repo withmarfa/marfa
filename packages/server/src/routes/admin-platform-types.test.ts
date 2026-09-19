@@ -93,15 +93,51 @@ describe("GET /admin/platform-types/drift", () => {
   });
 });
 
-describe("POST /admin/platform-types/{id}/remove", () => {
+describe("DELETE /admin/platform-types/{id}", () => {
   it("refuses an unauthenticated caller", async () => {
     const ctx = await newContext();
     const res = await request(
       ctx.app,
-      "POST",
-      "/admin/platform-types/core.anything/remove",
+      "DELETE",
+      "/admin/platform-types/core.anything",
     );
     expect(res.status).toBe(401);
+  });
+
+  it("binds `drift` as an identifier rather than reaching the listing", async () => {
+    // The two doors share a prefix now that this one names no verb of its
+    // own, so the listing's own path is a well-formed `{id}` under DELETE.
+    // It binds the literal, and `drift` is not an identifier the build has
+    // stopped shipping, so it is refused like any other — the sibling
+    // cannot be addressed as something to remove. The listing keeps
+    // answering its own verb.
+    const ctx = await newContext();
+    const id = await seedDriftedType(ctx);
+
+    const res = await request(
+      ctx.app,
+      "DELETE",
+      "/admin/platform-types/drift",
+      { key: ctx.operatorKey },
+    );
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("conflict");
+
+    const listed = await request(
+      ctx.app,
+      "GET",
+      "/admin/platform-types/drift",
+      {
+        key: ctx.operatorKey,
+      },
+    );
+    expect(listed.status).toBe(200);
+    // The seeded row is the witness. An empty listing would satisfy the
+    // status on its own, so the assertion below is what shows the GET was
+    // still reaching its own handler rather than answering vacuously.
+    const seen = (await listed.json()) as { types: { id: string }[] };
+    expect(seen.types.map((t) => t.id)).toEqual([id]);
   });
 
   it("removes a drifted row", async () => {
@@ -110,8 +146,8 @@ describe("POST /admin/platform-types/{id}/remove", () => {
 
     const res = await request(
       ctx.app,
-      "POST",
-      `/admin/platform-types/${id}/remove`,
+      "DELETE",
+      `/admin/platform-types/${id}`,
       { key: ctx.operatorKey },
     );
     expect(res.status).toBe(200);
@@ -140,8 +176,8 @@ describe("POST /admin/platform-types/{id}/remove", () => {
 
     const removed = await request(
       ctx.app,
-      "POST",
-      `/admin/platform-types/${id}/remove`,
+      "DELETE",
+      `/admin/platform-types/${id}`,
       { key: ctx.operatorKey },
     );
     expect(removed.status).toBe(200);
@@ -168,8 +204,8 @@ describe("POST /admin/platform-types/{id}/remove", () => {
 
     const res = await request(
       ctx.app,
-      "POST",
-      "/admin/platform-types/core.note/remove",
+      "DELETE",
+      "/admin/platform-types/core.note",
       { key: ctx.operatorKey },
     );
     expect(res.status).toBe(409);
@@ -202,8 +238,8 @@ describe("POST /admin/platform-types/{id}/remove", () => {
 
     const res = await request(
       ctx.app,
-      "POST",
-      `/admin/platform-types/${parent}/remove`,
+      "DELETE",
+      `/admin/platform-types/${parent}`,
       { key: ctx.operatorKey },
     );
     expect(res.status).toBe(409);
@@ -251,8 +287,8 @@ describe("POST /admin/platform-types/{id}/remove", () => {
 
     const res = await request(
       ctx.app,
-      "POST",
-      `/admin/platform-types/${id}/remove`,
+      "DELETE",
+      `/admin/platform-types/${id}`,
       { key: ctx.operatorKey },
     );
     expect(res.status).toBe(409);

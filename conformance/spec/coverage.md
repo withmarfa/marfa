@@ -123,12 +123,12 @@ Fixture paths are under `src/suites/`.
 
 ## Operator maintenance
 
-| Operation                                | Status        | Fixture                                                                   | Notes                                                                                                |
-| ---------------------------------------- | ------------- | ------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| `POST /admin/restore-archive`            | unpublished   | `compliance/admin-archive.test.ts`, `compliance/export-roundtrip.test.ts` | Operator key only.                                                                                   |
-| `GET /metrics`                           | unpublished   | `compliance/instance.test.ts`                                             | Operator key only. Stripped from the document as internal, so the fixture is what holds its shape.   |
-| `GET /admin/platform-types/drift`        | covered       | `compliance/platform-types.test.ts`                                       |                                                                                                      |
-| `POST /admin/platform-types/{id}/remove` | refusals only | `compliance/platform-types.test.ts`                                       | A drifted row cannot be created over the wire; shipped and unknown identifiers are refused with 409. |
+| Operation                           | Status        | Fixture                                                                   | Notes                                                                                                |
+| ----------------------------------- | ------------- | ------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `POST /admin/restore-archive`       | unpublished   | `compliance/admin-archive.test.ts`, `compliance/export-roundtrip.test.ts` | Operator key only.                                                                                   |
+| `GET /metrics`                      | unpublished   | `compliance/instance.test.ts`                                             | Operator key only. Stripped from the document as internal, so the fixture is what holds its shape.   |
+| `GET /admin/platform-types/drift`   | covered       | `compliance/platform-types.test.ts`                                       |                                                                                                      |
+| `DELETE /admin/platform-types/{id}` | refusals only | `compliance/platform-types.test.ts`                                       | A drifted row cannot be created over the wire; shipped and unknown identifiers are refused with 409. |
 
 ## Served but unpublished
 
