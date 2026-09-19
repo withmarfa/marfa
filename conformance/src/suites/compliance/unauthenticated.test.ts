@@ -110,7 +110,10 @@ function bodies(): Record<string, unknown> {
     "POST /edge-types": { id: "mock.sweep", cardinality: "many-to-many" },
     "POST /edges": { source_id: "x", target_id: "x", edge_type: "about" },
     "POST /items": { type: "core.note", properties: { body: "x" } },
-    "POST /webhooks": { url: "http://127.0.0.1:9/x", events: ["*"] },
+    "POST /webhooks": {
+      url: "http://127.0.0.1:9/x",
+      events: ["item.created"],
+    },
     "POST /keys": { label: "x", source: "x" },
     "POST /types": { id: "user.sweep", fields: {} },
   };

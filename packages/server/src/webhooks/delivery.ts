@@ -16,10 +16,12 @@ import {
 } from "../pubsub.js";
 import { log } from "../middleware/logger.js";
 
-/** Maps pubsub event types to webhook event names. Single entry point so
+/** Maps pubsub event types to webhook event types. Single entry point so
  *  the wire strings (item.*, metadata.changed, edge.*) stay consistent
- *  with SSE and the webhook VALID_EVENTS set. */
-function toWebhookEvent(type: ItemEvent["type"] | EdgeEvent["type"]): string {
+ *  with SSE and the `WEBHOOK_EVENTS` vocabulary. */
+function toWebhookEventType(
+  type: ItemEvent["type"] | EdgeEvent["type"],
+): string {
   return wireEventName(type);
 }
 
@@ -27,8 +29,8 @@ function toWebhookEvent(type: ItemEvent["type"] | EdgeEvent["type"]): string {
  * Stripe-style webhook signature. The HMAC is computed over
  * `<timestamp>.<rawBody>` (NOT the raw body alone), and the header
  * value embeds the timestamp so the receiver can re-derive the signed
- * string and enforce a replay window. Matches the documented contract
- * in docs/api/webhooks.mdx. Header format: `t=<unix>,v1=<hex-sha256>`.
+ * string and enforce a replay window. Header format:
+ * `t=<unix>,v1=<hex-sha256>`.
  *
  * Returns the full header value. Callers set it as `X-Marfa-Signature`.
  */
@@ -70,9 +72,9 @@ const DIRECT_DISPATCH_TIMEOUT_MS = 5_000;
  * eligibility window. Set generously so a single instance's full HTTP
  * attempt (≤ 10s poller timeout) finishes and writes its outcome before
  * the row becomes visible again; short enough that a crashed worker
- * doesn't stall a delivery indefinitely. Single source of truth — both
- * store implementations import this value from here so the poller and
- * the direct-dispatcher can never disagree on the reclaim deadline.
+ * doesn't stall a delivery indefinitely. Single source of truth — the
+ * store imports this value from here so the poller and the
+ * direct-dispatcher can never disagree on the reclaim deadline.
  */
 export const CLAIM_LOCK_TTL_MS = 60_000;
 
@@ -135,7 +137,7 @@ export async function deliverWebhookAttempt(
       headers: {
         "Content-Type": "application/json",
         "X-Marfa-Signature": signature,
-        "X-Marfa-Event": delivery.event,
+        "X-Marfa-Event-Type": delivery.event_type,
       },
       body: delivery.payload,
       signal: controller.signal,
@@ -148,7 +150,7 @@ export async function deliverWebhookAttempt(
       log("info", "Webhook delivered", {
         delivery_id: delivery.id,
         webhook_id: delivery.webhook_id,
-        event: delivery.event,
+        event_type: delivery.event_type,
         status: response.status,
         attempt: nextAttempt,
         direct,
@@ -165,7 +167,7 @@ export async function deliverWebhookAttempt(
       log("error", "Webhook dead-lettered", {
         delivery_id: delivery.id,
         webhook_id: delivery.webhook_id,
-        event: delivery.event,
+        event_type: delivery.event_type,
         status: response.status,
         attempt: nextAttempt,
         direct,
@@ -217,7 +219,7 @@ async function scheduleDeliveryRetry(
     log("error", "Webhook max attempts reached", {
       delivery_id: delivery.id,
       webhook_id: delivery.webhook_id,
-      event: delivery.event,
+      event_type: delivery.event_type,
       status: statusCode ?? null,
       attempt,
       error: error ?? null,
@@ -238,7 +240,7 @@ async function scheduleDeliveryRetry(
   log("info", "Webhook retry scheduled", {
     delivery_id: delivery.id,
     webhook_id: delivery.webhook_id,
-    event: delivery.event,
+    event_type: delivery.event_type,
     status: statusCode ?? null,
     attempt,
     next_attempt_at: nextAttemptAt,
@@ -317,16 +319,16 @@ export class WebhookConsumer {
       return;
     }
 
-    const eventName = toWebhookEvent(event.type);
+    const eventType = toWebhookEventType(event.type);
     const matching = webhooks.filter((w) => {
-      if (!w.events.includes(eventName)) return false;
+      if (!w.events.includes(eventType)) return false;
       // Edge events don't carry an item type; any type_filter skips them.
       if (w.type_filter) return false;
       return true;
     });
     if (matching.length === 0) return;
     const payload = JSON.stringify({
-      event: eventName,
+      event_type: eventType,
       edge: event.edge,
       delivered_at: new Date().toISOString(),
     });
@@ -334,7 +336,7 @@ export class WebhookConsumer {
       matching.map((w) =>
         this.deliveryStore.schedule({
           webhookId: w.id,
-          event: eventName,
+          eventType,
           payload,
           webhookUrl: w.url,
           webhookSecret: w.secret,
@@ -358,11 +360,11 @@ export class WebhookConsumer {
       return;
     }
 
-    const eventName = toWebhookEvent(event.type);
+    const eventType = toWebhookEventType(event.type);
 
     const matching = webhooks.filter((w) => {
       // Must subscribe to this event type
-      if (!w.events.includes(eventName)) return false;
+      if (!w.events.includes(eventType)) return false;
       // Type filter — if the webhook has a type_filter, the item type must match
       if (
         w.type_filter &&
@@ -375,7 +377,7 @@ export class WebhookConsumer {
     if (matching.length === 0) return;
 
     const payload = JSON.stringify({
-      event: eventName,
+      event_type: eventType,
       item: event.item,
       metadata: event.metadata ?? null,
       delivered_at: new Date().toISOString(),
@@ -387,7 +389,7 @@ export class WebhookConsumer {
         this.deliveryStore
           .schedule({
             webhookId: w.id,
-            event: eventName,
+            eventType,
             payload,
             webhookUrl: w.url,
             webhookSecret: w.secret,
@@ -454,9 +456,6 @@ export class WebhookConsumer {
 // HTTP delivery with durable retry. Survives server restarts.
 // ---------------------------------------------------------------------------
 
-/** One cadence for both scheduling substrates: the timer below and the
- *  queue chain in index.ts must agree or the poller's effective rate
- *  depends on the dialect. */
 export const WEBHOOK_POLL_INTERVAL_MS = 30_000;
 
 export class WebhookPoller {
@@ -480,7 +479,7 @@ export class WebhookPoller {
     }
   }
 
-  /** One poll, for schedulers that own the cadence themselves. */
+  /** One poll on demand, so a caller need not wait out the interval. */
   runOnce(): Promise<void> {
     return this.poll();
   }

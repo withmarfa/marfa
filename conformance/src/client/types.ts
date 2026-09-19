@@ -469,7 +469,7 @@ export interface Webhook {
 export interface WebhookDelivery {
   id: string;
   webhook_id: string;
-  event: string;
+  event_type: string;
   status_code: number | null;
   attempt: number;
   succeeded: boolean;

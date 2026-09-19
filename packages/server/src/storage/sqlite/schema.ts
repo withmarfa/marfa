@@ -317,7 +317,7 @@ export const outboundWebhookDeliveries = sqliteTable(
   {
     id: text("id").primaryKey(),
     webhook_id: text("webhook_id").notNull(),
-    event: text("event").notNull(),
+    event_type: text("event_type").notNull(),
     status_code: integer("status_code"),
     attempt: integer("attempt").notNull(),
     succeeded: integer("succeeded").notNull().default(0),

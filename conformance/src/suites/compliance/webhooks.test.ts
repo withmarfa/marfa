@@ -80,13 +80,13 @@ describe("outbound webhooks", () => {
     const delivery = await receiver.waitFor(
       (r) => r.path === "/hook/signed" && r.body.includes(item.data.item.id),
     );
-    expect(delivery.headers["x-marfa-event"]).toBe("item.created");
+    expect(delivery.headers["x-marfa-event-type"]).toBe("item.created");
     expect(delivery.headers["content-type"]).toContain("application/json");
     const payload = JSON.parse(delivery.body) as {
-      event: string;
+      event_type: string;
       item: { id: string; type: string };
     };
-    expect(payload.event).toBe("item.created");
+    expect(payload.event_type).toBe("item.created");
     expect(payload.item.id).toBe(item.data.item.id);
     expect(payload.item.type).toBe("core.note");
 
@@ -101,7 +101,7 @@ describe("outbound webhooks", () => {
       deliveries.data,
     );
     const row = deliveries.data.deliveries.find(
-      (d) => d.event === "item.created",
+      (d) => d.event_type === "item.created",
     );
     expect(row).toBeDefined();
     expect(row?.succeeded).toBe(true);
@@ -109,18 +109,22 @@ describe("outbound webhooks", () => {
     expect(row?.attempt).toBe(1);
   });
 
-  it("accepts a wildcard subscription, which then matches nothing", async () => {
+  it("refuses a wildcard subscription while a named one on the same event is delivered", async () => {
+    // Asserting the refusal alone would pass on a server that had stopped
+    // delivering altogether, so the named subscription on the same event is
+    // here as the proof that dispatch still works with `*` gone.
     const wildcard = await client.createWebhook({
       url: receiver.hookUrl("wildcard"),
       events: ["*"],
     });
-    expect(wildcard.status).toBe(201);
-    trackWebhook(ctx, wildcard.data.id, client);
-    expect(wildcard.data.events).toEqual(["*"]);
+    expect(wildcard.status).toBe(400);
+    expect(wildcard.error?.error.code).toBe("validation_error");
+    // The entry's position rather than the body, because a caller editing a
+    // list of ten has to be told which one went.
+    const errors = wildcard.error?.error.details?.errors as
+      { path: string; message: string }[] | undefined;
+    expect(errors?.[0]?.path).toBe("events.0");
 
-    // The named subscription is the control. Both are evaluated in the one
-    // dispatch pass, so its delivery of this event is what makes the
-    // wildcard's silence a decision rather than a race.
     const named = await client.createWebhook({
       url: receiver.hookUrl("wildcard-control"),
       events: ["item.created"],
@@ -134,19 +138,60 @@ describe("outbound webhooks", () => {
     expect(item.ok).toBe(true);
     trackItem(ctx, item.data.item.id);
 
-    const control = await receiver.waitFor(
+    const delivered = await receiver.waitFor(
       (r) =>
         r.path === "/hook/wildcard-control" &&
         r.body.includes(item.data.item.id),
     );
-    expect(control.headers["x-marfa-event"]).toBe("item.created");
+    expect(delivered.headers["x-marfa-event-type"]).toBe("item.created");
+    expectSignedBy(delivered, named.data.secret);
 
+    // Nothing reached the URL the refused request named, which is what makes
+    // the refusal a refusal rather than a row written somewhere else.
     expect(
       receiver.received.filter((r) => r.path === "/hook/wildcard"),
     ).toEqual([]);
-    const rows = await client.listWebhookDeliveries(wildcard.data.id);
+
+    const rows = await client.listWebhookDeliveries(named.data.id);
     expect(rows.ok).toBe(true);
-    expect(rows.data.deliveries).toEqual([]);
+    expect(rows.data.deliveries.map((d) => d.event_type)).toEqual([
+      "item.created",
+    ]);
+    expect(rows.data.deliveries.every((d) => d.succeeded)).toBe(true);
+  });
+
+  it("refuses a wildcard on the update door, leaving the stored events alone", async () => {
+    // One vocabulary, two doors. `PATCH` rewrites the whole event list, so a
+    // door that still took `*` here would put back exactly the row the create
+    // door now refuses to write, and the refusal would be a property of one
+    // door rather than of the vocabulary.
+    const created = await client.createWebhook({
+      url: receiver.hookUrl("patch-wildcard"),
+      events: ["item.created"],
+    });
+    expect(created.status).toBe(201);
+    trackWebhook(ctx, created.data.id, client);
+
+    const refused = await client.updateWebhook(created.data.id, {
+      events: ["*"],
+    });
+    expect(refused.status).toBe(400);
+    expect(refused.error?.error.code).toBe("validation_error");
+
+    // Read back, because a door that answered 400 after writing would satisfy
+    // the status assertion alone.
+    const untouched = await client.getWebhook(created.data.id);
+    expect(untouched.ok).toBe(true);
+    expect(untouched.data.events).toEqual(["item.created"]);
+
+    // The control: the same door takes a named event in the same field, so
+    // the refusal above is the vocabulary rather than a door that had stopped
+    // accepting `events` at all.
+    const accepted = await client.updateWebhook(created.data.id, {
+      events: ["item.updated"],
+    });
+    expect(accepted.ok).toBe(true);
+    expect(accepted.data.events).toEqual(["item.updated"]);
   });
 
   it("does not deliver an event outside the subscription", async () => {
@@ -170,19 +215,21 @@ describe("outbound webhooks", () => {
     const sentinel = await receiver.waitFor(
       (r) =>
         r.path === "/hook/deleted-only" &&
-        r.headers["x-marfa-event"] === "item.deleted" &&
+        r.headers["x-marfa-event-type"] === "item.deleted" &&
         r.body.includes(item.data.item.id),
     );
     expect(sentinel).toBeDefined();
     const toThisHook = receiver.received.filter(
       (r) => r.path === "/hook/deleted-only",
     );
-    expect(toThisHook.map((r) => r.headers["x-marfa-event"])).toEqual([
+    expect(toThisHook.map((r) => r.headers["x-marfa-event-type"])).toEqual([
       "item.deleted",
     ]);
     const rows = await client.listWebhookDeliveries(created.data.id);
     expect(rows.ok).toBe(true);
-    expect(rows.data.deliveries.map((d) => d.event)).toEqual(["item.deleted"]);
+    expect(rows.data.deliveries.map((d) => d.event_type)).toEqual([
+      "item.deleted",
+    ]);
   });
 
   it("updates the url, events, type filter and active flag in place", async () => {
@@ -329,8 +376,12 @@ describe("outbound webhooks", () => {
     const anonymous = new MarfaClient({ baseUrl: apiUrl, apiKey: "" });
     expect((await anonymous.listWebhooks()).status).toBe(401);
     expect(
-      (await anonymous.createWebhook({ url: receiverUrl, events: ["*"] }))
-        .status,
+      (
+        await anonymous.createWebhook({
+          url: receiverUrl,
+          events: ["item.created"],
+        })
+      ).status,
     ).toBe(401);
   });
 });

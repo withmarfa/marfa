@@ -62,6 +62,20 @@ interface OpenAPIDoc {
  * exactly why they are named here: for them this note is the only record
  * there will ever be.
  *
+ * It moved to 5.5.0 for a webhook delivery's event, which is `event_type`
+ * where it was `event`, and for `*` leaving the subscribable vocabulary.
+ * Four caller-visible surfaces move, and only two are in this document: the
+ * `events` enum on `POST /webhooks` and `PATCH /webhooks/{id}`, where a name
+ * both doors used to accept now answers `400` on each, and the delivery row on
+ * `GET /webhooks/{id}/deliveries`. The other two are the delivery request
+ * itself, which no operation here describes — the JSON body's key, and the
+ * `X-Marfa-Event-Type` header that was `X-Marfa-Event`. The header moves
+ * with the field it carries rather than being held back for the receivers
+ * that route on it: its value is an event type, the same body those
+ * receivers parse renames the key in the same request, and this repository
+ * ships no alias to bridge either. So there is one break, named here,
+ * instead of one break and a header still saying the old word.
+ *
  * **One change, one number**, even where it carries several breaks. The
  * version records that the contract moved and what a caller may have been
  * reading; a second increment inside one change would say the contract moved
@@ -74,7 +88,7 @@ interface OpenAPIDoc {
  */
 export const OPENAPI_DOCUMENT_INFO = {
   title: "Marfa API",
-  version: "5.4.0",
+  version: "5.5.0",
   description: "Typed data layer for structured personal data",
 } as const;
 

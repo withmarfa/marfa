@@ -65,8 +65,10 @@ describe("the webhook event vocabulary is published", () => {
     const spec = await buildPublishedOpenAPISpec();
     const carried = eventsEnumAt(spec, "/webhooks", "post") as string[];
     expect(carried.length).toBeGreaterThan(1);
-    // The wildcard is a member and is easy to lose when a list is filtered
-    // for looking unlike the others.
-    expect(carried).toContain("*");
+    // Every published name is one dispatch can match. `*` was published and
+    // matched nothing, so a caller who read it off this enum registered a
+    // subscription that could never fire; it is named here so re-offering it
+    // has to be a decision rather than an edit to an array.
+    expect(carried).not.toContain("*");
   });
 });

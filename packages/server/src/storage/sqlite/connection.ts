@@ -92,6 +92,7 @@ const RENAMED_COLUMNS: readonly (readonly [string, string, string])[] = [
   ["api_keys", "permissions", "is_operator"],
   ["types", "owner_connector", "origin"],
   ["blobs", "size_bytes", "storage_path"],
+  ["outbound_webhook_deliveries", "event_type", "webhook_secret"],
 ];
 
 export type DrizzleDb = ReturnType<typeof drizzle<typeof schema>>;

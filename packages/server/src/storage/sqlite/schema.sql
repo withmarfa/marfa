@@ -400,7 +400,7 @@ CREATE TABLE IF NOT EXISTS `metadata` (
 CREATE TABLE IF NOT EXISTS `outbound_webhook_deliveries` (
 	`id` text PRIMARY KEY NOT NULL,
 	`webhook_id` text NOT NULL,
-	`event` text NOT NULL,
+	`event_type` text NOT NULL,
 	`status_code` integer,
 	`attempt` integer NOT NULL,
 	`succeeded` integer DEFAULT 0 NOT NULL,
