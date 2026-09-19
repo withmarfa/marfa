@@ -336,22 +336,27 @@ describe("files and items", () => {
     put(
       harness,
       "note.md",
-      "---\nzebra: last in the alphabet\napple: first\ntitle: Ordered\n---\nbody\n",
+      "---\nzebra: last in the alphabet\napple: first\nmango: in between\ntitle: Ordered\n---\nbody\n",
     );
     expect((await harness.folder.push()).ok).toBe(true);
 
+    // The file's own fields, and only those. A field the type declares is
+    // ordered by the type: a real server answers `body` and `title` first
+    // whatever order they were sent in, so asserting where `title` lands
+    // would be asserting something only the scripted server does.
+    const own = ["zebra", "apple", "mango"];
     const written = read(harness, "note.md");
-    const fields = [...written.matchAll(/^([a-z_]+):/gm)].map(
-      (found) => found[1],
-    );
+    const fields = [...written.matchAll(/^([a-z_]+):/gm)]
+      .map((found) => found[1])
+      .filter((field) => own.includes(field));
     expect(
       fields.length,
-      "no frontmatter was found at all, so the assertion below is about an empty list",
-    ).toBeGreaterThan(3);
+      "none of the file's own fields came back at all, so the assertion below is about an empty list",
+    ).toBe(own.length);
     expect(
-      fields.filter((field) => field !== "marfa_id"),
+      fields,
       "the folder rewrote the person's frontmatter in an order nobody asked for, which is a change to their file on the first pull and one no scan can tell from a change they made",
-    ).toEqual(["zebra", "apple", "title"]);
+    ).toEqual(own);
   });
 
   it("treats a body opening with a horizontal rule as a body", async () => {
