@@ -168,7 +168,7 @@ const setExtensionRoute = createRoute({
   tags: ["Extensions"],
   summary: "Replace an extension namespace",
   description:
-    "Replaces the JSON payload for one extension namespace on the item, requiring `write` on that namespace. The body is capped at 100KB; reserved namespaces such as `connection.runtime` carry additional write constraints. A successful write publishes `metadata.changed` carrying the item and its whole metadata row, so realtime subscribers and webhooks hear it as they do a tag change. Namespaces under the reserved `connection.` root are the exception and stay silent: they carry per-Connection runtime state written on the machine's behalf.",
+    "Replaces the JSON payload for one extension namespace on the item, requiring `write` on that namespace. The body is capped at 100KB, and the reserved namespaces `core`, `marfa` and `system` are refused to every credential. A successful write publishes `metadata.changed` carrying the item and its whole metadata row, so realtime subscribers and webhooks hear it as they do a tag change. No namespace is exempt from the announcement.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({
@@ -238,7 +238,7 @@ const deleteExtensionRoute = createRoute({
   tags: ["Extensions"],
   summary: "Delete an extension namespace",
   description:
-    "Removes one extension namespace from the item, requiring `write` on that namespace. Idempotent — deleting a namespace that doesn't exist returns 200 with the unchanged extensions response. Every call publishes `metadata.changed` carrying the item and its whole metadata row, including one that removes nothing, exactly as a tag write that changes nothing still publishes. Namespaces under the reserved `connection.` root stay silent.",
+    "Removes one extension namespace from the item, requiring `write` on that namespace. Idempotent — deleting a namespace that doesn't exist returns 200 with the unchanged extensions response. Every call publishes `metadata.changed` carrying the item and its whole metadata row, including one that removes nothing, exactly as a tag write that changes nothing still publishes. No namespace is exempt from the announcement.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({

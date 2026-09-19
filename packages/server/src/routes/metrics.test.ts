@@ -81,12 +81,12 @@ describe("GET /metrics", () => {
     expect(body.items.total).toBe(sum);
   });
 
-  it("omits scheduled_jobs where there is no queue substrate", async () => {
+  it("omits scheduled_jobs where there is no job queue", async () => {
     // Nothing installs a reporter in a test context, which is the shape of
     // a deployment with no queue: SQLite runs the same jobs on in-process
     // timers and writes no equivalent record. The section has to be absent
     // rather than a list of jobs that have never ticked, so its absence
-    // reads as "no queue substrate" instead of "nothing ran".
+    // reads as "no job queue" instead of "nothing ran".
     const res = await request(ctx.app, "GET", "/metrics", {
       key: ctx.operatorKey,
     });

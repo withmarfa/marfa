@@ -1,7 +1,11 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { MarfaClient } from "../../client/api.js";
 import type { TestContext } from "../../client/types.js";
-import { createTestContext, cleanup } from "../../utils/setup.js";
+import {
+  createTestContext,
+  cleanup,
+  getOperatorClient,
+} from "../../utils/setup.js";
 import { publishedOperations } from "../../utils/openapi.js";
 import { coverageRows } from "../../utils/coverage-table.js";
 
@@ -35,8 +39,9 @@ describe("the instance", () => {
     expect(r.ok).toBe(true);
     expect(r.data.name).toBe("marfa");
     expect(typeof r.data.version).toBe("string");
-    // The whole array, not a subset: `findings.md` 6 is about a feature the
-    // root advertises and does not serve, which a subset could never catch.
+    // The whole array, not a subset: the root once advertised a feature it
+    // did not serve, and a subset could never catch an entry that should
+    // not be there.
     expect([...(r.data.features as string[])].sort()).toEqual(
       [
         "admin_archive",
@@ -47,7 +52,6 @@ describe("the instance", () => {
         "events",
         "export",
         "extensions",
-        "inbound-webhooks",
         "items",
         "keys",
         "metrics",
@@ -60,18 +64,38 @@ describe("the instance", () => {
     );
   });
 
-  it("advertises inbound-webhooks at the root while serving no inbound door", async () => {
-    // Recorded in spec/findings.md: the feature list is the one claim at the
-    // root no other fixture checks, so the contradiction is asserted here.
+  it("advertises no inbound webhook feature, and serves no inbound door", async () => {
+    // The root named `inbound-webhooks` after the door left with the
+    // connector runtime. Both halves are asserted, because re-adding the
+    // advertisement and re-adding the door are separate regressions and
+    // either alone puts the root back into contradiction.
     const r = await client.root();
     expect(r.ok).toBe(true);
-    expect(r.data.features).toContain("inbound-webhooks");
+    expect(r.data.features).not.toContain("inbound-webhooks");
     const door = await client.rawRequest(
       "/webhooks/inbound/00000000-0000-7000-8000-000000000000",
       { method: "POST", body: {} },
     );
     expect(door.status).toBe(404);
     expect(door.error?.error.code).toBe("not_found");
+  });
+
+  it("names every advertised feature in one convention", async () => {
+    // The hyphen in `inbound-webhooks` was the only one in the array, so
+    // nothing distinguished a second convention from a typo. Pinning the
+    // spelling is what stops the next multi-word entry arriving in the
+    // spelling of the entry that was wrong.
+    //
+    // Digits are inside the convention, not outside it. The first pattern
+    // here was `^[a-z]+(_[a-z]+)*$`, which would have reddened on `oauth2`
+    // or `s3` — names that break no rule this asserts — and the fixture
+    // would have been read as the authority rather than the typo.
+    const r = await client.root();
+    expect(r.ok).toBe(true);
+    const odd = (r.data.features as string[]).filter(
+      (name) => !/^[a-z][a-z0-9]*(_[a-z0-9]+)*$/.test(name),
+    );
+    expect(odd).toEqual([]);
   });
 
   it("serves its OpenAPI document, with and without a credential", async () => {
@@ -86,12 +110,88 @@ describe("the instance", () => {
     expect(doc).toEqual(r.data);
   });
 
+  it("declares no tag that no operation carries, and no operation without one", async () => {
+    // A tag is a heading in the published reference. One with nothing under
+    // it describes a surface the document says exists, and the two that were
+    // here outlived the operations they grouped.
+    //
+    // Three arms, and the third is the one the first two could never reach.
+    // `carried` is built from `op.tags ?? []`, so an operation carrying no
+    // tag at all contributes nothing to it and sails through both of the
+    // others — which is exactly what the two `/admin/platform-types`
+    // operations did, filed under no heading and absent from the reference's
+    // structure entirely. An untagged operation is asserted directly.
+    const doc = (await client.openApiDocument()).data as unknown as {
+      tags: { name: string }[];
+      paths: Record<string, Record<string, { tags?: string[] }>>;
+    };
+    const methodNames = ["get", "post", "put", "patch", "delete"];
+    const carried = new Set<string>();
+    const untagged: string[] = [];
+    for (const [path, methods] of Object.entries(doc.paths)) {
+      for (const [method, op] of Object.entries(methods)) {
+        if (!methodNames.includes(method)) continue;
+        const tags = op.tags ?? [];
+        if (tags.length === 0) untagged.push(`${method.toUpperCase()} ${path}`);
+        for (const tag of tags) carried.add(tag);
+      }
+    }
+    const declared = doc.tags.map((tag) => tag.name);
+    expect(declared.filter((name) => !carried.has(name))).toEqual([]);
+    expect([...carried].filter((name) => !declared.includes(name))).toEqual([]);
+    expect(untagged).toEqual([]);
+  });
+
   it("answers 404 not_found in the standard envelope for a path it does not serve", async () => {
     const r = await client.rawRequest("/no-such-door");
     expect(r.status).toBe(404);
     expect(r.error?.error.code).toBe("not_found");
     expect(typeof r.error?.error.message).toBe("string");
     expect(r.error?.error).not.toHaveProperty("status");
+  });
+
+  it("reports its instance-wide counters to the operator key, unpublished", async () => {
+    // `GET /metrics` is served and deliberately absent from the document
+    // (`INTERNAL_OPERATION_IDS`), so nothing in the published reference
+    // describes its body and `expectMatchesSchema` has nothing to check it
+    // against. A key inside it was renamed twice with nothing anywhere going
+    // red. The shape is asserted here instead, and `coverage.md` carries the
+    // unpublished row that records the absence as a decision.
+    const operator = getOperatorClient();
+    const r = await operator.rawRequest<{
+      items: { total: number; by_state: Record<string, number> };
+      blobs: { count: number; total_bytes: number };
+      types: { core: number; connector: number; registered: number };
+      keys: { total: number };
+      webhooks: { total: number };
+      uptime_seconds: number;
+      cached_at: string;
+    }>("/metrics");
+    expect(r.status).toBe(200);
+    expect(Object.keys(r.data).sort()).toEqual(
+      [
+        "blobs",
+        "cached_at",
+        "items",
+        "keys",
+        "types",
+        "uptime_seconds",
+        "webhooks",
+      ].sort(),
+    );
+    expect(Object.keys(r.data.types).sort()).toEqual(
+      ["connector", "core", "registered"].sort(),
+    );
+    expect(Object.keys(r.data.items).sort()).toEqual(["by_state", "total"]);
+    expect(Object.keys(r.data.blobs).sort()).toEqual(["count", "total_bytes"]);
+    expect(typeof r.data.types.registered).toBe("number");
+    expect(typeof r.data.uptime_seconds).toBe("number");
+    expect(typeof r.data.cached_at).toBe("string");
+
+    // Operator only, which is why no working credential covers it.
+    const refused = await client.rawRequest("/metrics");
+    expect(refused.status).toBe(403);
+    expect(refused.error?.error.code).toBe("forbidden");
   });
 
   it("publishes exactly the operations the coverage table knows", async () => {

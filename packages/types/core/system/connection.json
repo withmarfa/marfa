@@ -1,7 +1,7 @@
 {
   "id": "system.connection",
   "label": "Connection",
-  "description": "An approved relationship between this instance and something outside it. `kind` discriminates between variants: `app` (an OAuth client this user has authorized) and `connector` (anything installed from a manifest, whatever its upstream \u2014 a vendor service, a protocol, Marfa's own infrastructure, or nothing at all). Lifecycle bounded to active | revoked. Has no tier. The connector kind also carries a `runtime_status` distinct from the lifecycle `status`; runtime_status is server-stamped only.",
+  "description": "An approved relationship between this instance and something outside it. `kind` discriminates between variants: `app` (an OAuth client this user has authorized) and `connector` (anything installed from a manifest, whatever its upstream \u2014 a vendor service, a protocol, Marfa's own infrastructure, or nothing at all). Lifecycle bounded to active | revoked. Has no tier. The connector kind also carries a `runtime_status` distinct from the lifecycle `status`. Eight connector fields are declared here and written by nothing in this build \u2014 `runtime_status`, `last_sync_at`, `next_run_at`, `last_error_at`, `attached_device`, `feed_activity`, `triggers` and `mapping_reapply_until`. No door accepts them and no server path stamps them, so a reader will never meet one populated: they are the connector runtime's vocabulary, fixed ahead of the machinery rather than invented alongside it. The list is stated rather than left to be inferred, because a field nobody can observe is otherwise indistinguishable from one the server forgot to fill.",
   "version": 4,
   "fields": {
     "kind": {
@@ -87,7 +87,7 @@
     },
     "feed_activity": {
       "type": "boolean",
-      "description": "For kind: connector \u2014 when true, system.activity items emitted by this connector are server-stamped tier:'feed' (otherwise tier is omitted, as for all other system.* writes)"
+      "description": "For kind: connector \u2014 where per-connection feed eligibility for the connector's system.activity items will be declared. Nothing reads it in this build, and no server path stamps a tier from it"
     },
     "mapping": {
       "type": "object",

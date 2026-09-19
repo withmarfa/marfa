@@ -62,8 +62,15 @@ const exportRoute = createRoute({
         .describe(
           "Include only items whose own time — `occurred_at`, falling back to `created_at` — is strictly before this.",
         ),
+      // Enforced, not merely documented. `z.string()` took `?format=bogus`,
+      // answered 200 with NDJSON and recorded `format: "bogus"` in the audit
+      // row, while the description offered a two-value enumeration a reader
+      // takes as closed. The reasoning is the one `refuseUnknownQueryParams`
+      // is given twelve lines below: a caller who asked for an archive and
+      // was handed a stream, or asked for anything and was handed the
+      // default, believes the file is something it is not.
       format: z
-        .string()
+        .enum(["ndjson", "archive"])
         .optional()
         .describe("Output format: `ndjson` (default) or `archive`"),
     }),

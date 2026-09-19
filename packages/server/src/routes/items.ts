@@ -316,11 +316,7 @@ const createItemRoute = createRoute({
           schema: z.union([
             ConflictResponseSchema,
             AncestorUnavailableSchema,
-            makeErrorResponseSchema([
-              "conflict",
-              "type_mismatch",
-              "provenance_collision",
-            ]),
+            makeErrorResponseSchema(["conflict", "type_mismatch"]),
           ]),
         },
       },
@@ -803,6 +799,23 @@ const updateItemRoute = createRoute({
       },
       description: "Unauthorized",
     },
+    // `connector_owned` was reachable here and declared by no operation in
+    // the document at all. A caller can arrange it: `POST
+    // /admin/restore-archive` writes `item.source` through verbatim, so an
+    // archive carrying the connector prefix mints a row this door then
+    // refuses.
+    403: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema([
+            "type_not_permitted",
+            "connector_owned",
+          ]),
+        },
+      },
+      description:
+        "`type_not_permitted`: the credential does not hold write on the item's type. `connector_owned`: the row is a connector's copy of an external record, which only the owning connector writes — promote it first and edit your own copy.",
+    },
     404: {
       content: {
         "application/json": {
@@ -824,7 +837,6 @@ const updateItemRoute = createRoute({
               "version_conflict",
               "source_id_conflict",
               "type_mismatch",
-              "provenance_collision",
             ]),
           ]),
         },
@@ -870,15 +882,6 @@ const deleteItemRoute = createRoute({
         },
       },
       description: "Unauthorized",
-    },
-    409: {
-      content: {
-        "application/json": {
-          schema: makeErrorResponseSchema(["provenance_collision"]),
-        },
-      },
-      description:
-        "A connector may only destroy what it wrote. The row's recorded writer is another connection that is still installed, so the gesture is refused; the response names the owning connection. A row whose writer has been uninstalled is not refused.",
     },
   },
 });
@@ -3016,8 +3019,8 @@ export function itemRoutes(storage: Storage) {
     //
     // Purging is soft-delete-then-purge, so a caller meets `DELETE
     // /items/{id}` first. For a reserved-namespace row every credential is
-    // refused there, by name: "only the operator key may write system.*
-    // items". The row therefore never reaches its soft-deleted state, and
+    // refused there, by name: "no credential writes system.* items". The
+    // row therefore never reaches its soft-deleted state, and
     // this door would answer "Only revoked items can be purged", which is
     // true and reads as an ordering mistake the caller did not make.
     // Somebody following it goes looking for a step they never skipped.

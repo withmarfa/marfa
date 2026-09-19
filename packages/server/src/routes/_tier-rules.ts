@@ -13,10 +13,11 @@ import { ErrorCode, MarfaError, hasBoundedLifecycle } from "@withmarfa/shared";
  * door would have created a fresh disagreement of exactly the kind being
  * closed. One rule, called from all of them.
  *
- * `system.activity` is not an exception to this. The server does stamp a
- * tier on it when the owning connection opts into feed surfacing, but that
- * is the server deciding, keyed off a per-connection toggle. A client
- * asking for one is still refused.
+ * `system.activity` is not an exception to this, and nothing else is
+ * either. The toggle that was to key a feed stamp on it,
+ * `system.connection.feed_activity`, is read by no server path in this
+ * build, so no `system.*` row is ever stamped `feed` and every door refuses
+ * a client that asks for one.
  *
  * **Which types this applies to is `hasBoundedLifecycle`, not the seeded set
  * alone.** The set and the `system.` name test answer differently for a type

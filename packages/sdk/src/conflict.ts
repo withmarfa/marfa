@@ -112,7 +112,7 @@ function toConflictError(
  *
  * The route publishes three: a version conflict, an ancestor that cannot
  * be merged against, and an ordinary error envelope carrying
- * `source_id_conflict`, `type_mismatch` or `provenance_collision`. The
+ * `source_id_conflict` or `type_mismatch`. The
  * transport hands every `409` body back unchanged rather than throwing,
  * so deciding "not the first, not the second, therefore success" reads the
  * third as a resolved update and returns its absent `item` — a refusal

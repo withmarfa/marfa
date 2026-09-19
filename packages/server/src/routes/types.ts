@@ -137,7 +137,7 @@ const listTypesRoute = createRoute({
   tags: ["Types"],
   summary: "List types",
   description:
-    "Returns every registered type — the core type catalog plus any custom types registered via `POST /types`. Use as the schema manifest a type-aware client reads at startup.",
+    "Returns every type this instance resolves: the catalog this build ships, everything registered through `POST /types`, and any platform row an earlier build seeded that this one no longer ships. That third group is drift rather than vocabulary — a type retired by a rename survives on an instance upgraded across it, and keeps resolving and listing here until an operator retires the row. `GET /admin/platform-types/drift` names them and `POST /admin/platform-types/{id}/remove` removes one. Use as the schema manifest a type-aware client reads at startup.",
   security: [{ bearerAuth: [] }],
   responses: {
     200: {
@@ -166,7 +166,7 @@ const getTypeRoute = createRoute({
   tags: ["Types"],
   summary: "Get a type",
   description:
-    "Returns the full schema for a single type, resolving inheritance so the response reflects the effective fields and policies. Works for both core and locally registered custom types.\n\nA type whose stored inheritance chain cannot be resolved — circular, or deeper than any resolution walk follows — answers `409 type_chain_unresolvable` rather than a server fault. Correcting it through `PUT /types/{id}` still works, because that route reads the stored schema directly instead of resolving it.",
+    "Returns the full schema for a single type, resolving inheritance so the response reflects the effective fields and policies. Works for a platform-shipped type and one registered on this instance alike.\n\nA type whose stored inheritance chain cannot be resolved — circular, or deeper than any resolution walk follows — answers `409 type_chain_unresolvable` rather than a server fault. Correcting it through `PUT /types/{id}` still works, because that route reads the stored schema directly instead of resolving it.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({
@@ -214,9 +214,9 @@ const registerTypeRoute = createRoute({
   method: "post",
   path: "/",
   tags: ["Types"],
-  summary: "Register a custom type",
+  summary: "Register a type",
   description:
-    "Registers a custom type at runtime under the `app.*`, `user.*`, or `<publisher>.*` namespaces; reserved roots, ancestor-field redefinitions, and property names shadowing first-class `Item` fields all reject with `400`. Every credential needs the `metadata.types:write` scope, which is off by default. The operator key is no exception: this door reads the map like any other.",
+    "Registers a type at runtime under the `app.*`, `user.*`, or `<publisher>.*` namespaces; a reserved root rejects with `403 forbidden`, and ancestor-field redefinitions and property names shadowing first-class `Item` fields reject with `400`. Every credential needs the `metadata.types:write` scope, which is off by default. The operator key is no exception: this door reads the map like any other.",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -234,7 +234,7 @@ const registerTypeRoute = createRoute({
           schema: z.object({ type: TypeSchemaResponse }),
         },
       },
-      description: "Custom type registered",
+      description: "Type registered",
     },
     401: {
       content: {
@@ -269,9 +269,9 @@ const updateTypeRoute = createRoute({
   method: "put",
   path: "/{id}",
   tags: ["Types"],
-  summary: "Update a custom type",
+  summary: "Update a registered type",
   description:
-    "Replaces a custom type's schema, re-running the registration-time correctness rails. Requires `schema.write` — core types are immutable and return 403; the structural diff between versions sets the required version bump, and a mismatch rejects with `422 version_bump_mismatch`.",
+    "Replaces a registered type's schema, re-running the registration-time correctness rails. Requires `schema.write` — core types are immutable and return 403; the structural diff between versions sets the required version bump, and a mismatch rejects with `422 version_bump_mismatch`.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({
@@ -292,7 +292,7 @@ const updateTypeRoute = createRoute({
           schema: z.object({ type: TypeSchemaResponse }),
         },
       },
-      description: "Custom type updated",
+      description: "Type updated",
     },
     401: {
       content: {
@@ -301,6 +301,15 @@ const updateTypeRoute = createRoute({
         },
       },
       description: "Unauthorized",
+    },
+    403: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["forbidden", "core_type_immutable"]),
+        },
+      },
+      description:
+        "`forbidden`: the credential does not hold `schema.write`. `core_type_immutable`: the identifier names a platform-shipped type, which no credential may replace.",
     },
     404: {
       content: {
@@ -318,9 +327,9 @@ const deleteTypeRoute = createRoute({
   method: "delete",
   path: "/{id}",
   tags: ["Types"],
-  summary: "Delete a custom type",
+  summary: "Delete a registered type",
   description:
-    "Removes a custom type registration. Requires `schema.write` — platform-shipped types are immutable.\n\nRejected with `409 type_has_subtypes` while another registered type declares this one as its parent, naming them in `details.subtype_ids`. `?force=true` does not cover that case: delete each subtype first, or give it a different parent through `PUT /types/{id}`.\n\nRejected with `409 type_in_use` if any item of the type still exists, unless `?force=true` orphans those rows (they persist, but new writes against the type return `400 unknown_type`).",
+    "Removes a type registration. Requires `schema.write` — platform-shipped types are immutable.\n\nRejected with `409 type_has_subtypes` while another registered type declares this one as its parent, naming them in `details.subtype_ids`. `?force=true` does not cover that case: delete each subtype first, or give it a different parent through `PUT /types/{id}`.\n\nRejected with `409 type_in_use` if any item of the type still exists, unless `?force=true` orphans those rows (they persist, but new writes against the type return `400 unknown_type`).",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({
@@ -351,6 +360,15 @@ const deleteTypeRoute = createRoute({
         },
       },
       description: "Unauthorized",
+    },
+    403: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["forbidden", "core_type_immutable"]),
+        },
+      },
+      description:
+        "`forbidden`: the credential does not hold `schema.write`. `core_type_immutable`: the identifier names a platform-shipped type, which no credential may remove.",
     },
     404: {
       content: {

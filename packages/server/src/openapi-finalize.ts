@@ -45,20 +45,40 @@ interface OpenAPIDoc {
  * apart. What nothing checks is whether the number moved when the contract
  * did, and a judgment nobody verifies is one that gets skipped: this sat
  * still through several changes that moved paths, operation ids, wire fields
- * and an enum. It moves here because this change removes a published path,
- * which is the least arguable kind of contract change there is; a minor
- * rather than a major because the API is pre-release.
+ * and an enum. It moves whenever a caller could have branched on what left.
+ * It moved to 5.2.0 for a removed path, and to 5.3.0 for two things in one
+ * change. Three `409` responses left, along with the refusal code that went
+ * with them, so a client branching on that status at `DELETE /items/{id}`,
+ * `POST /items/{id}/restore` or `POST /items/{id}/transition` is reading for
+ * something the document no longer offers. And `GET /export`'s `format` was
+ * an open string under a description offering a closed pair, and is now the
+ * pair: every other value used to answer `200` with the default and now
+ * answers `400`, which narrows a generated client's parameter type with it.
+ *
+ * **One change, one number**, even where it carries several breaks. The
+ * version records that the contract moved and what a caller may have been
+ * reading; a second increment inside one change would say the contract moved
+ * twice, which is not what happened. The `403` that `PATCH /items/{id}`
+ * gained here is additive and would not have moved it at all. Minor rather
+ * than major because the API is pre-release.
  *
  * Lives here so the live `/openapi.json` endpoint and the committed spec read
  * one literal instead of keeping two in lockstep by hand.
  */
 export const OPENAPI_DOCUMENT_INFO = {
   title: "Marfa API",
-  version: "5.2.0",
+  version: "5.3.0",
   description: "Typed data layer for structured personal data",
 } as const;
 
-/** Ordered, described public tag list. Resources first; auth/realtime last. */
+/**
+ * Ordered, described public tag list. Resources first; auth/realtime last.
+ *
+ * Every name here must be carried by at least one published operation. A tag
+ * describing a surface no operation belongs to reads as a surface the server
+ * has and is withholding, which is the same defect as advertising a feature
+ * with no door behind it.
+ */
 const PUBLIC_TAGS = [
   {
     name: "Items",
@@ -88,7 +108,7 @@ const PUBLIC_TAGS = [
   {
     name: "Types",
     description:
-      "The type registry — core types plus app-registered custom types.",
+      "The type registry — the platform-shipped types plus the ones registered on this instance.",
   },
   {
     name: "Search",
@@ -101,17 +121,8 @@ const PUBLIC_TAGS = [
       "The instance configuration — the schema-enforcement levers and the cleanup-job retention overrides.",
   },
   {
-    name: "Connections",
-    description: "Installed connections and their lifecycle.",
-  },
-  {
     name: "Webhooks",
     description: "Outbound webhook subscriptions and their deliveries.",
-  },
-  {
-    name: "Credentials",
-    description:
-      "Connection credentials — static API tokens and OAuth providers.",
   },
   { name: "Export", description: "Bulk export of the instance's data." },
   { name: "Audit", description: "The instance's audit log." },

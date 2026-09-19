@@ -51,10 +51,14 @@ const listDriftRoute = createRoute({
   operationId: "adminListPlatformTypeDrift",
   method: "get",
   path: "/platform-types/drift",
+  // Filed under the type registry, which is what a drifted row is a row of.
+  // Both operations here published no tag at all, so they were the only two
+  // in the reference that belonged to no heading.
+  tags: ["Types"],
   summary: "Shipped types this instance carries that the build does not",
   security: [{ bearerAuth: [] }],
   description:
-    "Lists platform type rows this instance still carries that the running build no longer ships, each with how many items still carry the identifier. `/health` publishes the count of these as `platform_types`, a report that carries no status and never degrades the response; this is where the identifiers live, because that endpoint is unauthenticated. The count is read live rather than cached at boot: it is the part that changes without a restart, and a removal reasoning from a stale copy is the failure worth avoiding. Operator key only.",
+    "Lists platform type rows this instance still carries that the running build no longer ships, each with how many items still carry the identifier. A row here keeps resolving and keeps listing at `GET /types`, so a type a rename retired outlives the rename on every instance upgraded across it until somebody acts; `POST /admin/platform-types/{id}/remove` is that act, one row per call, and a row reporting `removable: true` is one it would accept today, unless this process has already removed it — the drifted set is derived once at boot, so a row removed since then is still listed here and the remove door answers `404` for it. `/health` publishes the count of these as `platform_types`, a report that carries no status and never degrades the response; this is where the identifiers live, because that endpoint is unauthenticated. The count is read live rather than cached at boot: it is the part that changes without a restart, and a removal reasoning from a stale copy is the failure worth avoiding. Operator key only.",
   responses: {
     200: {
       content: {
@@ -87,10 +91,11 @@ const removeDriftedTypeRoute = createRoute({
   operationId: "adminRemovePlatformType",
   method: "post",
   path: "/platform-types/{id}/remove",
+  tags: ["Types"],
   summary: "Remove one shipped type the build no longer carries",
   security: [{ bearerAuth: [] }],
   description:
-    "Removes exactly one platform type row this build does not ship. Refused with `409` when the identifier is one the build still ships, so this can never remove a live type; refused with `409` when items still carry it, because the row is what makes those items resolve, and orphaning readable data to tidy a registry is the wrong trade; and refused with `409` when another registered type inherits from it, naming them in `details.child_types`, because a parent supplies its children's fields. The item count is recomputed inside the request rather than read from the boot-time report. The type stops resolving on the next restart, since the in-memory registry is filled from the rows at boot. Operator key only.",
+    "Removes exactly one platform type row this build does not ship. Refused with `409` when the identifier is one the build still ships, so this can never remove a live type; refused with `409` when items still carry it, because the row is what makes those items resolve, and orphaning readable data to tidy a registry is the wrong trade; and refused with `409` when another registered type inherits from it, naming them in `details.child_types`, because a parent supplies its children's fields. The item count is recomputed inside the request rather than read from the boot-time report. The type stops resolving at once, on this process and not at the next restart: the row and the in-process registry entry go together. Operator key only.",
   request: {
     params: z.object({ id: z.string() }),
   },

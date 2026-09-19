@@ -153,6 +153,14 @@ export class SqliteTypeStore implements TypeStore {
       .delete(types)
       .where(and(eq(types.id, id), eq(types.origin, "platform")))
       .returning({ id: types.id });
+    // The row is only half of what makes a type resolve. The other half is
+    // the in-process registry, filled from the rows at boot, and `delete`
+    // above evicts it for exactly this reason. Leaving it here made the
+    // removal a promise rather than an act: `GET /types` kept listing the
+    // identifier, `GET /types/{id}` kept answering 200, and a write against
+    // it kept validating, all until somebody restarted the process — while
+    // the route that did the deleting reported success.
+    if (deleted.length > 0) unregisterTypeSchema(id);
     return deleted.length > 0;
   }
 

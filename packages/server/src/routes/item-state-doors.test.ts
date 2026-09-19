@@ -10,11 +10,12 @@
  * checked membership of the universal list and passed the value straight to the
  * store.
  *
- * The consequence was narrow and sharp. `trashed` is a valid state and is not
- * in the `system.*` lifecycle at all, so the operator key could create a
- * `system.connection` directly in `trashed` — a state no transition can produce
- * and none can leave — through the bulk door while the single door beside it
- * refused.
+ * The consequence is narrow and sharp. `trashed` is a valid state and is not
+ * in the `system.*` lifecycle at all, so a create naming it would put a
+ * `system.connection` in a state no transition can produce and none can leave,
+ * through the bulk door, while the single door beside it refused. No
+ * credential can reach that today, which is why the guard needs a test rather
+ * than a caller.
  *
  * **Two credential shapes, deliberately.** The doors are reachable by an
  * ordinary working credential for the types its maps admit, and by a

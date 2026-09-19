@@ -55,15 +55,6 @@ const restoreItemRoute = createRoute({
       },
       description: "Item not found",
     },
-    409: {
-      content: {
-        "application/json": {
-          schema: makeErrorResponseSchema(["provenance_collision"]),
-        },
-      },
-      description:
-        "A connector may only destroy what it wrote. The row's recorded writer is another connection that is still installed, so the gesture is refused; the response names the owning connection. A row whose writer has been uninstalled is not refused.",
-    },
   },
 });
 
@@ -123,15 +114,6 @@ const transitionItemRoute = createRoute({
         },
       },
       description: "Item not found",
-    },
-    409: {
-      content: {
-        "application/json": {
-          schema: makeErrorResponseSchema(["provenance_collision"]),
-        },
-      },
-      description:
-        "A connector may only destroy what it wrote. The row's recorded writer is another connection that is still installed, so the gesture is refused; the response names the owning connection. A row whose writer has been uninstalled is not refused.",
     },
   },
 });

@@ -976,6 +976,11 @@ export interface TypeStore {
    * No guard of its own: whether removal is safe is a question about
    * items, which this layer cannot see. The caller decides and this
    * performs.
+   *
+   * **Evicts the in-process registry entry too, as `delete` does.** The row
+   * and the registry are both what makes a type resolve, so removing one
+   * without the other leaves the identifier answering every read until the
+   * next restart, with the route that removed it reporting success.
    */
   deletePlatformType(id: string): Promise<boolean>;
   countRegistered(): Promise<number>;

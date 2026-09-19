@@ -309,8 +309,8 @@ describe("a 409 the update path does not resolve", () => {
   it("refuses rather than resolving with no item", async () => {
     // `PATCH /items/{id}` publishes three `409` shapes: a version
     // conflict, an ancestor that cannot be merged against, and an
-    // ordinary error envelope carrying `source_id_conflict`,
-    // `type_mismatch` or `provenance_collision`.
+    // ordinary error envelope carrying `source_id_conflict` or
+    // `type_mismatch`.
     //
     // The transport hands every `409` body back unchanged rather than
     // throwing, so reading "not the first, not the second, therefore

@@ -254,48 +254,26 @@ describe("a retired registry table is refused on open", () => {
     await opened.close();
   });
 
-  it("refuses rows stamped with the retired provenance prefix", async () => {
-    // The one refusal in this file guarding a security property rather than a
-    // readable database. Mirror protection is decided by the prefix on
-    // `items.source`, so a row an earlier build stamped `integration:` reads
-    // as a connector's copy and — before the gate learned both spellings —
-    // was writable by any credential.
+  it("opens a database carrying the retired provenance prefix", async () => {
+    // Deliberately not refused, and the reason is worth the test.
+    //
+    // A refusal keyed on this prefix stood here briefly. It was reachable
+    // through the API: `POST /keys` accepts a caller-chosen `source`, so one
+    // request could stamp a row that the next boot refused, permanently, with
+    // the refusal advising the operator to discard the database. Every other
+    // check in this file refuses a shape no request can create.
+    //
+    // What the prefix costs instead is bounded: mirror protection knows one
+    // spelling, so a row an older build stamped is an ordinary row. There is
+    // no corpus of them — the estate is torn down and every database here is
+    // test data — which is why that is the cheaper of the two failures.
     const path = scratch();
     const seed = createClient({ url: `file:${path}` });
     await seed.execute(
-      // `occurred_at` so the renamed-column probe above is satisfied and
-      // this case reaches the prefix check rather than stopping short of it.
-      "CREATE TABLE items (id TEXT PRIMARY KEY, source TEXT NOT NULL, occurred_at TEXT)",
+      "CREATE TABLE api_keys (id TEXT PRIMARY KEY, source TEXT NOT NULL, permissions TEXT)",
     );
     await seed.execute(
-      "INSERT INTO items (id, source) VALUES ('i1', 'integration:acme/thing')",
-    );
-    seed.close();
-    const before = createHash("sha256")
-      .update(readFileSync(path))
-      .digest("hex");
-
-    await expect(createConnection(path)).rejects.toThrow(/integration:/);
-    await expect(createConnection(path)).rejects.toThrow(path);
-    expect(createHash("sha256").update(readFileSync(path)).digest("hex")).toBe(
-      before,
-    );
-  });
-
-  it("does not refuse a source carrying the current prefix", async () => {
-    // The control, and it asserts the absence of this refusal rather than a
-    // successful open: the seeded `items` is a stub, so the real DDL fails
-    // later building an index over a column it does not have. That is fine
-    // for what is being proved — refusing on the column rather than on the
-    // prefix would refuse every database that has ever held a connector row,
-    // and this case would catch it.
-    const path = scratch();
-    const seed = createClient({ url: `file:${path}` });
-    await seed.execute(
-      "CREATE TABLE items (id TEXT PRIMARY KEY, source TEXT NOT NULL, occurred_at TEXT)",
-    );
-    await seed.execute(
-      "INSERT INTO items (id, source) VALUES ('i1', 'connector:acme/thing')",
+      "INSERT INTO api_keys (id, source, permissions) VALUES ('k1', 'integration:acme/thing', '[]')",
     );
     seed.close();
 

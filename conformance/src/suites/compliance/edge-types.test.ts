@@ -95,6 +95,87 @@ describe("custom edge-type registration", () => {
     expect(again.error?.error.code).toBe("edge_type_not_found");
   });
 
+  it("deletes an edge type while edges of it exist, and leaves them naming it", async () => {
+    // The door published a refusal it does not make: "the request fails
+    // while any edges of this type still exist, so delete or migrate them
+    // first". It answers 200 and looks at nothing but the core list and the
+    // row. Its sibling `DELETE /types/{id}` really does refuse, `409
+    // type_in_use`, which is what makes this an asymmetry rather than a
+    // house style.
+    //
+    // The assertion is the state afterwards, not the status alone: an
+    // implementation that refused would redden on the 200, and one that
+    // cascaded the edges away would redden on the read below. Recorded as
+    // `findings.md` 14; the description has been corrected to say this.
+    const etId = `mock.dangling.${ctx.runId}`;
+    const reg = await client.registerEdgeType({
+      id: etId,
+      cardinality: "many-to-many",
+    });
+    expect(reg.ok).toBe(true);
+    trackEdgeType(ctx, etId);
+
+    const a = await client.createItem(createNote({ source: ctx.source }));
+    const b = await client.createItem(createNote({ source: ctx.source }));
+    expect(a.ok).toBe(true);
+    expect(b.ok).toBe(true);
+    trackItem(ctx, a.data.item.id);
+    trackItem(ctx, b.data.item.id);
+
+    const edge = await client.createEdge({
+      source_id: a.data.item.id,
+      target_id: b.data.item.id,
+      edge_type: etId,
+    });
+    expect(edge.ok).toBe(true);
+    trackEdge(ctx, edge.data.edge.id);
+
+    const removed = await client.deleteEdgeType(etId);
+    expect(removed.status).toBe(200);
+
+    // The registration is gone.
+    const listed = await client.listEdgeTypes();
+    expect(listed.data.edge_types.map((t) => t.id)).not.toContain(etId);
+
+    // The edge is not, and still names it.
+    const orphan = await client.getEdge(edge.data.edge.id);
+    expect(orphan.status).toBe(200);
+    expect(orphan.data.edge.edge_type).toBe(etId);
+  });
+
+  it("refuses a delete to a key without schema.write, and declares the refusal", async () => {
+    // The door gates on `schema.write` and published no 403, so the one
+    // refusal a caller arranges by holding the wrong credential was absent
+    // from the document. `expectMatchesSchema` is the half that reddens if
+    // the declaration goes: it throws when the served document declares no
+    // such status for the door.
+    const etId = `mock.no-schema-write.${ctx.runId}`;
+    const reg = await client.registerEdgeType({
+      id: etId,
+      cardinality: "many-to-many",
+    });
+    expect(reg.ok).toBe(true);
+    trackEdgeType(ctx, etId);
+
+    const keyResp = await client.createKey({
+      label: "edge-types-no-schema-write",
+      source: `${ctx.source}-no-schema-write`,
+      permissions: [],
+      type_permissions: { "*": "write" },
+    });
+    expect(keyResp.ok).toBe(true);
+    trackKey(ctx, keyResp.data.id);
+    const scopedClient = new MarfaClient({
+      baseUrl: apiUrl,
+      apiKey: keyResp.data.key,
+    });
+
+    const removed = await scopedClient.deleteEdgeType(etId);
+    expect(removed.status).toBe(403);
+    expect(removed.error?.error.code).toBe("forbidden");
+    await expectMatchesSchema("DELETE", "/edge-types/{id}", 403, removed.error);
+  });
+
   it("a key without metadata.edge_types:write cannot register an edge type", async () => {
     // A credential that writes every type: the registration door asks for the
     // metadata map, and content reach says nothing about the registry.

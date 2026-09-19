@@ -11,9 +11,11 @@
  *     `trashed`, in both dialects, where `delete()` and `transition()` both
  *     validated first.
  *   - `POST /items` accepted an optional `state` checked only for membership
- *     of the universal state list, so the operator key could create a
- *     `system.*` row directly in `trashed` — a state that type's lifecycle
- *     does not contain, reachable by no transition and leavable by none.
+ *     of the universal state list, so a create naming `trashed` would put a
+ *     `system.*` row in a state that type's lifecycle does not contain,
+ *     reachable by no transition and leavable by none. No credential can
+ *     reach it — the fence admits the operator key alone and that key holds
+ *     no type permissions — so the guard has a test instead of a caller.
  *
  * Create in `trashed`, then restore, and the row is `active` having passed
  * nothing the graph admits.

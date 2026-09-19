@@ -44,6 +44,19 @@ async function seed(body: string): Promise<string> {
   return r.data.item.id;
 }
 
+/**
+ * How long one frame is waited for before the wait is called off.
+ *
+ * Well inside this project's 120s test budget, deliberately. Left to the
+ * runner, a frame that never arrives reports as `Test timed out in
+ * 120000ms` — which `vitest.shared.ts` names as the one failure shape that
+ * gets investigated as real before anyone thinks to check the clock, and
+ * which says nothing about what the stream did carry. Bounded here, the same
+ * silence is an assertion that names the frame, the row and every event that
+ * arrived instead.
+ */
+const FRAME_BUDGET_MS = 15_000;
+
 /** Open a stream, run `act`, and collect until an event for `id` named `name` arrives. */
 async function deliver(
   name: string,
@@ -62,14 +75,26 @@ async function deliver(
   const stream: EventStream = await openEventStream(apiUrl, apiKey);
   expect(stream.response.status).toBe(200);
   try {
+    // Headers are in, which is not the same as the subscription being on the
+    // publisher's list. A write that lands in the gap is published to nobody
+    // and the wait below can then only end in the budget.
+    // `baselineEventId` settles for the same reason and by the same margin.
+    await new Promise((r) => setTimeout(r, 250));
     await act();
-    const { events } = await collectUntil(
-      stream,
-      (events) => events.some(matches),
-      `${name} for ${id}`,
-      signal,
-    );
-    return events.find(matches);
+    try {
+      const { events } = await collectUntil(
+        stream,
+        (events) => events.some(matches),
+        `${name} for ${id}`,
+        AbortSignal.any([signal, AbortSignal.timeout(FRAME_BUDGET_MS)]),
+      );
+      return events.find(matches);
+    } catch (err) {
+      throw new Error(
+        `no ${name} frame arrived for ${id} within ${String(FRAME_BUDGET_MS)}ms — ${err instanceof Error ? err.message : String(err)}`,
+        { cause: err },
+      );
+    }
   } finally {
     await stream.close();
   }
@@ -218,6 +243,37 @@ describe("event stream contract", () => {
     };
     expect(data.item.id).toBe(id);
     expect(data.metadata?.tags).toContain(`evt-${ctx.runId}`);
+  });
+
+  it("announces metadata.changed on an extension write under any namespace", async ({
+    signal,
+  }) => {
+    // The extension doors published a carve-out: writes under a reserved
+    // `connection.` root "stay silent". No such root exists — the reserved
+    // set is `core`, `marfa` and `system`, matched exactly — and nothing
+    // anywhere tests a namespace prefix, so the write was announced like any
+    // other. The namespace here is the one the carve-out named, so
+    // implementing the silence the document described reddens this.
+    const id = await seed("extension-announced");
+    const event = await deliver(
+      "metadata.changed",
+      id,
+      async () => {
+        const put = await client.setItemExtension(id, "connection.runtime", {
+          probe: ctx.runId,
+        });
+        expect(put.ok).toBe(true);
+      },
+      signal,
+    );
+    const data = event?.data as {
+      item: { id: string };
+      metadata?: { extensions?: Record<string, unknown> };
+    };
+    expect(data.item.id).toBe(id);
+    expect(data.metadata?.extensions?.["connection.runtime"]).toEqual({
+      probe: ctx.runId,
+    });
   });
 
   it("announces edge.updated when an edge's properties change", async ({

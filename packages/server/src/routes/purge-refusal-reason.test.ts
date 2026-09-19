@@ -3,7 +3,7 @@
  *
  * Purging is trash-then-purge, so a caller meets `DELETE /items/{id}` first.
  * For a reserved-namespace row a working credential is refused there,
- * by name: "only the operator key may write `marfa.*` items". The row
+ * by name: "no credential writes `marfa.*` items". The row
  * therefore never becomes trashed, and `DELETE /items/{id}/purge` then
  * answers "Only trashed items can be purged" — which is true, and which
  * describes an ordering mistake the caller did not make.
@@ -82,7 +82,7 @@ describe("purging a row a working credential may not write", () => {
     // alone, because the code is what a machine reads and the message is
     // what sent somebody to the wrong place.
     expect(body.error.message).toContain("marfa.*");
-    expect(body.error.message).toContain("only the operator key");
+    expect(body.error.message).toContain("no credential writes");
     // And it does NOT say the thing that misdirected: a caller told to trash
     // first will try, be refused there too, and learn nothing either time.
     expect(body.error.message).not.toContain("trashed");
