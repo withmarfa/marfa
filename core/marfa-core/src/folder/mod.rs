@@ -334,8 +334,25 @@ impl Folder {
             let conn = self.core.conn()?;
             state::every_bound(&conn)?
         };
+        let journaled: HashSet<String> = {
+            let conn = self.core.conn()?;
+            state::journaled(&conn)?
+                .into_iter()
+                .map(|(path, _, _)| path)
+                .collect()
+        };
         for row in bound {
             if seen.contains(&row.path) {
+                // **The file came back.** The grace exists because it might
+                // (`folders.md` 15), and nothing was taking a row out of the
+                // journal when it came back under its own name: only a rename
+                // cleared one, so a file deleted and restored inside five
+                // seconds was deleted on the server anyway, and came back as
+                // a new item with none of its edges.
+                if journaled.contains(&row.path) {
+                    let conn = self.core.conn()?;
+                    state::journal_clear(&conn, &row.path)?;
+                }
                 continue;
             }
             let conn = self.core.conn()?;
@@ -497,6 +514,12 @@ impl Folder {
             // leaves the machine never, and the report says it did. Left
             // alone, the file is still changed and the next scan tries
             // again — and unbinding it would make it a second item.
+            //
+            // The refusal ends the scan rather than the file: nothing after
+            // it in the sorted order is read, and in a `push` neither the
+            // drain nor the pull runs. One file bound to a row the copy has
+            // lost holds up the whole folder, which is loud rather than
+            // quiet, and quiet is what would lose somebody's writing.
             return Err(CoreError::Invalid(format!(
                 "{key} is bound to {item_id}, which this copy no longer holds; \
                  the file is left as it is and nothing is queued for it"
@@ -527,9 +550,12 @@ impl Folder {
     ///
     /// Only the ones whose target this folder holds: a link to something
     /// outside the slice is text in the body and stays there, rather than
-    /// becoming an edge to a row the server may not have. Answers the targets
-    /// the body named, which is what the mapping records so the next scan can
-    /// tell a link the person removed from one that was never there.
+    /// becoming an edge to a row the server may not have.
+    ///
+    /// Answers what the mapping should record: the targets the body named,
+    /// and — where a link could not be resolved and the removal stood down —
+    /// the ones it recorded before, because forgetting those would take the
+    /// removal rule with them.
     fn queue_links(&self, item_id: &str, links: &[String], had: &[String]) -> Result<Vec<String>> {
         if item_id.is_empty() {
             return Ok(Vec::new());
@@ -621,11 +647,6 @@ fn title_of(key: &str) -> String {
 }
 
 /// Whether `grace` has passed between two instants in the wire's shape.
-///
-/// Compared as text, which the shape allows: it is fixed-width, zero-padded
-/// and UTC, so it sorts chronologically. A pair this cannot read counts as
-/// elapsed, because a journal row nobody can date is one that would sit
-/// there for ever.
 fn elapsed_past(since: &str, now: &str, grace: Duration) -> bool {
     // A pair this cannot read has **not** elapsed. Failing open here sends
     // a delete the folder cannot date, and a delete is the one thing in this
@@ -705,9 +726,11 @@ impl Folder {
                 state::bound_to_item(&conn, &item.id)?
             };
             let want = self.path_for(item, bound.as_ref());
-            // Before the path is counted as taken: a path the folder will
-            // not write is not a path anything took, and counting it makes
-            // the next item to want it a collision against nothing.
+            // Nothing is counted as taken until this item is actually going
+            // to be written there. A path a pull declines is not a path
+            // anything took, and leaving the claim in starves whichever item
+            // wanted it next — which, because the list is newest first, is
+            // usually the bound one with somebody's edits waiting.
             if !plainly_inside(&self.root, &want) {
                 report.outside += 1;
                 continue;
@@ -716,37 +739,56 @@ impl Folder {
             let (text, wrote) = self.render(item)?;
             let bytes = text.as_bytes().to_vec();
             let hash = state::hash(&bytes);
-            // A file already at this path that the mapping does not hold.
-            // `pull` runs no scan of its own, so a note somebody typed since
-            // the last one is a file nothing has queued, and the guard below
-            // only ever runs for a path already bound.
+            let ours = bound.as_ref().is_some_and(|bound| bound.path == want);
+
+            if ours
+                && bound
+                    .as_ref()
+                    .is_some_and(|bound| bound.content_hash == hash)
+            {
+                taken.insert(want);
+                report.unchanged += 1;
+                continue;
+            }
+            // **The bytes on the disk, not the mapping's memory of them.**
+            // The mapping says what the folder last wrote; it says nothing
+            // about what the person has typed since. A pull that trusted it
+            // would overwrite an afternoon's editing with no queue row and no
+            // line in the report, and `folders pull` runs no scan first.
             //
-            // Unless it is byte for byte what this item renders to, in which
-            // case it is this item's file and the mapping has lost it: a
-            // render carries the item's own id, so two items can never render
-            // the same bytes. Binding it is how a write that failed half way
-            // — the file made, the bytes not written, the mapping unbound —
-            // stops leaving the item with no file it can ever be given.
+            // The item keeps the file it has, so it does not take `want`.
+            if let Some(bound) = &bound
+                && std::fs::read(self.root.join(&bound.path))
+                    .is_ok_and(|found| state::hash(&found) != bound.content_hash)
+            {
+                report.unwritten += 1;
+                continue;
+            }
+            // Something is already at the destination that is not this item's
+            // own file — a note somebody typed since the last scan, or
+            // another item's file this one is being renamed on top of.
+            // `folders.md` 22.
             //
-            // Decided before the path counts as taken, for the reason above:
-            // a path this item is not going to be written to is not a path it
-            // took, and leaving it in would starve whichever item comes next.
-            if bound.is_none() && path.exists() {
-                if std::fs::read(&path).is_ok_and(|found| state::hash(&found) == hash) {
+            // Unless the bytes are exactly what this item renders to, in
+            // which case it is this item's own file and the mapping has lost
+            // it. The bytes are compared rather than their hash: the hash
+            // answers "did this change", and adopting a file somebody else
+            // wrote on the strength of a 64-bit collision is a different
+            // question to ask of it.
+            if !ours && path.exists() {
+                if bound.is_none() && std::fs::read(&path).is_ok_and(|found| found == bytes) {
                     let conn = self.core.conn()?;
                     state::bind(
                         &conn,
                         &state::Bound {
                             path: want.clone(),
                             item_id: item.id.clone(),
-                            identity: std::fs::symlink_metadata(&path)
-                                .ok()
-                                .and_then(|found| identity::of(&found))
-                                .map(|found| found.key()),
+                            identity: None,
                             content_hash: hash,
                             links: wrote,
                         },
                     )?;
+                    state::journal_clear(&conn, &want)?;
                     taken.insert(want);
                     report.unchanged += 1;
                     continue;
@@ -760,23 +802,6 @@ impl Folder {
             }
 
             if let Some(bound) = &bound {
-                if bound.path == want && bound.content_hash == hash {
-                    report.unchanged += 1;
-                    continue;
-                }
-                // **The bytes on the disk, not the mapping's memory of
-                // them.** The mapping says what the folder last wrote; it
-                // says nothing about what the person has typed since. A
-                // pull that trusted it would overwrite an afternoon's
-                // editing with no queue row and no line in the report, and
-                // `folders pull` runs no scan first.
-                let on_disk = std::fs::read(self.root.join(&bound.path)).ok();
-                if let Some(bytes) = &on_disk
-                    && state::hash(bytes) != bound.content_hash
-                {
-                    report.unwritten += 1;
-                    continue;
-                }
                 // A rename on the server moves the file (`folders.md` 12).
                 // The old path goes first, so the scan that follows does not
                 // find the file under both names and make a second item.
@@ -817,6 +842,12 @@ impl Folder {
                         links: wrote.clone(),
                     },
                 )?;
+                // A file is about to be here, so a journal row saying it is
+                // missing is a delete that is not one. Without this the sweep
+                // deletes the item this pull is in the middle of writing back
+                // — which is the danger the move above is careful about, at
+                // the path it does not cover.
+                state::journal_clear(&conn, &want)?;
             }
             if let Err(error) = std::fs::write(&path, &bytes) {
                 // The mapping was written first, so the scan would not read
@@ -901,10 +932,16 @@ impl Folder {
         // An edge the folder cannot express as a link is kept on the item
         // rather than dropped (`folders.md` 7), so this only adds.
         let held = document::links(&body);
-        // What the bytes this answers with name, which is what the mapping
-        // records. Not the edges considered: an edge skipped below whose link
-        // the body already carries is still a link in the file, and recording
-        // otherwise would tell the next scan the person had never had it.
+        // The targets of the links this answers with, for the mapping.
+        // Not the edges considered: an edge skipped below whose link the body
+        // already carries is still a link in the file, and recording
+        // otherwise would tell the next scan the person never had it.
+        //
+        // Still short of the whole truth — a link in the body with no edge
+        // behind it is named by the bytes and is not here, because this is
+        // built from the edges. `folders.md` 21 only ever asks whether an
+        // edge's target was named, so what is missing is a target with no
+        // edge, which that question never reaches.
         let mut wrote = Vec::new();
         for edge in self.core.edges_from(&item.id).unwrap_or_default() {
             let target = {

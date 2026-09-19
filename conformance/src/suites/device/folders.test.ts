@@ -1323,6 +1323,53 @@ describe("writing", () => {
     );
   });
 
+  it("takes a file out of the journal when it comes back under its own name", async () => {
+    harness = await folderHarness("folder-journal-return");
+    scriptFolderWrites(harness);
+    const text = "---\ntitle: Restored\n---\nbody\n";
+    put(harness, "note.md", text);
+    expect((await harness.folder.push()).ok).toBe(true);
+    const bound = read(harness, "note.md");
+
+    // Gone, then back at the same name inside the grace: an undo, a Put
+    // Back, a cloud mount that dropped a listing for a second.
+    const graceStarted = Date.now();
+    rmSync(join(harness.dir, "note.md"));
+    const missing = await harness.folder.scan();
+    expect(missing.ok).toBe(true);
+    if (!missing.ok) return;
+    expect(
+      missing.value.missing,
+      "the file was not journaled at all, so the rest of this is about a journal row that was never written",
+    ).toBe(1);
+
+    writeFileSync(join(harness.dir, "note.md"), bound);
+    expect((await harness.folder.scan()).ok).toBe(true);
+
+    // Past the grace, and asserted rather than waited for: the scan that
+    // sweeps is the one that would send the delete.
+    await vi.waitFor(
+      async () => {
+        const swept = await harness!.folder.scan();
+        expect(swept.ok).toBe(true);
+        expect((Date.now() - graceStarted) / 1000).toBeGreaterThan(6);
+      },
+      { timeout: 20_000, interval: 500 },
+    );
+
+    const queued = await harness.folder.device().queue();
+    expect(queued.ok).toBe(true);
+    if (!queued.ok) return;
+    expect(
+      queued.value.filter((row) => row.kind === "delete_item"),
+      "the folder deleted an item whose file is sitting on the disk, because nothing took the path out of the journal when it came back — and the next scan then makes the file a new item with none of its edges",
+    ).toEqual([]);
+    expect(
+      existsSync(join(harness.dir, "note.md")),
+      "the file is not there, so the assertion above is about a delete that was right",
+    ).toBe(true);
+  });
+
   it("journals a delete that happened while it was not running", async () => {
     harness = await folderHarness("folder-delete-offline");
     scriptFolderWrites(harness);
@@ -1565,6 +1612,72 @@ describe("what a folder does not watch", () => {
       scanned.value.created,
       "the file the folder had written became a second item, because nothing bound it back",
     ).toBe(0);
+  });
+
+  it("does not move an item on top of a file nobody has scanned", async () => {
+    harness = await folderHarness("folder-move-onto-file", {
+      rows: {
+        "core.note": [
+          {
+            item: {
+              id: "01a00000-0000-7000-8000-00000000001a",
+              source_id: "from.md",
+              properties: { title: "From", body: "the item\n" },
+            },
+          },
+        ],
+      },
+      events: [
+        replay("2", [
+          itemEvent(
+            "2",
+            "item.updated",
+            wireItem({
+              id: "01a00000-0000-7000-8000-00000000001a",
+              version: 2,
+              source_id: "onto.md",
+              properties: { title: "Onto", body: "the item\n" },
+            }),
+          ),
+        ]),
+      ],
+    });
+    scriptFolderWrites(harness);
+    expect((await harness.folder.pull()).ok).toBe(true);
+    expect(read(harness, "from.md")).toContain("the item");
+
+    // A note the person made and has not scanned. `folders pull` runs no
+    // scan of its own, so nothing has queued a word of it.
+    put(harness, "onto.md", "---\ntitle: Mine\n---\nan afternoon of it\n");
+
+    const caught = await harness.folder.device().catchUp();
+    expect(
+      caught.ok ? caught.value.applied : 0,
+      `the rename event was not applied, so nothing below is about a move: ${JSON.stringify(caught)}`,
+    ).toBe(1);
+
+    const pulled = await harness.folder.pull();
+    expect(
+      pulled.ok,
+      `the folder could not pull: ${JSON.stringify(pulled)}`,
+    ).toBe(true);
+    if (!pulled.ok) return;
+    expect(
+      read(harness, "onto.md"),
+      "a server-side rename wrote an item over a file the folder had never written, so an afternoon's typing went with no queue row and a report line that says the item moved",
+    ).toContain("an afternoon of it");
+    expect(
+      pulled.value.moved,
+      "the folder reported a move it did not make",
+    ).toBe(0);
+    expect(
+      pulled.value.unwritten,
+      "the folder declined the move and said nothing about it",
+    ).toBeGreaterThan(0);
+    expect(
+      existsSync(join(harness.dir, "from.md")),
+      "the item's own file was removed for a move that never happened, so it now has no file at all",
+    ).toBe(true);
   });
 
   it("leaves a file outside the slice alone", async () => {

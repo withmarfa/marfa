@@ -138,7 +138,11 @@ pub fn journal_missing(conn: &Connection, path: &str, item_id: &str) -> Result<(
     Ok(())
 }
 
-/// Takes a path out of the journal, because the file came back.
+/// Takes a path out of the journal: the file is there after all.
+///
+/// Called from all three places that can learn it — a scan that found it
+/// under its own name, a scan that followed it to a new one, and a pull that
+/// is about to write it.
 pub fn journal_clear(conn: &Connection, path: &str) -> Result<(), CoreError> {
     conn.execute("DELETE FROM folder_journal WHERE path = ?1", [path])?;
     Ok(())
