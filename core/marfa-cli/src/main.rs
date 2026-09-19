@@ -864,14 +864,21 @@ fn describe_pull(report: &marfa_core::PullReport) -> String {
 
 fn describe_scan(report: &marfa_core::ScanReport) -> String {
     format!(
-        "{} created, {} updated, {} renamed, {} unchanged, {} missing, {} deleted, {} skipped",
+        "{} created, {} updated, {} renamed, {} unchanged, {} missing, {} deleted, {} skipped{}",
         report.created,
         report.updated,
         report.renamed,
         report.unchanged,
         report.missing,
         report.deleted,
-        report.skipped
+        report.skipped,
+        // Named only when it happened, because it is rare and it is
+        // the write a line of the other seven does not account for.
+        if report.parked > 0 {
+            format!("; {} moved off a contested name and back", report.parked)
+        } else {
+            String::new()
+        }
     )
 }
 

@@ -445,6 +445,8 @@ export interface ScanReport {
   missing: number;
   deleted: number;
   skipped: number;
+  /** Items moved off a contested name and back (`folders.md` 24). */
+  parked: number;
 }
 
 export interface PullReport {

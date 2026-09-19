@@ -1240,6 +1240,51 @@ describe("identity", () => {
     ).toEqual(["two.md", "one.md"]);
   });
 
+  it("keeps a binding for every file after a swap that also edits both", async () => {
+    harness = await folderHarness("folder-swap-and-edit");
+    scriptFolderWrites(harness);
+    put(harness, "one.md", "---\ntitle: One\n---\nfirst\n");
+    put(harness, "two.md", "---\ntitle: Two\n---\nsecond\n");
+    expect((await harness.folder.push()).ok).toBe(true);
+
+    // Swapped **and** edited. With only the swap, a pull re-adopts each file
+    // by comparing bytes and quietly rebuilds a mapping row the scan
+    // destroyed — so the mapping looks right for a reason that has nothing
+    // to do with the scan. An edit puts the bytes beyond that rescue.
+    renameSync(join(harness.dir, "one.md"), join(harness.dir, ".swap"));
+    renameSync(join(harness.dir, "two.md"), join(harness.dir, "one.md"));
+    renameSync(join(harness.dir, ".swap"), join(harness.dir, "two.md"));
+    writeFileSync(
+      join(harness.dir, "one.md"),
+      "---\ntitle: Two\n---\nsecond, and a word the person typed\n",
+    );
+    writeFileSync(
+      join(harness.dir, "two.md"),
+      "---\ntitle: One\n---\nfirst, and another\n",
+    );
+    expect((await harness.folder.push()).ok).toBe(true);
+
+    // The witness the sent-keys assertions could not give: after the scan,
+    // does the folder still know what each file is? A row lost here is a
+    // file the next scan pushes as a second item, taking the first one's
+    // edges and leaving it to be deleted after the grace.
+    const scanned = await harness.folder.scan();
+    expect(scanned.ok).toBe(true);
+    if (!scanned.ok) return;
+    expect(
+      scanned.value.created,
+      "a file came out of the swap with no binding, so the next scan made it a second item",
+    ).toBe(0);
+    expect(
+      scanned.value.missing,
+      "a path came out of the swap bound to nothing that is there, so the grace is now counting down on an item whose file is on the disk",
+    ).toBe(0);
+    expect(
+      [scanned.value.updated, scanned.value.renamed],
+      "the scan after the swap still had something to say about these files, so the swap did not come to rest",
+    ).toEqual([0, 0]);
+  });
+
   it("follows a three-way rotation without a name landing on a held one", async () => {
     harness = await folderHarness("folder-rotate");
     scriptFolderWrites(harness);
