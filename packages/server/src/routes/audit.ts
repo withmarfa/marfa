@@ -34,7 +34,7 @@ const listAuditRoute = createRoute({
   path: "/",
   tags: ["Audit"],
   summary: "List audit log entries",
-  description: `Returns audit-log entries in reverse-chronological order, filtered by action, resource, or time range, with cursor pagination. Records only state-changing calls and a few admin reads — item/edge reads, SSE, and search are not logged. Requires \`space.audit_read\`, and answers a caller's own space and nothing else. A credential with no space holds no space permission, so it is refused rather than shown the whole trail. ${UNKNOWN_PARAM_NOTE}`,
+  description: `Returns audit-log entries in reverse-chronological order, filtered by action, resource, or time range, with cursor pagination. Records only state-changing calls and a few admin reads — item/edge reads, SSE, and search are not logged. Requires \`audit.read\`, and answers a caller's own space and nothing else. A credential with no space holds no space permission, so it is refused rather than shown the whole trail. ${UNKNOWN_PARAM_NOTE}`,
   security: [{ bearerAuth: [] }],
   request: {
     query: z.object({
@@ -98,7 +98,7 @@ const listAuditRoute = createRoute({
           schema: makeErrorResponseSchema(["forbidden"]),
         },
       },
-      description: "Caller does not hold `space.audit_read`",
+      description: "Caller does not hold `audit.read`",
     },
   },
 });
@@ -108,7 +108,7 @@ export function auditRoutes(storage: Storage) {
 
   router.openapi(listAuditRoute, async (c) => {
     requireAuth(c);
-    requireSpacePermission(c, "space.audit_read");
+    requireSpacePermission(c, "audit.read");
     refuseUnknownQueryParams(c.req.raw.url, listAuditRoute.request.query);
     const {
       action,

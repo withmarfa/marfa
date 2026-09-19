@@ -2,7 +2,7 @@
  * A key an app made is never widened afterwards.
  *
  * The consent screen tells a person what an app may do, and one of the things
- * an app holding `space.keys` may do is mint a durable credential that outlives
+ * an app holding `keys.mint` may do is mint a durable credential that outlives
  * the grant it came from. The mint clamp bounds that credential at what the app
  * itself held. **That is only half of the promise**, because the permission
  * maps are writable through `PATCH /keys/{id}` a moment later, and the person
@@ -45,7 +45,7 @@ async function seedKey(
       // Unique per key: the store holds one source display name per space, so
       // a fixture that seeds the same shape twice collides on it.
       source: `app-key-test-${label}-${suffix}`,
-      space_permissions: [],
+      permissions: [],
       type_permissions: {},
       extension_permissions: {},
       edge_permissions: {},
@@ -65,7 +65,7 @@ async function seedAppKey(): Promise<string> {
   const { id } = await seedKey("app-made", {
     oauth_client_id: "client-notes",
     type_permissions: { "core.note": "read" },
-    space_permissions: ["space.webhooks"],
+    permissions: ["webhooks.manage"],
     extension_permissions: { "com.notes": "read" },
     profile_permissions: { display_name: "read" },
   });
@@ -80,7 +80,7 @@ beforeAll(async () => {
     edge_permissions: { "*": "write" },
     metadata_permissions: { "*": "write" },
     profile_permissions: { "*": "write" },
-    space_permissions: ["space.keys", "space.webhooks", "space.settings"],
+    permissions: ["keys.mint", "webhooks.manage", "config.manage"],
   });
   editorKey = editor.raw;
 });
@@ -146,24 +146,24 @@ describe("editing a key an app made", () => {
     const id = await seedAppKey();
     const res = await request(ctx.app, "PATCH", `/keys/${id}`, {
       key: editorKey,
-      body: { space_permissions: ["space.webhooks", "space.settings"] },
+      body: { permissions: ["webhooks.manage", "config.manage"] },
     });
     expect(res.status).toBe(403);
     const body = (await res.json()) as {
       error: { details?: { required_scope?: string } };
     };
-    expect(body.error.details?.required_scope).toBe("space.settings");
+    expect(body.error.details?.required_scope).toBe("config.manage");
   });
 
   it("allows dropping a space permission it holds", async () => {
     const id = await seedAppKey();
     const res = await request(ctx.app, "PATCH", `/keys/${id}`, {
       key: editorKey,
-      body: { space_permissions: [] },
+      body: { permissions: [] },
     });
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { space_permissions: string[] };
-    expect(body.space_permissions).toEqual([]);
+    const body = (await res.json()) as { permissions: string[] };
+    expect(body.permissions).toEqual([]);
   });
 
   it("refuses an extension namespace it was not given", async () => {
@@ -191,7 +191,7 @@ describe("editing a key an app made", () => {
   it("refuses the operator key too, because the rule is the key's", async () => {
     const id = await seedAppKey();
     // The operator key is the credential with nothing above it: it reaches
-    // this door without holding `space.keys`, and its space-less binding
+    // this door without holding `keys.mint`, and its space-less binding
     // skips the fence that stops every other caller addressing a key outside
     // its own space. So it is the one that would lift the rule quietly.
     const res = await request(ctx.app, "PATCH", `/keys/${id}`, {
@@ -208,21 +208,21 @@ describe("editing a key an app made", () => {
     // simply refused every widening would fail here.
     const { id } = await seedKey("own", {
       type_permissions: { "core.note": "read" },
-      space_permissions: ["space.webhooks"],
+      permissions: ["webhooks.manage"],
     });
     const res = await request(ctx.app, "PATCH", `/keys/${id}`, {
       key: editorKey,
       body: {
         type_permissions: { "*": "write" },
-        space_permissions: ["space.webhooks", "space.settings"],
+        permissions: ["webhooks.manage", "config.manage"],
       },
     });
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
       type_permissions: Record<string, string>;
-      space_permissions: string[];
+      permissions: string[];
     };
     expect(body.type_permissions).toEqual({ "*": "write" });
-    expect(body.space_permissions).toContain("space.settings");
+    expect(body.permissions).toContain("config.manage");
   });
 });

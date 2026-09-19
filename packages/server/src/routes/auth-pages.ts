@@ -282,10 +282,10 @@ export function authRoutes(
     // act, the space fence below says where.
     requireAuth(c);
     // Revoking another app's access is exactly the authority a person would
-    // want to have been asked about, and `space.app_grants` is the row they
+    // want to have been asked about, and `grants.manage` is the row they
     // tick to grant it. There is nothing else to reach this on: no door admits
     // on rank, and a signed-in app holds what its grant carries.
-    requireSpacePermission(c, "space.app_grants");
+    requireSpacePermission(c, "grants.manage");
     const items = await storage.items.list({
       type: "system.connection",
       state: "active",
@@ -319,9 +319,9 @@ export function authRoutes(
   });
 
   router.delete("/grants/:id", async (c) => {
-    // The same axis as `GET /grants`: `space.app_grants` to act at all.
+    // The same axis as `GET /grants`: `grants.manage` to act at all.
     requireAuth(c);
-    requireSpacePermission(c, "space.app_grants");
+    requireSpacePermission(c, "grants.manage");
     const id = c.req.param("id");
     const item = await storage.items.get(id);
     if (item?.type !== "system.connection") {

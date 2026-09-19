@@ -31,7 +31,7 @@ function authorityOf(key: ApiKey) {
     metadata_permissions: key.metadata_permissions,
     extension_permissions: key.extension_permissions,
     profile_permissions: key.profile_permissions,
-    space_permissions: [...(key.space_permissions ?? [])].sort(),
+    permissions: [...(key.permissions ?? [])].sort(),
   };
 }
 
@@ -162,7 +162,7 @@ describe("the credentials createTestContext authenticates as", () => {
         `/keys/${minted.operator.id}`,
         {
           key: minted.operatorRaw,
-          body: { space_permissions: ["space.keys"] },
+          body: { permissions: ["keys.mint"] },
         },
       );
       expect(patchingPermissions.status).toBe(403);
@@ -205,7 +205,7 @@ describe("the credentials createTestContext authenticates as", () => {
         expect(key.metadata_permissions).toEqual({});
         expect(key.extension_permissions).toEqual({});
         expect(key.profile_permissions).toEqual({});
-        expect(key.space_permissions).toEqual([]);
+        expect(key.permissions).toEqual([]);
       }
     } finally {
       await ctx.cleanup();

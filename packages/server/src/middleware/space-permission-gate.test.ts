@@ -6,14 +6,12 @@
  * and both are the literals themselves — so the gate does not branch on what
  * it is looking at, and there is no second implementation to drift.
  *
- * **The carrier is the half that did not exist.** `hasSpacePermission` shipped
- * with the grammar and no route could call it, because a space permission
- * deliberately projects into none of the permission maps: the bearer
- * middleware translated a token's scopes into `type_permissions`,
- * `edge_permissions`, `metadata_permissions` and `profile_permissions` and
- * dropped the rest, so a gate reaching for the helper had no `held` to pass.
- * The wrong repair is to relax one of those projections, which would put
- * administrative authority on the data plane; the right one is to carry the
+ * **The carrier is the half worth guarding.** A permission deliberately
+ * projects into none of the permission maps: the bearer middleware
+ * translates a token's scopes into `type_permissions`, `edge_permissions`,
+ * `metadata_permissions` and `profile_permissions`, and a permission belongs
+ * in none of them. Relaxing one of those projections to carry it would put
+ * administrative authority on the data plane; the answer is to carry the
  * granted scopes onto the request beside them.
  *
  * The two halves are tested together because each is useless alone, and
@@ -76,17 +74,17 @@ describe("requireSpacePermission", () => {
     expect(() => {
       requireSpacePermission(
         fakeContext({ apiKey: fakeKey(), authType: "api_key" }),
-        "space.keys",
+        "keys.mint",
       );
     }).toThrow(MarfaError);
 
     expect(() => {
       requireSpacePermission(
         fakeContext({
-          apiKey: fakeKey({ space_permissions: ["space.keys"] }),
+          apiKey: fakeKey({ permissions: ["keys.mint"] }),
           authType: "api_key",
         }),
-        "space.keys",
+        "keys.mint",
       );
     }).not.toThrow();
   });
@@ -96,11 +94,11 @@ describe("requireSpacePermission", () => {
       requireSpacePermission(
         fakeContext({
           apiKey: fakeKey({
-            space_permissions: ["space.webhooks", "space.audit_read"],
+            permissions: ["webhooks.manage", "audit.read"],
           }),
           authType: "api_key",
         }),
-        "space.keys",
+        "keys.mint",
       );
     }).toThrow(MarfaError);
   });
@@ -114,7 +112,7 @@ describe("requireSpacePermission", () => {
           authType: "oauth",
           oauthGrant: { scopes: ["openid", "core.note:read"] },
         }),
-        "space.keys",
+        "keys.mint",
       );
     } catch (err) {
       thrown = err;
@@ -125,8 +123,8 @@ describe("requireSpacePermission", () => {
     // The refusal names what would satisfy it. A generic 403 on an
     // administrative surface leaves the caller with nothing to act on, and it
     // cannot narrow toward a scope it is not told.
-    expect(err.message).toContain("space.keys");
-    expect(err.details).toMatchObject({ required_scope: "space.keys" });
+    expect(err.message).toContain("keys.mint");
+    expect(err.details).toMatchObject({ required_scope: "keys.mint" });
   });
 
   it("admits an OAuth caller holding the space permission", () => {
@@ -135,9 +133,9 @@ describe("requireSpacePermission", () => {
         fakeContext({
           apiKey: fakeKey(),
           authType: "oauth",
-          oauthGrant: { scopes: ["openid", "space.keys"] },
+          oauthGrant: { scopes: ["openid", "keys.mint"] },
         }),
-        "space.keys",
+        "keys.mint",
       );
     }).not.toThrow();
   });
@@ -152,10 +150,10 @@ describe("requireSpacePermission", () => {
           apiKey: fakeKey(),
           authType: "oauth",
           oauthGrant: {
-            scopes: ["space.webhooks", "space.audit_read"],
+            scopes: ["webhooks.manage", "audit.read"],
           },
         }),
-        "space.keys",
+        "keys.mint",
       );
     }).toThrow(MarfaError);
   });
@@ -169,7 +167,7 @@ describe("requireSpacePermission", () => {
           apiKey: fakeKey(),
           authType: "oauth",
         }),
-        "space.keys",
+        "keys.mint",
       );
     }).toThrow(MarfaError);
   });
@@ -180,7 +178,7 @@ describe("requireSpacePermission", () => {
     // `if (!isBootstrap)` block rather than anything here. Pinned so the
     // answer is a decision rather than a surprise at the first call site.
     expect(() => {
-      requireSpacePermission(fakeContext({}), "space.keys");
+      requireSpacePermission(fakeContext({}), "keys.mint");
     }).toThrow(MarfaError);
   });
 });
@@ -215,7 +213,7 @@ describe("the bearer middleware carries the grant onto the request", () => {
   it("carries scopes, client id and user id for an OAuth bearer", async () => {
     const seeded = await seedOauthBearer(
       ctx.storage,
-      ["openid", "space.keys", "core.note:read"],
+      ["openid", "keys.mint", "core.note:read"],
       {},
     );
     const res = await probeApp().request("/probe", {
@@ -232,7 +230,7 @@ describe("the bearer middleware carries the grant onto the request", () => {
     };
     expect(body.authType).toBe("oauth");
     expect(body.grant).not.toBeNull();
-    expect(body.grant?.scopes).toContain("space.keys");
+    expect(body.grant?.scopes).toContain("keys.mint");
     expect(body.grant?.scopes).toContain("core.note:read");
     expect(body.grant?.clientId).toBe(seeded.clientId);
     expect(body.grant?.authUserId).toBeTruthy();
@@ -247,7 +245,7 @@ describe("the bearer middleware carries the grant onto the request", () => {
     // invisible here without this check because the gate would still pass.
     const seeded = await seedOauthBearer(
       ctx.storage,
-      ["openid", "space.keys", "core.note:read"],
+      ["openid", "keys.mint", "core.note:read"],
       {},
     );
     const app = new Hono<AppEnv>();
@@ -272,9 +270,9 @@ describe("the bearer middleware carries the grant onto the request", () => {
       grantScopes: string[];
       maps: (Record<string, string> | undefined)[];
     };
-    expect(body.grantScopes).toContain("space.keys");
+    expect(body.grantScopes).toContain("keys.mint");
     for (const map of body.maps) {
-      expect(Object.keys(map ?? {})).not.toContain("space.keys");
+      expect(Object.keys(map ?? {})).not.toContain("keys.mint");
       expect(Object.keys(map ?? {})).not.toContain("space");
     }
     // And the ordinary literal beside it still projects, so the case is not
@@ -312,7 +310,7 @@ describe("a real door reads what a real grant carries", () => {
   it("admits a bearer whose grant names the permission the door asks for", async () => {
     // The unit tests above pass a hand-built context, so nothing in them
     // proves the middleware, the gate and the route agree in one request.
-    const { token } = await seedOauthBearer(ctx.storage, ["space.keys"], {});
+    const { token } = await seedOauthBearer(ctx.storage, ["keys.mint"], {});
     const res = await request(ctx.app, "GET", "/keys", { key: token });
     expect(res.status).toBe(200);
   });

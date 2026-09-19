@@ -95,10 +95,10 @@ Fixture paths are under `src/suites/`.
 
 | Operation                    | Status  | Fixture                                                                                                                                              | Notes                                                            |
 | ---------------------------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
-| `POST /keys`                 | covered | `compliance/key-management.test.ts`, `compliance/type-permissions.test.ts`, `compliance/edge-permissions.test.ts`, `compliance/system-types.test.ts` | Mint, narrowing, `space.keys` gate, invalid permission values.   |
+| `POST /keys`                 | covered | `compliance/key-management.test.ts`, `compliance/type-permissions.test.ts`, `compliance/edge-permissions.test.ts`, `compliance/system-types.test.ts` | Mint, narrowing, `keys.mint` gate, invalid permission values.    |
 | `GET /keys`                  | covered | `compliance/key-management.test.ts`, `compliance/key-last-used.test.ts`                                                                              | No plaintext; `last_used_at`.                                    |
 | `PATCH /keys/{id}`           | covered | `compliance/keys-update.test.ts`                                                                                                                     | Label and maps; source immutable; never widened past the caller. |
-| `DELETE /keys/{id}`          | covered | `compliance/key-management.test.ts`                                                                                                                  | Revoke, 401 afterwards, `space.keys` gate.                       |
+| `DELETE /keys/{id}`          | covered | `compliance/key-management.test.ts`                                                                                                                  | Revoke, 401 afterwards, `keys.mint` gate.                        |
 | `POST /auth/oauth2/register` | covered | `compliance/oauth.test.ts`                                                                                                                           | Dynamic registration; RFC 7591 error shape on refusal.           |
 
 ## Events and webhooks
@@ -117,7 +117,7 @@ Fixture paths are under `src/suites/`.
 
 | Operation               | Status  | Fixture                                                      | Notes                                                                |
 | ----------------------- | ------- | ------------------------------------------------------------ | -------------------------------------------------------------------- |
-| `GET /audit`            | covered | `compliance/audit.test.ts`, `compliance/edge-events.test.ts` | Filters, exclusive bounds, cursor, `space.audit_read` gate.          |
+| `GET /audit`            | covered | `compliance/audit.test.ts`, `compliance/edge-events.test.ts` | Filters, exclusive bounds, cursor, `audit.read` gate.                |
 | `GET /spaces/me/config` | covered | `compliance/schema-enforcement.test.ts`                      |                                                                      |
 | `PUT /spaces/me/config` | covered | `compliance/schema-enforcement.test.ts`                      | Strict mode, source allowlist, source filter; wholesale replacement. |
 

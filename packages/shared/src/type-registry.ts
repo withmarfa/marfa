@@ -404,10 +404,16 @@ export function listTypes(): TypeSchema[] {
  * (`core`, `system`, `app`, `user`, `marfa`) carry platform-defined
  * semantics, anything else is a publisher handle.
  *
- * `RESERVED_ROOTS` holds two more entries than this has tiers. `space`
- * and `content` are reserved so that no type is ever registrable under
- * either, which means no identifier reaching a classifier can carry those
- * roots; neither has a tier because there is nothing there to classify.
+ * **`RESERVED_ROOTS` is wider than this, and by how much is not stated
+ * here.** It is `NAMESPACE_TIER_ROOTS` plus every scope-family root plus the
+ * retired one, and `scope-roots.ts` composes it from exactly those lists — so
+ * the arithmetic is the code that produces it rather than a sentence with a
+ * number in it. A sentence is what rotted the last time the set grew, and it
+ * rotted silently, because nothing compiles a docblock.
+ *
+ * What the extra roots have in common is that no type is ever registrable
+ * under one, so no identifier reaching a classifier can carry them, and none
+ * has a tier because there is nothing there to classify.
  *
  * That fall-through is load-bearing rather than incidental: a tierless
  * reserved root classifies as `publisher`, which is how a caller tells

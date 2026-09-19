@@ -39,7 +39,7 @@ async function createClientWithoutSpaceKeys(
     label,
     source: `${ctx.source}-${label}`,
     type_permissions: typePermissions,
-    space_permissions: [],
+    permissions: [],
   });
   expect(keyResp.ok).toBe(true);
   trackKey(ctx, keyResp.data.id);
@@ -74,14 +74,14 @@ describe("key management", () => {
     expect(found!.label).toBe(label);
   });
 
-  it("list keys requires space.keys", async () => {
+  it("list keys requires keys.mint", async () => {
     const { client: memberClient } =
       await createClientWithoutSpaceKeys("km-list-nonadmin");
 
     const list = await memberClient.listKeys();
     expect(list.status).toBe(403);
     expect(list.error?.error.code).toBe("forbidden");
-    expect(list.error?.error.details?.required_scope).toBe("space.keys");
+    expect(list.error?.error.details?.required_scope).toBe("keys.mint");
   });
 
   it("revoke key: create, use, revoke, retry fails with 401", async () => {
@@ -110,7 +110,7 @@ describe("key management", () => {
     expect(after.error?.error.code).toBe("unauthorized");
   });
 
-  it("revoke key requires space.keys", async () => {
+  it("revoke key requires keys.mint", async () => {
     const targetKey = await client.createKey({
       label: "km-revoke-target",
       source: `${ctx.source}-${"km-revoke-target"}`,
@@ -125,7 +125,7 @@ describe("key management", () => {
     const revoke = await memberClient.revokeKey(targetKey.data.id);
     expect(revoke.status).toBe(403);
     expect(revoke.error?.error.code).toBe("forbidden");
-    expect(revoke.error?.error.details?.required_scope).toBe("space.keys");
+    expect(revoke.error?.error.details?.required_scope).toBe("keys.mint");
   });
 
   it("key creation response includes expected fields", async () => {
@@ -142,7 +142,7 @@ describe("key management", () => {
     expect(typeof data.key).toBe("string");
     expect(data.key.length).toBeGreaterThan(0);
     expect(data.label).toBe("km-shape-test");
-    expect(Array.isArray(data.space_permissions)).toBe(true);
+    expect(Array.isArray(data.permissions)).toBe(true);
     expect(typeof data.created_at).toBe("string");
     expect(data.type_permissions["core.note"]).toBe("write");
     expect(data.type_permissions["core.bookmark"]).toBe("read");
@@ -166,7 +166,7 @@ describe("key management", () => {
     expect(found!.key).toBeUndefined();
   });
 
-  it("minting requires space.keys", async () => {
+  it("minting requires keys.mint", async () => {
     const { client: memberClient } =
       await createClientWithoutSpaceKeys("km-mint-nonadmin");
 
@@ -178,7 +178,7 @@ describe("key management", () => {
     expect(minted.ok).toBe(false);
     expect(minted.status).toBe(403);
     expect(minted.error?.error.code).toBe("forbidden");
-    expect(minted.error?.error.details?.required_scope).toBe("space.keys");
+    expect(minted.error?.error.details?.required_scope).toBe("keys.mint");
   });
 
   it("a mint naming no maps takes the creator's whole set", async () => {
@@ -201,7 +201,7 @@ describe("key management", () => {
 
     // Two absent maps compare equal, so the creator's are pinned as populated
     // before the child is compared to them.
-    expect(creator!.space_permissions?.length).toBeGreaterThan(0);
+    expect(creator!.permissions?.length).toBeGreaterThan(0);
     for (const map of [
       creator!.type_permissions,
       creator!.edge_permissions,
@@ -211,8 +211,8 @@ describe("key management", () => {
       expect(Object.keys(map ?? {}).length).toBeGreaterThan(0);
     }
 
-    expect([...(child!.space_permissions ?? [])].sort()).toEqual(
-      [...(creator!.space_permissions ?? [])].sort(),
+    expect([...(child!.permissions ?? [])].sort()).toEqual(
+      [...(creator!.permissions ?? [])].sort(),
     );
     expect(child!.type_permissions).toEqual(creator!.type_permissions);
     expect(child!.edge_permissions).toEqual(creator!.edge_permissions);
@@ -227,7 +227,7 @@ describe("key management", () => {
     const callerKey = await client.createKey({
       label,
       source: `${ctx.source}-${label}`,
-      space_permissions: ["space.keys"],
+      permissions: ["keys.mint"],
       type_permissions: { "core.bookmark": "read" },
     });
     expect(callerKey.ok).toBe(true);
@@ -250,13 +250,13 @@ describe("key management", () => {
     const widerSpace = await caller.createKey({
       label: `${label}-wider-space`,
       source: `${ctx.source}-${label}-wider-space`,
-      space_permissions: ["space.schema"],
+      permissions: ["schema.write"],
     });
     expect(widerSpace.ok).toBe(false);
     expect(widerSpace.status).toBe(403);
     expect(widerSpace.error?.error.code).toBe("forbidden");
     expect(widerSpace.error?.error.details?.required_scope).toBe(
-      "space.schema",
+      "schema.write",
     );
   });
 
@@ -309,7 +309,7 @@ describe("key management", () => {
       expect(minted.data.edge_permissions).toEqual({ "*": "write" });
       expect(minted.data.extension_permissions).toEqual({ "*": "write" });
       expect(minted.data.metadata_permissions).toEqual({ "*": "write" });
-      expect(minted.data.space_permissions?.length).toBeGreaterThan(0);
+      expect(minted.data.permissions?.length).toBeGreaterThan(0);
 
       const rows = await operator.listKeys();
       expect(rows.ok).toBe(true);
@@ -317,7 +317,7 @@ describe("key management", () => {
       expect(own).toBeDefined();
       expect(own!.type_permissions).toEqual({});
       expect(own!.edge_permissions).toEqual({});
-      expect(own!.space_permissions).toEqual([]);
+      expect(own!.permissions).toEqual([]);
     } finally {
       const revoked = await operator.revokeKey(minted.data.id);
       expect(revoked.ok).toBe(true);

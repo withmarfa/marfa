@@ -161,7 +161,7 @@ describe("PATCH /keys/{id}", () => {
     expect(updated.type_permissions).toEqual({ "core.note": "read" });
   });
 
-  it("returns 403 for a caller that does not hold `space.keys`", async () => {
+  it("returns 403 for a caller that does not hold `keys.mint`", async () => {
     const { id } = await createKey();
     const suffix = Math.random().toString(36).slice(2, 10);
     const narrow = `marfa_k1_patcher_${suffix}`;
@@ -174,7 +174,7 @@ describe("PATCH /keys/{id}", () => {
         // operator key either — that one reaches these doors by being the
         // operator key, and a fixture carrying the flag would prove the
         // carve-out rather than the permission.
-        space_permissions: [],
+        permissions: [],
         type_permissions: { "*": "read" },
         default_tier: "library",
         is_operator: false,
@@ -358,7 +358,7 @@ describe("PATCH /keys/{id} — an operator target", () => {
     expect(stored?.label).toBe(`renamed-${suffix}`);
     // Families the body never named are left alone rather than rewritten.
     expect(stored?.edge_permissions).toEqual({});
-    expect(stored?.space_permissions).toEqual([]);
+    expect(stored?.permissions).toEqual([]);
   });
 });
 
@@ -598,13 +598,13 @@ describe("bootstrap sentinel", () => {
       const workingBody = (await working.json()) as {
         key: string;
         is_operator: boolean;
-        space_permissions: string[];
+        permissions: string[];
         type_permissions: Record<string, string>;
       };
       // The working key is an ordinary credential holding the whole instance.
       expect(workingBody.is_operator).toBe(false);
-      expect(workingBody.space_permissions).toEqual(
-        expect.arrayContaining(["space.keys", "space.settings"]),
+      expect(workingBody.permissions).toEqual(
+        expect.arrayContaining(["keys.mint", "config.manage"]),
       );
       expect(workingBody.type_permissions).toEqual({ "*": "write" });
 
@@ -1014,7 +1014,7 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
   // rather than one test standing for both.
   let hostedCtx: TestContext;
 
-  const KEYS = "space.keys";
+  const KEYS = "keys.mint";
   const grantScopes = (...extra: string[]) => ["openid", KEYS, ...extra];
 
   beforeAll(async () => {
@@ -1224,9 +1224,9 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
     expect(minted.status).toBe(201);
     const first = (await minted.json()) as { id: string; key: string };
     const stored = await hostedCtx.storage.keys.get(first.id);
-    // The grant carried `space.keys`, so the key carries it and no more: the
+    // The grant carried `keys.mint`, so the key carries it and no more: the
     // other ten are absent even though the account holder holds them all.
-    expect(stored?.space_permissions).toEqual(["space.keys"]);
+    expect(stored?.permissions).toEqual(["keys.mint"]);
 
     // And the second hop cannot widen what the first was clamped to.
     const stepTwo = await request(hostedCtx.app, "POST", "/keys", {
@@ -1234,14 +1234,14 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
       body: {
         label: "step two",
         source: "step-two",
-        space_permissions: ["space.webhooks"],
+        permissions: ["webhooks.manage"],
       },
     });
     expect(stepTwo.status).toBe(403);
     const err = (await stepTwo.json()) as {
       error: { details?: { required_scope?: string } };
     };
-    expect(err.error.details?.required_scope).toBe("space.webhooks");
+    expect(err.error.details?.required_scope).toBe("webhooks.manage");
   });
 
   it("clamps the update door, which reaches keys the session never minted", async () => {
@@ -1462,7 +1462,7 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
     expect(allowed.status).toBe(201);
   });
 
-  it("lets an API key holding `space.keys` mint, with no grant anywhere", async () => {
+  it("lets an API key holding `keys.mint` mint, with no grant anywhere", async () => {
     // The gate reads the key's own list when the caller is not a session, so
     // a keys-mode or API-key deployment reaches this door with no OAuth
     // principal involved at all. This is the case that says so.
@@ -1471,7 +1471,7 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
       {
         label: "ta-key",
         source: "ta-key",
-        space_permissions: [...SPACE_PERMISSIONS],
+        permissions: [...SPACE_PERMISSIONS],
         type_permissions: {},
         default_tier: "library",
         is_operator: false,
@@ -1525,7 +1525,7 @@ describe("POST /keys — what an operator key mints", () => {
     expect(stored?.metadata_permissions).toEqual({ "*": "write" });
     expect(stored?.extension_permissions).toEqual({ "*": "write" });
     expect(stored?.profile_permissions).toEqual({ "*": "write" });
-    expect(stored?.space_permissions).toEqual([...SPACE_PERMISSIONS]);
+    expect(stored?.permissions).toEqual([...SPACE_PERMISSIONS]);
   });
 
   it("mints a working key holding only what the body names", async () => {
@@ -1536,7 +1536,7 @@ describe("POST /keys — what an operator key mints", () => {
         label: `narrow-${suffix}`,
         source: `narrow-${suffix}`,
         type_permissions: { "core.note": "read" },
-        space_permissions: ["space.keys"],
+        permissions: ["keys.mint"],
       },
     });
     expect(res.status).toBe(201);
@@ -1545,7 +1545,7 @@ describe("POST /keys — what an operator key mints", () => {
     expect(stored?.is_operator).toBe(false);
     expect(stored?.type_permissions).toEqual({ "core.note": "read" });
     expect(stored?.edge_permissions).toEqual({});
-    expect(stored?.space_permissions).toEqual(["space.keys"]);
+    expect(stored?.permissions).toEqual(["keys.mint"]);
   });
 
   it("refuses to give the operator key it mints any reach at all", async () => {
@@ -1587,7 +1587,7 @@ describe("POST /keys — what an operator key mints", () => {
     const stored = await hostedCtx.storage.keys.get(minted.id);
     expect(stored?.is_operator).toBe(true);
     expect(stored?.type_permissions).toEqual({});
-    expect(stored?.space_permissions).toEqual([]);
+    expect(stored?.permissions).toEqual([]);
 
     const audits = await waitForAudit(
       () => hostedCtx.storage.audit.list({ action: "key.create" }),
@@ -1627,7 +1627,7 @@ describe("POST /keys — what an operator key mints", () => {
     // nothing either, so the difference is not what a door would read off it:
     // the constraint compares bytes, and those are not the bytes `{}` takes.
     expect(stored?.type_permissions).toEqual({});
-    expect(stored?.space_permissions).toEqual([]);
+    expect(stored?.permissions).toEqual([]);
   });
 
   it("cannot even be handed a widened operator key to mint from", async () => {
@@ -1656,7 +1656,7 @@ describe("POST /keys — what an operator key mints", () => {
           metadata_permissions: { "*": "write" },
           extension_permissions: { "*": "write" },
           profile_permissions: { "*": "write" },
-          space_permissions: ["space.keys"],
+          permissions: ["keys.mint"],
         },
         hashApiKey(rawWide, TEST_API_KEY_SALT),
       ),
@@ -1689,7 +1689,7 @@ describe("POST /keys — what an operator key mints", () => {
     expect(stored?.metadata_permissions).toEqual({});
     expect(stored?.extension_permissions).toEqual({});
     expect(stored?.profile_permissions).toEqual({});
-    expect(stored?.space_permissions).toEqual([]);
+    expect(stored?.permissions).toEqual([]);
   });
 
   it("mints the two-hop credential chain a black-box client relies on", async () => {
@@ -1719,14 +1719,14 @@ describe("POST /keys — what an operator key mints", () => {
     expect(stored?.type_permissions).toEqual({ "core.note": "read" });
   });
 
-  it("still lets a working key holding `space.keys` mint", async () => {
+  it("still lets a working key holding `keys.mint` mint", async () => {
     const suffix = Math.random().toString(36).slice(2, 10);
     const raw = `marfa_k1_bound_admin_${suffix}`;
     await hostedCtx.storage.keys.create(
       {
         label: `bound-admin-${suffix}`,
         source: `bound-admin-${suffix}`,
-        space_permissions: [...SPACE_PERMISSIONS],
+        permissions: [...SPACE_PERMISSIONS],
         type_permissions: {},
         default_tier: "library",
         is_operator: false,

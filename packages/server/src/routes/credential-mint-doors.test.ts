@@ -64,7 +64,7 @@ async function mintFullSpaceKey(): Promise<string> {
     {
       label: "mint-door-space-key",
       source: `mint-door-${Math.random().toString(36).slice(2, 10)}`,
-      space_permissions: [...SPACE_PERMISSIONS],
+      permissions: [...SPACE_PERMISSIONS],
       type_permissions: { "*": "write" },
       is_operator: false,
     },
@@ -92,11 +92,9 @@ interface MintDoor {
    * flag; none asserted `source`, so a door writing its label verbatim
    * into the column sat inside an enumerated door and read as covered.
    *
-   * `source` is not a description. `oauth:<connection-id>` is read as
-   * proof that a caller IS that connection, by the connection proxy and
-   * by the inbound-webhook routes, both as an alternative to holding
-   * `space.connections`. A credential that could name one was handed the
-   * connection's upstream token and its webhook secrets.
+   * `source` is not a description. It is read as an assertion about who
+   * the caller is, and a door that writes a caller-supplied label straight
+   * into the column lets the caller make that assertion about itself.
    *
    * `undefined` where a door takes no caller-supplied source at all, and
    * that has to be stated rather than left off — an absent hook and a
@@ -151,7 +149,7 @@ const DOORS: MintDoor[] = [
         body: {
           label: "down",
           source: "mint-down",
-          space_permissions: ["space.webhooks"],
+          permissions: ["webhooks.manage"],
         },
       });
       expect(member.status).toBe(201);
@@ -174,7 +172,7 @@ const DOORS: MintDoor[] = [
     forgedSource: async () => {
       const { token } = await seedOauthBearer(
         ctx.storage,
-        ["openid", "space.keys"],
+        ["openid", "keys.mint"],
         {},
       );
       const res = await request(ctx.app, "POST", "/keys", {
@@ -187,7 +185,7 @@ const DOORS: MintDoor[] = [
       expect(res.status).toBeGreaterThanOrEqual(400);
     },
     ceiling: async () => {
-      const scopes = ["openid", "space.keys", "core.note:read"];
+      const scopes = ["openid", "keys.mint", "core.note:read"];
 
       // Over the ceiling: no space permission, so the door does not open at
       // all.
@@ -218,7 +216,7 @@ const DOORS: MintDoor[] = [
         body: {
           label: "beyond",
           source: "oauth-beyond",
-          space_permissions: ["space.settings"],
+          permissions: ["config.manage"],
         },
       });
       expect(beyond.status).toBe(403);
@@ -234,7 +232,7 @@ const DOORS: MintDoor[] = [
       const stored = await ctx.storage.keys.get(body.id);
       expect(stored?.is_operator).toBe(false);
       expect(stored?.type_permissions["core.note"]).toBe("read");
-      expect(stored?.space_permissions).toEqual(["space.keys"]);
+      expect(stored?.permissions).toEqual(["keys.mint"]);
     },
   },
   {

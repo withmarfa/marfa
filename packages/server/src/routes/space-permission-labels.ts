@@ -10,7 +10,7 @@
  * space permission fails to compile until it has been named in both. That is
  * the only guard that matters here: the fallback these replace is
  * `humanizeType`, which takes the last dotted segment, so an unnamed
- * `space.webhooks` renders as "Webhooks" — byte-identical to what
+ * `webhooks.manage` renders as "Webhooks" — byte-identical to what
  * `system.webhook:read` gets from the same fallback. One grant is sight of a
  * webhook row and the other is the power to point a new webhook anywhere, and
  * the one place a person inspects that difference would show none.
@@ -24,14 +24,13 @@ import { isSpacePermission } from "@withmarfa/shared";
  * noun reads as the latter.
  */
 export const SPACE_PERMISSION_LABELS: Record<SpacePermission, string> = {
-  "space.webhooks": "Set up webhooks that send your data elsewhere",
-  "space.schema": "Change and remove your type definitions",
-  "space.usage": "See how much of your space is used",
-  "space.settings": "Change your space settings",
-  "space.audit_read": "Read your security history",
-  "space.item_purge": "Permanently delete things, past the trash",
-  "space.keys": "Create and revoke API keys",
-  "space.app_grants": "See and revoke the other apps you have connected",
+  "webhooks.manage": "Set up webhooks that send your data elsewhere",
+  "schema.write": "Change and remove your type definitions",
+  "config.manage": "Read and change the server configuration",
+  "audit.read": "Read your security history",
+  "items.purge": "Permanently delete things, past the trash",
+  "keys.mint": "Create and revoke API keys",
+  "grants.manage": "See and revoke the other apps you have connected",
 };
 
 /**
@@ -44,14 +43,13 @@ export const SPACE_PERMISSION_LABELS: Record<SpacePermission, string> = {
  * entries where the comma is load-bearing.
  */
 export const SPACE_PERMISSION_SHORT: Record<SpacePermission, string> = {
-  "space.webhooks": "set up webhooks that send your data elsewhere",
-  "space.schema": "change your type definitions",
-  "space.usage": "see how much of your space is used",
-  "space.settings": "change your space settings",
-  "space.audit_read": "read your security history",
-  "space.item_purge": "permanently delete things past the trash",
-  "space.keys": "create and revoke API keys",
-  "space.app_grants": "revoke the other apps you have connected",
+  "webhooks.manage": "set up webhooks that send your data elsewhere",
+  "schema.write": "change your type definitions",
+  "config.manage": "read and change the server configuration",
+  "audit.read": "read your security history",
+  "items.purge": "permanently delete things past the trash",
+  "keys.mint": "create and revoke API keys",
+  "grants.manage": "revoke the other apps you have connected",
 };
 
 /** The consent-toggle label for a literal, or undefined when it names no

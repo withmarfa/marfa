@@ -30,7 +30,7 @@ const CLAIMING_BUNDLE: PermissionBundle = {
   id: "operator-custom",
   label: "Operator custom",
   description: "Configured, not shipped.",
-  scopes: ["core.note:read", "space.keys"],
+  scopes: ["core.note:read", "keys.mint"],
   default_on: true,
 };
 
@@ -69,7 +69,7 @@ describe("a bundle still cannot be the reason one is publishable", () => {
     // registration row, where a literal outlives the configuration that
     // introduced it — and a row is not re-derived at boot the way the
     // allowlist is.
-    expect(bundlePublishedScopes([CLAIMING_BUNDLE]).has("space.keys")).toBe(
+    expect(bundlePublishedScopes([CLAIMING_BUNDLE]).has("keys.mint")).toBe(
       false,
     );
     expect(bundlePublishedScopes([CLAIMING_BUNDLE]).has("core.note:read")).toBe(
@@ -82,7 +82,7 @@ describe("a bundle still cannot be the reason one is publishable", () => {
     const named = logSpy.mock.calls.filter(
       ([level, , data]) =>
         level === "warn" &&
-        (data as { scope?: string } | undefined)?.scope === "space.keys",
+        (data as { scope?: string } | undefined)?.scope === "keys.mint",
     );
     expect(named.length).toBeGreaterThanOrEqual(1);
   });

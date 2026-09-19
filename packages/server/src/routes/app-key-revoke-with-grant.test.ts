@@ -44,7 +44,7 @@ async function seedKey(
     {
       label,
       source: `app-key-revoke-${label}-${suffix}`,
-      space_permissions: [],
+      permissions: [],
       type_permissions: { "core.note": "read" },
       extension_permissions: {},
       edge_permissions: {},

@@ -88,7 +88,7 @@ async function createHostedContext(): Promise<HostedContext> {
     {
       label: "space-cfg",
       source: `space-cfg-${suffix}`,
-      space_permissions: [...SPACE_PERMISSIONS],
+      permissions: [...SPACE_PERMISSIONS],
       type_permissions: {},
       default_tier: "feed",
     },
@@ -160,7 +160,7 @@ describe("PUT /spaces/me/config — keys-mode fallback", () => {
       error: { code: string; details?: { required_scope?: string } };
     };
     expect(body.error.code).toBe("forbidden");
-    expect(body.error.details?.required_scope).toBe("space.settings");
+    expect(body.error.details?.required_scope).toBe("config.manage");
   });
 });
 
@@ -176,7 +176,7 @@ describe("Space config — round trips", () => {
     await hosted.cleanup();
   });
 
-  it("GET returns stored config for a caller holding space.settings", async () => {
+  it("GET returns stored config for a caller holding config.manage", async () => {
     await writeSpaceConfig(hosted.storage.settings, {
       enforcement: { strict_mode: { types: ["core.note"] } },
     });

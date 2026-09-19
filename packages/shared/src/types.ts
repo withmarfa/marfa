@@ -305,8 +305,7 @@ export interface ApiKey {
   /** Tier stamped onto items when the client doesn't supply one. */
   default_tier: Tier;
   /**
-   * The eleven space permissions this credential holds, as the literals
-   * themselves.
+   * The space permissions this credential holds, as the literals themselves.
    *
    * A list rather than a map because a space permission has no read/write
    * axis: it is held or it is not. Stored as the same shape a grant carries,
@@ -317,7 +316,7 @@ export interface ApiKey {
    * reading for an operator key as well: the instance tier is fenced off the
    * model rather than expressed inside it.
    */
-  space_permissions?: SpacePermission[];
+  permissions?: SpacePermission[];
   type_permissions: Record<string, TypePermission>;
   extension_permissions?: Record<string, ExtensionPermission>;
   /**
@@ -371,7 +370,7 @@ export interface ApiKey {
 export interface CreateKeyInput {
   label: string;
   source: string;
-  space_permissions?: SpacePermission[];
+  permissions?: SpacePermission[];
   default_tier?: Tier;
   type_permissions?: Record<string, TypePermission>;
   extension_permissions?: Record<string, ExtensionPermission>;
@@ -400,7 +399,7 @@ export interface CreateKeyInput {
 export interface UpdateKeyInput {
   label?: string;
   default_tier?: Tier;
-  space_permissions?: SpacePermission[];
+  permissions?: SpacePermission[];
   type_permissions?: Record<string, TypePermission>;
   extension_permissions?: Record<string, ExtensionPermission>;
   edge_permissions?: Record<string, EdgePermission>;
@@ -647,7 +646,7 @@ export interface EnforcementSettings {
   source_filter?: { types: string[]; sources: string[] };
 }
 
-/** Instance configuration. Written through `/spaces/me/config` on `space.settings`. */
+/** Instance configuration. Written through `/spaces/me/config` on `config.manage`. */
 export interface SpaceConfig {
   enforcement?: EnforcementSettings;
   /**

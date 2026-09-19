@@ -271,7 +271,7 @@ const updateTypeRoute = createRoute({
   tags: ["Types"],
   summary: "Update a custom type",
   description:
-    "Replaces a custom type's schema, re-running the registration-time correctness rails. Requires `space.schema` — core types are immutable and return 403; the structural diff between versions sets the required version bump, and a mismatch rejects with `422 version_bump_mismatch`.",
+    "Replaces a custom type's schema, re-running the registration-time correctness rails. Requires `schema.write` — core types are immutable and return 403; the structural diff between versions sets the required version bump, and a mismatch rejects with `422 version_bump_mismatch`.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({
@@ -320,7 +320,7 @@ const deleteTypeRoute = createRoute({
   tags: ["Types"],
   summary: "Delete a custom type",
   description:
-    "Removes a custom type registration. Requires `space.schema` — platform-shipped types are immutable.\n\nRejected with `409 type_has_subtypes` while another registered type declares this one as its parent, naming them in `details.subtype_ids`. `?force=true` does not cover that case: delete each subtype first, or give it a different parent through `PUT /types/{id}`.\n\nRejected with `409 type_in_use` if any item of the type still exists, unless `?force=true` orphans those rows (they persist, but new writes against the type return `400 unknown_type`).",
+    "Removes a custom type registration. Requires `schema.write` — platform-shipped types are immutable.\n\nRejected with `409 type_has_subtypes` while another registered type declares this one as its parent, naming them in `details.subtype_ids`. `?force=true` does not cover that case: delete each subtype first, or give it a different parent through `PUT /types/{id}`.\n\nRejected with `409 type_in_use` if any item of the type still exists, unless `?force=true` orphans those rows (they persist, but new writes against the type return `400 unknown_type`).",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({
@@ -512,7 +512,7 @@ export function typeRoutes(storage: Storage) {
 
   router.openapi(updateTypeRoute, async (c) => {
     requireAuth(c);
-    requireSpacePermission(c, "space.schema");
+    requireSpacePermission(c, "schema.write");
     const { id } = c.req.valid("param");
 
     if (!isValidTypeIdentifier(id)) {
@@ -592,7 +592,7 @@ export function typeRoutes(storage: Storage) {
 
   router.openapi(deleteTypeRoute, async (c) => {
     requireAuth(c);
-    requireSpacePermission(c, "space.schema");
+    requireSpacePermission(c, "schema.write");
     const { id } = c.req.valid("param");
 
     if (isLockedPlatformType(id)) {

@@ -113,30 +113,30 @@ describe("key management", () => {
       body: {
         label: "test-narrow",
         source: "test-narrow-src",
-        space_permissions: ["space.webhooks"],
+        permissions: ["webhooks.manage"],
       },
     });
     expect(createRes.status).toBe(201);
     const created = (await createRes.json()) as {
       id: string;
-      space_permissions?: string[];
+      permissions?: string[];
     };
-    expect(created.space_permissions).toEqual(["space.webhooks"]);
+    expect(created.permissions).toEqual(["webhooks.manage"]);
 
     const listRes = await request(ctx.app, "GET", "/keys", {
       key: ctx.spaceKey,
     });
     expect(listRes.status).toBe(200);
     const body = (await listRes.json()) as {
-      keys: { id: string; space_permissions?: string[] }[];
+      keys: { id: string; permissions?: string[] }[];
     };
     expect(body.keys.length).toBeGreaterThanOrEqual(2);
     // The stored row says the same thing the mint response did. Asserted
     // separately because the two are built by different code, and the mint
     // response is the one a caller cannot go back and re-read.
-    expect(
-      body.keys.find((k) => k.id === created.id)?.space_permissions,
-    ).toEqual(["space.webhooks"]);
+    expect(body.keys.find((k) => k.id === created.id)?.permissions).toEqual([
+      "webhooks.manage",
+    ]);
   });
 
   it("revokes a key", async () => {
@@ -163,7 +163,7 @@ describe("extension_permissions wiring", () => {
       body: {
         label: "ext-write-key",
         source: "ext-write-key-src",
-        space_permissions: [],
+        permissions: [],
         type_permissions: { "*": "write" },
         extension_permissions: { "swift.calendar": "write" },
       },
@@ -196,7 +196,7 @@ describe("extension_permissions wiring", () => {
       body: {
         label: "myapp",
         source: "myapp-grant-src",
-        space_permissions: [],
+        permissions: [],
         type_permissions: { "*": "write" },
         extension_permissions: { "other-app.notes": "write" },
       },
@@ -226,7 +226,7 @@ describe("extension_permissions wiring", () => {
       body: {
         label: "metadata-types-key",
         source: "metadata-types-key-src",
-        space_permissions: [],
+        permissions: [],
         type_permissions: { "*": "write" },
         metadata_permissions: { types: "write" },
       },
@@ -256,7 +256,7 @@ describe("extension_permissions wiring", () => {
       body: {
         label: "selfns",
         source: "selfns-src",
-        space_permissions: [],
+        permissions: [],
         type_permissions: { "*": "write" },
       },
     });
@@ -285,7 +285,7 @@ describe("KeyStore.updateLastUsed — DB-side debounce", () => {
       body: {
         label: "last-used-debounce-key",
         source: "last-used-debounce-src",
-        space_permissions: [],
+        permissions: [],
       },
     });
     const { id } = (await createRes.json()) as { id: string };

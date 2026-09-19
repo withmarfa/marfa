@@ -144,7 +144,7 @@ const createEdgeTypeRoute = createRoute({
           schema: makeErrorResponseSchema(["forbidden"]),
         },
       },
-      description: "`space.schema` required",
+      description: "`metadata.edge_types:write` required",
     },
     409: {
       content: {
@@ -187,7 +187,7 @@ const deleteEdgeTypeRoute = createRoute({
   tags: ["Edge Types"],
   summary: "Delete an edge type",
   description:
-    "Removes a custom edge type registration scoped to the caller's space. Requires `space.schema`; core edge types are rejected, another space's edge type resolves as not-found, and the request fails while any edges of this type still exist, so delete or migrate them first.",
+    "Removes a custom edge type registration scoped to the caller's space. Requires `schema.write`; core edge types are rejected, another space's edge type resolves as not-found, and the request fails while any edges of this type still exist, so delete or migrate them first.",
   security: [{ bearerAuth: [] }],
   request: { params: z.object({ id: z.string().describe("Edge type id.") }) },
   responses: {
@@ -296,7 +296,7 @@ export function edgeTypeRoutes(storage: Storage) {
 
   router.openapi(deleteEdgeTypeRoute, async (c) => {
     requireAuth(c);
-    requireSpacePermission(c, "space.schema");
+    requireSpacePermission(c, "schema.write");
     const { id } = c.req.valid("param");
     if (isCoreEdgeType(id)) {
       throw new MarfaError(

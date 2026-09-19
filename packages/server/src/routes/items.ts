@@ -1158,7 +1158,7 @@ const purgeItemRoute = createRoute({
   tags: ["Items"],
   summary: "Permanently delete an item",
   description:
-    "Hard-deletes the item and its edges, metadata, extensions, and attachment references — irreversible, and requires `space.item_purge`. Content-addressed blob bytes are retained if other items still reference them; most clients want the soft-delete endpoint instead. A live `system.connection` is refused: an app grant is revoked through the grants routes first, so its tokens and stored consent go with it.",
+    "Hard-deletes the item and its edges, metadata, extensions, and attachment references — irreversible, and requires `items.purge`. Content-addressed blob bytes are retained if other items still reference them; most clients want the soft-delete endpoint instead. A live `system.connection` is refused: an app grant is revoked through the grants routes first, so its tokens and stored consent go with it.",
   security: [{ bearerAuth: [] }],
   request: {
     params: IdParam,
@@ -1194,7 +1194,7 @@ const purgeItemRoute = createRoute({
         },
       },
       description:
-        "`space.item_purge` is missing, or the item is in a reserved namespace this credential may not write. The second reads `type_not_permitted` and is the answer for an untrashed row: purging is trash-then-purge, and a credential refused at the trash door would otherwise be told only that the item is not trashed, which describes an ordering mistake it did not make.",
+        "`items.purge` is missing, or the item is in a reserved namespace this credential may not write. The second reads `type_not_permitted` and is the answer for an untrashed row: purging is trash-then-purge, and a credential refused at the trash door would otherwise be told only that the item is not trashed, which describes an ordering mistake it did not make.",
     },
   },
 });
@@ -2996,7 +2996,7 @@ export function itemRoutes(storage: Storage) {
     }
 
     requireAuth(c);
-    requireSpacePermission(c, "space.item_purge");
+    requireSpacePermission(c, "items.purge");
     // Read before removing. This door used to purge without ever looking at
     // the row, so it could not have known a connection from a note.
     //
@@ -3039,7 +3039,7 @@ export function itemRoutes(storage: Storage) {
     }
 
     // **No provenance guard here**, and that is a finding rather than an
-    // omission: `space.item_purge` is asked above, and a runtime credential's
+    // omission: `items.purge` is asked above, and a runtime credential's
     // permissions are projected from its manifest and carry no space
     // permission at all, so an integration is refused before it reaches the
     // point where provenance would be consulted. A guard here would be

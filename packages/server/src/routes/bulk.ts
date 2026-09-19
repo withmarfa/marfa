@@ -319,7 +319,7 @@ const bulkActionRoute = createRoute({
           schema: makeErrorResponseSchema(["forbidden"]),
         },
       },
-      description: "`space.item_purge` required (purge only)",
+      description: "`items.purge` required (purge only)",
     },
   },
 });
@@ -1158,7 +1158,7 @@ export function bulkRoutes(storage: Storage) {
       MAX_BULK_ACTION_ITEMS_HARD,
     );
 
-    // **Purge asks for `space.item_purge`, the same permission the single-item
+    // **Purge asks for `items.purge`, the same permission the single-item
     // door asks for.** It is the same act on more rows, and a caller that may
     // destroy one row irrecoverably may destroy a hundred; a second, stricter
     // gate here would only mean the permission a person granted did not mean
@@ -1167,7 +1167,7 @@ export function bulkRoutes(storage: Storage) {
     // less sees its match set reduced rather than refused.
     if (action === "purge") {
       requireAuth(c);
-      requireSpacePermission(c, "space.item_purge");
+      requireSpacePermission(c, "items.purge");
       if (body.confirm !== "PURGE") {
         throw new MarfaError(
           ErrorCode.BULK_CONFIRMATION_REQUIRED,
@@ -1257,7 +1257,7 @@ export function bulkRoutes(storage: Storage) {
     // **Purge narrows here too, and that is new.** It used to be a no-op for
     // the only callers who reached purge, because a rank admitted them past
     // their maps. Under one model a caller purges what it may write: holding
-    // `space.item_purge` says a credential may destroy rows irrecoverably, and
+    // `items.purge` says a credential may destroy rows irrecoverably, and
     // its type permissions say which.
     const { allowed: allowedTypes, excluded: excludedTypes } = getTypeFilter(
       c,

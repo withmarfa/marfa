@@ -50,10 +50,10 @@ describe("the code-flow consent screen never pre-ticks a space permission", () =
   it("renders an unclaimed space permission unticked", () => {
     const html = renderConsentScreen({
       ...CONSENT_PARAMS,
-      scopes: [parsed("core.note:read"), parsed("space.keys")],
+      scopes: [parsed("core.note:read"), parsed("keys.mint")],
       bundles: DEFAULT_PERMISSION_BUNDLES,
     });
-    expect(rowFor(html, "space.keys")).not.toContain("checked");
+    expect(rowFor(html, "keys.mint")).not.toContain("checked");
     // The ordinary literal beside it still arrives ticked, so the case is not
     // passing because nothing is ticked at all.
     expect(rowFor(html, "core.note:read")).toContain("checked");
@@ -69,15 +69,15 @@ describe("the code-flow consent screen never pre-ticks a space permission", () =
       id: "operator-custom",
       label: "Operator custom",
       description: "Configured, not shipped.",
-      scopes: ["core.note:read", "space.keys"],
+      scopes: ["core.note:read", "keys.mint"],
       default_on: true,
     };
     const html = renderConsentScreen({
       ...CONSENT_PARAMS,
-      scopes: [parsed("core.note:read"), parsed("space.keys")],
+      scopes: [parsed("core.note:read"), parsed("keys.mint")],
       bundles: [claiming],
     });
-    expect(rowFor(html, "space.keys")).not.toContain("checked");
+    expect(rowFor(html, "keys.mint")).not.toContain("checked");
     expect(rowFor(html, "core.note:read")).toContain("checked");
   });
 
@@ -89,14 +89,14 @@ describe("the code-flow consent screen never pre-ticks a space permission", () =
     // trigger the narrowing revoke.
     const html = renderConsentScreen({
       ...CONSENT_PARAMS,
-      scopes: [parsed("space.keys"), parsed("core.note:read")],
+      scopes: [parsed("keys.mint"), parsed("core.note:read")],
       bundles: DEFAULT_PERMISSION_BUNDLES,
       // A standing grant, so this render is the re-consent diff: the
       // space permission lands in "Already allowed", which is being shown
       // rather than offered.
-      priorScopes: ["space.keys"],
+      priorScopes: ["keys.mint"],
     });
-    expect(rowFor(html, "space.keys")).toContain("checked");
+    expect(rowFor(html, "keys.mint")).toContain("checked");
   });
 });
 
@@ -113,21 +113,21 @@ describe("the device-approval screen offers a space permission as a toggle", () 
     // nothing for "leaving it alone grants nothing" to mean on this screen.
     const html = renderDeviceConsentScreen({
       ...DEVICE_PARAMS,
-      scopes: [parsed("core.note:read"), parsed("space.keys")],
+      scopes: [parsed("core.note:read"), parsed("keys.mint")],
       bundles: DEFAULT_PERMISSION_BUNDLES,
     });
     expect(html).toContain('name="scopes"');
     expect(html).toContain('value="core.note:read"');
-    expect(html).toContain('value="space.keys"');
+    expect(html).toContain('value="keys.mint"');
   });
 
   it("leaves a space permission unticked and everything else ticked", () => {
     const html = renderDeviceConsentScreen({
       ...DEVICE_PARAMS,
-      scopes: [parsed("core.note:read"), parsed("space.keys")],
+      scopes: [parsed("core.note:read"), parsed("keys.mint")],
       bundles: DEFAULT_PERMISSION_BUNDLES,
     });
-    expect(rowFor(html, "space.keys")).not.toContain("checked");
+    expect(rowFor(html, "keys.mint")).not.toContain("checked");
     expect(rowFor(html, "core.note:read")).toContain("checked");
   });
 

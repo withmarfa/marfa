@@ -12,10 +12,12 @@
  *
  * ## What is withheld, and what deliberately is not
  *
- * **`space.*` is withheld from a bundle, and only from a bundle.** The
- * eleven administrative literals are now emitted by `buildAllowedScopes`
- * itself, from the closed set, so the family is requestable and the drop here
- * no longer decides that. What it decides is that a *bundle* can never be the
+ * **Every administrative literal is withheld from a bundle, and only from a
+ * bundle.** They are emitted by `buildAllowedScopes` itself, from the closed
+ * set, so the family is requestable and the drop here no longer decides that.
+ * How many there are is not restated here — the predicate below asks the set
+ * rather than counting it, which is what keeps this paragraph true as the set
+ * changes size. What the drop decides is that a *bundle* can never be the
  * reason one is publishable, and that is the half worth keeping: a
  * bundle-claimed space permission leaves the consent screen's unclaimed-scope
  * bucket and would inherit the bundle's `default_on` tick, which is grant by

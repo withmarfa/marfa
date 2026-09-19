@@ -39,7 +39,7 @@ beforeAll(async () => {
     metadata_permissions: {},
     extension_permissions: {},
     profile_permissions: {},
-    space_permissions: [],
+    permissions: [],
   });
 });
 

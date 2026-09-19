@@ -6826,7 +6826,7 @@
           "Items"
         ],
         "summary": "Permanently delete an item",
-        "description": "Hard-deletes the item and its edges, metadata, extensions, and attachment references — irreversible, and requires `space.item_purge`. Content-addressed blob bytes are retained if other items still reference them; most clients want the soft-delete endpoint instead. A live `system.connection` is refused: an app grant is revoked through the grants routes first, so its tokens and stored consent go with it.",
+        "description": "Hard-deletes the item and its edges, metadata, extensions, and attachment references — irreversible, and requires `items.purge`. Content-addressed blob bytes are retained if other items still reference them; most clients want the soft-delete endpoint instead. A live `system.connection` is refused: an app grant is revoked through the grants routes first, so its tokens and stored consent go with it.",
         "security": [
           {
             "bearerAuth": []
@@ -7009,7 +7009,7 @@
             }
           },
           "403": {
-            "description": "`space.item_purge` is missing, or the item is in a reserved namespace this credential may not write. The second reads `type_not_permitted` and is the answer for an untrashed row: purging is trash-then-purge, and a credential refused at the trash door would otherwise be told only that the item is not trashed, which describes an ordering mistake it did not make.",
+            "description": "`items.purge` is missing, or the item is in a reserved namespace this credential may not write. The second reads `type_not_permitted` and is the answer for an untrashed row: purging is trash-then-purge, and a credential refused at the trash door would otherwise be told only that the item is not trashed, which describes an ordering mistake it did not make.",
             "content": {
               "application/json": {
                 "schema": {
@@ -8637,7 +8637,7 @@
             }
           },
           "403": {
-            "description": "`space.item_purge` required (purge only)",
+            "description": "`items.purge` required (purge only)",
             "content": {
               "application/json": {
                 "schema": {
@@ -14423,7 +14423,7 @@
             }
           },
           "403": {
-            "description": "`space.schema` required",
+            "description": "`metadata.edge_types:write` required",
             "content": {
               "application/json": {
                 "schema": {
@@ -14754,7 +14754,7 @@
           "Edge Types"
         ],
         "summary": "Delete an edge type",
-        "description": "Removes a custom edge type registration scoped to the caller's space. Requires `space.schema`; core edge types are rejected, another space's edge type resolves as not-found, and the request fails while any edges of this type still exist, so delete or migrate them first.",
+        "description": "Removes a custom edge type registration scoped to the caller's space. Requires `schema.write`; core edge types are rejected, another space's edge type resolves as not-found, and the request fails while any edges of this type still exist, so delete or migrate them first.",
         "security": [
           {
             "bearerAuth": []
@@ -15967,7 +15967,7 @@
           "Types"
         ],
         "summary": "Update a custom type",
-        "description": "Replaces a custom type's schema, re-running the registration-time correctness rails. Requires `space.schema` — core types are immutable and return 403; the structural diff between versions sets the required version bump, and a mismatch rejects with `422 version_bump_mismatch`.",
+        "description": "Replaces a custom type's schema, re-running the registration-time correctness rails. Requires `schema.write` — core types are immutable and return 403; the structural diff between versions sets the required version bump, and a mismatch rejects with `422 version_bump_mismatch`.",
         "security": [
           {
             "bearerAuth": []
@@ -16296,7 +16296,7 @@
           "Types"
         ],
         "summary": "Delete a custom type",
-        "description": "Removes a custom type registration. Requires `space.schema` — platform-shipped types are immutable.\n\nRejected with `409 type_has_subtypes` while another registered type declares this one as its parent, naming them in `details.subtype_ids`. `?force=true` does not cover that case: delete each subtype first, or give it a different parent through `PUT /types/{id}`.\n\nRejected with `409 type_in_use` if any item of the type still exists, unless `?force=true` orphans those rows (they persist, but new writes against the type return `400 unknown_type`).",
+        "description": "Removes a custom type registration. Requires `schema.write` — platform-shipped types are immutable.\n\nRejected with `409 type_has_subtypes` while another registered type declares this one as its parent, naming them in `details.subtype_ids`. `?force=true` does not cover that case: delete each subtype first, or give it a different parent through `PUT /types/{id}`.\n\nRejected with `409 type_in_use` if any item of the type still exists, unless `?force=true` orphans those rows (they persist, but new writes against the type return `400 unknown_type`).",
         "security": [
           {
             "bearerAuth": []
@@ -18625,7 +18625,7 @@
           "Keys"
         ],
         "summary": "Create an API key",
-        "description": "Creates a new API key. The plaintext `key` is returned only in this response and never shown again, so store it securely.\n\nA credential is a set of permissions and nothing else. `space_permissions` names the space permissions the key holds; omitting it takes the creator's whole set, and anything named is clamped to what the creator holds, so a mint can narrow and can never widen. The content maps behave the same way, and a signed-in app must hold `space.keys` to reach this route at all.\n\nThe operator key holds no permissions, because running the instance sits outside the permission model, so it is not a ceiling: a working key it mints holds what the body names, or the whole set when the body names nothing. With `is_operator: true` it mints a second operator key instead, which holds nothing, so a body naming any map entry or space permission on one is refused. `is_operator` is granted only when the caller is itself an operator key.\n\nOn a fresh server with zero keys this runs in bootstrap mode: the key it mints is the operator key, and the request must present the one-time secret the server printed to its log at startup, as a bearer token. That secret works once — the mint consumes it. The operator key is not a working key, so the next call is this route again with it, minting the key to configure a client with.",
+        "description": "Creates a new API key. The plaintext `key` is returned only in this response and never shown again, so store it securely.\n\nA credential is a set of permissions and nothing else. `permissions` names the space permissions the key holds; omitting it takes the creator's whole set, and anything named is clamped to what the creator holds, so a mint can narrow and can never widen. The content maps behave the same way, and a signed-in app must hold `keys.mint` to reach this route at all.\n\nThe operator key holds no permissions, because running the instance sits outside the permission model, so it is not a ceiling: a working key it mints holds what the body names, or the whole set when the body names nothing. With `is_operator: true` it mints a second operator key instead, which holds nothing, so a body naming any map entry or space permission on one is refused. `is_operator` is granted only when the caller is itself an operator key.\n\nOn a fresh server with zero keys this runs in bootstrap mode: the key it mints is the operator key, and the request must present the one-time secret the server printed to its log at startup, as a bearer token. That secret works once — the mint consumes it. The operator key is not a working key, so the next call is this route again with it, minting the key to configure a client with.",
         "security": [
           {
             "bearerAuth": []
@@ -18646,19 +18646,18 @@
                     "minLength": 1,
                     "maxLength": 200
                   },
-                  "space_permissions": {
+                  "permissions": {
                     "type": "array",
                     "items": {
                       "type": "string",
                       "enum": [
-                        "space.webhooks",
-                        "space.schema",
-                        "space.usage",
-                        "space.settings",
-                        "space.audit_read",
-                        "space.item_purge",
-                        "space.keys",
-                        "space.app_grants"
+                        "webhooks.manage",
+                        "schema.write",
+                        "config.manage",
+                        "audit.read",
+                        "items.purge",
+                        "keys.mint",
+                        "grants.manage"
                       ]
                     }
                   },
@@ -18789,7 +18788,8 @@
                 "required": [
                   "label",
                   "source"
-                ]
+                ],
+                "additionalProperties": false
               }
             }
           }
@@ -18814,19 +18814,18 @@
                     "source": {
                       "type": "string"
                     },
-                    "space_permissions": {
+                    "permissions": {
                       "type": "array",
                       "items": {
                         "type": "string",
                         "enum": [
-                          "space.webhooks",
-                          "space.schema",
-                          "space.usage",
-                          "space.settings",
-                          "space.audit_read",
-                          "space.item_purge",
-                          "space.keys",
-                          "space.app_grants"
+                          "webhooks.manage",
+                          "schema.write",
+                          "config.manage",
+                          "audit.read",
+                          "items.purge",
+                          "keys.mint",
+                          "grants.manage"
                         ]
                       }
                     },
@@ -19106,7 +19105,7 @@
             }
           },
           "403": {
-            "description": "Caller does not hold `space.keys`, asked for reach its own credential does not cover, asked to give reach to an operator key, or asked to mint an operator key without being one. A missing permission is named in `details.required_scope`.",
+            "description": "Caller does not hold `keys.mint`, asked for reach its own credential does not cover, asked to give reach to an operator key, or asked to mint an operator key without being one. A missing permission is named in `details.required_scope`.",
             "content": {
               "application/json": {
                 "schema": {
@@ -19222,7 +19221,7 @@
           "Keys"
         ],
         "summary": "List API keys",
-        "description": "Returns every API key without plaintext, which is only ever returned at creation time. `last_used_at` is debounced to at most one write per hour, so treat it as a coarse activity signal rather than an audit log. Requires `space.keys`, or the operator key, which reaches these doors by being the operator key rather than by holding a permission.",
+        "description": "Returns every API key without plaintext, which is only ever returned at creation time. `last_used_at` is debounced to at most one write per hour, so treat it as a coarse activity signal rather than an audit log. Requires `keys.mint`, or the operator key, which reaches these doors by being the operator key rather than by holding a permission.",
         "security": [
           {
             "bearerAuth": []
@@ -19250,19 +19249,18 @@
                           "source": {
                             "type": "string"
                           },
-                          "space_permissions": {
+                          "permissions": {
                             "type": "array",
                             "items": {
                               "type": "string",
                               "enum": [
-                                "space.webhooks",
-                                "space.schema",
-                                "space.usage",
-                                "space.settings",
-                                "space.audit_read",
-                                "space.item_purge",
-                                "space.keys",
-                                "space.app_grants"
+                                "webhooks.manage",
+                                "schema.write",
+                                "config.manage",
+                                "audit.read",
+                                "items.purge",
+                                "keys.mint",
+                                "grants.manage"
                               ]
                             },
                             "description": "The space permissions this credential holds, as the literals themselves. Omitted on a create request takes the creator's whole set; anything named is honoured and clamped to what the creator holds."
@@ -19560,7 +19558,7 @@
           "Keys"
         ],
         "summary": "Revoke an API key",
-        "description": "Revokes the key immediately; the next request bearing it returns `401 unauthorized`. In-flight long-lived connections (SSE) terminate on the next heartbeat. Requires `space.keys`, or the operator key, which reaches these doors by being the operator key rather than by holding a permission. A revoke that changes no row answers `404 api_key_not_found` rather than success, for every caller: an unknown id and a key already revoked are both refused, and the message says which it was.",
+        "description": "Revokes the key immediately; the next request bearing it returns `401 unauthorized`. In-flight long-lived connections (SSE) terminate on the next heartbeat. Requires `keys.mint`, or the operator key, which reaches these doors by being the operator key rather than by holding a permission. A revoke that changes no row answers `404 api_key_not_found` rather than success, for every caller: an unknown id and a key already revoked are both refused, and the message says which it was.",
         "security": [
           {
             "bearerAuth": []
@@ -19727,7 +19725,7 @@
             }
           },
           "403": {
-            "description": "`space.keys` required, unless the caller is the operator key",
+            "description": "`keys.mint` required, unless the caller is the operator key",
             "content": {
               "application/json": {
                 "schema": {
@@ -19899,7 +19897,7 @@
           "Keys"
         ],
         "summary": "Update an API key",
-        "description": "Updates a key's label, default tier, or permission maps in place. `source` is immutable and rejected with `400 validation_error` if present in the body — revoke and recreate to change it. Requires `space.keys`. A permission map may not be widened past what the calling credential itself holds. The operator key is excepted, since running the instance sits outside the permission model, but an operator key holds nothing at all, so no map on one may be widened by any caller. A key created by an app is never widened at all, by any caller including the operator key: it holds what that app held, and may only be narrowed.",
+        "description": "Updates a key's label, default tier, or permission maps in place. `source` is immutable and rejected with `400 validation_error` if present in the body — revoke and recreate to change it. Requires `keys.mint`. A permission map may not be widened past what the calling credential itself holds. The operator key is excepted, since running the instance sits outside the permission model, but an operator key holds nothing at all, so no map on one may be widened by any caller. A key created by an app is never widened at all, by any caller including the operator key: it holds what that app held, and may only be narrowed.",
         "security": [
           {
             "bearerAuth": []
@@ -19985,19 +19983,18 @@
                       ]
                     }
                   },
-                  "space_permissions": {
+                  "permissions": {
                     "type": "array",
                     "items": {
                       "type": "string",
                       "enum": [
-                        "space.webhooks",
-                        "space.schema",
-                        "space.usage",
-                        "space.settings",
-                        "space.audit_read",
-                        "space.item_purge",
-                        "space.keys",
-                        "space.app_grants"
+                        "webhooks.manage",
+                        "schema.write",
+                        "config.manage",
+                        "audit.read",
+                        "items.purge",
+                        "keys.mint",
+                        "grants.manage"
                       ]
                     }
                   },
@@ -20067,7 +20064,8 @@
                   "source": {
                     "nullable": true
                   }
-                }
+                },
+                "additionalProperties": false
               }
             }
           }
@@ -20089,19 +20087,18 @@
                     "source": {
                       "type": "string"
                     },
-                    "space_permissions": {
+                    "permissions": {
                       "type": "array",
                       "items": {
                         "type": "string",
                         "enum": [
-                          "space.webhooks",
-                          "space.schema",
-                          "space.usage",
-                          "space.settings",
-                          "space.audit_read",
-                          "space.item_purge",
-                          "space.keys",
-                          "space.app_grants"
+                          "webhooks.manage",
+                          "schema.write",
+                          "config.manage",
+                          "audit.read",
+                          "items.purge",
+                          "keys.mint",
+                          "grants.manage"
                         ]
                       },
                       "description": "The space permissions this credential holds, as the literals themselves. Omitted on a create request takes the creator's whole set; anything named is honoured and clamped to what the creator holds."
@@ -20378,7 +20375,7 @@
             }
           },
           "403": {
-            "description": "`space.keys` required, unless the caller is the operator key",
+            "description": "`keys.mint` required, unless the caller is the operator key",
             "content": {
               "application/json": {
                 "schema": {
@@ -20552,7 +20549,7 @@
           "Spaces"
         ],
         "summary": "Get the instance configuration",
-        "description": "Returns the instance configuration — the optional `enforcement` levers plus the cleanup-job retention overrides. Returns an empty object when nothing is configured. Requires `space.settings`.",
+        "description": "Returns the instance configuration — the optional `enforcement` levers plus the cleanup-job retention overrides. Returns an empty object when nothing is configured. Requires `config.manage`.",
         "security": [
           {
             "bearerAuth": []
@@ -20835,7 +20832,7 @@
           "Spaces"
         ],
         "summary": "Replace the instance configuration",
-        "description": "Overwrites the instance config with the supplied object — full replacement, not a merge. An unknown key is refused rather than dropped, because a full replacement that ignores a typo erases every override the instance had. Cleanup-job retention overrides must be non-negative, where `0` disables the corresponding job. Requires `space.settings`.",
+        "description": "Overwrites the instance config with the supplied object — full replacement, not a merge. An unknown key is refused rather than dropped, because a full replacement that ignores a typo erases every override the instance had. Cleanup-job retention overrides must be non-negative, where `0` disables the corresponding job. Requires `config.manage`.",
         "security": [
           {
             "bearerAuth": []
@@ -22346,7 +22343,7 @@
             }
           },
           "403": {
-            "description": "`forbidden`: the credential does not hold `space.webhooks`. `scoped_credential_not_permitted`: it does, but its content read is narrower than the space. A subscription is space-level and carries no credential of its own, so a delivery cannot be narrowed to what its creator could read; only a credential that can read the whole space may register or re-point one.",
+            "description": "`forbidden`: the credential does not hold `webhooks.manage`. `scoped_credential_not_permitted`: it does, but its content read is narrower than the space. A subscription is space-level and carries no credential of its own, so a delivery cannot be narrowed to what its creator could read; only a credential that can read the whole space may register or re-point one.",
             "content": {
               "application/json": {
                 "schema": {
@@ -22601,7 +22598,7 @@
             }
           },
           "403": {
-            "description": "The credential does not hold `space.webhooks`. Reading a space's webhook configuration takes the same permission as registering one.",
+            "description": "The credential does not hold `webhooks.manage`. Reading a space's webhook configuration takes the same permission as registering one.",
             "content": {
               "application/json": {
                 "schema": {
@@ -22858,7 +22855,7 @@
             }
           },
           "403": {
-            "description": "The credential does not hold `space.webhooks`. Reading a space's webhook configuration takes the same permission as registering one.",
+            "description": "The credential does not hold `webhooks.manage`. Reading a space's webhook configuration takes the same permission as registering one.",
             "content": {
               "application/json": {
                 "schema": {
@@ -23267,7 +23264,7 @@
             }
           },
           "403": {
-            "description": "`forbidden`: the credential does not hold `space.webhooks`. `scoped_credential_not_permitted`: it does, but its content read is narrower than the space. A subscription is space-level and carries no credential of its own, so a delivery cannot be narrowed to what its creator could read; only a credential that can read the whole space may register or re-point one.",
+            "description": "`forbidden`: the credential does not hold `webhooks.manage`. `scoped_credential_not_permitted`: it does, but its content read is narrower than the space. A subscription is space-level and carries no credential of its own, so a delivery cannot be narrowed to what its creator could read; only a credential that can read the whole space may register or re-point one.",
             "content": {
               "application/json": {
                 "schema": {
@@ -23551,7 +23548,7 @@
             }
           },
           "403": {
-            "description": "`forbidden`: the credential does not hold `space.webhooks`. `scoped_credential_not_permitted`: it does, but its content read is narrower than the space. A subscription is space-level and carries no credential of its own, so a delivery cannot be narrowed to what its creator could read; only a credential that can read the whole space may create, re-point or destroy one.",
+            "description": "`forbidden`: the credential does not hold `webhooks.manage`. `scoped_credential_not_permitted`: it does, but its content read is narrower than the space. A subscription is space-level and carries no credential of its own, so a delivery cannot be narrowed to what its creator could read; only a credential that can read the whole space may create, re-point or destroy one.",
             "content": {
               "application/json": {
                 "schema": {
@@ -23888,7 +23885,7 @@
             }
           },
           "403": {
-            "description": "The credential does not hold `space.webhooks`. Reading a space's webhook configuration takes the same permission as registering one.",
+            "description": "The credential does not hold `webhooks.manage`. Reading a space's webhook configuration takes the same permission as registering one.",
             "content": {
               "application/json": {
                 "schema": {
@@ -24062,7 +24059,7 @@
           "Audit"
         ],
         "summary": "List audit log entries",
-        "description": "Returns audit-log entries in reverse-chronological order, filtered by action, resource, or time range, with cursor pagination. Records only state-changing calls and a few admin reads — item/edge reads, SSE, and search are not logged. Requires `space.audit_read`, and answers a caller's own space and nothing else. A credential with no space holds no space permission, so it is refused rather than shown the whole trail. Unrecognized query parameters are refused with `400` rather than ignored, so a misspelled filter cannot silently return an unfiltered page. A parameter of your own — a cache-buster, an analytics tag — must start with `_`, which is always ignored.",
+        "description": "Returns audit-log entries in reverse-chronological order, filtered by action, resource, or time range, with cursor pagination. Records only state-changing calls and a few admin reads — item/edge reads, SSE, and search are not logged. Requires `audit.read`, and answers a caller's own space and nothing else. A credential with no space holds no space permission, so it is refused rather than shown the whole trail. Unrecognized query parameters are refused with `400` rather than ignored, so a misspelled filter cannot silently return an unfiltered page. A parameter of your own — a cache-buster, an analytics tag — must start with `_`, which is always ignored.",
         "security": [
           {
             "bearerAuth": []
@@ -24287,7 +24284,7 @@
             }
           },
           "403": {
-            "description": "Caller does not hold `space.audit_read`",
+            "description": "Caller does not hold `audit.read`",
             "content": {
               "application/json": {
                 "schema": {

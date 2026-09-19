@@ -42,7 +42,7 @@ let readerWriterKey: string;
 /** A source the space's `source_filter` approves, and one it does not. */
 let trustedKey: string;
 let untrustedKey: string;
-/** Holds `space.item_purge`, and write on bookmarks but only read on notes. */
+/** Holds `items.purge`, and write on bookmarks but only read on notes. */
 let purgerKey: string;
 
 async function mintKey(
@@ -57,7 +57,7 @@ async function mintKey(
       label,
       source,
       type_permissions: typePermissions,
-      space_permissions: spacePermissions,
+      permissions: spacePermissions,
       default_tier: "library",
     },
     hashApiKey(raw, TEST_API_KEY_SALT),
@@ -112,7 +112,7 @@ beforeAll(async () => {
     "purges-bookmarks-reads-notes",
     "purger",
     { "core.note": "read", "core.bookmark": "write" },
-    ["space.item_purge"],
+    ["items.purge"],
   );
 
   await writeSpaceConfig(ctx.storage.settings, {
@@ -153,7 +153,7 @@ describe("the match set narrows to what the caller may write", () => {
   it("narrows purge too, which it never used to", async () => {
     // **Purge was the one action this filter did not reach**, because the only
     // callers who got past its gate were admitted past their maps by a rank as
-    // well. Under one model `space.item_purge` says a credential may destroy
+    // well. Under one model `items.purge` says a credential may destroy
     // rows irrecoverably and its type permissions say which, so the filter
     // decides here exactly as it does for every other action.
     const marker = `pg${Math.random().toString(36).slice(2, 8)}`;

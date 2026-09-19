@@ -108,7 +108,7 @@ describe("GET /metrics", () => {
       {
         label: "space-a-admin",
         source: `space-a-${raw.slice(-8)}`,
-        space_permissions: [...SPACE_PERMISSIONS],
+        permissions: [...SPACE_PERMISSIONS],
         type_permissions: {},
         default_tier: "feed",
       },

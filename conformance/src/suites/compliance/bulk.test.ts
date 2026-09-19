@@ -301,7 +301,7 @@ describe("bulk", () => {
       label,
       source: `${ctx.source}-${label}`,
       type_permissions: { "*": "write" },
-      space_permissions: [],
+      permissions: [],
     });
     expect(keyResp.ok).toBe(true);
     trackKey(ctx, keyResp.data.id);
@@ -325,7 +325,7 @@ describe("bulk", () => {
     expect(res.ok).toBe(false);
     expect(res.status).toBe(403);
     expect(res.error?.error.code).toBe("forbidden");
-    expect(res.error?.error.details?.required_scope).toBe("space.item_purge");
+    expect(res.error?.error.details?.required_scope).toBe("items.purge");
 
     const survivor = await client.getItem(seeded.data.item.id);
     expect(survivor.ok).toBe(true);

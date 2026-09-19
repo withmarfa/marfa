@@ -167,7 +167,7 @@ const createWebhookRoute = createRoute({
         },
       },
       description:
-        "`forbidden`: the credential does not hold `space.webhooks`. `scoped_credential_not_permitted`: it does, but its content read is narrower than the space. A subscription is space-level and carries no credential of its own, so a delivery cannot be narrowed to what its creator could read; only a credential that can read the whole space may register or re-point one.",
+        "`forbidden`: the credential does not hold `webhooks.manage`. `scoped_credential_not_permitted`: it does, but its content read is narrower than the space. A subscription is space-level and carries no credential of its own, so a delivery cannot be narrowed to what its creator could read; only a credential that can read the whole space may register or re-point one.",
     },
   },
 });
@@ -207,7 +207,7 @@ const listWebhooksRoute = createRoute({
         },
       },
       description:
-        "The credential does not hold `space.webhooks`. Reading a space's webhook configuration takes the same permission as registering one.",
+        "The credential does not hold `webhooks.manage`. Reading a space's webhook configuration takes the same permission as registering one.",
     },
   },
 });
@@ -250,7 +250,7 @@ const getWebhookRoute = createRoute({
         },
       },
       description:
-        "The credential does not hold `space.webhooks`. Reading a space's webhook configuration takes the same permission as registering one.",
+        "The credential does not hold `webhooks.manage`. Reading a space's webhook configuration takes the same permission as registering one.",
     },
     404: {
       content: {
@@ -327,7 +327,7 @@ const updateWebhookRoute = createRoute({
         },
       },
       description:
-        "`forbidden`: the credential does not hold `space.webhooks`. `scoped_credential_not_permitted`: it does, but its content read is narrower than the space. A subscription is space-level and carries no credential of its own, so a delivery cannot be narrowed to what its creator could read; only a credential that can read the whole space may register or re-point one.",
+        "`forbidden`: the credential does not hold `webhooks.manage`. `scoped_credential_not_permitted`: it does, but its content read is narrower than the space. A subscription is space-level and carries no credential of its own, so a delivery cannot be narrowed to what its creator could read; only a credential that can read the whole space may register or re-point one.",
     },
     404: {
       content: {
@@ -381,7 +381,7 @@ const deleteWebhookRoute = createRoute({
         },
       },
       description:
-        "`forbidden`: the credential does not hold `space.webhooks`. `scoped_credential_not_permitted`: it does, but its content read is narrower than the space. A subscription is space-level and carries no credential of its own, so a delivery cannot be narrowed to what its creator could read; only a credential that can read the whole space may create, re-point or destroy one.",
+        "`forbidden`: the credential does not hold `webhooks.manage`. `scoped_credential_not_permitted`: it does, but its content read is narrower than the space. A subscription is space-level and carries no credential of its own, so a delivery cannot be narrowed to what its creator could read; only a credential that can read the whole space may create, re-point or destroy one.",
     },
     404: {
       content: {
@@ -444,7 +444,7 @@ const listDeliveriesRoute = createRoute({
         },
       },
       description:
-        "The credential does not hold `space.webhooks`. Reading a space's webhook configuration takes the same permission as registering one.",
+        "The credential does not hold `webhooks.manage`. Reading a space's webhook configuration takes the same permission as registering one.",
     },
     404: {
       content: {
@@ -471,7 +471,7 @@ const listDeliveriesRoute = createRoute({
  * for the subscription to belong to a credential that already reaches
  * everything in the space.
  *
- * **`space.webhooks` alone does not give that**, and under one permission
+ * **`webhooks.manage` alone does not give that**, and under one permission
  * model that is clearer than it was rather than less true. A credential can
  * hold the permission to set up webhooks and hold read on one type, and the
  * subscription it registers would then deliver every type — a standing
@@ -514,9 +514,9 @@ export function webhookRoutes(storage: Storage) {
   const router = createOpenAPIRouter<AppEnv>();
 
   router.openapi(createWebhookRoute, async (c) => {
-    // `space.webhooks` only.
+    // `webhooks.manage` only.
     const key = requireAuth(c);
-    requireSpacePermission(c, "space.webhooks");
+    requireSpacePermission(c, "webhooks.manage");
     refuseNarrowCredential(key);
 
     // Reserved around the create below rather than checked here, so
@@ -554,7 +554,7 @@ export function webhookRoutes(storage: Storage) {
 
   router.openapi(listWebhooksRoute, async (c) => {
     requireAuth(c);
-    requireSpacePermission(c, "space.webhooks");
+    requireSpacePermission(c, "webhooks.manage");
     const webhooks = await storage.outboundWebhooks.list();
     return c.json(
       {
@@ -569,7 +569,7 @@ export function webhookRoutes(storage: Storage) {
 
   router.openapi(getWebhookRoute, async (c) => {
     requireAuth(c);
-    requireSpacePermission(c, "space.webhooks");
+    requireSpacePermission(c, "webhooks.manage");
     const { id } = c.req.valid("param");
     const webhook = await storage.outboundWebhooks.get(id);
     if (!webhook) {
@@ -580,7 +580,7 @@ export function webhookRoutes(storage: Storage) {
 
   router.openapi(updateWebhookRoute, async (c) => {
     const key = requireAuth(c);
-    requireSpacePermission(c, "space.webhooks");
+    requireSpacePermission(c, "webhooks.manage");
     // The update door too: it re-points `url` and rewrites `events`, so
     // admitting a scoped credential here would let it take over a
     // subscription it could not have created.
@@ -623,7 +623,7 @@ export function webhookRoutes(storage: Storage) {
 
   router.openapi(deleteWebhookRoute, async (c) => {
     const key = requireAuth(c);
-    requireSpacePermission(c, "space.webhooks");
+    requireSpacePermission(c, "webhooks.manage");
     // Destroying a subscription this credential could not have created is
     // the same rationale as refusing to create one: the row belongs to
     // the space, not to the grant, and an app holding a subset of the
@@ -649,7 +649,7 @@ export function webhookRoutes(storage: Storage) {
 
   router.openapi(listDeliveriesRoute, async (c) => {
     requireAuth(c);
-    requireSpacePermission(c, "space.webhooks");
+    requireSpacePermission(c, "webhooks.manage");
     const { id } = c.req.valid("param");
     const { limit } = c.req.valid("query");
 

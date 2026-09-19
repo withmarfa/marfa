@@ -79,7 +79,7 @@ async function mintKey(opts: {
     {
       label: opts.label ?? `authority-${suffix}`,
       source: opts.source ?? `authority-${suffix}`,
-      space_permissions: opts.spacePermissions ?? [],
+      permissions: opts.spacePermissions ?? [],
       default_tier: "library",
       type_permissions: opts.type_permissions ?? {},
       extension_permissions: opts.extension_permissions,
@@ -117,7 +117,7 @@ describe("POST /keys — integration source prefixes are not mintable", () => {
   it("refuses a source claiming a connection's integration identity", async () => {
     const connectionId = await seedConnection();
     const caller = await mintKey({
-      spacePermissions: ["space.keys"],
+      spacePermissions: ["keys.mint"],
     });
 
     const res = await request(ctx.app, "POST", "/keys", {
@@ -136,7 +136,7 @@ describe("POST /keys — integration source prefixes are not mintable", () => {
 
   it("still accepts an ordinary source", async () => {
     const caller = await mintKey({
-      spacePermissions: ["space.keys"],
+      spacePermissions: ["keys.mint"],
     });
 
     const res = await request(ctx.app, "POST", "/keys", {
