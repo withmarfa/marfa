@@ -14,6 +14,10 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { requireDeclaredCredential } from "../middleware/auth.js";
+import {
+  finalizeOpenAPISpec,
+  OPENAPI_DOCUMENT_INFO,
+} from "../openapi-finalize.js";
 import { FENCED_PLUGIN_ENDPOINTS } from "./oauth-plugin-fence.js";
 import { ensureBootstrapSecret } from "../auth/bootstrap-secret.js";
 import {
@@ -47,26 +51,48 @@ function guardedDoors(): Set<string> {
   );
 }
 
-/**
- * Every operation the registry carries, secured or not, as the router paths.
- *
- * `declaredDoors` and `guardedDoors` are both derived from `security`, so a
- * route that loses the declaration leaves both sets at once and their
- * equality still holds. This is the set that does not move when it does.
- */
-function documentedDoors(): Set<string> {
-  const doc = ctx.app.getOpenAPIDocument({
-    openapi: "3.1.0",
-    info: { title: "census", version: "0" },
-  });
+const HTTP_METHODS = ["get", "post", "put", "patch", "delete"];
+
+function operationDoors(paths: Record<string, unknown>): Set<string> {
   const out = new Set<string>();
-  for (const [path, item] of Object.entries(doc.paths)) {
-    for (const method of Object.keys(item)) {
-      if (!["get", "post", "put", "patch", "delete"].includes(method)) continue;
+  for (const [path, item] of Object.entries(paths)) {
+    for (const method of Object.keys(item as Record<string, unknown>)) {
+      if (!HTTP_METHODS.includes(method)) continue;
       out.add(`${method.toUpperCase()} ${path.replace(/\{([^}]+)\}/g, ":$1")}`);
     }
   }
   return out;
+}
+
+/**
+ * Every operation the registry carries and every one the served document
+ * publishes, secured or not, as the router paths.
+ *
+ * `declaredDoors` and `guardedDoors` are both derived from `security`, so a
+ * route that loses the declaration leaves both sets at once and their
+ * equality still holds. This is the set that does not move when it does.
+ *
+ * **Both documents, because neither contains the other.**
+ * `finalizeOpenAPISpec` strips the internal operations and injects the
+ * plain-Hono ones the registry never sees, so the registry alone misses a
+ * door the server publishes and the published document alone misses one it
+ * serves without publishing.
+ */
+function documentedDoors(): Set<string> {
+  const registry = ctx.app.getOpenAPIDocument({
+    openapi: "3.1.0",
+    info: { title: "census", version: "0" },
+  });
+  const published = finalizeOpenAPISpec(
+    ctx.app.getOpenAPIDocument({
+      openapi: "3.1.0",
+      info: OPENAPI_DOCUMENT_INFO,
+    }),
+  );
+  return new Set([
+    ...operationDoors(registry.paths),
+    ...operationDoors(published.paths),
+  ]);
 }
 
 /**
@@ -90,7 +116,7 @@ function declaredDoors(): Set<string> {
     for (const [method, operation] of Object.entries(
       item as Record<string, unknown>,
     )) {
-      if (!["get", "post", "put", "patch", "delete"].includes(method)) continue;
+      if (!HTTP_METHODS.includes(method)) continue;
       const security = (operation as { security?: unknown[] }).security;
       if (security === undefined || security.length === 0) continue;
       out.add(`${method.toUpperCase()} ${path.replace(/\{([^}]+)\}/g, ":$1")}`);
@@ -207,10 +233,15 @@ describe("the credential gate", () => {
     // and the comparison stays green one door smaller. An operation exists in
     // the registry whether or not it declares anything, so an ungated one
     // that nobody named is visible here and nowhere else.
+    //
+    // The two records are the only way through: an operation the document
+    // carries is either gated, open by construction, or one of the plain
+    // Hono handlers that takes its credential itself and is swept below.
     const guarded = guardedDoors();
     const ungated = [...documentedDoors()]
       .filter((door) => !guarded.has(door))
-      .filter((door) => !(door in OPEN_OPERATIONS));
+      .filter((door) => !(door in OPEN_OPERATIONS))
+      .filter((door) => !(door in CREDENTIAL_IN_HANDLER));
     expect(ungated.sort()).toEqual([]);
   });
 
