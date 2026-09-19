@@ -166,6 +166,13 @@ export class SqliteEdgeStore implements EdgeStore {
       filters?.updated_after,
       "updated_after",
     );
+    const updatedBefore = normalizeTimeBound(
+      filters?.updated_before,
+      "updated_before",
+    );
+    // Only the lower bound chooses the ordering: it is the resume point a
+    // cursor advances through. The upper bound is an end point, so it
+    // narrows without changing how the page is walked.
     const catchUp = updatedAfter !== undefined;
     // Both of this listing's orderings, named the same way the item
     // listing names its several: column and direction, so one mechanism
@@ -178,6 +185,9 @@ export class SqliteEdgeStore implements EdgeStore {
     if (typed) conditions.push(typed);
     if (updatedAfter !== undefined) {
       conditions.push(gte(edges.updated_at, updatedAfter));
+    }
+    if (updatedBefore !== undefined) {
+      conditions.push(lt(edges.updated_at, updatedBefore));
     }
 
     if (filters?.cursor) {

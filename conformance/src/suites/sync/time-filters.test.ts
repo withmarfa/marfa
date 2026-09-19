@@ -13,7 +13,8 @@ import type { SyncCapabilities } from "./capabilities.js";
 /**
  * "A modification time moves when the item changes", on the read a
  * reconnecting client makes: the catch-up covers the graph as well as the
- * rows, and a filter it names is either applied or refused — never dropped.
+ * rows, and a bound the request names is either applied or refused — never
+ * dropped.
  *
  * Query parameters are parsed with a schema that strips keys it does not
  * declare, so a request naming a filter the server does not have parses
@@ -25,8 +26,8 @@ import type { SyncCapabilities } from "./capabilities.js";
  * under the match cap it does not error — it succeeds, against every row the
  * credential can see.
  *
- * That door is why this file exists rather than the naming being tidied in
- * passing.
+ * That door is why this file exists rather than the bounds being taken on
+ * trust from the document.
  */
 
 let client: MarfaClient;
@@ -95,86 +96,53 @@ function errorDetail(error: unknown): Record<string, unknown> {
   return details as Record<string, unknown>;
 }
 
-describe("a renamed time filter is refused, never dropped", () => {
-  it("refuses the old name on the read door and honors the new one", async () => {
-    requireRule(caps, "renamedTimeFilters");
-
+describe("a bound is applied or refused, never dropped", () => {
+  it("honors the item listing's own-time bound and refuses a name it does not declare", async () => {
     const seed = await client.createItem({
       type: "core.note",
       source: ctx.source,
-      properties: { body: "renamed-filter-seed" },
+      properties: { body: "time-filter-seed" },
     });
     expect(seed.ok).toBe(true);
     trackItem(ctx, seed.data.item.id);
 
     const scope = `source=${encodeURIComponent(ctx.source)}&limit=50`;
 
-    // The control, and what it establishes depends on how the door answers
-    // it. An undeclared key that is ignored makes a 400 on the old name
-    // readable on its own; an undeclared key that is refused means the door
-    // refuses unknown input generally, and the refusal has to be read.
-    const ignored = await client.rawRequest<{ data?: unknown[] }>(
-      `/items?${scope}&zzz_not_a_parameter=${IMPOSSIBLE_FUTURE}`,
+    // The bound is honored rather than merely accepted: an impossible lower
+    // bound has to empty the page. Without this the refusal below would pass
+    // against a server that refused every name and applied none of them.
+    const bounded = await client.rawRequest<{ data?: unknown[] }>(
+      `/items?${scope}&occurred_after=${IMPOSSIBLE_FUTURE}`,
     );
     expect(
-      [200, 400],
-      `an undeclared query key answered ${ignored.status}, which is neither ignored nor refused`,
-    ).toContain(ignored.status);
-
-    const old = await client.rawRequest<unknown>(
-      `/items?${scope}&since=${IMPOSSIBLE_FUTURE}`,
-    );
-    expect(
-      old.status,
-      "the old filter name answered 200, so a caller still using it gets an unbounded listing that looks exactly like the bounded one they asked for",
-    ).toBe(400);
-
-    if (ignored.status === 400) {
-      // The door refuses every key it does not declare, so a 400 here is the
-      // answer it gives any unknown name and says nothing about the rename.
-      // The message cannot settle it either: the general refusal lists every
-      // parameter the door accepts, `timestamp_after` among them, so a
-      // substring check passes against a server that has never renamed
-      // anything. The refusal has to name what replaced the old filter.
-      const detail = errorDetail(old.error);
-      expect(
-        detail.renamed_from,
-        `"since" was refused as an unrecognized parameter rather than as a renamed one, so the caller is told their request is wrong and not what replaced it: ${JSON.stringify(old.error)}`,
-      ).toBe("since");
-      expect(
-        detail.use,
-        "the refusal names the old filter but not the one that replaces it",
-      ).toBe("timestamp_after");
-    } else {
-      expect(
-        JSON.stringify(old.error),
-        "the refusal does not name the filter that replaces it, so a caller learns their request is wrong and not how to fix it",
-      ).toContain("timestamp_after");
-    }
-
-    // The new name is honored rather than merely accepted: an impossible
-    // lower bound has to empty the page. Without this the test would pass
-    // against a server that refused the old name and dropped the new one.
-    const renamed = await client.rawRequest<{ data?: unknown[] }>(
-      `/items?${scope}&timestamp_after=${IMPOSSIBLE_FUTURE}`,
-    );
-    expect(
-      renamed.ok,
-      `the replacement filter was refused: ${JSON.stringify(renamed.error)}`,
+      bounded.ok,
+      `the own-time bound was refused: ${JSON.stringify(bounded.error)}`,
     ).toBe(true);
     expect(
-      renamed.data.data ?? [],
-      "the replacement filter returned rows dated before an impossible lower bound, so it is being dropped exactly as the old name was",
+      bounded.data.data ?? [],
+      "the bound returned rows dated before an impossible lower bound, so it is being dropped",
     ).toHaveLength(0);
+
+    // And a name the door does not declare is refused rather than stripped.
+    // The refusal names it, so a caller learns which key was wrong rather
+    // than receiving an unfiltered page at 200.
+    const undeclared = await client.rawRequest<unknown>(
+      `/items?${scope}&occurred_at_after=${IMPOSSIBLE_FUTURE}`,
+    );
+    expect(
+      undeclared.status,
+      "a bound name the door does not declare answered 200, so a caller who misspells one gets an unbounded listing that looks exactly like the bounded one they asked for",
+    ).toBe(400);
+    expect(errorDetail(undeclared.error).unknown_parameters).toEqual([
+      "occurred_at_after",
+    ]);
   });
 
-  it("refuses the old name inside a bulk-action filter, where a dropped bound is every row", async () => {
-    requireRule(caps, "renamedTimeFilters");
-
+  it("refuses an undeclared bound inside a bulk-action filter, where a dropped bound is every row", async () => {
     const seed = await client.createItem({
       type: "core.note",
       source: ctx.source,
-      properties: { body: "renamed-filter-bulk-seed" },
+      properties: { body: "time-filter-bulk-seed" },
     });
     expect(seed.ok).toBe(true);
     trackItem(ctx, seed.data.item.id);
@@ -214,24 +182,222 @@ describe("a renamed time filter is refused, never dropped", () => {
       "the door did not report the run as a dry run, so it may have written",
     ).toBe(true);
 
-    const old = await dryRun({ since: IMPOSSIBLE_FUTURE });
+    const undeclared = await dryRun({ since: IMPOSSIBLE_FUTURE });
     expect(
-      old.status,
-      "the bulk-action door accepted the old filter name; if it dropped it, the match set is every item the credential can see and the action is applied to all of them",
+      undeclared.status,
+      "the bulk-action door accepted a filter field it does not declare; if it dropped it, the match set is every item the credential can see and the action is applied to all of them",
     ).toBe(400);
 
-    // And the replacement narrows rather than being dropped in its turn. An
-    // impossible lower bound has to match nothing, against a filter that
+    // And the declared bound narrows rather than being dropped in its turn.
+    // An impossible lower bound has to match nothing, against a filter that
     // matched this run's row a moment ago.
-    const renamed = await dryRun({ timestamp_after: IMPOSSIBLE_FUTURE });
+    const bounded = await dryRun({ occurred_after: IMPOSSIBLE_FUTURE });
     expect(
-      renamed.ok,
-      `the replacement filter was refused on the bulk-action door: ${JSON.stringify(renamed.error)}`,
+      bounded.ok,
+      `the own-time bound was refused on the bulk-action door: ${JSON.stringify(bounded.error)}`,
     ).toBe(true);
     expect(
-      renamed.data.matched ?? -1,
-      "the replacement filter matched rows dated before an impossible lower bound, so the bulk-action door is dropping it",
+      bounded.data.matched ?? -1,
+      "the bound matched rows dated before an impossible lower bound, so the bulk-action door is dropping it",
     ).toBe(0);
+  });
+});
+
+describe("the catch-up window, at both ends", () => {
+  /**
+   * Three rows and three assertions per bound, because two of them cannot
+   * tell the failures apart.
+   *
+   * The row **on** the bound's instant is what separates exclusive from
+   * inclusive. The row **inside** the range is the control that separates a
+   * working bound from one the validator stripped: a dropped predicate and a
+   * predicate that matched nothing both leave the boundary row absent, and
+   * only a row that must come back can tell them apart. The row **outside**
+   * on the far side proves the bound narrows in the direction it claims.
+   */
+  it("bounds an item listing by updated_before, exclusively", async () => {
+    const seeded: { id: string; at: number }[] = [];
+    for (let i = 0; i < 3; i++) {
+      const r = await client.createItem({
+        type: "core.note",
+        source: ctx.source,
+        properties: { body: `updated-before-seed-${String(i)}` },
+      });
+      expect(r.ok).toBe(true);
+      trackItem(ctx, r.data.item.id);
+      const at = Date.parse(r.data.item.updated_at ?? "");
+      expect(Number.isNaN(at)).toBe(false);
+      seeded.push({ id: r.data.item.id, at });
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    const [earlier, onBound, later] = seeded;
+    expect(
+      new Set(seeded.map((row) => row.at)).size,
+      "two rows share a modification instant, so a bound on one cannot separate them",
+    ).toBe(3);
+
+    const scope = `source=${encodeURIComponent(ctx.source)}&limit=200`;
+    const ids = async (bound: string): Promise<string[]> => {
+      const page = await client.rawRequest<{
+        data?: { id: string }[];
+        has_more?: boolean;
+      }>(`/items?${scope}&${bound}`);
+      expect(
+        page.ok,
+        `the bound was refused: ${JSON.stringify(page.error)}`,
+      ).toBe(true);
+      expect(
+        page.data.has_more,
+        "the page was truncated, so a row missing from it proves nothing about the bound",
+      ).toBe(false);
+      return (page.data.data ?? []).map((row) => row.id);
+    };
+
+    const bounded = await ids(
+      `updated_before=${encodeURIComponent(new Date(onBound.at).toISOString())}`,
+    );
+    expect(
+      bounded,
+      "a row whose modification time is exactly the upper bound came back, so the bound is inclusive where the rule says exclusive",
+    ).not.toContain(onBound.id);
+    expect(
+      bounded,
+      "a row modified before the upper bound was missing, so the bound is being dropped or is narrowing the wrong way",
+    ).toContain(earlier.id);
+    expect(
+      bounded,
+      "a row modified after the upper bound came back, so the bound narrows in the wrong direction",
+    ).not.toContain(later.id);
+  });
+
+  it("keeps updated_after inclusive, which the catch-up depends on", async () => {
+    // The carve-out, asserted rather than assumed. `updated_at` ties across
+    // a bulk write, so a strict lower bound would drop every row sharing a
+    // resuming client's cursor — silently, and with no way to ask again.
+    const seeded: { id: string; at: number }[] = [];
+    for (let i = 0; i < 3; i++) {
+      const r = await client.createItem({
+        type: "core.note",
+        source: ctx.source,
+        properties: { body: `updated-after-seed-${String(i)}` },
+      });
+      expect(r.ok).toBe(true);
+      trackItem(ctx, r.data.item.id);
+      const at = Date.parse(r.data.item.updated_at ?? "");
+      expect(Number.isNaN(at)).toBe(false);
+      seeded.push({ id: r.data.item.id, at });
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    const [earlier, onBound, later] = seeded;
+    expect(new Set(seeded.map((row) => row.at)).size).toBe(3);
+
+    const page = await client.rawRequest<{
+      data?: { id: string }[];
+      has_more?: boolean;
+    }>(
+      `/items?source=${encodeURIComponent(ctx.source)}&limit=200&updated_after=${encodeURIComponent(
+        new Date(onBound.at).toISOString(),
+      )}`,
+    );
+    expect(
+      page.ok,
+      `the catch-up bound was refused: ${JSON.stringify(page.error)}`,
+    ).toBe(true);
+    expect(
+      page.data.has_more,
+      "the page was truncated, so a row missing from it proves nothing about the bound",
+    ).toBe(false);
+    const ids = (page.data.data ?? []).map((row) => row.id);
+
+    expect(
+      ids,
+      "a row whose modification time is exactly the cursor was dropped: this is the catch-up losing every row that shares a bulk write's instant",
+    ).toContain(onBound.id);
+    expect(
+      ids,
+      "a row modified after the cursor was missing, so the catch-up is not returning what changed",
+    ).toContain(later.id);
+    expect(
+      ids,
+      "a row modified before the cursor came back, so the bound is being dropped",
+    ).not.toContain(earlier.id);
+  });
+
+  it("bounds an edge listing by updated_before, exclusively", async () => {
+    const [a, b, c, d] = await Promise.all(
+      ["a", "b", "c", "d"].map((label) =>
+        client.createItem({
+          type: "core.note",
+          source: ctx.source,
+          properties: { body: `edge-updated-before-${label}` },
+        }),
+      ),
+    );
+    for (const r of [a, b, c, d]) {
+      expect(r.ok).toBe(true);
+      trackItem(ctx, r.data.item.id);
+    }
+
+    const seeded: { id: string; at: number }[] = [];
+    for (const [source, target] of [
+      [a, b],
+      [a, c],
+      [a, d],
+    ] as const) {
+      const edge = await client.createEdge({
+        source_id: source.data.item.id,
+        target_id: target.data.item.id,
+        edge_type: "about",
+      });
+      expect(edge.ok).toBe(true);
+      trackEdge(ctx, edge.data.edge.id);
+      const at = Date.parse(edge.data.edge.updated_at ?? "");
+      expect(Number.isNaN(at)).toBe(false);
+      seeded.push({ id: edge.data.edge.id, at });
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    const [earlier, onBound, later] = seeded;
+    expect(
+      new Set(seeded.map((row) => row.at)).size,
+      "two edges share a modification instant, so a bound on one cannot separate them",
+    ).toBe(3);
+
+    // `/edges` takes no source filter, so the listing is scoped by its own
+    // lower bound: a window opening a millisecond before the first of these
+    // three can only answer with edges written since, which on this target
+    // is these three and whatever a sibling file wrote in the same instant.
+    const from = new Date(earlier.at - 1).toISOString();
+    const ids = async (bound: string): Promise<string[]> => {
+      const page = await client.rawRequest<{
+        data?: { id: string }[];
+        has_more?: boolean;
+      }>(`/edges?limit=500&updated_after=${encodeURIComponent(from)}&${bound}`);
+      expect(
+        page.ok,
+        `the bound was refused: ${JSON.stringify(page.error)}`,
+      ).toBe(true);
+      expect(
+        page.data.has_more,
+        "the page was truncated, so a row missing from it proves nothing about the bound",
+      ).toBe(false);
+      return (page.data.data ?? []).map((row) => row.id);
+    };
+
+    const bounded = await ids(
+      `updated_before=${encodeURIComponent(new Date(onBound.at).toISOString())}`,
+    );
+    expect(
+      bounded,
+      "an edge whose modification time is exactly the upper bound came back, so the bound is inclusive where the rule says exclusive",
+    ).not.toContain(onBound.id);
+    expect(
+      bounded,
+      "an edge modified before the upper bound was missing, so the bound is being dropped or is narrowing the wrong way",
+    ).toContain(earlier.id);
+    expect(
+      bounded,
+      "an edge modified after the upper bound came back, so the bound narrows in the wrong direction",
+    ).not.toContain(later.id);
   });
 });
 

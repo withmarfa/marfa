@@ -1114,8 +1114,8 @@ const doors: Door[] = [
       const { result } = await runBulkActionAsync(
         ctx,
         {
-          action: "update_timestamp",
-          timestamp: RESTAMPED_AT,
+          action: "update_occurred_at",
+          occurred_at: RESTAMPED_AT,
           filter: { tags: [s.tag] },
         },
         ctx.spaceKey,
@@ -1124,7 +1124,7 @@ const doors: Door[] = [
     },
     attributable: (h, s) => itemEventsFor(h, s.item),
     landed: async (s) =>
-      (await ctx.storage.items.getIncludingTrashed(s.item))?.timestamp ===
+      (await ctx.storage.items.getIncludingTrashed(s.item))?.occurred_at ===
       RESTAMPED_AT,
     survivesBreakage: false,
   },

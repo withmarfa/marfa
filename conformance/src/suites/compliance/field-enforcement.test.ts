@@ -32,28 +32,28 @@ describe("stamped, non-forgeable fields", () => {
 });
 
 describe("client-supplied verbatim fields (preserved without validation)", () => {
-  it("timestamp: a specific ISO date is preserved", async () => {
+  it("occurred_at: a specific ISO date is preserved", async () => {
     const ts = "2024-03-15T10:00:00.000Z";
-    const r = await client.createItem({ ...createNote(), timestamp: ts });
+    const r = await client.createItem({ ...createNote(), occurred_at: ts });
     expect(r.ok).toBe(true);
     trackItem(ctx, r.data.item.id);
-    expect(r.data.item.timestamp).toBe(ts);
+    expect(r.data.item.occurred_at).toBe(ts);
   });
 
-  it("timestamp: a far-future ISO date is preserved", async () => {
+  it("occurred_at: a far-future ISO date is preserved", async () => {
     const ts = "2099-01-01T00:00:00.000Z";
-    const r = await client.createItem({ ...createNote(), timestamp: ts });
+    const r = await client.createItem({ ...createNote(), occurred_at: ts });
     expect(r.ok).toBe(true);
     trackItem(ctx, r.data.item.id);
-    expect(r.data.item.timestamp).toBe(ts);
+    expect(r.data.item.occurred_at).toBe(ts);
   });
 
-  it("timestamp: a far-past ISO date is preserved", async () => {
+  it("occurred_at: a far-past ISO date is preserved", async () => {
     const ts = "1970-01-01T00:00:00.000Z";
-    const r = await client.createItem({ ...createNote(), timestamp: ts });
+    const r = await client.createItem({ ...createNote(), occurred_at: ts });
     expect(r.ok).toBe(true);
     trackItem(ctx, r.data.item.id);
-    expect(r.data.item.timestamp).toBe(ts);
+    expect(r.data.item.occurred_at).toBe(ts);
   });
 
   it("device: a nonsense label is preserved verbatim", async () => {

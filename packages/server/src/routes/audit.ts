@@ -8,10 +8,14 @@ import type { AppEnv } from "../middleware/auth.js";
 import { requireSpacePermission, requireAuth } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
+import {
+  refuseUnknownQueryParams,
+  UNKNOWN_PARAM_NOTE,
+} from "./_unknown-query-keys.js";
 
 const AuditEntrySchema = z.object({
   id: z.string(),
-  timestamp: z.string(),
+  created_at: z.string(),
   key_id: z.string().nullable(),
   action: z.string(),
   resource_type: z.string(),
@@ -30,8 +34,7 @@ const listAuditRoute = createRoute({
   path: "/",
   tags: ["Audit"],
   summary: "List audit log entries",
-  description:
-    "Returns audit-log entries in reverse-chronological order, filtered by action, resource, or time range, with cursor pagination. Records only state-changing calls and a few admin reads — item/edge reads, SSE, and search are not logged. Requires `space.audit_read`, and answers a caller's own space and nothing else. A credential with no space holds no space permission, so it is refused rather than shown the whole trail.",
+  description: `Returns audit-log entries in reverse-chronological order, filtered by action, resource, or time range, with cursor pagination. Records only state-changing calls and a few admin reads — item/edge reads, SSE, and search are not logged. Requires \`space.audit_read\`, and answers a caller's own space and nothing else. A credential with no space holds no space permission, so it is refused rather than shown the whole trail. ${UNKNOWN_PARAM_NOTE}`,
   security: [{ bearerAuth: [] }],
   request: {
     query: z.object({
@@ -44,14 +47,14 @@ const listAuditRoute = createRoute({
         .string()
         .optional()
         .describe("Filter to a single resource id."),
-      since: z
+      created_after: z
         .string()
         .optional()
-        .describe("Include entries at or after this timestamp."),
-      until: z
+        .describe("Include entries written strictly after this instant."),
+      created_before: z
         .string()
         .optional()
-        .describe("Include entries before this timestamp."),
+        .describe("Include entries written strictly before this instant."),
       limit: z.coerce
         .number()
         .int()
@@ -106,15 +109,23 @@ export function auditRoutes(storage: Storage) {
   router.openapi(listAuditRoute, async (c) => {
     requireAuth(c);
     requireSpacePermission(c, "space.audit_read");
-    const { action, resource_type, resource_id, since, until, limit, cursor } =
-      c.req.valid("query");
+    refuseUnknownQueryParams(c.req.raw.url, listAuditRoute.request.query);
+    const {
+      action,
+      resource_type,
+      resource_id,
+      created_after,
+      created_before,
+      limit,
+      cursor,
+    } = c.req.valid("query");
 
     const result = await storage.audit.list({
       action,
       resource_type,
       resource_id,
-      since,
-      until,
+      created_after,
+      created_before,
       limit,
       cursor,
     });

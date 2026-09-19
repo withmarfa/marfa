@@ -61,8 +61,8 @@ export async function runChunk(ctx: RunChunkContext): Promise<ChunkOutcome> {
       return runUpdateTierChunk(ctx);
     case "update_properties":
       return runUpdatePropertiesChunk(ctx);
-    case "update_timestamp":
-      return runUpdateTimestampChunk(ctx);
+    case "update_occurred_at":
+      return runUpdateOccurredAtChunk(ctx);
     default: {
       // Exhaustiveness check — discriminated union covers all six.
       const _exhaustive: never = input;
@@ -418,13 +418,13 @@ async function runUpdatePropertiesChunk({
   return { succeeded, errors };
 }
 
-async function runUpdateTimestampChunk({
+async function runUpdateOccurredAtChunk({
   storage,
   input,
   ids,
 }: RunChunkContext): Promise<ChunkOutcome> {
-  if (input.action !== "update_timestamp")
-    throw new Error("runUpdateTimestampChunk: wrong action");
+  if (input.action !== "update_occurred_at")
+    throw new Error("runUpdateOccurredAtChunk: wrong action");
   const succeeded: string[] = [];
   const errors: BulkActionErrorEntry[] = [];
   // Collected inside the transaction, published after it commits.
@@ -433,13 +433,13 @@ async function runUpdateTimestampChunk({
     for (const id of ids) {
       try {
         const result = await storage.items.update(id, {
-          timestamp: input.timestamp,
+          occurred_at: input.occurred_at,
         });
         if ("error" in result) {
           errors.push({
             id,
             code: "conflict",
-            message: "Version conflict during bulk update_timestamp",
+            message: "Version conflict during bulk update_occurred_at",
           });
         } else {
           updated.push(result);

@@ -72,7 +72,7 @@ describe("export", () => {
     }
   });
 
-  it("filters by date range on the item's own timestamp", async () => {
+  it("filters by date range on the item's own time", async () => {
     const inside = await client.createItem(createNote({ source: ctx.source }));
     expect(inside.ok).toBe(true);
     trackItem(ctx, inside.data.item.id);
@@ -80,7 +80,7 @@ describe("export", () => {
     const outside = await client.createItem(
       createNote({
         source: ctx.source,
-        timestamp: "2001-01-01T00:00:00.000Z",
+        occurred_at: "2001-01-01T00:00:00.000Z",
       }),
     );
     expect(outside.ok).toBe(true);
@@ -89,8 +89,8 @@ describe("export", () => {
     const pivot = new Date(inside.data.item.created_at).getTime();
     const exported = await client.exportItems({
       source: ctx.source,
-      timestamp_after: new Date(pivot - 1000).toISOString(),
-      timestamp_before: new Date(pivot + 1000).toISOString(),
+      occurred_after: new Date(pivot - 1000).toISOString(),
+      occurred_before: new Date(pivot + 1000).toISOString(),
     });
     expect(exported.ok).toBe(true);
     const ids = parseNdjson(exported.data).map((line) => line.item.id);
@@ -206,5 +206,32 @@ describe("export", () => {
     const r = await client.exportItems({ state: "bogus" });
     expect(r.status).toBe(400);
     expect(r.error?.error.code).toBe("validation_error");
+  });
+
+  it("refuses a bound that is not an instant, on both output formats", async () => {
+    // The streaming format flushes its 200 and its headers before the first
+    // page is fetched, so a bound the store refuses used to arrive after the
+    // response had begun: the caller was handed an empty body with a success
+    // status, which is an export narrowed by a filter nobody could read and
+    // written to a file they believe is a slice. The archive format of the
+    // same door, with the same query schema, refused it. The control is the
+    // third assertion — a readable bound must still stream something, or
+    // this case would pass against a door that refused every export.
+    const stream = await client.exportItems({ occurred_after: "banana" });
+    expect(stream.status).toBe(400);
+    expect(stream.error?.error.code).toBe("validation_error");
+
+    const archive = await client.exportArchive({ occurred_after: "banana" });
+    expect(archive.status).toBe(400);
+
+    const item = await client.createItem(createNote({ source: ctx.source }));
+    expect(item.ok).toBe(true);
+    trackItem(ctx, item.data.item.id);
+    const readable = await client.exportItems({
+      source: ctx.source,
+      occurred_after: new Date(0).toISOString(),
+    });
+    expect(readable.status).toBe(200);
+    expect(readable.data.length).toBeGreaterThan(0);
   });
 });

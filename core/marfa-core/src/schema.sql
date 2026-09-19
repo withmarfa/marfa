@@ -28,14 +28,14 @@ CREATE TABLE IF NOT EXISTS items (
   source TEXT NOT NULL,
   source_id TEXT,
   device TEXT,
-  timestamp TEXT NOT NULL,
+  occurred_at TEXT NOT NULL,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   properties TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS items_type_created ON items (type, created_at);
 CREATE INDEX IF NOT EXISTS items_type_updated ON items (type, updated_at);
-CREATE INDEX IF NOT EXISTS items_type_timestamp ON items (type, timestamp);
+CREATE INDEX IF NOT EXISTS items_type_occurred_at ON items (type, occurred_at);
 CREATE INDEX IF NOT EXISTS items_state ON items (state);
 CREATE INDEX IF NOT EXISTS items_tier ON items (tier);
 

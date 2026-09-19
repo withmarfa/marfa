@@ -73,10 +73,12 @@ One rule across the API, with one carve-out that is named rather than implied.
 
 - Every time field is a verb plus `_at`: `occurred_at`, `created_at`, `updated_at`, `expires_at`, `revoked_at`.
 - Every range filter is that verb plus `_after` and `_before`, and **both are exclusive**.
-- An item's own time is `occurred_at`, filtered by `occurred_after` and `occurred_before`. Both are inclusive today and become exclusive with the rename, which is a real change in behaviour and is intended.
+- An item's own time is `occurred_at`, filtered by `occurred_after` and `occurred_before`, both exclusive.
 - The audit log uses `created_at`, `created_after` and `created_before`.
 
-**`updated_after` is the carve-out, and it is not a bug.** It is the catch-up filter on `GET /items` and `GET /edges`, it is **inclusive**, and it has no `_before` sibling. Inclusive because `updated_at` ties across a bulk write: a strict comparison drops every row sharing the cursor's instant, silently and unrecoverably, so a caller deduplicates by id instead. The Rust core's catch-up depends on it. **Do not make it exclusive to satisfy the rule above.**
+**`updated_after` is the carve-out, and it is not a bug.** It is the catch-up filter on `GET /items` and `GET /edges`, and it is **inclusive**. Inclusive because `updated_at` ties across a bulk write: a strict comparison drops every row sharing the cursor's instant, silently and unrecoverably, so a caller deduplicates by id instead. **Do not make it exclusive to satisfy the rule above.**
+
+Its sibling `updated_before` closes the same window at the top and is **exclusive**, like every other bound. The asymmetry is the carve-out stated precisely rather than a second exception: a lower bound is a resume point a client hands back, and an upper bound is an end point a caller chooses. Only the resume point can lose rows to a tie.
 
 ## Errors
 

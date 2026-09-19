@@ -155,20 +155,20 @@ export interface ListFilters {
   filter?: string;
   /**
    * Sort key. Either a system column (`created_at` | `updated_at` |
-   * `timestamp`) or a naturally-orderable custom field via
+   * `occurred_at`) or a naturally-orderable custom field via
    * `properties.<field>` (e.g. `properties.due_at`). Property sorts order
    * datetimes and strings lexically and numbers numerically, with absent
    * values last. Enum-semantic fields (status, priority) are deliberately not
    * sortable here — their order isn't lexical, so sort those client-side.
    */
-  sort?: "created_at" | "updated_at" | "timestamp" | `properties.${string}`;
+  sort?: "created_at" | "updated_at" | "occurred_at" | `properties.${string}`;
   direction?: "asc" | "desc";
-  /** Inclusive lower bound on the item's own time — `timestamp`, falling
-   *  back to `created_at`. Named for the field it reads: it says nothing
-   *  about when the row last changed, which is `updated_after`. */
-  timestamp_after?: string;
-  /** Inclusive upper bound on the same field. */
-  timestamp_before?: string;
+  /** Exclusive lower bound on the item's own time — `occurred_at`,
+   *  falling back to `created_at`. Named for the field it reads: it says
+   *  nothing about when the row last changed, which is `updated_after`. */
+  occurred_after?: string;
+  /** Exclusive upper bound on the same field. */
+  occurred_before?: string;
   /**
    * Inclusive lower bound on `updated_at`, when the row last changed.
    *
@@ -186,6 +186,11 @@ export interface ListFilters {
    * pruning a local copy needs the event stream as well as this read.
    */
   updated_after?: string;
+  /** Exclusive upper bound on `updated_at`, closing the window
+   *  `updated_after` opens. Exclusive where its lower twin is inclusive:
+   *  an end point the caller chooses rather than a resume point that must
+   *  not drop a tie. It leaves the ordering alone. */
+  updated_before?: string;
   limit?: number;
   cursor?: string;
   /**
@@ -340,7 +345,7 @@ export interface BulkItemInput {
   properties?: Record<string, unknown>;
   state?: ItemState;
   tier?: Tier;
-  timestamp?: string;
+  occurred_at?: string;
   /** Ignored on the wire — server stamps `source` from the credential.
    *  Kept on the input shape for round-trip parity with /export output. */
   source?: string;
@@ -515,8 +520,8 @@ export interface BulkActionFilter {
   source?: string;
   tier?: Tier;
   tags?: string[];
-  timestamp_after?: string;
-  timestamp_before?: string;
+  occurred_after?: string;
+  occurred_before?: string;
   /** Same grammar as `GET /items?filter=`. `edge[type]=id` shorthand
    *  becomes `edge[type] eq "id"` here. */
   filter?: string;
@@ -556,7 +561,7 @@ export type BulkActionInput =
       action: "update_properties";
       patch: Record<string, unknown>;
     })
-  | (BulkActionBase & { action: "update_timestamp"; timestamp: string });
+  | (BulkActionBase & { action: "update_occurred_at"; occurred_at: string });
 
 export interface BulkActionErrorEntry {
   id: string;
@@ -1740,6 +1745,9 @@ export class MarfaClient {
        *  changes and never removals: a deleted edge leaves no row and no
        *  tombstone, so the event stream is the other half. */
       updated_after?: string;
+      /** Exclusive upper bound on the edge's `updated_at`, closing the
+       *  window `updated_after` opens. It leaves the ordering alone. */
+      updated_before?: string;
       limit?: number;
       cursor?: string;
     }): Promise<PaginatedResult<Edge>> => {
@@ -1751,6 +1759,9 @@ export class MarfaClient {
           ...(edgeType && { edge_type: edgeType }),
           ...(filters?.updated_after !== undefined && {
             updated_after: filters.updated_after,
+          }),
+          ...(filters?.updated_before !== undefined && {
+            updated_before: filters.updated_before,
           }),
           ...(filters?.limit !== undefined && { limit: filters.limit }),
           ...(filters?.cursor && { cursor: filters.cursor }),

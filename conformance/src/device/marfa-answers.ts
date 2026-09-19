@@ -19,7 +19,7 @@ export interface WireItemOptions {
   version?: number;
   source?: string;
   source_id?: string | null;
-  timestamp?: string;
+  occurred_at?: string;
   created_at?: string;
   updated_at?: string;
 }
@@ -27,7 +27,7 @@ export interface WireItemOptions {
 const EPOCH = "2026-09-18T00:00:00.000Z";
 
 export function wireItem(options: WireItemOptions): Record<string, unknown> {
-  const at = options.timestamp ?? EPOCH;
+  const at = options.occurred_at ?? EPOCH;
   return {
     id: options.id,
     type: options.type ?? "core.note",
@@ -45,7 +45,7 @@ export function wireItem(options: WireItemOptions): Record<string, unknown> {
     ...(options.source_id === undefined || options.source_id === null
       ? {}
       : { source_id: options.source_id }),
-    timestamp: at,
+    occurred_at: at,
     created_at: options.created_at ?? at,
     updated_at: options.updated_at ?? at,
   };

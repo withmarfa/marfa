@@ -138,7 +138,7 @@ describe("the working copy holds one slice", () => {
           {
             item: {
               id: "ancient",
-              timestamp: ancient,
+              occurred_at: ancient,
               created_at: ancient,
               updated_at: ancient,
             },

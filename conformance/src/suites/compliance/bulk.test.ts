@@ -345,7 +345,7 @@ describe("bulk_action time filters", () => {
         source: ctx.source,
         tags: [tag],
         tier: "library",
-        timestamp: "2020-01-01T00:00:00.000Z",
+        occurred_at: "2020-01-01T00:00:00.000Z",
       }),
     );
     expect(old.ok).toBe(true);
@@ -356,7 +356,7 @@ describe("bulk_action time filters", () => {
         source: ctx.source,
         tags: [tag],
         tier: "library",
-        timestamp: "2026-01-01T00:00:00.000Z",
+        occurred_at: "2026-01-01T00:00:00.000Z",
       }),
     );
     expect(recent.ok).toBe(true);
@@ -378,7 +378,7 @@ describe("bulk_action time filters", () => {
     const bounded = await client.bulkAction({
       action: "update_tags",
       add: [`${tag}-probe`],
-      filter: { tags: [tag], timestamp_after: "2023-01-01T00:00:00.000Z" },
+      filter: { tags: [tag], occurred_after: "2023-01-01T00:00:00.000Z" },
       dry_run: true,
     });
     expect(bounded.ok).toBe(true);
@@ -389,7 +389,7 @@ describe("bulk_action time filters", () => {
     const upperBounded = await client.bulkAction({
       action: "update_tags",
       add: [`${tag}-probe`],
-      filter: { tags: [tag], timestamp_before: "2023-01-01T00:00:00.000Z" },
+      filter: { tags: [tag], occurred_before: "2023-01-01T00:00:00.000Z" },
       dry_run: true,
     });
     expect(upperBounded.ok).toBe(true);
@@ -398,25 +398,25 @@ describe("bulk_action time filters", () => {
     ]);
   });
 
-  it("refuses the retired names, naming their replacements", async () => {
-    const tag = `ba-retired-${ctx.runId}`;
+  it("refuses a filter field it does not declare, naming it", async () => {
+    const tag = `ba-undeclared-${ctx.runId}`;
     await seedTagged(1, tag);
 
-    for (const [retired, replacement] of [
-      ["since", "timestamp_after"],
-      ["until", "timestamp_before"],
-    ] as const) {
+    // A dropped filter field here is not a narrower match set but every row
+    // the credential can see, so the door refuses rather than strips.
+    for (const undeclared of ["since", "until", "occurred_at_after"]) {
       const res = await client.bulkAction({
         action: "update_tags",
         add: ["probe"],
         dry_run: true,
         // Deliberately off-type: the client type does not offer these
         // fields, and the point is that the wire refuses them.
-        filter: { [retired]: "2023-01-01T00:00:00.000Z" } as never,
+        filter: { [undeclared]: "2023-01-01T00:00:00.000Z" } as never,
       });
       expect(res.status).toBe(400);
-      expect(res.error?.error.details?.renamed_from).toBe(retired);
-      expect(res.error?.error.details?.use).toBe(replacement);
+      expect(res.error?.error.details?.unknown_filter_fields).toEqual([
+        undeclared,
+      ]);
     }
   });
 });
@@ -568,21 +568,21 @@ describe("bulk_action", () => {
     ).toBe("patched");
   });
 
-  it("update_timestamp overrides the user-meaningful timestamp", async () => {
+  it("update_occurred_at overrides the item's own time", async () => {
     const tag = `ba-ts-${ctx.runId}`;
     const ids = await seedTagged(1, tag);
     const newTs = "2001-09-11T08:46:00.000Z";
 
     const result = await runToCompletion({
-      action: "update_timestamp",
-      timestamp: newTs,
+      action: "update_occurred_at",
+      occurred_at: newTs,
       filter: { tags: [tag] },
     });
     expect(result.succeeded).toBe(1);
 
     const got = await client.getItem(ids[0]!);
     expect(got.ok).toBe(true);
-    expect(got.data.item.timestamp).toBe(newTs);
+    expect(got.data.item.occurred_at).toBe(newTs);
   });
 });
 

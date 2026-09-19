@@ -9,12 +9,12 @@ import { assertTypeFilter } from "./_type-filter.js";
 import { withPreparedHeaders } from "../prepared-headers.js";
 import { requireAuth, getTypeFilter } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
+import { normalizeTimeBound } from "../storage/interface.js";
 import { readSpaceConfig } from "../storage/space-config.js";
 import type { SourceFilterSettings } from "../storage/filter-sql.js";
 import type { BlobBackend } from "../storage/blob-backend.js";
 import { collectBlobHashes } from "../storage/blob-utils.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
-import { refuseRenamedTimeQueryParams } from "./_renamed-time-filters.js";
 import { ALL_STATES, resolveStateFilter } from "./_schemas.js";
 import {
   refuseUnknownQueryParams,
@@ -50,17 +50,17 @@ const exportRoute = createRoute({
           `Filter by item state. \`${ALL_STATES}\` exports every state including trashed, in one pass — which is what an export meaning "everything this space holds" needs, since the archive is what a restore reads back. Omitting the parameter keeps the default every item read applies, which excludes trashed rows.`,
         ),
       source: z.string().optional().describe("Filter by source credential"),
-      timestamp_after: z
+      occurred_after: z
         .string()
         .optional()
         .describe(
-          "Include only items whose own time — `timestamp`, falling back to `created_at` — is at or after this (inclusive). Not the modification time, despite what this parameter's previous name suggested.",
+          "Include only items whose own time — `occurred_at`, falling back to `created_at` — is strictly after this. Not the modification time.",
         ),
-      timestamp_before: z
+      occurred_before: z
         .string()
         .optional()
         .describe(
-          "Include only items whose own time — `timestamp`, falling back to `created_at` — is at or before this (inclusive).",
+          "Include only items whose own time — `occurred_at`, falling back to `created_at` — is strictly before this.",
         ),
       format: z
         .string()
@@ -107,19 +107,11 @@ export function exportRoutes(storage: Storage, blobBackend: BlobBackend) {
   router.openapi(exportRoute, async (c) => {
     requireAuth(c);
 
-    // Covers the archive path too: it is reached from inside this handler,
-    // so refusing here refuses for both. An export narrowed by a filter
-    // that was silently dropped writes the whole space to a file the
-    // caller believes is a slice of it.
-    //
-    // This door has no modification-time filter, so the refusal must not
-    // offer one: its query schema strips an unknown key, and a caller
-    // following that advice would land back in the silence the refusal is
-    // here to prevent.
-    refuseRenamedTimeQueryParams(c.req.raw.url, { catchUpFilter: "none" });
     // One check for both output formats: `format=archive` is handled by a
     // separate function further down but arrives through this handler and
-    // shares this query schema, so refusing here covers both.
+    // shares this query schema, so refusing here covers both. An export
+    // narrowed by a filter that was silently dropped writes the whole
+    // space to a file the caller believes is a slice of it.
     refuseUnknownQueryParams(c.req.raw.url, exportRoute.request.query);
 
     const query = c.req.valid("query");
@@ -164,8 +156,21 @@ export function exportRoutes(storage: Storage, blobBackend: BlobBackend) {
     // state was a route-layer gap rather than a missing permission.
     const { state, all_states: allStates } = resolveStateFilter(query.state);
 
-    const timestampAfter = query.timestamp_after;
-    const timestampBefore = query.timestamp_before;
+    // Read here rather than left to the store, because this door answers by
+    // streaming: the 200 and its headers are flushed before the first page
+    // is fetched, so a bound the store refuses arrives after the response
+    // has begun and the caller is handed an empty body with a success
+    // status. That is an export narrowed by a filter nobody could read,
+    // written to a file the caller believes is a slice. The archive format
+    // of this same door already refuses it, and the two disagreed.
+    const occurredAfter = normalizeTimeBound(
+      query.occurred_after,
+      "occurred_after",
+    );
+    const occurredBefore = normalizeTimeBound(
+      query.occurred_before,
+      "occurred_before",
+    );
     const source = query.source;
 
     const { allowed: allowedTypes, excluded: excludedTypes } = getTypeFilter(c);
@@ -187,8 +192,8 @@ export function exportRoutes(storage: Storage, blobBackend: BlobBackend) {
                 state,
                 all_states: allStates,
                 source,
-                timestamp_after: timestampAfter,
-                timestamp_before: timestampBefore,
+                occurred_after: occurredAfter,
+                occurred_before: occurredBefore,
                 allowed_types: allowedTypes,
                 excluded_types: excludedTypes,
                 source_filter: sourceFilter,
@@ -292,8 +297,8 @@ async function handleArchiveExport(
   const { state, all_states: allStates } = resolveStateFilter(
     c.req.query("state"),
   );
-  const timestampAfter = c.req.query("timestamp_after");
-  const timestampBefore = c.req.query("timestamp_before");
+  const occurredAfter = c.req.query("occurred_after");
+  const occurredBefore = c.req.query("occurred_before");
   const source = c.req.query("source");
   const { allowed: allowedTypes, excluded: excludedTypes } = getTypeFilter(c);
 
@@ -316,8 +321,8 @@ async function handleArchiveExport(
         state,
         all_states: allStates,
         source,
-        timestamp_after: timestampAfter,
-        timestamp_before: timestampBefore,
+        occurred_after: occurredAfter,
+        occurred_before: occurredBefore,
         allowed_types: allowedTypes,
         excluded_types: excludedTypes,
         source_filter: sourceFilter,

@@ -387,7 +387,7 @@ describe("POST /items/bulk-actions reaches the event log", () => {
     expect(payload.item.properties.body).toBe("patched by bulk");
   });
 
-  it("logs an update for every item update_timestamp restamped", async () => {
+  it("logs an update for every item update_occurred_at restamped", async () => {
     const tag = `ts-${uniq()}`;
     const item = await note("restamped", [tag]);
     const cursor = await logCursor();
@@ -395,7 +395,11 @@ describe("POST /items/bulk-actions reaches the event log", () => {
 
     const run = await runBulkActionAsync(
       ctx,
-      { action: "update_timestamp", timestamp: when, filter: { tags: [tag] } },
+      {
+        action: "update_occurred_at",
+        occurred_at: when,
+        filter: { tags: [tag] },
+      },
       ctx.spaceKey,
     );
     expect(run.result?.succeeded).toBe(1);
@@ -406,9 +410,9 @@ describe("POST /items/bulk-actions reaches the event log", () => {
     );
     expect(changed).toHaveLength(1);
     const payload = JSON.parse(changed[0]!.payload) as {
-      item: { timestamp: string };
+      item: { occurred_at: string };
     };
-    expect(payload.item.timestamp).toBe(when);
+    expect(payload.item.occurred_at).toBe(when);
   });
 });
 

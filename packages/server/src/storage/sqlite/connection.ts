@@ -49,6 +49,19 @@ const REFUSED_DATABASE_REMEDY =
   "readable only by the build that wrote it. Keep it with that build if you need what is in it, " +
   "point this server at a fresh file, or discard it.";
 
+/**
+ * Columns whose absence means the file predates a rename, checked by table
+ * so a fresh database — which has neither table yet — is not refused.
+ *
+ * Only the columns an index in `schema.sql` is built over need to be here:
+ * those are the ones that fail the DDL, and a column nothing indexes would
+ * be read as missing rather than as a file to refuse.
+ */
+const RENAMED_COLUMNS: readonly (readonly [string, string])[] = [
+  ["items", "occurred_at"],
+  ["audit_log", "created_at"],
+];
+
 export type DrizzleDb = ReturnType<typeof drizzle<typeof schema>>;
 export type RawDb = Client;
 
@@ -119,6 +132,29 @@ export async function createConnection(sqlitePath: string): Promise<{
     client.close();
     throw new Error(
       `The type registry in ${sqlitePath} is still held in ${names}, which this build does not read. ` +
+        REFUSED_DATABASE_REMEDY,
+    );
+  }
+
+  // A renamed column is refused here for the same reason, and the reason is
+  // not that the old database would be read wrongly — it would not. The DDL
+  // below creates an index over the new column, so an old file fails at that
+  // statement whatever this does.
+  //
+  // What it fails with is the problem. A raw driver error naming an index
+  // says nothing an operator can act on, and it arrives after the PRAGMAs,
+  // which is the write the refusal above is ordered ahead of precisely so a
+  // database this build will not open comes back unchanged. Refusing here
+  // keeps both properties: one sentence that names the file and what to do,
+  // and a file left as it was found.
+  for (const [table, column] of RENAMED_COLUMNS) {
+    const info = await client.execute(`PRAGMA table_info(${table})`);
+    if (info.rows.length === 0) continue;
+    const hasColumn = info.rows.some((row) => row.name === column);
+    if (hasColumn) continue;
+    client.close();
+    throw new Error(
+      `The ${table} table in ${sqlitePath} has no ${column} column, so it predates this build's schema. ` +
         REFUSED_DATABASE_REMEDY,
     );
   }

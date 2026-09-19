@@ -1866,7 +1866,7 @@ describe("items.bulkAction", () => {
     expect(md.tags).not.toContain(tag);
   });
 
-  it("update_tier, update_properties, update_timestamp all land", async () => {
+  it("update_tier, update_properties, update_occurred_at all land", async () => {
     const tag = `ba-multi-${Math.random().toString(36).slice(2, 8)}`;
     const ids = await seedTagged(1, tag);
 
@@ -1882,8 +1882,8 @@ describe("items.bulkAction", () => {
     });
     const iso = "2001-09-11T08:46:00.000Z";
     await client.items.bulkAction({
-      action: "update_timestamp",
-      timestamp: iso,
+      action: "update_occurred_at",
+      occurred_at: iso,
       filter: { tags: [tag] },
     });
 
@@ -1892,7 +1892,7 @@ describe("items.bulkAction", () => {
     expect((fetched.properties as { extra_bulk?: string }).extra_bulk).toBe(
       "patched",
     );
-    expect(fetched.timestamp).toBe(iso);
+    expect(fetched.occurred_at).toBe(iso);
   });
 
   it("max_items cap exceeded surfaces as bulk_cap_exceeded", async () => {

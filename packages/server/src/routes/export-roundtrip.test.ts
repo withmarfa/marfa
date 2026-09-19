@@ -102,7 +102,7 @@ describe("export → restore round trip", () => {
       source: "rt-seed",
       source_id: "n1",
       tier: "feed",
-      timestamp: "2026-01-01T00:00:00.000Z",
+      occurred_at: "2026-01-01T00:00:00.000Z",
       tags: ["alpha", "beta"],
     });
     const note2 = await source.storage.items.create({
@@ -182,7 +182,7 @@ describe("export → restore round trip", () => {
       expect(restored?.properties).toEqual(original.properties);
       expect(restored?.state).toBe(original.state);
       expect(restored?.tier).toBe(original.tier);
-      expect(restored?.timestamp).toBe(original.timestamp);
+      expect(restored?.occurred_at).toBe(original.occurred_at);
       expect(restored?.source).toBe(original.source);
       expect(restored?.source_id).toBe(original.source_id);
     }

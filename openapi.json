@@ -99,7 +99,7 @@
                   "state": {
                     "type": "string"
                   },
-                  "timestamp": {
+                  "occurred_at": {
                     "type": "string"
                   },
                   "source": {
@@ -212,7 +212,7 @@
                         "capture_longitude": {
                           "type": "number"
                         },
-                        "timestamp": {
+                        "occurred_at": {
                           "type": "string"
                         },
                         "created_at": {
@@ -302,7 +302,7 @@
                         "version",
                         "schema_version",
                         "source",
-                        "timestamp",
+                        "occurred_at",
                         "created_at",
                         "updated_at"
                       ]
@@ -420,7 +420,7 @@
                         "capture_longitude": {
                           "type": "number"
                         },
-                        "timestamp": {
+                        "occurred_at": {
                           "type": "string"
                         },
                         "created_at": {
@@ -510,7 +510,7 @@
                         "version",
                         "schema_version",
                         "source",
-                        "timestamp",
+                        "occurred_at",
                         "created_at",
                         "updated_at"
                       ]
@@ -1122,11 +1122,11 @@
           {
             "schema": {
               "type": "string",
-              "pattern": "^(created_at|updated_at|timestamp|properties\\.[a-z0-9_]+)$",
-              "description": "Field to sort by: a system column (created_at, updated_at, timestamp) or a naturally-orderable custom field via properties.<field> (e.g. properties.due_at). Enum fields like status/priority are not sortable here — their order is semantic, not lexical."
+              "pattern": "^(created_at|updated_at|occurred_at|properties\\.[a-z0-9_]+)$",
+              "description": "Field to sort by: a system column (created_at, updated_at, occurred_at) or a naturally-orderable custom field via properties.<field> (e.g. properties.due_at). Enum fields like status/priority are not sortable here — their order is semantic, not lexical."
             },
             "required": false,
-            "description": "Field to sort by: a system column (created_at, updated_at, timestamp) or a naturally-orderable custom field via properties.<field> (e.g. properties.due_at). Enum fields like status/priority are not sortable here — their order is semantic, not lexical.",
+            "description": "Field to sort by: a system column (created_at, updated_at, occurred_at) or a naturally-orderable custom field via properties.<field> (e.g. properties.due_at). Enum fields like status/priority are not sortable here — their order is semantic, not lexical.",
             "name": "sort",
             "in": "query"
           },
@@ -1148,22 +1148,22 @@
             "schema": {
               "type": "string",
               "minLength": 1,
-              "description": "Lower bound on the item's own time — `timestamp`, falling back to `created_at` (inclusive). An RFC 3339 timestamp in any valid spelling; it is normalized before the comparison. Not the modification time; for that use `updated_after`."
+              "description": "Lower bound on the item's own time — `occurred_at`, falling back to `created_at` (exclusive). An RFC 3339 instant in any valid spelling; it is normalized before the comparison. Not the modification time; for that use `updated_after`."
             },
             "required": false,
-            "description": "Lower bound on the item's own time — `timestamp`, falling back to `created_at` (inclusive). An RFC 3339 timestamp in any valid spelling; it is normalized before the comparison. Not the modification time; for that use `updated_after`.",
-            "name": "timestamp_after",
+            "description": "Lower bound on the item's own time — `occurred_at`, falling back to `created_at` (exclusive). An RFC 3339 instant in any valid spelling; it is normalized before the comparison. Not the modification time; for that use `updated_after`.",
+            "name": "occurred_after",
             "in": "query"
           },
           {
             "schema": {
               "type": "string",
               "minLength": 1,
-              "description": "Upper bound on the item's own time — `timestamp`, falling back to `created_at` (inclusive)."
+              "description": "Upper bound on the item's own time — `occurred_at`, falling back to `created_at` (exclusive)."
             },
             "required": false,
-            "description": "Upper bound on the item's own time — `timestamp`, falling back to `created_at` (inclusive).",
-            "name": "timestamp_before",
+            "description": "Upper bound on the item's own time — `occurred_at`, falling back to `created_at` (exclusive).",
+            "name": "occurred_before",
             "in": "query"
           },
           {
@@ -1175,6 +1175,17 @@
             "required": false,
             "description": "Lower bound on `updated_at`, when the row last changed (inclusive). The catch-up filter: pass the cursor you hold to get everything that changed since. Forces `(updated_at, id)` ascending order, so `sort` and `direction` cannot also be given, and a cursor issued under one ordering is refused under the other. Inclusive because `updated_at` ties across a bulk write, so deduplicate by id — and note that a high-water mark landing on an instant a large bulk write shares means that whole group is re-sent on every reconnect, which terminates but is not free. This read reports changes, never removals: a purge leaves no row behind, so pruning a local copy needs the event stream as well.",
             "name": "updated_after",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Upper bound on `updated_at` (exclusive), closing the window its lower twin opens. Exclusive where `updated_after` is inclusive, because this is an end point the caller chooses rather than a resume point that must not drop a tie. It does not change the ordering, so it may be given under any sort."
+            },
+            "required": false,
+            "description": "Upper bound on `updated_at` (exclusive), closing the window its lower twin opens. Exclusive where `updated_after` is inclusive, because this is an end point the caller chooses rather than a resume point that must not drop a tie. It does not change the ordering, so it may be given under any sort.",
+            "name": "updated_before",
             "in": "query"
           },
           {
@@ -1275,7 +1286,7 @@
                               "capture_longitude": {
                                 "type": "number"
                               },
-                              "timestamp": {
+                              "occurred_at": {
                                 "type": "string"
                               },
                               "created_at": {
@@ -1365,7 +1376,7 @@
                               "version",
                               "schema_version",
                               "source",
-                              "timestamp",
+                              "occurred_at",
                               "created_at",
                               "updated_at"
                             ]
@@ -1445,7 +1456,7 @@
                                   "capture_longitude": {
                                     "type": "number"
                                   },
-                                  "timestamp": {
+                                  "occurred_at": {
                                     "type": "string"
                                   },
                                   "created_at": {
@@ -1535,7 +1546,7 @@
                                   "version",
                                   "schema_version",
                                   "source",
-                                  "timestamp",
+                                  "occurred_at",
                                   "created_at",
                                   "updated_at"
                                 ]
@@ -2574,7 +2585,7 @@
                         "capture_longitude": {
                           "type": "number"
                         },
-                        "timestamp": {
+                        "occurred_at": {
                           "type": "string"
                         },
                         "created_at": {
@@ -2664,7 +2675,7 @@
                         "version",
                         "schema_version",
                         "source",
-                        "timestamp",
+                        "occurred_at",
                         "created_at",
                         "updated_at"
                       ]
@@ -2814,7 +2825,7 @@
                               "capture_longitude": {
                                 "type": "number"
                               },
-                              "timestamp": {
+                              "occurred_at": {
                                 "type": "string"
                               },
                               "created_at": {
@@ -2904,7 +2915,7 @@
                               "version",
                               "schema_version",
                               "source",
-                              "timestamp",
+                              "occurred_at",
                               "created_at",
                               "updated_at"
                             ]
@@ -3182,7 +3193,7 @@
           "Items"
         ],
         "summary": "Update an item",
-        "description": "Updates an item's properties, tier, timestamp, edges, or natural key. Properties merge shallowly with existing values by default, or become the item's properties outright when `properties_mode` is `replace`, while tier and timestamp always replace; `version` is required, a stale value returns 409 with the conflict context to resolve, and a write naming none is refused 400 `missing_required_field`. An item's `type` is not updatable here by default: sending one that matches the item is accepted and ignored, and sending a different one is refused with 409 `type_mismatch` rather than silently dropped. Passing `retype: true` alongside a different `type` moves the item to it — that requires write on the type being entered as well as the one being left, and the resulting properties are validated against the destination.",
+        "description": "Updates an item's properties, tier, own time, edges, or natural key. Properties merge shallowly with existing values by default, or become the item's properties outright when `properties_mode` is `replace`, while tier and `occurred_at` always replace; `version` is required, a stale value returns 409 with the conflict context to resolve, and a write naming none is refused 400 `missing_required_field`. An item's `type` is not updatable here by default: sending one that matches the item is accepted and ignored, and sending a different one is refused with 409 `type_mismatch` rather than silently dropped. Passing `retype: true` alongside a different `type` moves the item to it — that requires write on the type being entered as well as the one being left, and the resulting properties are validated against the destination.",
         "security": [
           {
             "bearerAuth": []
@@ -3265,7 +3276,7 @@
                       "feed"
                     ]
                   },
-                  "timestamp": {
+                  "occurred_at": {
                     "type": "string"
                   },
                   "source_id": {
@@ -3348,7 +3359,7 @@
                         "capture_longitude": {
                           "type": "number"
                         },
-                        "timestamp": {
+                        "occurred_at": {
                           "type": "string"
                         },
                         "created_at": {
@@ -3438,7 +3449,7 @@
                         "version",
                         "schema_version",
                         "source",
-                        "timestamp",
+                        "occurred_at",
                         "created_at",
                         "updated_at"
                       ]
@@ -4388,7 +4399,7 @@
                         "capture_longitude": {
                           "type": "number"
                         },
-                        "timestamp": {
+                        "occurred_at": {
                           "type": "string"
                         },
                         "created_at": {
@@ -4478,7 +4489,7 @@
                         "version",
                         "schema_version",
                         "source",
-                        "timestamp",
+                        "occurred_at",
                         "created_at",
                         "updated_at"
                       ]
@@ -4887,7 +4898,7 @@
                         "capture_longitude": {
                           "type": "number"
                         },
-                        "timestamp": {
+                        "occurred_at": {
                           "type": "string"
                         },
                         "created_at": {
@@ -4977,7 +4988,7 @@
                         "version",
                         "schema_version",
                         "source",
-                        "timestamp",
+                        "occurred_at",
                         "created_at",
                         "updated_at"
                       ]
@@ -7423,7 +7434,7 @@
                             "feed"
                           ]
                         },
-                        "timestamp": {
+                        "occurred_at": {
                           "type": "string"
                         },
                         "source": {
@@ -7818,7 +7829,7 @@
           "Items"
         ],
         "summary": "Apply a bulk action",
-        "description": "Applies one action (transition, purge, retag, retier, or property/timestamp update) to every item matching a filter. Non-dry-run calls queue an async job; `dry_run: true` returns the matched ids without writing, and `max_items` caps the match set before a `bulk_cap_exceeded` error.\n\nUnrecognized fields are refused with `400` rather than ignored, in the request body and inside `filter` alike: a dropped filter field is not a narrower match set but every item in the space, and a dropped `dry_run` is the action running for real. A field of your own must start with `_`, which is always ignored.",
+        "description": "Applies one action (transition, purge, retag, retier, or a property or own-time update) to every item matching a filter. Non-dry-run calls queue an async job; `dry_run: true` returns the matched ids without writing, and `max_items` caps the match set before a `bulk_cap_exceeded` error.\n\nUnrecognized fields are refused with `400` rather than ignored, in the request body and inside `filter` alike: a dropped filter field is not a narrower match set but every item in the space, and a dropped `dry_run` is the action running for real. A field of your own must start with `_`, which is always ignored.",
         "security": [
           {
             "bearerAuth": []
@@ -7864,11 +7875,13 @@
                               "type": "string"
                             }
                           },
-                          "timestamp_after": {
-                            "type": "string"
+                          "occurred_after": {
+                            "type": "string",
+                            "description": "Lower bound on the item's own time — `occurred_at`, falling back to `created_at` — strictly after this. Exclusive, as every bound but `updated_after` is."
                           },
-                          "timestamp_before": {
-                            "type": "string"
+                          "occurred_before": {
+                            "type": "string",
+                            "description": "Upper bound on the same expression, strictly before this. Exclusive, matching its lower twin."
                           },
                           "filter": {
                             "type": "string"
@@ -7941,11 +7954,13 @@
                               "type": "string"
                             }
                           },
-                          "timestamp_after": {
-                            "type": "string"
+                          "occurred_after": {
+                            "type": "string",
+                            "description": "Lower bound on the item's own time — `occurred_at`, falling back to `created_at` — strictly after this. Exclusive, as every bound but `updated_after` is."
                           },
-                          "timestamp_before": {
-                            "type": "string"
+                          "occurred_before": {
+                            "type": "string",
+                            "description": "Upper bound on the same expression, strictly before this. Exclusive, matching its lower twin."
                           },
                           "filter": {
                             "type": "string"
@@ -8015,11 +8030,13 @@
                               "type": "string"
                             }
                           },
-                          "timestamp_after": {
-                            "type": "string"
+                          "occurred_after": {
+                            "type": "string",
+                            "description": "Lower bound on the item's own time — `occurred_at`, falling back to `created_at` — strictly after this. Exclusive, as every bound but `updated_after` is."
                           },
-                          "timestamp_before": {
-                            "type": "string"
+                          "occurred_before": {
+                            "type": "string",
+                            "description": "Upper bound on the same expression, strictly before this. Exclusive, matching its lower twin."
                           },
                           "filter": {
                             "type": "string"
@@ -8095,11 +8112,13 @@
                               "type": "string"
                             }
                           },
-                          "timestamp_after": {
-                            "type": "string"
+                          "occurred_after": {
+                            "type": "string",
+                            "description": "Lower bound on the item's own time — `occurred_at`, falling back to `created_at` — strictly after this. Exclusive, as every bound but `updated_after` is."
                           },
-                          "timestamp_before": {
-                            "type": "string"
+                          "occurred_before": {
+                            "type": "string",
+                            "description": "Upper bound on the same expression, strictly before this. Exclusive, matching its lower twin."
                           },
                           "filter": {
                             "type": "string"
@@ -8171,11 +8190,13 @@
                               "type": "string"
                             }
                           },
-                          "timestamp_after": {
-                            "type": "string"
+                          "occurred_after": {
+                            "type": "string",
+                            "description": "Lower bound on the item's own time — `occurred_at`, falling back to `created_at` — strictly after this. Exclusive, as every bound but `updated_after` is."
                           },
-                          "timestamp_before": {
-                            "type": "string"
+                          "occurred_before": {
+                            "type": "string",
+                            "description": "Upper bound on the same expression, strictly before this. Exclusive, matching its lower twin."
                           },
                           "filter": {
                             "type": "string"
@@ -8246,11 +8267,13 @@
                               "type": "string"
                             }
                           },
-                          "timestamp_after": {
-                            "type": "string"
+                          "occurred_after": {
+                            "type": "string",
+                            "description": "Lower bound on the item's own time — `occurred_at`, falling back to `created_at` — strictly after this. Exclusive, as every bound but `updated_after` is."
                           },
-                          "timestamp_before": {
-                            "type": "string"
+                          "occurred_before": {
+                            "type": "string",
+                            "description": "Upper bound on the same expression, strictly before this. Exclusive, matching its lower twin."
                           },
                           "filter": {
                             "type": "string"
@@ -8271,16 +8294,16 @@
                       "action": {
                         "type": "string",
                         "enum": [
-                          "update_timestamp"
+                          "update_occurred_at"
                         ]
                       },
-                      "timestamp": {
+                      "occurred_at": {
                         "type": "string"
                       }
                     },
                     "required": [
                       "action",
-                      "timestamp"
+                      "occurred_at"
                     ]
                   }
                 ]
@@ -9592,7 +9615,7 @@
                           "capture_longitude": {
                             "type": "number"
                           },
-                          "timestamp": {
+                          "occurred_at": {
                             "type": "string"
                           },
                           "created_at": {
@@ -9682,7 +9705,7 @@
                           "version",
                           "schema_version",
                           "source",
-                          "timestamp",
+                          "occurred_at",
                           "created_at",
                           "updated_at"
                         ]
@@ -12139,11 +12162,22 @@
             "schema": {
               "type": "string",
               "minLength": 1,
-              "description": "Lower bound on `updated_at`, when the edge last changed (inclusive). The catch-up filter, matching `GET /items`. An RFC 3339 timestamp in any valid spelling; it is normalized before the comparison. Changes the order from newest-created-first to `(updated_at, id)` ascending, so a cursor from one ordering cannot be continued under the other and is refused if tried. Inclusive because `updated_at` ties across a bulk write, so deduplicate by id — and a high-water mark landing on an instant a large bulk write shares means that whole group is re-sent on every reconnect."
+              "description": "Lower bound on `updated_at`, when the edge last changed (inclusive). The catch-up filter, matching `GET /items`. An RFC 3339 instant in any valid spelling; it is normalized before the comparison. Changes the order from newest-created-first to `(updated_at, id)` ascending, so a cursor from one ordering cannot be continued under the other and is refused if tried. Inclusive because `updated_at` ties across a bulk write, so deduplicate by id — and a high-water mark landing on an instant a large bulk write shares means that whole group is re-sent on every reconnect."
             },
             "required": false,
-            "description": "Lower bound on `updated_at`, when the edge last changed (inclusive). The catch-up filter, matching `GET /items`. An RFC 3339 timestamp in any valid spelling; it is normalized before the comparison. Changes the order from newest-created-first to `(updated_at, id)` ascending, so a cursor from one ordering cannot be continued under the other and is refused if tried. Inclusive because `updated_at` ties across a bulk write, so deduplicate by id — and a high-water mark landing on an instant a large bulk write shares means that whole group is re-sent on every reconnect.",
+            "description": "Lower bound on `updated_at`, when the edge last changed (inclusive). The catch-up filter, matching `GET /items`. An RFC 3339 instant in any valid spelling; it is normalized before the comparison. Changes the order from newest-created-first to `(updated_at, id)` ascending, so a cursor from one ordering cannot be continued under the other and is refused if tried. Inclusive because `updated_at` ties across a bulk write, so deduplicate by id — and a high-water mark landing on an instant a large bulk write shares means that whole group is re-sent on every reconnect.",
             "name": "updated_after",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Upper bound on `updated_at` (exclusive), closing the window its lower twin opens. Exclusive where `updated_after` is inclusive, because this is an end point the caller chooses rather than a resume point that must not drop a tie. It leaves the ordering alone."
+            },
+            "required": false,
+            "description": "Upper bound on `updated_at` (exclusive), closing the window its lower twin opens. Exclusive where `updated_after` is inclusive, because this is an end point the caller chooses rather than a resume point that must not drop a tie. It leaves the ordering alone.",
+            "name": "updated_before",
             "in": "query"
           },
           {
@@ -16682,22 +16716,22 @@
             "schema": {
               "type": "string",
               "minLength": 1,
-              "description": "Lower bound on the item's own time — `timestamp`, falling back to `created_at` (inclusive). An RFC 3339 timestamp in any valid spelling; it is normalized before the comparison. Not the modification time."
+              "description": "Lower bound on the item's own time — `occurred_at`, falling back to `created_at` (exclusive). An RFC 3339 instant in any valid spelling; it is normalized before the comparison. Not the modification time."
             },
             "required": false,
-            "description": "Lower bound on the item's own time — `timestamp`, falling back to `created_at` (inclusive). An RFC 3339 timestamp in any valid spelling; it is normalized before the comparison. Not the modification time.",
-            "name": "timestamp_after",
+            "description": "Lower bound on the item's own time — `occurred_at`, falling back to `created_at` (exclusive). An RFC 3339 instant in any valid spelling; it is normalized before the comparison. Not the modification time.",
+            "name": "occurred_after",
             "in": "query"
           },
           {
             "schema": {
               "type": "string",
               "minLength": 1,
-              "description": "Upper bound on the item's own time — `timestamp`, falling back to `created_at` (inclusive)."
+              "description": "Upper bound on the item's own time — `occurred_at`, falling back to `created_at` (exclusive)."
             },
             "required": false,
-            "description": "Upper bound on the item's own time — `timestamp`, falling back to `created_at` (inclusive).",
-            "name": "timestamp_before",
+            "description": "Upper bound on the item's own time — `occurred_at`, falling back to `created_at` (exclusive).",
+            "name": "occurred_before",
             "in": "query"
           }
         ],
@@ -16766,7 +16800,7 @@
                               "capture_longitude": {
                                 "type": "number"
                               },
-                              "timestamp": {
+                              "occurred_at": {
                                 "type": "string"
                               },
                               "created_at": {
@@ -16856,7 +16890,7 @@
                               "version",
                               "schema_version",
                               "source",
-                              "timestamp",
+                              "occurred_at",
                               "created_at",
                               "updated_at"
                             ],
@@ -16929,7 +16963,7 @@
             }
           },
           "400": {
-            "description": "An invalid type pattern, a time bound that is not a timestamp, an unrecognized query parameter, or one of the two retired time-filter names.",
+            "description": "An invalid type pattern, a time bound that is not an instant, or an unrecognized query parameter.",
             "content": {
               "application/json": {
                 "schema": {
@@ -17213,7 +17247,7 @@
                               "capture_longitude": {
                                 "type": "number"
                               },
-                              "timestamp": {
+                              "occurred_at": {
                                 "type": "string"
                               },
                               "created_at": {
@@ -17303,7 +17337,7 @@
                               "version",
                               "schema_version",
                               "source",
-                              "timestamp",
+                              "occurred_at",
                               "created_at",
                               "updated_at"
                             ]
@@ -21853,21 +21887,21 @@
           {
             "schema": {
               "type": "string",
-              "description": "Include only items whose own time — `timestamp`, falling back to `created_at` — is at or after this (inclusive). Not the modification time, despite what this parameter's previous name suggested."
+              "description": "Include only items whose own time — `occurred_at`, falling back to `created_at` — is strictly after this. Not the modification time."
             },
             "required": false,
-            "description": "Include only items whose own time — `timestamp`, falling back to `created_at` — is at or after this (inclusive). Not the modification time, despite what this parameter's previous name suggested.",
-            "name": "timestamp_after",
+            "description": "Include only items whose own time — `occurred_at`, falling back to `created_at` — is strictly after this. Not the modification time.",
+            "name": "occurred_after",
             "in": "query"
           },
           {
             "schema": {
               "type": "string",
-              "description": "Include only items whose own time — `timestamp`, falling back to `created_at` — is at or before this (inclusive)."
+              "description": "Include only items whose own time — `occurred_at`, falling back to `created_at` — is strictly before this."
             },
             "required": false,
-            "description": "Include only items whose own time — `timestamp`, falling back to `created_at` — is at or before this (inclusive).",
-            "name": "timestamp_before",
+            "description": "Include only items whose own time — `occurred_at`, falling back to `created_at` — is strictly before this.",
+            "name": "occurred_before",
             "in": "query"
           },
           {
@@ -24028,7 +24062,7 @@
           "Audit"
         ],
         "summary": "List audit log entries",
-        "description": "Returns audit-log entries in reverse-chronological order, filtered by action, resource, or time range, with cursor pagination. Records only state-changing calls and a few admin reads — item/edge reads, SSE, and search are not logged. Requires `space.audit_read`, and answers a caller's own space and nothing else. A credential with no space holds no space permission, so it is refused rather than shown the whole trail.",
+        "description": "Returns audit-log entries in reverse-chronological order, filtered by action, resource, or time range, with cursor pagination. Records only state-changing calls and a few admin reads — item/edge reads, SSE, and search are not logged. Requires `space.audit_read`, and answers a caller's own space and nothing else. A credential with no space holds no space permission, so it is refused rather than shown the whole trail. Unrecognized query parameters are refused with `400` rather than ignored, so a misspelled filter cannot silently return an unfiltered page. A parameter of your own — a cache-buster, an analytics tag — must start with `_`, which is always ignored.",
         "security": [
           {
             "bearerAuth": []
@@ -24068,21 +24102,21 @@
           {
             "schema": {
               "type": "string",
-              "description": "Include entries at or after this timestamp."
+              "description": "Include entries written strictly after this instant."
             },
             "required": false,
-            "description": "Include entries at or after this timestamp.",
-            "name": "since",
+            "description": "Include entries written strictly after this instant.",
+            "name": "created_after",
             "in": "query"
           },
           {
             "schema": {
               "type": "string",
-              "description": "Include entries before this timestamp."
+              "description": "Include entries written strictly before this instant."
             },
             "required": false,
-            "description": "Include entries before this timestamp.",
-            "name": "until",
+            "description": "Include entries written strictly before this instant.",
+            "name": "created_before",
             "in": "query"
           },
           {
@@ -24125,7 +24159,7 @@
                           "id": {
                             "type": "string"
                           },
-                          "timestamp": {
+                          "created_at": {
                             "type": "string"
                           },
                           "key_id": {
@@ -24155,7 +24189,7 @@
                         },
                         "required": [
                           "id",
-                          "timestamp",
+                          "created_at",
                           "key_id",
                           "action",
                           "resource_type",

@@ -35,7 +35,7 @@ describe("the instance", () => {
     expect(r.ok).toBe(true);
     expect(r.data.name).toBe("marfa");
     expect(typeof r.data.version).toBe("string");
-    // The whole array, not a subset: `findings.md` 7 is about a feature the
+    // The whole array, not a subset: `findings.md` 6 is about a feature the
     // root advertises and does not serve, which a subset could never catch.
     expect([...(r.data.features as string[])].sort()).toEqual(
       [

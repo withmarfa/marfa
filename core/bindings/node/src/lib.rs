@@ -19,11 +19,14 @@ pub enum ItemState {
     Revoked,
 }
 
+// Every sortable column is a verb plus `_at`, so the shared suffix is the
+// naming rule rather than a redundant prefix the variants could drop.
+#[allow(clippy::enum_variant_names)]
 #[napi(string_enum = "snake_case")]
 pub enum SortField {
     CreatedAt,
     UpdatedAt,
-    Timestamp,
+    OccurredAt,
 }
 
 #[napi(string_enum = "snake_case")]
@@ -53,7 +56,7 @@ pub struct Item {
     pub source: String,
     pub source_id: Option<String>,
     pub device: Option<String>,
-    pub timestamp: String,
+    pub occurred_at: String,
     pub created_at: String,
     pub updated_at: String,
     pub tags: Vec<String>,
@@ -83,8 +86,8 @@ pub struct ListFilters {
     pub include_trashed: Option<bool>,
     pub tier: Option<Tier>,
     pub tags: Option<Vec<String>>,
-    pub timestamp_after: Option<String>,
-    pub timestamp_before: Option<String>,
+    pub occurred_after: Option<String>,
+    pub occurred_before: Option<String>,
     pub limit: Option<u32>,
     pub offset: Option<u32>,
 }
@@ -198,7 +201,7 @@ fn item(item: marfa_core::Item) -> Item {
         source: item.source,
         source_id: item.source_id,
         device: item.device,
-        timestamp: item.timestamp,
+        occurred_at: item.occurred_at,
         created_at: item.created_at,
         updated_at: item.updated_at,
         tags: item.tags,
@@ -226,8 +229,8 @@ fn filters(filters: Option<ListFilters>) -> marfa_core::ListFilters {
         include_trashed: filters.include_trashed.unwrap_or(false),
         tier: filters.tier.map(Into::into),
         tags: filters.tags.unwrap_or_default(),
-        timestamp_after: filters.timestamp_after,
-        timestamp_before: filters.timestamp_before,
+        occurred_after: filters.occurred_after,
+        occurred_before: filters.occurred_before,
         limit: filters.limit,
         offset: filters.offset,
     }
@@ -240,7 +243,7 @@ fn sort(sort: Option<Sort>) -> marfa_core::Sort {
             field: match sort.field {
                 SortField::CreatedAt => marfa_core::SortField::CreatedAt,
                 SortField::UpdatedAt => marfa_core::SortField::UpdatedAt,
-                SortField::Timestamp => marfa_core::SortField::Timestamp,
+                SortField::OccurredAt => marfa_core::SortField::OccurredAt,
             },
             direction: match sort.direction {
                 SortDirection::Asc => marfa_core::SortDirection::Ascending,

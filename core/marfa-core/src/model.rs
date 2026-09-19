@@ -94,7 +94,9 @@ pub struct Item {
     pub source: String,
     pub source_id: Option<String>,
     pub device: Option<String>,
-    pub timestamp: String,
+    /// When the item's content happened, as opposed to when the row was
+    /// written. The server defaults it to `created_at`.
+    pub occurred_at: String,
     pub created_at: String,
     pub updated_at: String,
     pub tags: Vec<String>,
@@ -130,18 +132,21 @@ pub struct ListFilters {
     pub include_trashed: bool,
     pub tier: Option<Tier>,
     pub tags: Vec<String>,
-    pub timestamp_after: Option<String>,
-    pub timestamp_before: Option<String>,
+    pub occurred_after: Option<String>,
+    pub occurred_before: Option<String>,
     pub limit: Option<u32>,
     pub offset: Option<u32>,
 }
 
+// Every sortable column is a verb plus `_at`, so the shared suffix is the
+// naming rule rather than a redundant prefix the variants could drop.
+#[allow(clippy::enum_variant_names)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SortField {
     CreatedAt,
     UpdatedAt,
-    Timestamp,
+    OccurredAt,
 }
 
 impl SortField {
@@ -149,7 +154,7 @@ impl SortField {
         match self {
             SortField::CreatedAt => "created_at",
             SortField::UpdatedAt => "updated_at",
-            SortField::Timestamp => "timestamp",
+            SortField::OccurredAt => "occurred_at",
         }
     }
 }
@@ -161,9 +166,9 @@ impl FromStr for SortField {
         match text {
             "created_at" => Ok(SortField::CreatedAt),
             "updated_at" => Ok(SortField::UpdatedAt),
-            "timestamp" => Ok(SortField::Timestamp),
+            "occurred_at" => Ok(SortField::OccurredAt),
             other => Err(CoreError::Invalid(format!(
-                "sort must be created_at, updated_at or timestamp, not {other:?}"
+                "sort must be created_at, updated_at or occurred_at, not {other:?}"
             ))),
         }
     }

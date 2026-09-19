@@ -40,7 +40,7 @@ export const items = sqliteTable(
     properties: blob("properties", { mode: "buffer" }).notNull(),
     created_at: text("created_at").notNull(),
     updated_at: text("updated_at").notNull(),
-    timestamp: text("timestamp").notNull(),
+    occurred_at: text("occurred_at").notNull(),
     source: text("source"),
     source_id: text("source_id"),
     version: integer("version").notNull().default(1),
@@ -63,7 +63,7 @@ export const items = sqliteTable(
     index("idx_items_type").on(table.type),
     index("idx_items_state").on(table.state),
     index("idx_items_created_at").on(table.created_at),
-    index("idx_items_timestamp").on(table.timestamp),
+    index("idx_items_occurred_at").on(table.occurred_at),
     // Serves the catch-up read: "what changed after T", walked in
     // `(updated_at, id)` order. Both halves matter — an index on the
     // column alone answers the predicate and still leaves the sort, and
@@ -120,8 +120,10 @@ export const edges = sqliteTable(
   "edges",
   {
     id: text("id").primaryKey(),
-    // No FKs on source_id / target_id — see pg/schema.ts note. App-level
-    // checks run in assertEdgeCanBeCreated + planCascadeDelete.
+    // No FKs on source_id / target_id: an edge may be written before
+    // either endpoint resolves, and a cascade has to plan the rows it
+    // removes rather than let the engine remove them. The checks run in
+    // assertEdgeCanBeCreated + planCascadeDelete.
     source_id: text("source_id").notNull(),
     target_id: text("target_id").notNull(),
     edge_type: text("edge_type").notNull(),
@@ -346,7 +348,7 @@ export const auditLog = sqliteTable(
   "audit_log",
   {
     id: text("id").primaryKey(),
-    timestamp: text("timestamp").notNull(),
+    created_at: text("created_at").notNull(),
     key_id: text("key_id"),
     action: text("action").notNull(),
     resource_type: text("resource_type").notNull(),
@@ -354,13 +356,12 @@ export const auditLog = sqliteTable(
     details: text("details").notNull().default("{}"),
   },
   (table) => [
-    index("idx_audit_log_timestamp").on(table.timestamp),
+    index("idx_audit_log_created_at").on(table.created_at),
     index("idx_audit_log_action").on(table.action),
     index("idx_audit_log_resource_type").on(table.resource_type),
   ],
 );
 
-// bulk_action_jobs: see pg/schema.ts for design notes
 export const bulkActionJobs = sqliteTable(
   "bulk_action_jobs",
   {
@@ -392,7 +393,6 @@ export const bulkActionJobs = sqliteTable(
   ],
 );
 
-// rate_limit_windows: see pg/schema.ts for design notes
 export const rateLimitWindows = sqliteTable(
   "rate_limit_windows",
   {
@@ -465,9 +465,8 @@ export const auth_user = sqliteTable(
     createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
     updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
     // Account-lifecycle state. `pending_deletion_at` stays TEXT/ISO to
-    // match the rest of the timestamp convention; the purger compares
-    // strings without round-tripping through Date. See pg/schema.ts for
-    // the full design note.
+    // match the rest of the time convention; the purger compares
+    // strings without round-tripping through Date.
     deletion_state: text("deletion_state").notNull().default("active"),
     pending_deletion_at: text("pending_deletion_at"),
   },

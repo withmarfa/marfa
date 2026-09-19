@@ -52,12 +52,15 @@ pub(crate) fn list(
         );
         values.push(Value::String(tag.clone()));
     }
-    if let Some(after) = &filters.timestamp_after {
-        clauses.push("timestamp >= ?".into());
+    // Both ends exclusive, matching the server: a device answering a
+    // bounded list differently from the server it copied is a divergence a
+    // caller cannot see.
+    if let Some(after) = &filters.occurred_after {
+        clauses.push("occurred_at > ?".into());
         values.push(Value::String(after.clone()));
     }
-    if let Some(before) = &filters.timestamp_before {
-        clauses.push("timestamp <= ?".into());
+    if let Some(before) = &filters.occurred_before {
+        clauses.push("occurred_at < ?".into());
         values.push(Value::String(before.clone()));
     }
     let where_sql = if clauses.is_empty() {
@@ -228,18 +231,20 @@ mod tests {
         };
         assert_eq!(ids(&conn, filters, Sort::default()), vec!["f"]);
         let filters = ListFilters {
-            timestamp_after: Some("2026-01-02T00:00:00Z".into()),
-            timestamp_before: Some("2026-01-04T00:00:00Z".into()),
+            occurred_after: Some("2026-01-02T00:00:00Z".into()),
+            occurred_before: Some("2026-01-04T00:00:00Z".into()),
             ..Default::default()
         };
-        assert_eq!(ids(&conn, filters, Sort::default()), vec!["d", "c", "b"]);
+        // Exclusive at both ends, so the rows sitting exactly on the bounds
+        // are out and only the one between them comes back.
+        assert_eq!(ids(&conn, filters, Sort::default()), vec!["c"]);
     }
 
     #[test]
     fn sort_limit_and_offset() {
         let conn = seeded();
         let ascending = Sort {
-            field: SortField::Timestamp,
+            field: SortField::OccurredAt,
             direction: SortDirection::Ascending,
         };
         let filters = ListFilters {

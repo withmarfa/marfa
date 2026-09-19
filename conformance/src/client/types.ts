@@ -8,7 +8,7 @@ export interface MarfaItem {
   state: string; // Lifecycle state: "active", "archived", "trashed"
   created_at: string; // ISO 8601
   updated_at: string | null;
-  timestamp: string | null; // When the event actually happened (nullable, defaults to created_at)
+  occurred_at: string | null; // When the item's content happened (nullable, defaults to created_at)
   tier?: "library" | "feed"; // Items are either curated library content or transient feed content. Optional — system.* items have no tier.
   version: number; // Revision number, starts at 1, increments on update
   schema_version: number; // Type schema version this item was validated against
@@ -244,7 +244,7 @@ export interface BulkItemInput {
   tier?: "library" | "feed";
   source?: string;
   source_id?: string;
-  timestamp?: string;
+  occurred_at?: string;
   /** The version this entry was based on, where it resolves a row that
    *  already exists. Optional, as on the create door. */
   version?: number;
@@ -319,15 +319,15 @@ export interface BulkActionFilter {
   tier?: "library" | "feed";
   tags?: string[];
   /**
-   * Lower bound on the item's own time — `timestamp`, falling back to
-   * `created_at` — inclusive.
+   * Lower bound on the item's own time — `occurred_at`, falling back to
+   * `created_at` — exclusive.
    *
    * The bulk-action door is where a dropped bound costs rows rather than a
    * wrong answer, which makes it the typed surface most worth keeping honest.
    */
-  timestamp_after?: string;
-  /** Upper bound on the same expression, inclusive. */
-  timestamp_before?: string;
+  occurred_after?: string;
+  /** Upper bound on the same expression, exclusive. */
+  occurred_before?: string;
   filter?: string;
 }
 
@@ -354,7 +354,7 @@ export type BulkActionInput =
       action: "update_properties";
       patch: Record<string, unknown>;
     })
-  | (BulkActionBase & { action: "update_timestamp"; timestamp: string });
+  | (BulkActionBase & { action: "update_occurred_at"; occurred_at: string });
 
 export interface BulkActionResponse {
   action: string;
@@ -479,7 +479,7 @@ export interface WebhookDelivery {
 
 export interface AuditEntry {
   id: string;
-  timestamp: string;
+  created_at: string;
   key_id: string;
   action: string;
   resource_type: string;

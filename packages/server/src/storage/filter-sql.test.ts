@@ -22,10 +22,10 @@ describe("filterToRawSql", () => {
       expect(result.params).toEqual(["trashed"]);
     });
 
-    it("generates system field gt for timestamp", () => {
-      const expr = parseFilter('timestamp gt "2026-01-01"');
+    it("generates system field gt for occurred_at", () => {
+      const expr = parseFilter('occurred_at gt "2026-01-01"');
       const result = filterToRawSql(expr, "i");
-      expect(result.clause).toBe("i.timestamp > ?");
+      expect(result.clause).toBe("i.occurred_at > ?");
       expect(result.params).toEqual(["2026-01-01"]);
     });
 

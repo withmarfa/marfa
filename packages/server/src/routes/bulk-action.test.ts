@@ -257,7 +257,7 @@ describe("POST /items/bulk-actions (async)", () => {
     expect(item.item.properties.body).toBeDefined();
   });
 
-  it("update_timestamp changes the user-meaningful timestamp", async () => {
+  it("update_occurred_at changes the item's own time", async () => {
     const tag = `ts-${Math.random().toString(36).slice(2, 8)}`;
     const ids = await seed("core.note", 1, { tags: [tag] });
     const newTs = "2020-01-01T00:00:00.000Z";
@@ -265,8 +265,8 @@ describe("POST /items/bulk-actions (async)", () => {
     const { initialStatus } = await runBulkActionAsync(
       ctx,
       {
-        action: "update_timestamp",
-        timestamp: newTs,
+        action: "update_occurred_at",
+        occurred_at: newTs,
         filter: { tags: [tag] },
       },
       ctx.spaceKey,
@@ -276,16 +276,16 @@ describe("POST /items/bulk-actions (async)", () => {
     const getRes = await request(ctx.app, "GET", `/items/${ids[0]!}`, {
       key: ctx.spaceKey,
     });
-    const item = (await getRes.json()) as { item: { timestamp: string } };
-    expect(item.item.timestamp).toBe(newTs);
+    const item = (await getRes.json()) as { item: { occurred_at: string } };
+    expect(item.item.occurred_at).toBe(newTs);
   });
 
-  it("update_timestamp rejects non-ISO strings", async () => {
+  it("update_occurred_at rejects non-ISO strings", async () => {
     const { initialStatus } = await runBulkActionAsync(
       ctx,
       {
-        action: "update_timestamp",
-        timestamp: "not a date",
+        action: "update_occurred_at",
+        occurred_at: "not a date",
         filter: { type: "core.note" },
       },
       ctx.spaceKey,

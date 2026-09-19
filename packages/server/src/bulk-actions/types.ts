@@ -39,8 +39,18 @@ export const BulkActionFilterShape = z.object({
   source: z.string().optional(),
   tier: z.enum(["library", "feed"]).optional(),
   tags: z.array(z.string()).optional(),
-  timestamp_after: z.string().optional(),
-  timestamp_before: z.string().optional(),
+  occurred_after: z
+    .string()
+    .optional()
+    .describe(
+      "Lower bound on the item's own time — `occurred_at`, falling back to `created_at` — strictly after this. Exclusive, as every bound but `updated_after` is.",
+    ),
+  occurred_before: z
+    .string()
+    .optional()
+    .describe(
+      "Upper bound on the same expression, strictly before this. Exclusive, matching its lower twin.",
+    ),
   /** Full filter-SQL DSL string, same grammar as GET /items?filter=. */
   filter: z.string().optional(),
 });
@@ -78,8 +88,8 @@ export const BulkActionInputSchema = z.discriminatedUnion("action", [
     patch: z.record(z.string(), z.unknown()),
   }),
   BulkActionBaseSchema.extend({
-    action: z.literal("update_timestamp"),
-    timestamp: z.string(),
+    action: z.literal("update_occurred_at"),
+    occurred_at: z.string(),
   }),
 ]);
 

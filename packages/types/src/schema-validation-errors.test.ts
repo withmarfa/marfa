@@ -95,8 +95,8 @@ const CLASSES: { name: string; input: unknown; atField: string }[] = [
   },
   {
     name: "property shadows a first-class Item field",
-    input: { id: "acme.j", fields: { timestamp: { type: "datetime" } } },
-    atField: "fields.timestamp",
+    input: { id: "acme.j", fields: { occurred_at: { type: "datetime" } } },
+    atField: "fields.occurred_at",
   },
   {
     name: "per-type lifecycle declaration",

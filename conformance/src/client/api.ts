@@ -57,7 +57,7 @@ export interface CreateItemInput {
    */
   version?: number;
   tier?: "library" | "feed"; // Items are curated library content or transient feed content; system.* items have no tier
-  timestamp?: string;
+  occurred_at?: string;
   device?: string;
   capture_latitude?: number;
   capture_longitude?: number;
@@ -145,9 +145,11 @@ export class MarfaClient {
       source?: string;
       tags?: string[];
       tier?: "library" | "feed" | "all";
-      timestamp_after?: string;
-      timestamp_before?: string;
-      sort?: "created_at" | "updated_at" | "timestamp";
+      occurred_after?: string;
+      occurred_before?: string;
+      updated_after?: string;
+      updated_before?: string;
+      sort?: "created_at" | "updated_at" | "occurred_at";
       direction?: "asc" | "desc";
       limit?: number;
       cursor?: string;
@@ -304,8 +306,8 @@ export class MarfaClient {
       type?: string;
       state?: string;
       source?: string;
-      timestamp_after?: string;
-      timestamp_before?: string;
+      occurred_after?: string;
+      occurred_before?: string;
     } = {},
   ): Promise<ApiResponse<string>> {
     const params = new URLSearchParams();
@@ -325,8 +327,8 @@ export class MarfaClient {
       type?: string;
       state?: string;
       source?: string;
-      timestamp_after?: string;
-      timestamp_before?: string;
+      occurred_after?: string;
+      occurred_before?: string;
     } = {},
   ): Promise<ApiResponse<Uint8Array>> {
     const params = new URLSearchParams({ format: "archive" });
@@ -773,6 +775,7 @@ export class MarfaClient {
     opts: {
       edge_type?: string;
       updated_after?: string;
+      updated_before?: string;
       cursor?: string;
       limit?: number;
     } = {},
@@ -859,8 +862,8 @@ export class MarfaClient {
       action?: string;
       resource_type?: string;
       resource_id?: string;
-      since?: string;
-      until?: string;
+      created_after?: string;
+      created_before?: string;
       limit?: number;
       cursor?: string;
     } = {},

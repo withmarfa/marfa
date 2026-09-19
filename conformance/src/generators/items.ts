@@ -45,7 +45,7 @@ export function createNote(
 /**
  * Create a core.highlight item. `text` is required; the other properties
  * are optional. The moment the highlight was made is the item's system
- * `timestamp`, not a `highlighted_at` property.
+ * `occurred_at`, not a `highlighted_at` property.
  */
 export function createHighlight(
   overrides: Partial<CreateItemInput> = {},

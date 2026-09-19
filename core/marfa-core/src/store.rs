@@ -19,7 +19,7 @@ pub const META_HYDRATE_STATE: &str = "hydrate_state";
 pub const HYDRATE_IN_PROGRESS: &str = "in_progress";
 pub const SCHEMA_VERSION: &str = "provisional-1";
 
-const ITEM_COLUMNS: &str = "id, type, state, tier, version, schema_version, source, source_id, device, timestamp, created_at, updated_at, properties";
+const ITEM_COLUMNS: &str = "id, type, state, tier, version, schema_version, source, source_id, device, occurred_at, created_at, updated_at, properties";
 const EDGE_COLUMNS: &str =
     "id, source_id, target_id, edge_type, properties, version, created_at, updated_at";
 
@@ -130,13 +130,13 @@ pub fn upsert_item(
 ) -> Result<(), CoreError> {
     ItemState::from_str_checked(&item.state)?;
     conn.execute(
-        "INSERT INTO items (id, type, state, tier, version, schema_version, source, source_id, device, timestamp, created_at, updated_at, properties)
+        "INSERT INTO items (id, type, state, tier, version, schema_version, source, source_id, device, occurred_at, created_at, updated_at, properties)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
          ON CONFLICT (id) DO UPDATE SET
            type = excluded.type, state = excluded.state, tier = excluded.tier,
            version = excluded.version, schema_version = excluded.schema_version,
            source = excluded.source, source_id = excluded.source_id, device = excluded.device,
-           timestamp = excluded.timestamp, created_at = excluded.created_at,
+           occurred_at = excluded.occurred_at, created_at = excluded.created_at,
            updated_at = excluded.updated_at, properties = excluded.properties",
         params![
             item.id,
@@ -148,7 +148,7 @@ pub fn upsert_item(
             item.source,
             item.source_id,
             item.device,
-            item.timestamp,
+            item.occurred_at,
             item.created_at,
             item.updated_at,
             Value::Object(item.properties.clone()).to_string(),
@@ -343,7 +343,7 @@ fn row_to_item(row: &rusqlite::Row<'_>) -> rusqlite::Result<Item> {
         source: row.get(6)?,
         source_id: row.get(7)?,
         device: row.get(8)?,
-        timestamp: row.get(9)?,
+        occurred_at: row.get(9)?,
         created_at: row.get(10)?,
         updated_at: row.get(11)?,
         properties: parse_object(&properties).map_err(|_| invalid_row(12, &properties))?,
@@ -453,7 +453,7 @@ pub(crate) mod testing {
         id: &str,
         type_: &str,
         state: &str,
-        timestamp: &str,
+        occurred_at: &str,
         props: Value,
     ) -> WireItem {
         let properties = match props {
@@ -471,9 +471,9 @@ pub(crate) mod testing {
             source: "test".into(),
             source_id: None,
             device: None,
-            timestamp: timestamp.into(),
-            created_at: timestamp.into(),
-            updated_at: timestamp.into(),
+            occurred_at: occurred_at.into(),
+            created_at: occurred_at.into(),
+            updated_at: occurred_at.into(),
             edges: None,
         }
     }
@@ -491,12 +491,12 @@ pub(crate) mod testing {
         }
     }
 
-    pub fn note(id: &str, title: &str, body: &str, timestamp: &str) -> WireItem {
+    pub fn note(id: &str, title: &str, body: &str, occurred_at: &str) -> WireItem {
         wire_item(
             id,
             "core.note",
             "active",
-            timestamp,
+            occurred_at,
             json!({ "title": title, "body": body }),
         )
     }

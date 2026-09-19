@@ -61,7 +61,9 @@ export interface Item {
   properties: Record<string, unknown>;
   created_at: string;
   updated_at: string;
-  timestamp: string;
+  /** When the item's content happened, as opposed to when the row was
+   *  written. Defaults to `created_at` when the writer names nothing. */
+  occurred_at: string;
   source: string;
   source_id?: string;
   version: number;
@@ -86,7 +88,7 @@ export interface CreateItemInput {
   state?: ItemState;
   /** Overrides the credential's default_tier when supplied. */
   tier?: Tier;
-  timestamp?: string;
+  occurred_at?: string;
   /** Ignored on the wire — server always stamps source from the credential. */
   source?: string;
   source_id?: string;
@@ -149,10 +151,10 @@ export interface UpdateItemInput {
    *  path for `properties`; flipping `tier` doesn't conflict (it's a single
    *  metadata-axis flag, last-writer-wins by design). */
   tier?: Tier;
-  /** Override the user-meaningful timestamp. Settable on create; this
-   *  field lets importers fix dates retroactively without rewriting
-   *  properties. Independent of the version-merge path. */
-  timestamp?: string;
+  /** Override the item's own time. Settable on create; this field lets
+   *  importers fix dates retroactively without rewriting properties.
+   *  Independent of the version-merge path. */
+  occurred_at?: string;
   /**
    * Repoint the item at a new natural-key identifier under the caller's
    * stamped `source`. The `(source, source_id)` tuple is unique per space

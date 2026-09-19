@@ -101,8 +101,8 @@ const itemColumns = {
 
 /**
  * Detect a SQLite unique-constraint violation on `idx_items_source_dedup`.
- * Mirrors the PG-side trap (see `pg/item-store.ts`). The route-layer
- * pre-check catches the common case; this covers the narrow race window.
+ * The route-layer pre-check catches the common case; this covers the narrow
+ * race window between that check and the insert.
  */
 function isSourceDedupViolation(err: unknown): boolean {
   if (err == null || typeof err !== "object") return false;
@@ -209,7 +209,7 @@ async function insertConflictedSibling(
       properties: sql`jsonb(${JSON.stringify(properties)})`,
       created_at: now,
       updated_at: now,
-      timestamp: now,
+      occurred_at: now,
       source: row.source,
       version: 1,
       schema_version: schemaVersion,
@@ -244,7 +244,7 @@ async function insertConflictedSibling(
     properties,
     created_at: now,
     updated_at: now,
-    timestamp: now,
+    occurred_at: now,
     version: 1,
     schema_version: schemaVersion,
     source: row.source ?? "unknown",
@@ -344,7 +344,7 @@ export class SqliteItemStore implements ItemStore {
             properties: sql`jsonb(${JSON.stringify(properties)})`,
             created_at: now,
             updated_at: now,
-            timestamp: input.timestamp ?? now,
+            occurred_at: input.occurred_at ?? now,
             source: input.source,
             source_id: input.source_id,
             // A restore recreates a row under its archived id, so it also
@@ -388,7 +388,7 @@ export class SqliteItemStore implements ItemStore {
         properties,
         created_at: now,
         updated_at: now,
-        timestamp: input.timestamp ?? now,
+        occurred_at: input.occurred_at ?? now,
         version: input.version ?? 1,
         schema_version: schemaVersion,
         source: input.source ?? "unknown",
@@ -492,13 +492,17 @@ export class SqliteItemStore implements ItemStore {
       filters.updated_after,
       "updated_after",
     );
-    const timestampAfter = normalizeTimeBound(
-      filters.timestamp_after,
-      "timestamp_after",
+    const occurredAfter = normalizeTimeBound(
+      filters.occurred_after,
+      "occurred_after",
     );
-    const timestampBefore = normalizeTimeBound(
-      filters.timestamp_before,
-      "timestamp_before",
+    const occurredBefore = normalizeTimeBound(
+      filters.occurred_before,
+      "occurred_before",
+    );
+    const updatedBefore = normalizeTimeBound(
+      filters.updated_before,
+      "updated_before",
     );
 
     // One test of the field decides both the ordering and the bound. Two
@@ -569,18 +573,24 @@ export class SqliteItemStore implements ItemStore {
       conditions.push(sql`${items.type} NOT LIKE 'system.%'`);
     }
 
-    if (timestampAfter !== undefined) {
+    if (occurredAfter !== undefined) {
       conditions.push(
-        sql`COALESCE(${items.timestamp}, ${items.created_at}) >= ${timestampAfter}`,
+        sql`COALESCE(${items.occurred_at}, ${items.created_at}) > ${occurredAfter}`,
       );
     }
-    if (timestampBefore !== undefined) {
+    if (occurredBefore !== undefined) {
       conditions.push(
-        sql`COALESCE(${items.timestamp}, ${items.created_at}) <= ${timestampBefore}`,
+        sql`COALESCE(${items.occurred_at}, ${items.created_at}) < ${occurredBefore}`,
       );
     }
+    // The one bound that stays inclusive. `updated_at` ties across a bulk
+    // write, so a strict comparison drops every row sharing the cursor's
+    // instant and a resuming client never learns they existed.
     if (updatedAfter !== undefined) {
       conditions.push(gte(items.updated_at, updatedAfter));
+    }
+    if (updatedBefore !== undefined) {
+      conditions.push(lt(items.updated_at, updatedBefore));
     }
 
     // The normalized instant columns compare as text because they are
@@ -642,8 +652,8 @@ export class SqliteItemStore implements ItemStore {
       sort.kind === "system"
         ? sort.column === "updated_at"
           ? items.updated_at
-          : sort.column === "timestamp"
-            ? items.timestamp
+          : sort.column === "occurred_at"
+            ? items.occurred_at
             : items.created_at
         : null;
 
@@ -722,8 +732,8 @@ export class SqliteItemStore implements ItemStore {
           ? propertySortValue(last.properties, sort)
           : sort.column === "updated_at"
             ? last.updated_at
-            : sort.column === "timestamp"
-              ? last.timestamp
+            : sort.column === "occurred_at"
+              ? last.occurred_at
               : last.created_at;
       cursor = encodeKeyedCursor(sortValue, last.id, cursorKey);
     }
@@ -808,7 +818,9 @@ export class SqliteItemStore implements ItemStore {
           version: newVersion,
           updated_at: now,
           ...(input.tier !== undefined && { tier: input.tier }),
-          ...(input.timestamp !== undefined && { timestamp: input.timestamp }),
+          ...(input.occurred_at !== undefined && {
+            occurred_at: input.occurred_at,
+          }),
           ...(input.source_id !== undefined && {
             source_id: input.source_id,
           }),
@@ -840,7 +852,9 @@ export class SqliteItemStore implements ItemStore {
           version: newVersion,
           updated_at: now,
           tier: newTier,
-          ...(input.timestamp !== undefined && { timestamp: input.timestamp }),
+          ...(input.occurred_at !== undefined && {
+            occurred_at: input.occurred_at,
+          }),
           ...(input.source_id !== undefined && {
             source_id: input.source_id,
           }),
@@ -947,7 +961,9 @@ export class SqliteItemStore implements ItemStore {
         version: newVersion,
         updated_at: now,
         ...(input.tier !== undefined && { tier: input.tier }),
-        ...(input.timestamp !== undefined && { timestamp: input.timestamp }),
+        ...(input.occurred_at !== undefined && {
+          occurred_at: input.occurred_at,
+        }),
         ...(input.source_id !== undefined && {
           source_id: input.source_id,
         }),
@@ -976,8 +992,8 @@ export class SqliteItemStore implements ItemStore {
           version: newVersion,
           updated_at: now,
           tier: newTier,
-          ...(input.timestamp !== undefined && {
-            timestamp: input.timestamp,
+          ...(input.occurred_at !== undefined && {
+            occurred_at: input.occurred_at,
           }),
           ...(input.source_id !== undefined && {
             source_id: input.source_id,

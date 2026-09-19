@@ -106,6 +106,40 @@ describe("a retired registry table is refused on open", () => {
     );
   });
 
+  it("refuses a database whose items table predates the occurred_at rename", async () => {
+    // Not because it would be read wrongly — the DDL builds an index over
+    // the new column, so an old file fails at that statement whatever this
+    // check does. It is the shape of the failure that matters: without this
+    // the operator gets a driver error naming an index, after the PRAGMAs
+    // have already rewritten the file header.
+    const path = scratch();
+    const seed = createClient({ url: `file:${path}` });
+    await seed.execute(
+      "CREATE TABLE items (id TEXT PRIMARY KEY, timestamp TEXT NOT NULL)",
+    );
+    seed.close();
+    const before = createHash("sha256")
+      .update(readFileSync(path))
+      .digest("hex");
+
+    await expect(createConnection(path)).rejects.toThrow(/no occurred_at/);
+    await expect(createConnection(path)).rejects.toThrow(path);
+    expect(createHash("sha256").update(readFileSync(path)).digest("hex")).toBe(
+      before,
+    );
+  });
+
+  it("refuses an audit_log that predates the created_at rename", async () => {
+    const path = scratch();
+    const seed = createClient({ url: `file:${path}` });
+    await seed.execute(
+      "CREATE TABLE audit_log (id TEXT PRIMARY KEY, timestamp TEXT NOT NULL)",
+    );
+    seed.close();
+
+    await expect(createConnection(path)).rejects.toThrow(/no created_at/);
+  });
+
   it("opens a fresh database, and one it has already opened", async () => {
     const path = scratch();
     const first = await createConnection(path);

@@ -122,12 +122,16 @@ struct ListArgs {
     /// Items must carry every tag given.
     #[arg(long = "tag", value_name = "TAG")]
     tags: Vec<String>,
-    /// Lower bound on the item's own time, RFC 3339.
-    #[arg(long, value_name = "TIME")]
-    after: Option<String>,
-    /// Upper bound on the item's own time, RFC 3339.
-    #[arg(long, value_name = "TIME")]
-    before: Option<String>,
+    /// Exclusive lower bound on the item's own time, RFC 3339.
+    ///
+    /// Named for the field rather than shortened to `--after`, because the
+    /// binary has two time axes: this one and the modification time
+    /// `catch-up` walks.
+    #[arg(long = "occurred-after", value_name = "TIME")]
+    occurred_after: Option<String>,
+    /// Exclusive upper bound on the item's own time, RFC 3339.
+    #[arg(long = "occurred-before", value_name = "TIME")]
+    occurred_before: Option<String>,
     #[arg(long, default_value = "created-at")]
     sort: SortField,
     #[arg(long, default_value = "desc")]
@@ -163,11 +167,14 @@ enum ItemState {
     Revoked,
 }
 
+// Every sortable column is a verb plus `_at`, so the shared suffix is the
+// naming rule rather than a redundant prefix the variants could drop.
+#[allow(clippy::enum_variant_names)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 enum SortField {
     CreatedAt,
     UpdatedAt,
-    Timestamp,
+    OccurredAt,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -201,7 +208,7 @@ impl From<SortField> for marfa_core::SortField {
         match field {
             SortField::CreatedAt => marfa_core::SortField::CreatedAt,
             SortField::UpdatedAt => marfa_core::SortField::UpdatedAt,
-            SortField::Timestamp => marfa_core::SortField::Timestamp,
+            SortField::OccurredAt => marfa_core::SortField::OccurredAt,
         }
     }
 }
@@ -274,8 +281,8 @@ fn run(cli: Cli) -> Result<(), CliError> {
                         include_trashed: args.include_trashed,
                         tier: args.tier.map(Into::into),
                         tags: args.tags,
-                        timestamp_after: args.after,
-                        timestamp_before: args.before,
+                        occurred_after: args.occurred_after,
+                        occurred_before: args.occurred_before,
                         limit: args.limit,
                         offset: args.offset,
                     };
@@ -425,7 +432,7 @@ mod tests {
             "--state",
             "archived",
             "--sort",
-            "timestamp",
+            "occurred-at",
             "--direction",
             "asc",
             "--limit",
@@ -440,7 +447,7 @@ mod tests {
                 assert_eq!(args.type_.as_deref(), Some("core.note"));
                 assert_eq!(args.tags, vec!["a", "b"]);
                 assert_eq!(args.state, Some(ItemState::Archived));
-                assert_eq!(args.sort, SortField::Timestamp);
+                assert_eq!(args.sort, SortField::OccurredAt);
                 assert_eq!(args.direction, SortDirection::Asc);
                 assert_eq!(args.limit, Some(5));
             }
