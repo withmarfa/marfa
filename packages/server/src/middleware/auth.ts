@@ -452,19 +452,9 @@ export function authMiddleware(storage: Storage, salt: string) {
  * external record, which nothing writes over. A minted key carrying the
  * prefix would let any caller plant rows that read as mirrors.
  */
-/**
- * Prefixes a caller may not claim as its own `source`.
- *
- * `integration:` is the name `connector:` replaced, and it is here for the
- * same reason the retired scope root stays reserved: a prefix that once meant
- * connector provenance must not become claimable by dropping out of this
- * list. Without it, a caller could mint a credential stamping rows with the
- * exact provenance identity a connector used before the rename.
- */
 export const RESERVED_CREDENTIAL_SOURCE_PREFIXES = [
   "oauth:",
   "connector:",
-  "integration:",
 ] as const;
 
 /** Whether `source` claims one of the reserved connector shapes. */
@@ -534,6 +524,14 @@ export function checkTypeAccess(
   // machinery writes these rows through the storage layer rather than through
   // a credential at all.
   //
+  // **The message says no credential rather than naming the operator key**,
+  // which is what it used to do. The operator key is the only credential
+  // this fence admits, and the permission resolution below then refuses it
+  // too: `api_keys_operator_holds_nothing` makes an operator key's
+  // `type_permissions` empty by database constraint, so the map resolves
+  // `none`. Naming a door and refusing everyone who walks through it sent
+  // readers looking for a credential to mint.
+  //
   // `core.*` writes are NOT gated here — core types are user-facing
   // (core.note, core.task, core.bookmark) and ordinary credentials write them
   // routinely. Registering a new one is a different matter: `routes/types.ts`
@@ -551,7 +549,7 @@ export function checkTypeAccess(
     ) {
       throw new MarfaError(
         ErrorCode.TYPE_NOT_PERMITTED,
-        `Reserved namespace: only the operator key may write ${tier}.* items`,
+        `Reserved namespace: no credential writes ${tier}.* items. The operator key is the only one this fence admits and it holds no type permissions, so the platform writes these rows through the storage layer instead.`,
       );
     }
   }
@@ -690,19 +688,6 @@ export function itemProvenanceSource(
 export const CONNECTOR_SOURCE_PREFIX = "connector:";
 
 /**
- * The prefix `CONNECTOR_SOURCE_PREFIX` replaced.
- *
- * A row this server stamped before the rename still carries it, and mirror
- * protection is decided by the prefix alone — so a gate that knew only the
- * new spelling would leave every such row writable by any credential, with
- * the row still reading as a connector's mirror to `GET /items`. The boot
- * refusal in `storage/sqlite/connection.ts` means a database holding these
- * is not opened at all; this constant is what makes the gate correct rather
- * than merely unreached.
- */
-const RETIRED_CONNECTOR_SOURCE_PREFIX = "integration:";
-
-/**
  * One rule: nothing writes to an item a connector owns. Ownership is
  * provenance: a row whose source carries the connector prefix is a
  * connector's mirror of an external record, and nothing this server
@@ -732,10 +717,7 @@ export function permitsMirrorWrite(row: {
   id: string;
   source: string;
 }): boolean {
-  return !(
-    row.source.startsWith(CONNECTOR_SOURCE_PREFIX) ||
-    row.source.startsWith(RETIRED_CONNECTOR_SOURCE_PREFIX)
-  );
+  return !row.source.startsWith(CONNECTOR_SOURCE_PREFIX);
 }
 
 /**

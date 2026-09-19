@@ -116,10 +116,47 @@ describe("POST /admin/platform-types/{id}/remove", () => {
     );
     expect(res.status).toBe(200);
 
-    // Gone from the table, which is what makes it stop resolving at the
-    // next boot.
     const rows = await ctx.storage.types.loadAll();
     expect(rows.map((r) => r.schema.id)).not.toContain(id);
+  });
+
+  it("stops the type resolving on this process, not at the next boot", async () => {
+    // The row is half of what makes a type resolve; the in-process registry
+    // is the other half, and `deletePlatformType` used to leave it. So a
+    // successful removal changed nothing a caller could see: `GET /types`
+    // kept listing the identifier, `GET /types/{id}` kept answering 200, and
+    // the operator was told the row was gone. The route's description
+    // claimed the immediacy this asserts, and the storage layer did not
+    // provide it.
+    const ctx = await newContext();
+    const id = await seedDriftedType(ctx);
+
+    // The control: it resolves before the removal, so the assertions after
+    // it are about the removal rather than about a type that never listed.
+    const before = await request(ctx.app, "GET", `/types/${id}`, {
+      key: ctx.operatorKey,
+    });
+    expect(before.status).toBe(200);
+
+    const removed = await request(
+      ctx.app,
+      "POST",
+      `/admin/platform-types/${id}/remove`,
+      { key: ctx.operatorKey },
+    );
+    expect(removed.status).toBe(200);
+
+    const after = await request(ctx.app, "GET", `/types/${id}`, {
+      key: ctx.operatorKey,
+    });
+    expect(after.status).toBe(404);
+
+    const listed = await request(ctx.app, "GET", "/types", {
+      key: ctx.operatorKey,
+    });
+    expect(listed.status).toBe(200);
+    const ids = ((await listed.json()) as { id: string }[]).map((t) => t.id);
+    expect(ids).not.toContain(id);
   });
 
   it("refuses a type the build still ships", async () => {

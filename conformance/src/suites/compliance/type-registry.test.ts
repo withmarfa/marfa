@@ -116,6 +116,67 @@ describe("type registry", () => {
     expect(r.error?.error.details?.metadata_subresource).toBe("types");
   });
 
+  it("refuses both schema.write doors to a key without it, and declares the refusal", async () => {
+    // `PUT` and `DELETE /types/{id}` gate on `schema.write` and published no
+    // 403 at all, so the refusal a caller is most likely to meet was the one
+    // response the document did not describe. Two halves are asserted, and
+    // the second is the one that reddens if the declaration goes again:
+    // `expectMatchesSchema` throws when the served document declares no such
+    // status for the door.
+    const typeId = testTypeId("schema-write-gate");
+    const registered = await client.registerType({
+      id: typeId,
+      fields: { name: { type: "string" } },
+    });
+    expect(registered.ok).toBe(true);
+
+    const keyResp = await client.createKey({
+      label: "no-schema-write",
+      source: `${ctx.source}-${"no-schema-write"}`,
+      permissions: [],
+      type_permissions: { "*": "write" },
+    });
+    expect(keyResp.ok).toBe(true);
+    trackKey(ctx, keyResp.data.id);
+    const scopedClient = new MarfaClient({
+      baseUrl: apiUrl,
+      apiKey: keyResp.data.key,
+    });
+
+    const replaced = await scopedClient.updateType(typeId, {
+      id: typeId,
+      version: 2,
+      fields: { name: { type: "string" }, note: { type: "string" } },
+    });
+    expect(replaced.status).toBe(403);
+    expect(replaced.error?.error.code).toBe("forbidden");
+    await expectMatchesSchema("PUT", "/types/{id}", 403, replaced.error);
+
+    const removed = await scopedClient.deleteType(typeId);
+    expect(removed.status).toBe(403);
+    expect(removed.error?.error.code).toBe("forbidden");
+    await expectMatchesSchema("DELETE", "/types/{id}", 403, removed.error);
+  });
+
+  it("refuses both schema.write doors a platform-shipped type, and declares that refusal too", async () => {
+    // The other code the 403 now names. A credential that holds
+    // `schema.write` reaches the immutability check, so this is the arm the
+    // permission refusal above can never reach.
+    const replaced = await client.updateType("core.note", {
+      id: "core.note",
+      version: 99,
+      fields: { body: { type: "string" } },
+    });
+    expect(replaced.status).toBe(403);
+    expect(replaced.error?.error.code).toBe("core_type_immutable");
+    await expectMatchesSchema("PUT", "/types/{id}", 403, replaced.error);
+
+    const removed = await client.deleteType("core.note");
+    expect(removed.status).toBe(403);
+    expect(removed.error?.error.code).toBe("core_type_immutable");
+    await expectMatchesSchema("DELETE", "/types/{id}", 403, removed.error);
+  });
+
   it("updates type schema: adding a field with a version bump succeeds", async () => {
     const typeId = testTypeId("update-add");
     const schema: TypeSchema = {

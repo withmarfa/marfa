@@ -109,7 +109,7 @@ const createEdgeTypeRoute = createRoute({
   tags: ["Edge Types"],
   summary: "Register an edge type",
   description:
-    "Registers a custom edge type with its cardinality, cascade behavior, type constraints, and optional property schema. Requires `metadata.edge_types:write`. The eight core edge-type names are reserved and reject with a conflict, and custom types are flat with no inheritance.",
+    "Registers an edge type with its cardinality, cascade behavior, type constraints, and optional property schema. Requires `metadata.edge_types:write`. The eight core edge-type names are reserved and reject with a conflict, and a registered edge type is flat with no inheritance.",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -164,7 +164,7 @@ const listEdgeTypesRoute = createRoute({
   tags: ["Edge Types"],
   summary: "List edge types",
   description:
-    "Returns every edge type registered on the instance — the eight core types plus any custom registrations — each with its cardinality, cascade behavior, and source/target type constraints.",
+    "Returns every edge type this instance resolves — the eight core types plus any registered through `POST /edge-types` — each with its cardinality, cascade behavior, and source/target type constraints.",
   security: [{ bearerAuth: [] }],
   responses: {
     200: {
@@ -187,7 +187,7 @@ const deleteEdgeTypeRoute = createRoute({
   tags: ["Edge Types"],
   summary: "Delete an edge type",
   description:
-    "Removes a registered edge type. Requires `schema.write`; core edge types are rejected, an edge type this instance does not hold resolves as not-found, and the request fails while any edges of this type still exist, so delete or migrate them first.",
+    "Removes a registered edge type. Requires `schema.write`; core edge types are rejected, and an edge type this instance does not hold resolves as not-found. Existing edges are not consulted and not touched: the registration goes, the rows stay, and they keep naming an edge type the instance no longer holds. Delete or migrate them first if that is not what you want.",
   security: [{ bearerAuth: [] }],
   request: { params: z.object({ id: z.string().describe("Edge type id.") }) },
   responses: {
@@ -202,6 +202,14 @@ const deleteEdgeTypeRoute = createRoute({
         },
       },
       description: "Can't delete a core edge type",
+    },
+    403: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["forbidden"]),
+        },
+      },
+      description: "The credential does not hold `schema.write`",
     },
     404: {
       content: {
@@ -222,7 +230,7 @@ export function edgeTypeRoutes(storage: Storage) {
   const router = createOpenAPIRouter<AppEnv>();
 
   router.openapi(createEdgeTypeRoute, async (c) => {
-    // Registering a custom edge type is gated by the metadata.edge_types
+    // Registering an edge type is gated by the metadata.edge_types
     // scope, which every credential must carry: `metadata.edge_types:write`
     // is requestable but not part of the default consent bundle, so an app
     // that registers edge types asks for it explicitly. Mirrors
@@ -238,8 +246,9 @@ export function edgeTypeRoutes(storage: Storage) {
         `${body.id} is a core edge type and cannot be redefined`,
       );
     }
-    // Custom edge types use `<app>.<kebab-name>` shape, and kebab is allowed
-    // because core types like `parent-of` set the precedent. That used to be
+    // A registered edge type uses the `<app>.<kebab-name>` shape, and
+    // kebab is allowed because core types like `parent-of` set the
+    // precedent. That used to be
     // expressed as `!isValidTypeIdentifier(id) && !id.includes("-")`, which
     // admitted the kebab set by skipping the check for anything hyphenated —
     // so `"-"`, `"MY-EDGE"`, `"a b-c"` and `"../-"` all registered.
@@ -258,7 +267,7 @@ export function edgeTypeRoutes(storage: Storage) {
     if ("extends" in rawBody) {
       throw new MarfaError(
         ErrorCode.VALIDATION_ERROR,
-        "Custom edge types do not support `extends`",
+        "A registered edge type does not support `extends`",
       );
     }
 

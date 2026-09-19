@@ -202,6 +202,32 @@ describe("export", () => {
     expect(edgeIndex).toBeGreaterThan(lastItemIndex);
   });
 
+  it("refuses a format outside the two it offers", async () => {
+    // `format` was `z.string()` under a description offering `ndjson` or
+    // `archive`, an enumeration a reader takes as closed. `?format=bogus`
+    // answered 200 with NDJSON and recorded `format: "bogus"` in the audit
+    // row: a caller who asked for an archive and mistyped it got a stream
+    // named like a success. The reasoning is the door's own, twelve lines
+    // from where it refuses an undeclared query key.
+    //
+    // The control is the second half. A refusal of everything would pass the
+    // first assertion, so both accepted values are exercised beside it.
+    const bogus = await client.rawRequest("/export?format=bogus");
+    expect(bogus.status).toBe(400);
+    expect(bogus.error?.error.code).toBe("validation_error");
+
+    const item = await client.createItem(createNote({ source: ctx.source }));
+    expect(item.ok).toBe(true);
+    trackItem(ctx, item.data.item.id);
+    const scope = encodeURIComponent(ctx.source);
+    const ndjson = await client.rawRequest<string>(
+      `/export?source=${scope}&format=ndjson`,
+    );
+    expect(ndjson.status).toBe(200);
+    const archive = await client.exportArchive({ source: ctx.source });
+    expect(archive.status).toBe(200);
+  });
+
   it("refuses an unknown state filter", async () => {
     const r = await client.exportItems({ state: "bogus" });
     expect(r.status).toBe(400);

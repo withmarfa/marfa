@@ -203,40 +203,6 @@ export enum ErrorCode {
    */
   SOURCE_ID_CONFLICT = "source_id_conflict",
   /**
-   * A write resolved a row that a *different, still-installed* connection
-   * of the same connector wrote. Refused rather than merged.
-   *
-   * `source` is stamped `connector:<manifest name>` and is deliberately
-   * one value for the whole connector (D34), so that
-   * reinstalling adopts the corpus it created rather than duplicating it.
-   * The cost is that two live connections of one connector share a
-   * natural-key namespace, and nothing in `(source, source_id)` tells them
-   * apart. The row's recorded writer is what does.
-   *
-   * **The refusal is on liveness, not on difference.** A row whose recorded
-   * writer is gone — uninstalled, or never recorded — is adopted and
-   * re-stamped, which is exactly D34's reinstall behaviour and must not
-   * change. Only a live sibling refuses.
-   *
-   * **Permanent, not transient: a handler must not retry it.** Retrying
-   * cannot succeed while the owning connection stays installed. The remedy
-   * is for the handler to scope its `source_id` per upstream source
-   * (decision 18) so the two connections stop competing for one key.
-   *
-   * **It refuses a write and asserts nothing wider.** Lifecycle gestures —
-   * transition, restore, delete — are deliberately exempt from this guard,
-   * so a connection refused here can still trash the same row. Reading this
-   * as "the row belongs to that connection" would be reading a guarantee
-   * the platform does not defend.
-   *
-   * **The create race answers a different code.** Two connections creating
-   * the same `source_id` concurrently, where both pre-checks miss, trip the
-   * `idx_items_source_dedup` unique constraint and surface as
-   * `SOURCE_ID_CONFLICT`. Loud either way; the absence of this code there
-   * is not a gap.
-   */
-  PROVENANCE_COLLISION = "provenance_collision",
-  /**
    * A write resolved an existing row whose type is not the one the request
    * declared. The write is refused rather than reinterpreted.
    *
@@ -341,7 +307,6 @@ const STATUS_MAP: Record<ErrorCode, number> = {
   [ErrorCode.BULK_JOB_NOT_FOUND]: 404,
   [ErrorCode.STREAM_CAPACITY_EXHAUSTED]: 503,
   [ErrorCode.SOURCE_ID_CONFLICT]: 409,
-  [ErrorCode.PROVENANCE_COLLISION]: 409,
   [ErrorCode.TYPE_MISMATCH]: 409,
   // A genuine 409: the key is held by a request in flight, or contention
   // kept it changing hands. Something else got there first, which is

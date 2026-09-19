@@ -53,6 +53,18 @@ const REFUSED_DATABASE_REMEDY =
  * Columns whose absence means the file predates a rename, checked by table
  * so a fresh database — which has neither table yet — is not refused.
  *
+ * **A refusal here must not be reachable through the API**, and that is the
+ * rule rather than a property these three happen to have. Nothing a caller
+ * can send creates a `custom_types` table, a `space_config` settings row or
+ * a missing column, so each of these refuses a database an older build wrote
+ * and nothing else. A refusal keyed on row *content* is a different animal:
+ * one keyed on the retired `integration:` provenance prefix stood here
+ * briefly, and because a caller could mint a credential carrying that source,
+ * a single request could leave an instance that never opened again — with
+ * the refusal telling its operator to discard the database. A boot check
+ * whose trigger a request can write is a denial of service with a polite
+ * message.
+ *
  * **Every renamed column belongs here, not only the indexed ones.** An
  * earlier draft of this list reasoned that a column an index is built over
  * fails the DDL anyway, so only those need naming. That is true and it is
@@ -201,31 +213,6 @@ export async function createConnection(sqlitePath: string): Promise<{
           REFUSED_DATABASE_REMEDY,
       );
     }
-  }
-
-  // A stored provenance prefix this build no longer writes is refused, and
-  // this one is a security regression rather than a broken read.
-  //
-  // Mirror protection is decided by the prefix on `items.source` alone: a
-  // connector's copy of an external record is refused to every other
-  // credential. The prefix moved from `integration:` to `connector:`, so a
-  // row stamped by an earlier build reads as a mirror to `GET /items` and is
-  // writable by anyone. The gate itself now knows both spellings, so the
-  // refusal here is not what closes the hole — it is what stops an operator
-  // running an instance whose provenance vocabulary is half one thing and
-  // half another, and finding out from a row that changed under them.
-  for (const table of ["items", "api_keys"] as const) {
-    const info = await client.execute(`PRAGMA table_info(${table})`);
-    if (!info.rows.some((row) => row.name === "source")) continue;
-    const stamped = await client.execute(
-      `SELECT 1 FROM ${table} WHERE source LIKE 'integration:%' LIMIT 1`,
-    );
-    if (stamped.rows.length === 0) continue;
-    client.close();
-    throw new Error(
-      `${table} in ${sqlitePath} carries rows stamped with the retired 'integration:' provenance prefix, which this build does not write. ` +
-        REFUSED_DATABASE_REMEDY,
-    );
   }
 
   // Enable WAL for better concurrent read/write performance. PRAGMA is a

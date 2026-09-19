@@ -126,25 +126,26 @@ describe("POST /keys — connector source prefixes are not mintable", () => {
     expect(body.error.code).toBe("validation_error");
   });
 
-  it("refuses the connector prefix itself, and the one it replaced", async () => {
-    // The `oauth:` case above is the only door-level cover this family had,
-    // so removing `connector:` from the reserved list reddened one assertion
-    // in the whole suite and no door test at all. Both prefixes belong here:
-    // `connector:` because a minted credential must not be able to claim a
-    // connector's provenance, and `integration:` because it is the spelling
-    // `connector:` replaced — a prefix that once meant connector provenance
-    // must not become claimable by falling out of the list.
+  it("refuses the connector prefix itself", async () => {
+    // A minted credential must not be able to claim connector provenance:
+    // `itemProvenanceSource` stamps a credential's source onto its rows and
+    // `permitsMirrorWrite` reads the prefix as ownership, so a key sourced
+    // this way plants rows that read as a connector's mirror.
+    //
+    // This is the door-level cover the family lacked. The `oauth:` case above
+    // was the only one, so removing `connector:` from the reserved list
+    // reddened a single assertion in the whole suite, and the integration
+    // test beside it posts an `oauth:` source rather than this one.
     const caller = await mintKey({ permissions: ["keys.mint"] });
+    const source = "connector:acme/thing";
 
-    for (const source of ["connector:acme/thing", "integration:acme/thing"]) {
-      const res = await request(ctx.app, "POST", "/keys", {
-        key: caller,
-        body: { label: `forged-${source}`, source },
-      });
-      expect(res.status, `${source} was accepted`).toBe(400);
-      const body = (await res.json()) as { error: { code: string } };
-      expect(body.error.code).toBe("validation_error");
-    }
+    const res = await request(ctx.app, "POST", "/keys", {
+      key: caller,
+      body: { label: `forged-${source}`, source },
+    });
+    expect(res.status, `${source} was accepted`).toBe(400);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("validation_error");
   });
 
   it("still accepts an ordinary source", async () => {

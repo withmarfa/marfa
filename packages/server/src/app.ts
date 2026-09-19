@@ -219,6 +219,11 @@ export function createApp(
   // The features array advertises the surfaces a client can expect to find on
   // this deployment. Keep it in sync with the routes mounted below; entries
   // here are an honest signal to discovery clients, not a marketing list.
+  //
+  // Entries are lower_snake_case. The list carried one hyphenated name for a
+  // door that had already left, and a reader cannot tell a second convention
+  // from a typo, so the spelling is stated rather than inferred from the two
+  // multi-word entries that happen to be here.
   const features = [
     "items",
     "search",
@@ -231,7 +236,6 @@ export function createApp(
     "extensions",
     "events",
     "webhooks",
-    "inbound-webhooks",
     "type_crud",
     "audit",
     "metrics",

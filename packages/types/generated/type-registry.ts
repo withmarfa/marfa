@@ -958,7 +958,7 @@ const systemAccountHolder: TypeSchema = {
 const systemActivity: TypeSchema = {
   id: "system.activity",
   label: "Activity",
-  description: "User-meaningful telemetry emitted by an external-service connector at semantic boundaries — sync runs, errors, things that need user attention. Severity drives surfacing: `info` is routine, `warning` is operational, `error` is recoverable failure, `action_required` is surfaced as a Repairs-style inbox (the user has to do something — re-authorize, resolve a tombstone conflict, etc.). Per-Connection feed-eligibility lives on the emitting `system.connection.feed_activity`; when true, server stamps tier:'feed' on activity items the connector writes. Lifecycle bounded to active | revoked. Has no tier by default.",
+  description: "User-meaningful telemetry emitted by an external-service connector at semantic boundaries — sync runs, errors, things that need user attention. Severity drives surfacing: `info` is routine, `warning` is operational, `error` is recoverable failure, `action_required` is surfaced as a Repairs-style inbox (the user has to do something — re-authorize, resolve a tombstone conflict, etc.). Per-connection feed eligibility is to be declared on the emitting `system.connection.feed_activity`, which nothing in this build reads: no server path stamps a tier on an activity item, so an activity item is no more feed-surfaced than any other `system.*` row. Lifecycle bounded to active | revoked. Has no tier by default.",
   version: 1,
   fields: {
     connection_id: { type: "string", description: "Id of the emitting system.connection item", required: true },
@@ -984,7 +984,7 @@ const systemApp: TypeSchema = {
 const systemConnection: TypeSchema = {
   id: "system.connection",
   label: "Connection",
-  description: "An approved relationship between this instance and something outside it. `kind` discriminates between variants: `app` (an OAuth client this user has authorized) and `connector` (anything installed from a manifest, whatever its upstream — a vendor service, a protocol, Marfa's own infrastructure, or nothing at all). Lifecycle bounded to active | revoked. Has no tier. The connector kind also carries a `runtime_status` distinct from the lifecycle `status`; runtime_status is server-stamped only.",
+  description: "An approved relationship between this instance and something outside it. `kind` discriminates between variants: `app` (an OAuth client this user has authorized) and `connector` (anything installed from a manifest, whatever its upstream — a vendor service, a protocol, Marfa's own infrastructure, or nothing at all). Lifecycle bounded to active | revoked. Has no tier. The connector kind also carries a `runtime_status` distinct from the lifecycle `status`. Eight connector fields are declared here and written by nothing in this build — `runtime_status`, `last_sync_at`, `next_run_at`, `last_error_at`, `attached_device`, `feed_activity`, `triggers` and `mapping_reapply_until`. No door accepts them and no server path stamps them, so a reader will never meet one populated: they are the connector runtime's vocabulary, fixed ahead of the machinery rather than invented alongside it. The list is stated rather than left to be inferred, because a field nobody can observe is otherwise indistinguishable from one the server forgot to fill.",
   version: 4,
   fields: {
     kind: { type: "enum", description: "Discriminator for connection variant", required: true, enum_values: ["app", "connector"] },
@@ -1004,7 +1004,7 @@ const systemConnection: TypeSchema = {
     last_sync_at: { type: "datetime", description: "For kind: connector — last successful sync run timestamp" },
     next_run_at: { type: "datetime", description: "For kind: connector — next scheduled run, when applicable" },
     last_error_at: { type: "datetime", description: "For kind: connector — most recent failure timestamp (cleared on next success)" },
-    feed_activity: { type: "boolean", description: "For kind: connector — when true, system.activity items emitted by this connector are server-stamped tier:'feed' (otherwise tier is omitted, as for all other system.* writes)" },
+    feed_activity: { type: "boolean", description: "For kind: connector — where per-connection feed eligibility for the connector's system.activity items will be declared. Nothing reads it in this build, and no server path stamps a tier from it" },
     mapping: { type: "object", description: "Per-connection user mapping: conditions on the incoming record choose the target type and fields are assigned onto its schema. Validated as a whole document rather than field by field; shape and semantics live with the shared mapping module, not this schema." },
     mapping_reapply_until: { type: "datetime", description: "For kind: connector — while this instant is in the future, the runtime brings items already stored onto the type the mapping now names rather than being refused as a type mismatch. Set when a mapping is saved and the person answers yes to bringing the existing corpus along. A deadline rather than a boolean, so the state cannot outlive the intent that set it: a sweep that parks and never resumes, or a connection paused mid-run, would otherwise leave every future sweep re-typing a corpus nobody asked it to. Cleared when a mapping is saved and the answer is no." },
   },

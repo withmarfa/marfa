@@ -877,11 +877,16 @@ async function processBulkItem(
     // The same question `POST /items` asks, and it has to be asked here for
     // the same reason: a create is not a transition, so it reaches none of
     // the graph, and a membership test against the universal state list is
-    // weaker than the one that matters. `trashed` is a valid state and is not
-    // in the `system.*` lifecycle at all, so the operator key could
-    // create a `system.connection` directly in `trashed` — a state no
-    // transition can produce and none can leave — through this door while the
-    // single-item door beside it refused.
+    // weaker than the one that matters. `trashed` is a valid state and is
+    // not in the `system.*` lifecycle at all, so a create naming it would put
+    // a `system.connection` in a state no transition can produce and none can
+    // leave, through this door, while the single-item door beside it refused.
+    //
+    // No credential reaches that today — the fence admits the operator key
+    // alone and an operator key holds no type permissions — so nothing
+    // exercises this branch, which is exactly the condition under which a
+    // guard rots. It is here because the door must refuse what the graph
+    // would have, not because a caller is currently able to ask.
     //
     // In the route rather than in `storage.items.create`, matching the
     // sibling: the store's `create` is also the archive restore's writer, and

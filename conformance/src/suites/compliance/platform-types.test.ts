@@ -44,6 +44,24 @@ describe("platform type maintenance", () => {
     expect(r.data.types).toEqual([]);
   });
 
+  it("serves no type this repository's vocabulary retired", async () => {
+    // A retired platform type is not removed by the build that stops
+    // shipping it: the seed upserts and never prunes, so the row keeps
+    // resolving and keeps listing on every instance upgraded across the
+    // rename. This instance is seeded by this build, so the listing is the
+    // shipped set and the retired identifier must be absent from it — which
+    // reddens if one is ever put back into the shipped catalog, the only
+    // half of the problem a black-box run can reach.
+    const listed = await client.listTypes();
+    expect(listed.ok).toBe(true);
+    const ids = listed.data.map((t) => t.id);
+    expect(ids).toContain("system.connection");
+    expect(ids).not.toContain("system.integration");
+    const missing = await client.getType("system.integration");
+    expect(missing.status).toBe(404);
+    expect(missing.error?.error.code).toBe("type_not_found");
+  });
+
   it("refuses the listing to a working key and to no credential", async () => {
     const working = await client.listPlatformTypeDrift();
     expect(working.status).toBe(403);

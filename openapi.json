@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Marfa API",
-    "version": "5.2.0",
+    "version": "5.3.0",
     "description": "Typed data layer for structured personal data"
   },
   "components": {
@@ -922,8 +922,7 @@
                               "type": "string",
                               "enum": [
                                 "conflict",
-                                "type_mismatch",
-                                "provenance_collision"
+                                "type_mismatch"
                               ]
                             },
                             "message": {
@@ -3657,6 +3656,63 @@
               }
             }
           },
+          "403": {
+            "description": "`type_not_permitted`: the credential does not hold write on the item's type. `connector_owned`: the row is a connector's copy of an external record, which only the owning connector writes — promote it first and edit your own copy.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "enum": [
+                            "type_not_permitted",
+                            "connector_owned"
+                          ]
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "nullable": true
+                          }
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            },
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/X-RateLimit-Reset"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
           "404": {
             "description": "Item not found",
             "content": {
@@ -3891,8 +3947,7 @@
                               "enum": [
                                 "version_conflict",
                                 "source_id_conflict",
-                                "type_mismatch",
-                                "provenance_collision"
+                                "type_mismatch"
                               ]
                             },
                             "message": {
@@ -4183,65 +4238,6 @@
               },
               "X-Error-Code": {
                 "$ref": "#/components/headers/X-Error-Code"
-              }
-            }
-          },
-          "409": {
-            "description": "A connector may only destroy what it wrote. The row's recorded writer is another connection that is still installed, so the gesture is refused; the response names the owning connection. A row whose writer has been uninstalled is not refused.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "error": {
-                      "type": "object",
-                      "properties": {
-                        "code": {
-                          "type": "string",
-                          "enum": [
-                            "provenance_collision"
-                          ]
-                        },
-                        "message": {
-                          "type": "string"
-                        },
-                        "details": {
-                          "type": "object",
-                          "additionalProperties": {
-                            "nullable": true
-                          }
-                        }
-                      },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
-                    }
-                  },
-                  "required": [
-                    "error"
-                  ]
-                }
-              }
-            },
-            "headers": {
-              "X-Request-ID": {
-                "$ref": "#/components/headers/X-Request-ID"
-              },
-              "X-RateLimit-Limit": {
-                "$ref": "#/components/headers/X-RateLimit-Limit"
-              },
-              "X-RateLimit-Remaining": {
-                "$ref": "#/components/headers/X-RateLimit-Remaining"
-              },
-              "X-RateLimit-Reset": {
-                "$ref": "#/components/headers/X-RateLimit-Reset"
-              },
-              "X-Error-Code": {
-                "$ref": "#/components/headers/X-Error-Code"
-              },
-              "Idempotency-Replayed": {
-                "$ref": "#/components/headers/Idempotency-Replayed"
               }
             }
           },
@@ -4618,65 +4614,6 @@
                           "type": "string",
                           "enum": [
                             "item_not_found"
-                          ]
-                        },
-                        "message": {
-                          "type": "string"
-                        },
-                        "details": {
-                          "type": "object",
-                          "additionalProperties": {
-                            "nullable": true
-                          }
-                        }
-                      },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
-                    }
-                  },
-                  "required": [
-                    "error"
-                  ]
-                }
-              }
-            },
-            "headers": {
-              "X-Request-ID": {
-                "$ref": "#/components/headers/X-Request-ID"
-              },
-              "X-RateLimit-Limit": {
-                "$ref": "#/components/headers/X-RateLimit-Limit"
-              },
-              "X-RateLimit-Remaining": {
-                "$ref": "#/components/headers/X-RateLimit-Remaining"
-              },
-              "X-RateLimit-Reset": {
-                "$ref": "#/components/headers/X-RateLimit-Reset"
-              },
-              "X-Error-Code": {
-                "$ref": "#/components/headers/X-Error-Code"
-              },
-              "Idempotency-Replayed": {
-                "$ref": "#/components/headers/Idempotency-Replayed"
-              }
-            }
-          },
-          "409": {
-            "description": "A connector may only destroy what it wrote. The row's recorded writer is another connection that is still installed, so the gesture is refused; the response names the owning connection. A row whose writer has been uninstalled is not refused.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "error": {
-                      "type": "object",
-                      "properties": {
-                        "code": {
-                          "type": "string",
-                          "enum": [
-                            "provenance_collision"
                           ]
                         },
                         "message": {
@@ -5179,65 +5116,6 @@
                           "type": "string",
                           "enum": [
                             "item_not_found"
-                          ]
-                        },
-                        "message": {
-                          "type": "string"
-                        },
-                        "details": {
-                          "type": "object",
-                          "additionalProperties": {
-                            "nullable": true
-                          }
-                        }
-                      },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
-                    }
-                  },
-                  "required": [
-                    "error"
-                  ]
-                }
-              }
-            },
-            "headers": {
-              "X-Request-ID": {
-                "$ref": "#/components/headers/X-Request-ID"
-              },
-              "X-RateLimit-Limit": {
-                "$ref": "#/components/headers/X-RateLimit-Limit"
-              },
-              "X-RateLimit-Remaining": {
-                "$ref": "#/components/headers/X-RateLimit-Remaining"
-              },
-              "X-RateLimit-Reset": {
-                "$ref": "#/components/headers/X-RateLimit-Reset"
-              },
-              "X-Error-Code": {
-                "$ref": "#/components/headers/X-Error-Code"
-              },
-              "Idempotency-Replayed": {
-                "$ref": "#/components/headers/Idempotency-Replayed"
-              }
-            }
-          },
-          "409": {
-            "description": "A connector may only destroy what it wrote. The row's recorded writer is another connection that is still installed, so the gesture is refused; the response names the owning connection. A row whose writer has been uninstalled is not refused.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "error": {
-                      "type": "object",
-                      "properties": {
-                        "code": {
-                          "type": "string",
-                          "enum": [
-                            "provenance_collision"
                           ]
                         },
                         "message": {
@@ -10579,7 +10457,7 @@
           "Extensions"
         ],
         "summary": "Replace an extension namespace",
-        "description": "Replaces the JSON payload for one extension namespace on the item, requiring `write` on that namespace. The body is capped at 100KB; reserved namespaces such as `connection.runtime` carry additional write constraints. A successful write publishes `metadata.changed` carrying the item and its whole metadata row, so realtime subscribers and webhooks hear it as they do a tag change. Namespaces under the reserved `connection.` root are the exception and stay silent: they carry per-Connection runtime state written on the machine's behalf.",
+        "description": "Replaces the JSON payload for one extension namespace on the item, requiring `write` on that namespace. The body is capped at 100KB, and the reserved namespaces `core`, `marfa` and `system` are refused to every credential. A successful write publishes `metadata.changed` carrying the item and its whole metadata row, so realtime subscribers and webhooks hear it as they do a tag change. No namespace is exempt from the announcement.",
         "security": [
           {
             "bearerAuth": []
@@ -10945,7 +10823,7 @@
           "Extensions"
         ],
         "summary": "Delete an extension namespace",
-        "description": "Removes one extension namespace from the item, requiring `write` on that namespace. Idempotent — deleting a namespace that doesn't exist returns 200 with the unchanged extensions response. Every call publishes `metadata.changed` carrying the item and its whole metadata row, including one that removes nothing, exactly as a tag write that changes nothing still publishes. Namespaces under the reserved `connection.` root stay silent.",
+        "description": "Removes one extension namespace from the item, requiring `write` on that namespace. Idempotent — deleting a namespace that doesn't exist returns 200 with the unchanged extensions response. Every call publishes `metadata.changed` carrying the item and its whole metadata row, including one that removes nothing, exactly as a tag write that changes nothing still publishes. No namespace is exempt from the announcement.",
         "security": [
           {
             "bearerAuth": []
@@ -14187,7 +14065,7 @@
           "Edge Types"
         ],
         "summary": "Register an edge type",
-        "description": "Registers a custom edge type with its cardinality, cascade behavior, type constraints, and optional property schema. Requires `metadata.edge_types:write`. The eight core edge-type names are reserved and reject with a conflict, and custom types are flat with no inheritance.",
+        "description": "Registers an edge type with its cardinality, cascade behavior, type constraints, and optional property schema. Requires `metadata.edge_types:write`. The eight core edge-type names are reserved and reject with a conflict, and a registered edge type is flat with no inheritance.",
         "security": [
           {
             "bearerAuth": []
@@ -14595,7 +14473,7 @@
           "Edge Types"
         ],
         "summary": "List edge types",
-        "description": "Returns every edge type registered on the instance — the eight core types plus any custom registrations — each with its cardinality, cascade behavior, and source/target type constraints.",
+        "description": "Returns every edge type this instance resolves — the eight core types plus any registered through `POST /edge-types` — each with its cardinality, cascade behavior, and source/target type constraints.",
         "security": [
           {
             "bearerAuth": []
@@ -14754,7 +14632,7 @@
           "Edge Types"
         ],
         "summary": "Delete an edge type",
-        "description": "Removes a registered edge type. Requires `schema.write`; core edge types are rejected, an edge type this instance does not hold resolves as not-found, and the request fails while any edges of this type still exist, so delete or migrate them first.",
+        "description": "Removes a registered edge type. Requires `schema.write`; core edge types are rejected, and an edge type this instance does not hold resolves as not-found. Existing edges are not consulted and not touched: the registration goes, the rows stay, and they keep naming an edge type the instance no longer holds. Delete or migrate them first if that is not what you want.",
         "security": [
           {
             "bearerAuth": []
@@ -14822,6 +14700,62 @@
                           "type": "string",
                           "enum": [
                             "validation_error"
+                          ]
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "nullable": true
+                          }
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            },
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/X-RateLimit-Reset"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "403": {
+            "description": "The credential does not hold `schema.write`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "enum": [
+                            "forbidden"
                           ]
                         },
                         "message": {
@@ -14983,7 +14917,7 @@
           "Types"
         ],
         "summary": "List types",
-        "description": "Returns every registered type — the core type catalog plus any custom types registered via `POST /types`. Use as the schema manifest a type-aware client reads at startup.",
+        "description": "Returns every type this instance resolves: the catalog this build ships, everything registered through `POST /types`, and any platform row an earlier build seeded that this one no longer ships. That third group is drift rather than vocabulary — a type retired by a rename survives on an instance upgraded across it, and keeps resolving and listing here until an operator retires the row. `GET /admin/platform-types/drift` names them and `POST /admin/platform-types/{id}/remove` removes one. Use as the schema manifest a type-aware client reads at startup.",
         "security": [
           {
             "bearerAuth": []
@@ -15226,8 +15160,8 @@
         "tags": [
           "Types"
         ],
-        "summary": "Register a custom type",
-        "description": "Registers a custom type at runtime under the `app.*`, `user.*`, or `<publisher>.*` namespaces; reserved roots, ancestor-field redefinitions, and property names shadowing first-class `Item` fields all reject with `400`. Every credential needs the `metadata.types:write` scope, which is off by default. The operator key is no exception: this door reads the map like any other.",
+        "summary": "Register a type",
+        "description": "Registers a type at runtime under the `app.*`, `user.*`, or `<publisher>.*` namespaces; a reserved root rejects with `403 forbidden`, and ancestor-field redefinitions and property names shadowing first-class `Item` fields reject with `400`. Every credential needs the `metadata.types:write` scope, which is off by default. The operator key is no exception: this door reads the map like any other.",
         "security": [
           {
             "bearerAuth": []
@@ -15247,7 +15181,7 @@
         },
         "responses": {
           "201": {
-            "description": "Custom type registered",
+            "description": "Type registered",
             "content": {
               "application/json": {
                 "schema": {
@@ -15602,7 +15536,7 @@
           "Types"
         ],
         "summary": "Get a type",
-        "description": "Returns the full schema for a single type, resolving inheritance so the response reflects the effective fields and policies. Works for both core and locally registered custom types.\n\nA type whose stored inheritance chain cannot be resolved — circular, or deeper than any resolution walk follows — answers `409 type_chain_unresolvable` rather than a server fault. Correcting it through `PUT /types/{id}` still works, because that route reads the stored schema directly instead of resolving it.",
+        "description": "Returns the full schema for a single type, resolving inheritance so the response reflects the effective fields and policies. Works for a platform-shipped type and one registered on this instance alike.\n\nA type whose stored inheritance chain cannot be resolved — circular, or deeper than any resolution walk follows — answers `409 type_chain_unresolvable` rather than a server fault. Correcting it through `PUT /types/{id}` still works, because that route reads the stored schema directly instead of resolving it.",
         "security": [
           {
             "bearerAuth": []
@@ -15966,8 +15900,8 @@
         "tags": [
           "Types"
         ],
-        "summary": "Update a custom type",
-        "description": "Replaces a custom type's schema, re-running the registration-time correctness rails. Requires `schema.write` — core types are immutable and return 403; the structural diff between versions sets the required version bump, and a mismatch rejects with `422 version_bump_mismatch`.",
+        "summary": "Update a registered type",
+        "description": "Replaces a registered type's schema, re-running the registration-time correctness rails. Requires `schema.write` — core types are immutable and return 403; the structural diff between versions sets the required version bump, and a mismatch rejects with `422 version_bump_mismatch`.",
         "security": [
           {
             "bearerAuth": []
@@ -15999,7 +15933,7 @@
         },
         "responses": {
           "200": {
-            "description": "Custom type updated",
+            "description": "Type updated",
             "content": {
               "application/json": {
                 "schema": {
@@ -16179,6 +16113,63 @@
               }
             }
           },
+          "403": {
+            "description": "`forbidden`: the credential does not hold `schema.write`. `core_type_immutable`: the identifier names a platform-shipped type, which no credential may replace.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "enum": [
+                            "forbidden",
+                            "core_type_immutable"
+                          ]
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "nullable": true
+                          }
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            },
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/X-RateLimit-Reset"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
           "404": {
             "description": "Type not found",
             "content": {
@@ -16295,8 +16286,8 @@
         "tags": [
           "Types"
         ],
-        "summary": "Delete a custom type",
-        "description": "Removes a custom type registration. Requires `schema.write` — platform-shipped types are immutable.\n\nRejected with `409 type_has_subtypes` while another registered type declares this one as its parent, naming them in `details.subtype_ids`. `?force=true` does not cover that case: delete each subtype first, or give it a different parent through `PUT /types/{id}`.\n\nRejected with `409 type_in_use` if any item of the type still exists, unless `?force=true` orphans those rows (they persist, but new writes against the type return `400 unknown_type`).",
+        "summary": "Delete a registered type",
+        "description": "Removes a type registration. Requires `schema.write` — platform-shipped types are immutable.\n\nRejected with `409 type_has_subtypes` while another registered type declares this one as its parent, naming them in `details.subtype_ids`. `?force=true` does not cover that case: delete each subtype first, or give it a different parent through `PUT /types/{id}`.\n\nRejected with `409 type_in_use` if any item of the type still exists, unless `?force=true` orphans those rows (they persist, but new writes against the type return `400 unknown_type`).",
         "security": [
           {
             "bearerAuth": []
@@ -16378,6 +16369,63 @@
                           "type": "string",
                           "enum": [
                             "unauthorized"
+                          ]
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "nullable": true
+                          }
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            },
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/X-RateLimit-Reset"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden`: the credential does not hold `schema.write`. `core_type_immutable`: the identifier names a platform-shipped type, which no credential may remove.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "enum": [
+                            "forbidden",
+                            "core_type_immutable"
                           ]
                         },
                         "message": {
@@ -21263,13 +21311,16 @@
     "/admin/platform-types/drift": {
       "get": {
         "operationId": "adminListPlatformTypeDrift",
+        "tags": [
+          "Types"
+        ],
         "summary": "Shipped types this instance carries that the build does not",
         "security": [
           {
             "bearerAuth": []
           }
         ],
-        "description": "Lists platform type rows this instance still carries that the running build no longer ships, each with how many items still carry the identifier. `/health` publishes the count of these as `platform_types`, a report that carries no status and never degrades the response; this is where the identifiers live, because that endpoint is unauthenticated. The count is read live rather than cached at boot: it is the part that changes without a restart, and a removal reasoning from a stale copy is the failure worth avoiding. Operator key only.",
+        "description": "Lists platform type rows this instance still carries that the running build no longer ships, each with how many items still carry the identifier. A row here keeps resolving and keeps listing at `GET /types`, so a type a rename retired outlives the rename on every instance upgraded across it until somebody acts; `POST /admin/platform-types/{id}/remove` is that act, one row per call, and a row reporting `removable: true` is one it would accept today, unless this process has already removed it — the drifted set is derived once at boot, so a row removed since then is still listed here and the remove door answers `404` for it. `/health` publishes the count of these as `platform_types`, a report that carries no status and never degrades the response; this is where the identifiers live, because that endpoint is unauthenticated. The count is read live rather than cached at boot: it is the part that changes without a restart, and a removal reasoning from a stale copy is the failure worth avoiding. Operator key only.",
         "responses": {
           "200": {
             "description": "The drifted rows, with their live item counts",
@@ -21500,13 +21551,16 @@
     "/admin/platform-types/{id}/remove": {
       "post": {
         "operationId": "adminRemovePlatformType",
+        "tags": [
+          "Types"
+        ],
         "summary": "Remove one shipped type the build no longer carries",
         "security": [
           {
             "bearerAuth": []
           }
         ],
-        "description": "Removes exactly one platform type row this build does not ship. Refused with `409` when the identifier is one the build still ships, so this can never remove a live type; refused with `409` when items still carry it, because the row is what makes those items resolve, and orphaning readable data to tidy a registry is the wrong trade; and refused with `409` when another registered type inherits from it, naming them in `details.child_types`, because a parent supplies its children's fields. The item count is recomputed inside the request rather than read from the boot-time report. The type stops resolving on the next restart, since the in-memory registry is filled from the rows at boot. Operator key only.",
+        "description": "Removes exactly one platform type row this build does not ship. Refused with `409` when the identifier is one the build still ships, so this can never remove a live type; refused with `409` when items still carry it, because the row is what makes those items resolve, and orphaning readable data to tidy a registry is the wrong trade; and refused with `409` when another registered type inherits from it, naming them in `details.child_types`, because a parent supplies its children's fields. The item count is recomputed inside the request rather than read from the boot-time report. The type stops resolving at once, on this process and not at the next restart: the row and the in-process registry entry go together. Operator key only.",
         "parameters": [
           {
             "schema": {
@@ -21904,6 +21958,10 @@
           {
             "schema": {
               "type": "string",
+              "enum": [
+                "ndjson",
+                "archive"
+              ],
               "description": "Output format: `ndjson` (default) or `archive`"
             },
             "required": false,
@@ -24783,7 +24841,7 @@
     },
     {
       "name": "Types",
-      "description": "The type registry — core types plus app-registered custom types."
+      "description": "The type registry — the platform-shipped types plus the ones registered on this instance."
     },
     {
       "name": "Search",
@@ -24798,16 +24856,8 @@
       "description": "The instance configuration — the schema-enforcement levers and the cleanup-job retention overrides."
     },
     {
-      "name": "Connections",
-      "description": "Installed connections and their lifecycle."
-    },
-    {
       "name": "Webhooks",
       "description": "Outbound webhook subscriptions and their deliveries."
-    },
-    {
-      "name": "Credentials",
-      "description": "Connection credentials — static API tokens and OAuth providers."
     },
     {
       "name": "Export",

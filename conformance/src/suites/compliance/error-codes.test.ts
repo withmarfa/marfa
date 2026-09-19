@@ -176,6 +176,22 @@ describe("error codes", () => {
     });
   });
 
+  describe("provenance_collision", () => {
+    it("is declared by no door, because nothing raises it", async () => {
+      // The code was mapped to 409 and declared on five doors while no code
+      // path ever threw it, so three published refusals described a gesture
+      // the server never refuses. Nothing over the wire can produce it, so
+      // the only assertable claim is its absence from the document, and the
+      // whole document is searched rather than the five doors it sat on:
+      // the defect was a declaration nobody could reach, and a new one would
+      // be just as unreachable wherever it landed.
+      const response = await fetch(`${apiUrl}/openapi.json`);
+      expect(response.status).toBe(200);
+      const document = await response.text();
+      expect(document).not.toContain("provenance_collision");
+    });
+  });
+
   describe("type_not_permitted", () => {
     it("rejects creation of out-of-scope type", async () => {
       const keyResp = await client.createKey({
