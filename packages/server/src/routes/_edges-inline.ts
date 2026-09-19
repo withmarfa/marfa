@@ -26,7 +26,7 @@ export interface InlineEdgeChanges {
  * (post-delete) edge set is validated
  * through the same `assertEdgesCanBeCreated` checks the create path uses
  * — cardinality, type constraints, exact-duplicate, and the load-bearing
- * cycle check (`parent-of` / `supersedes`). Without it the upsert path
+ * cycle checks. Without it the upsert path
  * could re-introduce a graph cycle or a cardinality / type-constraint
  * violation that the first write rejected, and a poisoned cycle later
  * breaks cascade delete.
@@ -80,13 +80,6 @@ export async function applyInlineEdges(
         throw new MarfaError(
           ErrorCode.INVALID_ID,
           `Invalid target id in edges.${edgeType}: ${target}`,
-        );
-      }
-      if (target === itemId) {
-        throw new MarfaError(
-          ErrorCode.EDGE_CONSTRAINT_VIOLATION,
-          `Edge source and target must be different items`,
-          { edge_type: edgeType },
         );
       }
       proposals.push({

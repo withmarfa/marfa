@@ -100,6 +100,19 @@ describe("edge cycle rejection", () => {
     const self = await makeEdge(a, a, "parent-of");
     expect(self.ok).toBe(false);
     expect(self.status).toBe(400);
-    expect(self.code).toBe("edge_constraint_violation");
+    expect(self.code).toBe("edge_cycle");
+  });
+
+  it("self-loop rejected: A→A on about", async () => {
+    // The case above cannot carry the rule on its own. `parent-of` is one of
+    // the two types the cycle walk covers, and that walk reaches A→A before
+    // any self-loop rule does — so it answers `edge_cycle` whether or not the
+    // server still refuses a self-loop as such. `about` is walked by nothing,
+    // which is what makes this the fixture the rule is actually held to.
+    const a = await makeItem("self-about");
+    const self = await makeEdge(a, a, "about");
+    expect(self.ok).toBe(false);
+    expect(self.status).toBe(400);
+    expect(self.code).toBe("edge_cycle");
   });
 });

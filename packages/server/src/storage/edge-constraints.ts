@@ -8,9 +8,11 @@ import type { Edge, EdgeTypeSchema } from "@withmarfa/shared";
 import type { EdgeStore, ItemStore } from "./interface.js";
 
 /**
- * Edge types that can introduce graph cycles — hierarchy for `parent-of`,
- * version chain for `supersedes`. BFS cycle-detection is skipped for every
- * other edge type where the graph is DAG-by-construction or unordered.
+ * Edge types that can reach around and close a cycle over more than one
+ * edge — hierarchy for `parent-of`, version chain for `supersedes`. BFS is
+ * skipped for every other edge type, where the graph is DAG-by-construction
+ * or unordered. A self-loop is the exception and is refused on all of them,
+ * because one edge closing on itself needs no walk to find.
  */
 const CYCLE_RISK_EDGE_TYPES = new Set(["parent-of", "supersedes"]);
 
@@ -34,6 +36,30 @@ const CYCLE_RISK_EDGE_TYPES = new Set(["parent-of", "supersedes"]);
  */
 const COLLECTION_EDGE_TYPE = "in-collection";
 
+/**
+ * A self-loop is the shortest cycle there is, so it answers `edge_cycle`
+ * like any longer one: what the caller got wrong is the shape of the edge,
+ * not the length of the path back. It needs no walk, which is why it is
+ * refused on every edge type while the BFS below runs on two.
+ *
+ * One site, reached by every door, and deliberately after the edge type is
+ * resolved: a proposal naming a type that does not exist has a worse problem
+ * than its endpoints, and answering `edge_cycle` for it would describe the
+ * wrong mistake.
+ */
+function assertNotSelfLoop(
+  sourceId: string,
+  targetId: string,
+  edgeType: string,
+): void {
+  if (sourceId !== targetId) return;
+  throw new MarfaError(
+    ErrorCode.EDGE_CYCLE,
+    `Edge source and target must be different items`,
+    { edge_type: edgeType },
+  );
+}
+
 export interface EdgeProposal {
   source_id: string;
   target_id: string;
@@ -49,8 +75,9 @@ export interface EdgeProposal {
  * 4. Target type satisfies target_type_constraints (inheritance-aware).
  * 5. Cardinality holds per edge type (DB edges + earlier proposals in the batch).
  * 6. Exact duplicate (source, target, edge_type) rejected — both DB and in-batch.
- * 7. Cycles rejected for parent-of and supersedes, considering proposed edges
- *    as part of the graph.
+ * 7. A self-loop is rejected on every edge type; a longer cycle on
+ *    parent-of and supersedes, considering proposed edges as part of the
+ *    graph. Both answer `edge_cycle`.
  *
  * Throws `MarfaError` on the first failure encountered in input order, matching
  * the sequential-validation behavior the single-edge entry point exposed.
@@ -65,8 +92,8 @@ export async function assertEdgesCanBeCreated(
 ): Promise<EdgeTypeSchema[]> {
   if (proposals.length === 0) return [];
 
-  // Step 1 + 2: schema resolve (in-memory) + self-edge guard. Zip each
-  // proposal with its schema once so downstream loops never have to realign.
+  // Zip each proposal with its schema once, so no downstream loop has to
+  // realign the two lists.
   interface ResolvedProposal {
     p: EdgeProposal;
     schema: EdgeTypeSchema;
@@ -80,13 +107,7 @@ export async function assertEdgesCanBeCreated(
         `Unknown edge type: ${p.edge_type}`,
       );
     }
-    if (p.source_id === p.target_id) {
-      throw new MarfaError(
-        ErrorCode.EDGE_CONSTRAINT_VIOLATION,
-        `Edge source and target must be different items`,
-        { edge_type: p.edge_type },
-      );
-    }
+    assertNotSelfLoop(p.source_id, p.target_id, p.edge_type);
     resolved.push({ p, schema });
   }
 
@@ -301,8 +322,9 @@ export async function assertEdgesCanBeCreated(
         break;
     }
 
-    // Cycle check — only the two edge types that can form them. BFS sees the
-    // DB graph plus every prior in-batch proposal of the same type.
+    // The cycles that need a walk. A self-loop is already refused above, on
+    // every type; BFS sees the DB graph plus every prior in-batch proposal of
+    // the same type.
     if (CYCLE_RISK_EDGE_TYPES.has(p.edge_type)) {
       const pending = pendingByType.get(p.edge_type) ?? [];
       if (
