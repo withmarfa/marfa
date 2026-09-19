@@ -34,20 +34,27 @@ interface OpenAPIDoc {
 /**
  * `info` block for the generated document.
  *
- * `version` is the API-contract version (the wire shape exposed under
- * `/openapi.json`), distinct from the deployed-build `version` reported on
- * `GET /` — bump it on contract changes, not on every deploy. It reached 5.1.0
- * in the docs API-surface rework: the path renames (bulk-actions,
- * spaces/me/config, edge-types, lease-tokens) are breaking, but the API is
- * pre-release and nothing pins the contract version yet, so the change
- * deliberately rode a minor rather than a major.
+ * `version` is the API-contract version — the wire shape served under
+ * `/openapi.json` — and is not the deployed build's version reported on
+ * `GET /`. It moves when the contract moves and not on a deploy.
+ *
+ * **The literal is guarded; the decision to move it is not.** Editing this
+ * number without regenerating `openapi.json` reddens
+ * `openapi-committed-spec.test.ts` and the `openapi-freshness` job, which
+ * compare the document to what the source produces — so the two cannot drift
+ * apart. What nothing checks is whether the number moved when the contract
+ * did, and a judgment nobody verifies is one that gets skipped: this sat
+ * still through several changes that moved paths, operation ids, wire fields
+ * and an enum. It moves here because this change removes a published path,
+ * which is the least arguable kind of contract change there is; a minor
+ * rather than a major because the API is pre-release.
  *
  * Lives here so the live `/openapi.json` endpoint and the committed spec read
  * one literal instead of keeping two in lockstep by hand.
  */
 export const OPENAPI_DOCUMENT_INFO = {
   title: "Marfa API",
-  version: "5.1.0",
+  version: "5.2.0",
   description: "Typed data layer for structured personal data",
 } as const;
 
@@ -88,8 +95,9 @@ const PUBLIC_TAGS = [
   },
   { name: "Keys", description: "API key management." },
   {
-    name: "Spaces",
-    description: "Configuration for the calling space.",
+    name: "Config",
+    description:
+      "The instance configuration — the schema-enforcement levers and the cleanup-job retention overrides.",
   },
   {
     name: "Connections",

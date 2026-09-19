@@ -35,7 +35,7 @@ const NAMESPACES = [
   "types",
   "keys",
   "webhooks",
-  "spaces",
+  "config",
   "admin",
   "events",
   "occurrences",

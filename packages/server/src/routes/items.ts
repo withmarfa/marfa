@@ -55,7 +55,7 @@ import type {
   ItemSortField,
   ResolvedItem,
 } from "../storage/interface.js";
-import { readSpaceConfig } from "../storage/space-config.js";
+import { readInstanceConfig } from "../storage/instance-config.js";
 import { planCascadeDelete } from "../storage/edge-cascade.js";
 import { assertEdgesCanBeCreated } from "../storage/edge-constraints.js";
 import { publish, publishEdge } from "../pubsub.js";
@@ -1322,8 +1322,8 @@ export function itemRoutes(storage: Storage) {
     // Schema-enforcement levers: source allow-list, strict-mode, and
     // custom sources. Off by default; enabled per type via the instance
     // config or per-credential override.
-    const spaceConfig = await readSpaceConfig(storage.settings);
-    const enforcement = resolveEnforcement(spaceConfig, c.get("apiKey"));
+    const instanceConfig = await readInstanceConfig(storage.settings);
+    const enforcement = resolveEnforcement(instanceConfig, c.get("apiKey"));
 
     // source is non-forgeable: always stamped from the credential.
     // tier falls back to the credential default when absent.
@@ -2042,8 +2042,8 @@ export function itemRoutes(storage: Storage) {
     const { by } = c.req.valid("query");
     const typeFilter = getTypeFilter(c);
     // These counts summarize the listing, so they narrow with it.
-    const spaceConfig = await readSpaceConfig(storage.settings);
-    const enforcement = resolveEnforcement(spaceConfig, callerKey);
+    const instanceConfig = await readInstanceConfig(storage.settings);
+    const enforcement = resolveEnforcement(instanceConfig, callerKey);
     const stats = await storage.items.stats(
       typeFilter,
       enforcement.source_filter,
@@ -2151,9 +2151,9 @@ export function itemRoutes(storage: Storage) {
     const excludeSystemTypes = excludesSystemTypes(includeSet, type);
 
     const callerKeyForRead = c.get("apiKey");
-    const spaceConfigForRead = await readSpaceConfig(storage.settings);
+    const instanceConfigForRead = await readInstanceConfig(storage.settings);
     const enforcementForRead = resolveEnforcement(
-      spaceConfigForRead,
+      instanceConfigForRead,
       callerKeyForRead,
     );
     const typeFilterForList = getTypeFilter(c);

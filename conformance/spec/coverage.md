@@ -115,11 +115,11 @@ Fixture paths are under `src/suites/`.
 
 ## Audit and instance configuration
 
-| Operation               | Status  | Fixture                                                      | Notes                                                                |
-| ----------------------- | ------- | ------------------------------------------------------------ | -------------------------------------------------------------------- |
-| `GET /audit`            | covered | `compliance/audit.test.ts`, `compliance/edge-events.test.ts` | Filters, exclusive bounds, cursor, `audit.read` gate.                |
-| `GET /spaces/me/config` | covered | `compliance/schema-enforcement.test.ts`                      |                                                                      |
-| `PUT /spaces/me/config` | covered | `compliance/schema-enforcement.test.ts`                      | Strict mode, source allowlist, source filter; wholesale replacement. |
+| Operation     | Status  | Fixture                                                      | Notes                                                                |
+| ------------- | ------- | ------------------------------------------------------------ | -------------------------------------------------------------------- |
+| `GET /audit`  | covered | `compliance/audit.test.ts`, `compliance/edge-events.test.ts` | Filters, exclusive bounds, cursor, `audit.read` gate.                |
+| `GET /config` | covered | `compliance/schema-enforcement.test.ts`                      |                                                                      |
+| `PUT /config` | covered | `compliance/schema-enforcement.test.ts`                      | Strict mode, source allowlist, source filter; wholesale replacement. |
 
 ## Operator maintenance
 

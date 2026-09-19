@@ -13,7 +13,7 @@ import {
 import type { SpaceFanout } from "./retention.js";
 import { TEST_API_KEY_SALT } from "../test-utils.js";
 import { hashApiKey } from "../middleware/auth.js";
-import { writeSpaceConfig } from "./space-config.js";
+import { writeInstanceConfig } from "./instance-config.js";
 
 let ctx: TestContext;
 
@@ -218,7 +218,9 @@ describe("TrashPurger.runOnce — behavioral", () => {
 
 describe("TrashPurger — the instance config override", () => {
   it("honors trash_retention_days from the instance config over the default", async () => {
-    await writeSpaceConfig(ctx.storage.settings, { trash_retention_days: 1 });
+    await writeInstanceConfig(ctx.storage.settings, {
+      trash_retention_days: 1,
+    });
     const itemId = id("fa01");
     await seedItemWithUpdatedAt({
       id: itemId,
@@ -246,7 +248,9 @@ describe("TrashPurger — the instance config override", () => {
   });
 
   it("treats trash_retention_days = 0 in the config as disabled", async () => {
-    await writeSpaceConfig(ctx.storage.settings, { trash_retention_days: 0 });
+    await writeInstanceConfig(ctx.storage.settings, {
+      trash_retention_days: 0,
+    });
     const itemId = id("fb01");
     await seedItemWithUpdatedAt({
       id: itemId,
@@ -276,7 +280,9 @@ describe("TrashPurger — the instance config override", () => {
 
 describe("runSpaceCleanup — audit and event-log retention", () => {
   it("calls the sweep function with the effective retention", async () => {
-    await writeSpaceConfig(ctx.storage.settings, { audit_retention_days: 7 });
+    await writeInstanceConfig(ctx.storage.settings, {
+      audit_retention_days: 7,
+    });
 
     const calls: { retention: number }[] = [];
     const total = await runSpaceCleanup({
@@ -299,7 +305,7 @@ describe("runSpaceCleanup — audit and event-log retention", () => {
   });
 
   it("skips the sweep when the effective retention is 0 (disabled)", async () => {
-    await writeSpaceConfig(ctx.storage.settings, {
+    await writeInstanceConfig(ctx.storage.settings, {
       event_log_retention_hours: 0,
     });
 

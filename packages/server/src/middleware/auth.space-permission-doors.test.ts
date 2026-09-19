@@ -312,7 +312,7 @@ describe("/audit — audit.read", () => {
   });
 });
 
-describe("/spaces/me/config — config.manage", () => {
+describe("/config — config.manage", () => {
   it("reads the instance config for a credential that holds config.manage", async () => {
     // The read door, deliberately: `config.manage` is not `config.write`, so
     // a caller refused it cannot read the configuration either, and a pass
@@ -322,7 +322,7 @@ describe("/spaces/me/config — config.manage", () => {
       spacePermissions: ["config.manage"],
     });
 
-    const res = await request(ctx.app, "GET", "/spaces/me/config", {
+    const res = await request(ctx.app, "GET", "/config", {
       key: caller,
     });
     expect(res.status).toBe(200);
@@ -334,7 +334,7 @@ describe("/spaces/me/config — config.manage", () => {
       typePermissions: { "*": "write" },
     });
 
-    const res = await request(ctx.app, "GET", "/spaces/me/config", {
+    const res = await request(ctx.app, "GET", "/config", {
       key: caller,
     });
     expect(res.status).toBe(403);

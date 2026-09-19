@@ -47,7 +47,7 @@ import { eventRoutes } from "./routes/events.js";
 import { webhookRoutes } from "./routes/webhooks.js";
 import { auditRoutes } from "./routes/audit.js";
 import { metricsRoutes } from "./routes/metrics.js";
-import { spaceRoutes } from "./routes/spaces.js";
+import { configRoutes } from "./routes/config.js";
 import { rateLimitMiddleware } from "./middleware/rate-limit.js";
 import { clientIpMiddleware } from "./middleware/client-ip.js";
 import { authConsentRoutes } from "./routes/auth-consent.js";
@@ -499,7 +499,7 @@ export function createApp(
   app.route("/metadata", metadataRoutes(storage));
   app.route("/blobs", blobRoutes(storage, blobBackend, config.maxBlobSize));
   app.route("/keys", keyRoutes(storage, config.apiKeySalt));
-  app.route("/spaces", spaceRoutes(storage));
+  app.route("/config", configRoutes(storage));
   app.route("/admin", adminArchiveRoutes(storage, blobBackend));
   app.route("/admin", adminPlatformTypeRoutes(storage));
   app.route("/export", exportRoutes(storage, blobBackend));

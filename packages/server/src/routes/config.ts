@@ -1,10 +1,13 @@
 import { createRoute, z } from "@hono/zod-openapi";
-import type { SpaceConfig } from "@withmarfa/shared";
+import type { InstanceConfig } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { requireSpacePermission, requireAuth } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
-import { readSpaceConfig, writeSpaceConfig } from "../storage/space-config.js";
+import {
+  readInstanceConfig,
+  writeInstanceConfig,
+} from "../storage/instance-config.js";
 import { enforcementSchema } from "./_schemas.js";
 
 /**
@@ -12,7 +15,7 @@ import { enforcementSchema } from "./_schemas.js";
  * `enforcementSchema` in `_schemas.ts` carries the levers, because a key's
  * override is the same shape and the two must not drift.
  */
-const spaceConfigShape = (strict: boolean) => ({
+const instanceConfigShape = (strict: boolean) => ({
   enforcement: enforcementSchema(strict).optional(),
   // Retention overrides for the cleanup jobs. Each falls back to the
   // instance env default when unset. `0` disables the job (matches
@@ -25,7 +28,7 @@ const spaceConfigShape = (strict: boolean) => ({
 });
 
 /** The read shape, permissive at every level. */
-const SpaceConfigSchema = z.object(spaceConfigShape(false));
+const InstanceConfigSchema = z.object(instanceConfigShape(false));
 
 /**
  * The write shape, which refuses a key it does not know, at every level.
@@ -39,13 +42,13 @@ const SpaceConfigSchema = z.object(spaceConfigShape(false));
  * refuses to parse a field added after it shipped is the mirror-image failure,
  * and a response has never erased anything.
  */
-const SpaceConfigWriteSchema = z.strictObject(spaceConfigShape(true));
+const InstanceConfigWriteSchema = z.strictObject(instanceConfigShape(true));
 
 const getConfigRoute = createRoute({
-  operationId: "getSpaceConfig",
+  operationId: "getConfig",
   method: "get",
-  path: "/me/config",
-  tags: ["Spaces"],
+  path: "/",
+  tags: ["Config"],
   summary: "Get the instance configuration",
   description:
     "Returns the instance configuration — the optional `enforcement` levers plus the cleanup-job retention overrides. Returns an empty object when nothing is configured. Requires `config.manage`.",
@@ -53,7 +56,7 @@ const getConfigRoute = createRoute({
   responses: {
     200: {
       content: {
-        "application/json": { schema: SpaceConfigSchema },
+        "application/json": { schema: InstanceConfigSchema },
       },
       description: "Instance config",
     },
@@ -77,10 +80,10 @@ const getConfigRoute = createRoute({
 });
 
 const putConfigRoute = createRoute({
-  operationId: "replaceSpaceConfig",
+  operationId: "replaceConfig",
   method: "put",
-  path: "/me/config",
-  tags: ["Spaces"],
+  path: "/",
+  tags: ["Config"],
   summary: "Replace the instance configuration",
   description:
     "Overwrites the instance config with the supplied object — full replacement, not a merge. An unknown key is refused rather than dropped, because a full replacement that ignores a typo erases every override the instance had. Cleanup-job retention overrides must be non-negative, where `0` disables the corresponding job. Requires `config.manage`.",
@@ -88,14 +91,14 @@ const putConfigRoute = createRoute({
   request: {
     body: {
       content: {
-        "application/json": { schema: SpaceConfigWriteSchema },
+        "application/json": { schema: InstanceConfigWriteSchema },
       },
     },
   },
   responses: {
     200: {
       content: {
-        "application/json": { schema: SpaceConfigSchema },
+        "application/json": { schema: InstanceConfigSchema },
       },
       description: "Instance config updated",
     },
@@ -129,28 +132,25 @@ const putConfigRoute = createRoute({
   },
 });
 
-export function spaceRoutes(storage: Storage) {
+export function configRoutes(storage: Storage) {
   const router = createOpenAPIRouter<AppEnv>();
 
-  // `/me/config` is the instance config door, gated on `config.manage`
-  // and backed by the settings table.
   router.openapi(getConfigRoute, async (c) => {
     requireAuth(c);
     requireSpacePermission(c, "config.manage");
-    const config = await readSpaceConfig(storage.settings);
+    const config = await readInstanceConfig(storage.settings);
     return c.json(config ?? {}, 200);
   });
 
   router.openapi(putConfigRoute, async (c) => {
     const key = requireAuth(c);
     requireSpacePermission(c, "config.manage");
-    // No cast. The validated shape and `SpaceConfig` are the same type now
-    // that the schema declares every field the interface does, and the cast
-    // that used to bridge them was hiding exactly the field this route could
-    // not set.
-    const body: SpaceConfig = c.req.valid("json");
+    // No cast. The validated shape and `InstanceConfig` are the same type,
+    // because the schema declares every field the interface does — a cast
+    // between them would hide a field this route cannot set.
+    const body: InstanceConfig = c.req.valid("json");
 
-    await writeSpaceConfig(storage.settings, body);
+    await writeInstanceConfig(storage.settings, body);
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
       key_id: key.id,

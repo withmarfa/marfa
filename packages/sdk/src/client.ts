@@ -12,7 +12,7 @@ import type {
   SearchResult,
   ItemState,
   Tier,
-  SpaceConfig,
+  InstanceConfig,
   Edge,
   CreateEdgeInput,
   EdgeTypeSchema,
@@ -2182,24 +2182,25 @@ export class MarfaClient {
     },
   };
 
-  // ---- Spaces ----
+  // ---- Config ----
 
   /** Instance configuration. Carries the three optional schema-
    * enforcement levers (`strict_mode`, `source_allowlist`,
    * `source_filter`) and the cleanup-job overrides
    * (`audit_retention_days`, `event_log_retention_hours`,
-   * `trash_retention_days`). Both endpoints take `config.manage`. */
-  readonly spaces = {
+   * `trash_retention_days`, `activity_retention_days`). Both endpoints
+   * take `config.manage`. */
+  readonly config = {
     /** Returns the instance config. Empty object when nothing is
      * configured. */
-    getConfig: async (): Promise<SpaceConfig> => {
-      return this.transport.request<SpaceConfig>("GET", "/spaces/me/config");
+    get: async (): Promise<InstanceConfig> => {
+      return this.transport.request<InstanceConfig>("GET", "/config");
     },
 
     /** Replaces the instance config (PUT semantics — full replacement, not
      * merge). */
-    setConfig: async (config: SpaceConfig): Promise<SpaceConfig> => {
-      return this.transport.request<SpaceConfig>("PUT", "/spaces/me/config", {
+    set: async (config: InstanceConfig): Promise<InstanceConfig> => {
+      return this.transport.request<InstanceConfig>("PUT", "/config", {
         body: config,
       });
     },

@@ -12,7 +12,7 @@ import { hashApiKey } from "../middleware/auth.js";
 import type { AppEnv } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import { SPACE_PERMISSIONS } from "@withmarfa/shared";
-import { writeSpaceConfig } from "../storage/space-config.js";
+import { writeInstanceConfig } from "../storage/instance-config.js";
 
 const SALT = "test-salt";
 
@@ -27,7 +27,7 @@ interface HostedContext {
 }
 
 async function createHostedContext(): Promise<HostedContext> {
-  const tmpDir = mkdtempSync(join(tmpdir(), "marfa-spaces-test-"));
+  const tmpDir = mkdtempSync(join(tmpdir(), "marfa-config-test-"));
   const blobPath = join(tmpDir, "blobs");
 
   const dbPath = join(tmpDir, "test.db");
@@ -121,16 +121,16 @@ afterAll(async () => {
   await ctx.cleanup();
 });
 
-describe("GET /spaces/me/config — keys-mode fallback", () => {
+describe("GET /config — keys-mode fallback", () => {
   it("401 without credentials", async () => {
-    const res = await request(ctx.app, "GET", "/spaces/me/config");
+    const res = await request(ctx.app, "GET", "/config");
     expect(res.status).toBe(401);
   });
 
   it("returns {} when the config was never set", async () => {
     // An unset config reads as an empty object rather than as null, so a
     // client can merge into what it gets back without a null check.
-    const res = await request(ctx.app, "GET", "/spaces/me/config", {
+    const res = await request(ctx.app, "GET", "/config", {
       key: ctx.spaceKey,
     });
     expect(res.status).toBe(200);
@@ -139,9 +139,9 @@ describe("GET /spaces/me/config — keys-mode fallback", () => {
   });
 });
 
-describe("PUT /spaces/me/config — keys-mode fallback", () => {
+describe("PUT /config — keys-mode fallback", () => {
   it("401 without credentials", async () => {
-    const res = await request(ctx.app, "PUT", "/spaces/me/config", {
+    const res = await request(ctx.app, "PUT", "/config", {
       body: {},
     });
     expect(res.status).toBe(401);
@@ -151,7 +151,7 @@ describe("PUT /spaces/me/config — keys-mode fallback", () => {
     // The operator key is refused at the permission gate, because the
     // instance tier holds no space permissions at all — running the
     // instance sits outside the permission model rather than above it.
-    const res = await request(ctx.app, "PUT", "/spaces/me/config", {
+    const res = await request(ctx.app, "PUT", "/config", {
       key: ctx.operatorKey,
       body: {},
     });
@@ -165,7 +165,7 @@ describe("PUT /spaces/me/config — keys-mode fallback", () => {
 });
 
 // ----- A second context: the settings-backed round trips -------
-describe("Space config — round trips", () => {
+describe("Instance config — round trips", () => {
   let hosted: HostedContext;
 
   beforeAll(async () => {
@@ -177,11 +177,11 @@ describe("Space config — round trips", () => {
   });
 
   it("GET returns stored config for a caller holding config.manage", async () => {
-    await writeSpaceConfig(hosted.storage.settings, {
+    await writeInstanceConfig(hosted.storage.settings, {
       enforcement: { strict_mode: { types: ["core.note"] } },
     });
 
-    const res = await request(hosted.app, "GET", "/spaces/me/config", {
+    const res = await request(hosted.app, "GET", "/config", {
       key: hosted.spaceKey,
     });
     expect(res.status).toBe(200);
@@ -192,7 +192,7 @@ describe("Space config — round trips", () => {
   });
 
   it("PUT rejects a negative cleanup-job override with 400", async () => {
-    const res = await request(hosted.app, "PUT", "/spaces/me/config", {
+    const res = await request(hosted.app, "PUT", "/config", {
       key: hosted.spaceKey,
       body: {
         audit_retention_days: -1,
@@ -207,13 +207,13 @@ describe("Space config — round trips", () => {
     // The purger already reads this field, so a value the route accepts and
     // drops is worse than one it refuses: PUT is a full replacement, so
     // following the documentation un-sets the neighbours.
-    const res = await request(hosted.app, "PUT", "/spaces/me/config", {
+    const res = await request(hosted.app, "PUT", "/config", {
       key: hosted.spaceKey,
       body: { activity_retention_days: 30, trash_retention_days: 7 },
     });
     expect(res.status).toBe(200);
 
-    const getRes = await request(hosted.app, "GET", "/spaces/me/config", {
+    const getRes = await request(hosted.app, "GET", "/config", {
       key: hosted.spaceKey,
     });
     expect(getRes.status).toBe(200);
@@ -226,7 +226,7 @@ describe("Space config — round trips", () => {
   });
 
   it("PUT rejects a negative activity retention override with 400", async () => {
-    const res = await request(hosted.app, "PUT", "/spaces/me/config", {
+    const res = await request(hosted.app, "PUT", "/config", {
       key: hosted.spaceKey,
       body: { activity_retention_days: -1 },
     });
@@ -235,18 +235,19 @@ describe("Space config — round trips", () => {
     expect(body.error.code).toBe("validation_error");
   });
 
-  // The destructive shape. PUT is a full replacement, so a key the schema
-  // did not know used to be dropped and the request answered 200 having
-  // erased everything the instance had set. The test that existed round-tripped
-  // a well-formed body and would pass either way.
+  // The destructive shape, and the reason the schema is strict. PUT is a
+  // full replacement, so a key the schema does not know, dropped rather than
+  // refused, answers 200 having erased everything the instance had set. A
+  // round trip of a well-formed body passes either way, which is why the
+  // case below sends a misspelling instead.
   it("PUT refuses a mistyped key instead of dropping it", async () => {
-    const good = await request(hosted.app, "PUT", "/spaces/me/config", {
+    const good = await request(hosted.app, "PUT", "/config", {
       key: hosted.spaceKey,
       body: { activity_retention_days: 30, trash_retention_days: 7 },
     });
     expect(good.status).toBe(200);
 
-    const res = await request(hosted.app, "PUT", "/spaces/me/config", {
+    const res = await request(hosted.app, "PUT", "/config", {
       key: hosted.spaceKey,
       body: { activity_retention_day: 30 },
     });
@@ -256,7 +257,7 @@ describe("Space config — round trips", () => {
 
     // And the refusal left the instance's config alone, which is the whole
     // point: the old behavior returned 200 with this now empty.
-    const getRes = await request(hosted.app, "GET", "/spaces/me/config", {
+    const getRes = await request(hosted.app, "GET", "/config", {
       key: hosted.spaceKey,
     });
     const getBody = (await getRes.json()) as {
@@ -273,14 +274,14 @@ describe("Space config — round trips", () => {
   // The outer object refusing an unknown key while the nested one accepts it
   // is the same defect one level down, and `.strict()` does not recurse.
   it("PUT refuses a mistyped key inside enforcement too", async () => {
-    const res = await request(hosted.app, "PUT", "/spaces/me/config", {
+    const res = await request(hosted.app, "PUT", "/config", {
       key: hosted.spaceKey,
       body: { enforcement: { strict_modes: { types: ["core.note"] } } },
     });
     expect(res.status).toBe(400);
 
     // And one level deeper again, inside a block that does exist.
-    const deeper = await request(hosted.app, "PUT", "/spaces/me/config", {
+    const deeper = await request(hosted.app, "PUT", "/config", {
       key: hosted.spaceKey,
       body: { enforcement: { strict_mode: { types: [], typo: 1 } } },
     });
@@ -292,7 +293,7 @@ describe("Space config — round trips", () => {
       enforcement: { strict_mode: { types: ["core.note"] } },
       audit_retention_days: 45,
     };
-    const res = await request(hosted.app, "PUT", "/spaces/me/config", {
+    const res = await request(hosted.app, "PUT", "/config", {
       key: hosted.spaceKey,
       body: config,
     });
@@ -302,7 +303,7 @@ describe("Space config — round trips", () => {
     expect(body.audit_retention_days).toBe(45);
 
     // Round-trip: GET must return the persisted value.
-    const getRes = await request(hosted.app, "GET", "/spaces/me/config", {
+    const getRes = await request(hosted.app, "GET", "/config", {
       key: hosted.spaceKey,
     });
     expect(getRes.status).toBe(200);

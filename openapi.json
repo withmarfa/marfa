@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Marfa API",
-    "version": "5.1.0",
+    "version": "5.2.0",
     "description": "Typed data layer for structured personal data"
   },
   "components": {
@@ -20542,11 +20542,11 @@
         }
       }
     },
-    "/spaces/me/config": {
+    "/config": {
       "get": {
-        "operationId": "getSpaceConfig",
+        "operationId": "getConfig",
         "tags": [
-          "Spaces"
+          "Config"
         ],
         "summary": "Get the instance configuration",
         "description": "Returns the instance configuration — the optional `enforcement` levers plus the cleanup-job retention overrides. Returns an empty object when nothing is configured. Requires `config.manage`.",
@@ -20827,9 +20827,9 @@
         }
       },
       "put": {
-        "operationId": "replaceSpaceConfig",
+        "operationId": "replaceConfig",
         "tags": [
-          "Spaces"
+          "Config"
         ],
         "summary": "Replace the instance configuration",
         "description": "Overwrites the instance config with the supplied object — full replacement, not a merge. An unknown key is refused rather than dropped, because a full replacement that ignores a typo erases every override the instance had. Cleanup-job retention overrides must be non-negative, where `0` disables the corresponding job. Requires `config.manage`.",
@@ -24794,8 +24794,8 @@
       "description": "API key management."
     },
     {
-      "name": "Spaces",
-      "description": "Configuration for the calling space."
+      "name": "Config",
+      "description": "The instance configuration — the schema-enforcement levers and the cleanup-job retention overrides."
     },
     {
       "name": "Connections",

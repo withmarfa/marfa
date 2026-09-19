@@ -9,7 +9,7 @@ import {
   getTypeFilter,
 } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
-import { readSpaceConfig } from "../storage/space-config.js";
+import { readInstanceConfig } from "../storage/instance-config.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import {
   ItemSchema as BaseItemSchema,
@@ -215,9 +215,9 @@ export function searchRoutes(storage: Storage) {
     const excludeSystemTypes = excludesSystemTypes(includeSet, type);
 
     const callerKeyForSearch = c.get("apiKey");
-    const spaceConfigForSearch = await readSpaceConfig(storage.settings);
+    const instanceConfigForSearch = await readInstanceConfig(storage.settings);
     const enforcementForSearch = resolveEnforcement(
-      spaceConfigForSearch,
+      instanceConfigForSearch,
       callerKeyForSearch,
     );
     const results = await storage.search.search(q.trim(), {

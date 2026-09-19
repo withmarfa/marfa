@@ -27,7 +27,7 @@ import {
   TEST_API_KEY_SALT,
   type TestContext,
 } from "../test-utils.js";
-import { readSpaceConfig } from "../storage/space-config.js";
+import { readInstanceConfig } from "../storage/instance-config.js";
 
 // ---------------------------------------------------------------------------
 // Unit — checkOperatorKey reads the flag and the space binding together
@@ -178,13 +178,13 @@ describe("instance config is self-service behind config.manage", () => {
       spacePermissions: ["config.manage"],
     });
 
-    const put = await request(ctx.app, "PUT", "/spaces/me/config", {
+    const put = await request(ctx.app, "PUT", "/config", {
       key: caller,
       body: { trash_retention_days: 7 },
     });
     expect(put.status).toBe(200);
 
-    const get = await request(ctx.app, "GET", "/spaces/me/config", {
+    const get = await request(ctx.app, "GET", "/config", {
       key: caller,
     });
     expect(get.status).toBe(200);
@@ -193,7 +193,7 @@ describe("instance config is self-service behind config.manage", () => {
     });
 
     // The write landed on the instance config.
-    const stored = await readSpaceConfig(ctx.storage.settings);
+    const stored = await readInstanceConfig(ctx.storage.settings);
     expect(stored?.trash_retention_days).toBe(7);
   });
 
@@ -203,7 +203,7 @@ describe("instance config is self-service behind config.manage", () => {
       label: "config-none",
     });
 
-    const res = await request(ctx.app, "GET", "/spaces/me/config", {
+    const res = await request(ctx.app, "GET", "/config", {
       key: caller,
     });
     expect(res.status).toBe(403);

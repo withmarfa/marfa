@@ -4,8 +4,8 @@ import type {
   SettingsStore,
   Storage,
 } from "./interface.js";
-import type { SpaceConfig } from "@withmarfa/shared";
-import { readSpaceConfig } from "./space-config.js";
+import type { InstanceConfig } from "@withmarfa/shared";
+import { readInstanceConfig } from "./instance-config.js";
 import type { BlobBackend } from "./blob-backend.js";
 import { log } from "../middleware/logger.js";
 import { logJobTickFailure } from "./job-tick.js";
@@ -17,18 +17,18 @@ const MS_PER_DAY = 86_400_000;
 /**
  * Optional instance-config wiring shared by the retention jobs. When
  * provided, a tick resolves the effective retention from the instance
- * configuration (`SpaceConfig`'s override field, falling back to the
+ * configuration (`InstanceConfig`'s override field, falling back to the
  * instance default) and runs one sweep with it.
  */
 export interface SpaceFanout {
   settings: SettingsStore;
   /**
-   * Field on `SpaceConfig` that holds the retention override. The tick
+   * Field on `InstanceConfig` that holds the retention override. The tick
    * reads `config[configField]` and treats `0` as "disabled" (matches
    * env-default semantics for `TRASH_RETENTION_DAYS=0`).
    */
   configField: keyof Pick<
-    SpaceConfig,
+    InstanceConfig,
     | "trash_retention_days"
     | "audit_retention_days"
     | "event_log_retention_hours"
@@ -866,7 +866,7 @@ async function effectiveRetention(
   fanout: SpaceFanout,
   instanceDefault: number,
 ): Promise<number> {
-  const config = await readSpaceConfig(fanout.settings);
+  const config = await readInstanceConfig(fanout.settings);
   const override = config?.[fanout.configField];
   return typeof override === "number" ? override : instanceDefault;
 }

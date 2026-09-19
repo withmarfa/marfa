@@ -296,7 +296,7 @@ export interface ApiKey {
   is_operator: boolean;
   /**
    * Per-credential schema-enforcement override. Same shape as
-   * `SpaceConfig.enforcement`; a lever set here wins over the instance
+   * `InstanceConfig.enforcement`; a lever set here wins over the instance
    * config for this credential's writes and reads, lever by lever
    * (`resolveEnforcement`). Optional — most credentials inherit the instance
    * config without override.
@@ -646,8 +646,8 @@ export interface EnforcementSettings {
   source_filter?: { types: string[]; sources: string[] };
 }
 
-/** Instance configuration. Written through `/spaces/me/config` on `config.manage`. */
-export interface SpaceConfig {
+/** Instance configuration. Written through `/config` on `config.manage`. */
+export interface InstanceConfig {
   enforcement?: EnforcementSettings;
   /**
    * Retention overrides for the cleanup jobs. Each falls back to the
@@ -658,9 +658,9 @@ export interface SpaceConfig {
   event_log_retention_hours?: number;
   trash_retention_days?: number;
   /**
-   * Days to keep `system.activity` rows. An integration reports its runs
-   * as activity, so on a busy space this is the fastest-growing item
-   * type by a wide margin and nothing aged it out before this existed.
+   * Days to keep `system.activity` rows. A connector reports its runs as
+   * activity, so on a busy instance this is the fastest-growing item type
+   * by a wide margin, and nothing else ages it out.
    */
   activity_retention_days?: number;
 }
