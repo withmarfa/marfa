@@ -6,7 +6,7 @@ import {
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { hashApiKey } from "../middleware/auth.js";
-import { PERMISSIONS } from "@withmarfa/shared";
+import { PERMISSIONS, generateId } from "@withmarfa/shared";
 
 let ctx: TestContext;
 
@@ -458,6 +458,150 @@ describe("natural-key upsert: inline edges are validated", () => {
     expect(edgesBody.data).toHaveLength(2);
     const targets = edgesBody.data.map((e) => e.target_id).sort();
     expect(targets).toEqual([targetA, targetB].sort());
+  });
+});
+
+describe("inline edges: a self-loop is refused edge_cycle on every door", () => {
+  // Driven on `about`, which is many-to-many and which no cycle check walks.
+  // On `parent-of` every one of these would pass on the cycle walk alone,
+  // which reaches A→A before any self-loop rule does — so the type is what
+  // makes these assertions witness the rule rather than the walk.
+  //
+  // Per door rather than once. The refusal is one shared check, but what a
+  // caller reads is the door's envelope, and a door that wraps or reorders
+  // the throw is invisible to a test that only drives its neighbour.
+
+  async function note(sourceId?: string): Promise<string> {
+    const res = await request(ctx.app, "POST", "/items", {
+      key: ctx.workingKey,
+      body: {
+        type: "core.note",
+        ...(sourceId !== undefined && { source_id: sourceId }),
+        properties: { body: "self-loop fixture" },
+      },
+    });
+    expect(res.status).toBe(201);
+    return ((await res.json()) as { item: { id: string } }).item.id;
+  }
+
+  function suffix(): string {
+    return Math.random().toString(36).slice(2, 10);
+  }
+
+  it("POST /items — a create naming its own id as the target", async () => {
+    const id = generateId();
+    const res = await request(ctx.app, "POST", "/items", {
+      key: ctx.workingKey,
+      body: {
+        id,
+        type: "core.note",
+        properties: { body: "self-loop on create" },
+        edges: { about: [id] },
+      },
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("edge_cycle");
+
+    // The row went with the edge. The create writes the item first and
+    // validates the edges after, so a refusal that left the item behind
+    // would hand back a 400 and an item the caller never learned the id of.
+    const read = await request(ctx.app, "GET", `/items/${id}`, {
+      key: ctx.workingKey,
+    });
+    expect(read.status).toBe(404);
+  });
+
+  it("answers edge_type_not_found, not edge_cycle, when the type is unknown too", async () => {
+    // Order of refusals, not a self-loop case. A proposal naming a type that
+    // does not exist has a worse problem than its endpoints, and the shared
+    // check resolves the schema before it looks at them. This is the one
+    // input the two route-level copies of the rule answered differently, and
+    // the reason they went rather than gaining a test that froze it.
+    const id = await note();
+    const res = await request(ctx.app, "PATCH", `/items/${id}`, {
+      key: ctx.workingKey,
+      body: { version: 1, edges: { "acme.not-a-type": [id] } },
+    });
+    expect(res.status).toBe(404);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("edge_type_not_found");
+  });
+
+  it("POST /items — a natural-key upsert naming the row it resolved", async () => {
+    const sourceId = `self-loop-upsert-${suffix()}`;
+    const id = await note(sourceId);
+    const res = await request(ctx.app, "POST", "/items", {
+      key: ctx.workingKey,
+      body: {
+        type: "core.note",
+        source_id: sourceId,
+        properties: { body: "self-loop on upsert" },
+        edges: { about: [id] },
+      },
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("edge_cycle");
+  });
+
+  it("PATCH /items/:id — an edge back to the item being patched", async () => {
+    const id = await note();
+    const res = await request(ctx.app, "PATCH", `/items/${id}`, {
+      key: ctx.workingKey,
+      body: { version: 1, edges: { about: [id] } },
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("edge_cycle");
+  });
+
+  it("POST /items/bulk — the entry's own error, under atomic: false", async () => {
+    const id = await note();
+    const res = await request(ctx.app, "POST", "/items/bulk", {
+      key: ctx.workingKey,
+      body: {
+        atomic: false,
+        items: [
+          {
+            id,
+            type: "core.note",
+            properties: { body: "self-loop in a batch" },
+            edges: { about: [id] },
+          },
+        ],
+      },
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      counts: { errored: number };
+      results: { error?: { code: string } }[];
+    };
+    expect(body.counts.errored).toBe(1);
+    expect(body.results[0]!.error?.code).toBe("edge_cycle");
+  });
+
+  it("POST /items/bulk — the rollback's details, under the default atomic", async () => {
+    const id = await note();
+    const res = await request(ctx.app, "POST", "/items/bulk", {
+      key: ctx.workingKey,
+      body: {
+        items: [
+          {
+            id,
+            type: "core.note",
+            properties: { body: "self-loop in an atomic batch" },
+            edges: { about: [id] },
+          },
+        ],
+      },
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as {
+      error: { code: string; details?: { code?: string } };
+    };
+    expect(body.error.code).toBe("bulk_atomic_rollback");
+    expect(body.error.details?.code).toBe("edge_cycle");
   });
 });
 

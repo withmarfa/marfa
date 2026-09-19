@@ -82,6 +82,27 @@ interface OpenAPIDoc {
  * one operation, which is one break; the old path is gone rather than
  * redirected, so a caller still on it gets `404`.
  *
+ * It moved to 5.7.0 for a self-loop, which answers `edge_cycle` where it
+ * answered `edge_constraint_violation`. The three doors whose responses name
+ * the code (`POST /items`, `PATCH /items/{id}` and `POST /edges`) already
+ * declare both, so the document's shape does not move and this note is the
+ * only record: a caller branching on the old code for `A→A` reads the
+ * other one now. Everywhere else it surfaces is a string this document leaves
+ * open: a bulk door's per-entry `error.code`, the `details.code` of the
+ * rollback those doors answer under `atomic`, and the `edges_skipped_reasons`
+ * key on the unpublished archive restore. Nothing there declared the old code
+ * either, so this note is their record too. The refusal itself is unchanged,
+ * and so is its message.
+ *
+ * One more answer moves with it, on the inline-edge doors only. They each
+ * carried their own copy of the self-loop rule ahead of the shared checks,
+ * which meant an edge naming both an unknown type and the item itself was
+ * refused `400 edge_cycle` for its endpoints rather than `404
+ * edge_type_not_found` for the type that does not exist. The copies are gone
+ * and the shared check resolves the type first, so that request now answers
+ * the type. It is a correction rather than a break, and it is here because
+ * the status moves with the code and neither is declared for that case.
+ *
  * **One change, one number**, even where it carries several breaks. The
  * version records that the contract moved and what a caller may have been
  * reading; a second increment inside one change would say the contract moved
@@ -94,7 +115,7 @@ interface OpenAPIDoc {
  */
 export const OPENAPI_DOCUMENT_INFO = {
   title: "Marfa API",
-  version: "5.6.0",
+  version: "5.7.0",
   description: "Typed data layer for structured personal data",
 } as const;
 

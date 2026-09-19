@@ -175,6 +175,10 @@ describe("restore validates the edges it writes", () => {
     ]);
     expect(result.edges_imported).toBe(0);
     expect(result.edges_skipped).toBe(1);
+    // The reason, not only the count. `references` is walked by no cycle
+    // check, so this is the door's own record of which refusal a self-loop
+    // gets — the one thing about it a restore report carries at all.
+    expect(result.edges_skipped_reasons).toMatchObject({ edge_cycle: 1 });
     expect(edgeCount).toBe(0);
   });
 

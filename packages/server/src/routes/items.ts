@@ -2570,13 +2570,6 @@ export function itemRoutes(storage: Storage) {
         // fail existsExact after the first insert).
         const uniqueTargets = new Set<string>();
         for (const target of targets) {
-          if (target === id) {
-            throw new MarfaError(
-              ErrorCode.EDGE_CONSTRAINT_VIOLATION,
-              `Edge source and target must be different items`,
-              { edge_type: edgeType },
-            );
-          }
           if (uniqueTargets.has(target)) {
             throw new MarfaError(
               ErrorCode.EDGE_CONSTRAINT_VIOLATION,

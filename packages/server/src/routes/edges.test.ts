@@ -77,13 +77,15 @@ describe("POST /edges — happy path + validation", () => {
     expect(data.error.code).toBe("edge_type_not_found");
   });
 
-  it("rejects self-edge", async () => {
+  it("rejects a self-edge with edge_cycle", async () => {
     const id = await createItem();
     const res = await request(ctx.app, "POST", "/edges", {
       key: ctx.workingKey,
       body: { source_id: id, target_id: id, edge_type: "about" },
     });
     expect(res.status).toBe(400);
+    const data = (await res.json()) as { error: { code: string } };
+    expect(data.error.code).toBe("edge_cycle");
   });
 
   it("rejects exact duplicate edge", async () => {

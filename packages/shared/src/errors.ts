@@ -159,7 +159,11 @@ export enum ErrorCode {
   // ---------------------------------------------------------------------
   /** Edge creation / update violated cardinality or type constraints. */
   EDGE_CONSTRAINT_VIOLATION = "edge_constraint_violation",
-  /** An edge creation would close a cycle (parent-of or supersedes). */
+  /**
+   * An edge creation would close a cycle: a self-loop on any edge type, or a
+   * longer cycle on `parent-of` or `supersedes`, the two whose graphs are not
+   * acyclic by construction.
+   */
   EDGE_CYCLE = "edge_cycle",
   /** The referenced edge_type is not in the core or custom registry. */
   EDGE_TYPE_NOT_FOUND = "edge_type_not_found",
