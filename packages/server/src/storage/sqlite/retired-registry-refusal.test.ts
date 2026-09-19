@@ -207,6 +207,39 @@ describe("a retired registry table is refused on open", () => {
     );
   });
 
+  it("refuses an outbound_webhook_deliveries table that predates the event_type rename", async () => {
+    // The fourth unindexed column, and it is quiet in a way the others are
+    // not: the failure is confined to one feature. Both indexes on this
+    // table are over `webhook_id` and `next_attempt_at`, which an older file
+    // still has, so the DDL passes and the boot says nothing. Items, edges,
+    // search and the event stream all keep working. What stops is every
+    // outbound webhook: the scheduler's insert names `event_type`, so no
+    // delivery is ever queued, `GET /webhooks/{id}/deliveries` answers 500,
+    // and the poller throws on its own schedule for as long as the process
+    // runs. A subscription that receives nothing is exactly the failure the
+    // wildcard refusal exists to prevent, arriving by another door.
+    //
+    // `webhook_secret` is the witness: this build keeps the signing secret
+    // on the delivery row so a worker can sign without joining back to the
+    // subscription, which a table of this name written by anything else
+    // would not.
+    const path = scratch();
+    const seed = createClient({ url: `file:${path}` });
+    await seed.execute(
+      "CREATE TABLE outbound_webhook_deliveries (id TEXT PRIMARY KEY, webhook_id TEXT NOT NULL, event TEXT NOT NULL, webhook_secret TEXT)",
+    );
+    seed.close();
+    const before = createHash("sha256")
+      .update(readFileSync(path))
+      .digest("hex");
+
+    await expect(createConnection(path)).rejects.toThrow(/no event_type/);
+    await expect(createConnection(path)).rejects.toThrow(path);
+    expect(createHash("sha256").update(readFileSync(path)).digest("hex")).toBe(
+      before,
+    );
+  });
+
   it("refuses settings still keyed to the retired config name", async () => {
     // The quietest of the three. Nothing fails: the table and the column are
     // both there, the read finds no row and answers an empty object, and the

@@ -10,7 +10,10 @@ function makeHeader(timestamp: number, body: string, secret: string): string {
 }
 
 describe("verifyWebhookSignature", () => {
-  const body = JSON.stringify({ event: "item.created", item: { id: "x" } });
+  const body = JSON.stringify({
+    event_type: "item.created",
+    item: { id: "x" },
+  });
   const secret = "whsec_test";
   const now = 1_712_345_678;
 

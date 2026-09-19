@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Marfa API",
-    "version": "5.4.0",
+    "version": "5.5.0",
     "description": "Typed data layer for structured personal data"
   },
   "components": {
@@ -22171,7 +22171,7 @@
           "Webhooks"
         ],
         "summary": "Create a webhook",
-        "description": "Registers an outbound webhook subscription targeting a URL and one or more event names (wildcards accepted). The `secret` is the HMAC-SHA256 signing key, generated server-side when omitted, and returned in plaintext only on creation.",
+        "description": "Registers an outbound webhook subscription targeting a URL and one or more event types from the closed vocabulary. The `secret` is the HMAC-SHA256 signing key, generated server-side when omitted, and returned in plaintext only on creation.",
         "security": [
           {
             "bearerAuth": []
@@ -22201,8 +22201,7 @@
                         "metadata.changed",
                         "edge.created",
                         "edge.updated",
-                        "edge.deleted",
-                        "*"
+                        "edge.deleted"
                       ]
                     },
                     "minItems": 1
@@ -23126,8 +23125,7 @@
                         "metadata.changed",
                         "edge.created",
                         "edge.updated",
-                        "edge.deleted",
-                        "*"
+                        "edge.deleted"
                       ]
                     },
                     "minItems": 1
@@ -23831,7 +23829,7 @@
                           "webhook_id": {
                             "type": "string"
                           },
-                          "event": {
+                          "event_type": {
                             "type": "string"
                           },
                           "status_code": {
@@ -23855,7 +23853,7 @@
                         "required": [
                           "id",
                           "webhook_id",
-                          "event",
+                          "event_type",
                           "status_code",
                           "attempt",
                           "succeeded",

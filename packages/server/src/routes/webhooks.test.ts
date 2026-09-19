@@ -289,7 +289,7 @@ describe("GET /webhooks/:id/deliveries", () => {
     for (let i = 0; i < 3; i++) {
       await ctx.storage.outboundWebhookDeliveries.log({
         webhookId: created.id,
-        event: "item.created",
+        eventType: "item.created",
         statusCode: 200,
         attempt: 1,
         succeeded: true,
@@ -312,5 +312,53 @@ describe("GET /webhooks/:id/deliveries", () => {
       key: ctx.workingKey,
     });
     expect(res.status).toBe(404);
+  });
+});
+
+describe("a wildcard in an events array", () => {
+  it("is refused on the way in, on both doors that take an event list", async () => {
+    const created = await createWebhook();
+    for (const res of [
+      await request(ctx.app, "POST", "/webhooks", {
+        key: ctx.workingKey,
+        body: { url: "https://example.com/hook", events: ["*"] },
+      }),
+      await request(ctx.app, "PATCH", `/webhooks/${created.id}`, {
+        key: ctx.workingKey,
+        body: { events: ["*"] },
+      }),
+    ]) {
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as {
+        error: { code: string; details?: { errors?: { path: string }[] } };
+      };
+      expect(body.error.code).toBe("validation_error");
+      // The entry rather than the body: a caller editing a list of ten has
+      // to be told which one went.
+      expect(body.error.details?.errors?.[0]?.path).toBe("events.0");
+    }
+  });
+});
+
+describe("an event name the vocabulary no longer carries", () => {
+  // `WebhookSchema.events` stays `z.array(z.string())` where the request side
+  // is the enum, and this is the case that decides it. Retiring a name does
+  // not rewrite the rows that subscribed to it, so a read side typed to
+  // today's vocabulary would make such a row impossible to serve — and leave
+  // its owner unable to see the subscription in order to replace it.
+  //
+  // Written through the store, because the door is what refuses the name.
+  it("reads back as written when a row already holds one", async () => {
+    const stored = await ctx.storage.outboundWebhooks.create({
+      url: "https://example.com/retired",
+      events: ["item.trashed"],
+    });
+
+    const res = await request(ctx.app, "GET", `/webhooks/${stored.id}`, {
+      key: ctx.workingKey,
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as WebhookResponse;
+    expect(body.events).toEqual(["item.trashed"]);
   });
 });

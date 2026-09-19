@@ -73,7 +73,7 @@ describe("parseRetryAfter", () => {
 interface PendingDelivery {
   id: string;
   webhook_id: string;
-  event: string;
+  event_type: string;
   payload: string;
   webhook_url: string;
   webhook_secret: string;
@@ -87,8 +87,8 @@ function makeDelivery(
   return {
     id: "del_1",
     webhook_id: "wh_1",
-    event: "item.created",
-    payload: '{"event":"item.created"}',
+    event_type: "item.created",
+    payload: '{"event_type":"item.created"}',
     webhook_url: "https://example.test/hook",
     webhook_secret: "shh",
     attempt: 0,
@@ -320,7 +320,7 @@ describe("WebhookPoller retry behavior", () => {
     );
     globalThis.fetch = fetchSpy as unknown as typeof fetch;
 
-    const payload = '{"event":"item.created","item":{"id":"abc"}}';
+    const payload = '{"event_type":"item.created","item":{"id":"abc"}}';
     const secret = "whsec_delivery_test";
     const { store } = makeStubStore([
       makeDelivery({ id: "del_sig", payload, webhook_secret: secret }),
@@ -484,8 +484,8 @@ describe("deliverWebhookAttempt (direct fast path)", () => {
     const claimed: PendingWebhookDelivery = {
       id: "del_fast",
       webhook_id: "wh_fast",
-      event: "item.created",
-      payload: '{"event":"item.created"}',
+      event_type: "item.created",
+      payload: '{"event_type":"item.created"}',
       webhook_url: "https://example.test/hook",
       webhook_secret: "s",
       attempt: 0,
@@ -578,7 +578,7 @@ describe("deliverWebhookAttempt (direct fast path)", () => {
     const { store } = makeStubStore([]);
     const delivery: PendingWebhookDelivery = makeDelivery({
       id: "del_sig_parity",
-      payload: '{"event":"item.created"}',
+      payload: '{"event_type":"item.created"}',
       webhook_secret: "whsec_parity",
     });
 
@@ -734,5 +734,96 @@ describe("WebhookConsumer fan-out gate", () => {
 
     expect(afterQuiet).toBe(0);
     expect(scheduledCount()).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WebhookConsumer — a stored name the vocabulary dropped matches nothing
+// ---------------------------------------------------------------------------
+
+describe("WebhookConsumer subscription matching", () => {
+  let originalFetch: typeof fetch;
+
+  beforeEach(() => {
+    originalFetch = globalThis.fetch;
+  });
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  it("schedules nothing for a retired name, and one delivery for a live subscription on the same event", async () => {
+    // Retiring an event name does not rewrite the rows that subscribed to it,
+    // and nothing is going to: a refusal keyed on stored content is the one
+    // shape the boot checks refuse to take, because a caller could then write
+    // a row that stopped the instance opening. So such a row's fate is this
+    // dispatch pass, which is what `WebhookSchema.events` staying
+    // `z.array(z.string())` in `routes/webhooks.ts` rests on.
+    //
+    // Both subscriptions are evaluated in the one pass, so the live one's
+    // delivery is what makes the retired one's silence a decision rather than
+    // a consumer that scheduled nothing at all.
+    const fetchSpy = vi.fn(() =>
+      Promise.resolve(new Response(null, { status: 200 })),
+    );
+    globalThis.fetch = fetchSpy;
+
+    const scheduledFor: string[] = [];
+    const store: WebhookDeliveryStore = {
+      log: () => Promise.resolve(),
+      list: () => Promise.resolve([] as WebhookDelivery[]),
+      schedule: (entry) => {
+        scheduledFor.push(entry.webhookId);
+        return Promise.resolve(`del_match_${String(scheduledFor.length)}`);
+      },
+      getPending: () => Promise.resolve([]),
+      claimById: () => Promise.resolve(null),
+      markSuccess: () => Promise.resolve(),
+      markFailed: () => Promise.resolve(),
+      markDeadLetter: () => Promise.resolve(),
+    };
+
+    const subscription = (id: string, events: string[]): Webhook => ({
+      id,
+      url: "https://example.test/hook",
+      secret: "s",
+      events,
+      active: true,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    });
+    const retired = subscription("wh_retired", ["item.trashed"]);
+    const named = subscription("wh_named", ["item.created"]);
+    const webhooks = [retired, named];
+    const webhookStore: WebhookStore = {
+      create: () => Promise.resolve(retired),
+      list: () => Promise.resolve(webhooks),
+      get: () => Promise.resolve(retired),
+      update: () => Promise.resolve(retired),
+      delete: () => Promise.resolve(),
+      listActive: () => Promise.resolve(webhooks),
+      count: () => Promise.resolve(webhooks.length),
+    };
+
+    const consumer = new WebhookConsumer(webhookStore, store);
+    consumer.start();
+    await publish({
+      type: "created",
+      item: {
+        id: "01HEEEEEEEEEEEEEEEEEEEEEEE",
+        type: "core.note",
+        version: 1,
+        state: "active",
+        tier: "library",
+        source: "test",
+        properties: { title: "retired" },
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      } as unknown as Item,
+    });
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    consumer.stop();
+
+    expect(scheduledFor).toEqual(["wh_named"]);
   });
 });

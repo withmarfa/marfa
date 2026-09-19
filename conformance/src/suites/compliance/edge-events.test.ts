@@ -143,7 +143,7 @@ describe("edge events", () => {
 
     const forOurEdge = (name: string) => (r: Received) =>
       r.path === "/hook/edges" &&
-      r.headers["x-marfa-event"] === name &&
+      r.headers["x-marfa-event-type"] === name &&
       r.body.includes(edgeId);
     const created = await receiver.waitFor(forOurEdge("edge.created"));
     const deleted = await receiver.waitFor(forOurEdge("edge.deleted"));
@@ -151,16 +151,16 @@ describe("edge events", () => {
       expectSignedBy(delivery, subscription.data.secret);
     }
     const payload = JSON.parse(created.body) as {
-      event: string;
+      event_type: string;
       edge: { id: string; edge_type: string };
     };
-    expect(payload.event).toBe("edge.created");
+    expect(payload.event_type).toBe("edge.created");
     expect(payload.edge.id).toBe(edgeId);
     expect(payload.edge.edge_type).toBe("about");
 
     const rows = await client.listWebhookDeliveries(subscription.data.id);
     expect(rows.ok).toBe(true);
-    expect(rows.data.deliveries.map((d) => d.event).sort()).toEqual([
+    expect(rows.data.deliveries.map((d) => d.event_type).sort()).toEqual([
       "edge.created",
       "edge.deleted",
     ]);

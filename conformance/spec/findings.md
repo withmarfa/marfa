@@ -2,7 +2,7 @@
 
 Where the server contradicts its own OpenAPI document, where its document describes something a caller cannot observe, where it contradicts the device half of this specification, or where two doors that answer the same question answer it differently. Each entry names the operation, what the document says, what the server does, and the fixture that shows it. The fixtures assert what the server does; nothing here is fixed on the suite's side, and nothing is a proposal. This file is the channel to the server's maintainers. Two entries carry no fixture, and each says why.
 
-**An entry goes when the behavior it recorded changes, never because the contract softened.** Two went that way, and one of them was stale on arrival: the conformance tree was folded into this repository at `11930838`, the commit after `a64fe481` taught the archive reader to refuse a body that is not gzip, so the entry recording that crash described a defect the server had already lost before the file was ever tracked here.
+**An entry goes when the behavior it recorded changes, never because the contract softened.** Three went that way. One was stale on arrival: the conformance tree was folded into this repository at `11930838`, the commit after `a64fe481` taught the archive reader to refuse a body that is not gzip, so the entry recording that crash described a defect the server had already lost before the file was ever tracked here. The most recent recorded a wildcard webhook subscription that `POST /webhooks` stored and dispatch never matched, and went when the door began refusing `events: ["*"]` outright.
 
 ## 1. `nullable: true` inside a 3.1 document
 
@@ -53,15 +53,11 @@ Every entry is a status a fixture asserts on an operation whose served document 
 
 A bare request to `PATCH /edges/{id}` or `POST /edge-types` with a malformed body answers `400`, and one to `DELETE /items/{id}/tags/{tag}` naming an unknown item answers `404 item_not_found`; the same doors answer `401` once the body is well-formed and the row exists, so no write lands, but an unauthenticated caller can learn whether an item id exists. The same ordering holds for the body checks on `PATCH /items/{id}`, `POST /items/{id}/transition`, `POST /items/{id}/tags`, the bulk doors, `GET /search` and `GET /occurrences`. `compliance/unauthenticated.test.ts › answers 401 unauthorized on each of them` sends real rows and well-formed bodies for this reason.
 
-## 10. `POST /webhooks` accepts `events: ["*"]` and never delivers to it
-
-The document lists `*` in the webhook event vocabulary and the door answers `201` storing it, but dispatch matches an event name against the stored list literally, so a wildcard subscription receives nothing and records no delivery while a named subscription on the same event does. `compliance/webhooks.test.ts › accepts a wildcard subscription, which then matches nothing`.
-
-## 11. Self-loops are refused as `edge_constraint_violation`, not `edge_cycle`
+## 10. Self-loops are refused as `edge_constraint_violation`, not `edge_cycle`
 
 The vocabulary has `edge_cycle` for an edge that would close a cycle, and the server uses it for a direct or deep cycle; an edge whose source and target are the same item is refused `edge_constraint_violation` with the message "Edge source and target must be different items". `correctness/edges/edges-cycle.test.ts › self-loop rejected: A→A on parent-of`, `› supersedes direct cycle: A→B then B→A rejected`.
 
-## 12. The natural key is scoped by the credential, so two devices cannot share one
+## 11. The natural key is scoped by the credential, so two devices cannot share one
 
 `folders.md` 10 requires that the same file on two separately enrolled machines is one item. The natural key is `(source, source_id)` (`items.md` 5), `source` is stamped from the credential and a value in the body is ignored (`items.md` 4), and a second key naming a `source` already in use is refused `409 conflict` (`keys-and-oauth.md` 7). Two devices with their own keys therefore cannot present the same natural key, and the same file becomes two items on the same server with nothing recording that they are the same file.
 
@@ -69,7 +65,7 @@ Nothing here is a contradiction of the OpenAPI document; it is the server contra
 
 Out of milestone one, which has one folder and one keyed process.
 
-## 13. Contention on one row answers `500`, which a device reads as a fault
+## 12. Contention on one row answers `500`, which a device reads as a fault
 
 Several writers patching one edge at the same time are serialized by the driver, not queued: the store opens each write with `BEGIN IMMEDIATE` and a second one meets `SQLITE_BUSY` rather than waiting. The refusal surfaces as `500 internal_error`.
 
@@ -79,7 +75,7 @@ Contention is not a fault. `device.md` says the server answers a `5xx` "only for
 
 No fixture asserts it. One did, indirectly, until `version` became required on an update: it fired eight concurrent patches to prove the row lock never loses an accepted write, and the version gate now refuses seven of them before the lock is reached, so the case was removed rather than renamed into a claim it could no longer support. `packages/server/src/routes/edges-merge-rather-than-replace.test.ts` carries the reasoning and names the fixture that would reach the lock again: writers that each read the edge and then patch with what they read, rather than several sharing one version.
 
-## 14. `DELETE /edge-types/{id}` removes a registration out from under its edges
+## 13. `DELETE /edge-types/{id}` removes a registration out from under its edges
 
 The door looks at the core edge-type list and at whether the row exists, and at nothing else. Edges of the type are neither counted nor cascaded: the call answers `200`, the registration goes, and every edge of it stays, each still naming an edge type the instance no longer holds and `GET /edges/{id}` still serving it.
 

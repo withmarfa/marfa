@@ -36,8 +36,13 @@ function redactSecret(secret: string): string {
  * drift one layer along, which is why `EventNameSchema` derives from this
  * rather than repeating it.
  *
- * `*` is a member: it is the subscribe-to-everything wildcard, and a caller
- * needs to see it offered as much as any named event.
+ * **`*` is not a member.** It was offered here and accepted at registration,
+ * and dispatch matches a stored name against an event's own literally, so a
+ * wildcard subscription received nothing and recorded no delivery while a
+ * named one on the same event did. A subscription that can never fire is
+ * worse than a refused request: the caller believes it is subscribed. Every
+ * name here is one dispatch can match, which is what makes this list a
+ * vocabulary rather than a menu.
  */
 export const WEBHOOK_EVENTS = [
   "item.created",
@@ -50,7 +55,6 @@ export const WEBHOOK_EVENTS = [
   "edge.created",
   "edge.updated",
   "edge.deleted",
-  "*",
 ] as const;
 
 /**
@@ -92,7 +96,7 @@ const WebhookSchema = z.object({
 const DeliverySchema = z.object({
   id: z.string(),
   webhook_id: z.string(),
-  event: z.string(),
+  event_type: z.string(),
   status_code: z.number().nullable(),
   attempt: z.number(),
   succeeded: z.boolean(),
@@ -111,7 +115,7 @@ const createWebhookRoute = createRoute({
   tags: ["Webhooks"],
   summary: "Create a webhook",
   description:
-    "Registers an outbound webhook subscription targeting a URL and one or more event names (wildcards accepted). The `secret` is the HMAC-SHA256 signing key, generated server-side when omitted, and returned in plaintext only on creation.",
+    "Registers an outbound webhook subscription targeting a URL and one or more event types from the closed vocabulary. The `secret` is the HMAC-SHA256 signing key, generated server-side when omitted, and returned in plaintext only on creation.",
   security: [{ bearerAuth: [] }],
   request: {
     body: {

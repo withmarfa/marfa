@@ -15,7 +15,7 @@ function rowToDelivery(
   return {
     id: row.id,
     webhook_id: row.webhook_id,
-    event: row.event,
+    event_type: row.event_type,
     status_code: row.status_code ?? null,
     attempt: row.attempt,
     succeeded: row.succeeded === 1,
@@ -29,7 +29,7 @@ export class SqliteWebhookDeliveryStore implements WebhookDeliveryStore {
 
   async log(entry: {
     webhookId: string;
-    event: string;
+    eventType: string;
     statusCode?: number;
     attempt: number;
     succeeded: boolean;
@@ -40,7 +40,7 @@ export class SqliteWebhookDeliveryStore implements WebhookDeliveryStore {
       .values({
         id: generateId(),
         webhook_id: entry.webhookId,
-        event: entry.event,
+        event_type: entry.eventType,
         status_code: entry.statusCode ?? null,
         attempt: entry.attempt,
         succeeded: entry.succeeded ? 1 : 0,
@@ -63,7 +63,7 @@ export class SqliteWebhookDeliveryStore implements WebhookDeliveryStore {
 
   async schedule(entry: {
     webhookId: string;
-    event: string;
+    eventType: string;
     payload: string;
     webhookUrl: string;
     webhookSecret: string;
@@ -75,7 +75,7 @@ export class SqliteWebhookDeliveryStore implements WebhookDeliveryStore {
       .values({
         id,
         webhook_id: entry.webhookId,
-        event: entry.event,
+        event_type: entry.eventType,
         status_code: null,
         attempt: 0,
         succeeded: 0,
@@ -97,7 +97,7 @@ export class SqliteWebhookDeliveryStore implements WebhookDeliveryStore {
     const rows = await this.db.all<{
       id: string;
       webhook_id: string;
-      event: string;
+      event_type: string;
       payload: string | null;
       webhook_url: string | null;
       webhook_secret: string | null;
@@ -113,13 +113,13 @@ export class SqliteWebhookDeliveryStore implements WebhookDeliveryStore {
             ORDER BY next_attempt_at
             LIMIT ${limit}
           )
-          RETURNING id, webhook_id, event, payload, webhook_url, webhook_secret, attempt, max_attempts
+          RETURNING id, webhook_id, event_type, payload, webhook_url, webhook_secret, attempt, max_attempts
         `,
     );
     return rows.map((r) => ({
       id: r.id,
       webhook_id: r.webhook_id,
-      event: r.event,
+      event_type: r.event_type,
       payload: r.payload ?? "",
       webhook_url: r.webhook_url ?? "",
       webhook_secret: r.webhook_secret ?? "",
@@ -128,8 +128,8 @@ export class SqliteWebhookDeliveryStore implements WebhookDeliveryStore {
     }));
   }
 
-  /** See PG store for rationale. SQLite is single-process so the CAS
-   *  serializes trivially at the statement level. */
+  /** SQLite is single-process, so the CAS serializes trivially at the
+   *  statement level. */
   async claimById(
     id: string,
     claimExpiry: string,
@@ -138,7 +138,7 @@ export class SqliteWebhookDeliveryStore implements WebhookDeliveryStore {
     const rows = await this.db.all<{
       id: string;
       webhook_id: string;
-      event: string;
+      event_type: string;
       payload: string | null;
       webhook_url: string | null;
       webhook_secret: string | null;
@@ -151,7 +151,7 @@ export class SqliteWebhookDeliveryStore implements WebhookDeliveryStore {
           WHERE id = ${id}
             AND status = 'pending'
             AND next_attempt_at <= ${now}
-          RETURNING id, webhook_id, event, payload, webhook_url, webhook_secret, attempt, max_attempts
+          RETURNING id, webhook_id, event_type, payload, webhook_url, webhook_secret, attempt, max_attempts
         `,
     );
     const row = rows[0];
@@ -159,7 +159,7 @@ export class SqliteWebhookDeliveryStore implements WebhookDeliveryStore {
     return {
       id: row.id,
       webhook_id: row.webhook_id,
-      event: row.event,
+      event_type: row.event_type,
       payload: row.payload ?? "",
       webhook_url: row.webhook_url ?? "",
       webhook_secret: row.webhook_secret ?? "",

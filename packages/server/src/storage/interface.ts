@@ -1150,7 +1150,7 @@ export interface WebhookStore {
 export interface PendingWebhookDelivery {
   id: string;
   webhook_id: string;
-  event: string;
+  event_type: string;
   payload: string;
   webhook_url: string;
   webhook_secret: string;
@@ -1161,7 +1161,7 @@ export interface PendingWebhookDelivery {
 export interface WebhookDeliveryStore {
   log(entry: {
     webhookId: string;
-    event: string;
+    eventType: string;
     statusCode?: number;
     attempt: number;
     succeeded: boolean;
@@ -1170,7 +1170,7 @@ export interface WebhookDeliveryStore {
   list(webhookId: string, limit?: number): Promise<WebhookDelivery[]>;
   schedule(entry: {
     webhookId: string;
-    event: string;
+    eventType: string;
     payload: string;
     webhookUrl: string;
     webhookSecret: string;
@@ -2577,9 +2577,9 @@ export interface Storage extends Partial<BetterAuthStorageAdapter> {
    *  `index.ts` is gated on this being present). */
   authSessions?: AuthSessionStore;
   settings: SettingsStore;
-  /** Async substrate for `POST /items/bulk-actions`. Always wired on both
-   *  dialects. The worker module reads + writes through this store; the
-   *  route handler creates jobs + serves GET / DELETE. */
+  /** The job table behind `POST /items/bulk-actions`. The worker module
+   *  reads and writes through this store; the route handler creates jobs
+   *  and serves GET and DELETE. */
   bulkActionJobs: BulkActionJobStore;
   /** What a write returned, keyed on the caller's `Idempotency-Key`.
    *  Always wired on both dialects; the idempotency middleware and the
