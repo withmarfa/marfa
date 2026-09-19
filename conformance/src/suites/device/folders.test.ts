@@ -387,14 +387,69 @@ describe("files and items", () => {
       "the edge points at something this folder did not create, so the link resolved to the wrong item",
     ).toBeDefined();
 
-    // And the other direction: an edge on an item appears as a link in the
-    // file. The body already carries this one, so what is asserted is that
-    // writing back does not lose it.
+    // And the other direction, with a witness that it ran. The body above
+    // already carries its link, so writing it back proves only that nothing
+    // was lost; an edge the file does not mention is what makes the folder
+    // add one.
     expect((await harness.folder.pull()).ok).toBe(true);
     expect(
       read(harness, "source.md"),
       "the link went from the file when the item was written back, so an edge a folder made disappears from the note that made it",
     ).toContain("[[target]]");
+
+    // A second folder, hydrated on an item that carries an edge in its own
+    // body-free form: the file has no link, and the edge is what has to put
+    // one there.
+    second = await folderHarness("folder-edges-to-links", {
+      rows: {
+        "core.note": [
+          {
+            item: {
+              id: "01a00000-0000-7000-8000-0000000000a1",
+              source_id: "from-server.md",
+              properties: { title: "From the server", body: "no link here\n" },
+              edges: {
+                references: {
+                  edges: [
+                    {
+                      id: "01a00000-0000-7000-8000-0000000000e1",
+                      source_id: "01a00000-0000-7000-8000-0000000000a1",
+                      target_id: "01a00000-0000-7000-8000-0000000000a2",
+                      edge_type: "references",
+                      properties: {},
+                      version: 1,
+                      created_at: "2026-09-18T00:00:00.000Z",
+                      updated_at: "2026-09-18T00:00:00.000Z",
+                    },
+                  ],
+                  has_more: false,
+                  next_cursor: null,
+                },
+              },
+            },
+          },
+          {
+            item: {
+              id: "01a00000-0000-7000-8000-0000000000a2",
+              source_id: "the-target.md",
+              properties: { title: "The target", body: "the other end\n" },
+            },
+          },
+        ],
+      },
+    });
+    scriptFolderWrites(second);
+    const pulled = await second.folder.pull();
+    expect(pulled.ok).toBe(true);
+    if (!pulled.ok) return;
+    expect(
+      pulled.value.written,
+      "the folder wrote no files at all, so the assertion below is about a file that is not there",
+    ).toBe(2);
+    expect(
+      read(second, "from-server.md"),
+      "an edge the item carries did not appear as a link in the file, so a connection made anywhere else is invisible in the folder",
+    ).toContain("[[the-target]]");
   });
 });
 
@@ -449,7 +504,24 @@ describe("identity", () => {
     // The first file is gone and a different file takes its place. The
     // filesystem may hand the new one the old one's inode, and the birth
     // time is the only thing that says they are not the same file.
-    rmSync(join(harness.dir, "first.md"));
+    // The control first, and it is what makes the case below mean anything:
+    // a file the folder *does* remember, moved, is followed. Without it the
+    // assertion that a different file is not followed would hold just as
+    // well against a folder that follows nothing at all.
+    renameSync(join(harness.dir, "first.md"), join(harness.dir, "moved.md"));
+    const followed = await harness.folder.scan();
+    expect(followed.ok).toBe(true);
+    if (!followed.ok) return;
+    expect(
+      followed.value.renamed,
+      "the folder followed no rename at all, so the case below says nothing about identity",
+    ).toBe(1);
+
+    // Now a different file, in the place the folder last saw one. On this
+    // filesystem it gets a fresh inode; on one that reuses inodes it may
+    // get the old one, and the birth time is the only thing that tells
+    // them apart.
+    rmSync(join(harness.dir, "moved.md"));
     put(harness, "second.md", "---\ntitle: Second\n---\ntwo\n");
     const scanned = await harness.folder.scan();
     expect(scanned.ok).toBe(true);
@@ -811,6 +883,7 @@ describe("writing", () => {
     // The first half of a rename looks exactly like a delete: the old path
     // stops existing. A folder that sent a delete here would delete the item
     // it was about to rename.
+    const graceStarted = Date.now();
     rmSync(join(harness.dir, "going.md"));
     const scanned = await harness.folder.scan();
     expect(scanned.ok).toBe(true);
@@ -831,11 +904,25 @@ describe("writing", () => {
       "a delete was queued inside the grace, so the queue holds it whether or not the rename completes",
     ).toBe(false);
 
-    // The other half arrives inside the grace: it was a rename.
-    put(harness, "arrived.md", "---\ntitle: Going\n---\nbody\n");
+    // The other half arrives inside the grace. **A real rename**, so the
+    // identity carries over and the folder can recognise it: an earlier
+    // version of this case created a new file, which can never match the
+    // remembered identity, so the rename path was never reached and the
+    // assertion below rode entirely on the grace not having elapsed.
+    rmSync(join(harness.dir, "going.md"), { force: true });
+    writeFileSync(
+      join(harness.dir, "going.md"),
+      "---\ntitle: Going\n---\nbody\n",
+    );
+    expect((await harness.folder.scan()).ok).toBe(true);
+    renameSync(join(harness.dir, "going.md"), join(harness.dir, "arrived.md"));
     const renamed = await harness.folder.scan();
     expect(renamed.ok).toBe(true);
     if (!renamed.ok) return;
+    expect(
+      renamed.value.renamed,
+      "the file was not followed as a rename, so the assertion below is about the grace rather than about the folder noticing the other half arrived",
+    ).toBe(1);
     const after = await harness.folder.device().queue();
     expect(after.ok).toBe(true);
     if (!after.ok) return;
@@ -843,6 +930,31 @@ describe("writing", () => {
       after.value.some((row) => row.kind === "delete_item"),
       "the rename completed and the delete went anyway, so the grace records the delete and sends it regardless",
     ).toBe(false);
+    // **Past the grace**, which is the only thing that tells a journal the
+    // rename cleared from one that is merely still waiting. Both look
+    // identical until the grace runs out, and an earlier version of this
+    // case asserted the second and called it the first: remove
+    // `journal_clear` from the rename path and it stayed green.
+    await vi.waitFor(
+      async () => {
+        const swept = await harness?.folder.scan();
+        expect(swept?.ok).toBe(true);
+        const queue = await harness?.folder.device().queue();
+        expect(queue?.ok).toBe(true);
+        // The grace has run: any journal row left would have become a
+        // delete by now.
+        expect(
+          (Date.now() - graceStarted) / 1000,
+          "the grace has not run out yet, so a journal the rename failed to clear would not have become a delete",
+        ).toBeGreaterThan(6);
+        expect(
+          queue?.ok === true &&
+            queue.value.some((row) => row.kind === "delete_item"),
+          "the rename completed and a delete went anyway once the grace ran out, so the journal the rename should have cleared survived it",
+        ).toBe(false);
+      },
+      { timeout: 25_000, interval: 1_000 },
+    );
   });
 
   it("journals a delete that happened while it was not running", async () => {
@@ -932,6 +1044,17 @@ describe("what a folder does not watch", () => {
               properties: { title: "Inside", body: "in the slice\n" },
             },
           },
+          // An item of a type this folder does not hold, arriving through
+          // the same page. Without one the pull's own slice rule is never
+          // exercised, and the assertion below is about the push half only.
+          {
+            item: {
+              id: "01a00000-0000-7000-8000-00000000000b",
+              type: "core.bookmark",
+              source_id: "outside.md",
+              properties: { title: "Outside", body: "not in the slice\n" },
+            },
+          },
         ],
       },
     });
@@ -954,5 +1077,19 @@ describe("what a folder does not watch", () => {
       readFileSync(join(harness.dir, "photo.png"), "utf8"),
       "the folder rewrote a file it does not carry",
     ).toBe("not text at all");
+
+    // The pull half: an item outside the slice does not become a file.
+    expect(
+      existsSync(join(harness.dir, "outside.md")),
+      "an item of a type this folder does not hold became a file in it, so a folder declaring one type writes every type it is sent",
+    ).toBe(false);
+    expect(
+      pushed.value.pull.skipped,
+      "the pull reported skipping nothing, so the absence above is a pull that wrote nothing at all",
+    ).toBeGreaterThan(0);
+    expect(
+      existsSync(join(harness.dir, "inside.md")),
+      "the item inside the slice did not become a file either, so the folder is writing nothing rather than choosing",
+    ).toBe(true);
   });
 });
