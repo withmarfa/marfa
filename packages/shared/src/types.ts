@@ -663,3 +663,17 @@ export interface InstanceConfig {
    */
   activity_retention_days?: number;
 }
+
+/**
+ * What `/config` answers: the configuration, under the identity of the
+ * instance whose configuration it is.
+ *
+ * `instance_id` is deliberately not a field of `InstanceConfig` beside the
+ * levers. `PUT /config` is a wholesale replacement of what that interface
+ * describes, so an identity held there would leave with the first body that
+ * omitted it. It is read-only on the wire: a `PUT` may send back the one it
+ * read, and one naming a different instance is refused.
+ */
+export interface InstanceConfigResponse extends InstanceConfig {
+  instance_id: string;
+}

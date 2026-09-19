@@ -1,6 +1,7 @@
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import { PERMISSIONS } from "@withmarfa/shared";
 import { createApp } from "../app.js";
+import { ensureInstanceId } from "../storage/instance-id.js";
 import { createSqliteStorage } from "../storage/sqlite/index.js";
 import { FilesystemBlobBackend } from "../storage/blob-backend.js";
 import { hashApiKey } from "./auth.js";
@@ -31,47 +32,53 @@ async function buildCtx(): Promise<Ctx> {
   // middleware no longer reads process.env.
   const tmpDir = mkdtempSync(join(tmpdir(), "marfa-ratelimit-"));
   const storage = await createSqliteStorage(join(tmpDir, "test.db"));
+  const instanceId = await ensureInstanceId(storage.settings);
   const blobBackend = new FilesystemBlobBackend(join(tmpDir, "blobs"));
-  const app = createApp(storage, blobBackend, {
-    port: 0,
-    sqlitePath: "",
-    blobPath: join(tmpDir, "blobs"),
-    blobBackend: "fs",
-    maxBlobSize: 50 * 1024 * 1024,
-    maxRequestBytes: 1_048_576,
-    s3Bucket: "",
-    s3Region: "us-east-1",
-    s3Endpoint: "",
-    s3AccessKeyId: "",
-    s3SecretAccessKey: "",
-    apiKeySalt: SALT,
-    corsOrigins: [],
-    cdnBaseUrl: "",
-    rateLimitEnabled: true,
-    enableHsts: false,
-    auditRetentionDays: 90,
-    auditCleanupIntervalMs: 86_400_000,
-    eventLogRetentionHours: 168,
-    versionThinningIntervalMs: 3_600_000,
-    versionRecentDays: 30,
-    versionDailySnapshotDays: 90,
-    versionWeeklySnapshotDays: 365,
-    versionMaxVersions: 500,
-    trashRetentionDays: 60,
-    trashPurgeIntervalMs: 3_600_000,
-    errorWebhookUrl: "",
-    trustedProxyCidrs: [],
-    authBaseUrl: "http://localhost:0",
-    authSecret: "test-auth-secret",
-    rateLimitDefaultLimit: 2,
-    rateLimitWindowMs: 60_000,
-    // Disable the aggregate per-identifier window for the per-path /
-    // per-credential isolation tests below — several reuse one shared
-    // (unauthenticated) IP identifier across many paths in a single
-    // window, which the aggregate cap would otherwise trip. The
-    // aggregate window has its own dedicated test context.
-    rateLimitAggregateMultiplier: 0,
-  });
+  const app = createApp(
+    storage,
+    blobBackend,
+    {
+      port: 0,
+      sqlitePath: "",
+      blobPath: join(tmpDir, "blobs"),
+      blobBackend: "fs",
+      maxBlobSize: 50 * 1024 * 1024,
+      maxRequestBytes: 1_048_576,
+      s3Bucket: "",
+      s3Region: "us-east-1",
+      s3Endpoint: "",
+      s3AccessKeyId: "",
+      s3SecretAccessKey: "",
+      apiKeySalt: SALT,
+      corsOrigins: [],
+      cdnBaseUrl: "",
+      rateLimitEnabled: true,
+      enableHsts: false,
+      auditRetentionDays: 90,
+      auditCleanupIntervalMs: 86_400_000,
+      eventLogRetentionHours: 168,
+      versionThinningIntervalMs: 3_600_000,
+      versionRecentDays: 30,
+      versionDailySnapshotDays: 90,
+      versionWeeklySnapshotDays: 365,
+      versionMaxVersions: 500,
+      trashRetentionDays: 60,
+      trashPurgeIntervalMs: 3_600_000,
+      errorWebhookUrl: "",
+      trustedProxyCidrs: [],
+      authBaseUrl: "http://localhost:0",
+      authSecret: "test-auth-secret",
+      rateLimitDefaultLimit: 2,
+      rateLimitWindowMs: 60_000,
+      // Disable the aggregate per-identifier window for the per-path /
+      // per-credential isolation tests below — several reuse one shared
+      // (unauthenticated) IP identifier across many paths in a single
+      // window, which the aggregate cap would otherwise trip. The
+      // aggregate window has its own dedicated test context.
+      rateLimitAggregateMultiplier: 0,
+    },
+    instanceId,
+  );
 
   const suffix = Math.random().toString(36).slice(2, 14);
   const rawKey = `marfa_k1_rl_working_${suffix}`;
@@ -239,45 +246,51 @@ describe("rate-limit per-path caps for /auth/oauth2/*", () => {
 async function buildAggCtx(): Promise<Ctx> {
   const tmpDir = mkdtempSync(join(tmpdir(), "marfa-ratelimit-agg-"));
   const storage = await createSqliteStorage(join(tmpDir, "test.db"));
+  const instanceId = await ensureInstanceId(storage.settings);
   const blobBackend = new FilesystemBlobBackend(join(tmpDir, "blobs"));
-  const app = createApp(storage, blobBackend, {
-    port: 0,
-    sqlitePath: "",
-    blobPath: join(tmpDir, "blobs"),
-    blobBackend: "fs",
-    maxBlobSize: 50 * 1024 * 1024,
-    maxRequestBytes: 1_048_576,
-    s3Bucket: "",
-    s3Region: "us-east-1",
-    s3Endpoint: "",
-    s3AccessKeyId: "",
-    s3SecretAccessKey: "",
-    apiKeySalt: SALT,
-    corsOrigins: [],
-    cdnBaseUrl: "",
-    rateLimitEnabled: true,
-    enableHsts: false,
-    auditRetentionDays: 90,
-    auditCleanupIntervalMs: 86_400_000,
-    eventLogRetentionHours: 168,
-    versionThinningIntervalMs: 3_600_000,
-    versionRecentDays: 30,
-    versionDailySnapshotDays: 90,
-    versionWeeklySnapshotDays: 365,
-    versionMaxVersions: 500,
-    trashRetentionDays: 60,
-    trashPurgeIntervalMs: 3_600_000,
-    errorWebhookUrl: "",
-    trustedProxyCidrs: [],
-    authBaseUrl: "http://localhost:0",
-    authSecret: "test-auth-secret",
-    // defaultLimit 2 → GET path window resolves to 4. Aggregate
-    // multiplier 2 → aggregate cap = defaultLimit * 2 = 4, keyed on the
-    // identifier alone.
-    rateLimitDefaultLimit: 2,
-    rateLimitWindowMs: 60_000,
-    rateLimitAggregateMultiplier: 2,
-  });
+  const app = createApp(
+    storage,
+    blobBackend,
+    {
+      port: 0,
+      sqlitePath: "",
+      blobPath: join(tmpDir, "blobs"),
+      blobBackend: "fs",
+      maxBlobSize: 50 * 1024 * 1024,
+      maxRequestBytes: 1_048_576,
+      s3Bucket: "",
+      s3Region: "us-east-1",
+      s3Endpoint: "",
+      s3AccessKeyId: "",
+      s3SecretAccessKey: "",
+      apiKeySalt: SALT,
+      corsOrigins: [],
+      cdnBaseUrl: "",
+      rateLimitEnabled: true,
+      enableHsts: false,
+      auditRetentionDays: 90,
+      auditCleanupIntervalMs: 86_400_000,
+      eventLogRetentionHours: 168,
+      versionThinningIntervalMs: 3_600_000,
+      versionRecentDays: 30,
+      versionDailySnapshotDays: 90,
+      versionWeeklySnapshotDays: 365,
+      versionMaxVersions: 500,
+      trashRetentionDays: 60,
+      trashPurgeIntervalMs: 3_600_000,
+      errorWebhookUrl: "",
+      trustedProxyCidrs: [],
+      authBaseUrl: "http://localhost:0",
+      authSecret: "test-auth-secret",
+      // defaultLimit 2 → GET path window resolves to 4. Aggregate
+      // multiplier 2 → aggregate cap = defaultLimit * 2 = 4, keyed on the
+      // identifier alone.
+      rateLimitDefaultLimit: 2,
+      rateLimitWindowMs: 60_000,
+      rateLimitAggregateMultiplier: 2,
+    },
+    instanceId,
+  );
 
   const suffix = Math.random().toString(36).slice(2, 14);
   const rawKey = `marfa_k1_rl_agg_${suffix}`;

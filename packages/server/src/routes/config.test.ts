@@ -6,13 +6,17 @@ import type { Hono } from "hono";
 import { createTestContext, request, waitForAudit } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { createApp } from "../app.js";
+import { ensureInstanceId } from "../storage/instance-id.js";
 import { createSqliteStorage } from "../storage/sqlite/index.js";
 import { FilesystemBlobBackend } from "../storage/blob-backend.js";
 import { hashApiKey } from "../middleware/auth.js";
 import type { AppEnv } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import { PERMISSIONS } from "@withmarfa/shared";
-import { writeInstanceConfig } from "../storage/instance-config.js";
+import {
+  readInstanceConfig,
+  writeInstanceConfig,
+} from "../storage/instance-config.js";
 
 const SALT = "test-salt";
 
@@ -32,42 +36,48 @@ async function createConfigContext(): Promise<ConfigContext> {
 
   const dbPath = join(tmpDir, "test.db");
   const storage = await createSqliteStorage(dbPath);
+  const instanceId = await ensureInstanceId(storage.settings);
 
   const blobBackend = new FilesystemBlobBackend(blobPath);
-  const app = createApp(storage, blobBackend, {
-    port: 0,
-    sqlitePath: "",
-    blobPath,
-    blobBackend: "fs",
-    maxBlobSize: 50 * 1024 * 1024,
-    maxRequestBytes: 1_048_576,
-    s3Bucket: "",
-    s3Region: "us-east-1",
-    s3Endpoint: "",
-    s3AccessKeyId: "",
-    s3SecretAccessKey: "",
-    apiKeySalt: SALT,
-    corsOrigins: [],
-    cdnBaseUrl: "",
-    rateLimitEnabled: false,
-    enableHsts: false,
-    auditRetentionDays: 90,
-    auditCleanupIntervalMs: 86_400_000,
-    eventLogRetentionHours: 168,
-    versionThinningIntervalMs: 3_600_000,
-    versionRecentDays: 30,
-    versionDailySnapshotDays: 90,
-    versionWeeklySnapshotDays: 365,
-    versionMaxVersions: 500,
-    trashRetentionDays: 60,
-    trashPurgeIntervalMs: 3_600_000,
-    errorWebhookUrl: "",
-    trustedProxyCidrs: [],
-    authBaseUrl: "http://localhost:0",
-    authSecret: "test-auth-secret",
-    rateLimitDefaultLimit: 1000,
-    rateLimitWindowMs: 60_000,
-  });
+  const app = createApp(
+    storage,
+    blobBackend,
+    {
+      port: 0,
+      sqlitePath: "",
+      blobPath,
+      blobBackend: "fs",
+      maxBlobSize: 50 * 1024 * 1024,
+      maxRequestBytes: 1_048_576,
+      s3Bucket: "",
+      s3Region: "us-east-1",
+      s3Endpoint: "",
+      s3AccessKeyId: "",
+      s3SecretAccessKey: "",
+      apiKeySalt: SALT,
+      corsOrigins: [],
+      cdnBaseUrl: "",
+      rateLimitEnabled: false,
+      enableHsts: false,
+      auditRetentionDays: 90,
+      auditCleanupIntervalMs: 86_400_000,
+      eventLogRetentionHours: 168,
+      versionThinningIntervalMs: 3_600_000,
+      versionRecentDays: 30,
+      versionDailySnapshotDays: 90,
+      versionWeeklySnapshotDays: 365,
+      versionMaxVersions: 500,
+      trashRetentionDays: 60,
+      trashPurgeIntervalMs: 3_600_000,
+      errorWebhookUrl: "",
+      trustedProxyCidrs: [],
+      authBaseUrl: "http://localhost:0",
+      authSecret: "test-auth-secret",
+      rateLimitDefaultLimit: 1000,
+      rateLimitWindowMs: 60_000,
+    },
+    instanceId,
+  );
 
   const suffix = Math.random().toString(36).slice(2, 10);
   const operatorKey = `marfa_k1_operator_quotas_${suffix}`;
@@ -121,25 +131,27 @@ afterAll(async () => {
   await ctx.cleanup();
 });
 
-describe("GET /config — keys-mode fallback", () => {
+describe("GET /config", () => {
   it("401 without credentials", async () => {
     const res = await request(ctx.app, "GET", "/config");
     expect(res.status).toBe(401);
   });
 
-  it("returns {} when the config was never set", async () => {
-    // An unset config reads as an empty object rather than as null, so a
-    // client can merge into what it gets back without a null check.
+  it("carries the identity alone when the config was never set", async () => {
+    // An unset config reads as an object carrying only the instance's
+    // identity, rather than as null, so a client can merge into what it gets
+    // back without a null check.
     const res = await request(ctx.app, "GET", "/config", {
       key: ctx.workingKey,
     });
     expect(res.status).toBe(200);
     const body = (await res.json()) as Record<string, unknown>;
-    expect(body).toEqual({});
+    expect(Object.keys(body)).toEqual(["instance_id"]);
+    expect(typeof body.instance_id).toBe("string");
   });
 });
 
-describe("PUT /config — keys-mode fallback", () => {
+describe("PUT /config", () => {
   it("401 without credentials", async () => {
     const res = await request(ctx.app, "PUT", "/config", {
       body: {},
@@ -322,5 +334,66 @@ describe("Instance config — round trips", () => {
     );
     expect(auditResult.data.length).toBeGreaterThanOrEqual(1);
     expect(auditResult.data[0]?.resource_type).toBe("config");
+  });
+
+  it("takes back the body GET handed over, identity and all", async () => {
+    // The use a full-replacement door is actually put to. `instance_id` is
+    // in every read, so a client that reads, edits one lever and sends the
+    // object back would be refused by the strict write schema if the field
+    // were merely unknown to it — and the refusal would look like a typo.
+    const read = await request(configCtx.app, "GET", "/config", {
+      key: configCtx.workingKey,
+    });
+    const body = (await read.json()) as Record<string, unknown>;
+    expect(typeof body.instance_id).toBe("string");
+
+    const res = await request(configCtx.app, "PUT", "/config", {
+      key: configCtx.workingKey,
+      body: { ...body, audit_retention_days: 31 },
+    });
+    expect(res.status).toBe(200);
+    const echoed = (await res.json()) as Record<string, unknown>;
+    expect(echoed.instance_id).toBe(body.instance_id);
+    expect(echoed.audit_retention_days).toBe(31);
+
+    // Read from the store, not from the door. `GET /config` spreads the
+    // identity over whatever the configuration holds, so a copy persisted
+    // into `instance_config` carrying the same value would be invisible on
+    // the wire — and would then leave with the next body that omitted it,
+    // which is the whole reason the identity lives elsewhere.
+    expect(
+      await readInstanceConfig(configCtx.storage.settings),
+    ).not.toHaveProperty("instance_id");
+  });
+
+  it("refuses a body addressed to a different instance", async () => {
+    // Dropping the field instead would answer 200 to a write meant for
+    // somewhere else, which is what a backup script pointed at the wrong
+    // host sends. The identity is not persisted either way, so the refusal
+    // is the only thing that can carry the news.
+    const before = await request(configCtx.app, "GET", "/config", {
+      key: configCtx.workingKey,
+    });
+    const body = (await before.json()) as Record<string, unknown>;
+
+    const res = await request(configCtx.app, "PUT", "/config", {
+      key: configCtx.workingKey,
+      body: {
+        instance_id: "019537a0-7b80-7000-8000-000000000000",
+        audit_retention_days: 7,
+      },
+    });
+    expect(res.status).toBe(400);
+    const error = (await res.json()) as {
+      error: { code: string; details?: { errors?: { path: string }[] } };
+    };
+    expect(error.error.code).toBe("validation_error");
+    expect(error.error.details?.errors?.[0]?.path).toBe("instance_id");
+
+    // And it changed nothing, which is the half a status code cannot state.
+    const after = await request(configCtx.app, "GET", "/config", {
+      key: configCtx.workingKey,
+    });
+    expect(await after.json()).toEqual(body);
   });
 });

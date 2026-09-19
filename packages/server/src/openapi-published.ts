@@ -57,6 +57,14 @@ function specGenerationConfig(): AppConfig {
   };
 }
 
+/**
+ * The identity the generator hands the app.
+ *
+ * Nothing in the published document carries it, so any string does; a fixed
+ * one keeps the generation deterministic.
+ */
+const SPEC_GENERATION_INSTANCE_ID = "00000000-0000-7000-8000-000000000000";
+
 /** Assemble the document published as the public API reference. */
 export async function buildPublishedOpenAPISpec(): Promise<
   Record<string, unknown>
@@ -67,6 +75,11 @@ export async function buildPublishedOpenAPISpec(): Promise<
       storage,
       new FilesystemBlobBackend(BLOB_PATH),
       specGenerationConfig(),
+      // A literal, not a mint. The document describes the shape of a
+      // response, not this run's value, and an id in it would change the
+      // generated file on every regeneration — which is exactly what the
+      // freshness job reads as drift.
+      SPEC_GENERATION_INSTANCE_ID,
     );
     return finalizeOpenAPISpec(
       app.getOpenAPIDocument({

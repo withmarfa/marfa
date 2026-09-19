@@ -77,11 +77,11 @@ Fixture paths are under `src/suites/`.
 
 ## Search, occurrences and export
 
-| Operation          | Status  | Fixture                                                                                                  | Notes                                                           |
-| ------------------ | ------- | -------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
-| `GET /search`      | covered | `correctness/persistence.test.ts`, `compliance/fts-searchable.test.ts`, `correctness/pagination.test.ts` | Query required, limit, searchable fields, permission filtering. |
-| `GET /occurrences` | covered | `compliance/occurrences.test.ts`                                                                         | Window required and ordered; expansion inside the window.       |
-| `GET /export`      | covered | `compliance/export.test.ts`, `compliance/admin-archive.test.ts`, `compliance/export-roundtrip.test.ts`   | NDJSON filters with controls; `format=archive`.                 |
+| Operation          | Status  | Fixture                                                                                                                               | Notes                                                                                            |
+| ------------------ | ------- | ------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `GET /search`      | covered | `correctness/persistence.test.ts`, `compliance/fts-searchable.test.ts`, `correctness/pagination.test.ts`                              | Query required, limit, searchable fields, permission filtering.                                  |
+| `GET /occurrences` | covered | `compliance/occurrences.test.ts`                                                                                                      | Window required and ordered; expansion inside the window.                                        |
+| `GET /export`      | covered | `compliance/export.test.ts`, `compliance/admin-archive.test.ts`, `compliance/export-roundtrip.test.ts`, `compliance/instance.test.ts` | NDJSON filters with controls; `format=archive`, whose manifest names the instance that wrote it. |
 
 ## Blobs
 
@@ -115,11 +115,11 @@ Fixture paths are under `src/suites/`.
 
 ## Audit and instance configuration
 
-| Operation     | Status  | Fixture                                                      | Notes                                                                |
-| ------------- | ------- | ------------------------------------------------------------ | -------------------------------------------------------------------- |
-| `GET /audit`  | covered | `compliance/audit.test.ts`, `compliance/edge-events.test.ts` | Filters, exclusive bounds, cursor, `audit.read` gate.                |
-| `GET /config` | covered | `compliance/schema-enforcement.test.ts`                      |                                                                      |
-| `PUT /config` | covered | `compliance/schema-enforcement.test.ts`                      | Strict mode, source allowlist, source filter; wholesale replacement. |
+| Operation     | Status  | Fixture                                                                | Notes                                                                                                                                      |
+| ------------- | ------- | ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `GET /audit`  | covered | `compliance/audit.test.ts`, `compliance/edge-events.test.ts`           | Filters, exclusive bounds, cursor, `audit.read` gate.                                                                                      |
+| `GET /config` | covered | `compliance/schema-enforcement.test.ts`, `compliance/instance.test.ts` | Carries `instance_id` beside the levers.                                                                                                   |
+| `PUT /config` | covered | `compliance/schema-enforcement.test.ts`                                | Strict mode, source allowlist, source filter; wholesale replacement; `instance_id` round trips and one naming another instance is refused. |
 
 ## Operator maintenance
 
@@ -135,7 +135,7 @@ Fixture paths are under `src/suites/`.
 | Operation                                          | Status      | Fixture                       | Notes                                            |
 | -------------------------------------------------- | ----------- | ----------------------------- | ------------------------------------------------ |
 | `GET /health`                                      | unpublished | `compliance/instance.test.ts` |                                                  |
-| `GET /`                                            | unpublished | `compliance/instance.test.ts` |                                                  |
+| `GET /`                                            | unpublished | `compliance/instance.test.ts` | Name, build, `instance_id` and the feature list. |
 | `GET /openapi.json`                                | unpublished | `compliance/instance.test.ts` |                                                  |
 | `GET /.well-known/oauth-authorization-server/auth` | unpublished | `compliance/oauth.test.ts`    | The authorization server metadata.               |
 | `POST /auth/oauth2/token`                          | unpublished | `compliance/oauth.test.ts`    | Refusals only: a grant needs a signed-in person. |

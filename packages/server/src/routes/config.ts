@@ -1,4 +1,5 @@
 import { createRoute, z } from "@hono/zod-openapi";
+import { ErrorCode, MarfaError } from "@withmarfa/shared";
 import type { InstanceConfig } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { requirePermission, requireAuth } from "../middleware/auth.js";
@@ -27,8 +28,20 @@ const instanceConfigShape = (strict: boolean) => ({
   activity_retention_days: z.number().int().min(0).optional(),
 });
 
-/** The read shape, permissive at every level. */
-const InstanceConfigSchema = z.object(instanceConfigShape(false));
+/**
+ * The read shape, permissive at every level, with the instance's identity
+ * beside the levers.
+ *
+ * `instance_id` is not configuration and nothing here sets it — it names the
+ * deployment whose configuration this is, which is the fact an operator
+ * holding two of them needs and cannot get from the levers. It is always
+ * present, so it is required rather than optional: a caller that has to
+ * handle its absence would be handling a state the door does not produce.
+ */
+const InstanceConfigSchema = z.object({
+  instance_id: z.string(),
+  ...instanceConfigShape(false),
+});
 
 /**
  * The write shape, which refuses a key it does not know, at every level.
@@ -42,7 +55,17 @@ const InstanceConfigSchema = z.object(instanceConfigShape(false));
  * refuses to parse a field added after it shipped is the mirror-image failure,
  * and a response has never erased anything.
  */
-const InstanceConfigWriteSchema = z.strictObject(instanceConfigShape(true));
+const InstanceConfigWriteSchema = z.strictObject({
+  // Accepted so that the natural use of a full-replacement door — read it,
+  // change one lever, send it back — is not refused for carrying the field
+  // the read just handed over. It sets nothing: the handler refuses a value
+  // that is not this instance's own and never persists it either way.
+  // Silently dropping it instead would make `PUT` answer `200` to a body
+  // addressed to a different instance, which is the failure a backup script
+  // pointed at the wrong host produces.
+  instance_id: z.string().min(1).optional(),
+  ...instanceConfigShape(true),
+});
 
 const getConfigRoute = createRoute({
   operationId: "getConfig",
@@ -51,7 +74,7 @@ const getConfigRoute = createRoute({
   tags: ["Config"],
   summary: "Get the instance configuration",
   description:
-    "Returns the instance configuration — the optional `enforcement` levers plus the cleanup-job retention overrides. Returns an empty object when nothing is configured. Requires `config.manage`.",
+    "Returns the instance configuration — the optional `enforcement` levers plus the cleanup-job retention overrides — under `instance_id`, the identifier this deployment answers to. Only `instance_id` is present when nothing is configured. Requires `config.manage`.",
   security: [{ bearerAuth: [] }],
   responses: {
     200: {
@@ -86,7 +109,7 @@ const putConfigRoute = createRoute({
   tags: ["Config"],
   summary: "Replace the instance configuration",
   description:
-    "Overwrites the instance config with the supplied object — full replacement, not a merge. An unknown key is refused rather than dropped, because a full replacement that ignores a typo erases every override the instance had. Cleanup-job retention overrides must be non-negative, where `0` disables the corresponding job. Requires `config.manage`.",
+    "Overwrites the instance config with the supplied object — full replacement, not a merge. An unknown key is refused rather than dropped, because a full replacement that ignores a typo erases every override the instance had. Cleanup-job retention overrides must be non-negative, where `0` disables the corresponding job. `instance_id` may be sent back as read, so a body taken from `GET /config` round trips; it sets nothing, and one naming a different instance answers `400 validation_error` rather than being ignored. Requires `config.manage`.",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -132,23 +155,43 @@ const putConfigRoute = createRoute({
   },
 });
 
-export function configRoutes(storage: Storage) {
+export function configRoutes(storage: Storage, instanceId: string) {
   const router = createOpenAPIRouter<AppEnv>();
 
   router.openapi(getConfigRoute, async (c) => {
     requireAuth(c);
     requirePermission(c, "config.manage");
     const config = await readInstanceConfig(storage.settings);
-    return c.json(config ?? {}, 200);
+    // The identity last, so a stored row carrying the key cannot shadow it.
+    // `readInstanceConfig` parses without a runtime schema, so whatever is
+    // in that row is spread verbatim — and a wrong identity served with a
+    // 200 is the one answer this door must not give.
+    return c.json({ ...(config ?? {}), instance_id: instanceId }, 200);
   });
 
   router.openapi(putConfigRoute, async (c) => {
     const key = requireAuth(c);
     requirePermission(c, "config.manage");
-    // No cast. The validated shape and `InstanceConfig` are the same type,
-    // because the schema declares every field the interface does — a cast
-    // between them would hide a field this route cannot set.
-    const body: InstanceConfig = c.req.valid("json");
+    const { instance_id: addressed, ...rest } = c.req.valid("json");
+    if (addressed !== undefined && addressed !== instanceId) {
+      throw new MarfaError(
+        ErrorCode.VALIDATION_ERROR,
+        "instance_id names a different instance",
+        {
+          errors: [
+            {
+              path: "instance_id",
+              message: `this instance is ${instanceId}`,
+            },
+          ],
+        },
+      );
+    }
+    // No cast. What is left after the identity is removed and
+    // `InstanceConfig` are the same type, because the schema declares every
+    // field the interface does — a cast between them would hide a field this
+    // route cannot set.
+    const body: InstanceConfig = rest;
 
     await writeInstanceConfig(storage.settings, body);
     void storage.audit.log({
@@ -158,7 +201,9 @@ export function configRoutes(storage: Storage) {
       resource_type: "config",
     });
 
-    return c.json(body, 200);
+    // Echoed with the identity the read carries, so the two doors answer the
+    // same shape and a client can send back what either one gave it.
+    return c.json({ ...body, instance_id: instanceId }, 200);
   });
 
   return router;

@@ -30,3 +30,7 @@ export { initEventLog, __resetEventLogForTests } from "./pubsub.js";
 // harness that drives the first mint has to do the same or it is testing a
 // door the product no longer has.
 export { ensureBootstrapSecret } from "./auth/bootstrap-secret.js";
+// And the identity, for the same reason again: `createApp` takes the name the
+// instance answers to rather than reading it, so a harness that builds an app
+// without the server's own boot has to resolve it the way boot does.
+export { ensureInstanceId } from "./storage/instance-id.js";

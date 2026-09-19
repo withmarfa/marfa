@@ -954,11 +954,19 @@ export class MarfaClient {
   }
 
   async root(): Promise<
-    ApiResponse<{ name: string; version: string; features: string[] }>
+    ApiResponse<{
+      name: string;
+      version: string;
+      instance_id: string;
+      features: string[];
+    }>
   > {
-    return this.request<{ name: string; version: string; features: string[] }>(
-      "/",
-    );
+    return this.request<{
+      name: string;
+      version: string;
+      instance_id: string;
+      features: string[];
+    }>("/");
   }
 
   /**

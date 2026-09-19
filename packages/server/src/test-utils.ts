@@ -1,6 +1,7 @@
 import { PERMISSIONS } from "@withmarfa/shared";
 import type { CreateKeyInput } from "@withmarfa/shared";
 import { createApp } from "./app.js";
+import { ensureInstanceId } from "./storage/instance-id.js";
 import { consentLockDepth } from "./auth/consent-lock.js";
 import { OidcSigner } from "./auth/oidc-signing.js";
 import type { AppConfig } from "./config.js";
@@ -446,7 +447,13 @@ async function buildUnbootstrappedApp(
     ...overrides,
   };
   const oidcSigner = await OidcSigner.init(storage);
-  const app = createApp(storage, blobBackend, config, oidcSigner);
+  const app = createApp(
+    storage,
+    blobBackend,
+    config,
+    await ensureInstanceId(storage.settings),
+    oidcSigner,
+  );
   if (!app.auth) {
     throw new Error("test-utils: createApp mounted no auth instance");
   }

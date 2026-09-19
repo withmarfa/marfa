@@ -14,6 +14,7 @@ The specification has two halves.
 - `events.md`: the event stream, its frames and filters, and outbound webhooks.
 - `search-and-filters.md`: search, export, occurrences and the query grammar every listing shares.
 - `keys-and-oauth.md`: keys, permissions, the operator key and the OAuth provider.
+- `instance.md`: what one deployment says about itself, and the identity it answers to.
 - `errors.md`: the error envelope and every code the fixtures produce.
 - `coverage.md`: every published operation with its fixture and status.
 - `findings.md`: where the server contradicts its own document, for the server's maintainers.

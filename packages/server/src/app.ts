@@ -63,8 +63,34 @@ export function createApp(
   storage: Storage,
   blobBackend: BlobBackend,
   config: AppConfig,
+  /**
+   * The name this instance answers to, resolved by the caller before the
+   * app exists.
+   *
+   * Passed in rather than read per request, for two reasons.
+   *
+   * The root route must not be able to fail. It is what a client asks to
+   * learn whether it is talking to a marfa server and which one, and a
+   * handler that awaits the database answers `500` exactly when an operator
+   * most needs it to answer — which is the failure `GET /health` is
+   * deliberately built never to have.
+   *
+   * And three doors show this value. Resolving it here and handing it to
+   * each makes "the three agree" true by construction rather than by every
+   * call site happening to read the same row; `ensureInstanceId` resolves
+   * it, and the server's boot is what calls that.
+   */
+  instanceId: string,
   oidcSigner?: OidcSigner,
 ) {
+  // The empty string is the one wrong value the type cannot refuse, and it
+  // is what a caller reaching for a field that is not there hands over. An
+  // instance serving `"instance_id": ""` names nothing, and does it with a
+  // 200 on three doors — loud here beats quiet everywhere.
+  if (instanceId === "") {
+    throw new Error("createApp: instanceId is empty; resolve it first");
+  }
+
   const app = new OpenAPIHono<AppEnv>();
 
   // Global error handler. Held in a variable because the idempotency
@@ -248,10 +274,15 @@ export function createApp(
   // version (`info.version` below) — that's a stable literal bumped on
   // wire-shape changes, not on every deploy.
   const deployedVersion = config.versionSha ?? "dev";
+  // `instance_id` names the deployment, and the root is where a caller that
+  // holds no credential can read it: the id is what distinguishes two
+  // instances answering the same shape, which is exactly the question
+  // somebody pointing a client at an address is asking.
   app.get("/", (c) =>
     c.json({
       name: "marfa",
       version: deployedVersion,
+      instance_id: instanceId,
       features,
       cdn_base_url: config.cdnBaseUrl || null,
     }),
@@ -503,10 +534,10 @@ export function createApp(
   app.route("/metadata", metadataRoutes(storage));
   app.route("/blobs", blobRoutes(storage, blobBackend, config.maxBlobSize));
   app.route("/keys", keyRoutes(storage, config.apiKeySalt));
-  app.route("/config", configRoutes(storage));
+  app.route("/config", configRoutes(storage, instanceId));
   app.route("/admin", adminArchiveRoutes(storage, blobBackend));
   app.route("/admin", adminPlatformTypeRoutes(storage));
-  app.route("/export", exportRoutes(storage, blobBackend));
+  app.route("/export", exportRoutes(storage, blobBackend, instanceId));
   app.route("/auth", authRoutes(storage, auth, oidcSigner));
   // `/auth/authorize` consent page (the @better-auth/oauth-provider plugin's
   // `consentPage` redirect target). Mounted BEFORE the better-auth catch-all

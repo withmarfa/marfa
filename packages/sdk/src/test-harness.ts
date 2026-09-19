@@ -5,6 +5,7 @@ import {
   createApp,
   ensureBootstrapSecret,
   createSqliteStorage,
+  ensureInstanceId,
   FilesystemBlobBackend,
   initEventLog,
   __resetEventLogForTests,
@@ -152,6 +153,7 @@ export async function createKeysModeFixture(
     storage,
     blobBackend,
     baseConfig({ ...configOverrides }),
+    await ensureInstanceId(storage.settings),
   );
   const fetch = createTestFetch(app);
 

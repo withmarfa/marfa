@@ -133,5 +133,11 @@ export type {
   ItemState,
   MergePolicy,
   MergeStrategy,
+  // Both halves of the configuration door. `config.get` returns the second
+  // and `config.set` takes either, so a consumer that cannot name them here
+  // has to reach into the other package to declare a variable holding what
+  // this client just handed it.
+  InstanceConfig,
+  InstanceConfigResponse,
 } from "@withmarfa/shared";
 export type { TypeSchema } from "@withmarfa/shared";

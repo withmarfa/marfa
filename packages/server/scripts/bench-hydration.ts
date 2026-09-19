@@ -8,46 +8,53 @@ import { join } from "node:path";
 import { createSqliteStorage } from "../src/storage/sqlite/index.js";
 import { FilesystemBlobBackend } from "../src/storage/blob-backend.js";
 import { createApp } from "../src/app.js";
+import { ensureInstanceId } from "../src/storage/instance-id.js";
 import { hashApiKey } from "../src/middleware/auth.js";
 
 async function main(): Promise<void> {
   const dir = mkdtempSync(join(tmpdir(), "bench-"));
   const storage = await createSqliteStorage(join(dir, "b.db"));
   const blob = new FilesystemBlobBackend(join(dir, "blobs"));
-  const app = createApp(storage, blob, {
-    port: 0,
-    sqlitePath: "",
-    blobPath: "",
-    blobBackend: "fs",
-    maxBlobSize: 50 * 1024 * 1024,
-    maxRequestBytes: 1_048_576,
-    s3Bucket: "",
-    s3Region: "us-east-1",
-    s3Endpoint: "",
-    s3AccessKeyId: "",
-    s3SecretAccessKey: "",
-    apiKeySalt: "s",
-    corsOrigins: [],
-    cdnBaseUrl: "",
-    rateLimitEnabled: false,
-    enableHsts: false,
-    auditRetentionDays: 90,
-    auditCleanupIntervalMs: 86400000,
-    eventLogRetentionHours: 168,
-    versionThinningIntervalMs: 3600000,
-    versionRecentDays: 30,
-    versionDailySnapshotDays: 90,
-    versionWeeklySnapshotDays: 365,
-    versionMaxVersions: 500,
-    trashRetentionDays: 60,
-    trashPurgeIntervalMs: 86_400_000,
-    errorWebhookUrl: "",
-    trustedProxyCidrs: [],
-    authBaseUrl: "http://localhost:0",
-    authSecret: "test-auth-secret",
-    rateLimitDefaultLimit: 1000,
-    rateLimitWindowMs: 60_000,
-  });
+  const instanceId = await ensureInstanceId(storage.settings);
+  const app = createApp(
+    storage,
+    blob,
+    {
+      port: 0,
+      sqlitePath: "",
+      blobPath: "",
+      blobBackend: "fs",
+      maxBlobSize: 50 * 1024 * 1024,
+      maxRequestBytes: 1_048_576,
+      s3Bucket: "",
+      s3Region: "us-east-1",
+      s3Endpoint: "",
+      s3AccessKeyId: "",
+      s3SecretAccessKey: "",
+      apiKeySalt: "s",
+      corsOrigins: [],
+      cdnBaseUrl: "",
+      rateLimitEnabled: false,
+      enableHsts: false,
+      auditRetentionDays: 90,
+      auditCleanupIntervalMs: 86400000,
+      eventLogRetentionHours: 168,
+      versionThinningIntervalMs: 3600000,
+      versionRecentDays: 30,
+      versionDailySnapshotDays: 90,
+      versionWeeklySnapshotDays: 365,
+      versionMaxVersions: 500,
+      trashRetentionDays: 60,
+      trashPurgeIntervalMs: 86_400_000,
+      errorWebhookUrl: "",
+      trustedProxyCidrs: [],
+      authBaseUrl: "http://localhost:0",
+      authSecret: "test-auth-secret",
+      rateLimitDefaultLimit: 1000,
+      rateLimitWindowMs: 60_000,
+    },
+    instanceId,
+  );
   const raw = "marfa_k1_bench";
   await storage.keys.create(
     {

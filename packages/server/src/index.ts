@@ -17,6 +17,7 @@ import {
 } from "./auth/default-bundles.js";
 import { setRuntimeNamespaceRoots } from "./auth/oauth-provider.js";
 import { createApp } from "./app.js";
+import { ensureInstanceId } from "./storage/instance-id.js";
 import { createSqliteStorage } from "./storage/sqlite/index.js";
 import { FilesystemBlobBackend } from "./storage/blob-backend.js";
 import type { BlobBackend } from "./storage/blob-backend.js";
@@ -455,7 +456,13 @@ async function main() {
     );
   }
 
-  const app = createApp(storage, blobBackend, config, oidcSigner);
+  // **Minted at first boot**, so an instance holds its name before it has
+  // answered anything and before the socket is listening. The root route is
+  // handed the value rather than reading it, which is what keeps that one
+  // door answerable on an instance whose database has since gone.
+  const instanceId = await ensureInstanceId(storage.settings);
+
+  const app = createApp(storage, blobBackend, config, instanceId, oidcSigner);
   const server = serve({ fetch: app.fetch, port: config.port }, (info) => {
     log("info", `Marfa server listening on port ${String(info.port)}`);
   });

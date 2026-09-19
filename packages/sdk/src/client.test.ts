@@ -6,6 +6,7 @@ import {
   ensureBootstrapSecret,
   createApp,
   createSqliteStorage,
+  ensureInstanceId,
   FilesystemBlobBackend,
   BulkActionWorker,
 } from "@withmarfa/server";
@@ -50,39 +51,45 @@ beforeAll(async () => {
   const storage = await createSqliteStorage(join(tmpDir, "test.db"));
   testStorage = storage;
   const blobBackend = new FilesystemBlobBackend(join(tmpDir, "blobs"));
-  const app = createApp(storage, blobBackend, {
-    port: 0,
-    sqlitePath: "",
-    blobPath: "",
-    blobBackend: "fs",
-    maxBlobSize: 50 * 1024 * 1024,
-    maxRequestBytes: 1_048_576,
-    s3Bucket: "",
-    s3Region: "us-east-1",
-    s3Endpoint: "",
-    s3AccessKeyId: "",
-    s3SecretAccessKey: "",
-    apiKeySalt: "test-salt",
-    corsOrigins: [],
-    cdnBaseUrl: "",
-    rateLimitEnabled: false,
-    enableHsts: false,
-    auditRetentionDays: 90,
-    auditCleanupIntervalMs: 86_400_000,
-    versionThinningIntervalMs: 3_600_000,
-    versionRecentDays: 30,
-    versionDailySnapshotDays: 90,
-    versionWeeklySnapshotDays: 365,
-    versionMaxVersions: 500,
-    trashRetentionDays: 60,
-    trashPurgeIntervalMs: 3_600_000,
-    errorWebhookUrl: "",
-    trustedProxyCidrs: [],
-    authBaseUrl: "http://localhost:0",
-    authSecret: "test-secret",
-    rateLimitDefaultLimit: 1000,
-    rateLimitWindowMs: 60_000,
-  });
+  const instanceId = await ensureInstanceId(storage.settings);
+  const app = createApp(
+    storage,
+    blobBackend,
+    {
+      port: 0,
+      sqlitePath: "",
+      blobPath: "",
+      blobBackend: "fs",
+      maxBlobSize: 50 * 1024 * 1024,
+      maxRequestBytes: 1_048_576,
+      s3Bucket: "",
+      s3Region: "us-east-1",
+      s3Endpoint: "",
+      s3AccessKeyId: "",
+      s3SecretAccessKey: "",
+      apiKeySalt: "test-salt",
+      corsOrigins: [],
+      cdnBaseUrl: "",
+      rateLimitEnabled: false,
+      enableHsts: false,
+      auditRetentionDays: 90,
+      auditCleanupIntervalMs: 86_400_000,
+      versionThinningIntervalMs: 3_600_000,
+      versionRecentDays: 30,
+      versionDailySnapshotDays: 90,
+      versionWeeklySnapshotDays: 365,
+      versionMaxVersions: 500,
+      trashRetentionDays: 60,
+      trashPurgeIntervalMs: 3_600_000,
+      errorWebhookUrl: "",
+      trustedProxyCidrs: [],
+      authBaseUrl: "http://localhost:0",
+      authSecret: "test-secret",
+      rateLimitDefaultLimit: 1000,
+      rateLimitWindowMs: 60_000,
+    },
+    instanceId,
+  );
 
   testFetchFn = createTestFetch(app);
   const testFetch = testFetchFn;
@@ -1028,15 +1035,25 @@ describe("Extended SDK surface", () => {
     await expect(client.items.get(item.id)).rejects.toThrow(NotFoundError);
   });
 
-  it("config.get returns the empty config when nothing is configured", async () => {
+  it("config.get names the instance", async () => {
     const config = await client.config.get();
-    expect(typeof config).toBe("object");
+    expect(typeof config.instance_id).toBe("string");
   });
 
-  it("config.set calls PUT /config", async () => {
+  it("config.set calls PUT /config and takes the document back", async () => {
     // What this asserts is that the SDK reaches the door and returns the
     // config the server sent back, not merely that it built a request.
-    await expect(client.config.set({})).resolves.toEqual({});
+    const identity = (await client.config.get()).instance_id;
+    await expect(client.config.set({})).resolves.toEqual({
+      instance_id: identity,
+    });
+    // And that the whole document `get` returns is a body `set` takes: the
+    // identity is in every read, so a caller reading, editing and writing
+    // back would be refused if the SDK stripped it or the door rejected it.
+    await expect(
+      client.config.set({ instance_id: identity, audit_retention_days: 21 }),
+    ).resolves.toEqual({ instance_id: identity, audit_retention_days: 21 });
+    await client.config.set({});
   });
 
   it("keys.create returns the full ApiKey shape including credential defaults", async () => {
