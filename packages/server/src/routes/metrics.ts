@@ -110,7 +110,7 @@ export function metricsRoutes(storage: Storage) {
       },
       blobs: {
         count: blobStats.count,
-        total_bytes: blobStats.total_size,
+        total_bytes: blobStats.total_size_bytes,
       },
       types: {
         // Counted apart so the number does not quietly conflate the shared

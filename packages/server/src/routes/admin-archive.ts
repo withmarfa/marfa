@@ -85,7 +85,7 @@ interface ArchiveManifest {
   item_count: number;
   edge_count: number;
   blob_count: number;
-  blobs: Record<string, { mime_type: string; size: number }>;
+  blobs: Record<string, { mime_type: string; size_bytes: number }>;
 }
 
 const restoreArchiveRoute = createRoute({

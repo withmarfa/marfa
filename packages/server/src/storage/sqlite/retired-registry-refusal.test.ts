@@ -115,7 +115,7 @@ describe("a retired registry table is refused on open", () => {
     const path = scratch();
     const seed = createClient({ url: `file:${path}` });
     await seed.execute(
-      "CREATE TABLE items (id TEXT PRIMARY KEY, timestamp TEXT NOT NULL)",
+      "CREATE TABLE items (id TEXT PRIMARY KEY, source_id TEXT, timestamp TEXT NOT NULL)",
     );
     seed.close();
     const before = createHash("sha256")
@@ -133,7 +133,7 @@ describe("a retired registry table is refused on open", () => {
     const path = scratch();
     const seed = createClient({ url: `file:${path}` });
     await seed.execute(
-      "CREATE TABLE audit_log (id TEXT PRIMARY KEY, timestamp TEXT NOT NULL)",
+      "CREATE TABLE audit_log (id TEXT PRIMARY KEY, resource_type TEXT, timestamp TEXT NOT NULL)",
     );
     seed.close();
 
@@ -149,7 +149,7 @@ describe("a retired registry table is refused on open", () => {
     const path = scratch();
     const seed = createClient({ url: `file:${path}` });
     await seed.execute(
-      "CREATE TABLE api_keys (id TEXT PRIMARY KEY, space_permissions TEXT NOT NULL)",
+      "CREATE TABLE api_keys (id TEXT PRIMARY KEY, is_operator INTEGER, space_permissions TEXT NOT NULL)",
     );
     seed.close();
 
@@ -167,7 +167,7 @@ describe("a retired registry table is refused on open", () => {
     const path = scratch();
     const seed = createClient({ url: `file:${path}` });
     await seed.execute(
-      "CREATE TABLE types (id TEXT PRIMARY KEY, owner_integration TEXT)",
+      "CREATE TABLE types (id TEXT PRIMARY KEY, origin TEXT, owner_integration TEXT)",
     );
     seed.close();
     const before = createHash("sha256")
@@ -175,6 +175,32 @@ describe("a retired registry table is refused on open", () => {
       .digest("hex");
 
     await expect(createConnection(path)).rejects.toThrow(/no owner_connector/);
+    await expect(createConnection(path)).rejects.toThrow(path);
+    expect(createHash("sha256").update(readFileSync(path)).digest("hex")).toBe(
+      before,
+    );
+  });
+
+  it("refuses a blobs table that predates the size_bytes rename", async () => {
+    // The third unindexed column, and the quietest read of the three. Nothing
+    // indexes it, so the DDL passes against a file still carrying `size`, and
+    // the columns a sweep selects — `hash`, `created_at` — are both still
+    // there. What dies is every door that reads a blob's row: upload,
+    // download, the archive export, the enrichment sweep, and `GET /metrics`,
+    // whose blob counter sums this very column. Items keep reading, so a boot
+    // that said nothing was wrong is followed by an instance whose files have
+    // all become unreachable and whose health surface answers 500.
+    const path = scratch();
+    const seed = createClient({ url: `file:${path}` });
+    await seed.execute(
+      "CREATE TABLE blobs (hash TEXT PRIMARY KEY, storage_path TEXT, size INTEGER NOT NULL)",
+    );
+    seed.close();
+    const before = createHash("sha256")
+      .update(readFileSync(path))
+      .digest("hex");
+
+    await expect(createConnection(path)).rejects.toThrow(/no size_bytes/);
     await expect(createConnection(path)).rejects.toThrow(path);
     expect(createHash("sha256").update(readFileSync(path)).digest("hex")).toBe(
       before,
@@ -278,6 +304,24 @@ describe("a retired registry table is refused on open", () => {
     seed.close();
 
     await expect(createConnection(path)).rejects.not.toThrow(/integration:/);
+  });
+
+  it("opens a stranger's table that happens to share a name", async () => {
+    // `blobs` is a name anything might use, so the table alone is not
+    // evidence the file is one of ours. Each entry names a witness column
+    // this build's table has and an unrelated one would not, and concludes
+    // nothing without it. Refusing a foreign database with advice about a
+    // build that never wrote it is worse than opening it — the sibling
+    // `settings` probe reached the same answer from the other direction.
+    const path = scratch();
+    const seed = createClient({ url: `file:${path}` });
+    await seed.execute(
+      "CREATE TABLE blobs (id INTEGER PRIMARY KEY, data BLOB)",
+    );
+    seed.close();
+
+    const opened = await createConnection(path);
+    await opened.close();
   });
 
   it("opens a fresh database, and one it has already opened", async () => {

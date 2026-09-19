@@ -1110,12 +1110,14 @@ export interface BlobStore {
   register(
     hash: string,
     mimeType: string,
-    size: number,
+    sizeBytes: number,
     storagePath: string,
   ): Promise<void>;
-  get(
-    hash: string,
-  ): Promise<{ mime_type: string; size: number; storage_path: string } | null>;
+  get(hash: string): Promise<{
+    mime_type: string;
+    size_bytes: number;
+    storage_path: string;
+  } | null>;
   /** Every registered hash, de-duplicated. Used by the admin reconcile
    *  route + metrics. */
   listAll(): Promise<string[]>;
@@ -1127,7 +1129,7 @@ export interface BlobStore {
    */
   listRegisteredBefore(cutoff: string): Promise<string[]>;
   remove(hash: string): Promise<void>;
-  count(): Promise<{ count: number; total_size: number }>;
+  count(): Promise<{ count: number; total_size_bytes: number }>;
 }
 
 export interface WebhookStore {

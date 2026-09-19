@@ -68,6 +68,29 @@ describe("GET /metrics", () => {
     expect(typeof body.cached_at).toBe("string");
   });
 
+  it("blobs.total_bytes sums the bytes rather than counting the rows", async () => {
+    // `typeof === "number"` above passes against a count, a zero, or the
+    // uptime. Two blobs of different lengths separate all three: the sum is
+    // neither the row count nor either length on its own.
+    const first = await request(ctx.app, "POST", "/blobs", {
+      key: ctx.workingKey,
+      body: new Uint8Array(153).fill(65),
+      headers: { "Content-Type": "application/octet-stream" },
+    });
+    expect(first.status).toBe(201);
+    const second = await request(ctx.app, "POST", "/blobs", {
+      key: ctx.workingKey,
+      body: new Uint8Array(67).fill(66),
+      headers: { "Content-Type": "application/octet-stream" },
+    });
+    expect(second.status).toBe(201);
+
+    const stats = await ctx.storage.blobs.count();
+    expect(stats.count).toBeGreaterThanOrEqual(2);
+    expect(stats.total_size_bytes).toBeGreaterThanOrEqual(153 + 67);
+    expect(stats.total_size_bytes).toBeGreaterThan(stats.count);
+  });
+
   it("items.total equals the sum of items.by_state", async () => {
     const res = await request(ctx.app, "GET", "/metrics", {
       key: ctx.operatorKey,

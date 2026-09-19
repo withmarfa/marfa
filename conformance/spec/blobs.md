@@ -2,7 +2,7 @@
 
 Content-addressed binary storage beside the items that reference it.
 
-1. `POST /blobs` takes the raw bytes as the body with their `Content-Type`, and answers `201` with `hash` (`sha256:` plus 64 hex characters of the content's digest), `mime_type` as sent and `size` in bytes. `correctness/blob-correctness.test.ts › upload returns the sha256 hash, the mime type sent and the byte length`.
+1. `POST /blobs` takes the raw bytes as the body with their `Content-Type`, and answers `201` with `hash` (`sha256:` plus 64 hex characters of the content's digest), `mime_type` as sent and `size_bytes`. `correctness/blob-correctness.test.ts › upload returns the sha256 hash, the mime type sent and the byte length`.
 2. Uploading the same bytes again answers the same hash without error. `correctness/blob-correctness.test.ts › duplicate upload returns same hash without error`.
 3. `GET /blobs/{hash}` returns the bytes unchanged with the content type they were uploaded under. `correctness/blob-correctness.test.ts › download returns byte-for-byte identical content`, `› content-type is preserved on download`.
 4. An unknown hash answers `404 blob_not_found`. `correctness/blob-correctness.test.ts › download with an unknown hash returns 404`, `compliance/error-codes.test.ts › returns 404 for non-existent blob`.

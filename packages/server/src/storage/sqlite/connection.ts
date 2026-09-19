@@ -51,7 +51,7 @@ const REFUSED_DATABASE_REMEDY =
 
 /**
  * Columns whose absence means the file predates a rename, checked by table
- * so a fresh database — which has neither table yet — is not refused.
+ * so a fresh database — which has none of these tables yet — is not refused.
  *
  * **A refusal here must not be reachable through the API**, and that is the
  * rule rather than a property these three happen to have. Nothing a caller
@@ -75,12 +75,23 @@ const REFUSED_DATABASE_REMEDY =
  * `api_keys.permissions` that read is in the bearer middleware, so every
  * authenticated request on the instance answers `500 internal_error` after
  * a boot that said nothing was wrong.
+ *
+ * **The third name is a witness, and it is why `blobs` can be on this list.**
+ * A table name alone is not evidence the file is one of ours: `blobs` in
+ * particular is a name anything might use, and refusing a stranger's
+ * database with advice about a build that never wrote it is worse than
+ * opening it. So each entry also names a column this build's table has and
+ * an unrelated one would not, and the check concludes nothing unless the
+ * witness is present. The sibling `settings` probe reached the same answer
+ * from the other direction, and says so in its own test: recognizing a
+ * stranger's schema is not this check's job.
  */
-const RENAMED_COLUMNS: readonly (readonly [string, string])[] = [
-  ["items", "occurred_at"],
-  ["audit_log", "created_at"],
-  ["api_keys", "permissions"],
-  ["types", "owner_connector"],
+const RENAMED_COLUMNS: readonly (readonly [string, string, string])[] = [
+  ["items", "occurred_at", "source_id"],
+  ["audit_log", "created_at", "resource_type"],
+  ["api_keys", "permissions", "is_operator"],
+  ["types", "owner_connector", "origin"],
+  ["blobs", "size_bytes", "storage_path"],
 ];
 
 export type DrizzleDb = ReturnType<typeof drizzle<typeof schema>>;
@@ -168,11 +179,16 @@ export async function createConnection(sqlitePath: string): Promise<{
   // database this build will not open comes back unchanged. Refusing here
   // keeps both properties: one sentence that names the file and what to do,
   // and a file left as it was found.
-  for (const [table, column] of RENAMED_COLUMNS) {
+  for (const [table, column, witness] of RENAMED_COLUMNS) {
     const info = await client.execute(`PRAGMA table_info(${table})`);
     if (info.rows.length === 0) continue;
-    const hasColumn = info.rows.some((row) => row.name === column);
-    if (hasColumn) continue;
+    const names = new Set(
+      info.rows
+        .map((row) => row.name)
+        .filter((name): name is string => typeof name === "string"),
+    );
+    if (!names.has(witness)) continue;
+    if (names.has(column)) continue;
     client.close();
     throw new Error(
       `The ${table} table in ${sqlitePath} has no ${column} column, so it predates this build's schema. ` +

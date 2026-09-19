@@ -30,7 +30,7 @@ describe("blob correctness", () => {
     await expectMatchesSchema("POST", "/blobs", 201, upload.data);
     expect(upload.data.hash).toBe(`sha256:${expectedHex}`);
     expect(upload.data.mime_type).toBe("text/plain");
-    expect(upload.data.size).toBe(content.byteLength);
+    expect(upload.data.size_bytes).toBe(content.byteLength);
   });
 
   it("download returns byte-for-byte identical content", async () => {

@@ -281,7 +281,7 @@ interface ArchiveManifest {
    *  platform-seeded rows sharing the table. */
   type_count: number;
   edge_type_count: number;
-  blobs: Record<string, { mime_type: string; size: number }>;
+  blobs: Record<string, { mime_type: string; size_bytes: number }>;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -313,7 +313,8 @@ async function handleArchiveExport(
   let typeCount = 0;
   let edgeTypeCount = 0;
   const blobHashes = new Set<string>();
-  const blobMeta: Record<string, { mime_type: string; size: number }> = {};
+  const blobMeta: Record<string, { mime_type: string; size_bytes: number }> =
+    {};
 
   const collect = async () => {
     // Same both-endpoints rule as the NDJSON path: the archive carries
@@ -405,7 +406,10 @@ async function handleArchiveExport(
     for (const hash of blobHashes) {
       const record = await storage.blobs.get(hash);
       if (record) {
-        blobMeta[hash] = { mime_type: record.mime_type, size: record.size };
+        blobMeta[hash] = {
+          mime_type: record.mime_type,
+          size_bytes: record.size_bytes,
+        };
       }
     }
   };

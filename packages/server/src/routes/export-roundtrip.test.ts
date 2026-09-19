@@ -389,7 +389,6 @@ describe("an archive's blobs", () => {
         title: "attachment",
         blob_ref: hash,
         mime_type: "text/plain",
-        size: bytes.length,
       },
       source: "blob-seed",
     });

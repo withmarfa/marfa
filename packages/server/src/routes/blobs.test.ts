@@ -27,11 +27,11 @@ describe("POST /blobs", () => {
     const body = (await res.json()) as {
       hash: string;
       mime_type: string;
-      size: number;
+      size_bytes: number;
     };
     expect(body.hash).toMatch(/^sha256:[0-9a-f]{64}$/);
     expect(body.mime_type).toBe("application/octet-stream");
-    expect(body.size).toBe(data.length);
+    expect(body.size_bytes).toBe(data.length);
   });
 
   it("deduplicates identical content", async () => {

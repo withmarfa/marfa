@@ -272,7 +272,7 @@ CREATE INDEX IF NOT EXISTS `idx_auth_verification_identifier` ON `auth_verificat
 CREATE TABLE IF NOT EXISTS `blobs` (
 	`hash` text PRIMARY KEY NOT NULL,
 	`mime_type` text NOT NULL,
-	`size` integer NOT NULL,
+	`size_bytes` integer NOT NULL,
 	`storage_path` text NOT NULL,
 	`created_at` text NOT NULL
 );
