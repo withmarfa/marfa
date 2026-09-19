@@ -328,17 +328,13 @@ describe("the server sends the headers the spec declares", () => {
       await res.body?.cancel();
     });
 
-    it("sends them on a blob HEAD, whichever handler answers it", async () => {
+    it("sends them on a blob HEAD", async () => {
       // A HEAD is a request clients make, so what it carries is worth
-      // pinning — but be precise about what this covers. The file mounts a
-      // separate `.on("HEAD", "/:hash")` handler, and that handler never
-      // runs: a HEAD is answered by the GET route above, which is why this
-      // case reddens when the GET merge is removed and not when the HEAD
-      // branch's is. The dead handler is noted at its definition.
-      //
-      // So this asserts the client-visible behavior and deliberately not
-      // the handler behind it. A test naming a handler it does not reach is
-      // worse than no test: it reads as coverage.
+      // pinning. There used to be a separate `.on("HEAD", "/:hash")`
+      // handler beside the GET route which never ran — a HEAD has always
+      // been answered by the GET route — and it is gone. This asserts the
+      // client-visible behavior, which is what it asserted before and what
+      // it still asserts now that only one handler exists.
       const res = await request(ctx.app, "HEAD", `/blobs/${blobHash}`, {
         key: ctx.workingKey,
       });

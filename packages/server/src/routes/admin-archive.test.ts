@@ -102,7 +102,10 @@ describe("POST /admin/restore-archive", () => {
         item_count: 1,
         blob_count: 1,
         blobs: {
-          [blob.hash]: { mime_type: "text/plain", size: blob.data.length },
+          [blob.hash]: {
+            mime_type: "text/plain",
+            size_bytes: blob.data.length,
+          },
         },
       },
       [

@@ -1997,7 +1997,7 @@ export class MarfaClient {
       const result = (await response.json()) as {
         hash: string;
         mime_type: string;
-        size: number;
+        size_bytes: number;
       };
 
       if (!response.ok) {

@@ -261,7 +261,7 @@ export const apiKeys = sqliteTable(
 export const blobs = sqliteTable("blobs", {
   hash: text("hash").primaryKey(),
   mime_type: text("mime_type").notNull(),
-  size: integer("size").notNull(),
+  size_bytes: integer("size_bytes").notNull(),
   storage_path: text("storage_path").notNull(),
   // When the blob was registered. The orphan sweep measures its grace
   // window against it, so a blob whose item write is still in flight is not

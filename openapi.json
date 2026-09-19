@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Marfa API",
-    "version": "5.3.0",
+    "version": "5.4.0",
     "description": "Typed data layer for structured personal data"
   },
   "components": {
@@ -17898,14 +17898,14 @@
                     "mime_type": {
                       "type": "string"
                     },
-                    "size": {
+                    "size_bytes": {
                       "type": "number"
                     }
                   },
                   "required": [
                     "hash",
                     "mime_type",
-                    "size"
+                    "size_bytes"
                   ]
                 }
               }

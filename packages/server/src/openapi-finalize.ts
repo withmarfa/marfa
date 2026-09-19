@@ -54,20 +54,27 @@ interface OpenAPIDoc {
  * an open string under a description offering a closed pair, and is now the
  * pair: every other value used to answer `200` with the default and now
  * answers `400`, which narrows a generated client's parameter type with it.
+ * It moved to 5.4.0 for a blob's size, which is `size_bytes` where it was
+ * `size` on three surfaces a caller reads: the upload's `201`, the archive
+ * manifest inside `GET /export?format=archive`, and the `blob.upload` row's
+ * `details` on `GET /audit`. Only the first is described in this document —
+ * the other two are bodies the document carries no schema for, which is
+ * exactly why they are named here: for them this note is the only record
+ * there will ever be.
  *
  * **One change, one number**, even where it carries several breaks. The
  * version records that the contract moved and what a caller may have been
  * reading; a second increment inside one change would say the contract moved
  * twice, which is not what happened. The `403` that `PATCH /items/{id}`
- * gained here is additive and would not have moved it at all. Minor rather
- * than major because the API is pre-release.
+ * gained in the 5.3.0 change is additive and would not have moved it at all.
+ * Minor rather than major because the API is pre-release.
  *
  * Lives here so the live `/openapi.json` endpoint and the committed spec read
  * one literal instead of keeping two in lockstep by hand.
  */
 export const OPENAPI_DOCUMENT_INFO = {
   title: "Marfa API",
-  version: "5.3.0",
+  version: "5.4.0",
   description: "Typed data layer for structured personal data",
 } as const;
 

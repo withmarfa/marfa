@@ -240,10 +240,20 @@ describe("GET /export?format=archive", () => {
       format: string;
       item_count: number;
       blob_count: number;
+      blobs: Record<string, { mime_type: string; size_bytes: number }>;
     };
     expect(manifest.version).toBe(2);
     expect(manifest.format).toBe("marfa-archive-v2");
     expect(manifest.item_count).toBeGreaterThan(0);
+
+    // The manifest's blob entry, pinned by key and by value. Nothing on the
+    // read side consults it — a restore takes each blob's length from the tar
+    // entry — so without this the writer could emit any key it liked, or any
+    // number, and a full round trip would still pass.
+    expect(manifest.blobs[blobHash]).toEqual({
+      mime_type: "application/octet-stream",
+      size_bytes: "archive-export-blob".length,
+    });
 
     expect(entries.has("items.ndjson")).toBe(true);
     const ndjson = entries.get("items.ndjson")!.toString().trim();

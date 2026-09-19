@@ -188,7 +188,7 @@ export interface ApiKeyResponse {
 export interface BlobUploadResponse {
   hash: string;
   mime_type: string;
-  size: number;
+  size_bytes: number;
 }
 
 export interface ErrorResponse {

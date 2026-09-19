@@ -248,7 +248,7 @@ export class TextEnrichmentSweeper {
       }
       // Size gate before the read, so an oversized blob costs a metadata
       // lookup rather than its own bytes in memory.
-      if (meta.size > this.opts.maxBlobBytes) {
+      if (meta.size_bytes > this.opts.maxBlobBytes) {
         await recordSkip("blob exceeds size limit");
         return "skipped";
       }

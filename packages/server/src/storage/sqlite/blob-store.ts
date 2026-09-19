@@ -9,7 +9,7 @@ export class SqliteBlobStore implements BlobStore {
   async register(
     hash: string,
     mimeType: string,
-    size: number,
+    sizeBytes: number,
     storagePath: string,
   ): Promise<void> {
     // Idempotent — ignore if the row already exists.
@@ -18,7 +18,7 @@ export class SqliteBlobStore implements BlobStore {
       .values({
         hash,
         mime_type: mimeType,
-        size,
+        size_bytes: sizeBytes,
         storage_path: storagePath,
         created_at: new Date().toISOString(),
       })
@@ -26,9 +26,11 @@ export class SqliteBlobStore implements BlobStore {
       .run();
   }
 
-  async get(
-    hash: string,
-  ): Promise<{ mime_type: string; size: number; storage_path: string } | null> {
+  async get(hash: string): Promise<{
+    mime_type: string;
+    size_bytes: number;
+    storage_path: string;
+  } | null> {
     const row = await this.db
       .select()
       .from(blobs)
@@ -37,7 +39,7 @@ export class SqliteBlobStore implements BlobStore {
     if (!row) return null;
     return {
       mime_type: row.mime_type,
-      size: row.size,
+      size_bytes: row.size_bytes,
       storage_path: row.storage_path,
     };
   }
@@ -60,17 +62,17 @@ export class SqliteBlobStore implements BlobStore {
     await this.db.delete(blobs).where(eq(blobs.hash, hash)).run();
   }
 
-  async count(): Promise<{ count: number; total_size: number }> {
+  async count(): Promise<{ count: number; total_size_bytes: number }> {
     const row = await this.db
       .select({
         count: sql<number>`count(*)`,
-        total_size: sql<number>`coalesce(sum(${blobs.size}), 0)`,
+        total_size_bytes: sql<number>`coalesce(sum(${blobs.size_bytes}), 0)`,
       })
       .from(blobs)
       .get();
     return {
       count: row?.count ?? 0,
-      total_size: row?.total_size ?? 0,
+      total_size_bytes: row?.total_size_bytes ?? 0,
     };
   }
 }

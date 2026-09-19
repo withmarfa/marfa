@@ -63,7 +63,7 @@ async function buildArchive(opts: {
     blobs: Object.fromEntries(
       blobs.map((b) => [
         b.hash,
-        { mime_type: "text/plain", size: b.data.length },
+        { mime_type: "text/plain", size_bytes: b.data.length },
       ]),
     ),
   };
