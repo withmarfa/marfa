@@ -1,54 +1,13 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { MarfaClient } from "../../client/api.js";
 import type { TestContext } from "../../client/types.js";
-import {
-  createTestContext,
-  trackItem,
-  trackEdge,
-  trackWebhook,
-  cleanup,
-} from "../../utils/setup.js";
-import { createNote } from "../../generators/items.js";
+import { createTestContext, cleanup } from "../../utils/setup.js";
 import { publishedOperations } from "../../utils/openapi.js";
 
-let client: MarfaClient;
 let ctx: TestContext;
 let apiUrl: string;
-let itemId: string;
-let itemVersion: number;
-let edgeId: string;
-let edgeVersion: number;
-let webhookId: string;
 
 beforeAll(async () => {
-  ({ ctx, client, apiUrl } = await createTestContext(
-    "compliance",
-    "unauthenticated",
-  ));
-  const a = await client.createItem(createNote({ source: ctx.source }));
-  expect(a.ok).toBe(true);
-  trackItem(ctx, a.data.item.id);
-  itemId = a.data.item.id;
-  itemVersion = a.data.item.version;
-  const b = await client.createItem(createNote({ source: ctx.source }));
-  expect(b.ok).toBe(true);
-  trackItem(ctx, b.data.item.id);
-  const edge = await client.createEdge({
-    source_id: itemId,
-    target_id: b.data.item.id,
-    edge_type: "about",
-  });
-  expect(edge.ok).toBe(true);
-  trackEdge(ctx, edge.data.edge.id);
-  edgeId = edge.data.edge.id;
-  edgeVersion = edge.data.edge.version;
-  const hook = await client.createWebhook({
-    url: "http://127.0.0.1:9/never-called",
-    events: ["item.created"],
-  });
-  expect(hook.status).toBe(201);
-  trackWebhook(ctx, hook.data.id, client);
-  webhookId = hook.data.id;
+  ({ ctx, apiUrl } = await createTestContext("compliance", "unauthenticated"));
 });
 
 afterAll(async () => {
@@ -63,66 +22,23 @@ afterAll(async () => {
 const OPEN_DOORS = new Set(["POST /auth/oauth2/register"]);
 
 /**
- * Real identifiers and well-formed bodies, because on some routes the body
- * check or the row lookup runs before the credential check: a bare request
- * with a malformed body answers 400 there, and one naming an unknown row
- * answers 404, which would let the sweep pass on a door that never looked
- * for a credential. Recorded in spec/findings.md.
+ * Nothing about these requests is well formed, which is the point. The
+ * credential check runs ahead of the body check and the row lookup, so a
+ * bare request gets one answer whatever else is wrong with it: an id nothing
+ * carries, a query key no door knows, and a body no parser accepts. This
+ * sweep used to send a real row and a well-formed body, because the checks
+ * ran the other way round and a `400` or a `404` would have passed a door
+ * that never looked for a credential.
  */
+const UNKNOWN_ID = "019537a0-7b80-7000-8000-000000000000";
+const UNKNOWN_QUERY = "?definitely-not-a-filter=1";
+const UNPARSEABLE_BODY = "{ not json";
+
 function concretePath(template: string): string {
   return template
-    .replace("/items/{id}", `/items/${itemId}`)
-    .replace("/edges/{id}", `/edges/${edgeId}`)
-    .replace("/webhooks/{id}", `/webhooks/${webhookId}`)
-    .replace("/keys/{id}", `/keys/${ctx.trackedKeys[0]}`)
-    .replace("/types/{id}", "/types/core.note")
-    .replace("/edge-types/{id}", "/edge-types/about")
-    .replace("/platform-types/{id}", "/platform-types/core.note")
-    .replace("/jobs/{id}", "/jobs/baj-none")
-    .replace("{hash}", `sha256:${"0".repeat(64)}`)
-    .replace("{tag}", "x")
-    .replace("{namespace}", "x");
+    .replace("{hash}", "not-a-blob-hash")
+    .replace(/\{[^}]+\}/g, UNKNOWN_ID);
 }
-
-/**
- * Built after `beforeAll` rather than at module scope, because two of these
- * bodies have to name a version the run has actually read: the update doors
- * refuse a request naming none with `400 missing_required_field` before they
- * look for a credential, and a sweep sending one would report those two doors
- * as refusing a bare request when what it measured was its own malformed body.
- */
-function bodies(): Record<string, unknown> {
-  return {
-    "PATCH /items/{id}": { properties: { body: "x" }, version: itemVersion },
-    "POST /items/{id}/transition": { state: "archived" },
-    "POST /items/{id}/tags": { tags: ["x"] },
-    "POST /items/bulk": {
-      items: [{ type: "core.note", properties: { body: "x" } }],
-    },
-    "POST /items/bulk-actions": {
-      action: "transition",
-      state: "archived",
-      filter: { tags: ["x"] },
-    },
-    "POST /items/bulk-get": { ids: [] },
-    "PATCH /edges/{id}": { properties: {}, version: edgeVersion },
-    "POST /edges/bulk": { edges: [] },
-    "POST /edge-types": { id: "mock.sweep", cardinality: "many-to-many" },
-    "POST /edges": { source_id: "x", target_id: "x", edge_type: "about" },
-    "POST /items": { type: "core.note", properties: { body: "x" } },
-    "POST /webhooks": {
-      url: "http://127.0.0.1:9/x",
-      events: ["item.created"],
-    },
-    "POST /keys": { label: "x", source: "x" },
-    "POST /types": { id: "user.sweep", fields: {} },
-  };
-}
-
-const QUERIES: Record<string, string> = {
-  "GET /search": "?q=x",
-  "GET /occurrences": "?from=2030-01-01T00:00:00Z&to=2030-01-02T00:00:00Z",
-};
 
 describe("every published door refuses a request with no credential", () => {
   it("answers 401 unauthorized on each of them", async () => {
@@ -131,18 +47,14 @@ describe("every published door refuses a request with no credential", () => {
     );
     expect(doors.length).toBeGreaterThan(50);
 
-    const allBodies = bodies();
     const wrong: string[] = [];
     for (const op of doors) {
-      const key = `${op.method} ${op.path}`;
-      const body = allBodies[key] ?? {};
-      const query = QUERIES[key] ?? "";
       const response = await fetch(
-        `${apiUrl}${concretePath(op.path)}${query}`,
+        `${apiUrl}${concretePath(op.path)}${UNKNOWN_QUERY}`,
         {
           method: op.method,
           headers: { "Content-Type": "application/json" },
-          body: op.method === "GET" ? undefined : JSON.stringify(body),
+          body: op.method === "GET" ? undefined : UNPARSEABLE_BODY,
         },
       );
       const text = await response.text();
@@ -154,7 +66,7 @@ describe("every published door refuses a request with no credential", () => {
       }
       if (response.status !== 401 || code !== "unauthorized") {
         wrong.push(
-          `${key} answered ${String(response.status)} ${text.slice(0, 120)}`,
+          `${op.method} ${op.path} answered ${String(response.status)} ${text.slice(0, 120)}`,
         );
       }
     }

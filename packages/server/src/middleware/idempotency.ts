@@ -340,8 +340,8 @@ export function idempotencyMiddleware(opts: {
     // **No credential, no claim.** `authMiddleware` never rejects: every
     // failure path — absent bearer, an OAuth token that does not resolve —
     // sets `apiKey` to undefined and calls
-    // `next()`, and the refusal is raised by `requireAuth` inside the
-    // route, which is downstream of here. Claiming first would let an
+    // `next()`, and the refusal is raised by the credential gate the route
+    // carries, which is downstream of here. Claiming first would let an
     // unauthenticated stranger insert a row per request, keyed on 255
     // bytes of their choosing and kept for the whole retention window, on
     // a table with no quota; and a planted key would make a legitimate
