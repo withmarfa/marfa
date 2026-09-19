@@ -13,6 +13,7 @@ import type {
   ItemState,
   Tier,
   InstanceConfig,
+  InstanceConfigResponse,
   Edge,
   CreateEdgeInput,
   EdgeTypeSchema,
@@ -2188,19 +2189,28 @@ export class MarfaClient {
    * enforcement levers (`strict_mode`, `source_allowlist`,
    * `source_filter`) and the cleanup-job overrides
    * (`audit_retention_days`, `event_log_retention_hours`,
-   * `trash_retention_days`, `activity_retention_days`). Both endpoints
-   * take `config.manage`. */
+   * `trash_retention_days`, `activity_retention_days`), under the
+   * `instance_id` of the instance they belong to. Both endpoints take
+   * `config.manage`. */
   readonly config = {
-    /** Returns the instance config. Empty object when nothing is
+    /** Returns the instance config. Only `instance_id` when nothing is
      * configured. */
-    get: async (): Promise<InstanceConfig> => {
-      return this.transport.request<InstanceConfig>("GET", "/config");
+    get: async (): Promise<InstanceConfigResponse> => {
+      return this.transport.request<InstanceConfigResponse>("GET", "/config");
     },
 
     /** Replaces the instance config (PUT semantics — full replacement, not
-     * merge). */
-    set: async (config: InstanceConfig): Promise<InstanceConfig> => {
-      return this.transport.request<InstanceConfig>("PUT", "/config", {
+     * merge).
+     *
+     * Takes either a bare configuration or the whole document `get`
+     * returned, and sends what it was given: `instance_id` sets nothing,
+     * and one naming a different instance is refused `400`. Stripping it
+     * here instead would turn a body addressed to the wrong host into a
+     * success. */
+    set: async (
+      config: InstanceConfig | InstanceConfigResponse,
+    ): Promise<InstanceConfigResponse> => {
+      return this.transport.request<InstanceConfigResponse>("PUT", "/config", {
         body: config,
       });
     },

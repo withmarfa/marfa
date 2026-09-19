@@ -7,6 +7,7 @@ import { createSqliteStorage } from "../storage/sqlite/index.js";
 import { FilesystemBlobBackend } from "../storage/blob-backend.js";
 import { ensureBootstrapSecret } from "../auth/bootstrap-secret.js";
 import { createApp } from "../app.js";
+import { ensureInstanceId } from "../storage/instance-id.js";
 import type { TestContext } from "../test-utils.js";
 
 let ctx: TestContext;
@@ -44,42 +45,48 @@ describe("bootstrap mode", () => {
   it("mints the first key on the printed secret and no other credential", async () => {
     const freshTmpDir = mkdtempSync(join(tmpdir(), "marfa-boot-"));
     const storage = await createSqliteStorage(join(freshTmpDir, "boot.db"));
+    const instanceId = await ensureInstanceId(storage.settings);
     const blobBackend = new FilesystemBlobBackend(join(freshTmpDir, "blobs"));
-    const app = createApp(storage, blobBackend, {
-      port: 0,
-      sqlitePath: "",
-      blobPath: "",
-      blobBackend: "fs",
-      maxBlobSize: 50 * 1024 * 1024,
-      maxRequestBytes: 1_048_576,
-      s3Bucket: "",
-      s3Region: "us-east-1",
-      s3Endpoint: "",
-      s3AccessKeyId: "",
-      s3SecretAccessKey: "",
-      apiKeySalt: "test-salt",
-      corsOrigins: [],
-      cdnBaseUrl: "",
-      rateLimitEnabled: false,
-      enableHsts: false,
-      auditRetentionDays: 90,
-      auditCleanupIntervalMs: 86_400_000,
-      eventLogRetentionHours: 168,
-      versionThinningIntervalMs: 3_600_000,
-      versionRecentDays: 30,
-      versionDailySnapshotDays: 90,
-      versionWeeklySnapshotDays: 365,
-      versionMaxVersions: 500,
-      trashRetentionDays: 60,
-      trashPurgeIntervalMs: 86_400_000,
-      authSessionCleanupIntervalMs: 3_600_000,
-      errorWebhookUrl: "",
-      trustedProxyCidrs: [],
-      authBaseUrl: "http://localhost:0",
-      authSecret: "test-auth-secret",
-      rateLimitDefaultLimit: 1000,
-      rateLimitWindowMs: 60_000,
-    });
+    const app = createApp(
+      storage,
+      blobBackend,
+      {
+        port: 0,
+        sqlitePath: "",
+        blobPath: "",
+        blobBackend: "fs",
+        maxBlobSize: 50 * 1024 * 1024,
+        maxRequestBytes: 1_048_576,
+        s3Bucket: "",
+        s3Region: "us-east-1",
+        s3Endpoint: "",
+        s3AccessKeyId: "",
+        s3SecretAccessKey: "",
+        apiKeySalt: "test-salt",
+        corsOrigins: [],
+        cdnBaseUrl: "",
+        rateLimitEnabled: false,
+        enableHsts: false,
+        auditRetentionDays: 90,
+        auditCleanupIntervalMs: 86_400_000,
+        eventLogRetentionHours: 168,
+        versionThinningIntervalMs: 3_600_000,
+        versionRecentDays: 30,
+        versionDailySnapshotDays: 90,
+        versionWeeklySnapshotDays: 365,
+        versionMaxVersions: 500,
+        trashRetentionDays: 60,
+        trashPurgeIntervalMs: 86_400_000,
+        authSessionCleanupIntervalMs: 3_600_000,
+        errorWebhookUrl: "",
+        trustedProxyCidrs: [],
+        authBaseUrl: "http://localhost:0",
+        authSecret: "test-auth-secret",
+        rateLimitDefaultLimit: 1000,
+        rateLimitWindowMs: 60_000,
+      },
+      instanceId,
+    );
 
     // The one unauthenticated write in the product is bound to the host: the
     // first mint presents the one-time secret the server printed to its boot

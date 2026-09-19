@@ -108,7 +108,11 @@ const exportRoute = createRoute({
 // Router
 // ---------------------------------------------------------------------------
 
-export function exportRoutes(storage: Storage, blobBackend: BlobBackend) {
+export function exportRoutes(
+  storage: Storage,
+  blobBackend: BlobBackend,
+  instanceId: string,
+) {
   const router = createOpenAPIRouter<AppEnv>();
 
   router.openapi(exportRoute, async (c) => {
@@ -147,7 +151,13 @@ export function exportRoutes(storage: Storage, blobBackend: BlobBackend) {
     ).source_filter;
 
     if (query.format === "archive") {
-      return handleArchiveExport(c, storage, blobBackend, sourceFilter);
+      return handleArchiveExport(
+        c,
+        storage,
+        blobBackend,
+        sourceFilter,
+        instanceId,
+      );
     }
 
     // Pattern grammar, matching `GET /items` and `/search`: the parameter
@@ -272,6 +282,17 @@ interface ArchiveManifest {
   version: number;
   format: string;
   created_at: string;
+  /**
+   * The instance that produced the archive.
+   *
+   * Provenance, and nothing acts on it: `POST /admin/restore-archive` does
+   * not read it, because restoring an instance's own archive into itself and
+   * restoring another's are both supported and neither is an error to
+   * detect. What it answers is the question a directory of `.tar.gz` files
+   * cannot — which deployment this one came off — and `created_at` alone
+   * cannot answer it for an operator running two.
+   */
+  instance_id: string;
   item_count: number;
   edge_count: number;
   blob_count: number;
@@ -293,6 +314,8 @@ async function handleArchiveExport(
   blobBackend: BlobBackend,
   /** The instance's `source_filter` lever, resolved by the route handler. */
   sourceFilter: SourceFilterSettings | undefined,
+  /** The instance writing the archive, for the manifest. */
+  instanceId: string,
 ): Promise<Response> {
   const type = c.req.query("type");
   assertTypeFilter(type);
@@ -419,6 +442,7 @@ async function handleArchiveExport(
     version: 2,
     format: "marfa-archive-v2",
     created_at: new Date().toISOString(),
+    instance_id: instanceId,
     item_count: lines.length,
     edge_count: edgeLines.length,
     blob_count: Object.keys(blobMeta).length,

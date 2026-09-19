@@ -1,5 +1,6 @@
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import { createApp } from "../app.js";
+import { ensureInstanceId } from "../storage/instance-id.js";
 import { createSqliteStorage } from "../storage/sqlite/index.js";
 import { FilesystemBlobBackend } from "../storage/blob-backend.js";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -474,43 +475,49 @@ describe("bootstrap sentinel", () => {
   }> {
     const tmpDir = mkdtempSync(join(tmpdir(), "marfa-bootstrap-"));
     const storage = await createSqliteStorage(join(tmpDir, "test.db"));
+    const instanceId = await ensureInstanceId(storage.settings);
     const blobPath = join(tmpDir, "blobs");
     const blobBackend = new FilesystemBlobBackend(blobPath);
-    const app = createApp(storage, blobBackend, {
-      port: 0,
-      sqlitePath: "",
-      blobPath,
-      blobBackend: "fs",
-      maxBlobSize: 50 * 1024 * 1024,
-      maxRequestBytes: 1_048_576,
-      s3Bucket: "",
-      s3Region: "us-east-1",
-      s3Endpoint: "",
-      s3AccessKeyId: "",
-      s3SecretAccessKey: "",
-      apiKeySalt: "test-salt",
-      corsOrigins: [],
-      cdnBaseUrl: "",
-      rateLimitEnabled: false,
-      enableHsts: false,
-      auditRetentionDays: 90,
-      auditCleanupIntervalMs: 86_400_000,
-      eventLogRetentionHours: 168,
-      versionThinningIntervalMs: 3_600_000,
-      versionRecentDays: 30,
-      versionDailySnapshotDays: 90,
-      versionWeeklySnapshotDays: 365,
-      versionMaxVersions: 500,
-      trashRetentionDays: 60,
-      trashPurgeIntervalMs: 3_600_000,
-      errorWebhookUrl: "",
-      trustedProxyCidrs: [],
-      authBaseUrl: "http://localhost:0",
-      authSecret: "test-auth-secret",
-      rateLimitDefaultLimit: 1000,
-      rateLimitWindowMs: 60_000,
-      ...overrides,
-    });
+    const app = createApp(
+      storage,
+      blobBackend,
+      {
+        port: 0,
+        sqlitePath: "",
+        blobPath,
+        blobBackend: "fs",
+        maxBlobSize: 50 * 1024 * 1024,
+        maxRequestBytes: 1_048_576,
+        s3Bucket: "",
+        s3Region: "us-east-1",
+        s3Endpoint: "",
+        s3AccessKeyId: "",
+        s3SecretAccessKey: "",
+        apiKeySalt: "test-salt",
+        corsOrigins: [],
+        cdnBaseUrl: "",
+        rateLimitEnabled: false,
+        enableHsts: false,
+        auditRetentionDays: 90,
+        auditCleanupIntervalMs: 86_400_000,
+        eventLogRetentionHours: 168,
+        versionThinningIntervalMs: 3_600_000,
+        versionRecentDays: 30,
+        versionDailySnapshotDays: 90,
+        versionWeeklySnapshotDays: 365,
+        versionMaxVersions: 500,
+        trashRetentionDays: 60,
+        trashPurgeIntervalMs: 3_600_000,
+        errorWebhookUrl: "",
+        trustedProxyCidrs: [],
+        authBaseUrl: "http://localhost:0",
+        authSecret: "test-auth-secret",
+        rateLimitDefaultLimit: 1000,
+        rateLimitWindowMs: 60_000,
+        ...overrides,
+      },
+      instanceId,
+    );
     const bootstrapSecret = await ensureBootstrapSecret(storage);
     return { app, storage, bootstrapSecret, tmpDir };
   }

@@ -1,4 +1,4 @@
-import { gzipSync } from "node:zlib";
+import { gunzipSync, gzipSync } from "node:zlib";
 
 /**
  * A `marfa-archive-v2` built here rather than exported from the server.
@@ -70,6 +70,56 @@ export function tarGz(files: ArchiveFile[]): Uint8Array {
   // Two zero blocks close the archive.
   parts.push(Buffer.alloc(BLOCK * 2, 0));
   return new Uint8Array(gzipSync(Buffer.concat(parts)));
+}
+
+/**
+ * The named member of a `tar.gz` the server produced, as text.
+ *
+ * The writer above exists because one precondition cannot be exported; this
+ * reader exists because one assertion cannot be made over HTTP. The archive
+ * manifest is a wire artifact the server emits and no route echoes, so the
+ * only way to hold it to anything is to open the bytes.
+ *
+ * Same USTAR subset as the writer, read rather than written: a 512-byte
+ * header, an octal size at offset 124, the body padded to the next block.
+ * Entries the archive carries that this is not asked for are skipped by
+ * size, and a name that never appears answers null so the caller can say so
+ * rather than reading a member it did not ask for.
+ */
+export function readTarGzEntry(
+  archive: Uint8Array,
+  name: string,
+): string | null {
+  const tar = gunzipSync(Buffer.from(archive));
+  let offset = 0;
+  while (offset + BLOCK <= tar.length) {
+    const header = tar.subarray(offset, offset + BLOCK);
+    // Two zero blocks close the archive, and one is enough to stop on: a
+    // header whose name field is empty is the end of the entries.
+    const entry = header.subarray(0, 100).toString("utf8").replace(/\0.*$/, "");
+    if (entry === "") return null;
+    // The size field is eleven octal digits and a terminator, but the
+    // terminator is a NUL in one legal spelling and a space in another, and
+    // either may be left-padded with spaces. Cutting at the first space
+    // reads a left-padded field as empty, and `parseInt("", 8)` is `NaN` —
+    // which walks the loop off the end of the archive and answers "no such
+    // member" for a member that is there. The throw is what stops that
+    // being a silent wrong answer; it also catches the base-256 encoding a
+    // member of 8 GiB or more would use, which this reader does not read.
+    const field = header.subarray(124, 136).toString("ascii");
+    const size = parseInt(field.replace(/\0.*$/, "").trim(), 8);
+    if (!Number.isInteger(size) || size < 0) {
+      throw new Error(
+        `tar entry ${entry} has an unreadable size field: ${JSON.stringify(field)}`,
+      );
+    }
+    const body = offset + BLOCK;
+    if (entry === name) {
+      return tar.subarray(body, body + size).toString("utf8");
+    }
+    offset = body + Math.ceil(size / BLOCK) * BLOCK;
+  }
+  return null;
 }
 
 /** One `items.ndjson` line: the row, and the metadata layer beside it. */

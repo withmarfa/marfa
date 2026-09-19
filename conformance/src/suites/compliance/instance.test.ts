@@ -8,6 +8,11 @@ import {
 } from "../../utils/setup.js";
 import { publishedOperations } from "../../utils/openapi.js";
 import { coverageRows } from "../../utils/coverage-table.js";
+import { readTarGzEntry } from "../../utils/archive.js";
+
+/** The shape `generateId` mints, which is what the identity is. */
+const UUID_V7 =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
 let client: MarfaClient;
 let ctx: TestContext;
@@ -39,6 +44,7 @@ describe("the instance", () => {
     expect(r.ok).toBe(true);
     expect(r.data.name).toBe("marfa");
     expect(typeof r.data.version).toBe("string");
+    expect(r.data.instance_id).toMatch(UUID_V7);
     // The whole array, not a subset: the root once advertised a feature it
     // did not serve, and a subset could never catch an entry that should
     // not be there.
@@ -96,6 +102,42 @@ describe("the instance", () => {
       (name) => !/^[a-z][a-z0-9]*(_[a-z0-9]+)*$/.test(name),
     );
     expect(odd).toEqual([]);
+  });
+
+  it("names itself the same way at the root, at /config and in an archive", async () => {
+    // One identity, three doors, and the third is the one the first two
+    // cannot stand in for: the manifest is written into a file nothing
+    // echoes back, so an export that recorded a different name — or none —
+    // would go unnoticed by every assertion made over HTTP.
+    //
+    // A credential-less read of the root is deliberate. The identity is how
+    // a caller pointed at an address tells this deployment from another one
+    // answering the same shape, which is a question asked before any key
+    // exists.
+    const bare = await fetch(`${apiUrl}/`);
+    expect(bare.status).toBe(200);
+    const root = (await bare.json()) as { instance_id: string };
+    expect(root.instance_id).toMatch(UUID_V7);
+
+    const config = await client.getConfig();
+    expect(config.ok).toBe(true);
+    expect((config.data as { instance_id: string }).instance_id).toBe(
+      root.instance_id,
+    );
+
+    const archive = await client.exportArchive({ source: ctx.source });
+    expect(archive.ok).toBe(true);
+    const raw = readTarGzEntry(archive.data, "manifest.json");
+    expect(raw).not.toBeNull();
+    const manifest = JSON.parse(raw as string) as {
+      version: number;
+      instance_id: string;
+    };
+    // The witness. Without it a reader that silently returned the wrong
+    // member, or an empty one, would satisfy the identity assertion below
+    // for the wrong reason.
+    expect(manifest.version).toBe(2);
+    expect(manifest.instance_id).toBe(root.instance_id);
   });
 
   it("serves its OpenAPI document, with and without a credential", async () => {

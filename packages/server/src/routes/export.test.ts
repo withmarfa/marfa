@@ -4,6 +4,7 @@ import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import * as tar from "tar-stream";
 import { createTestContext, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
+import { ensureInstanceId } from "../storage/instance-id.js";
 
 let ctx: TestContext;
 
@@ -238,6 +239,7 @@ describe("GET /export?format=archive", () => {
     const manifest = JSON.parse(entries.get("manifest.json")!.toString()) as {
       version: number;
       format: string;
+      instance_id: string;
       item_count: number;
       blob_count: number;
       blobs: Record<string, { mime_type: string; size_bytes: number }>;
@@ -245,6 +247,13 @@ describe("GET /export?format=archive", () => {
     expect(manifest.version).toBe(2);
     expect(manifest.format).toBe("marfa-archive-v2");
     expect(manifest.item_count).toBeGreaterThan(0);
+    // The instance that wrote it. Nothing on the read side consults this
+    // either, for the reason the blob entry below gives, and it is asserted
+    // against the store rather than against a shape so that an export which
+    // invented a value rather than reading the instance's own would redden.
+    expect(manifest.instance_id).toBe(
+      await ensureInstanceId(ctx.storage.settings),
+    );
 
     // The manifest's blob entry, pinned by key and by value. Nothing on the
     // read side consults it — a restore takes each blob's length from the tar

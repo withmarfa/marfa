@@ -66,20 +66,65 @@ async function clientWithSource(
 
 describe("the configuration door", () => {
   it("PUT replaces the configuration wholesale and GET reads it back", async () => {
+    // The identity rides on both doors and is not configuration: a `PUT`
+    // that omits it still gets it back, and the clear below does not remove
+    // it. Everything else the body carries is replaced outright.
+    const instanceId = (originalConfig as { instance_id: string }).instance_id;
     const lever = {
       enforcement: { strict_mode: { types: ["core.bookmark"] } },
     };
     const written = await setConfig(lever);
     await expectMatchesSchema("PUT", "/config", 200, written);
-    expect(written).toEqual(lever);
+    expect(written).toEqual({ instance_id: instanceId, ...lever });
     const read = await client.getConfig();
     expect(read.ok).toBe(true);
-    expect(read.data).toEqual(lever);
+    expect(read.data).toEqual({ instance_id: instanceId, ...lever });
 
     const cleared = await setConfig({});
-    expect(cleared).toEqual({});
+    expect(cleared).toEqual({ instance_id: instanceId });
     const readAgain = await client.getConfig();
-    expect(readAgain.data).toEqual({});
+    expect(readAgain.data).toEqual({ instance_id: instanceId });
+  });
+
+  it("takes a body back as read, and refuses one addressed elsewhere", async () => {
+    // What a full-replacement door is actually used for: read it, change one
+    // lever, send it back. The identity is in every read, so a write that
+    // carried it would be refused by the strict shape if the field were
+    // merely unknown — and the refusal would read as a typo.
+    //
+    // Both halves, because either alone leaves the door wrong. Accepting any
+    // identity means a backup script pointed at the wrong host answers 200.
+    //
+    // The precondition is set here rather than inherited from the test
+    // above: the "changed nothing" check at the end only witnesses anything
+    // while the refused body would have changed something, and a refusal
+    // against a configuration that already matched it proves nothing.
+    await setConfig({});
+    const read = await client.getConfig();
+    expect(read.ok).toBe(true);
+    const body = read.data as Record<string, unknown>;
+    expect(typeof body.instance_id).toBe("string");
+
+    const echoed = await setConfig({ ...body, audit_retention_days: 31 });
+    expect(echoed.instance_id).toBe(body.instance_id);
+    expect(echoed.audit_retention_days).toBe(31);
+
+    const elsewhere = await client.updateConfig({
+      ...body,
+      instance_id: "019537a0-7b80-7000-8000-000000000000",
+    });
+    expect(elsewhere.status).toBe(400);
+    expect(elsewhere.error?.error.code).toBe("validation_error");
+    // The field named, not just the code: a caller sending a whole
+    // configuration object needs to be told which of its keys was the
+    // problem, and every other refusal on this door says so too.
+    const errors = elsewhere.error?.error.details?.errors as
+      { path: string }[] | undefined;
+    expect(errors?.[0]?.path).toBe("instance_id");
+
+    // And it changed nothing, which the status code cannot state.
+    const after = await client.getConfig();
+    expect(after.data).toEqual(echoed);
   });
 
   it("refuses a lever of the wrong shape", async () => {

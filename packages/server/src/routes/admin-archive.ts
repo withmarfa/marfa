@@ -78,6 +78,17 @@ function archiveExtensions(
   return out;
 }
 
+/**
+ * What the restore reads out of `manifest.json`, which is narrower than what
+ * the export writes.
+ *
+ * `ArchiveManifest` in `routes/export.ts` is the writer's own declaration
+ * and the authority on the format. This one stops at the fields the restore
+ * consults — `version`, which it refuses, and `blobs`, whose mime type it
+ * falls back to. Widening it to match the writer would have it claim fields
+ * of every archive ever written, including the ones written before those
+ * fields existed, which is a claim nothing here can keep.
+ */
 interface ArchiveManifest {
   version: number;
   format: string;
