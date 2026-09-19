@@ -39,7 +39,7 @@ describe("the seeded platform set", () => {
     expect(activity?.family).toBe("system");
   });
 
-  it("never appears in a space's own registrations", async () => {
+  it("never appears in the runtime registrations", async () => {
     // What an archive carries, and what a restore replays.
     const own = await ctx.storage.types.listRegistered();
     expect(own.map((t) => t.id)).not.toContain("core.note");
@@ -54,7 +54,7 @@ describe("the seeded platform set", () => {
   it("stays locked against modification and deletion", async () => {
     const { request } = await import("../test-utils.js");
     const res = await request(ctx.app, "DELETE", "/types/core.note", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
     });
     expect(res.status).toBe(403);
   });

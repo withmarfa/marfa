@@ -67,7 +67,7 @@ describe("a repeat is answered from what the first attempt returned", () => {
     };
 
     const first = await request(ctx.app, "POST", "/items", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       headers: { "Idempotency-Key": k },
       body,
     });
@@ -78,7 +78,7 @@ describe("a repeat is answered from what the first attempt returned", () => {
     const mark = await eventHighWater();
 
     const second = await request(ctx.app, "POST", "/items", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       headers: { "Idempotency-Key": k },
       body,
     });
@@ -94,7 +94,7 @@ describe("a repeat is answered from what the first attempt returned", () => {
 
   it("replays an update without writing a second time", async () => {
     const create = await request(ctx.app, "POST", "/items", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: { type: "core.note", properties: { body: "before" } },
     });
     const created = ((await create.json()) as ItemBody).item;
@@ -102,7 +102,7 @@ describe("a repeat is answered from what the first attempt returned", () => {
     const k = key();
     const patch = { properties: { body: "after" }, version: created.version };
     const first = await request(ctx.app, "PATCH", `/items/${created.id}`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       headers: { "Idempotency-Key": k },
       body: patch,
     });
@@ -113,7 +113,7 @@ describe("a repeat is answered from what the first attempt returned", () => {
     const mark = await eventHighWater();
 
     const second = await request(ctx.app, "PATCH", `/items/${created.id}`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       headers: { "Idempotency-Key": k },
       body: patch,
     });
@@ -127,14 +127,14 @@ describe("a repeat is answered from what the first attempt returned", () => {
 
   it("replays a delete without writing a second time", async () => {
     const create = await request(ctx.app, "POST", "/items", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: { type: "core.note", properties: { body: "to remove" } },
     });
     const id = ((await create.json()) as ItemBody).item.id;
 
     const k = key();
     const first = await request(ctx.app, "DELETE", `/items/${id}`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       headers: { "Idempotency-Key": k },
     });
     expect(first.status).toBe(200);
@@ -143,7 +143,7 @@ describe("a repeat is answered from what the first attempt returned", () => {
     const mark = await eventHighWater();
 
     const second = await request(ctx.app, "DELETE", `/items/${id}`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       headers: { "Idempotency-Key": k },
     });
     // Without the record this is a 404: the row is gone, so the door is
@@ -158,7 +158,7 @@ describe("a repeat is answered from what the first attempt returned", () => {
     // and a retry has to be told it happened rather than left to work out
     // whether the conflict it now meets is its own doing.
     const create = await request(ctx.app, "POST", "/items", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: { type: "core.note", properties: { body: "versioned" } },
     });
     const item = ((await create.json()) as ItemBody).item;
@@ -166,7 +166,7 @@ describe("a repeat is answered from what the first attempt returned", () => {
     const k = key();
     const stale = { properties: { body: "from a stale read" }, version: 99 };
     const first = await request(ctx.app, "PATCH", `/items/${item.id}`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       headers: { "Idempotency-Key": k },
       body: stale,
     });
@@ -174,7 +174,7 @@ describe("a repeat is answered from what the first attempt returned", () => {
     const firstText = await first.text();
 
     const second = await request(ctx.app, "PATCH", `/items/${item.id}`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       headers: { "Idempotency-Key": k },
       body: stale,
     });
@@ -187,7 +187,7 @@ describe("a repeat is answered from what the first attempt returned", () => {
     // The permissive direction. A middleware that stamped the header
     // unconditionally would satisfy every assertion above.
     const res = await request(ctx.app, "POST", "/items", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       headers: { "Idempotency-Key": key() },
       body: { type: "core.note", properties: { body: "first" } },
     });
@@ -200,11 +200,11 @@ describe("a repeat is answered from what the first attempt returned", () => {
     // were. The record is opt-in and must not quietly dedupe.
     const body = { type: "core.note", properties: { body: "unkeyed" } };
     const a = await request(ctx.app, "POST", "/items", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body,
     });
     const b = await request(ctx.app, "POST", "/items", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body,
     });
     const idA = ((await a.json()) as ItemBody).item.id;
@@ -222,7 +222,7 @@ describe("an unauthenticated caller claims nothing", () => {
     // pass with this guard deleted, measuring the other one. Counting the
     // claim isolates it: a request with no credential must not produce a
     // row even transiently, on a table with no quota, and must not be able
-    // to occupy a key in the bucket every space-less caller shares.
+    // to occupy a key in the keyspace every caller shares.
     const store = ctx.storage.idempotency;
     const seam = store as unknown as {
       claim: (input: unknown) => Promise<unknown>;
@@ -246,7 +246,7 @@ describe("an unauthenticated caller claims nothing", () => {
       // would pass the assertion above, and the counter would be measuring
       // a seam that does not work.
       const authed = await request(ctx.app, "POST", "/items", {
-        key: ctx.spaceKey,
+        key: ctx.workingKey,
         headers: { "Idempotency-Key": key() },
         body: { type: "core.note", properties: { body: "with credential" } },
       });
@@ -259,7 +259,7 @@ describe("an unauthenticated caller claims nothing", () => {
 
   it("leaves the key usable by a legitimate caller afterwards", async () => {
     // The consequence spelled out: the poisoning half. A stranger guessing
-    // a key must not be able to make a tenant's own use of it a mismatch.
+    // a key must not be able to make its owner's own use of it a mismatch.
     const k = key();
 
     await request(ctx.app, "POST", "/items", {
@@ -268,7 +268,7 @@ describe("an unauthenticated caller claims nothing", () => {
     });
 
     const mine = await request(ctx.app, "POST", "/items", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       headers: { "Idempotency-Key": k },
       body: { type: "core.note", properties: { body: "the real write" } },
     });
@@ -282,7 +282,7 @@ describe("the key names one request in every dimension, not just the body", () =
   // reddening. Each case below varies exactly one of them.
   async function seedItem(): Promise<string> {
     const res = await request(ctx.app, "POST", "/items", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: { type: "core.note", properties: { body: "seed" } },
     });
     expect(res.status).toBe(201);
@@ -298,7 +298,7 @@ describe("the key names one request in every dimension, not just the body", () =
     const patch = { properties: { body: "changed" }, version: 1 };
 
     const a = await request(ctx.app, "PATCH", `/items/${first}`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       headers: { "Idempotency-Key": k },
       body: patch,
     });
@@ -306,7 +306,7 @@ describe("the key names one request in every dimension, not just the body", () =
 
     // Same key, same method, same body, same credential — a different row.
     const b = await request(ctx.app, "PATCH", `/items/${second}`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       headers: { "Idempotency-Key": k },
       body: patch,
     });
@@ -318,7 +318,7 @@ describe("the key names one request in every dimension, not just the body", () =
     const id = await seedItem();
 
     const a = await request(ctx.app, "DELETE", `/items/${id}`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       headers: { "Idempotency-Key": k },
     });
     expect(a.status).toBe(200);
@@ -326,7 +326,7 @@ describe("the key names one request in every dimension, not just the body", () =
     // A delete whose query asks for something else entirely is a different
     // request, and the digest has to see the query to know that.
     const b = await request(ctx.app, "DELETE", `/items/${id}?permanent=true`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       headers: { "Idempotency-Key": k },
     });
     expect(b.status).toBe(422);
@@ -339,13 +339,13 @@ describe("the key names one request in every dimension, not just the body", () =
     // DELETE carries no body, so the follow-up differs from it in the
     // method alone — path, query, credential and body all identical.
     const a = await request(ctx.app, "DELETE", `/items/${id}`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       headers: { "Idempotency-Key": k },
     });
     expect(a.status).toBe(200);
 
     const b = await request(ctx.app, "PATCH", `/items/${id}`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       headers: { "Idempotency-Key": k },
     });
     expect(b.status).toBe(422);
@@ -380,7 +380,7 @@ describe("the digest reads the path, not its spelling", () => {
   it("replays a retry that re-encoded a character", async () => {
     const k = key();
     const create = await request(ctx.app, "POST", "/items", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: { type: "core.note", properties: { body: "seed" } },
     });
     expect(create.status).toBe(201);
@@ -388,7 +388,7 @@ describe("the digest reads the path, not its spelling", () => {
     const patch = { properties: { body: "changed" }, version: item.version };
 
     const a = await request(ctx.app, "PATCH", `/items/${item.id}`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       headers: { "Idempotency-Key": k },
       body: patch,
     });
@@ -399,7 +399,7 @@ describe("the digest reads the path, not its spelling", () => {
 
     const mark = await eventHighWater();
     const b = await request(ctx.app, "PATCH", `/items/${spelled}`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       headers: { "Idempotency-Key": k },
       body: patch,
     });
@@ -479,7 +479,7 @@ describe("a retried update never conflicts with itself", () => {
     // Only reachable through the raw request path: the typed client
     // deliberately offers the key on create and delete but not update.
     const created = await request(ctx.app, "POST", "/items", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: { type: "core.note", properties: { body: "v1" } },
     });
     const { item } = (await created.json()) as ItemBody;
@@ -487,7 +487,7 @@ describe("a retried update never conflicts with itself", () => {
     const patch = { version: item.version, properties: { body: "v2" } };
 
     const first = await request(ctx.app, "PATCH", `/items/${item.id}`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       headers: { "Idempotency-Key": k },
       body: patch,
     });
@@ -496,7 +496,7 @@ describe("a retried update never conflicts with itself", () => {
 
     const mark = await eventHighWater();
     const retry = await request(ctx.app, "PATCH", `/items/${item.id}`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       headers: { "Idempotency-Key": k },
       body: patch,
     });
@@ -510,7 +510,7 @@ describe("a retried update never conflicts with itself", () => {
     // clause exists to remove. Without it the case above proves only that
     // a replay happened, not that it replaced a conflict.
     const unkeyed = await request(ctx.app, "PATCH", `/items/${item.id}`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: patch,
     });
     expect(unkeyed.status).toBe(409);
@@ -524,7 +524,7 @@ describe("the key itself is bounded", () => {
     // written with only an upper bound admits the empty string.
     for (const bad of ["", "x".repeat(256)]) {
       const res = await request(ctx.app, "POST", "/items", {
-        key: ctx.spaceKey,
+        key: ctx.workingKey,
         headers: { "Idempotency-Key": bad },
         body: { type: "core.note", properties: { body: "bounded" } },
       });
@@ -534,7 +534,7 @@ describe("the key itself is bounded", () => {
     // And the bound itself is admitted, so this measures the edge rather
     // than refusing everything.
     const ok = await request(ctx.app, "POST", "/items", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       headers: { "Idempotency-Key": "x".repeat(255) },
       body: { type: "core.note", properties: { body: "at the bound" } },
     });
@@ -546,7 +546,7 @@ describe("a key replayed with a different request is a client defect", () => {
   it("refuses rather than serving the stored result", async () => {
     const k = key();
     const first = await request(ctx.app, "POST", "/items", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       headers: { "Idempotency-Key": k },
       body: { type: "core.note", properties: { body: "the first thing" } },
     });
@@ -554,7 +554,7 @@ describe("a key replayed with a different request is a client defect", () => {
 
     const mark = await eventHighWater();
     const second = await request(ctx.app, "POST", "/items", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       headers: { "Idempotency-Key": k },
       body: { type: "core.note", properties: { body: "a second thing" } },
     });
@@ -570,7 +570,7 @@ describe("a key replayed with a different request is a client defect", () => {
 describe("edges carry the same property as items", () => {
   async function note(body: string): Promise<string> {
     const res = await request(ctx.app, "POST", "/items", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: { type: "core.note", properties: { body } },
     });
     return ((await res.json()) as ItemBody).item.id;
@@ -588,7 +588,7 @@ describe("edges carry the same property as items", () => {
       properties: { note: "first" },
     };
     const created = await request(ctx.app, "POST", "/edges", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       headers: { "Idempotency-Key": createKey },
       body: createBody,
     });
@@ -600,7 +600,7 @@ describe("edges carry the same property as items", () => {
 
     let mark = await eventHighWater();
     const createdAgain = await request(ctx.app, "POST", "/edges", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       headers: { "Idempotency-Key": createKey },
       body: createBody,
     });
@@ -611,7 +611,7 @@ describe("edges carry the same property as items", () => {
     const patchKey = key();
     const patchBody = { properties: { note: "second" }, version: edge.version };
     const patched = await request(ctx.app, "PATCH", `/edges/${edge.id}`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       headers: { "Idempotency-Key": patchKey },
       body: patchBody,
     });
@@ -620,7 +620,7 @@ describe("edges carry the same property as items", () => {
 
     mark = await eventHighWater();
     const patchedAgain = await request(ctx.app, "PATCH", `/edges/${edge.id}`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       headers: { "Idempotency-Key": patchKey },
       body: patchBody,
     });
@@ -632,7 +632,7 @@ describe("edges carry the same property as items", () => {
 
     const deleteKey = key();
     const deleted = await request(ctx.app, "DELETE", `/edges/${edge.id}`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       headers: { "Idempotency-Key": deleteKey },
     });
     expect(deleted.status).toBe(200);
@@ -640,7 +640,7 @@ describe("edges carry the same property as items", () => {
 
     mark = await eventHighWater();
     const deletedAgain = await request(ctx.app, "DELETE", `/edges/${edge.id}`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       headers: { "Idempotency-Key": deleteKey },
     });
     expect(deletedAgain.status).toBe(200);
@@ -662,12 +662,12 @@ describe("two requests carrying one key", () => {
 
     const [a, b] = await Promise.all([
       request(ctx.app, "POST", "/items", {
-        key: ctx.spaceKey,
+        key: ctx.workingKey,
         headers: { "Idempotency-Key": k },
         body,
       }),
       request(ctx.app, "POST", "/items", {
-        key: ctx.spaceKey,
+        key: ctx.workingKey,
         headers: { "Idempotency-Key": k },
         body,
       }),

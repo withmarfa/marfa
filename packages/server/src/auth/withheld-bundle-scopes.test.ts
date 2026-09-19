@@ -1,5 +1,5 @@
 /**
- * A configured permission bundle cannot be the reason a space permission is
+ * A configured permission bundle cannot be the reason a permission is
  * publishable.
  *
  * The allowlist is assembled from registry keys and is well-formed by
@@ -10,24 +10,24 @@
  * not whether this server is willing to publish it.
  *
  * **What the drop protects changed, and the cases moved with it.** The
- * allowlist now emits every space permission itself, from the closed set, so
+ * allowlist now emits every permission itself, from the closed set, so
  * the drop is no longer what decides whether one is requestable and is no
  * longer visible in that function's output. It still decides whether a
  * *bundle* can claim one, which is the half that mattered more: a
- * bundle-claimed space permission would inherit the bundle's `default_on`
+ * bundle-claimed permission would inherit the bundle's `default_on`
  * tick on the consent screen, and `bundlePublishedScopes` is written into a
  * stored client ceiling that outlives the configuration. The reachability
- * half is covered by `space-permissions-reachable.test.ts`.
+ * half is covered by `permissions-reachable.test.ts`.
  *
  * **Every case here uses a CONFIGURED bundle rather than the shipped
  * defaults**, which is the population that can actually carry the defect. The
- * defaults name no space permission literal and never did, so a suite written
+ * defaults name no permission literal and never did, so a suite written
  * against them would pass whether or not the drop exists.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import type { MockInstance } from "vitest";
 import type { PermissionBundle } from "@withmarfa/shared";
-import { isValidScope, SPACE_PERMISSIONS } from "@withmarfa/shared";
+import { isValidScope, PERMISSIONS } from "@withmarfa/shared";
 import * as logger from "../middleware/logger.js";
 import { buildAllowedScopes } from "./oauth-provider.js";
 import { bundlePublishedScopes } from "./ceiling-catchup.js";
@@ -59,7 +59,7 @@ afterEach(() => {
 describe("a configured bundle cannot publish a withheld scope", () => {
   it("is built on a literal the grammar accepts, or it proves nothing", () => {
     // The precondition, stated rather than assumed: this defect exists only
-    // because a space permission literal is grammatically valid. If
+    // because a permission literal is grammatically valid. If
     // `isValidScope` ever starts refusing it, every case below passes for the
     // wrong reason.
     expect(isValidScope("keys.mint")).toBe(true);
@@ -106,11 +106,11 @@ describe("a configured bundle cannot publish a withheld scope", () => {
     expect(named.length).toBeGreaterThanOrEqual(1);
   });
 
-  it("withholds every space permission literal, not the one under test", () => {
-    // Asked of the closed set, so a literal added to `SPACE_PERMISSIONS` is
+  it("withholds every permission literal, not the one under test", () => {
+    // Asked of the closed set, so a literal added to `PERMISSIONS` is
     // withheld by having been added rather than by somebody editing the
     // withholding module.
-    for (const literal of SPACE_PERMISSIONS) {
+    for (const literal of PERMISSIONS) {
       expect(isWithheldFromAllowlist(literal), literal).toBe(true);
     }
   });
@@ -118,7 +118,7 @@ describe("a configured bundle cannot publish a withheld scope", () => {
   it("leaves the shipped defaults exactly as they were", () => {
     // The control. If this ever fails, the drop has caught something the
     // defaults legitimately publish. Asked of the bundles rather than of the
-    // allowlist, because the allowlist now emits the space permission family
+    // allowlist, because the allowlist now emits the permission family
     // from the closed set and would answer for scopes no bundle named.
     for (const bundle of DEFAULT_PERMISSION_BUNDLES) {
       for (const scope of bundle.scopes) {

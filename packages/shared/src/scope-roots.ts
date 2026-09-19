@@ -25,7 +25,7 @@ export const NAMESPACE_TIER_ROOTS = [
 ] as const;
 
 /**
- * One root per verb-less space permission, because a permission is named for
+ * One root per verb-less permission, because a permission is named for
  * what it permits and there is no noun for the whole to name them after.
  *
  * **Seven ordinary publisher handles leave the claimable namespace by being

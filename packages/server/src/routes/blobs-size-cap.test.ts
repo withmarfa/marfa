@@ -23,7 +23,7 @@ describe("POST /blobs — size cap", () => {
     const res = await ctx.app.request("/blobs", {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${ctx.spaceKey}`,
+        Authorization: `Bearer ${ctx.workingKey}`,
         "Content-Type": "application/octet-stream",
       },
       body: data,
@@ -36,7 +36,7 @@ describe("POST /blobs — size cap", () => {
     const res = await ctx.app.request("/blobs", {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${ctx.spaceKey}`,
+        Authorization: `Bearer ${ctx.workingKey}`,
         "Content-Type": "application/octet-stream",
       },
       body: data,
@@ -52,7 +52,7 @@ describe("POST /blobs — size cap", () => {
     const res = await ctx.app.request("/blobs", {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${ctx.spaceKey}`,
+        Authorization: `Bearer ${ctx.workingKey}`,
         "Content-Type": "application/octet-stream",
         "Content-Length": String(CAP + 1000),
       },

@@ -29,9 +29,9 @@ afterAll(async () => {
 });
 
 /**
- * Create a key holding no space permissions and return a client using it.
+ * Create a key holding no permissions and return a client using it.
  */
-async function createClientWithoutSpaceKeys(
+async function createClientWithoutPermissions(
   label: string,
   typePermissions: Record<string, string> = { "*": "write" },
 ): Promise<{ client: MarfaClient; keyId: string }> {
@@ -76,7 +76,7 @@ describe("key management", () => {
 
   it("list keys requires keys.mint", async () => {
     const { client: memberClient } =
-      await createClientWithoutSpaceKeys("km-list-nonadmin");
+      await createClientWithoutPermissions("km-list-nonadmin");
 
     const list = await memberClient.listKeys();
     expect(list.status).toBe(403);
@@ -120,7 +120,7 @@ describe("key management", () => {
     trackKey(ctx, targetKey.data.id);
 
     const { client: memberClient } =
-      await createClientWithoutSpaceKeys("km-revoke-nonadmin");
+      await createClientWithoutPermissions("km-revoke-nonadmin");
 
     const revoke = await memberClient.revokeKey(targetKey.data.id);
     expect(revoke.status).toBe(403);
@@ -168,7 +168,7 @@ describe("key management", () => {
 
   it("minting requires keys.mint", async () => {
     const { client: memberClient } =
-      await createClientWithoutSpaceKeys("km-mint-nonadmin");
+      await createClientWithoutPermissions("km-mint-nonadmin");
 
     const label = `km-mint-denied-${ctx.runId}`;
     const minted = await memberClient.createKey({
@@ -247,15 +247,15 @@ describe("key management", () => {
     expect(widerTypes.error?.error.code).toBe("forbidden");
     expect(widerTypes.error?.error.details?.required_scope).toBe("*:write");
 
-    const widerSpace = await caller.createKey({
-      label: `${label}-wider-space`,
-      source: `${ctx.source}-${label}-wider-space`,
+    const widerPermission = await caller.createKey({
+      label: `${label}-wider-permission`,
+      source: `${ctx.source}-${label}-wider-permission`,
       permissions: ["schema.write"],
     });
-    expect(widerSpace.ok).toBe(false);
-    expect(widerSpace.status).toBe(403);
-    expect(widerSpace.error?.error.code).toBe("forbidden");
-    expect(widerSpace.error?.error.details?.required_scope).toBe(
+    expect(widerPermission.ok).toBe(false);
+    expect(widerPermission.status).toBe(403);
+    expect(widerPermission.error?.error.code).toBe("forbidden");
+    expect(widerPermission.error?.error.details?.required_scope).toBe(
       "schema.write",
     );
   });
@@ -302,7 +302,7 @@ describe("key management", () => {
     expect(minted.ok).toBe(true);
     try {
       // The widening rule holds for a working key and not for this one: the
-      // operator holds no content families and no space permissions, and the
+      // operator holds no content families and no permissions, and the
       // key it mints naming no maps holds every one of them.
       expect(minted.data.is_operator).toBe(false);
       expect(minted.data.type_permissions).toEqual({ "*": "write" });

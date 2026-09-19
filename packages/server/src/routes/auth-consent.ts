@@ -102,7 +102,7 @@ import { setNoStore, withNoStore } from "./no-store.js";
 import { forwardHeaders } from "./forward-headers.js";
 import { withConsentLock } from "../auth/consent-lock.js";
 import { auditGrantReused } from "../auth/grant-lifecycle.js";
-import { buildAllowedOrigins, isCrossOriginPost } from "./_space-caller.js";
+import { buildAllowedOrigins, isCrossOriginPost } from "./_cross-origin.js";
 import {
   findRegisteredResponseRedirect,
   hasAddedResponseParam,
@@ -1203,12 +1203,12 @@ async function preserveBroaderGrant(
  * `routes/auth-pages.ts` does for the device-flow path. Emits
  * `auth.grant.created` audit row in both branches (creation + re-consent).
  *
- * Re-consent behavior: if a projection already exists for (space,
- * client, user), we update its `scopes` + `granted_at` in place rather
+ * Re-consent behavior: if a projection already exists for this
+ * (client, user), we update its `scopes` + `granted_at` in place rather
  * than creating a second row. The `audit.grant.created` row still emits
  * (a re-consent IS a grant event), with the existing `grant_item_id`
  * in details — operators auditing grant history see one row per consent
- * action, projection stays single-row per (space, client, user).
+ * action, projection stays single-row per (client, user).
  */
 async function projectGrantOnConsent(
   storage: Storage,
@@ -1443,11 +1443,11 @@ async function resolvePriorScopes(
  * Missing entries fall back to a registry `description` where a registry has
  * one. **That fallback has never served a type registered at runtime, and
  * the claim that it did stood here while sixteen shipped types were the only
- * population reaching it.** `POST /types` writes to a per-space overlay, and
+ * population reaching it.** `POST /types` writes to a runtime overlay, and
  * neither `TYPE_REGISTRY` nor `EDGE_TYPE_REGISTRY` exposes one — so a custom
  * type cannot reach either lookup. It does not reach a row of its own
  * either: `buildAllowedScopes` enumerates registry keys for the concrete
- * scopes, so a space's own type is requestable only through its namespace
+ * scopes, so a runtime-registered type is requestable only through its namespace
  * wildcard, which is curated.
  *
  * What the type fallback does reach is a platform row this build no longer
@@ -1472,8 +1472,8 @@ async function resolvePriorScopes(
  * across four kinds sound.** `typePattern` carries a different namespace per
  * kind, so a single map is only safe if no two kinds can produce the same
  * string, and none can: `parseScope` claims `metadata`, `edge.` and
- * `space.` ahead of the item-type matcher, `space` is a reserved
- * root whose non-members it refuses outright, and the four OIDC literals are
+ * the permission roots ahead of the item-type matcher and refuses every
+ * non-member beneath them outright, and the four OIDC literals are
  * bare single words that `isValidTypePattern` rejects, a type identifier
  * needing two segments.
  *
@@ -1484,7 +1484,7 @@ async function resolvePriorScopes(
  * allowlist publishes as requestable. Both would have read another kind's
  * copy off this map the moment the wildcard and metadata entries landed in
  * it, and a consent screen telling someone that one relation is "Everything
- * in your space" is a worse failure than the blank row it replaced.
+ * on your server" is a worse failure than the blank row it replaced.
  *
  * Exported for the guard that walks `src` looking for a second statement of
  * this copy. The guard derives its search keys from the map itself rather
@@ -1499,7 +1499,7 @@ export const CONSENT_SCOPE_DESCRIPTIONS: Record<string, string> = {
   // what the word was doing. Dropped, the entries read as one list.
   //
   // It stays in two places, and both carry information a reader would lose:
-  // "in your space" and "about your account" say where the grant reaches, and
+  // "on your server" and "about your account" say where the grant reaches, and
   // `user.*` is "Your custom types" precisely because `app.*` immediately
   // below it is the app's. Neither is decoration.
   //
@@ -1594,7 +1594,7 @@ export const CONSENT_SCOPE_DESCRIPTIONS: Record<string, string> = {
   "google.youtube.video":
     "YouTube videos you like, and the ones in your playlists.",
   "marfa.captured_email":
-    "Emails sent to the address that captures mail into your space.",
+    "Emails sent to the address that captures mail onto your server.",
   "marfa.podcast.episode": "Episodes of the podcasts you follow.",
   "marfa.podcast.show": "Podcasts you follow.",
   "raindrop.collection":
@@ -1613,11 +1613,11 @@ export const CONSENT_SCOPE_DESCRIPTIONS: Record<string, string> = {
   "todoist.task": "Tasks on your Todoist projects.",
 
   // System
-  "system.account_holder": "The entry that represents you in your space.",
+  "system.account_holder": "The entry that represents you on your server.",
   "system.activity": "Background activity and notifications.",
   "system.app": "Connected apps.",
   "system.connection": "Connections to other apps and services.",
-  "system.credential": "Keys that give access to your space.",
+  "system.credential": "Keys that give access to your server.",
   "system.device": "Devices signed in to your account.",
   "system.integration": "Available integrations.",
   "system.webhook": "Webhook subscriptions.",
@@ -1630,7 +1630,7 @@ export const CONSENT_SCOPE_DESCRIPTIONS: Record<string, string> = {
   // what the platform does with it ("Items grouped into threads."), and an
   // abstract restatement of the identifier ("References between items.",
   // "Items derived from other items."). The third shape is the one that
-  // earns nothing: a space owner reading it has been told the type id back,
+  // earns nothing: an owner reading it has been told the type id back,
   // spelled differently, and the row above already said that.
   //
   // So each of these answers which of the person's things the relation joins,
@@ -1669,8 +1669,8 @@ export const CONSENT_SCOPE_DESCRIPTIONS: Record<string, string> = {
   "profile.avatar": "Your avatar.",
 
   metadata: "Custom data types and relationship types.",
-  "metadata.types": "Custom data types in your space.",
-  "metadata.edge_types": "Custom relationship types in your space.",
+  "metadata.types": "Custom data types on your server.",
+  "metadata.edge_types": "Custom relationship types on your server.",
 
   // Wildcards: the one family where curated copy is not merely better than
   // the registry's but is the only thing that can exist. A wildcard matches
@@ -1699,20 +1699,17 @@ export const CONSENT_SCOPE_DESCRIPTIONS: Record<string, string> = {
   // silenced the line on a wildcard that then said nothing about its reach.
   // Composing removes the collision rather than arbitrating it.
   //
-  // The global wildcard is no longer an exemption. It read "Everything in
-  // your space." because that sentence cannot be falsified by a type
+  // The global wildcard is no longer an exemption. It read "Everything on
+  // your server." because that sentence cannot be falsified by a type
   // registered tomorrow, which was all the device screen needed back when
   // the device screen needed the copy to carry it. It needs nothing of the
   // sort now, so `*` says what it reaches like every other entry and the
   // screens add the rest.
-  // `routes/keys-page.ts` renders "Everything in your space" as a section
-  // heading, without this entry's full stop, and that divergence is correct:
-  // one is a heading and the other is a sentence a consent row prints.
-  // Recorded because nothing will catch it if it stops being correct — the
-  // duplicate-copy guard excludes non-dotted keys by construction, since a
-  // bare `*` is an ordinary field name in code, so `*` sits outside what the
-  // guard can see rather than having been overlooked by it.
-  "*": "Everything in your space.",
+  //
+  // The duplicate-copy guard excludes non-dotted keys by construction, since
+  // a bare `*` is an ordinary field name in code, so this entry sits outside
+  // what the guard can see rather than having been overlooked by it.
+  "*": "Everything on your server.",
   // Says what it reaches by saying what it does not, because the only
   // thing separating it from `*` above is the system family: the
   // category projects every system type to `none`, so a person holding
@@ -1737,7 +1734,7 @@ export const CONSENT_SCOPE_DESCRIPTIONS: Record<string, string> = {
   //
   // Phrased as how a person's items are joined rather than as a noun for the
   // relation, which is the rule the concrete edge entries above follow.
-  "edge.*": "How everything in your space is connected.",
+  "edge.*": "How everything on your server is connected.",
   "edge.user.*": "How your custom relationship types connect your items.",
   "edge.app.*":
     "How the relationship types this app defines connect your items.",
@@ -1756,14 +1753,14 @@ export function resolveConsentBundles(): PermissionBundle[] {
 
 /**
  * For a requested custom-namespace wildcard (`user.*`, or a runtime
- * publisher-handle root the space registered), the display names of the
- * custom types the consenting user's space holds under that root today.
+ * publisher-handle root registered here), the display names of the custom
+ * types held under that root today.
  * Read from `storage.types` (the persisted rows) rather than the
  * in-memory registry, so the answer does not depend on hydration state.
- * Reserved roots stay un-enumerated — their members are the platform's,
- * not the space's — and any other root enumerates only what the space
- * itself registered under it, so a registry-shipped root like `google.*`
- * keeps rendering without an enumeration.
+ * Reserved roots stay un-enumerated — their members are the platform's —
+ * and any other root enumerates only what was registered here under it, so a
+ * registry-shipped root like `google.*` keeps rendering without an
+ * enumeration.
  */
 export async function resolveWildcardExpansions(
   storage: Storage,
@@ -1776,9 +1773,9 @@ export async function resolveWildcardExpansions(
     if (root.length === 0 || root.includes(".")) continue;
     // The runtime tiers (`user`, `app`) sit inside the reserved set —
     // reserved means unclaimable as a handle, not unregistrable — and are
-    // exactly the roots a space registers under, so they enumerate. The
-    // rest of the reserved set (`core`, `system`, `marfa`) is the
-    // platform's and never does.
+    // exactly the roots a runtime registration lands under, so they
+    // enumerate. The rest of the reserved set (`core`, `system`, `marfa`) is
+    // the platform's and never does.
     if (isReservedRoot(root) && root !== "user" && root !== "app") continue;
     wildcardRoots.add(root);
   }
@@ -1816,18 +1813,18 @@ function describeScope(scope: ParsedScope): string | undefined {
       // map, so anything written here for one was computed and discarded. A
       // third register existed to fill it and is gone with it.
       return undefined;
-    case "space":
+    case "permission":
       // Deliberately absent, for the reason above. `scopeName` in
       // `consent.ts` and `describeScope` in `device-pages.ts` both
-      // resolve a space permission literal through
-      // `space-permission-labels.ts` and return before they look at this map,
+      // resolve a permission literal through `permission-labels.ts` and
+      // return before they look at this map,
       // so anything written here for one was computed and discarded. The
       // branch that filled it is gone with it.
       //
-      // Absent here is not a gap waiting on space permissions reaching a
+      // Absent here is not a gap waiting on permissions reaching a
       // consent screen. They are already described when they get there, on
-      // both surfaces, by `SPACE_PERMISSION_LABELS` and
-      // `SPACE_PERMISSION_SHORT`. Whoever comes to put one in front of a
+      // both surfaces, by `PERMISSION_LABELS` and
+      // `PERMISSION_SHORT`. Whoever comes to put one in front of a
       // person should extend those maps rather than this one: an entry here
       // is a third name for the same grant, in the one place neither renderer
       // reads.
@@ -1836,7 +1833,7 @@ function describeScope(scope: ParsedScope): string | undefined {
       // Resolved from the curated map, unlike the two arms above, because
       // both renderers do read the map for this kind. `describeScope`
       // on the device screen falls to `descriptions?.[s.typePattern]` for
-      // everything that is not OIDC or a space permission, and `labelFor` on
+      // everything that is not OIDC or a permission, and `labelFor` on
       // the authorize screen falls through `SCOPE_LABELS` to the same map. So
       // a `content` entry written there reaches a person on both surfaces,
       // and a hard return here would discard it — silently, on the one screen
@@ -1858,7 +1855,7 @@ function describeScope(scope: ParsedScope): string | undefined {
       // reaches nothing today: `EDGE_TYPE_REGISTRY` is built once from the
       // shipped set with no seed path, and every member of it is curated,
       // which a test holds. It is emphatically NOT what serves an edge type
-      // registered at runtime — that lives in a per-space overlay this
+      // registered at runtime — that lives in a runtime overlay this
       // lookup never consults.
       return (
         CONSENT_SCOPE_DESCRIPTIONS[scope.typePattern] ??
@@ -1924,9 +1921,9 @@ function describeScope(scope: ParsedScope): string | undefined {
  * reverses what this function used to do.** The skip rested on a claim that
  * `metadata:read` and its siblings are self-explanatory to the audience that
  * requests them. That audience is the wrong one: whoever wrote the
- * integration is not who reads this screen, and the person deciding owns a
- * space rather than operates the server. The device screen had been showing
- * "Register and update custom data types in your space" against
+ * integration is not who reads this screen, and the person deciding owns the
+ * data rather than operates the server. The device screen had been showing
+ * "Register and update custom data types on your server" against
  * `metadata.types` for exactly that reason, and between working copy on one
  * surface and a skip on the other, the copy is what should survive.
  *

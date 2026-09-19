@@ -142,9 +142,9 @@ describe("computeConsentDiff, against a grant broader than the request", () => {
     ]);
   });
 
-  it("does not let a wildcard grant cover a space permission", () => {
+  it("does not let a wildcard grant cover a permission", () => {
     // The one arm where a wrong answer hands over authority rather than
-    // showing a redundant tile. A space permission is reached by naming it.
+    // showing a redundant tile. A permission is reached by naming it.
     const diff = computeConsentDiff(["*:write"], ["keys.mint"]);
     expect(diff.added).toEqual(["keys.mint"]);
     expect(diff.kept).toEqual([]);

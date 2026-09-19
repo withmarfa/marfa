@@ -89,7 +89,7 @@ describe("type registry", () => {
   });
 
   it("rejects type registration from a key without metadata.types:write", async () => {
-    // The registration door asks for the metadata map, not a space
+    // The registration door asks for the metadata map, not a
     // permission: a key naming any map at all takes `metadata_permissions`
     // empty, and content reach says nothing about the registry.
     const keyResp = await client.createKey({

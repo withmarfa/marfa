@@ -100,7 +100,7 @@ describe("a restore does not rewind a row's version", () => {
       source.app,
       "GET",
       `/export?format=archive`,
-      { key: source.spaceKey },
+      { key: source.workingKey },
     );
     expect(exportRes.status).toBe(200);
     const archive = Buffer.from(await exportRes.arrayBuffer());

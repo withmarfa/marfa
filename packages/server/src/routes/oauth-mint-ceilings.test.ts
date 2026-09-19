@@ -15,9 +15,9 @@
  * the rule is a change the suite sees.
  *
  * The `client_credentials` grant was the other such path and it is no longer
- * a grant this server has. A machine acting on a space is an API key, minted
- * into that space and listed, narrowed, revoked and rotated on the keys page;
- * a machine token has none of that, and it would hold space permissions no
+ * a grant this server has. A machine acting on this server uses an API key,
+ * listed, narrowed, revoked and rotated on the keys page;
+ * a machine token has none of that, and it would hold permissions no
  * screen ever showed anybody. Registration refuses the grant and the token
  * endpoint answers `unsupported_grant_type`, which is what the first block
  * below pins, against a client seeded past registration so the refusal is

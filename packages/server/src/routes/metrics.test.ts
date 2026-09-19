@@ -2,7 +2,7 @@ import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import { createTestContext, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { hashApiKey } from "../middleware/auth.js";
-import { SPACE_PERMISSIONS } from "@withmarfa/shared";
+import { PERMISSIONS } from "@withmarfa/shared";
 
 let ctx: TestContext;
 
@@ -17,7 +17,7 @@ afterAll(async () => {
 describe("GET /metrics", () => {
   it("requires admin", async () => {
     const res = await request(ctx.app, "GET", "/metrics");
-    // No credential → 401. A space-bound credential would 403, but we don't
+    // No credential → 401. A working credential would 403, but we don't
     // need to cover that here — the auth gate is exercised by other routes.
     expect(res.status).toBe(401);
   });
@@ -25,7 +25,7 @@ describe("GET /metrics", () => {
   it("returns numeric counters throughout the payload", async () => {
     // Seed at least one item so `items.by_state` is non-empty.
     const createRes = await request(ctx.app, "POST", "/items", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         type: "core.note",
         properties: { body: "metrics shape test" },
@@ -97,18 +97,18 @@ describe("GET /metrics", () => {
     expect(body).not.toHaveProperty("scheduled_jobs");
   });
 
-  it("refuses a space-bound credential", async () => {
-    // Only `items` is space-scoped; blobs, keys, webhooks, registrations,
-    // connection drift and scheduled-job ticks are all instance-wide. That
-    // makes the whole response platform-operator data, so the gate is
-    // platform-only and a credential confined to a space is refused
-    // whatever its role — closing the read rather than partially scoping it.
-    const raw = `marfa_k1_space_a_${Math.random().toString(36).slice(2, 10)}`;
+  it("refuses a working credential", async () => {
+    // Items, blobs, keys, webhooks, registrations, connection drift and
+    // scheduled-job ticks are all instance-wide, which makes the whole
+    // response platform-operator data — so the gate is platform-only and a
+    // working credential is refused whatever it holds, closing the read
+    // rather than partially scoping it.
+    const raw = `marfa_k1_working_${Math.random().toString(36).slice(2, 10)}`;
     await ctx.storage.keys.create(
       {
-        label: "space-a-admin",
-        source: `space-a-${raw.slice(-8)}`,
-        permissions: [...SPACE_PERMISSIONS],
+        label: "working-key",
+        source: `working-${raw.slice(-8)}`,
+        permissions: [...PERMISSIONS],
         type_permissions: {},
         default_tier: "feed",
       },

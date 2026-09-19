@@ -3,7 +3,7 @@
 import type { ItemState, MergePolicy, MergeStrategy } from "@withmarfa/types";
 // Type-only, and so erased at build: `scopes.ts` imports this module for its
 // wire types, and a value import back the other way would be a runtime cycle.
-import type { SpacePermission } from "./scopes.js";
+import type { Permission } from "./scopes.js";
 
 /** Valid item states as a readonly array, useful for validation. */
 export const ITEM_STATES: readonly ItemState[] = [
@@ -157,7 +157,7 @@ export interface UpdateItemInput {
   occurred_at?: string;
   /**
    * Repoint the item at a new natural-key identifier under the caller's
-   * stamped `source`. The `(source, source_id)` tuple is unique per space
+   * stamped `source`. The `(source, source_id)` tuple is unique
    * — the same constraint enforced at create time — so the server rejects
    * the update with HTTP 409 `source_id_conflict` if the target value is
    * already taken by a different item. PATCHing the same value the item
@@ -259,7 +259,7 @@ export type EdgePermission = "read" | "write";
 /**
  * Per-metadata-sub-resource permission levels. Today the only sub-resource
  * is `types` (gating type registration via `POST /types`); future entries
- * (e.g. space config) follow the same shape. Default `{}` — no access —
+ * (e.g. instance config) follow the same shape. Default `{}` — no access —
  * means the credential cannot mutate the metadata surface, whatever else it
  * holds.
  */
@@ -288,7 +288,7 @@ export interface ApiKey {
    * operator key included — those types arrive with the build. The first
    * credential created at server install is the seed operator key; only an
    * existing operator key may mint another. Defaults to `false` for every
-   * ordinary space credential.
+   * ordinary working credential.
    *
    * This is the whole instance tier: the routes that run the instance take
    * an operator key and nothing else, and no consent screen can offer one.
@@ -305,18 +305,18 @@ export interface ApiKey {
   /** Tier stamped onto items when the client doesn't supply one. */
   default_tier: Tier;
   /**
-   * The space permissions this credential holds, as the literals themselves.
+   * The permissions this credential holds, as the literals themselves.
    *
-   * A list rather than a map because a space permission has no read/write
+   * A list rather than a map because a permission has no read/write
    * axis: it is held or it is not. Stored as the same shape a grant carries,
-   * so one `hasSpacePermission` answers for a key and for a sign-in and
+   * so one `hasPermission` answers for a key and for a sign-in and
    * neither door has to know which it is looking at.
    *
    * Absent or empty means the credential holds none, which is the correct
    * reading for an operator key as well: the instance tier is fenced off the
    * model rather than expressed inside it.
    */
-  permissions?: SpacePermission[];
+  permissions?: Permission[];
   type_permissions: Record<string, TypePermission>;
   extension_permissions?: Record<string, ExtensionPermission>;
   /**
@@ -370,7 +370,7 @@ export interface ApiKey {
 export interface CreateKeyInput {
   label: string;
   source: string;
-  permissions?: SpacePermission[];
+  permissions?: Permission[];
   default_tier?: Tier;
   type_permissions?: Record<string, TypePermission>;
   extension_permissions?: Record<string, ExtensionPermission>;
@@ -399,7 +399,7 @@ export interface CreateKeyInput {
 export interface UpdateKeyInput {
   label?: string;
   default_tier?: Tier;
-  permissions?: SpacePermission[];
+  permissions?: Permission[];
   type_permissions?: Record<string, TypePermission>;
   extension_permissions?: Record<string, ExtensionPermission>;
   edge_permissions?: Record<string, EdgePermission>;
@@ -630,7 +630,7 @@ export interface WebhookDelivery {
 
 /**
  * Schema-enforcement levers. All three default off; flip on per-type to
- * tighten validation. Applied space-wide by default; per-credential override
+ * tighten validation. Applied instance-wide by default; per-credential override
  * available via `ApiKey.enforcement_override`.
  *
  * - `strict_mode.types` — type IDs where unknown properties are rejected on

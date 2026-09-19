@@ -44,7 +44,7 @@ beforeAll(async () => {
 
   const seed = async (occurredAt: string, label: string): Promise<string> => {
     const res = await request(ctx.app, "POST", "/items", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         type: "core.note",
         // The FTS token is shared so one query returns all three; the
@@ -69,7 +69,7 @@ afterAll(async () => {
 
 async function searchIds(query: string): Promise<string[]> {
   const res = await request(ctx.app, "GET", `/search?${query}`, {
-    key: ctx.spaceKey,
+    key: ctx.workingKey,
   });
   expect(res.status).toBe(200);
   const body = (await res.json()) as { results: { item: { id: string } }[] };
@@ -131,7 +131,7 @@ describe("GET /search — the time bounds it advertises", () => {
       ctx.app,
       "GET",
       `/search?q=${TOKEN}&occurred_after=not-a-date`,
-      { key: ctx.spaceKey },
+      { key: ctx.workingKey },
     );
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: { message: string } };
@@ -141,7 +141,7 @@ describe("GET /search — the time bounds it advertises", () => {
   it("answers the same rows as the item listing for the same bound", async () => {
     // The parity the route's description claims, asserted against the door
     // it claims parity with. Comparing row identity rather than counts, and
-    // over the seeded rows only, because `/items` returns the space and
+    // over the seeded rows only, because `/items` returns everything and
     // `/search` returns what the token matched.
     const seeded = new Set([oldId, midId, newId]);
     const listedIds = async (query: string): Promise<string[]> => {
@@ -149,7 +149,7 @@ describe("GET /search — the time bounds it advertises", () => {
         ctx.app,
         "GET",
         `/items?type=core.note&limit=200&${query}`,
-        { key: ctx.spaceKey },
+        { key: ctx.workingKey },
       );
       expect(res.status).toBe(200);
       const body = (await res.json()) as { data: { id: string }[] };
@@ -188,7 +188,7 @@ describe("GET /search — the time bounds it advertises", () => {
         ctx.app,
         "GET",
         `/search?q=${TOKEN}&${wrong}=2023-01-01T00:00:00.000Z`,
-        { key: ctx.spaceKey },
+        { key: ctx.workingKey },
       );
       expect(res.status).toBe(400);
       const body = (await res.json()) as {

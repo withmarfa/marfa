@@ -12,13 +12,12 @@
  * exists, so nothing leaked; the record was absent.
  *
  * The cases drive the real flow, with two exceptions that seed what the flow
- * cannot produce on demand: a consent row standing with no projection (the
- * shape a failed projection write leaves), and a drifted space binding. A
- * device approval leaves one row carrying the merged scopes and the grant's
- * space; a browser authorize is then answered silently; a re-approval widens
- * the one row; in hosted mode the row is bound to the space and a drifted
- * binding is re-stamped; a standalone row is narrowed to the approval,
- * deliberately; the row equals the merged set where merging is not a union;
+ * cannot produce on demand: a consent row standing with no projection, the
+ * shape a failed projection write leaves. A device approval leaves one row
+ * carrying the merged scopes; a browser authorize is then answered silently;
+ * a re-approval widens the one row; a standalone row is narrowed to the
+ * approval, deliberately; the row equals the merged set where merging is not
+ * a union;
  * an approval whose bind fails leaves no row; revoking the grant removes the
  * row and the browser is asked again.
  */
@@ -393,7 +392,7 @@ describe("POST /auth/device/consent writes the plugin's consent row", () => {
       "DELETE",
       `/auth/grants/${grant.id}`,
       {
-        key: ctx.spaceKey,
+        key: ctx.workingKey,
       },
     );
     expect(revoke.status).toBe(204);

@@ -6,7 +6,7 @@
  * that reading actually needs is that whoever chose the label was trusted with
  * that namespace, which is not the same as their having chosen it.** A signed-in
  * app chooses its own: one minting a key called `com.othervendor.sync` would
- * hold that vendor's extension data on every item in the space, from a grant
+ * hold that vendor's extension data on every item stored, from a grant
  * that named no extension anything, durably and after the app was revoked.
  *
  * The test is whether an app chose the label, which `oauth_client_id` answers
@@ -21,9 +21,9 @@
  * rather than withholding one.
  *
  * The same gap exists one step away and is inert: the self-serve key page lets
- * a signed-in person name a label freely. One account holds one space and the
- * first person in it holds everything, so there is no one for that person to
- * escalate against; it bites the day a space can hold more than one person.
+ * a signed-in person name a label freely. One instance has one owner and that
+ * owner holds everything, so there is no one for them to escalate against; it
+ * bites the day an instance can hold more than one person.
  *
  * **`label` is read as identity, exactly like `source`.** `source` already has
  * that recorded — `oauth:<connection-id>` is proof a caller *is* a connection,

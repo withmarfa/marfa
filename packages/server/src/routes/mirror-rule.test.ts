@@ -18,11 +18,11 @@ const MIRROR_SOURCE = "integration:acme.mirror";
 beforeAll(async () => {
   ctx = await createTestContext();
 
-  // Minted from the space key, not the operator key: a mint from an operator
-  // caller produces another operator key, which is space-less and is not the
+  // Minted from the working key, not the operator key: a mint from an
+  // operator caller produces another operator key, which is not the
   // ordinary member this case is about.
   const memberRes = await request(ctx.app, "POST", "/keys", {
-    key: ctx.spaceKey,
+    key: ctx.workingKey,
     body: {
       label: "mirror-member",
       source: "mirror-member-src",
@@ -77,7 +77,7 @@ describe("the mirror rule", () => {
       `m-${String(Math.random()).slice(2)}`,
     );
     const res = await request(ctx.app, "PATCH", `/items/${id}`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: { properties: { title: "admin edit" }, version },
     });
     expect(res.status).toBe(403);
@@ -110,7 +110,7 @@ describe("the mirror rule", () => {
       "GET",
       `/items/${promotedBody.item.id}/edges`,
       {
-        key: ctx.spaceKey,
+        key: ctx.workingKey,
       },
     );
     const edgesBody = (await edges.json()) as {
@@ -146,7 +146,7 @@ describe("the mirror rule", () => {
       ctx.app,
       "GET",
       `/items/${promotedBody.item.id}`,
-      { key: ctx.spaceKey },
+      { key: ctx.workingKey },
     );
     const promotedAfterBody = (await promotedAfter.json()) as {
       item: { properties: Record<string, unknown> };

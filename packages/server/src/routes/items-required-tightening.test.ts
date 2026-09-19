@@ -31,7 +31,7 @@ async function seedLooseItem(
   id: string,
 ): Promise<{ itemId: string; version: number }> {
   const registered = await request(ctx.app, "POST", "/types", {
-    key: ctx.spaceKey,
+    key: ctx.workingKey,
     body: {
       id,
       version: 1,
@@ -44,7 +44,7 @@ async function seedLooseItem(
   expect(registered.status).toBe(201);
 
   const created = await request(ctx.app, "POST", "/items", {
-    key: ctx.spaceKey,
+    key: ctx.workingKey,
     body: { type: id, properties: { title: "no body here" } },
   });
   expect(created.status).toBe(201);
@@ -56,7 +56,7 @@ async function seedLooseItem(
 
 async function tightenBodyToRequired(id: string): Promise<void> {
   const updated = await request(ctx.app, "PUT", `/types/${id}`, {
-    key: ctx.spaceKey,
+    key: ctx.workingKey,
     body: {
       id,
       version: 2,
@@ -76,7 +76,7 @@ describe("tightening required on a type with existing items", () => {
 
     // Editable before the tightening.
     const before = await request(ctx.app, "PATCH", `/items/${itemId}`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: { properties: { title: "still fine" }, version },
     });
     expect(before.status).toBe(200);
@@ -87,7 +87,7 @@ describe("tightening required on a type with existing items", () => {
     // The same patch, touching only `title`, is now rejected — the merged set
     // is what gets validated, and it has no `body`.
     const after = await request(ctx.app, "PATCH", `/items/${itemId}`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         properties: { title: "no longer allowed" },
         version: edited.item.version,
@@ -109,14 +109,14 @@ describe("tightening required on a type with existing items", () => {
     await tightenBodyToRequired(typeId);
 
     const repaired = await request(ctx.app, "PATCH", `/items/${itemId}`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: { properties: { body: "" }, version },
     });
     expect(repaired.status).toBe(200);
     const backfilled = (await repaired.json()) as { item: { version: number } };
 
     const afterwards = await request(ctx.app, "PATCH", `/items/${itemId}`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         properties: { title: "editable again" },
         version: backfilled.item.version,

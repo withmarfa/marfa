@@ -1,5 +1,5 @@
 /**
- * The space-permission carrier and the gate that reads it.
+ * The permission carrier and the gate that reads it.
  *
  * **One question, asked of one list, whichever credential arrived.** A key
  * carries its permissions on its row and a sign-in carries them on its grant,
@@ -24,7 +24,7 @@ import { Hono } from "hono";
 import type { Context } from "hono";
 import type { ApiKey } from "@withmarfa/shared";
 import { MarfaError } from "@withmarfa/shared";
-import { authMiddleware, requireSpacePermission, type AppEnv } from "./auth.js";
+import { authMiddleware, requirePermission, type AppEnv } from "./auth.js";
 import {
   createTestContext,
   request,
@@ -64,22 +64,22 @@ function fakeContext(vars: {
   } as unknown as Context<AppEnv>;
 }
 
-describe("requireSpacePermission", () => {
+describe("requirePermission", () => {
   it("reads an API key's own list, and refuses one holding nothing", () => {
-    // The API-key arm used to be a pass-through, on the reading that a space
+    // The API-key arm used to be a pass-through, on the reading that a
     // permission named what a person handed an app and so meant nothing on a
     // person's own credential. Under one permission model it means the same
     // thing on both: the key's row carries the literals, and a key that
     // carries none holds none.
     expect(() => {
-      requireSpacePermission(
+      requirePermission(
         fakeContext({ apiKey: fakeKey(), authType: "api_key" }),
         "keys.mint",
       );
     }).toThrow(MarfaError);
 
     expect(() => {
-      requireSpacePermission(
+      requirePermission(
         fakeContext({
           apiKey: fakeKey({ permissions: ["keys.mint"] }),
           authType: "api_key",
@@ -91,7 +91,7 @@ describe("requireSpacePermission", () => {
 
   it("does not let one of a key's permissions stand in for another", () => {
     expect(() => {
-      requireSpacePermission(
+      requirePermission(
         fakeContext({
           apiKey: fakeKey({
             permissions: ["webhooks.manage", "audit.read"],
@@ -103,10 +103,10 @@ describe("requireSpacePermission", () => {
     }).toThrow(MarfaError);
   });
 
-  it("refuses an OAuth caller holding no space permission, naming the literal", () => {
+  it("refuses an OAuth caller holding no permission, naming the literal", () => {
     let thrown: unknown;
     try {
-      requireSpacePermission(
+      requirePermission(
         fakeContext({
           apiKey: fakeKey(),
           authType: "oauth",
@@ -127,9 +127,9 @@ describe("requireSpacePermission", () => {
     expect(err.details).toMatchObject({ required_scope: "keys.mint" });
   });
 
-  it("admits an OAuth caller holding the space permission", () => {
+  it("admits an OAuth caller holding the permission", () => {
     expect(() => {
-      requireSpacePermission(
+      requirePermission(
         fakeContext({
           apiKey: fakeKey(),
           authType: "oauth",
@@ -140,12 +140,12 @@ describe("requireSpacePermission", () => {
     }).not.toThrow();
   });
 
-  it("does not let one space permission stand in for another", () => {
-    // The family is exact by construction: no wildcard reaches a space
+  it("does not let one permission stand in for another", () => {
+    // The family is exact by construction: no wildcard reaches a
     // permission and holding every other member implies nothing about this
     // one.
     expect(() => {
-      requireSpacePermission(
+      requirePermission(
         fakeContext({
           apiKey: fakeKey(),
           authType: "oauth",
@@ -162,7 +162,7 @@ describe("requireSpacePermission", () => {
     // Fails closed. A carrier that did not get set is a bug in the middleware,
     // and the safe reading of "I cannot tell what was granted" is "nothing was".
     expect(() => {
-      requireSpacePermission(
+      requirePermission(
         fakeContext({
           apiKey: fakeKey(),
           authType: "oauth",
@@ -178,7 +178,7 @@ describe("requireSpacePermission", () => {
     // `if (!isBootstrap)` block rather than anything here. Pinned so the
     // answer is a decision rather than a surprise at the first call site.
     expect(() => {
-      requireSpacePermission(fakeContext({}), "keys.mint");
+      requirePermission(fakeContext({}), "keys.mint");
     }).toThrow(MarfaError);
   });
 });
@@ -238,7 +238,7 @@ describe("the bearer middleware carries the grant onto the request", () => {
 
   it("carries what the projections drop, and does not widen them", async () => {
     // The premise of the whole carrier, asserted rather than assumed: the
-    // space permission must appear in the grant and in none of the permission
+    // permission must appear in the grant and in none of the permission
     // maps. If it ever reaches a map, a wildcard on that axis could resolve
     // it and administrative authority would be grantable by breadth — which
     // is the wrong repair `scopes.ts` warns against, and it would be
@@ -273,7 +273,6 @@ describe("the bearer middleware carries the grant onto the request", () => {
     expect(body.grantScopes).toContain("keys.mint");
     for (const map of body.maps) {
       expect(Object.keys(map ?? {})).not.toContain("keys.mint");
-      expect(Object.keys(map ?? {})).not.toContain("space");
     }
     // And the ordinary literal beside it still projects, so the case is not
     // passing because nothing projected at all.
@@ -282,7 +281,7 @@ describe("the bearer middleware carries the grant onto the request", () => {
 
   it("sets no grant for an API-key caller", async () => {
     const res = await probeApp().request("/probe", {
-      headers: { Authorization: `Bearer ${ctx.spaceKey}` },
+      headers: { Authorization: `Bearer ${ctx.workingKey}` },
     });
     expect(res.status).toBe(200);
     const body = (await res.json()) as {

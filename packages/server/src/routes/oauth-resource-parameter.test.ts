@@ -14,8 +14,8 @@
  * **Driven through the authorization-code grant.** This suite used to seed a
  * confidential client and mint through `client_credentials`, which was the
  * cheapest way to reach the token endpoint. That grant is gone: a machine
- * acting on a space is an API key, and a machine token would carry no space
- * of its own, nothing on the security page, and no way for the person
+ * acting on this server uses an API key, and a machine token would carry
+ * nothing on the security page and no way for the person
  * accountable for it to end it. So the client registers the way a real MCP
  * client registers, through dynamic registration carrying a signed-in
  * session, and the code flow runs end to end. That is slower, and it is also
@@ -191,8 +191,8 @@ describe("resource parameter on the token endpoint", () => {
     expect(accessToken.startsWith("marfa_at_")).toBe(true);
 
     // And it resolves against the data plane, which is the half a shape
-    // assertion cannot see: the token carries the consenting person's space,
-    // so the storage layer has a predicate to apply.
+    // assertion cannot see: the token resolves to a principal the data
+    // plane can narrow by.
     const read = await request(context.app, "GET", "/items", {
       key: accessToken,
     });

@@ -32,7 +32,7 @@ import { describe, it, expect, afterEach, vi } from "vitest";
 import {
   createTestContext,
   createTestAccount,
-  mintSpaceKey,
+  mintWorkingKey,
   request,
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
@@ -92,11 +92,8 @@ async function seedClient(c: TestContext): Promise<string> {
 /**
  * Sign up + verify + sign in.
  *
- * Returns the session cookie, the space the provisioning hook put the new
- * account in, and a working key inside it. The space is the load-bearing
- * half: a grant is projected into the account's own space, so every read and
- * every item door below has to be asked from inside that space or it is
- * asking about somewhere else.
+ * Returns the session cookie, the account the provisioning hook created,
+ * and a working key.
  */
 async function signInUser(
   c: TestContext,
@@ -109,7 +106,7 @@ async function signInUser(
     headers: { origin: ORIGIN },
   });
   expect(signIn.status).toBe(200);
-  const key = await mintSpaceKey(c);
+  const key = await mintWorkingKey(c);
   const setCookie = signIn.headers.get("set-cookie");
   if (!setCookie) throw new Error("sign-in: no Set-Cookie header");
   for (const entry of setCookie.split(/,\s*(?=[a-zA-Z0-9_-]+=)/)) {
@@ -160,7 +157,7 @@ async function allGrantRows(c: TestContext) {
   return listed.data;
 }
 
-/** `GET /auth/grants` from inside the account's own space, which is where its
+/** `GET /auth/grants` for the account, which is where its
  *  grants are projected. This is the surface the Disconnect button reads
  *  from, so it is what "the user can see it" means here. */
 async function listedGrants(
@@ -295,7 +292,7 @@ describe("an ordinary revoke still re-establishes on re-approval", () => {
     // has a row to reactivate — an app grant is a re-grantable
     // relationship, unlike an integration connection's terminal uninstall.
     const revoked = await request(c.app, "DELETE", `/auth/grants/${grantId}`, {
-      key: c.spaceKey,
+      key: c.workingKey,
     });
     expect(revoked.status).toBe(204);
     const afterRevoke = await c.storage.items.get(grantId);
@@ -307,8 +304,7 @@ describe("an ordinary revoke still re-establishes on re-approval", () => {
 
     // Re-established in place, not forked. The predicate narrows on
     // `state`, so a row the user revoked is still the row the approval
-    // reaches, and the projection stays single-row per (space, client,
-    // user).
+    // reaches, and the projection stays single-row per (client, user).
     const reapproved = await listedGrants(c, key);
     expect(reapproved.length).toBe(1);
     expect(reapproved[0]!.id).toBe(grantId);
@@ -409,7 +405,7 @@ describe("a live grant cannot be stranded through the item doors", () => {
     const [grant] = await listedGrants(c, key);
 
     const revoke = await request(c.app, "DELETE", `/auth/grants/${grant!.id}`, {
-      key: c.spaceKey,
+      key: c.workingKey,
     });
     expect(revoke.status).toBe(204);
 

@@ -41,12 +41,12 @@ beforeAll(async () => {
     LOOKALIKE_CHILD,
   ]) {
     const registered = await request(ctx.app, "POST", "/types", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: { id, version: 1, fields: { title: { type: "string" } } },
     });
     expect(registered.status).toBe(201);
     const created = await request(ctx.app, "POST", "/items", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: { type: id, properties: { title: id } },
     });
     expect(created.status).toBe(201);
@@ -67,8 +67,8 @@ async function listTypes(query: string, key: string): Promise<string[]> {
 /**
  * Mint a key whose only readable types are `patterns`.
  *
- * Bound to the context's space, which is what an ordinary working credential
- * is: the type map is the whole of what this key can read.
+ * The type map is the whole of what this key can read, which is what an
+ * ordinary working credential is.
  */
 async function mintScopedKey(
   patterns: Record<string, "read" | "write">,
@@ -91,13 +91,13 @@ async function mintScopedKey(
 describe("GET /items?type= — underscores are literal identifier bytes", () => {
   it("does not admit a lookalike sibling for a bare identifier", async () => {
     expect(
-      await listTypes(`/items?type=${UNDERSCORE_PARENT}`, ctx.spaceKey),
+      await listTypes(`/items?type=${UNDERSCORE_PARENT}`, ctx.workingKey),
     ).toEqual([UNDERSCORE_PARENT, UNDERSCORE_CHILD].sort());
   });
 
   it("does not admit a lookalike sibling for a subtree wildcard", async () => {
     expect(
-      await listTypes(`/items?type=${UNDERSCORE_PARENT}.*`, ctx.spaceKey),
+      await listTypes(`/items?type=${UNDERSCORE_PARENT}.*`, ctx.workingKey),
     ).toEqual([UNDERSCORE_PARENT, UNDERSCORE_CHILD].sort());
   });
 });
@@ -105,7 +105,7 @@ describe("GET /items?type= — underscores are literal identifier bytes", () => 
 describe("GET /items?type= — pattern grammar", () => {
   it("rejects a LIKE metacharacter smuggled in as a subtree wildcard", async () => {
     const res = await request(ctx.app, "GET", "/items?type=%25.*", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
     });
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: { code: string } };
@@ -114,21 +114,21 @@ describe("GET /items?type= — pattern grammar", () => {
 
   it("rejects an underscore-only wildcard root", async () => {
     const res = await request(ctx.app, "GET", "/items?type=_.*", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
     });
     expect(res.status).toBe(400);
   });
 
   it("rejects a malformed subtree wildcard", async () => {
     const res = await request(ctx.app, "GET", "/items?type=demo..thing.*", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
     });
     expect(res.status).toBe(400);
   });
 
   it("still rejects a bare invalid identifier", async () => {
     const res = await request(ctx.app, "GET", "/items?type=NotAType", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
     });
     expect(res.status).toBe(400);
   });
@@ -159,7 +159,7 @@ describe("allowed_types — underscore handling across read surfaces", () => {
       [LOOKALIKE_CHILD, "tag-lookalike"],
     ] as const) {
       const created = await request(ctx.app, "POST", "/items", {
-        key: ctx.spaceKey,
+        key: ctx.workingKey,
         body: { type: id, properties: { title: id }, tags: [tag] },
       });
       expect(created.status).toBe(201);
@@ -177,7 +177,7 @@ describe("allowed_types — underscore handling across read surfaces", () => {
   it("returns no tags to a credential with no readable types", async () => {
     // An empty allow-list means "nothing is readable", and every other read
     // surface says so. The tag aggregate guarded on a non-empty list, so the
-    // empty case skipped the type clause and handed back the space's whole
+    // empty case skipped the type clause and handed back the whole
     // vocabulary with counts — which names what exists even though no item
     // behind it is readable.
     const key = await mintScopedKey({});
@@ -203,7 +203,7 @@ describe("GET /items?filter= — LIKE operands declare their escape character", 
     // any character", and this query returns nothing.
     const types = await listTypes(
       `/items?filter=${encodeURIComponent('type contains "web_gallery"')}`,
-      ctx.spaceKey,
+      ctx.workingKey,
     );
     expect(types).toContain(UNDERSCORE_PARENT);
     expect(types).not.toContain(LOOKALIKE);
@@ -233,7 +233,7 @@ describe("GET /items/stats — counts what the caller can actually read", () => 
 
   it("counts nothing for a credential with no readable types", async () => {
     // The list path already forces zero rows on an empty filter; stats used to
-    // skip the clause entirely and report the whole space.
+    // skip the clause entirely and report everything.
     const key = await mintScopedKey({});
     expect(await statsTotal(key)).toBe(0);
   });
@@ -246,19 +246,19 @@ describe("DELETE /types/:id — in-use check", () => {
     // a delete that should succeed.
     for (const id of ["demo.solo_type", "demo.soloxtype.child"]) {
       const registered = await request(ctx.app, "POST", "/types", {
-        key: ctx.spaceKey,
+        key: ctx.workingKey,
         body: { id, version: 1, fields: { title: { type: "string" } } },
       });
       expect(registered.status).toBe(201);
     }
     const created = await request(ctx.app, "POST", "/items", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: { type: "demo.soloxtype.child", properties: { title: "decoy" } },
     });
     expect(created.status).toBe(201);
 
     const res = await request(ctx.app, "DELETE", "/types/demo.solo_type", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
     });
     expect(res.status).toBe(200);
   });

@@ -5,7 +5,7 @@ import {
   MIN_PAGE_LIMIT,
 } from "../page-limits.js";
 import type { AppEnv } from "../middleware/auth.js";
-import { requireSpacePermission, requireAuth } from "../middleware/auth.js";
+import { requirePermission, requireAuth } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import {
@@ -34,7 +34,7 @@ const listAuditRoute = createRoute({
   path: "/",
   tags: ["Audit"],
   summary: "List audit log entries",
-  description: `Returns audit-log entries in reverse-chronological order, filtered by action, resource, or time range, with cursor pagination. Records only state-changing calls and a few admin reads — item/edge reads, SSE, and search are not logged. Requires \`audit.read\`, and answers a caller's own space and nothing else. A credential with no space holds no space permission, so it is refused rather than shown the whole trail. ${UNKNOWN_PARAM_NOTE}`,
+  description: `Returns audit-log entries in reverse-chronological order, filtered by action, resource, or time range, with cursor pagination. Records only state-changing calls and a few admin reads — item/edge reads, SSE, and search are not logged. Requires \`audit.read\`. The operator key holds no permission, so it is refused rather than shown the trail. ${UNKNOWN_PARAM_NOTE}`,
   security: [{ bearerAuth: [] }],
   request: {
     query: z.object({
@@ -108,7 +108,7 @@ export function auditRoutes(storage: Storage) {
 
   router.openapi(listAuditRoute, async (c) => {
     requireAuth(c);
-    requireSpacePermission(c, "audit.read");
+    requirePermission(c, "audit.read");
     refuseUnknownQueryParams(c.req.raw.url, listAuditRoute.request.query);
     const {
       action,

@@ -40,7 +40,7 @@ afterAll(async () => {
  *  metadata row rather than only the half the write touched. */
 async function seedTaggedItem(): Promise<string> {
   const res = await request(ctx.app, "POST", "/items", {
-    key: ctx.spaceKey,
+    key: ctx.workingKey,
     body: {
       type: "core.note",
       properties: { body: "extension-event" },
@@ -90,7 +90,7 @@ describe("metadata.changed on an extension write", () => {
       ctx.app,
       "PUT",
       `/items/${itemId}/extensions/reader`,
-      { key: ctx.spaceKey, body: { offset: 1234 } },
+      { key: ctx.workingKey, body: { offset: 1234 } },
     );
     expect(res.status).toBe(200);
     await settle();
@@ -114,7 +114,7 @@ describe("metadata.changed on an extension write", () => {
       ctx.app,
       "PUT",
       `/items/${itemId}/extensions/reader`,
-      { key: ctx.spaceKey, body: { offset: 1234 } },
+      { key: ctx.workingKey, body: { offset: 1234 } },
     );
     expect(seeded.status).toBe(200);
 
@@ -126,7 +126,7 @@ describe("metadata.changed on an extension write", () => {
       ctx.app,
       "DELETE",
       `/items/${itemId}/extensions/reader`,
-      { key: ctx.spaceKey },
+      { key: ctx.workingKey },
     );
     expect(res.status).toBe(200);
     await settle();
@@ -177,7 +177,7 @@ describe("the item the event carries is the item after the write", () => {
       ctx.app,
       "PUT",
       `/items/${itemId}/extensions/reader`,
-      { key: ctx.spaceKey, body: { offset: 99 } },
+      { key: ctx.workingKey, body: { offset: 99 } },
     );
     expect(res.status).toBe(200);
     await settle();

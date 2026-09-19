@@ -28,7 +28,7 @@
  *
  * Both maps here are keyed on the literal union rather than on `string`, so
  * a literal added to `OidcScope` fails to compile until it has been named in
- * both. That is the guard `space-permission-labels.ts` next door already uses for
+ * both. That is the guard `permission-labels.ts` next door already uses for
  * the same reason, and the one the five maps this replaces did not have.
  *
  * Two shapes rather than one, because a toggle row and a prose summary want

@@ -44,8 +44,8 @@ const DEFAULT_AGGREGATE_MULTIPLIER = 4;
  * increments, so a cap of N admits exactly N requests per window and
  * the whole budget refreshes when the window lapses.
  *
- * The counter table sits in the same database every other space-scoped
- * table lives in. Two server instances pointed at the same DB share
+ * The counter table sits in the same database every other table lives in.
+ * Two server instances pointed at the same DB share
  * counters cluster-wide; SQLite is single-process by file lock so the
  * same code path stays correct on a self-hosted instance.
  *

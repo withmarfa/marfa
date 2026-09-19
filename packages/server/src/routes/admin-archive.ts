@@ -11,7 +11,7 @@
  * an id or natural-key collision counts as a duplicate and leaves the
  * existing row untouched. Tags and extensions restore alongside their
  * items. Edges restore in a second pass, only where both endpoints
- * resolve in the restore space — a hand-edited archive cannot plant a
+ * resolve in the target database — a hand-edited archive cannot plant a
  * reference to an item it does not carry. A row comes back at the version
  * it was archived at; version history, created_at and updated_at are
  * re-stamped, not carried.
@@ -160,7 +160,7 @@ const restoreArchiveRoute = createRoute({
         },
       },
       description:
-        "The archive redefines a type the target space already registers differently, or carries a core edge type. Nothing was written.",
+        "The archive redefines a type this instance already registers differently, or carries a core edge type. Nothing was written.",
     },
   },
 });
@@ -182,7 +182,7 @@ interface BlobRestore {
  * request created.
  *
  * The per-hash lock is the same one `POST /blobs` takes, and for the same
- * reason: content addressing means two spaces can be writing identical bytes
+ * reason: content addressing means two requests can be writing identical bytes
  * at once, so `exists` and the write have to be one step or the request that
  * is refused deletes the other's committed blob.
  */
@@ -263,7 +263,7 @@ async function restoreArchiveBlobs(
           });
         }
       }
-      // Another space may have registered these same bytes in the
+      // Another request may have registered these same bytes in the
       // meantime, and content addressing means its row describes the file
       // this request happens to have written; `undoBytes` re-checks under
       // the per-hash lock before deleting.
@@ -459,10 +459,9 @@ export function adminArchiveRoutes(storage: Storage, blobBackend: BlobBackend) {
 
     // Blobs land only once every refusal above has passed. They used to be
     // written as the tar was read, which put bytes AND `blobs` rows into the
-    // target space ahead of the space-mismatch refusal, the count caps and
-    // the type-conflict refusal — so an archive this route went on to reject
-    // had already mutated the space's blob store and the quota those rows
-    // count toward. They are still outside the transaction, because a
+    // store ahead of the count caps and the type-conflict refusal — so an
+    // archive this route went on to reject had already mutated the blob store
+    // and the quota those rows count toward. They are still outside the transaction, because a
     // rollback cannot reach a filesystem or an object store; what changes is
     // that this request now takes back exactly what it wrote.
     const blobs = await restoreArchiveBlobs(storage, blobBackend, pendingBlobs);
@@ -485,7 +484,7 @@ export function adminArchiveRoutes(storage: Storage, blobBackend: BlobBackend) {
 
         // Ids an edge endpoint may resolve against without a storage
         // lookup: every id this restore just wrote, plus ids that
-        // collided — a collision means the restore space already holds
+        // collided — a collision means the database already holds
         // that exact id, so edges naming it still land correctly.
         const resolvableIds = new Set<string>();
 
@@ -565,8 +564,8 @@ export function adminArchiveRoutes(storage: Storage, blobBackend: BlobBackend) {
         }
 
         // Second pass, after every item the archive carries exists: an
-        // edge restores only when both endpoints resolve in the restore
-        // space, so a partial or hand-edited archive cannot plant a
+        // edge restores only when both endpoints resolve in the database,
+        // so a partial or hand-edited archive cannot plant a
         // reference to an item that is not there.
         const endpointResolves = async (id: string): Promise<boolean> =>
           resolvableIds.has(id) || (await storage.items.get(id)) !== null;
@@ -653,8 +652,8 @@ export function adminArchiveRoutes(storage: Storage, blobBackend: BlobBackend) {
     } catch (err) {
       // The write is what this request did; the rollback is what the database
       // did. Nothing sweeps a blob whose restore was refused, so the undo is
-      // the only thing that keeps a failed restore from leaving the space
-      // permanently larger.
+      // the only thing that keeps a failed restore from leaving the blob
+      // store permanently larger.
       await blobs.undo();
       throw err;
     }

@@ -162,10 +162,10 @@ const REPLAY_HEADER = "Idempotency-Replayed";
  * to prevent, arriving from the other side. So the digest covers
  * everything that decides what the write does.
  *
- * **The credential is in it deliberately.** The key is scoped to the
- * space, so two credentials in one space share a keyspace; without the
- * credential, one could be handed a response body derived from a row the
- * other may not read. A client that rotates its credential between a
+ * **The credential is in it deliberately.** The key is unique across the
+ * instance, so two credentials share one keyspace; without the credential,
+ * one could be handed a response body derived from a row the other may not
+ * read. A client that rotates its credential between a
  * write and its retry is refused rather than served, which is the safe
  * direction of that trade.
  */
@@ -176,13 +176,13 @@ const REPLAY_HEADER = "Idempotency-Replayed";
  * replaces it. That is not an edge case here, it is the case the feature
  * exists for: a write goes out, the response is lost, the token expires
  * inside the same partition, and the client refreshes and retries with the
- * key it already minted. Same space, same body, same everything a caller
+ * key it already minted. Same body, same everything a caller
  * can see — and a different access-token row, so keying on `id` refuses
  * the retry as a reused key and the client can never learn whether its
  * first attempt landed.
  *
  * `source` carries `oauth:<client>:<user>`, which is stable across a
- * refresh and distinguishes two principals sharing a space, so it holds
+ * refresh and distinguishes two principals sharing the keyspace, so it holds
  * the property the digest wants the credential for. API keys keep their
  * own id, which does not rotate under them.
  *

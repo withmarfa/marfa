@@ -38,7 +38,7 @@ does not hold at all.
 
 Nothing reported the disagreement: the write is accepted, nothing errors, and
 the projection is only overwritten when an inbound event for that item
-arrives — so on a quiet space it could stand indefinitely, with
+arrives — so on a quiet instance it could stand indefinitely, with
 `visible.getItem` handing back a field that does not exist server-side.
 
 The projection now calls the same coercion the server's door applies, rather

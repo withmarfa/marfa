@@ -43,7 +43,7 @@ async function createWebhook(overrides?: {
   events?: string[];
 }): Promise<WebhookResponse> {
   const res = await request(ctx.app, "POST", "/webhooks", {
-    key: ctx.spaceKey,
+    key: ctx.workingKey,
     body: {
       url: overrides?.url ?? "https://example.com/hook",
       events: overrides?.events ?? ["item.created"],
@@ -55,7 +55,7 @@ async function createWebhook(overrides?: {
 describe("POST /webhooks", () => {
   it("creates a webhook on the happy path", async () => {
     const res = await request(ctx.app, "POST", "/webhooks", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         url: "https://example.com/happy",
         events: ["item.created", "item.updated"],
@@ -73,7 +73,7 @@ describe("POST /webhooks", () => {
 
   it("rejects a malformed URL with 400", async () => {
     const res = await request(ctx.app, "POST", "/webhooks", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         url: "not-a-url",
         events: ["item.created"],
@@ -86,7 +86,7 @@ describe("POST /webhooks", () => {
 
   it("rejects an unknown event type with 400", async () => {
     const res = await request(ctx.app, "POST", "/webhooks", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         url: "https://example.com/hook",
         events: ["item.created", "item.nonsense"],
@@ -129,7 +129,7 @@ describe("GET /webhooks", () => {
     await createWebhook({ url: "https://example.com/list-test" });
 
     const res = await request(ctx.app, "GET", "/webhooks", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
     });
     expect(res.status).toBe(200);
     const body = (await res.json()) as { webhooks: WebhookResponse[] };
@@ -154,7 +154,7 @@ describe("GET /webhooks/:id", () => {
     });
 
     const res = await request(ctx.app, "GET", `/webhooks/${created.id}`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
     });
     expect(res.status).toBe(200);
     const body = (await res.json()) as WebhookResponse;
@@ -164,7 +164,7 @@ describe("GET /webhooks/:id", () => {
 
   it("returns 404 for a missing webhook", async () => {
     const res = await request(ctx.app, "GET", "/webhooks/does-not-exist-xyz", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
     });
     expect(res.status).toBe(404);
     const body = (await res.json()) as { error: { code: string } };
@@ -180,7 +180,7 @@ describe("PATCH /webhooks/:id", () => {
     });
 
     const res = await request(ctx.app, "PATCH", `/webhooks/${created.id}`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         url: "https://example.com/updated",
         events: ["item.updated", "item.deleted"],
@@ -198,7 +198,7 @@ describe("PATCH /webhooks/:id", () => {
   it("rejects malformed URL on update with 400", async () => {
     const created = await createWebhook();
     const res = await request(ctx.app, "PATCH", `/webhooks/${created.id}`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: { url: "not a url at all" },
     });
     expect(res.status).toBe(400);
@@ -209,7 +209,7 @@ describe("PATCH /webhooks/:id", () => {
   it("rejects unknown event type on update with 400", async () => {
     const created = await createWebhook();
     const res = await request(ctx.app, "PATCH", `/webhooks/${created.id}`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: { events: ["item.created", "item.bogus"] },
     });
     expect(res.status).toBe(400);
@@ -219,7 +219,7 @@ describe("PATCH /webhooks/:id", () => {
 
   it("returns 404 when patching a missing webhook", async () => {
     const res = await request(ctx.app, "PATCH", "/webhooks/missing-id", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: { active: false },
     });
     expect(res.status).toBe(404);
@@ -233,7 +233,7 @@ describe("DELETE /webhooks/:id", () => {
     });
 
     const res = await request(ctx.app, "DELETE", `/webhooks/${created.id}`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
     });
     expect(res.status).toBe(200);
     const body = (await res.json()) as { ok: boolean };
@@ -241,7 +241,7 @@ describe("DELETE /webhooks/:id", () => {
 
     // Confirm it is actually gone.
     const getRes = await request(ctx.app, "GET", `/webhooks/${created.id}`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
     });
     expect(getRes.status).toBe(404);
 
@@ -256,7 +256,7 @@ describe("DELETE /webhooks/:id", () => {
 
   it("returns 404 when deleting a missing webhook", async () => {
     const res = await request(ctx.app, "DELETE", "/webhooks/nope-nope", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
     });
     expect(res.status).toBe(404);
   });
@@ -272,7 +272,7 @@ describe("GET /webhooks/:id/deliveries", () => {
       ctx.app,
       "GET",
       `/webhooks/${created.id}/deliveries`,
-      { key: ctx.spaceKey },
+      { key: ctx.workingKey },
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as { deliveries: unknown[] };
@@ -300,7 +300,7 @@ describe("GET /webhooks/:id/deliveries", () => {
       ctx.app,
       "GET",
       `/webhooks/${created.id}/deliveries?limit=2`,
-      { key: ctx.spaceKey },
+      { key: ctx.workingKey },
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as { deliveries: unknown[] };
@@ -309,7 +309,7 @@ describe("GET /webhooks/:id/deliveries", () => {
 
   it("returns 404 when the webhook does not exist", async () => {
     const res = await request(ctx.app, "GET", "/webhooks/ghost-id/deliveries", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
     });
     expect(res.status).toBe(404);
   });

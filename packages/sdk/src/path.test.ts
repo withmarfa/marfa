@@ -79,8 +79,8 @@ describe("an identifier cannot smuggle a query onto a real route", () => {
     // fetches it rather than by this client. Both branches, because the CDN
     // one is a different origin and was written separately.
     const api = new MarfaClient({ url: "http://localhost", apiKey: "k" });
-    expect(api.blobs.url("sha256:abc/../../admin/spaces")).toBe(
-      "http://localhost/blobs/sha256%3Aabc%2F..%2F..%2Fadmin%2Fspaces",
+    expect(api.blobs.url("sha256:abc/../../admin/keys")).toBe(
+      "http://localhost/blobs/sha256%3Aabc%2F..%2F..%2Fadmin%2Fkeys",
     );
 
     const cdn = new MarfaClient({
@@ -88,8 +88,8 @@ describe("an identifier cannot smuggle a query onto a real route", () => {
       apiKey: "k",
       cdnBaseUrl: "http://cdn.example",
     });
-    expect(cdn.blobs.url("sha256:abc/../../admin/spaces")).toBe(
-      "http://cdn.example/blobs/sha256%3Aabc%2F..%2F..%2Fadmin%2Fspaces",
+    expect(cdn.blobs.url("sha256:abc/../../admin/keys")).toBe(
+      "http://cdn.example/blobs/sha256%3Aabc%2F..%2F..%2Fadmin%2Fkeys",
     );
   });
 

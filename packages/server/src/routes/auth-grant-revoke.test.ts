@@ -25,7 +25,7 @@
  *
  * The device flow is the vehicle throughout because it is the shortest path
  * to a real projected grant: initiate, approve, and the
- * `system.connection { kind: "app" }` row exists with the right space.
+ * `system.connection { kind: "app" }` row exists.
  */
 import { createHmac } from "node:crypto";
 import { describe, it, expect, afterEach, vi } from "vitest";
@@ -318,7 +318,7 @@ describe("DELETE /auth/grants/:id — the record never overstates the revoke", (
       Promise.reject(new Error("token store unavailable"));
 
     const res = await request(c.app, "DELETE", `/auth/grants/${grant.id}`, {
-      key: c.spaceKey,
+      key: c.workingKey,
     });
 
     // Told the truth: the cascade refused, and so did the door.
@@ -377,7 +377,7 @@ describe("POST /auth/device/consent — the approval serializes with a revoke", 
 
     // Meanwhile the app is revoked through the grants door.
     const revoking = request(c.app, "DELETE", `/auth/grants/${grant.id}`, {
-      key: c.spaceKey,
+      key: c.workingKey,
     });
     // The revoke has to be queued on the lock before the approval is let
     // go. It does not get past the lock — that is the point — but a revoke
@@ -676,7 +676,7 @@ describe("revocation reaches outstanding device codes", () => {
     );
 
     const revoked = await request(c.app, "DELETE", `/auth/grants/${grant.id}`, {
-      key: c.spaceKey,
+      key: c.workingKey,
     });
     expect(revoked.status).toBe(204);
 
@@ -731,7 +731,7 @@ describe("revocation reaches outstanding device codes", () => {
     expect(await deviceCodeRow(c, flow.device_code)).not.toBeNull();
 
     const revoked = await request(c.app, "DELETE", `/auth/grants/${grant.id}`, {
-      key: c.spaceKey,
+      key: c.workingKey,
     });
     expect(revoked.status).toBe(204);
 
@@ -763,7 +763,7 @@ describe("revocation reaches outstanding device codes", () => {
     const flowB = await initiateDeviceFlow(c, clientId, "core.note:read");
 
     const revoked = await request(c.app, "DELETE", `/auth/grants/${grant.id}`, {
-      key: c.spaceKey,
+      key: c.workingKey,
     });
     expect(revoked.status).toBe(204);
 
@@ -831,7 +831,7 @@ describe("revocation reaches outstanding device codes", () => {
       Promise.reject(new Error("device code table unavailable"));
 
     const res = await request(c.app, "DELETE", `/auth/grants/${grant.id}`, {
-      key: c.spaceKey,
+      key: c.workingKey,
     });
     expect(res.status).toBe(500);
 

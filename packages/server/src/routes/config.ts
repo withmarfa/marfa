@@ -1,7 +1,7 @@
 import { createRoute, z } from "@hono/zod-openapi";
 import type { InstanceConfig } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
-import { requireSpacePermission, requireAuth } from "../middleware/auth.js";
+import { requirePermission, requireAuth } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import {
@@ -137,14 +137,14 @@ export function configRoutes(storage: Storage) {
 
   router.openapi(getConfigRoute, async (c) => {
     requireAuth(c);
-    requireSpacePermission(c, "config.manage");
+    requirePermission(c, "config.manage");
     const config = await readInstanceConfig(storage.settings);
     return c.json(config ?? {}, 200);
   });
 
   router.openapi(putConfigRoute, async (c) => {
     const key = requireAuth(c);
-    requireSpacePermission(c, "config.manage");
+    requirePermission(c, "config.manage");
     // No cast. The validated shape and `InstanceConfig` are the same type,
     // because the schema declares every field the interface does — a cast
     // between them would hide a field this route cannot set.
@@ -154,9 +154,8 @@ export function configRoutes(storage: Storage) {
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
       key_id: key.id,
-      action: "space.config.update",
-      resource_type: "space",
-      resource_id: "me",
+      action: "config.update",
+      resource_type: "config",
     });
 
     return c.json(body, 200);

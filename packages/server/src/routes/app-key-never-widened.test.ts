@@ -42,7 +42,7 @@ async function seedKey(
   const stored = await ctx.storage.keys.create(
     {
       label,
-      // Unique per key: the store holds one source display name per space, so
+      // Unique per key: the store holds one live row per source, so
       // a fixture that seeds the same shape twice collides on it.
       source: `app-key-test-${label}-${suffix}`,
       permissions: [],
@@ -60,7 +60,7 @@ async function seedKey(
   return { id: stored.id, raw };
 }
 
-/** A key the app "Notes" minted: read on one type, one space permission. */
+/** A key the app "Notes" minted: read on one type, one permission. */
 async function seedAppKey(): Promise<string> {
   const { id } = await seedKey("app-made", {
     oauth_client_id: "client-notes",
@@ -142,7 +142,7 @@ describe("editing a key an app made", () => {
     expect(body.type_permissions).toEqual({});
   });
 
-  it("refuses a space permission the key does not already hold", async () => {
+  it("refuses a permission the key does not already hold", async () => {
     const id = await seedAppKey();
     const res = await request(ctx.app, "PATCH", `/keys/${id}`, {
       key: editorKey,
@@ -155,7 +155,7 @@ describe("editing a key an app made", () => {
     expect(body.error.details?.required_scope).toBe("config.manage");
   });
 
-  it("allows dropping a space permission it holds", async () => {
+  it("allows dropping a permission it holds", async () => {
     const id = await seedAppKey();
     const res = await request(ctx.app, "PATCH", `/keys/${id}`, {
       key: editorKey,
@@ -191,9 +191,9 @@ describe("editing a key an app made", () => {
   it("refuses the operator key too, because the rule is the key's", async () => {
     const id = await seedAppKey();
     // The operator key is the credential with nothing above it: it reaches
-    // this door without holding `keys.mint`, and its space-less binding
+    // this door without holding `keys.mint`, and its binding
     // skips the fence that stops every other caller addressing a key outside
-    // its own space. So it is the one that would lift the rule quietly.
+    // nothing else. So it is the one that would lift the rule quietly.
     const res = await request(ctx.app, "PATCH", `/keys/${id}`, {
       key: ctx.operatorKey,
       body: { type_permissions: { "*": "write" } },

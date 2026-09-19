@@ -44,7 +44,7 @@ export interface EdgeProposal {
  * Enforces edge-creation invariants across a batch of proposed edges:
  *
  * 1. Edge type exists (core or custom registry).
- * 2. Source and target items exist and belong to the same space.
+ * 2. Source and target items both exist.
  * 3. Source type satisfies source_type_constraints (inheritance-aware).
  * 4. Target type satisfies target_type_constraints (inheritance-aware).
  * 5. Cardinality holds per edge type (DB edges + earlier proposals in the batch).
@@ -112,11 +112,9 @@ export async function assertEdgesCanBeCreated(
         `Edge target item not found: ${p.target_id}`,
       );
     }
-    // Endpoint types resolve within the caller's space, exactly as the edge
-    // type itself did above. Core and system types resolve regardless, so
-    // omitting the space only ever mattered for a constraint naming a
-    // space-registered type — which no core edge had until `in-collection`,
-    // and which every custom edge type naming a custom type has always had.
+    // Endpoint types resolve through the registry, exactly as the edge type
+    // itself did above, so a constraint naming a runtime-registered type
+    // resolves like one naming a shipped type.
     if (!satisfiesEdgeConstraint(source.type, schema.source_type_constraints)) {
       throw new MarfaError(
         ErrorCode.EDGE_CONSTRAINT_VIOLATION,

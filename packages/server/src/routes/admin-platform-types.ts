@@ -37,7 +37,7 @@ import { platformDrift } from "../storage/platform-drift.js";
 
 const DriftedTypeSchema = z.object({
   id: z.string(),
-  /** Items carrying this identifier, across every space. */
+  /** Items carrying this identifier. */
   item_count: z.number(),
   /** Types inheriting from this one. A parent supplies their fields, so a
    *  removal is declined while any exist. */
@@ -54,7 +54,7 @@ const listDriftRoute = createRoute({
   summary: "Shipped types this instance carries that the build does not",
   security: [{ bearerAuth: [] }],
   description:
-    "Lists platform type rows this instance still carries that the running build no longer ships, each with how many items across every space still carry the identifier. `/health` publishes the count of these as `platform_types`, a report that carries no status and never degrades the response; this is where the identifiers live, because that endpoint is unauthenticated. The count is read live rather than cached at boot: it is the part that changes without a restart, and a removal reasoning from a stale copy is the failure worth avoiding. Operator key only.",
+    "Lists platform type rows this instance still carries that the running build no longer ships, each with how many items still carry the identifier. `/health` publishes the count of these as `platform_types`, a report that carries no status and never degrades the response; this is where the identifiers live, because that endpoint is unauthenticated. The count is read live rather than cached at boot: it is the part that changes without a restart, and a removal reasoning from a stale copy is the failure worth avoiding. Operator key only.",
   responses: {
     200: {
       content: {
@@ -140,7 +140,7 @@ const removeDriftedTypeRoute = createRoute({
 });
 
 /**
- * Types that name `id` as their parent, across every space.
+ * Types that name `id` as their parent.
  *
  * **A parent supplies fields to its children, not items.** An abstract
  * parent carries no items of its own by construction, so the item count is
@@ -150,10 +150,8 @@ const removeDriftedTypeRoute = createRoute({
  * gone, silently, because ancestor collection degrades to a partial view
  * on an unresolvable parent rather than failing.
  *
- * Read from the rows rather than the in-memory registry so a space's own
- * registration that inherits from a platform type is counted too. It is
- * that space's data, and an operator-key action in another scope should
- * not narrow it.
+ * Read from the rows rather than the in-memory registry so a registration
+ * this instance wrote that inherits from a platform type is counted too.
  */
 async function declaredChildrenOf(
   storage: Storage,
@@ -233,11 +231,11 @@ export function adminPlatformTypeRoutes(storage: Storage) {
       });
     }
 
-    // Audited because it is irreversible and reaches every space. A space
-    // deleting its own type already writes a row, so an operator removing
-    // one instance-wide should not be the quieter of the two. Propagating
-    // rather than fire-and-forget: reporting a removal nothing recorded is
-    // worse than failing the request.
+    // Audited because it is irreversible. Deleting an ordinary type already
+    // writes a row, so an operator removing a platform one should not be the
+    // quieter of the two. Propagating rather than fire-and-forget:
+    // reporting a removal nothing recorded is worse than failing the
+    // request.
     await storage.audit.logOrThrow({
       action: "platform_type.removed",
       resource_type: "type",

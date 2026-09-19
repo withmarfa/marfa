@@ -12,7 +12,7 @@
  * On a read that is a long answer that looks filtered. On
  * `POST /items/bulk-actions` the filter *is* the match set, so a dropped
  * key turns `{action: "purge", filter: {occurred_before: "..."}}` into a
- * purge with an empty filter — every item in the space, and under the
+ * purge with an empty filter — every item, and under the
  * match cap it does not even error.
  *
  * The same door's *envelope* is worse again, and is the one that reads as
@@ -83,7 +83,7 @@ export const UNKNOWN_PARAM_NOTE =
 export const UNKNOWN_FILTER_FIELD_NOTE =
   "Unrecognized fields are refused with `400` rather than ignored, in the " +
   "request body and inside `filter` alike: a dropped filter field is not a " +
-  "narrower match set but every item in the space, and a dropped `dry_run` " +
+  "narrower match set but every item, and a dropped `dry_run` " +
   "is the action running for real. A field of your own must start with " +
   "`_`, which is always ignored.";
 
@@ -190,7 +190,7 @@ export function refuseUnknownFilterKeys(
     )
       .sort()
       .join(", ")}. A dropped filter field is not a narrower match set, it ` +
-      `is the whole space, so this is refused rather than ignored.`,
+      `is every item, so this is refused rather than ignored.`,
     { unknown_filter_fields: unknown },
   );
 }

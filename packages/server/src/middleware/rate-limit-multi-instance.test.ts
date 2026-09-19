@@ -11,7 +11,7 @@ import type { TestContext } from "../test-utils.js";
  * Cluster-shared rate-limit regression test.
  *
  * Models two middleware instances bound to the SAME `Storage` handle —
- * every middleware keeps its own in-process per-space-cap cache, but
+ * every middleware keeps its own in-process per-cap cache, but
  * they share the `rate_limit_windows` rows that hold the actual
  * counters. The key property: the SAME `(family, window_key)` row is
  * seen by both readers, so the cap holds cluster-wide.

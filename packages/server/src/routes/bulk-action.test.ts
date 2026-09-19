@@ -27,7 +27,7 @@ async function seed(
   const suffix = Math.random().toString(36).slice(2, 8);
   for (let i = 0; i < count; i++) {
     const res = await request(ctx.app, "POST", "/items", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         type,
         properties: {
@@ -58,7 +58,7 @@ describe("POST /items/bulk-actions (async)", () => {
         filter: { type: "core.note", tags: [tag] },
         dry_run: true,
       },
-      ctx.spaceKey,
+      ctx.workingKey,
     );
     expect(initialStatus).toBe(200);
     expect(result?.dry_run).toBe(true);
@@ -68,7 +68,7 @@ describe("POST /items/bulk-actions (async)", () => {
 
     // Confirm no state change happened
     const getRes = await request(ctx.app, "GET", `/items/${ids[0]!}`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
     });
     const item = (await getRes.json()) as { item: { state: string } };
     expect(item.item.state).toBe("active");
@@ -85,7 +85,7 @@ describe("POST /items/bulk-actions (async)", () => {
         state: "archived",
         filter: { tags: [tag] },
       },
-      ctx.spaceKey,
+      ctx.workingKey,
     );
     expect(initialStatus).toBe(202);
     expect(job?.status).toBe("completed");
@@ -93,7 +93,7 @@ describe("POST /items/bulk-actions (async)", () => {
     expect(result?.errored).toBe(0);
 
     const getRes = await request(ctx.app, "GET", `/items/${ids[0]!}`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
     });
     const item = (await getRes.json()) as { item: { state: string } };
     expect(item.item.state).toBe("archived");
@@ -109,7 +109,7 @@ describe("POST /items/bulk-actions (async)", () => {
         action: "purge",
         filter: { tags: [tag] },
       },
-      ctx.spaceKey,
+      ctx.workingKey,
     );
     expect(initialStatus).toBe(400);
     expect(errorResponse?.error.code).toBe("bulk_confirmation_required");
@@ -126,23 +126,22 @@ describe("POST /items/bulk-actions (async)", () => {
         confirm: "PURGE",
         filter: { tags: [tag] },
       },
-      ctx.spaceKey,
+      ctx.workingKey,
     );
     expect(initialStatus).toBe(202);
     expect(result?.succeeded).toBe(3);
     expect(result?.blob_hashes_referenced).toBeDefined();
 
     const getRes = await request(ctx.app, "GET", `/items/${ids[0]!}`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
     });
     expect(getRes.status).toBe(404);
   });
 
   it("purge action refuses a credential that is not the operator (hard 403)", async () => {
-    // Bound to a space, which is what makes this a test rather than a
-    // tautology: the schema holds a space-less key to `is_operator`, so a
-    // credential with no space would pass the very gate under test. The wide
-    // type map is there so the refusal cannot be mistaken for a narrow one.
+    // Not the operator key, which is what makes this a test rather than a
+    // tautology. The wide type map is there so the refusal cannot be
+    // mistaken for a narrow one.
     const rawKey = `marfa_k1_purge_${Math.random().toString(36).slice(2)}`;
     const keyHash = hashApiKey(rawKey, "test-salt");
     await ctx.storage.keys.create(
@@ -178,13 +177,13 @@ describe("POST /items/bulk-actions (async)", () => {
         remove: [tag],
         filter: { tags: [tag] },
       },
-      ctx.spaceKey,
+      ctx.workingKey,
     );
     expect(initialStatus).toBe(202);
     expect(result?.succeeded).toBe(2);
 
     const mdRes = await request(ctx.app, "GET", `/items/${ids[0]!}/metadata`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
     });
     const mdBody = (await mdRes.json()) as {
       metadata: { tags: string[] };
@@ -200,7 +199,7 @@ describe("POST /items/bulk-actions (async)", () => {
         action: "update_tags",
         filter: { type: "core.note" },
       },
-      ctx.spaceKey,
+      ctx.workingKey,
     );
     expect(initialStatus).toBe(400);
   });
@@ -216,13 +215,13 @@ describe("POST /items/bulk-actions (async)", () => {
         tier: "library",
         filter: { tags: [tag] },
       },
-      ctx.spaceKey,
+      ctx.workingKey,
     );
     expect(initialStatus).toBe(202);
     expect(result?.succeeded).toBe(2);
 
     const getRes = await request(ctx.app, "GET", `/items/${ids[0]!}`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
     });
     const item = (await getRes.json()) as {
       item: { tier: "library" | "feed" };
@@ -241,13 +240,13 @@ describe("POST /items/bulk-actions (async)", () => {
         patch: { extra_field: "patched" },
         filter: { tags: [tag] },
       },
-      ctx.spaceKey,
+      ctx.workingKey,
     );
     expect(initialStatus).toBe(202);
     expect(result?.succeeded).toBe(2);
 
     const getRes = await request(ctx.app, "GET", `/items/${ids[0]!}`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
     });
     const item = (await getRes.json()) as {
       item: { properties: Record<string, unknown> };
@@ -269,12 +268,12 @@ describe("POST /items/bulk-actions (async)", () => {
         occurred_at: newTs,
         filter: { tags: [tag] },
       },
-      ctx.spaceKey,
+      ctx.workingKey,
     );
     expect(initialStatus).toBe(202);
 
     const getRes = await request(ctx.app, "GET", `/items/${ids[0]!}`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
     });
     const item = (await getRes.json()) as { item: { occurred_at: string } };
     expect(item.item.occurred_at).toBe(newTs);
@@ -288,7 +287,7 @@ describe("POST /items/bulk-actions (async)", () => {
         occurred_at: "not a date",
         filter: { type: "core.note" },
       },
-      ctx.spaceKey,
+      ctx.workingKey,
     );
     expect(initialStatus).toBe(400);
   });
@@ -305,7 +304,7 @@ describe("POST /items/bulk-actions (async)", () => {
         filter: { tags: [tag] },
         max_items: 2,
       },
-      ctx.spaceKey,
+      ctx.workingKey,
     );
     expect(initialStatus).toBe(400);
     expect(errorResponse?.error.code).toBe("bulk_cap_exceeded");
@@ -330,14 +329,14 @@ describe("POST /items/bulk-actions (async)", () => {
           filter: 'properties.body eq "dsl-body"',
         },
       },
-      ctx.spaceKey,
+      ctx.workingKey,
     );
     expect(initialStatus).toBe(202);
     expect(result?.succeeded).toBe(3);
 
     // Verify
     const getRes = await request(ctx.app, "GET", `/items/${ids[0]!}`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
     });
     const item = (await getRes.json()) as { item: { state: string } };
     expect(item.item.state).toBe("archived");
@@ -354,7 +353,7 @@ describe("POST /items/bulk-actions (async)", () => {
         state: "archived",
         filter: { tags: [tag] },
       },
-      ctx.spaceKey,
+      ctx.workingKey,
     );
 
     // Audit insert is fire-and-forget — poll until our row lands.
@@ -371,7 +370,7 @@ describe("POST /items/bulk-actions (async)", () => {
           ctx.app,
           "GET",
           "/audit?action=items.bulk_action&limit=50",
-          { key: ctx.spaceKey },
+          { key: ctx.workingKey },
         );
         return (await auditRes.json()) as AuditDataShape;
       },
@@ -410,7 +409,7 @@ describe("GET + DELETE /items/bulk-actions/jobs/:id", () => {
         state: "archived",
         filter: { tags: [tag] },
       },
-      ctx.spaceKey,
+      ctx.workingKey,
     );
 
     expect(job).toBeDefined();
@@ -427,7 +426,7 @@ describe("GET + DELETE /items/bulk-actions/jobs/:id", () => {
       ctx.app,
       "GET",
       "/items/bulk-actions/jobs/does-not-exist",
-      { key: ctx.spaceKey },
+      { key: ctx.workingKey },
     );
     expect(res.status).toBe(404);
     const body = (await res.json()) as { error: { code: string } };
@@ -440,7 +439,7 @@ describe("GET + DELETE /items/bulk-actions/jobs/:id", () => {
 
     // POST without running the worker — the job sits in `queued`.
     const postRes = await request(ctx.app, "POST", "/items/bulk-actions", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         action: "transition",
         state: "archived",
@@ -455,7 +454,7 @@ describe("GET + DELETE /items/bulk-actions/jobs/:id", () => {
       ctx.app,
       "DELETE",
       `/items/bulk-actions/jobs/${queued.id}`,
-      { key: ctx.spaceKey },
+      { key: ctx.workingKey },
     );
     expect(delRes.status).toBe(200);
     const cancelled = (await delRes.json()) as { status: string };
@@ -467,17 +466,15 @@ describe("GET + DELETE /items/bulk-actions/jobs/:id", () => {
       ctx.app,
       "DELETE",
       "/items/bulk-actions/jobs/does-not-exist",
-      { key: ctx.spaceKey },
+      { key: ctx.workingKey },
     );
     expect(res.status).toBe(404);
   });
 
   it("a credential that did not start the job is 403 on GET", async () => {
-    // Both credentials sit in one space, because that is the only shape the
-    // 403 branch has left: a caller in another space is cloaked with a 404,
-    // and an operator key reaches every job. What remains is a sibling in
-    // the same space, and no permission it can hold opens another
-    // credential's job to it.
+    // Two ordinary credentials, because that is the only shape the 403
+    // branch has left: an operator key reaches every job, and no permission
+    // a sibling can hold opens another credential's job to it.
     const ownerKey = `marfa_k1_owner_${Math.random().toString(36).slice(2)}`;
     await ctx.storage.keys.create(
       {

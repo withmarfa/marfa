@@ -232,7 +232,7 @@ export function firstUncoveredScope(
  * honest answers are "refuse" and "let it through unchecked" — and unchecked
  * is real reach: `GET /items/{id}/extensions/{ns}` consults the extension map
  * alone, with no type-permission check beside it, so `{"*":"read"}` reads
- * every namespace on every item in the space from a grant that conferred
+ * every namespace on every item stored from a grant that conferred
  * nothing. Every namespace, reserved ones included: `RESERVED_NAMESPACES` is
  * consulted on the write and delete doors and on neither read door.
  *

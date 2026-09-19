@@ -18,7 +18,7 @@ afterAll(async () => {
 describe("GET /export", () => {
   it("exports items as NDJSON", async () => {
     await request(ctx.app, "POST", "/items", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         type: "core.note",
         properties: { body: "Export test" },
@@ -28,7 +28,7 @@ describe("GET /export", () => {
     });
 
     const res = await request(ctx.app, "GET", "/export", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
     });
     expect(res.status).toBe(200);
     expect(res.headers.get("Content-Type")).toContain("ndjson");
@@ -43,7 +43,7 @@ describe("GET /export", () => {
 
   it("filters export by type", async () => {
     await request(ctx.app, "POST", "/items", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         type: "core.bookmark",
         properties: { url: "https://example.com" },
@@ -51,7 +51,7 @@ describe("GET /export", () => {
     });
 
     const res = await request(ctx.app, "GET", "/export?type=core.bookmark", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
     });
     expect(res.status).toBe(200);
 
@@ -74,7 +74,7 @@ describe("GET /export", () => {
 
     const mintKey = async (source: string): Promise<string> => {
       const res = await request(ctx.app, "POST", "/keys", {
-        key: ctx.spaceKey,
+        key: ctx.workingKey,
         body: {
           label: source,
           source,
@@ -104,7 +104,7 @@ describe("GET /export", () => {
     }
 
     const res = await request(ctx.app, "GET", `/export?source=${sourceA}`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
     });
     expect(res.status).toBe(200);
 
@@ -126,7 +126,7 @@ describe("GET /export", () => {
     // Use a new source_id on the bulk side so the insert doesn't dedupe.
     const sourceId = `rt-${Math.random().toString(36).slice(2)}`;
     await request(ctx.app, "POST", "/items", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         type: "core.note",
         properties: { body: "Round trip note", title: "RT" },
@@ -136,7 +136,7 @@ describe("GET /export", () => {
     });
 
     const exportRes = await request(ctx.app, "GET", `/export?type=core.note`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
     });
     const exportText = await exportRes.text();
     const lines = exportText.trim().split("\n");
@@ -163,7 +163,7 @@ describe("GET /export", () => {
     expect(ours).toBeDefined();
 
     const bulkRes = await request(ctx.app, "POST", "/items/bulk", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         items: [
           {
@@ -189,7 +189,7 @@ describe("GET /export?format=archive", () => {
     const uploadRes = await ctx.app.request("/blobs", {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${ctx.spaceKey}`,
+        Authorization: `Bearer ${ctx.workingKey}`,
         "Content-Type": "application/octet-stream",
       },
       body: blobContent,
@@ -198,7 +198,7 @@ describe("GET /export?format=archive", () => {
 
     const source = `archive-export-${Math.random().toString(36).slice(2)}`;
     await request(ctx.app, "POST", "/items", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         type: "core.note",
         properties: { body: "Has a blob", blob_ref: blobHash },
@@ -208,7 +208,7 @@ describe("GET /export?format=archive", () => {
     });
 
     const res = await request(ctx.app, "GET", "/export?format=archive", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
     });
     expect(res.status).toBe(200);
     expect(res.headers.get("Content-Type")).toBe("application/gzip");

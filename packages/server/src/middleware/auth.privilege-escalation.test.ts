@@ -3,22 +3,21 @@
  * the authority it was given.
  *
  * 1. **A mint never exceeds its caller.** `POST /keys` takes the new key's
- *    space permissions from the request body, so a credential asking for one
+ *    permissions from the request body, so a credential asking for one
  *    it does not hold itself would widen by minting. The clamp refuses by
  *    name; a peer mint of what the caller already holds is permitted, because
  *    privilege travels sideways or down.
  *
- * 2. **The operator tier is the absence of a space binding.**
- *    `checkOperatorKey` reads `is_operator` *and* the space together, so a
- *    credential bound to a space reaches none of `/admin/*` however it came
- *    to exist. Operator authority is authority not confined to a space.
+ * 2. **The operator tier is a flag on the row and nothing else.**
+ *    `checkOperatorKey` reads `is_operator`, so a working credential reaches
+ *    none of `/admin/*` however it came to exist.
  *
  * Each layer is tested on its own, because either fence holding says nothing
  * about the other.
  */
 
 import { describe, it, expect, afterEach } from "vitest";
-import type { ApiKey, SpacePermission } from "@withmarfa/shared";
+import type { ApiKey, Permission } from "@withmarfa/shared";
 import { MarfaError, ErrorCode } from "@withmarfa/shared";
 import { checkOperatorKey, hashApiKey } from "./auth.js";
 import {
@@ -30,7 +29,7 @@ import {
 import { readInstanceConfig } from "../storage/instance-config.js";
 
 // ---------------------------------------------------------------------------
-// Unit — checkOperatorKey reads the flag and the space binding together
+// Unit — checkOperatorKey reads the flag
 // ---------------------------------------------------------------------------
 
 function fakeKey(overrides: Partial<ApiKey> = {}): ApiKey {
@@ -83,7 +82,7 @@ async function mintKey(
   ctx: TestContext,
   opts: {
     label: string;
-    spacePermissions?: SpacePermission[];
+    permissions?: Permission[];
     is_operator?: boolean;
   },
 ): Promise<string> {
@@ -93,7 +92,7 @@ async function mintKey(
     {
       label: opts.label,
       source: `${opts.label}-${suffix}`,
-      permissions: opts.spacePermissions ?? [],
+      permissions: opts.permissions ?? [],
       default_tier: "library",
       type_permissions: {},
       is_operator: opts.is_operator ?? false,
@@ -110,11 +109,11 @@ describe("the mint never exceeds the caller", () => {
     await ctx.cleanup();
   });
 
-  it("refuses a space permission the caller does not hold, by name", async () => {
+  it("refuses a permission the caller does not hold, by name", async () => {
     ctx = await createTestContext();
     const caller = await mintKey(ctx, {
       label: "clamp-caller",
-      spacePermissions: ["keys.mint", "webhooks.manage"],
+      permissions: ["keys.mint", "webhooks.manage"],
     });
 
     const res = await request(ctx.app, "POST", "/keys", {
@@ -141,7 +140,7 @@ describe("the mint never exceeds the caller", () => {
     ctx = await createTestContext();
     const caller = await mintKey(ctx, {
       label: "peer-caller",
-      spacePermissions: ["keys.mint", "webhooks.manage"],
+      permissions: ["keys.mint", "webhooks.manage"],
     });
 
     const res = await request(ctx.app, "POST", "/keys", {
@@ -175,7 +174,7 @@ describe("instance config is self-service behind config.manage", () => {
     ctx = await createTestContext();
     const caller = await mintKey(ctx, {
       label: "config-holder",
-      spacePermissions: ["config.manage"],
+      permissions: ["config.manage"],
     });
 
     const put = await request(ctx.app, "PUT", "/config", {

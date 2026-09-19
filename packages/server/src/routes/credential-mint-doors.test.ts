@@ -12,8 +12,8 @@
  * The invariant is stated in `auth/mint-ceiling.ts`: no minting path may
  * issue a credential whose authority exceeds, on any axis, the authority
  * of the principal or governing declaration that authorized the mint —
- * the space permissions it holds, the operator flag, its space binding,
- * and the breadth of its content maps. Quoted from that file rather than
+ * the permissions it holds, the operator flag, and the breadth of its
+ * content maps. Quoted from that file rather than
  * paraphrased, because this comment named a role lattice long after the
  * lattice had gone and the file it cites had stopped listing one. Each door
  * below asserts one over-ceiling ask refused AND one at-ceiling mint
@@ -39,12 +39,11 @@ import {
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { hashApiKey } from "../middleware/auth.js";
-import { SPACE_PERMISSIONS } from "@withmarfa/shared";
+import { PERMISSIONS } from "@withmarfa/shared";
 
 let ctx: TestContext;
 
 beforeAll(async () => {
-  // Hosted: space binding and the auth surfaces only exist there.
   ctx = await createTestContext({});
 });
 
@@ -58,13 +57,13 @@ const ORIGIN = "http://localhost:0";
 // Fixture
 // ---------------------------------------------------------------------------
 
-async function mintFullSpaceKey(): Promise<string> {
+async function mintFullWorkingKey(): Promise<string> {
   const raw = `marfa_k1_minttest_${Math.random().toString(36).slice(2, 14)}`;
   await ctx.storage.keys.create(
     {
-      label: "mint-door-space-key",
+      label: "mint-door-working-key",
       source: `mint-door-${Math.random().toString(36).slice(2, 10)}`,
-      permissions: [...SPACE_PERMISSIONS],
+      permissions: [...PERMISSIONS],
       type_permissions: { "*": "write" },
       is_operator: false,
     },
@@ -113,10 +112,10 @@ const NO_CALLER_SOURCE: Record<string, string> = {
 
 const DOORS: MintDoor[] = [
   {
-    name: "POST /keys — a mint is clamped to the creator, space is inherited",
+    name: "POST /keys — a mint is clamped to the creator",
     specRoute: "post /keys",
     forgedSource: async () => {
-      const caller = await mintFullSpaceKey();
+      const caller = await mintFullWorkingKey();
       const res = await request(ctx.app, "POST", "/keys", {
         key: caller,
         body: {
@@ -127,14 +126,14 @@ const DOORS: MintDoor[] = [
       expect(res.status).toBeGreaterThanOrEqual(400);
     },
     ceiling: async () => {
-      const spaceKey = await mintFullSpaceKey();
+      const workingKey = await mintFullWorkingKey();
 
       // Over the ceiling: claiming the operator flag without holding it.
       // Refused outright rather than coerced, because running the instance
       // sits outside the permission model and nothing in a permission set
       // reaches it.
       const platform = await request(ctx.app, "POST", "/keys", {
-        key: spaceKey,
+        key: workingKey,
         body: {
           label: "flag",
           source: "mint-flag",
@@ -145,7 +144,7 @@ const DOORS: MintDoor[] = [
 
       // At the ceiling: a mint narrower than the creator works.
       const member = await request(ctx.app, "POST", "/keys", {
-        key: spaceKey,
+        key: workingKey,
         body: {
           label: "down",
           source: "mint-down",
@@ -166,7 +165,7 @@ const DOORS: MintDoor[] = [
     // The axis is new. Until this shipped, `POST /keys` refused an OAuth caller
     // outright, and that refusal was the whole ceiling. Now a session may mint,
     // so the ceiling has to be stated: never past the reach the grant covers,
-    // on any of the families or on the space permissions.
+    // on any of the families or on the permissions.
     name: "POST /keys — a session mints no wider than its own grant",
     specRoute: "post /keys",
     forgedSource: async () => {
@@ -187,7 +186,7 @@ const DOORS: MintDoor[] = [
     ceiling: async () => {
       const scopes = ["openid", "keys.mint", "core.note:read"];
 
-      // Over the ceiling: no space permission, so the door does not open at
+      // Over the ceiling: no permission, so the door does not open at
       // all.
       const ungranted = await seedOauthBearer(ctx.storage, ["openid"], {});
       const refused = await request(ctx.app, "POST", "/keys", {
@@ -209,7 +208,7 @@ const DOORS: MintDoor[] = [
       });
       expect(wider.status).toBe(403);
 
-      // Over the ceiling on the space-permission axis: a space permission the
+      // Over the ceiling on the permission axis: a permission the
       // grant does not carry, which is the axis a content clamp cannot see.
       const beyond = await request(ctx.app, "POST", "/keys", {
         key: granted.token,
@@ -286,8 +285,8 @@ const DOORS: MintDoor[] = [
 
       // The one grant with no user in it is not a grant this server has, so
       // no client registers for it and there is no mint door to bound. A
-      // machine acting on a space is an API key, which the keys doors above
-      // already cover.
+      // machine acting on this server is an API key, which the keys doors
+      // above already cover.
       const m2m = await request(ctx.app, "POST", "/auth/oauth2/register", {
         body: {
           grant_types: ["client_credentials"],

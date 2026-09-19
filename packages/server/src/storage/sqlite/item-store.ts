@@ -125,8 +125,8 @@ function isSourceDedupViolation(err: unknown): boolean {
  * Shared by `list` and `stats` so the two cannot disagree about what a
  * credential can see. Both directions of disagreement have bitten: comparing
  * the patterns as literal identifiers reports zero rows for every
- * wildcard-scoped credential, and ignoring an empty list reports the whole
- * space to a credential that may read nothing.
+ * wildcard-scoped credential, and ignoring an empty list reports every row
+ * to a credential that may read nothing.
  *
  * `undefined` in means "no filter", which is either a request that carried no
  * credential at all — bootstrap and the anonymous reads — or a server-internal
@@ -183,7 +183,7 @@ type SqliteTx = Parameters<Parameters<DrizzleDb["transaction"]>[0]>[0];
  * "conflicted copy" the person created once.
  *
  * The sibling inherits the original's `source` so it lists beside it, and
- * deliberately does not inherit `source_id`: that tuple is unique per space,
+ * deliberately does not inherit `source_id`: that tuple is unique,
  * and a copy claiming the original's natural key is a second row asserting it
  * is the same upstream record.
  */

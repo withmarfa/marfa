@@ -28,11 +28,11 @@ interface SeriesError {
 
 beforeAll(async () => {
   ctx = await createTestContext();
-  // A space credential, not the operator key: reading your own calendar is
+  // A working credential, not the operator key: reading your own calendar is
   // the ordinary case, and it exercises the type filter rather than bypassing
   // it.
   const res = await request(ctx.app, "POST", "/keys", {
-    key: ctx.spaceKey,
+    key: ctx.workingKey,
     body: {
       label: "occurrences-member",
       source: "occurrences-src",
@@ -420,7 +420,7 @@ describe("GET /occurrences", () => {
       "2027-08-15T00:00:00Z",
     );
     // Nothing of this series sits at the slot the exception vacated.
-    // Scoped to the series because the suite shares one space and an
+    // Scoped to the series because the suite shares one context and an
     // unrelated weekly rule runs through the same instant.
     expect(
       rows.filter(

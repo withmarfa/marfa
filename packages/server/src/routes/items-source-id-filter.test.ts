@@ -30,7 +30,7 @@ const PATHS = [
 
 async function seed(path: string): Promise<void> {
   const res = await request(ctx.app, "POST", "/items", {
-    key: ctx.spaceKey,
+    key: ctx.workingKey,
     body: {
       type: "core.note",
       properties: { title: path, body: "x" },
@@ -45,7 +45,7 @@ async function pathsMatching(filter: string): Promise<string[]> {
     ctx.app,
     "GET",
     `/items?filter=${encodeURIComponent(filter)}&limit=100`,
-    { key: ctx.spaceKey },
+    { key: ctx.workingKey },
   );
   expect(res.status).toBe(200);
   const body = (await res.json()) as { data: { source_id: string | null }[] };

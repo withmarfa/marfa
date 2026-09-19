@@ -3,7 +3,7 @@
  *
  * No minting path may issue a credential whose authority exceeds, on any
  * axis, the authority of the principal or governing declaration that
- * authorized the mint — space permissions at or below the creator's own
+ * authorized the mint — permissions at or below the creator's own
  * set; `is_operator` only from an operator caller, and only for another
  * operator key; and content breadth at or below the caller's own grant or
  * the explicitly requested scope set. The operator key the bootstrap mints

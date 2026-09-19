@@ -6,7 +6,7 @@
  * stream rather than falling in the gap. That ordering only works if the
  * client holds a cursor at the moment it starts reading. Without one it
  * has nothing to resume from until an event happens to arrive, so on a
- * quiet space it can be interrupted after a full read and come back with
+ * quiet instance it can be interrupted after a full read and come back with
  * no way to ask what it missed — and no way to know that it missed
  * anything.
  *
@@ -56,7 +56,7 @@ async function createItem(
   properties: Record<string, unknown>,
 ): Promise<string> {
   const res = await request(ctx.app, "POST", "/items", {
-    key: ctx.spaceKey,
+    key: ctx.workingKey,
     body: { type, properties },
   });
   expect(res.status, `create ${type}`).toBe(201);
@@ -84,7 +84,7 @@ function dataOf(frame: string): Record<string, unknown> {
 /** Open a stream, read to its announcement, and close it again. */
 async function announcedCursor(query = ""): Promise<string> {
   const res = await request(ctx.app, "GET", `/events${query}`, {
-    key: ctx.spaceKey,
+    key: ctx.workingKey,
   });
   expect(res.status).toBe(200);
   const { text } = await readSse(res, {
@@ -120,7 +120,7 @@ describe("GET /events announces its cursor", () => {
     const missed = await createNote("written while nobody was listening");
 
     const res = await request(ctx.app, "GET", "/events", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       headers: { "Last-Event-ID": cursor },
     });
     expect(res.status).toBe(200);
@@ -141,7 +141,7 @@ describe("GET /events announces its cursor", () => {
     const backlog = await createNote("written while the client was away");
 
     const res = await request(ctx.app, "GET", "/events", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       headers: { "Last-Event-ID": String(cursor) },
     });
     expect(res.status).toBe(200);
@@ -185,7 +185,7 @@ describe("GET /events announces its cursor", () => {
     const note = await createNote(`${tag}note`);
 
     const res = await request(ctx.app, "GET", "/events", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       headers: { "Last-Event-ID": cursor },
     });
     expect(res.status).toBe(200);

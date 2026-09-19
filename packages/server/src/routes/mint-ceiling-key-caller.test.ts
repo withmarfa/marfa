@@ -180,7 +180,7 @@ describe("a key minting a key", () => {
   it("takes the creator's whole set when the body names no reach", async () => {
     // The other half of one rule: omitting a family takes what the creator
     // holds, so the default is never wider than the ceiling and never the
-    // empty map that would mint a credential able to administer a space it
+    // empty map that would mint a credential able to administer what it
     // cannot read a row of.
     const res = await request(ctx.app, "POST", "/keys", {
       key: narrowKey,
@@ -205,7 +205,7 @@ describe("a key editing a key", () => {
     expect(created.status).toBe(201);
     const { id } = (await created.json()) as { id: string };
 
-    // The door that reaches every key in the space, not only the ones this
+    // The door that reaches every key, not only the ones this
     // credential minted. A clamp only at the mint is not a clamp.
     const widened = await request(ctx.app, "PATCH", `/keys/${id}`, {
       key: narrowKey,
@@ -220,7 +220,7 @@ describe("a key editing a key", () => {
     expect(permitted.status).toBe(200);
   });
 
-  it("cannot give a key a space permission it does not hold", async () => {
+  it("cannot give a key a permission it does not hold", async () => {
     const created = await request(ctx.app, "POST", "/keys", {
       key: narrowKey,
       body: { label: "target2", source: "ceiling-target2" },

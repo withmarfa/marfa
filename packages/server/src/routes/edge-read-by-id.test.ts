@@ -2,7 +2,7 @@
  * `GET /edges/{id}`.
  *
  * Every other addressable row in this API reads back by its own id; an edge
- * did not. The ways to read one were the whole space filtered by type, or an
+ * did not. The ways to read one were every edge filtered by type, or an
  * item's outbound or inbound listing -- and both of those need an endpoint
  * the caller may not have. A synced client holding a queued update that was
  * refused, or an event that arrived before its endpoints did, had an id it
@@ -31,7 +31,6 @@ let keyA: string;
 interface EdgeBody {
   edge: {
     id: string;
-    space_id?: string | null;
     source_id: string;
     target_id: string;
     edge_type: string;

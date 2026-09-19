@@ -20,7 +20,7 @@ describe("error handler — malformed and empty bodies", () => {
     return ctx.app.request("/items", {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${ctx.spaceKey}`,
+        Authorization: `Bearer ${ctx.workingKey}`,
         "Content-Type": "application/json",
       },
       body,
@@ -66,7 +66,7 @@ describe("error handler — the unmatched-route 404", () => {
     // the header on every other error, so it has to stamp it itself: a
     // client keying on the header read this one 404 as headerless.
     const res = await ctx.app.request("/no-such-route", {
-      headers: { Authorization: `Bearer ${ctx.spaceKey}` },
+      headers: { Authorization: `Bearer ${ctx.workingKey}` },
     });
     expect(res.status).toBe(404);
     expect(res.headers.get("X-Error-Code")).toBe("not_found");

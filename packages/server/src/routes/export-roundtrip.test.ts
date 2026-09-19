@@ -1,17 +1,12 @@
 /**
  * The property under test is the round trip itself: an export carries
- * everything a space's content is made of — items under their original
+ * everything the content is made of — items under their original
  * ids, tags, extensions, and the edges between them — and a restore
  * onto a fresh database reproduces it. Every assertion here exists
  * because the thing it checks was once silently dropped: edges were
  * never exported while the route's description said they were, restored
  * items were re-minted under new ids (dangling every edge an archive
  * could have carried), and metadata was parsed and discarded.
- *
- * The restore space must match the archive's manifest space — an
- * archive restores into the space it came from, on the same or a fresh
- * database. Cross-space restore is deliberately refused upstream and
- * covered by export.space-scoping.test.ts.
  */
 
 import { createHash } from "node:crypto";
@@ -138,7 +133,7 @@ describe("export → restore round trip", () => {
       source.app,
       "GET",
       `/export?format=archive`,
-      { key: source.spaceKey },
+      { key: source.workingKey },
     );
     expect(exportRes.status).toBe(200);
     const archive = Buffer.from(await exportRes.arrayBuffer());
@@ -152,8 +147,6 @@ describe("export → restore round trip", () => {
     expect(manifest.edge_count).toBe(2);
     expect(entries.has("edges.ndjson")).toBe(true);
 
-    // Restore is an operator route, and the operator key is space-less, so
-    // the space the archive came from is named rather than inferred.
     const restoreRes = await destination.app.request(`/admin/restore-archive`, {
       method: "POST",
       headers: {
@@ -233,7 +226,7 @@ describe("export → restore round trip", () => {
       source.app,
       "GET",
       `/export?format=archive`,
-      { key: source.spaceKey },
+      { key: source.workingKey },
     );
     const archive = Buffer.from(await exportRes.arrayBuffer());
 
@@ -247,7 +240,7 @@ describe("export → restore round trip", () => {
         body: archive,
       });
 
-    // Restoring into the space the archive came from: everything already
+    // Restoring into the database the archive came from: everything already
     // exists, so nothing may change and everything counts as duplicate.
     const res = await restore();
     expect(res.status).toBe(200);
@@ -342,7 +335,7 @@ describe("export → restore round trip", () => {
     });
 
     const readEdgeLines = async (path: string): Promise<unknown[]> => {
-      const res = await request(ctx.app, "GET", path, { key: ctx.spaceKey });
+      const res = await request(ctx.app, "GET", path, { key: ctx.workingKey });
       expect(res.status).toBe(200);
       const text = await res.text();
       return text
@@ -368,21 +361,17 @@ describe("export → restore round trip", () => {
 // ---------------------------------------------------------------------------
 // The bytes an archive claims to hold.
 //
-// The blob lookup once asked the instance-wide `""` bucket, where none of a
-// space's hashes live, and the manifest recorded `blob_count: 0` while the
-// response reported success. The archive work exists to stop exactly that: an
+// The blob lookup once asked a bucket no hash lived in, and the manifest
+// recorded `blob_count: 0` while the response reported success. The archive work exists to stop exactly that: an
 // export that looks like it worked and cannot restore what it claims to hold.
 //
 // Driven by restoring into an empty database and reading the bytes back,
 // because reading the manifest is what let this survive: the count agreed
 // with the (empty) blob set it was counting.
 //
-// **On one space, because that is the only shape there is.** This used to be
-// written as a whole-instance export spanning two spaces, which needs a
-// space-less caller; the only space-less credential is the operator key, its
-// type map is empty, and an export is a list read narrowed by that map, so it
-// carried no items and therefore no blob hashes. The route no longer offers
-// that arm, and the lookup this pins is per space either way.
+// **Driven with a working key.** This used to be written with an operator
+// caller, whose type map is empty; an export is a list read narrowed by that
+// map, so it carried no items and therefore no blob hashes.
 // ---------------------------------------------------------------------------
 
 describe("an archive's blobs", () => {
@@ -409,7 +398,7 @@ describe("an archive's blobs", () => {
       source.app,
       "GET",
       "/export?format=archive",
-      { key: source.spaceKey },
+      { key: source.workingKey },
     );
     expect(exportRes.status).toBe(200);
     const archive = Buffer.from(await exportRes.arrayBuffer());
@@ -419,7 +408,7 @@ describe("an archive's blobs", () => {
     // presence alone would pass on an archive that packed an empty file.
     expect(
       entries.get(`blobs/${hash}`),
-      "no bytes packed for the space's blob",
+      "no bytes packed for the blob",
     ).toBeDefined();
     expect(entries.get(`blobs/${hash}`)!.toString()).toBe(bytes.toString());
 

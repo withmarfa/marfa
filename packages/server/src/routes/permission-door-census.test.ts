@@ -1,5 +1,5 @@
 /**
- * Every administrative door, and the space permission it consults.
+ * Every administrative door, and the permission it consults.
  *
  * **A census rather than a per-route test, for the reason the credential-mint
  * census exists.** A gate added to nine doors and forgotten on the tenth reads
@@ -28,7 +28,7 @@ interface Site {
   file: string;
   line: number;
   handler: string;
-  spacePermission: string | null;
+  permission: string | null;
 }
 
 /**
@@ -38,7 +38,7 @@ interface Site {
  * their surfaces as plain Hono routes and contain no `openapi(` call at all —
  * `auth-pages.ts` alone has twenty-eight. Bounding a handler by `openapi(`
  * there bounded nothing: the window became the whole file, so one
- * `requireSpacePermission` anywhere in it credited every rank-admitting site in it,
+ * `requirePermission` anywhere in it credited every rank-admitting site in it,
  * and every site reported the same `(module scope)` handler. Both effects run
  * in the unsafe direction, and they run in exactly the files the surfaces are
  * hardest to see in by eye.
@@ -60,7 +60,7 @@ const ROUTE_STARTS: readonly RegExp[] = [
  *
  * A door gated through one of these names is gated, and the scanner has to say
  * so or the four `/keys` doors become invisible the moment they share a line.
- * The helper's own body is skipped for the same reason `_space-caller.ts` is:
+ * The helper's own body is skipped for the same reason `_cross-origin.ts` is:
  * it is not a surface, and counting it would credit a door that does not exist
  * while leaving the real ones unattributed.
  *
@@ -68,7 +68,7 @@ const ROUTE_STARTS: readonly RegExp[] = [
  * wraps a gate has to be declared before the census will credit it.
  */
 const GATE_HELPERS: Readonly<Record<string, string>> = {
-  requireSpaceKeysOrOperator: "keys.mint",
+  requireKeysMintOrOperator: "keys.mint",
 };
 
 function routeStart(line: string): string | null {
@@ -96,7 +96,7 @@ function handlerAbove(lines: readonly string[], line: number): string {
  * loses its place would report an absence rather than fail, which is the
  * direction that costs something.
  */
-function spacePermissionWithin(
+function permissionWithin(
   lines: readonly string[],
   line: number,
 ): string | null {
@@ -115,7 +115,7 @@ function spacePermissionWithin(
     }
   }
   for (let i = start; i < end; i++) {
-    const direct = /requireSpacePermission\(\s*c\s*,\s*"([^"]+)"/.exec(
+    const direct = /requirePermission\(\s*c\s*,\s*"([^"]+)"/.exec(
       lines[i] ?? "",
     );
     if (direct) return direct[1] ?? null;
@@ -157,7 +157,7 @@ function census(): Site[] {
       // the next line is still seen. The identifier and its paren stay
       // together; the argument does not.
       const consultsPermission =
-        text.includes("requireSpacePermission(") ||
+        text.includes("requirePermission(") ||
         Object.keys(GATE_HELPERS).some((name) => text.includes(`${name}(`));
       if (!consultsPermission) return;
       if (insideGateHelper(lines, i + 1)) return;
@@ -165,14 +165,14 @@ function census(): Site[] {
         file,
         line: i + 1,
         handler: handlerAbove(lines, i + 1),
-        spacePermission: spacePermissionWithin(lines, i + 1),
+        permission: permissionWithin(lines, i + 1),
       });
     });
   }
   return out;
 }
 
-describe("every administrative door consults a space permission", () => {
+describe("every administrative door consults a permission", () => {
   const sites = census();
 
   it("finds the surface at all, so an empty census cannot pass", () => {
@@ -186,7 +186,7 @@ describe("every administrative door consults a space permission", () => {
     // be excluded from the mapping check below without anything saying so,
     // which is the failure mode that reads as a clean sweep.
     const unattributed = sites
-      .filter((s) => s.spacePermission === null)
+      .filter((s) => s.permission === null)
       .map((s) => `${s.file}:${String(s.line)} ${s.handler}`);
     expect(unattributed).toEqual([]);
   });
@@ -195,9 +195,9 @@ describe("every administrative door consults a space permission", () => {
     // **The count is pinned, not only the permission**, and that is what the
     // rank gate used to give for free. The rank check marked which doors
     // needed a permission, so a new one arriving unmarked was visible in the
-    // source; with rank retired nothing marks them, and a door added to a
-    // space surface with no permission beside it reads exactly like a door
-    // that never needed one.
+    // source; with rank retired nothing marks them, and a door added to an
+    // administrative surface with no permission beside it reads exactly like
+    // a door that never needed one.
     //
     // So the surface is written down. A door losing its gate drops its count
     // and reddens here; a door gated on the wrong literal reddens here; and a
@@ -225,7 +225,7 @@ describe("every administrative door consults a space permission", () => {
 
     const actual: Record<string, Record<string, number>> = {};
     for (const site of sites) {
-      const permission = site.spacePermission ?? "none";
+      const permission = site.permission ?? "none";
       const byPermission = (actual[site.file] ??= {});
       byPermission[permission] = (byPermission[permission] ?? 0) + 1;
     }

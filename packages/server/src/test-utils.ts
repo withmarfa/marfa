@@ -1,4 +1,4 @@
-import { SPACE_PERMISSIONS } from "@withmarfa/shared";
+import { PERMISSIONS } from "@withmarfa/shared";
 import type { CreateKeyInput } from "@withmarfa/shared";
 import { createApp } from "./app.js";
 import { consentLockDepth } from "./auth/consent-lock.js";
@@ -21,7 +21,7 @@ import { BulkActionWorker } from "./bulk-actions/index.js";
 import type { BulkActionJob, BulkActionResult } from "./bulk-actions/types.js";
 
 /** Salt used by `createTestContext` for `hashApiKey`. Exposed so tests
- *  that mint additional api keys (e.g. for space-scoped admin coverage)
+ *  that mint additional api keys (e.g. for administrative coverage)
  *  hash with the same value the route auth resolver expects. */
 export const TEST_API_KEY_SALT = "test-salt";
 const SALT = TEST_API_KEY_SALT;
@@ -56,16 +56,16 @@ export interface TestContext {
    * The instance tier, and nothing else: no permissions, exactly what the
    * one unauthenticated mint hands back. It opens the instance routes and
    * reaches no content at all, so a test about anything inside the
-   * permission model wants `spaceKey`.
+   * permission model wants `workingKey`.
    */
   operatorKey: string;
   /**
-   * A working credential holding every space permission and writing every
+   * A working credential holding every permission and writing every
    * content family — what the operator mints first through `POST /keys`.
-   * This is the suite's working credential: content, the space permissions,
+   * This is the suite's working credential: content, the permissions,
    * everything but the instance routes.
    */
-  spaceKey: string;
+  workingKey: string;
   /** The per-context temporary directory holding the sqlite database and
    *  the blob root. Exposed so a test can assert on its lifetime; removed
    *  by `cleanup`. */
@@ -328,24 +328,24 @@ export async function waitForConsentLockDepth(
  * and the shape is the route's — `test-context-credentials.test.ts` is what
  * holds the two together.
  */
-export async function mintSpaceKey(
+export async function mintWorkingKey(
   ctx: Pick<TestContext, "storage">,
   options?: Partial<CreateKeyInput> & { rawKey?: string },
 ): Promise<string> {
   const suffix = Math.random().toString(36).slice(2, 14);
-  const rawKey = options?.rawKey ?? `marfa_k1_test_space_${suffix}`;
+  const rawKey = options?.rawKey ?? `marfa_k1_test_working_${suffix}`;
   const input: Partial<CreateKeyInput> = { ...options };
   delete (input as { rawKey?: string }).rawKey;
   await ctx.storage.keys.create(
     {
-      label: `test-space-key-${suffix}`,
-      source: `test-space-key-${suffix}`,
+      label: `test-working-key-${suffix}`,
+      source: `test-working-key-${suffix}`,
       type_permissions: { "*": "write" },
       extension_permissions: { "*": "write" },
       edge_permissions: { "*": "write" },
       metadata_permissions: { "*": "write" },
       profile_permissions: { "*": "write" },
-      permissions: [...SPACE_PERMISSIONS],
+      permissions: [...PERMISSIONS],
       default_tier: "library",
       ...input,
       is_operator: false,
@@ -373,7 +373,7 @@ export async function createTestContext(
 }
 
 /**
- * An app and its storage with nothing seeded: no key, no space, and no
+ * An app and its storage with nothing seeded: no key and no
  * `bootstrapped` sentinel. The shape a brand-new installation starts from, so
  * a test can drive the product's own first-mint doors rather than describing
  * what they produce.
@@ -501,9 +501,7 @@ async function buildTestContext(
       // **The shape bootstrap forces, stated in full.** The one
       // unauthenticated mint takes nothing on any axis — five empty maps and
       // an empty permission list — because running the instance sits outside
-      // the permission model rather than being a large set inside it. A
-      // space-less row also has no space predicate applied to it, so reach
-      // here would be reach over every space at once.
+      // the permission model rather than being a large set inside it.
       //
       // Named rather than left to the store's defaults so the fixture says
       // what it is, and so a default that drifted would show up here.
@@ -529,21 +527,21 @@ async function buildTestContext(
   // The wildcard maps and the whole permission list are what the operator's
   // `POST /keys` hands back for a body that names no narrowing: a seed with
   // no creator above it takes everything.
-  const spaceRawKey = `marfa_k1_test_space_key_${suffix}`;
+  const workingRawKey = `marfa_k1_test_working_key_${suffix}`;
   await storage.keys.create(
     {
-      label: "test-space-key",
-      source: `test-space-${suffix}`,
+      label: "test-working-key",
+      source: `test-working-${suffix}`,
       type_permissions: { "*": "write" },
       extension_permissions: { "*": "write" },
       edge_permissions: { "*": "write" },
       metadata_permissions: { "*": "write" },
       profile_permissions: { "*": "write" },
-      permissions: [...SPACE_PERMISSIONS],
+      permissions: [...PERMISSIONS],
       default_tier: "library",
       is_operator: false,
     },
-    hashApiKey(spaceRawKey, SALT),
+    hashApiKey(workingRawKey, SALT),
   );
 
   return {
@@ -551,7 +549,7 @@ async function buildTestContext(
     storage,
     blobBackend,
     operatorKey: rawKey,
-    spaceKey: spaceRawKey,
+    workingKey: workingRawKey,
     tmpDir,
     cleanup,
     auth,

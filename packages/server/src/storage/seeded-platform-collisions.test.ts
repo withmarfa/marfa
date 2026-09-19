@@ -2,9 +2,7 @@
  * A shipped type does not overwrite a registration this instance already owns.
  *
  * **The two live in the same primary-key bucket, which is the whole defect.**
- * `POST /types` stores at `space_id: spaceId ?? ""`, and under `AUTH_MODE=keys`
- * — every self-host — a credential carries no space, so a self-hoster's own
- * type lands exactly where the seed writes. A build that started shipping an
+ * A runtime registration lands exactly where the seed writes. A build that started shipping an
  * identifier somebody had already registered rewrote their schema on the next
  * boot, flipped `origin` from `user` to `platform`, and stamped a family.
  *

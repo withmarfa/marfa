@@ -36,7 +36,7 @@ export interface BlobSweepOptions {
   registeredBefore?: string;
 }
 
-/** Page size for both corpus walks. Large enough that a big space is not
+/** Page size for both corpus walks. Large enough that a big corpus is not
  *  a thousand round trips, small enough not to hold a whole page of
  *  properties per iteration. */
 const SCAN_PAGE = 200;

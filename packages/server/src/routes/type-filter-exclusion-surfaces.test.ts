@@ -16,7 +16,7 @@
  * a global wildcard. That was safe only while `computeTypeFilter` enumerated
  * the wildcard into concrete ids before it arrived; the moment it stopped, a
  * grant of `{"*": "read", "<withheld>": "none"}` reaches the skip carrying a
- * wildcard, and the vocabulary is computed over every type in the space
+ * wildcard, and the vocabulary is computed over every registered type
  * including the withheld one. Tag names leak what exists even when no item
  * behind them is readable.
  *
@@ -49,12 +49,12 @@ beforeAll(async () => {
   ];
   for (const [id, tag] of seed) {
     const registered = await request(ctx.app, "POST", "/types", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: { id, version: 1, fields: { title: { type: "string" } } },
     });
     expect(registered.status).toBe(201);
     const created = await request(ctx.app, "POST", "/items", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         type: id,
         properties: { title: `zqxbrindle ${id}` },
@@ -73,11 +73,9 @@ afterAll(async () => {
 /**
  * A key whose reach is exactly its permission map — nothing reads past it.
  *
- * Bound to the context's space, which is what an ordinary working credential
- * is. It used to be minted space-less with the operator flag, on the reading
- * that keys mode carried no space; keys mode has a real space now, and a
- * space-less credential is the operator tier and may hold no permission at
- * all, so that fixture was a shape the product cannot produce.
+ * An ordinary working credential. It used to be minted with the operator
+ * flag, and an operator key is the instance tier and may hold no permission
+ * at all, so that fixture was a shape the product cannot produce.
  */
 async function mintKey(type_permissions: Perms): Promise<string> {
   const suffix = Math.random().toString(36).slice(2, 12);

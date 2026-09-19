@@ -2,29 +2,27 @@
  * The bearer grants API takes `grants.manage`, and holding content
  * permissions is not it.
  *
- * `GET /auth/grants` enumerates every OAuth app a space has authorized —
+ * `GET /auth/grants` enumerates every OAuth app the owner has authorized —
  * client ids, granted scopes, last-used times — and `DELETE /auth/grants/:id`
  * kills one outright. Both are operations on other principals' access, so
- * they sit behind a space permission of their own rather than behind whatever
+ * they sit behind a permission of their own rather than behind whatever
  * content the caller happens to reach.
  *
- * Both routes originally fenced only the space: a credential with no
- * `space_id` was refused, because an unbound one would have addressed every
- * space's grants. That check says nothing about what was granted, so a key
- * minted with a single read scope could list the space's integrations and
- * revoke any of them. Nothing caught it because the one test covering these
+ * Both routes originally fenced on the credential being bound at all, and
+ * that check says nothing about what was granted, so a key minted with a
+ * single read scope could list every connected app and revoke any of them. Nothing caught it because the one test covering these
  * routes used the operator key, which satisfies every gate in the codebase and
  * so tells you nothing about where the boundary actually is.
  *
  * The session-gated twin (`POST /auth/grants/:id/revoke`) is a different
  * surface with a different principal — the signed-in human acting on their
- * own space — and is unaffected.
+ * own grants — and is unaffected.
  */
 
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
-import { createTestContext, mintSpaceKey, request } from "../test-utils.js";
+import { createTestContext, mintWorkingKey, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
-import type { SpacePermission } from "@withmarfa/shared";
+import type { Permission } from "@withmarfa/shared";
 
 let ctx: TestContext;
 
@@ -37,7 +35,7 @@ afterEach(async () => {
 });
 
 /** One active app grant, plus keys holding different permissions. */
-async function seedSpaceWithGrant() {
+async function seedGrant() {
   const grant = await ctx.storage.items.create({
     type: "system.connection",
     tier: "library",
@@ -53,15 +51,12 @@ async function seedSpaceWithGrant() {
     source: "test/grants-authority",
   });
 
-  const mint = (
-    name: string,
-    spacePermissions: SpacePermission[],
-  ): Promise<string> => {
+  const mint = (name: string, permissions: Permission[]): Promise<string> => {
     const suffix = Math.random().toString(36).slice(2, 10);
-    return mintSpaceKey(ctx, {
+    return mintWorkingKey(ctx, {
       label: `grants-authority-${name}-${suffix}`,
       source: `grants-authority-${name}-${suffix}`,
-      permissions: spacePermissions,
+      permissions,
       default_tier: "library",
       // Deliberately narrow: the point is that a credential scoped to
       // one read on one type still reached an account-management
@@ -77,8 +72,8 @@ async function seedSpaceWithGrant() {
 }
 
 describe("the bearer grants API refuses a key without `grants.manage`", () => {
-  it("refuses a key holding no space permissions listing the space's grants", async () => {
-    const { mint } = await seedSpaceWithGrant();
+  it("refuses a key holding no permissions listing the grants", async () => {
+    const { mint } = await seedGrant();
     const memberKey = await mint("narrow", []);
 
     const res = await request(ctx.app, "GET", "/auth/grants", {
@@ -87,8 +82,8 @@ describe("the bearer grants API refuses a key without `grants.manage`", () => {
     expect(res.status).toBe(403);
   });
 
-  it("refuses a key holding no space permissions revoking another app's grant", async () => {
-    const { grant, mint } = await seedSpaceWithGrant();
+  it("refuses a key holding no permissions revoking another app's grant", async () => {
+    const { grant, mint } = await seedGrant();
     const memberKey = await mint("narrow", []);
 
     const res = await request(ctx.app, "DELETE", `/auth/grants/${grant.id}`, {
@@ -102,7 +97,7 @@ describe("the bearer grants API refuses a key without `grants.manage`", () => {
   });
 
   it("still admits the holder of `grants.manage`, whose job this is", async () => {
-    const { grant, mint } = await seedSpaceWithGrant();
+    const { grant, mint } = await seedGrant();
     const adminKey = await mint("granted", ["grants.manage"]);
 
     const list = await request(ctx.app, "GET", "/auth/grants", {
@@ -121,11 +116,11 @@ describe("the bearer grants API refuses a key without `grants.manage`", () => {
     expect(revoke.status).toBe(204);
   });
 
-  it("still admits the operator key, which the space fence already allowed", async () => {
-    await seedSpaceWithGrant();
+  it("still admits the operator key", async () => {
+    await seedGrant();
 
     const res = await request(ctx.app, "GET", "/auth/grants", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
     });
     expect(res.status).toBe(200);
   });

@@ -50,14 +50,14 @@ const PROBES: Probe[] = [
 
 let client: MarfaClient;
 let fetchFn: typeof globalThis.fetch;
-let spaceKey: string;
+let workingKey: string;
 let cleanup: () => void;
 
 beforeAll(async () => {
   const fixture = await createKeysModeFixture();
   client = fixture.client;
   fetchFn = fixture.fetch;
-  spaceKey = fixture.spaceKey;
+  workingKey = fixture.workingKey;
   cleanup = fixture.cleanup;
 
   await client.types.register({
@@ -93,7 +93,7 @@ async function serverAccepts(
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${spaceKey}`,
+      Authorization: `Bearer ${workingKey}`,
     },
     body: JSON.stringify({ type, properties }),
   });
@@ -122,7 +122,7 @@ describe("hydrateTypeRegistry against a live type payload", () => {
     const payload = await client.types.list();
 
     // Child ahead of parent, which is the shape the helper has to cope with
-    // and the one a space that registered them in that order gets back.
+    // and the one a server that holds them in that order hands back.
     const reordered = [
       ...payload.filter((schema) => schema.id !== PARENT),
       ...payload.filter((schema) => schema.id === PARENT),

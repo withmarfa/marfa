@@ -29,9 +29,9 @@ const ERROR_MESSAGES: Record<string, string> = {
   invalid_client:
     "We didn't recognize the app that sent you here, so nothing was shared.",
   invalid_request: "That sign-in link was incomplete.",
-  invalid_scope: "That app asked for something this space doesn't offer.",
+  invalid_scope: "That app asked for something this server doesn't offer.",
   unsupported_response_type:
-    "That app started sign-in in a way this space doesn't support.",
+    "That app started sign-in in a way this server doesn't support.",
   access_denied: "You cancelled sign-in. Nothing was shared.",
   server_error: "Something failed on our side while signing you in.",
   temporarily_unavailable:

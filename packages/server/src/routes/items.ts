@@ -39,7 +39,7 @@ import type { AppEnv } from "../middleware/auth.js";
 import { assertTypeFilter } from "./_type-filter.js";
 import {
   requireAuth,
-  requireSpacePermission,
+  requirePermission,
   requireTypeAccess,
   itemProvenanceSource,
   requireMirrorProtection,
@@ -253,7 +253,7 @@ const createItemRoute = createRoute({
         "The request resolved an item that already exists, by one of two " +
         "keys, and there are three answers. **Natural-key upsert:** both " +
         "`source` (stamped from the credential) and request `source_id` " +
-        "resolve a live item in the caller's space, and it is updated in " +
+        "resolve a live item, and it is updated in " +
         "place — an idempotent re-sync of the upstream entry. " +
         "**Acknowledged re-sync:** the same natural key resolves an item " +
         "the user has trashed, so the response carries `acknowledged: true` " +
@@ -329,9 +329,9 @@ const createItemRoute = createRoute({
         "`(source, source_id)` natural key or by a repeated `id` — whose " +
         "type is not the one declared. Re-typing an item is a deliberate " +
         "operation, not something a re-sync does in passing. `conflict`: " +
-        "the `id` is held by an item in a space this caller cannot see, so " +
-        "it is somebody else's row rather than a repeat of this caller's " +
-        "own create. `version_conflict` and `ancestor_unavailable` are " +
+        "the `id` is held by an item this caller cannot read, so the " +
+        "server cannot tell it is a repeat of this caller's own create " +
+        "and will not overwrite it blind. `version_conflict` and `ancestor_unavailable` are " +
         "reachable only when the request carried a `version` and its " +
         "`source_id` resolved a live row: that upsert is conditional and " +
         "answers exactly what the update door answers. A repeated `id` is " +
@@ -449,7 +449,7 @@ const getItemStatsRoute = createRoute({
   tags: ["Items"],
   summary: "Get item counts",
   description:
-    "Returns a count of items for the space, grouped on one axis. `by=state` (the default) counts per lifecycle state; `by=type` names the types the space actually uses, which is otherwise unanswerable without paging every row. Both groupings cover the same rows, so their totals agree. The counts are scoped to the caller's type permissions, so a credential sees only the types it can read.",
+    "Returns a count of items, grouped on one axis. `by=state` (the default) counts per lifecycle state; `by=type` names the types actually in use, which is otherwise unanswerable without paging every row. Both groupings cover the same rows, so their totals agree. The counts are scoped to the caller's type permissions, so a credential sees only the types it can read.",
   security: [{ bearerAuth: [] }],
   request: {
     query: z.object({
@@ -487,7 +487,7 @@ const listItemsRoute = createRoute({
   path: "/",
   tags: ["Items"],
   summary: "List items",
-  description: `Returns a paginated list of items in the space, narrowed by the query parameters; a \`type\` filter matches subtypes via inheritance. Lists are lean by default — use \`include\` to hydrate edges, metadata, or extensions inline and avoid an N+1. That same parameter also takes \`system\`, which is not a hydration: it widens the rows returned to include \`system.*\` items, which this listing omits by default. ${UNKNOWN_PARAM_NOTE}`,
+  description: `Returns a paginated list of items, narrowed by the query parameters; a \`type\` filter matches subtypes via inheritance. Lists are lean by default — use \`include\` to hydrate edges, metadata, or extensions inline and avoid an N+1. That same parameter also takes \`system\`, which is not a hydration: it widens the rows returned to include \`system.*\` items, which this listing omits by default. ${UNKNOWN_PARAM_NOTE}`,
   security: [{ bearerAuth: [] }],
   request: {
     query: z.object({
@@ -495,7 +495,7 @@ const listItemsRoute = createRoute({
         .string()
         .optional()
         .describe(
-          "Type identifier; matches subtypes via inheritance. A concrete identifier the space does not know is refused with 400 `unknown_type`; a wildcard over nothing answers an empty page.",
+          "Type identifier; matches subtypes via inheritance. A concrete identifier this instance does not know is refused with 400 `unknown_type`; a wildcard over nothing answers an empty page.",
         ),
       state: z
         .string()
@@ -756,7 +756,7 @@ const updateItemRoute = createRoute({
             /** Repoint at a new natural-key identifier under the item's
              *  `source` (the server-stamped value, not the caller's). The
              *  `(source, source_id)` tuple is
-             *  unique per space — server returns 409 `source_id_conflict`
+             *  unique — the server returns 409 `source_id_conflict`
              *  if another item already holds the target value. Idempotent
              *  no-op when the value matches the row's current source_id.
              *  Repointing the natural key is how renames preserve item
@@ -1310,7 +1310,7 @@ export function itemRoutes(storage: Storage) {
     // The items quota is reserved around the write itself, further down,
     // rather than checked here. A count taken at this point is a check
     // against a number the write is about to change, so N concurrent
-    // creates each see room and the space lands at limit + N - 1.
+    // creates each see room and the count lands at limit + N - 1.
 
     if (Array.isArray(body.tags) && body.tags.length > MAX_TAGS_PER_ITEM) {
       throw new MarfaError(
@@ -1432,7 +1432,7 @@ export function itemRoutes(storage: Storage) {
 
     // Natural-key upsert. When both `source` (stamped from the credential)
     // and request `source_id` are present, look up an existing non-trashed
-    // row by (source, source_id) within the caller's space. If one matches,
+    // row by (source, source_id). If one matches,
     // short-circuit to update so `POST /items` is idempotent on re-sync —
     // the contract that lets inbound integration handlers recover from
     // whole-batch retries (createItem-success / cursor-write-fail) without
@@ -1477,8 +1477,8 @@ export function itemRoutes(storage: Storage) {
         //
         //  - The row itself is disclosed, because every part of reaching it
         //    is already the caller's own. `source` is stamped from the
-        //    credential and cannot be chosen, the lookup is fenced to the
-        //    caller's space, and the `source_id` came from this request.
+        //    credential and cannot be chosen, and the `source_id` came from
+        //    this request.
         //  - The extension namespaces are NOT, because that axis is not
         //    bounded by the natural key. `extension_permissions` are per
         //    credential, so a row can carry namespaces this caller holds
@@ -1702,7 +1702,7 @@ export function itemRoutes(storage: Storage) {
     // **Both a pre-check and a catch, and each covers what the other
     // cannot.** The pre-check has to exist because the write path is not
     // reachable at every moment the acknowledgement is owed: the
-    // transaction reserves quota before it inserts, so a space at its
+    // transaction reserves quota before it inserts, so an instance at its
     // item ceiling would answer a repeat with `quota_exceeded` for a row
     // it already holds — the same permanent refusal in another code. The
     // catch has to exist because the pre-check races: two sends of one id
@@ -1722,10 +1722,11 @@ export function itemRoutes(storage: Storage) {
       // forever, and the retry is not asking to revive it. The row comes
       // back in whatever state it holds.
       const existing = await storage.items.getIncludingTrashed(clientId);
-      // Nothing visible means the id belongs to a space this caller
-      // cannot see. That is a genuine collision with somebody else's row
-      // and stays a conflict — the caller learns only that the id it
-      // chose is taken, which it already told us.
+      // Nothing visible means the id belongs to a row this caller cannot
+      // read — a type it holds no permission for. It stays a conflict
+      // because the server cannot tell whether this is the caller's own
+      // earlier write, and the caller learns only that the id it chose is
+      // taken, which it already told us.
       if (!existing) return null;
 
       // **No type gate of its own here, and its absence is the honest
@@ -1771,7 +1772,7 @@ export function itemRoutes(storage: Storage) {
       writeResult = await storage.runInTransaction(async () => {
         // The reservation is the first thing in this transaction and holds for
         // the rest of it, so the count it reads includes every create already
-        // committed against this space's ceiling.
+        // committed against the instance's ceiling.
         const created = await storage.items.create({
           type,
           properties,
@@ -1910,7 +1911,7 @@ export function itemRoutes(storage: Storage) {
 
     // One transaction, because the copy without its edge is not a partial
     // promotion — it is an untraceable duplicate that no query relates to
-    // its origin, and nothing in the space says where it came from. The
+    // its origin, and nothing stored says where it came from. The
     // caller is told the promotion failed either way, so a copy that
     // outlives the failure is a row nobody asked for and nobody is looking
     // for. The wrapper the request already runs inside is not a rollback
@@ -2290,7 +2291,7 @@ export function itemRoutes(storage: Storage) {
       // The 1-hop neighborhood: the far-end items of the edge blocks present
       // in this response — outbound targets always, inbound sources when
       // `backrefs` was also requested. Each neighbor is re-authorised through
-      // the same space fence + per-type read gate the bulk-get path uses, so a
+      // the same per-type read gate the bulk-get path uses, so a
       // neighbor the caller cannot read is silently omitted, never leaked.
       const neighborIds = new Set<string>();
       for (const block of Object.values(edges)) {
@@ -2460,7 +2461,7 @@ export function itemRoutes(storage: Storage) {
     requireMirrorProtection(item);
 
     // Natural-key uniqueness check. The `(source, source_id)` tuple is
-    // unique per space — the same constraint enforced at create time.
+    // unique — the same constraint enforced at create time.
     // Reject before the write so no partial state lands. PATCHing the value
     // the item already carries is a no-op success. Cross-source isolation is
     // automatic: `findBySourceId` scopes by `item.source`, so the same
@@ -2996,7 +2997,7 @@ export function itemRoutes(storage: Storage) {
     }
 
     requireAuth(c);
-    requireSpacePermission(c, "items.purge");
+    requirePermission(c, "items.purge");
     // Read before removing. This door used to purge without ever looking at
     // the row, so it could not have known a connection from a note.
     //
@@ -3040,7 +3041,7 @@ export function itemRoutes(storage: Storage) {
 
     // **No provenance guard here**, and that is a finding rather than an
     // omission: `items.purge` is asked above, and a runtime credential's
-    // permissions are projected from its manifest and carry no space
+    // permissions are projected from its manifest and carry no
     // permission at all, so an integration is refused before it reaches the
     // point where provenance would be consulted. A guard here would be
     // unreachable code no test could pin, which is worse than none because it
@@ -3049,8 +3050,6 @@ export function itemRoutes(storage: Storage) {
     // day this door widens, the case saying an integration cannot purge is
     // the one that reddens.
     // Edges have no FK to items — explicit cleanup required before purge.
-    // Fence the edge cleanup to the caller's space so a space-scoped purge
-    // never drops another space's edges.
     // Every edge the purge takes with it, announced individually. A
     // subscriber holding a graph cannot infer these from the item's own
     // removal: an edge pointing AT the purged item lives on another item,

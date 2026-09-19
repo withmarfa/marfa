@@ -1,14 +1,14 @@
 /**
- * A space permission is granted by being ticked, on every surface that offers
+ * A permission is granted by being ticked, on every surface that offers
  * one.
  *
  * **Two screens held opposite opinions and which one a person met decided
- * what they handed over.** The code-flow consent screen gives a space
+ * what they handed over.** The code-flow consent screen gives a
  * permission no bundle claims its own unticked row, on the reasoning that it
- * is authority over the space itself and has to be handed over deliberately
+ * is authority over the instance itself and has to be handed over deliberately
  * rather than by silence. The
  * device-approval screen could not reach that reasoning: its only withholding
- * input was derived from the configured bundles, so a space permission no
+ * input was derived from the configured bundles, so a permission no
  * bundle names was in no withheld set, and its rows were confirmations rather
  * than toggles — one Approve granted the lot.
  *
@@ -46,8 +46,8 @@ const CONSENT_PARAMS = {
   descriptions: {},
 };
 
-describe("the code-flow consent screen never pre-ticks a space permission", () => {
-  it("renders an unclaimed space permission unticked", () => {
+describe("the code-flow consent screen never pre-ticks a permission", () => {
+  it("renders an unclaimed permission unticked", () => {
     const html = renderConsentScreen({
       ...CONSENT_PARAMS,
       scopes: [parsed("core.note:read"), parsed("keys.mint")],
@@ -64,7 +64,7 @@ describe("the code-flow consent screen never pre-ticks a space permission", () =
     // opinion about its own contents; `requiresExplicitConsent` is the
     // platform's about the scope, and the platform's outranks it. Without
     // this the fallback bucket never fires for a claimed literal and the
-    // space permission inherits the bundle's tick.
+    // permission inherits the bundle's tick.
     const claiming: PermissionBundle = {
       id: "operator-custom",
       label: "Operator custom",
@@ -81,18 +81,18 @@ describe("the code-flow consent screen never pre-ticks a space permission", () =
     expect(rowFor(html, "core.note:read")).toContain("checked");
   });
 
-  it("shows a space permission the person already granted as granted", () => {
+  it("shows a permission the person already granted as granted", () => {
     // The other direction, and the one that costs an app its tokens if it is
     // wrong: a default that decides what to OFFER must never decide what to
     // KEEP. At re-consent a standing grant renders from the prior grant, so
-    // an untouched Continue cannot silently drop a space permission and
+    // an untouched Continue cannot silently drop a permission and
     // trigger the narrowing revoke.
     const html = renderConsentScreen({
       ...CONSENT_PARAMS,
       scopes: [parsed("keys.mint"), parsed("core.note:read")],
       bundles: DEFAULT_PERMISSION_BUNDLES,
       // A standing grant, so this render is the re-consent diff: the
-      // space permission lands in "Already allowed", which is being shown
+      // permission lands in "Already allowed", which is being shown
       // rather than offered.
       priorScopes: ["keys.mint"],
     });
@@ -100,7 +100,7 @@ describe("the code-flow consent screen never pre-ticks a space permission", () =
   });
 });
 
-describe("the device-approval screen offers a space permission as a toggle", () => {
+describe("the device-approval screen offers a permission as a toggle", () => {
   const DEVICE_PARAMS = {
     clientName: "Marfa CLI",
     userCode: "ABCD-EFGH",
@@ -121,7 +121,7 @@ describe("the device-approval screen offers a space permission as a toggle", () 
     expect(html).toContain('value="keys.mint"');
   });
 
-  it("leaves a space permission unticked and everything else ticked", () => {
+  it("leaves a permission unticked and everything else ticked", () => {
     const html = renderDeviceConsentScreen({
       ...DEVICE_PARAMS,
       scopes: [parsed("core.note:read"), parsed("keys.mint")],

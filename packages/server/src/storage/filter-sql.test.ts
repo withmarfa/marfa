@@ -157,19 +157,10 @@ describe("filterToRawSql", () => {
     });
   });
 
-  // -------------------------------------------------------------------------
-  // Boolean and null values
-  // -------------------------------------------------------------------------
-
-  // -------------------------------------------------------------------------
-  // Edge subqueries — space scoping (defense-in-depth)
-  // -------------------------------------------------------------------------
-
   describe("edge subqueries", () => {
     it("binds the edge type and the endpoint, and nothing else", () => {
       const expr = parseFilter('edge[parent-of] eq "item_xyz"');
       const result = filterToRawSql(expr, "i");
-      expect(result.clause).not.toContain("e.space_id");
       expect(result.params).toEqual(["parent-of", "item_xyz"]);
     });
   });

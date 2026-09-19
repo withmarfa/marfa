@@ -46,7 +46,7 @@ import {
 } from "../storage/merge-properties.js";
 import type { AppEnv } from "../middleware/auth.js";
 import {
-  requireSpacePermission,
+  requirePermission,
   requireAuth,
   requireTypeAccess,
   requireEdgePermission,
@@ -200,7 +200,7 @@ const bulkRoute = createRoute({
   tags: ["Items"],
   summary: "Bulk upsert items",
   description:
-    "Creates or upserts up to 5000 items in one call, matching existing rows on `(source, source_id)`. Atomic by default; `source` is server-stamped from the credential, so any caller-supplied value is overwritten. Requires write access to each item's type — the credential's own type permissions decide, and nothing bypasses them — and operates only within the caller's space.\n\nAn entry that resolves a row of a different type is refused with `type_mismatch` — a write does not re-type the row it lands on. Passing `retype: true` for the batch moves those rows instead, which is how a corpus is brought onto a type a mapping now names. It is opt-in rather than inferred from a differing type, because a declared type accompanies nearly every write and inferring would move a corpus on an ordinary sync bug. Each move requires write on the type being entered as well as the one being left, and the resulting properties are validated against the destination: an item the destination type cannot accept is reported as an `errored` entry naming why, and the rest of the batch proceeds.\n\nAn ordinary update is validated too, against the row's own type and on the properties the write would leave on it rather than on the body alone, so a patch removing a required field is refused even though it names no invalid value. A refusal is an `errored` entry under `invalid_properties`; with the default `atomic` it rolls the page back instead, carrying that code in `details.code`. An entry may also carry the `version` it was based on, which makes its upsert conditional and is refused the same two ways.",
+    "Creates or upserts up to 5000 items in one call, matching existing rows on `(source, source_id)`. Atomic by default; `source` is server-stamped from the credential, so any caller-supplied value is overwritten. Requires write access to each item's type — the credential's own type permissions decide, and nothing bypasses them.\n\nAn entry that resolves a row of a different type is refused with `type_mismatch` — a write does not re-type the row it lands on. Passing `retype: true` for the batch moves those rows instead, which is how a corpus is brought onto a type a mapping now names. It is opt-in rather than inferred from a differing type, because a declared type accompanies nearly every write and inferring would move a corpus on an ordinary sync bug. Each move requires write on the type being entered as well as the one being left, and the resulting properties are validated against the destination: an item the destination type cannot accept is reported as an `errored` entry naming why, and the rest of the batch proceeds.\n\nAn ordinary update is validated too, against the row's own type and on the properties the write would leave on it rather than on the body alone, so a patch removing a required field is refused even though it names no invalid value. A refusal is an `errored` entry under `invalid_properties`; with the default `atomic` it rolls the page back instead, carrying that code in `details.code`. An entry may also carry the `version` it was based on, which makes its upsert conditional and is refused the same two ways.",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -335,7 +335,7 @@ const bulkActionStatusRoute = createRoute({
   tags: ["Items"],
   summary: "Get a bulk-action job",
   description:
-    'Returns the current state of an asynchronous bulk-action job; once terminal, `result` carries the outcome envelope. Readable by the credential that created it and by the operator key, and by nothing else: no space permission says "read another credential\'s bulk jobs". A job in another space reads as absent.',
+    "Returns the current state of an asynchronous bulk-action job; once terminal, `result` carries the outcome envelope. Readable by the credential that created it and by the operator key, and by nothing else: no permission says \"read another credential's bulk jobs\". A job it did not create is refused `403`; the job's existence is not the secret, its contents are.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({
@@ -1167,7 +1167,7 @@ export function bulkRoutes(storage: Storage) {
     // less sees its match set reduced rather than refused.
     if (action === "purge") {
       requireAuth(c);
-      requireSpacePermission(c, "items.purge");
+      requirePermission(c, "items.purge");
       if (body.confirm !== "PURGE") {
         throw new MarfaError(
           ErrorCode.BULK_CONFIRMATION_REQUIRED,
@@ -1184,7 +1184,7 @@ export function bulkRoutes(storage: Storage) {
     // This is the door where silence costs the most. The filter *is* the
     // match set, so a dropped bound does not narrow anything: `{"action":
     // "purge", "filter": {"occurred_before": "..."}}` becomes a purge with
-    // an empty filter, matching every item in the space. Under the match
+    // an empty filter, matching every item stored. Under the match
     // cap it does not even error — it succeeds, against everything.
     //
     // After the auth gates rather than before them, matching the other
@@ -1202,7 +1202,7 @@ export function bulkRoutes(storage: Storage) {
       refuseUnknownBodyKeys(raw, BULK_ACTION_SHAPES[action]);
       // Then the filter. Unconditional on this door regardless of what the
       // read doors do: a dropped filter field here is not a narrower match
-      // set but the whole space, and under the match cap it succeeds.
+      // set but every item, and under the match cap it succeeds.
       refuseUnknownFilterKeys(raw.filter, BulkActionFilterShape);
     }
 
@@ -1264,7 +1264,7 @@ export function bulkRoutes(storage: Storage) {
       "write",
     );
 
-    // The space's source filter, resolved the way the four list reads resolve
+    // The instance source filter, resolved the way the four list reads resolve
     // it. This door passed nothing, so a match set included rows every read
     // hides.
     //
@@ -1474,24 +1474,23 @@ export function bulkRoutes(storage: Storage) {
 //
 //   - the operator key reaches any job, which is what the instance tier is;
 //   - anyone else reaches only jobs their own credential created, since
-//     within a space separate credentials do not observe each other's
-//     bulk_action jobs;
-//   - a job in another space is cloaked as absent rather than refused.
+//     separate credentials do not observe each other's bulk_action jobs;
+//   - a job another credential created is refused, not cloaked: its
+//     existence is not a secret, only its contents.
 //
-// `bulkActionJobs.getById` applies no space filter, so this function is the
-// whole fence.
+// `bulkActionJobs.getById` applies no filter, so this function is the whole
+// fence.
 function assertJobAuth(c: Context<AppEnv>, job: BulkActionJobRow): void {
   const apiKey = c.get("apiKey");
   if (!apiKey) {
     throw new MarfaError(ErrorCode.UNAUTHORIZED, "Missing credential");
   }
   // Operator authority reaches every job: `bulkActionJobs.getById` is
-  // deliberately unscoped, so this is the only fence, and a purge job
-  // carries no space at all.
+  // deliberately unscoped, so this is the only fence.
   if (apiKey.is_operator) return;
   // **A job belongs to the credential that started it, and to nothing else.**
   // There used to be a rank arm above this one, admitting an admin to any job
-  // in its own space; with rank retired there is no space permission that says
+  // anyone else had started; with rank retired there is no permission that says
   // "read another credential's bulk jobs", and inventing one to preserve the
   // arm would be widening the model to fit a line rather than the other way
   // round. What is left is the narrower half that was always here.

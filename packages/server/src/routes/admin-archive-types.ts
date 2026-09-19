@@ -2,8 +2,8 @@
  * Registering the types an archive carries, before the restore writes
  * anything that needs them.
  *
- * A space's items can be of types the space registered itself, and until
- * the archive carried those registrations a restore into an empty space
+ * An item can be of a type registered here rather than shipped, and until
+ * the archive carried those registrations a restore into an empty database
  * dropped every such item as an unknown type. The registrations therefore
  * land first, outside the restore transaction, because the type registry
  * is process-level in-memory state that a rollback cannot reach anyway:
@@ -58,8 +58,8 @@ export interface ArchiveTypeResult {
 }
 
 /**
- * Runs the same check `POST /types` runs, against the same space-scoped
- * registry, after the batch's own parents are registered so a parent-child
+ * Runs the same check `POST /types` runs, against the same registry, after
+ * the batch's own parents are registered so a parent-child
  * pair in one archive validates in either input order.
  *
  * The routes that check a parent chain share the check rather than holding a
@@ -119,7 +119,7 @@ function normalizeForCompare(schema: TypeSchema): TypeSchema {
  *   into the same table the platform seed uses, so a replayed `platform` claim
  *   would seed an attacker-chosen type into the registry at the next boot,
  *   undeletable, and `default_on` in the connected bundle.
- *   A delayed fuse: `create` writes the space overlay now and nothing manifests
+ *   A delayed fuse: `create` writes the overlay now and nothing manifests
  *   until a restart.
  * - **`family: "core"` or `"system"`.** Family decides membership of the content
  *   category, and `core` is the permissive value the boot projection exists to
@@ -330,7 +330,7 @@ export async function registerArchiveTypes(
     );
   }
 
-  // What this space has registered is a question about this database,
+  // What is registered is a question about this database,
   // not about the in-memory registry: the registry is process state
   // seeded at boot and can hold entries this instance never wrote. The rows
   // are what a restore is reconciling against.
@@ -375,7 +375,7 @@ export async function registerArchiveTypes(
   if (conflicts.length > 0) {
     throw new MarfaError(
       ErrorCode.CONFLICT,
-      `Archive redefines ${String(conflicts.length)} type(s) the target space already registers differently: ${conflicts.join(", ")}`,
+      `Archive redefines ${String(conflicts.length)} type(s) this instance already registers differently: ${conflicts.join(", ")}`,
       { conflicting_ids: conflicts },
     );
   }

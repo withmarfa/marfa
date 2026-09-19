@@ -25,7 +25,7 @@ CREATE TABLE IF NOT EXISTS `api_keys` (
 	`expires_at` text,
 	`revoked_at` text,
 	`last_used_at` text,
-	CONSTRAINT "api_keys_space_less_holds_nothing" CHECK("api_keys"."is_operator" <> 1 OR (
+	CONSTRAINT "api_keys_operator_holds_nothing" CHECK("api_keys"."is_operator" <> 1 OR (
         "api_keys"."type_permissions" = '{}' AND
         "api_keys"."edge_permissions" = '{}' AND
         "api_keys"."metadata_permissions" = '{}' AND
@@ -35,7 +35,7 @@ CREATE TABLE IF NOT EXISTS `api_keys` (
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS `api_keys_key_hash_unique` ON `api_keys` (`key_hash`);
-CREATE UNIQUE INDEX IF NOT EXISTS `idx_api_keys_source_per_space` ON `api_keys` (`source`) WHERE revoked_at IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS `idx_api_keys_source_unrevoked` ON `api_keys` (`source`) WHERE revoked_at IS NULL;
 CREATE TABLE IF NOT EXISTS `audit_log` (
 	`id` text PRIMARY KEY NOT NULL,
 	`created_at` text NOT NULL,

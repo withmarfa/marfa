@@ -136,7 +136,7 @@ export interface SubscribeOptions {
    *
    * What it is for: a client that subscribes and then reads a snapshot has
    * nowhere to resume from until an event happens to arrive, so on a quiet
-   * space it can finish a full read, be interrupted, and come back with no
+   * instance it can finish a full read, be interrupted, and come back with no
    * way to ask what it missed — or to know that it missed anything. This
    * arrives at connect whether or not anything has happened.
    *

@@ -15,12 +15,12 @@
  * ## What the read is bounded by, and what it is not
  *
  * Two of the three passes cannot be narrowed by the window and so read
- * every matching row in the space. They are walked to exhaustion. There
+ * every matching row stored. They are walked to exhaustion. There
  * is deliberately no ceiling on how many rows that is: a ceiling on the
  * scan cannot be recovered from, because the only move a caller knows —
  * ask for a narrower window — does not change how many rows carry a
  * rule. Such a ceiling fails closed permanently, and every call fails
- * once a space crosses it. A large calendar should be slower, not
+ * once an instance crosses it. A large calendar should be slower, not
  * refused.
  *
  * What keeps "slower" from meaning "out of memory" is that a scanned row
@@ -33,10 +33,10 @@
  * bytes and several kilobytes each. Whole items are read exactly once,
  * for the occurrences actually being returned, after the occurrence
  * ceiling has already refused anything larger — so the number of items
- * held at once is bounded by `MAX_OCCURRENCES` rather than by the size
- * of the space.
+ * held at once is bounded by `MAX_OCCURRENCES` rather than by how much is
+ * stored.
  *
- * Five bounds do the rest of that work and none of them refuses a space
+ * Five bounds do the rest of that work and none of them refuses a calendar
  * for being large:
  *
  *   - **Assembly stops the moment the window is over full**, so the rest
@@ -54,14 +54,14 @@
  *     bound on one uninterrupted stretch, in iterations.
  *   - **Expansion work is bounded across the whole request**, in the
  *     iterations spent on expansions that return no occurrence.
- *     `MAX_UNPRODUCTIVE_EXPANSION_ITERATIONS` is what stops a space full
+ *     `MAX_UNPRODUCTIVE_EXPANSION_ITERATIONS` is what stops a calendar full
  *     of per-minute rules from taking hours of CPU in one request. It is
  *     the one bound here that can leave the calendar partial, and the
  *     response says so rather than stopping quietly.
  *
  * **What the occurrence ceiling does not bound, and it reads as though
  * it does.** All three `scanEvents` calls run to exhaustion and the
- * exceptions are grouped over every exception in the space *before* the
+ * exceptions are grouped over every exception stored *before* the
  * first occurrence is appended, so a refusal costs the whole read that
  * preceded it: every row scanned, every projection built, every edge
  * chunk walked. A window holding two million standalone events
@@ -78,7 +78,7 @@
  * rather than the property added.
  *
  * That leaves the projections themselves growing linearly with the
- * space's event count. It is survivable where holding whole rows is not,
+ * instance's event count. It is survivable where holding whole rows is not,
  * and it is not free. Two follow-ups would remove the growth rather than
  * shrink it, and neither is possible against the schema as it stands:
  *
@@ -139,7 +139,7 @@ export const MAX_OCCURRENCES = 5000;
  * rather than in rows: one row can produce two.
  *
  * `series_errors` is a second result array and `MAX_OCCURRENCES`
- * structurally cannot bound it. A space of rules that all fail in the
+ * structurally cannot bound it. A calendar of rules that all fail in the
  * parser contributes no occurrence at all, so it sits at zero against
  * every other bound here and still returns an arbitrarily long list. Measured before this existed:
  * 25,000 rows carrying a malformed rule answered 200 with a 4.8 MB JSON
@@ -155,8 +155,8 @@ export const MAX_OCCURRENCES = 5000;
  *   - **No occurrence is dropped.** Nothing in `data` is derived from
  *     this list: it is a diagnostic beside the calendar, and every
  *     occurrence is appended by a path that never reads it. So capping
- *     it cannot remove a meeting, and the healthy series in the same
- *     space expand and return exactly as they would have.
+ *     it cannot remove a meeting, and the healthy series beside them
+ *     expand and return exactly as they would have.
  *
  *     The stronger-sounding version — that a listed series contributed
  *     no occurrence — is false and was the argument this docblock used
@@ -175,20 +175,20 @@ export const MAX_OCCURRENCES = 5000;
  *     either. Diagnostics are compressible in a way meetings are not.
  *     Both numbers are entries rather than rows, which is what makes the
  *     comparison behind `series_errors_truncated` exact; a row reported
- *     twice consumes two entries of this cap, and a space where every
+ *     twice consumes two entries of this cap, and a calendar where every
  *     broken rule is broken in two ways fits half as many rows under
  *     it.
  *
  * Refusing here was tried first and was wrong. The series pass is
  * unwindowed, so a refusal could not be recovered from by asking for a
- * narrower window: a space with 501 broken rules would have received no
+ * narrower window: a calendar with 501 broken rules would have received no
  * calendar at all, its healthy series having expanded perfectly well.
  * That is precisely the fail-closed scan ceiling this change exists to
  * remove, reintroduced one array over.
  *
  * The retention argument that motivated the ceiling is untouched:
  * accumulation still stops here, so the array in memory is bounded by
- * this and by `MAX_SERIES_ERROR_MESSAGE_CHARS` whatever the space holds.
+ * this and by `MAX_SERIES_ERROR_MESSAGE_CHARS` whatever is stored.
  * What changed is only that the request still succeeds.
  */
 export const MAX_SERIES_ERRORS = 500;
@@ -218,7 +218,7 @@ const MAX_SERIES_ERROR_MESSAGE_CHARS = 200;
  * 200 because that is the storage layer's own ceiling — `items.list`
  * silently clamps any larger `limit`. This route previously asked for
  * 1000 and read one page, so it saw 200 events and reported the result
- * as the whole calendar: a space's 201st event simply was not on it.
+ * as the whole calendar: the 201st event simply was not on it.
  * Naming the real number here is what stops the next reader believing
  * the request.
  */
@@ -282,7 +282,7 @@ const SERIES_PER_YIELD = 32;
  *
  * **What this does not bound:** the total work one request may do. It
  * paces the loop, it does not stop it, and a paced loop still runs for
- * as long as the space gives it work.
+ * as long as the data gives it work.
  * `MAX_UNPRODUCTIVE_EXPANSION_ITERATIONS` stops the loop, but over one
  * part of that work rather than over the sum of it: iterations spent on
  * expansions that return no occurrence. Nothing in this file bounds
@@ -300,7 +300,7 @@ const ITERATIONS_PER_YIELD = 20_000;
  * Refusing the read at the 501st expansion failure also capped how many
  * *expansions* one request performed, at roughly 501, and capping the
  * error list instead removed that without anything taking its place.
- * Every series in the space is now walked. Measured through the route:
+ * Every stored series is now walked. Measured through the route:
  * 40 `FREQ=MINUTELY` rules each burning `MAX_EXPANSION_ITERATIONS` took
  * 13.5 seconds, about 340 ms of CPU per rule, and nothing about that
  * number stopped at 40. Fifty thousand such rules is hours of CPU on one
@@ -390,7 +390,7 @@ const ITERATIONS_PER_YIELD = 20_000;
  * sooner and walked less — so the worst case is `MAX_OCCURRENCES` series
  * emitting once each: 500 million iterations, extrapolating to about
  * half an hour, and then a 400. That is a constant rather than a bound
- * that grows with the space, which is the whole of what changed, and it
+ * that grows with the corpus, which is the whole of what changed, and it
  * is not a small one.
  *
  * **What the number is.** Two million is twenty full per-series
@@ -405,7 +405,7 @@ const ITERATIONS_PER_YIELD = 20_000;
  * contribute nothing. A daily rule that ran for a decade and ended costs
  * about
  * 3,650 iterations on every read of a later window, so roughly 550 of
- * them fill this budget, against 20 per-minute rules. A space past that
+ * them fill this budget, against 20 per-minute rules. A calendar past that
  * gets a partial calendar and is told so. Narrowing that would mean
  * knowing a rule's last instant before expanding it, which is the
  * indexed column the note at the top of this file says the schema does
@@ -679,7 +679,7 @@ async function fetchItemsBatched(
  * Each chunk is consumed before the next is asked for, and the only
  * thing kept from an edge is the id at the far end of it. Returning the
  * edges instead would hold one fully hydrated row — `properties`
- * included — per exception in the space until the last chunk landed,
+ * included — per stored exception until the last chunk landed,
  * which is the retention chunking exists to avoid rather than one it
  * merely reshapes.
  *
@@ -769,7 +769,7 @@ const ScanSchema = z.object({
     .number()
     .int()
     .describe(
-      "Failures this request found in recurrence rules, in the same unit as the `series_errors` array on the envelope: entries, not rows. One row can account for two — an unreadable line dropped from its rule is one failure, and expanding what was left then failing is another — so this is an upper bound on the number of rows to go and look at, and `item_id` is what a caller groups on to get the exact number. Counted across the event types this request read, and scoped to those and not to the space: a request narrowed by `type`, or a credential permissioned for one event type, is told about the rules it read and nothing about the ones it did not, so a zero here is not a statement that the rest of the space is healthy. It counts everything this read detected, even when the array lists fewer, which is what lets a caller tell a handful of broken rules from a corrupt import without receiving the bytes of the larger one. Read it as a floor rather than as a certificate: it counts the ways of being broken this route knows how to recognize.",
+      "Failures this request found in recurrence rules, in the same unit as the `series_errors` array on the envelope: entries, not rows. One row can account for two — an unreadable line dropped from its rule is one failure, and expanding what was left then failing is another — so this is an upper bound on the number of rows to go and look at, and `item_id` is what a caller groups on to get the exact number. Counted across the event types this request read, and scoped to those and not to everything stored: a request narrowed by `type`, or a credential permissioned for one event type, is told about the rules it read and nothing about the ones it did not, so a zero here is not a statement that the rest of the calendar is healthy. It counts everything this read detected, even when the array lists fewer, which is what lets a caller tell a handful of broken rules from a corrupt import without receiving the bytes of the larger one. Read it as a floor rather than as a certificate: it counts the ways of being broken this route knows how to recognize.",
     ),
   max_series_errors: z
     .number()
@@ -849,7 +849,7 @@ const occurrencesRoute = createRoute({
   tags: ["Items"],
   summary: "List event occurrences in a window",
   description:
-    "Returns the events that fall inside a time window, expanding recurring series from their rules at read time rather than storing occurrences. Single events appear by their own times; a series contributes one entry per occurrence in the window, carrying `series_id`; a stored exception replaces the occurrence it was recorded against and carries `replaces`. A row is shown at the times its own item carries; only a computed series occurrence, whose time the item does not hold, is shown at the time the rule produced. Two bounds refuse rather than silently trimming: the window may not be longer than `max_days`, and the assembled result may not exceed `max_occurrences`. The second depends on what the window holds, so a window well inside the length limit can still be refused for being too full; `scan.max_occurrences` is reported on every successful read so the ceiling is visible before it is reached. Its refusal carries `max_occurrences` and `found` in `details`, and `expansion_incomplete` with `series_unexpanded` as well when expansion had already been truncated — worth branching on, because the refusal says to narrow the window and those two say that narrowing it returns a calendar that is partial for a second reason. A rule that cannot be read or cannot be fully applied is reported in `series_errors` while the rest of the calendar still returns. Entries there are failures rather than rows: one row can carry two, and `item_id` is what a caller groups on. That list alone is capped rather than refused, at `scan.max_series_errors`: it is a diagnostic beside the calendar and nothing in `data` depends on it, so a capped list sets `series_errors_truncated` while `scan.series_errors` still carries the true total for the event types the request read — not for the space, which a request narrowed by `type` or a credential permissioned for one event type never sees all of. Expansion itself is bounded too: a request spends at most `scan.max_unproductive_iterations` rule iterations on expansions that return no occurrence, and one that reaches that ceiling stops expanding, sets `expansion_incomplete` and reports `scan.series_unexpanded`, rather than running for as long as the space gives it work.",
+    "Returns the events that fall inside a time window, expanding recurring series from their rules at read time rather than storing occurrences. Single events appear by their own times; a series contributes one entry per occurrence in the window, carrying `series_id`; a stored exception replaces the occurrence it was recorded against and carries `replaces`. A row is shown at the times its own item carries; only a computed series occurrence, whose time the item does not hold, is shown at the time the rule produced. Two bounds refuse rather than silently trimming: the window may not be longer than `max_days`, and the assembled result may not exceed `max_occurrences`. The second depends on what the window holds, so a window well inside the length limit can still be refused for being too full; `scan.max_occurrences` is reported on every successful read so the ceiling is visible before it is reached. Its refusal carries `max_occurrences` and `found` in `details`, and `expansion_incomplete` with `series_unexpanded` as well when expansion had already been truncated — worth branching on, because the refusal says to narrow the window and those two say that narrowing it returns a calendar that is partial for a second reason. A rule that cannot be read or cannot be fully applied is reported in `series_errors` while the rest of the calendar still returns. Entries there are failures rather than rows: one row can carry two, and `item_id` is what a caller groups on. That list alone is capped rather than refused, at `scan.max_series_errors`: it is a diagnostic beside the calendar and nothing in `data` depends on it, so a capped list sets `series_errors_truncated` while `scan.series_errors` still carries the true total for the event types the request read — not for every event type, which a request narrowed by `type` or a credential permissioned for one event type never sees all of. Expansion itself is bounded too: a request spends at most `scan.max_unproductive_iterations` rule iterations on expansions that return no occurrence, and one that reaches that ceiling stops expanding, sets `expansion_incomplete` and reports `scan.series_unexpanded`, rather than running for as long as the data gives it work.",
   security: [{ bearerAuth: [] }],
   request: {
     query: z.object({
@@ -877,7 +877,7 @@ const occurrencesRoute = createRoute({
         },
       },
       description:
-        "A missing, unreadable or inverted window; a window longer than `max_days`; an invalid type identifier; or a window whose occurrences exceed `max_occurrences`. The last of these can refuse a window that is otherwise perfectly valid, because it depends on what the window holds rather than on how long it is. It carries `max_occurrences` and `found`, where `found` is the count assembly stopped at rather than the window's total: the read is abandoned as soon as the ceiling is crossed instead of continuing in order to report how far past it the window went. When expansion had already been truncated before the ceiling was crossed, the details also carry `expansion_incomplete` and `series_unexpanded`, because narrowing the window returns a calendar that is partial for that second reason and the caller would otherwise not learn it until after acting on this one. Broken rules do not cause this refusal on their own: that list is capped and the read succeeds however many of them there are. They do not exempt a space from it either — the ceiling counts the occurrences the window's healthy rows produce and is indifferent to how many rules failed, so a space holding both enough broken rules to cap the list and enough events to fill the window is refused on the second, exactly as a space with no broken rules would be.",
+        "A missing, unreadable or inverted window; a window longer than `max_days`; an invalid type identifier; or a window whose occurrences exceed `max_occurrences`. The last of these can refuse a window that is otherwise perfectly valid, because it depends on what the window holds rather than on how long it is. It carries `max_occurrences` and `found`, where `found` is the count assembly stopped at rather than the window's total: the read is abandoned as soon as the ceiling is crossed instead of continuing in order to report how far past it the window went. When expansion had already been truncated before the ceiling was crossed, the details also carry `expansion_incomplete` and `series_unexpanded`, because narrowing the window returns a calendar that is partial for that second reason and the caller would otherwise not learn it until after acting on this one. Broken rules do not cause this refusal on their own: that list is capped and the read succeeds however many of them there are. They do not exempt a read from it either — the ceiling counts the occurrences the window's healthy rows produce and is indifferent to how many rules failed, so a window holding both enough broken rules to cap the list and enough events to fill it is refused on the second, exactly as a window with no broken rules would be.",
     },
     401: {
       content: {
@@ -1009,7 +1009,7 @@ export function occurrenceRoutes(
     if (wanted.length === 0) {
       // Every count here is scoped to what this request read, and it
       // read nothing, so the zeros are true rather than a claim about
-      // the space. `scan.series_errors` says the same on every other
+      // the rest. `scan.series_errors` says the same on every other
       // path: a credential permissioned for one event type is told
       // about that type's rules and about no others.
       return c.json(
@@ -1103,7 +1103,7 @@ export function occurrenceRoutes(
      * because a limit has to fail toward something bounded: a ceiling
      * that is only consulted once everything it would have refused is
      * already assembled does not make the work smaller, it only makes
-     * the answer a 400. Unbounded is not slower — a space dense enough
+     * the answer a 400. Unbounded is not slower — a calendar dense enough
      * to cross this by orders of magnitude would build every occurrence
      * it holds in order to produce a refusal the first `MAX_OCCURRENCES`
      * plus one already justified.

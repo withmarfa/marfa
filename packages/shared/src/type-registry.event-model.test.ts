@@ -5,7 +5,7 @@
  * end in the one it started in. Neither was expressible: all-day was carried
  * by whether a string happened to omit a time, and one `timezone` field had
  * to answer for both ends. Both rode along as undeclared properties, which a
- * loose space accepts silently and a space that enforces its own schema
+ * loose instance accepts silently and one that enforces its own schema
  * refuses outright — so turning validation on made an ordinary all-day event
  * unstorable.
  *

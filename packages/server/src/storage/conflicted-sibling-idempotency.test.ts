@@ -42,7 +42,7 @@ async function collidingNote(seed: string): Promise<{
   return { id: created.id, base: created.version };
 }
 
-/** Every keep-both sibling this space holds carrying `body`. */
+/** Every keep-both sibling carrying `body`. */
 async function siblingsHolding(body: string): Promise<string[]> {
   const listed = await ctx.storage.items.list({ limit: 200 });
   return listed.data

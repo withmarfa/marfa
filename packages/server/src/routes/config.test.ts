@@ -11,22 +11,22 @@ import { FilesystemBlobBackend } from "../storage/blob-backend.js";
 import { hashApiKey } from "../middleware/auth.js";
 import type { AppEnv } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
-import { SPACE_PERMISSIONS } from "@withmarfa/shared";
+import { PERMISSIONS } from "@withmarfa/shared";
 import { writeInstanceConfig } from "../storage/instance-config.js";
 
 const SALT = "test-salt";
 
 // A second app built inline, so the config round trips run on a database
 // the shared context does not share.
-interface HostedContext {
+interface ConfigContext {
   app: Hono<AppEnv>;
   storage: Storage;
   operatorKey: string;
-  spaceKey: string;
+  workingKey: string;
   cleanup: () => Promise<void>;
 }
 
-async function createHostedContext(): Promise<HostedContext> {
+async function createConfigContext(): Promise<ConfigContext> {
   const tmpDir = mkdtempSync(join(tmpdir(), "marfa-config-test-"));
   const blobPath = join(tmpDir, "blobs");
 
@@ -71,7 +71,7 @@ async function createHostedContext(): Promise<HostedContext> {
 
   const suffix = Math.random().toString(36).slice(2, 10);
   const operatorKey = `marfa_k1_operator_quotas_${suffix}`;
-  const spaceKey = `marfa_k1_space_cfg_${suffix}`;
+  const workingKey = `marfa_k1_working_cfg_${suffix}`;
 
   await storage.keys.create(
     {
@@ -86,13 +86,13 @@ async function createHostedContext(): Promise<HostedContext> {
 
   await storage.keys.create(
     {
-      label: "space-cfg",
-      source: `space-cfg-${suffix}`,
-      permissions: [...SPACE_PERMISSIONS],
+      label: "config-key",
+      source: `config-key-${suffix}`,
+      permissions: [...PERMISSIONS],
       type_permissions: {},
       default_tier: "feed",
     },
-    hashApiKey(spaceKey, SALT),
+    hashApiKey(workingKey, SALT),
   );
   await storage.settings.set("bootstrapped", "true");
 
@@ -100,7 +100,7 @@ async function createHostedContext(): Promise<HostedContext> {
     app,
     storage,
     operatorKey,
-    spaceKey,
+    workingKey,
     cleanup: async () => {
       await storage.close();
       // The directory holds this file's sqlite database and blob
@@ -131,7 +131,7 @@ describe("GET /config — keys-mode fallback", () => {
     // An unset config reads as an empty object rather than as null, so a
     // client can merge into what it gets back without a null check.
     const res = await request(ctx.app, "GET", "/config", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
     });
     expect(res.status).toBe(200);
     const body = (await res.json()) as Record<string, unknown>;
@@ -149,7 +149,7 @@ describe("PUT /config — keys-mode fallback", () => {
 
   it("rejects the operator key", async () => {
     // The operator key is refused at the permission gate, because the
-    // instance tier holds no space permissions at all — running the
+    // instance tier holds no permissions at all — running the
     // instance sits outside the permission model rather than above it.
     const res = await request(ctx.app, "PUT", "/config", {
       key: ctx.operatorKey,
@@ -166,23 +166,23 @@ describe("PUT /config — keys-mode fallback", () => {
 
 // ----- A second context: the settings-backed round trips -------
 describe("Instance config — round trips", () => {
-  let hosted: HostedContext;
+  let configCtx: ConfigContext;
 
   beforeAll(async () => {
-    hosted = await createHostedContext();
+    configCtx = await createConfigContext();
   });
 
   afterAll(async () => {
-    await hosted.cleanup();
+    await configCtx.cleanup();
   });
 
   it("GET returns stored config for a caller holding config.manage", async () => {
-    await writeInstanceConfig(hosted.storage.settings, {
+    await writeInstanceConfig(configCtx.storage.settings, {
       enforcement: { strict_mode: { types: ["core.note"] } },
     });
 
-    const res = await request(hosted.app, "GET", "/config", {
-      key: hosted.spaceKey,
+    const res = await request(configCtx.app, "GET", "/config", {
+      key: configCtx.workingKey,
     });
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
@@ -192,8 +192,8 @@ describe("Instance config — round trips", () => {
   });
 
   it("PUT rejects a negative cleanup-job override with 400", async () => {
-    const res = await request(hosted.app, "PUT", "/config", {
-      key: hosted.spaceKey,
+    const res = await request(configCtx.app, "PUT", "/config", {
+      key: configCtx.workingKey,
       body: {
         audit_retention_days: -1,
       },
@@ -207,14 +207,14 @@ describe("Instance config — round trips", () => {
     // The purger already reads this field, so a value the route accepts and
     // drops is worse than one it refuses: PUT is a full replacement, so
     // following the documentation un-sets the neighbours.
-    const res = await request(hosted.app, "PUT", "/config", {
-      key: hosted.spaceKey,
+    const res = await request(configCtx.app, "PUT", "/config", {
+      key: configCtx.workingKey,
       body: { activity_retention_days: 30, trash_retention_days: 7 },
     });
     expect(res.status).toBe(200);
 
-    const getRes = await request(hosted.app, "GET", "/config", {
-      key: hosted.spaceKey,
+    const getRes = await request(configCtx.app, "GET", "/config", {
+      key: configCtx.workingKey,
     });
     expect(getRes.status).toBe(200);
     const getBody = (await getRes.json()) as {
@@ -226,8 +226,8 @@ describe("Instance config — round trips", () => {
   });
 
   it("PUT rejects a negative activity retention override with 400", async () => {
-    const res = await request(hosted.app, "PUT", "/config", {
-      key: hosted.spaceKey,
+    const res = await request(configCtx.app, "PUT", "/config", {
+      key: configCtx.workingKey,
       body: { activity_retention_days: -1 },
     });
     expect(res.status).toBe(400);
@@ -241,14 +241,14 @@ describe("Instance config — round trips", () => {
   // round trip of a well-formed body passes either way, which is why the
   // case below sends a misspelling instead.
   it("PUT refuses a mistyped key instead of dropping it", async () => {
-    const good = await request(hosted.app, "PUT", "/config", {
-      key: hosted.spaceKey,
+    const good = await request(configCtx.app, "PUT", "/config", {
+      key: configCtx.workingKey,
       body: { activity_retention_days: 30, trash_retention_days: 7 },
     });
     expect(good.status).toBe(200);
 
-    const res = await request(hosted.app, "PUT", "/config", {
-      key: hosted.spaceKey,
+    const res = await request(configCtx.app, "PUT", "/config", {
+      key: configCtx.workingKey,
       body: { activity_retention_day: 30 },
     });
     expect(res.status).toBe(400);
@@ -257,8 +257,8 @@ describe("Instance config — round trips", () => {
 
     // And the refusal left the instance's config alone, which is the whole
     // point: the old behavior returned 200 with this now empty.
-    const getRes = await request(hosted.app, "GET", "/config", {
-      key: hosted.spaceKey,
+    const getRes = await request(configCtx.app, "GET", "/config", {
+      key: configCtx.workingKey,
     });
     const getBody = (await getRes.json()) as {
       activity_retention_days?: number;
@@ -274,15 +274,15 @@ describe("Instance config — round trips", () => {
   // The outer object refusing an unknown key while the nested one accepts it
   // is the same defect one level down, and `.strict()` does not recurse.
   it("PUT refuses a mistyped key inside enforcement too", async () => {
-    const res = await request(hosted.app, "PUT", "/config", {
-      key: hosted.spaceKey,
+    const res = await request(configCtx.app, "PUT", "/config", {
+      key: configCtx.workingKey,
       body: { enforcement: { strict_modes: { types: ["core.note"] } } },
     });
     expect(res.status).toBe(400);
 
     // And one level deeper again, inside a block that does exist.
-    const deeper = await request(hosted.app, "PUT", "/config", {
-      key: hosted.spaceKey,
+    const deeper = await request(configCtx.app, "PUT", "/config", {
+      key: configCtx.workingKey,
       body: { enforcement: { strict_mode: { types: [], typo: 1 } } },
     });
     expect(deeper.status).toBe(400);
@@ -293,8 +293,8 @@ describe("Instance config — round trips", () => {
       enforcement: { strict_mode: { types: ["core.note"] } },
       audit_retention_days: 45,
     };
-    const res = await request(hosted.app, "PUT", "/config", {
-      key: hosted.spaceKey,
+    const res = await request(configCtx.app, "PUT", "/config", {
+      key: configCtx.workingKey,
       body: config,
     });
     expect(res.status).toBe(200);
@@ -303,8 +303,8 @@ describe("Instance config — round trips", () => {
     expect(body.audit_retention_days).toBe(45);
 
     // Round-trip: GET must return the persisted value.
-    const getRes = await request(hosted.app, "GET", "/config", {
-      key: hosted.spaceKey,
+    const getRes = await request(configCtx.app, "GET", "/config", {
+      key: configCtx.workingKey,
     });
     expect(getRes.status).toBe(200);
     const getBody = (await getRes.json()) as typeof config;
@@ -315,13 +315,12 @@ describe("Instance config — round trips", () => {
     // instead of an inline retry.
     const auditResult = await waitForAudit(
       () =>
-        hosted.storage.audit.list({
-          action: "space.config.update",
-          resource_id: "me",
+        configCtx.storage.audit.list({
+          action: "config.update",
         }),
       (r) => r.data.length >= 1,
     );
     expect(auditResult.data.length).toBeGreaterThanOrEqual(1);
-    expect(auditResult.data[0]?.resource_type).toBe("space");
+    expect(auditResult.data[0]?.resource_type).toBe("config");
   });
 });

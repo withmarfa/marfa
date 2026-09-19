@@ -1,13 +1,13 @@
 /**
- * Human names for the space permissions, in the two shapes the surfaces need.
+ * Human names for the permissions, in the two shapes the surfaces need.
  *
  * One home because three surfaces read them — the consent screen, the
- * device-approval screen, and the security page's revoke line — and a space
+ * device-approval screen, and the security page's revoke line — and a
  * permission whose name differs between the screen that grants it and the
  * screen that revokes it is worse than one with no name at all.
  *
- * Both maps are keyed on `SpacePermission` rather than `string`, so adding a
- * space permission fails to compile until it has been named in both. That is
+ * Both maps are keyed on `Permission` rather than `string`, so adding a
+ * permission fails to compile until it has been named in both. That is
  * the only guard that matters here: the fallback these replace is
  * `humanizeType`, which takes the last dotted segment, so an unnamed
  * `webhooks.manage` renders as "Webhooks" — byte-identical to what
@@ -15,15 +15,15 @@
  * webhook row and the other is the power to point a new webhook anywhere, and
  * the one place a person inspects that difference would show none.
  */
-import type { SpacePermission } from "@withmarfa/shared";
-import { isSpacePermission } from "@withmarfa/shared";
+import type { Permission } from "@withmarfa/shared";
+import { isPermission } from "@withmarfa/shared";
 
 /**
  * Consent-toggle labels: a full verb phrase, because the row is a thing the
  * person is deciding to hand over rather than a category of content, and a
  * noun reads as the latter.
  */
-export const SPACE_PERMISSION_LABELS: Record<SpacePermission, string> = {
+export const PERMISSION_LABELS: Record<Permission, string> = {
   "webhooks.manage": "Set up webhooks that send your data elsewhere",
   "schema.write": "Change and remove your type definitions",
   "config.manage": "Read and change the server configuration",
@@ -42,7 +42,7 @@ export const SPACE_PERMISSION_LABELS: Record<SpacePermission, string> = {
  * produce these is a lowercase plus a comma strip, which quietly mangles the
  * entries where the comma is load-bearing.
  */
-export const SPACE_PERMISSION_SHORT: Record<SpacePermission, string> = {
+export const PERMISSION_SHORT: Record<Permission, string> = {
   "webhooks.manage": "set up webhooks that send your data elsewhere",
   "schema.write": "change your type definitions",
   "config.manage": "read and change the server configuration",
@@ -53,18 +53,14 @@ export const SPACE_PERMISSION_SHORT: Record<SpacePermission, string> = {
 };
 
 /** The consent-toggle label for a literal, or undefined when it names no
- *  space permission. A guard rather than a cast, so a literal outside the set
+ *  permission. A guard rather than a cast, so a literal outside the set
  *  cannot be asserted into a lookup that has no entry for it. */
-export function spacePermissionLabel(literal: string): string | undefined {
-  return isSpacePermission(literal)
-    ? SPACE_PERMISSION_LABELS[literal]
-    : undefined;
+export function permissionLabel(literal: string): string | undefined {
+  return isPermission(literal) ? PERMISSION_LABELS[literal] : undefined;
 }
 
 /** The inline-list form for a literal, or undefined when it names no
- *  space permission. */
-export function spacePermissionShort(literal: string): string | undefined {
-  return isSpacePermission(literal)
-    ? SPACE_PERMISSION_SHORT[literal]
-    : undefined;
+ *  permission. */
+export function permissionShort(literal: string): string | undefined {
+  return isPermission(literal) ? PERMISSION_SHORT[literal] : undefined;
 }

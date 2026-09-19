@@ -14,8 +14,8 @@
  * - The registry's own publisher roots, for the namespace wildcards the
  *   scope allowlist admits (`google.*`, `readwise.*`, …) — previously a
  *   second hand list.
- * - The runtime `types` table, for the namespaces of types spaces
- *   have registered themselves. Their roots extend the custom bundle with
+ * - The runtime `types` table, for the namespaces of types registered at
+ *   runtime. Their roots extend the custom bundle with
  *   `<root>.*` wildcards so a custom type under any handle is offerable,
  *   not just `user.*`.
  *
@@ -59,7 +59,7 @@ export function deriveRequestableNamespaceRoots(): string[] {
 }
 
 /**
- * Namespace roots of the types spaces registered at runtime, for extending
+ * Namespace roots of the types registered at runtime, for extending
  * the custom bundle beyond `user.*`. Publisher-tier roots only: `user.*`
  * and `app.*` are covered structurally, and reserved roots cannot hold a
  * custom type in the first place (belt: filtered anyway, since this reads
@@ -129,13 +129,12 @@ export async function resolveRegisteredNamespaceRoots(
 }
 
 /**
- * Every space's registered namespace roots at once, for the OAuth
- * scope allowlist and nothing user-facing. The allowlist is an acceptance
- * set — a scope literal outside it is narrowed away before consent — so a
- * space's roots have to be in it for that space's grants to be issuable
- * at all, and admitting every space's roots instance-wide reveals nothing:
- * what a person is shown stays per-space (the consent route), and what the
- * discovery documents advertise stays pinned to the bundle baseline.
+ * Every registered namespace root at once, for the OAuth scope allowlist and
+ * nothing user-facing. The allowlist is an acceptance set — a scope literal
+ * outside it is narrowed away before consent — so a root has to be in it for
+ * a grant naming it to be issuable at all. What a person is shown is decided
+ * separately by the consent route, and what the discovery documents advertise
+ * stays pinned to the bundle baseline.
  */
 export async function resolveAllRegisteredNamespaceRoots(
   storage: Storage,
@@ -144,7 +143,7 @@ export async function resolveAllRegisteredNamespaceRoots(
   // Platform rows share this table since the shipped vocabulary became
   // seeded data, and their publisher roots are already in the allowlist's
   // static half. Folding them in again would report the build's own set as
-  // though a space had registered it.
+  // though it had been registered here.
   return namespaceRootsOf(
     loaded
       .filter((row) => row.origin !== "platform")
@@ -216,10 +215,10 @@ export function buildDefaultPermissionBundles(
   // Roots reachable only through a type whose provenance nobody recorded.
   //
   // Subtracted from the read-and-write set rather than added beside it: a
-  // space holding both a type it registered itself and a restored one under
-  // the same root has earned write on that root through the first, and
-  // offering the same root twice at two levels would put a contradiction on
-  // one screen. The stronger grant wins, which is the existing rule for a
+  // root holding both a type registered here and a restored one has earned
+  // write through the first, and offering the same root twice at two levels
+  // would put a contradiction on one screen. The stronger grant wins, which
+  // is the existing rule for a
   // root that appears more than once.
   const writableRoots = new Set(customWildcardRoots);
   const readOnlyCustomRoots = [...new Set(readOnlyCustomNamespaces)]
@@ -243,7 +242,7 @@ export function buildDefaultPermissionBundles(
     {
       id: "write",
       label: "Write your content",
-      description: "Add, edit, and organize what's in your space.",
+      description: "Add, edit, and organize what's on your server.",
       scopes: coreTypes.map((id) => `${id}:write`),
       default_on: true,
     },
@@ -252,7 +251,7 @@ export function buildDefaultPermissionBundles(
       label: "Content from your connected services",
       description:
         "What your integrations have synced, like Google and Readwise.",
-      // Shipped publisher types are enumerated; a space's own installed
+      // Shipped publisher types are enumerated; locally installed
       // integrations publish types this build has never heard of, so
       // their roots ride as wildcards. Read-only either way, which is the
       // rule for a mirror rather than a property of how it is named.

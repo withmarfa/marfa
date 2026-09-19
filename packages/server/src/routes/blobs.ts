@@ -109,7 +109,7 @@ const getBlobRoute = createRoute({
   tags: ["Blobs"],
   summary: "Download blob binary",
   description:
-    "Streams the raw bytes for a previously-uploaded blob as `application/octet-stream`. Space-scoped — a hash uploaded in one space is invisible to another, so cross-space probes return 404.",
+    "Streams the raw bytes for a previously-uploaded blob as `application/octet-stream`. A hash this instance does not hold answers 404.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({
@@ -361,7 +361,7 @@ export function blobRoutes(
 
     // Both ceilings are reserved around the registration, not checked
     // before it. `storage_bytes` is the one that matters most here: it is
-    // unbounded disk, so an overshoot costs real space rather than a row.
+    // unbounded disk, so an overshoot costs real bytes rather than a row.
     //
     // The physical write happens inside the reservation too. Putting bytes
     // on disk that the registration then refuses would leak them, since
@@ -374,7 +374,7 @@ export function blobRoutes(
     // writing the same bytes, which is what the per-hash lock buys: taken
     // across the check, the write and the registration, `existed === false`
     // means this request wrote them and is the only one that may take them
-    // back. Without it two spaces uploading identical bytes both read false,
+    // back. Without it two requests uploading identical bytes both read false,
     // and the one that is refused deletes the other's committed blob.
     await withBlobUploadLock(hash, async () => {
       const existed = await blobBackend.exists(hash);

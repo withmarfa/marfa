@@ -2,7 +2,7 @@ import type { Context } from "hono";
 import { Hono } from "hono";
 import { MarfaError, ErrorCode, parseScope } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
-import { requireSpacePermission, requireAuth } from "../middleware/auth.js";
+import { requirePermission, requireAuth } from "../middleware/auth.js";
 import { buildScopeDescriptions } from "./auth-consent.js";
 import { getPermissionBundles } from "../config.js";
 import type { Storage } from "../storage/interface.js";
@@ -101,7 +101,7 @@ async function createUserAppGrant(
       //
       // **A revoked grant contributes nothing to that merge, because the
       // rule is about a STANDING grant and a revoked one is not standing.**
-      // `findGrantItemId` matches on (space, client, user) and has no status
+      // `findGrantItemId` matches on (client, user) and has no status
       // predicate, so it hands back a revoked row as readily as a live one,
       // and `revokeProjectedGrant` above leaves `scopes` verbatim on the row
       // it flips. Merging against that set folds a scope the user explicitly
@@ -212,11 +212,11 @@ export function authRoutes(
   // many IPs would slip under it. This counter is keyed on the submitted
   // `user_code` itself (independent of IP) and denies once a code has
   // accumulated too many failed lookups — so a brute-force sweep against
-  // the short user-code space is capped per code, cluster-wide. Only
+  // the short user-code range is capped per code, cluster-wide. Only
   // failed submissions increment; a valid code that advances to consent
   // never touches the counter, so the legitimate flow is unaffected.
   // `PerEmailThrottle` is a generic keyed-counter over
-  // `storage.rateLimits`; reused here with a device-code key space.
+  // `storage.rateLimits`; reused here with a device-code key prefix.
   const deviceUserCodeThrottle = new PerEmailThrottle(storage, {
     family: "device-user-code",
     keyPrefix: "device-user-code:",
@@ -276,16 +276,15 @@ export function authRoutes(
   // -----------------------------------------------------------------------
 
   router.get("/grants", async (c) => {
-    // Listing every app a space authorized, and revoking one, are
+    // Listing every app the owner authorized, and revoking one, are
     // operations on other principals' access — the same standing as the key
-    // management routes beside them. Two axes: the permission says who may
-    // act, the space fence below says where.
+    // management routes beside them.
     requireAuth(c);
     // Revoking another app's access is exactly the authority a person would
     // want to have been asked about, and `grants.manage` is the row they
     // tick to grant it. There is nothing else to reach this on: no door admits
     // on rank, and a signed-in app holds what its grant carries.
-    requireSpacePermission(c, "grants.manage");
+    requirePermission(c, "grants.manage");
     const items = await storage.items.list({
       type: "system.connection",
       state: "active",
@@ -321,7 +320,7 @@ export function authRoutes(
   router.delete("/grants/:id", async (c) => {
     // The same axis as `GET /grants`: `grants.manage` to act at all.
     requireAuth(c);
-    requireSpacePermission(c, "grants.manage");
+    requirePermission(c, "grants.manage");
     const id = c.req.param("id");
     const item = await storage.items.get(id);
     if (item?.type !== "system.connection") {
@@ -584,7 +583,7 @@ export function authRoutes(
     // Per-`user_code` failed-attempt throttle (independent of IP).
     // Register every failed submission against the submitted code and
     // refuse once the code crosses the cap, so a distributed guesser
-    // can't sweep the user-code space by rotating IPs under the per-IP
+    // can't sweep the user-code range by rotating IPs under the per-IP
     // limit. A failure that crosses the cap — and any later attempt on
     // an already-poisoned code — surfaces `too_many_attempts`. A valid
     // code advances to consent below WITHOUT incrementing, so the
@@ -906,7 +905,7 @@ export function authRoutes(
 
 /** Failed `user_code` submissions allowed per code before the device
  *  verification form refuses further attempts. Defends the short
- *  user-code space against a distributed brute force that would slip
+ *  user-code range against a distributed brute force that would slip
  *  under the per-IP rate limit. */
 const DEVICE_USER_CODE_MAX_ATTEMPTS = 5;
 

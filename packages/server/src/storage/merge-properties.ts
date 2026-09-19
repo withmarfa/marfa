@@ -7,9 +7,8 @@ import { coerceNullProperties } from "@withmarfa/shared";
  * to predict it: a re-sync is judged on the value the row ends up with, not
  * on the body, because a body naming no required field at all can still be
  * what removes one. Two copies of a merge rule is two chances to disagree,
- * and they had already drifted once — the store resolved the type without a
- * space, so a null on a space-registered custom type's optional field was
- * written as null.
+ * and they had already drifted once, and a null on a runtime-registered
+ * custom type's optional field was written as null.
  */
 
 /**

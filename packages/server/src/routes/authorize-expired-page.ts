@@ -31,9 +31,7 @@
  *
  * Recovery starts at the app either way. A "try again" control here
  * could only point back at the request that just failed, and the only
- * party able to mint a fresh one is the client. The one exception is the
- * no-space arm, where retrying changes nothing until somebody with access to
- * the server changes something, so that copy points at them instead.
+ * party able to mint a fresh one is the client.
  */
 
 import { renderAuthLayout } from "./auth-layout.js";

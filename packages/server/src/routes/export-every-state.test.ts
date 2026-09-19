@@ -5,8 +5,8 @@
  * what `POST /admin/restore-archive` reads back. Its `state` filter took a
  * single lifecycle value or none, and none applies the same default every
  * item read applies — everything except `trashed`. So an export that
- * genuinely meant "everything this space holds" returned the space minus
- * its bin, with nothing in the response saying so, and getting the whole
+ * genuinely meant "everything stored" returned everything minus the bin,
+ * with nothing in the response saying so, and getting the whole
  * corpus meant two or more full walks stitched together.
  *
  * Both output formats are covered because they are one door with one query
@@ -31,7 +31,7 @@ beforeAll(async () => {
 
   const create = async (state: string, tag: string): Promise<string> => {
     const res = await request(ctx.app, "POST", "/items", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         type: "core.note",
         state,
@@ -57,7 +57,7 @@ afterAll(async () => {
 /** Ids carried by an NDJSON export, restricted to this file's rows. */
 async function ndjsonIds(query: string): Promise<string[]> {
   const res = await request(ctx.app, "GET", `/export${query}`, {
-    key: ctx.spaceKey,
+    key: ctx.workingKey,
   });
   expect(res.status).toBe(200);
   const mine = new Set([activeId, archivedId, trashedId]);
@@ -72,7 +72,7 @@ async function ndjsonIds(query: string): Promise<string[]> {
 /** Ids carried by an archive export's `items.ndjson`, same restriction. */
 async function archiveIds(query: string): Promise<string[]> {
   const res = await request(ctx.app, "GET", `/export${query}`, {
-    key: ctx.spaceKey,
+    key: ctx.workingKey,
   });
   expect(res.status).toBe(200);
 
@@ -132,7 +132,7 @@ describe("GET /export — the all-states sentinel", () => {
 
   it("refuses a state that is not a state", async () => {
     const res = await request(ctx.app, "GET", "/export?state=nonsense", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
     });
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: { message: string } };
@@ -156,7 +156,7 @@ describe("GET /export?format=archive — the same sentinel on the other format",
       ctx.app,
       "GET",
       "/export?format=archive&state=nonsense",
-      { key: ctx.spaceKey },
+      { key: ctx.workingKey },
     );
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: { message: string } };

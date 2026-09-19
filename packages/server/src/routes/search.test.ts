@@ -22,7 +22,7 @@ describe("GET /search auth gate", () => {
 describe("GET /search happy path", () => {
   it("returns matching results", async () => {
     await request(ctx.app, "POST", "/items", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         type: "core.note",
         properties: { body: "Quokkas of the world. Adorable creatures." },
@@ -33,7 +33,7 @@ describe("GET /search happy path", () => {
       ctx.app,
       "GET",
       "/search?q=quokkas&type=core.note",
-      { key: ctx.spaceKey },
+      { key: ctx.workingKey },
     );
     expect(res.status).toBe(200);
     const data = (await res.json()) as {
@@ -50,7 +50,7 @@ describe("GET /search indexes tags", () => {
   it("finds an item by a tag that appears nowhere in its text, from the moment the tag is set", async () => {
     const tag = `wombatry${String(Date.now())}`;
     const created = await request(ctx.app, "POST", "/items", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         type: "core.note",
         properties: { body: "Nothing in this body names the tag." },
@@ -60,20 +60,20 @@ describe("GET /search indexes tags", () => {
     const { item } = (await created.json()) as { item: { id: string } };
 
     const before = await request(ctx.app, "GET", `/search?q=${tag}`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
     });
     expect(((await before.json()) as { results: unknown[] }).results).toEqual(
       [],
     );
 
     const tagged = await request(ctx.app, "POST", `/items/${item.id}/tags`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: { tags: [tag] },
     });
     expect(tagged.status).toBe(200);
 
     const found = await request(ctx.app, "GET", `/search?q=${tag}`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
     });
     expect(found.status).toBe(200);
     const results = (
@@ -86,11 +86,11 @@ describe("GET /search indexes tags", () => {
       ctx.app,
       "DELETE",
       `/items/${item.id}/tags/${tag}`,
-      { key: ctx.spaceKey },
+      { key: ctx.workingKey },
     );
     expect(untagged.status).toBe(200);
     const after = await request(ctx.app, "GET", `/search?q=${tag}`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
     });
     expect(((await after.json()) as { results: unknown[] }).results).toEqual(
       [],
@@ -106,7 +106,7 @@ describe("GET /search library filter", () => {
 
   beforeAll(async () => {
     await request(ctx.app, "POST", "/items", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         type: "core.note",
         properties: { body: `${sharedToken} library variant` },
@@ -114,7 +114,7 @@ describe("GET /search library filter", () => {
       },
     });
     await request(ctx.app, "POST", "/items", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         type: "core.note",
         properties: { body: `${sharedToken} feed variant` },
@@ -128,7 +128,7 @@ describe("GET /search library filter", () => {
       ctx.app,
       "GET",
       `/search?q=${sharedToken}&type=core.note&limit=100`,
-      { key: ctx.spaceKey },
+      { key: ctx.workingKey },
     );
     expect(res.status).toBe(200);
     const data = (await res.json()) as {
@@ -144,7 +144,7 @@ describe("GET /search library filter", () => {
       ctx.app,
       "GET",
       `/search?q=${sharedToken}&type=core.note&tier=library&limit=100`,
-      { key: ctx.spaceKey },
+      { key: ctx.workingKey },
     );
     expect(res.status).toBe(200);
     const data = (await res.json()) as {
@@ -161,7 +161,7 @@ describe("GET /search library filter", () => {
       ctx.app,
       "GET",
       `/search?q=${sharedToken}&type=core.note&tier=feed&limit=100`,
-      { key: ctx.spaceKey },
+      { key: ctx.workingKey },
     );
     expect(res.status).toBe(200);
     const data = (await res.json()) as {
@@ -178,7 +178,7 @@ describe("GET /search library filter", () => {
       ctx.app,
       "GET",
       `/search?q=${sharedToken}&type=core.note&tier=all&limit=100`,
-      { key: ctx.spaceKey },
+      { key: ctx.workingKey },
     );
     expect(res.status).toBe(200);
     const data = (await res.json()) as {
@@ -197,7 +197,7 @@ describe("GET /search?tags=", () => {
     // Three notes with overlapping tags.
     const make = async (tags: string[]) => {
       const itemRes = await request(ctx.app, "POST", "/items", {
-        key: ctx.spaceKey,
+        key: ctx.workingKey,
         body: {
           type: "core.note",
           properties: { body: corpus },
@@ -216,7 +216,7 @@ describe("GET /search?tags=", () => {
       ctx.app,
       "GET",
       `/search?q=${corpus}&tags=red&limit=100`,
-      { key: ctx.spaceKey },
+      { key: ctx.workingKey },
     );
     expect(res.status).toBe(200);
     const data = (await res.json()) as {
@@ -233,7 +233,7 @@ describe("GET /search?tags=", () => {
       ctx.app,
       "GET",
       `/search?q=${corpus}&tags=red,small&limit=100`,
-      { key: ctx.spaceKey },
+      { key: ctx.workingKey },
     );
     expect(res.status).toBe(200);
     const data = (await res.json()) as {
@@ -252,7 +252,7 @@ describe("GET /search?tags=", () => {
       ctx.app,
       "GET",
       `/search?q=${corpus}&tags=nonexistent&limit=100`,
-      { key: ctx.spaceKey },
+      { key: ctx.workingKey },
     );
     expect(res.status).toBe(200);
     const data = (await res.json()) as { results: unknown[] };
@@ -281,7 +281,7 @@ describe("GET /search?include=system", () => {
     word: string,
   ): Promise<{ noteId: string; deviceId: string }> {
     const note = await request(ctx.app, "POST", "/items", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         type: "core.note",
         properties: { body: `${word} note` },
@@ -302,7 +302,7 @@ describe("GET /search?include=system", () => {
   }
 
   async function foundIds(query: string): Promise<string[]> {
-    const res = await request(ctx.app, "GET", query, { key: ctx.spaceKey });
+    const res = await request(ctx.app, "GET", query, { key: ctx.workingKey });
     expect(res.status).toBe(200);
     const body = (await res.json()) as { results: { item: { id: string } }[] };
     return body.results.map((r) => r.item.id);

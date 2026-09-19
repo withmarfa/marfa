@@ -166,7 +166,7 @@ async function runPurgeChunk({
           errors.push({
             id,
             code: "item_not_found",
-            message: "Item not found in space scope at purge time",
+            message: "Item not found at purge time",
           });
         }
       }

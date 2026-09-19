@@ -10,7 +10,7 @@ import { UnauthorizedError, ValidationError } from "./errors.js";
  * an ask too big to answer refused rather than trimmed. A mock fetch
  * would only prove the URL was assembled.
  *
- * The suite shares one space, so every assertion scopes to the ids it
+ * The suite shares one server, so every assertion scopes to the ids it
  * created and the windows are kept in separate years. The occurrence
  * ceiling gets its own fixture: the series pass is unwindowed, so the
  * rules that flood one window would be re-expanded on every later read.
@@ -142,7 +142,7 @@ describe("occurrences.list", () => {
 
   it("keeps a series in its own zone rather than flattening it", async () => {
     // 09:00 in Berlin is 08:00Z before the 29 March transition and 07:00Z
-    // after it. A kit that resolved these against one zone would space
+    // after it. A kit that resolved these against one zone would spread
     // them evenly and be wrong on one side of the change.
     const id = await createEvent({
       title: "Berlin standup",

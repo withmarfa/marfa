@@ -2446,7 +2446,7 @@ export interface BulkActionJobStore {
   create(input: CreateBulkActionJobInput): Promise<BulkActionJobRow>;
   /** Fetch by id. The store returns the row regardless of caller; the route
    *  handler enforces auth: the credential that created the job, or the
-   *  operator key, and nothing else. No space permission says "read another
+   *  operator key, and nothing else. No permission says "read another
    *  credential's bulk jobs". */
   getById(id: string): Promise<BulkActionJobRow | null>;
   /**

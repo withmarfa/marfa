@@ -299,9 +299,6 @@ async function processBulkEdge(
     // PATCH /edges/:id semantics, which merge shallowly rather than
     // replacing, so an entry naming one property leaves the others
     // standing (source/target/type stay immutable either way).
-    // Space-fenced so a triple that collided with another space's edge
-    // (defense-in-depth beyond the space-scoped duplicate lookup) cannot
-    // be mutated here.
     //
     // Conditional where the entry named a version, unconditional where it
     // did not — the same bargain the item bulk door strikes, and for the
@@ -398,9 +395,7 @@ export function edgesBulkRoutes(storage: Storage) {
 
   router.openapi(edgesBulkRoute, async (c) => {
     // Authenticated + per-edge dual gate (source-type write + edge-type
-    // write), mirroring single-edge `POST /edges`. Space scoping is
-    // threaded through every storage query below so a space-scoped caller
-    // stays inside its own space.
+    // write), mirroring single-edge `POST /edges`.
     requireAuth(c);
     const checkEdgeWrite = (
       sourceType: string | null,
@@ -493,9 +488,7 @@ export function edgesBulkRoutes(storage: Storage) {
       }
     }
 
-    // Pre-resolve duplicates in one batched pass, space-scoped so a triple
-    // that matches another space's edge is never resolved (and thus never
-    // mutated) by a space-scoped caller. Edges with existing
+    // Pre-resolve duplicates in one batched pass. Edges with existing
     // `(source_id, target_id, edge_type)` rows take the skipped/updated
     // path; the rest go through full validation + create.
     const existingByTriple = await storage.edges.findByTriplesBatch(

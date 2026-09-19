@@ -331,8 +331,8 @@ export function createApp(
         storage,
         // Aggregate per-identifier cap (defaultLimit × multiplier),
         // keyed on the identifier with no path split, so a key's budget
-        // can't multiply across path groups and space-less identifiers
-        // still hit a ceiling. `0` disables it.
+        // can't multiply across path groups and an unattributed identifier
+        // still hits a ceiling. `0` disables it.
         aggregateMultiplier: config.rateLimitAggregateMultiplier,
       }),
     );

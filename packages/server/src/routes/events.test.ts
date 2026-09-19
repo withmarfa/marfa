@@ -32,7 +32,7 @@ async function createNote(body = "hello"): Promise<bigint> {
   const before = await ctx.storage.eventLog.getAfter(0n, 1000);
   const maxBefore = before.length ? maxBigInt(before.map((e) => e.id)) : 0n;
   const res = await request(ctx.app, "POST", "/items", {
-    key: ctx.spaceKey,
+    key: ctx.workingKey,
     body: { type: "core.note", properties: { body } },
   });
   expect(res.status).toBe(201);
@@ -73,7 +73,7 @@ describe("GET /events — catchup_too_old", () => {
     expect(eventId > 0n).toBe(true);
 
     const res = await request(ctx.app, "GET", "/events", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       headers: { "Last-Event-ID": "0" },
     });
     expect(res.status).toBe(200);
@@ -111,7 +111,7 @@ describe("GET /events — catchup_too_old", () => {
     const secondId = await createNote("within-retention-2");
 
     const res = await request(ctx.app, "GET", "/events", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       headers: { "Last-Event-ID": String(firstId) },
     });
     expect(res.status).toBe(200);
@@ -127,7 +127,7 @@ describe("GET /events — catchup_too_old", () => {
   it("does not emit catchup_too_old when Last-Event-ID is absent", async () => {
     await createNote("no-cursor");
     const res = await request(ctx.app, "GET", "/events", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
     });
     expect(res.status).toBe(200);
     // `requireSeen` is what makes the absence mean something: the stream
@@ -142,7 +142,7 @@ describe("GET /events — catchup_too_old", () => {
 
   it("emits an initial `: connected` SSE comment so proxies flush headers", async () => {
     const res = await request(ctx.app, "GET", "/events", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
     });
     expect(res.status).toBe(200);
     // Waits on the comment rather than betting that 100ms is long enough to
@@ -154,7 +154,7 @@ describe("GET /events — catchup_too_old", () => {
     expect(text.startsWith(": connected\n\n")).toBe(true);
   });
 
-  it("does not emit catchup_too_old when the event log is empty for the space", async () => {
+  it("does not emit catchup_too_old when the event log is empty", async () => {
     // Spin up a second context with its own fresh storage so min(id) is
     // genuinely null. Sharing `ctx` would mean any prior test that
     // appended events makes min(id) non-null.
@@ -162,7 +162,7 @@ describe("GET /events — catchup_too_old", () => {
     initEventLog(fresh.storage.eventLog);
     try {
       const res = await request(fresh.app, "GET", "/events", {
-        key: fresh.spaceKey,
+        key: fresh.workingKey,
         headers: { "Last-Event-ID": "5" },
       });
       expect(res.status).toBe(200);

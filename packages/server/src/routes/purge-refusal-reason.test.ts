@@ -2,7 +2,7 @@
  * The purge door says which of two refusals this is.
  *
  * Purging is trash-then-purge, so a caller meets `DELETE /items/{id}` first.
- * For a reserved-namespace row a space-scoped credential is refused there,
+ * For a reserved-namespace row a working credential is refused there,
  * by name: "only the operator key may write `marfa.*` items". The row
  * therefore never becomes trashed, and `DELETE /items/{id}/purge` then
  * answers "Only trashed items can be purged" — which is true, and which
@@ -21,22 +21,22 @@
  * refusal would pass a test that only checked the reserved-namespace one.
  */
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
-import { createTestContext, mintSpaceKey, request } from "../test-utils.js";
+import { createTestContext, mintWorkingKey, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 
 let ctx: TestContext;
-/** Space-scoped and deliberately NOT platform: the credential the refusal is
- *  about. The operator key is no alternative to it, holding neither a space
- *  to address these rows in nor the permission to purge one. */
-let spaceKey: string;
+/** A working credential and deliberately NOT the operator key: the
+ *  credential the refusal is about. The operator key holds no permission to
+ *  purge one with. */
+let workingKey: string;
 
 beforeAll(async () => {
   ctx = await createTestContext();
 
-  // Reaches every type in its space and is still not the instance tier,
+  // Reaches every type and is still not the instance tier,
   // which is the whole shape this file is about: the reserved namespace
-  // is fenced off a space credential however wide its maps are.
-  spaceKey = await mintSpaceKey(ctx, {
+  // is fenced off a working credential however wide its maps are.
+  workingKey = await mintWorkingKey(ctx, {
     label: "purger",
     source: "purger",
     type_permissions: { "*": "write" },
@@ -48,13 +48,12 @@ afterAll(async () => {
 });
 
 /**
- * A reserved-namespace row inside the space, seeded through storage.
+ * A reserved-namespace row, seeded through storage.
  *
  * Through storage rather than the API because the API gate is the very
- * thing under test: a space credential cannot create one, and the operator
- * key holds no space, so neither route puts a `marfa.*` row where a
- * space-scoped caller can address it. That combination is exactly the
- * situation an integration's corpus is in.
+ * thing under test: a working credential cannot create one, and the operator
+ * key holds no permissions to create one with. That combination is exactly
+ * the situation an integration's corpus is in.
  */
 async function seedReservedRow(sourceId: string): Promise<string> {
   const item = await ctx.storage.items.create({
@@ -66,12 +65,12 @@ async function seedReservedRow(sourceId: string): Promise<string> {
   return item.id;
 }
 
-describe("purging a row a space credential may not write", () => {
+describe("purging a row a working credential may not write", () => {
   it("names the namespace rather than the trashed-state precondition", async () => {
     const id = await seedReservedRow("show:refusal-1");
 
     const res = await request(ctx.app, "DELETE", `/items/${id}/purge`, {
-      key: spaceKey,
+      key: workingKey,
     });
 
     const body = (await res.json()) as {
@@ -90,10 +89,9 @@ describe("purging a row a space credential may not write", () => {
 
     // The row is untouched. A refusal that half-purged would be worse than
     // the message it replaced. Read back through the same credential, which
-    // is the one that can address this space: reads are not fenced by the
-    // reserved namespace, only writes are.
+    // reads are not fenced by the reserved namespace, only writes are.
     const after = await request(ctx.app, "GET", `/items/${id}`, {
-      key: spaceKey,
+      key: workingKey,
     });
     expect(after.status).toBe(200);
   });
@@ -103,7 +101,7 @@ describe("purging a row a space credential may not write", () => {
     // is in no reserved namespace, so the write rule passes and the original
     // message is what should come back.
     const created = await request(ctx.app, "POST", "/items", {
-      key: spaceKey,
+      key: workingKey,
       body: { type: "core.note", properties: { body: "ordinary" } },
     });
     const createdBody = (await created.json()) as { item: { id: string } };
@@ -113,7 +111,7 @@ describe("purging a row a space credential may not write", () => {
       ctx.app,
       "DELETE",
       `/items/${createdBody.item.id}/purge`,
-      { key: spaceKey },
+      { key: workingKey },
     );
 
     const body = (await res.json()) as {
@@ -130,7 +128,7 @@ describe("purging a row a space credential may not write", () => {
     //
     // Trashed through the storage layer, which is how a reserved-namespace
     // row reaches that state at all: the trash door asks the same write rule
-    // and refuses every space credential, and the operator key holds no
+    // and refuses every working credential, and the operator key holds no
     // permissions to pass it with either. So the platform's own machinery is
     // what moves these rows, and the state this test needs is the state a
     // retention sweep or an uninstall leaves behind.
@@ -138,7 +136,7 @@ describe("purging a row a space credential may not write", () => {
     await ctx.storage.items.transition(id, "trashed");
 
     const purged = await request(ctx.app, "DELETE", `/items/${id}/purge`, {
-      key: spaceKey,
+      key: workingKey,
     });
     expect(purged.status).toBe(200);
   });

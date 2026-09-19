@@ -122,7 +122,7 @@ describe("runtime custom-namespace resolution", () => {
       };
       for (const id of ["acme.gadget", "acme.widget", "user.recipe"]) {
         const res = await request(ctx.app, "POST", "/types", {
-          key: ctx.spaceKey,
+          key: ctx.workingKey,
           body: { id, ...baseType },
         });
         expect(res.status).toBe(201);
@@ -141,8 +141,8 @@ describe("runtime custom-namespace resolution", () => {
     //
     // It matters because these roots become a wildcard in the default
     // grant, under a heading about the person's own types. A type a
-    // connected service published is in their space and is not theirs to
-    // be offered wholesale — it belongs to the service, and the service's
+    // connected service published is stored beside their own and is not
+    // theirs to be offered wholesale — it belongs to the service, and the service's
     // own scopes are how it is reached.
     const ctx = await createTestContext({});
     try {
@@ -232,9 +232,8 @@ describe("a type whose provenance nobody recorded", () => {
   });
 
   it("does not take write away from a root the person also owns", async () => {
-    // A space holding a type it registered itself and a restored one
-    // under the same root has earned write on that root through the
-    // first. Offering the same root at two levels would put a
+    // A root holding a type registered here and a restored one has earned
+    // write on that root through the first. Offering the same root at two levels would put a
     // contradiction on one screen, so the stronger grant wins.
     const ctx = await createTestContext({});
     try {

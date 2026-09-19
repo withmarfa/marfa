@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import {
   expandBundlesToScopes,
-  isSpacePermission,
+  isPermission,
   TYPE_REGISTRY,
   EDGE_TYPE_REGISTRY,
   parseScope,
@@ -45,10 +45,10 @@ describe("buildAllowedScopes", () => {
   });
 
   it("offers a namespace wildcard for custom edge types, which are never enumerable", () => {
-    // A custom edge type is registered per space at runtime, so it cannot
-    // be in this set and cannot be named concretely in a grant. Without a
-    // namespace wildcard the only expressible scope for a space's own
-    // relation edges is the global `edge.*`, so an app asking narrowly is
+    // A custom edge type is registered at runtime, so it cannot be in this
+    // set and cannot be named concretely in a grant. Without a namespace
+    // wildcard the only expressible scope for a runtime-registered
+    // relation edge is the global `edge.*`, so an app asking narrowly is
     // silently narrowed to nothing while an app asking for everything
     // works — the exact inversion of what scopes are for.
     const scopes = new Set(buildAllowedScopes(DEFAULT_PERMISSION_BUNDLES));
@@ -83,9 +83,8 @@ describe("buildAllowedScopes", () => {
   });
 
   it("admits runtime namespace roots for items and edges alike", () => {
-    // The roots boot installs from the types table, spanning every
-    // space. Admission is what lets a space's own publisher-handle scopes
-    // survive the authorize narrowing at all — without it the request is
+    // The roots boot installs from the types table. Admission is what lets
+    // a publisher-handle scope survive the authorize narrowing at all — without it the request is
     // silently stripped before consent and the capability is inert.
     const scopes = new Set(
       buildAllowedScopes(DEFAULT_PERMISSION_BUNDLES, ["acme"]),
@@ -98,9 +97,9 @@ describe("buildAllowedScopes", () => {
 
   it("keeps runtime roots out of the enumeration when told to", () => {
     // The advertised discovery metadata is built with an explicit empty
-    // root set: the acceptance set spans every space, the public document
-    // must not — an unauthenticated reader learning one space's namespace
-    // names would be a cross-space disclosure.
+    // root set: the acceptance set carries the runtime roots, the public
+    // document must not — an unauthenticated reader learning this
+    // instance's namespace names would be a disclosure.
     const scopes = new Set(buildAllowedScopes(DEFAULT_PERMISSION_BUNDLES, []));
     expect(scopes.has("acme.*:read")).toBe(false);
     expect(scopes.has("edge.acme.*:read")).toBe(false);
@@ -200,13 +199,13 @@ describe("permission bundles bind to the type registry", () => {
     const unresolved: string[] = [];
     for (const literal of expandBundlesToScopes(DEFAULT_PERMISSION_BUNDLES)) {
       if (NON_TYPE_LITERALS.has(literal)) continue;
-      // A space permission names no type, and `split(":")` makes it its own
+      // A permission names no type, and `split(":")` makes it its own
       // pattern: the literal carries no colon, so the whole string survives
       // and falls through to a registry lookup that can never succeed now
       // the root is reserved. The day a bundle names one, a correct config
       // would be reported here as a deleted type. Asked of the parser rather
       // than of the characters, like everything else that classifies a scope.
-      if (isSpacePermission(literal)) continue;
+      if (isPermission(literal)) continue;
       // The profile family names the account's own record, a reserved root
       // no registered type can occupy, so the registry has nothing to say
       // about it; the parser owns that family and is asked here as well.

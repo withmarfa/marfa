@@ -12,7 +12,7 @@
  * `exists()` is read before the write with nothing joining the two, so it
  * answers "were these bytes here a moment ago", not "are these bytes mine".
  * Content addressing makes the difference matter: deduplicating identical
- * bytes across spaces is the design, so two requests uploading the same
+ * bytes is the design, so two requests uploading the same
  * attachment is ordinary rather than exotic. Both read false, both write, and
  * if either is then refused — a quota ceiling is the designed failure on this
  * path — it deletes a blob the other has already committed a row against.

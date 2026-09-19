@@ -228,7 +228,7 @@ const bulkActionWrite = async ({
   properties,
 }: DoorWrite): Promise<Response> => {
   // Filter-in rather than id-in, so one call reaches every activity row
-  // in the space without knowing a single id — the widest of the doors.
+  // without knowing a single id — the widest of the doors.
   // `runBulkActionAsync` drains the worker, so the write really lands or
   // really does not rather than stopping at a queued job that nothing
   // in-process would ever pick up.

@@ -28,7 +28,7 @@ async function upload(c: TestContext, content: string): Promise<string> {
   const res = await c.app.request("/blobs", {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${c.spaceKey}`,
+      Authorization: `Bearer ${c.workingKey}`,
       "Content-Type": "application/octet-stream",
     },
     body: new TextEncoder().encode(content),
@@ -43,7 +43,7 @@ describe("BlobOrphanCleaner.runOnce", () => {
     const orphan = await upload(ctx, "no item will ever point at this");
     const referenced = await upload(ctx, "an item points at this");
     const itemRes = await request(ctx.app, "POST", "/items", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         type: "core.note",
         properties: { body: "see attached", attachment: referenced },

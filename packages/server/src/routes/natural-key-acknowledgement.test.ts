@@ -13,8 +13,8 @@
  *
  *  - **The row itself: yes.** Everything the natural key bounds is already
  *    the caller's own. `source` is stamped from its credential and cannot be
- *    chosen, the lookup is fenced to its space, and it supplied the
- *    `source_id`. Seeing a row it addressed by a key only its own source can
+ *    chosen, and it supplied the `source_id`. Seeing a row it addressed by
+ *    a key only its own source can
  *    resolve tells it nothing it could not have written.
  *  - **The extension namespaces: no.** That axis is not bounded by the
  *    natural key at all. `extension_permissions` are per credential, so a
@@ -29,7 +29,7 @@
  *    did not, so the two branches disagreed about who may address one row.
  *
  * The narrowing is modelled by editing the credential that wrote the row,
- * because nothing else can reach it: `source` is unique per space among
+ * because nothing else can reach it: `source` is unique among
  * unrevoked credentials, so no second credential resolves the same natural
  * key. Cutting that one credential's permission map produces the state the
  * resolved-row gates exist for, a reachable row the caller may no longer
@@ -53,7 +53,7 @@ const GRANTED_NS = "acme.probe";
 beforeAll(async () => {
   ctx = await createTestContext();
   const registered = await request(ctx.app, "POST", "/types", {
-    key: ctx.spaceKey,
+    key: ctx.workingKey,
     body: { id: SYNCED, version: 1, fields: { title: { type: "string" } } },
   });
   expect(registered.status).toBe(201);
@@ -70,11 +70,10 @@ interface SyncKey {
 }
 
 /**
- * A credential whose stamped `source` fixes its natural-key space.
+ * A credential whose stamped `source` fixes its natural-key namespace.
  *
- * Bound to the context's space, because that is where the type it writes is
- * registered and a space-less credential is the operator tier, which reaches
- * no content at all. Both maps below still decide every type and every
+ * Not the operator key, which is the instance tier and reaches no content at
+ * all. Both maps below decide every type and every
  * `acme.*` namespace this credential touches, which is what each case here
  * asserts.
  */
@@ -128,7 +127,7 @@ async function trashedRow(cred: SyncKey, sourceId: string): Promise<string> {
     ctx.app,
     "PUT",
     `/items/${id}/extensions/${PRIVATE_NS}`,
-    { key: ctx.spaceKey, body: { secret: "not the caller's to read" } },
+    { key: ctx.workingKey, body: { secret: "not the caller's to read" } },
   );
   expect(admin.status).toBe(200);
 

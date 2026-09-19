@@ -41,7 +41,7 @@ import {
   scopesToProfilePermissions,
   PROFILE_ROWS,
   PROFILE_ROOT,
-  SPACE_PERMISSIONS,
+  PERMISSIONS,
   TYPE_REGISTRY,
   EDGE_TYPE_REGISTRY,
   expandBundlesToScopes,
@@ -117,8 +117,8 @@ const METADATA_SUBRESOURCES = ["types", "edge_types"] as const;
 /**
  * Namespaces whose members the static registry never enumerates: an app's
  * own runtime types (`user.*`, `app.*`) and the connected-service
- * namespaces. A type or edge type in one of these is registered per space
- * at runtime, so it does not exist when the allowed-scope set is built and
+ * namespaces. A type or edge type in one of these is registered at
+ * runtime, so it does not exist when the allowed-scope set is built and
  * cannot be named concretely in a grant. The namespace wildcard is the only
  * thing that can name it, which is why these stay requestable while
  * deliberately staying out of the default consent bundle: the default grant
@@ -129,7 +129,7 @@ const METADATA_SUBRESOURCES = ["types", "edge_types"] as const;
  * root) rather than enumerated by hand — the hand list drifted the same
  * way the bundle lists did. The namespaces of types a caller registered
  * reach the allowlist by the other path, {@link setRuntimeNamespaceRoots},
- * which boot installs from the `types` table across every space.
+ * which boot installs from the `types` table.
  */
 export function requestableNamespaceRoots(): readonly string[] {
   // Derived on call rather than at module load. The platform vocabulary is
@@ -144,12 +144,9 @@ export function requestableNamespaceRoots(): readonly string[] {
 /**
  * Registered namespace roots admitted into the scope allowlist,
  * installed once at boot (same restart-re-enumeration model as the rest
- * of the allowlist). Spans every space deliberately: admission is not
- * disclosure. The allowlist only decides whether a requested literal can
- * survive to consent — which space's data a granted wildcard reaches is
- * decided per-token by the data plane, and every user-visible surface
- * (the consent screen's bundles, the advertised discovery metadata) stays
- * scoped to the consenting space or the instance baseline.
+ * of the allowlist). Admission is not disclosure: the allowlist only decides
+ * whether a requested literal can survive to consent, and what a granted
+ * wildcard actually reaches is decided per-token by the data plane.
  */
 let runtimeNamespaceRoots: readonly string[] = [];
 
@@ -177,8 +174,8 @@ export function setRuntimeNamespaceRoots(roots: readonly string[]): void {
  * scopes — a server restart re-enumerates from the (now-larger) registry.
  * The namespace wildcards are how an app reaches its own `user.*` types
  * without that restart: the wildcard is granted, and matches whatever
- * `user.*` types exist at check time. The same applies to a space's own
- * publisher-handle namespaces, whose roots boot installs via
+ * `user.*` types exist at check time. The same applies to the
+ * publisher-handle namespaces registered here, whose roots boot installs via
  * {@link setRuntimeNamespaceRoots}.
  */
 export function buildAllowedScopes(
@@ -205,14 +202,14 @@ export function buildAllowedScopes(
       `${PROFILE_ROOT}.${row}:read`,
       `${PROFILE_ROOT}.${row}:write`,
     ]),
-    // The space permission family: authority over one administrative surface,
+    // The permission family: authority over one administrative surface,
     // which is handed over by being named and consented to and by nothing
     // else. Nothing inherits it, and no door admits without it.
     //
     // **Emitted from the closed set, deliberately not through a bundle.** The
     // shape this replaces was to put them in an off-by-default bundle so a
     // stale client's ceiling would catch up to them. That fails twice over: a
-    // bundle-claimed space permission leaves the consent screen's
+    // bundle-claimed permission leaves the consent screen's
     // unclaimed-scope bucket, so it renders inside the bundle's group and
     // inherits the bundle's tick rather than its own rule; and it makes
     // reachability depend on a configuration, so an operator shipping no
@@ -223,9 +220,9 @@ export function buildAllowedScopes(
     // whole design.** Every surface that offers one has to obtain a
     // deliberate yes — `requiresExplicitConsent` is the rule, read by the
     // consent screen and the device screen at their own call sites. The
-    // bundle door below still drops a space permission a configuration names,
+    // bundle door below still drops a permission a configuration names,
     // which now guards the stored client ceiling rather than this list.
-    ...SPACE_PERMISSIONS,
+    ...PERMISSIONS,
     // The content category, the parent grant over everything a person
     // saves. Withheld until this build for one reason: both literals share
     // the type pattern `content`, which is the key both consent surfaces
@@ -267,7 +264,7 @@ export function buildAllowedScopes(
     ]),
     // Runtime publisher-handle roots, installed at boot. Same rationale as
     // the registry-derived set above; enumerated from the database rather
-    // than the registry because a space's registrations live only there.
+    // than the registry because a runtime registration lives only there.
     ...runtimeRoots.flatMap((ns) => [`${ns}.*:read`, `${ns}.*:write`]),
   ]);
 
@@ -288,10 +285,10 @@ export function buildAllowedScopes(
 
   // Namespace wildcards for edge types the static registry never
   // enumerates, for exactly the reason the item-type namespaces above
-  // exist: a custom edge type is registered per space at runtime, so it
-  // does not exist when this set is built and can never be named
-  // concretely in a grant. Without these the only expressible scope for a
-  // space's own relation edges is the global `edge.*`, which grants every
+  // exist: a custom edge type is registered at runtime, so it does not
+  // exist when this set is built and can never be named concretely in a
+  // grant. Without these the only expressible scope for a runtime-registered
+  // relation edge is the global `edge.*`, which grants every
   // edge type on the instance — so an app asking narrowly was silently
   // narrowed to nothing and its relation writes were refused, while an app
   // asking for everything worked.
@@ -321,7 +318,7 @@ export function buildAllowedScopes(
   // whether the grammar recognizes the literal at all; `isWithheldFromAllowlist`
   // asks whether a bundle may be the thing that publishes one it recognizes.
   //
-  // The space permission family is emitted above, from the closed set, so the
+  // The permission family is emitted above, from the closed set, so the
   // drop no longer changes this function's output for one. What it still
   // decides is whether a *configuration* can claim the literal, which is the
   // half that reaches a stored client ceiling and the consent screen's
@@ -418,9 +415,9 @@ export function buildOauthProviderPlugin(
     // server restart to surface here.
     scopes: allowedScopes,
     clientRegistrationAllowedScopes: allowedScopes,
-    // The acceptance set above spans every space's runtime namespace roots,
-    // but the discovery document is public and unauthenticated — advertising
-    // those roots there would disclose one space's namespace names to
+    // The acceptance set above carries the runtime namespace roots, but the
+    // discovery document is public and unauthenticated — advertising those
+    // roots there would disclose this instance's namespace names to
     // everyone. Pin the advertisement to the baseline enumeration (grammar +
     // configured bundles, no runtime roots); the plugin otherwise advertises
     // `scopes` verbatim as `scopes_supported`.
@@ -1170,14 +1167,6 @@ async function cascadeClientRevoke(
  *     until TTL. We pre-emptively delete them for (clientId, userId) so a
  *     parallel request can't slip through with one. Best-effort.
  *
- *  3. **Active token with no space → `invalid_grant` (400).** The plugin
- *     copies the presented token's `reference_id` onto the rotated one
- *     rather than resolving it again, so an unbound token rotates into
- *     another unbound token and the bearer middleware turns every request
- *     through it away. Refusing here is what puts a reason in front of a
- *     client, and this is the only grant that reaches a mint without a code,
- *     so no other guard covers it.
- *
  * Every other active token falls through to the plugin's rotation. Any
  * failure of the lookup itself fails open (logs, returns) so a transient DB
  * blip never turns a legitimate refresh into a hard error.
@@ -1460,7 +1449,7 @@ async function narrowAuthorizeScopes(
 
   // `prompt=select_account` is `unsupported_prompt_select_account` unless the
   // provider is configured with a `selectAccount.page`, and this deployment
-  // configures none. Reproduces `parsePrompt`, which splits on spaces and
+  // configures none. Reproduces `parsePrompt`, which splits on whitespace and
   // trims, so `prompt=login select_account` is caught too. If a select-account
   // page is ever configured this gate becomes stricter than the plugin, which
   // costs a stale client one more sign-in before it self-heals — the safe
@@ -1622,8 +1611,8 @@ async function narrowAuthorizeScopes(
   // operator trail already carries `auth.grant.created` next to it — this
   // is the line that says the two do not match and why.
   //
-  // No space: the narrowing happens before the plugin resolves a session,
-  // so there is no user to attribute it to yet, and inventing one by
+  // No user: the narrowing happens before the plugin resolves a session,
+  // so there is no one to attribute it to yet, and inventing one by
   // guessing would be worse than the null the audit store already admits
   // for system-initiated rows. The client is the subject here anyway.
   void storage.audit.log({
@@ -2016,13 +2005,6 @@ async function guardDeviceCodeGrant(
  * Fails open on a lookup error and on an unrecognized code: the plugin owns
  * the real validation, and a transient database blip must not turn a
  * legitimate exchange into a hard failure.
- *
- * **The space check below is the one exception, and it is deliberate.** The
- * plugin resolves a grant's space at authorize time and stores it on the
- * code, so nothing downstream asks the question again: failing open here
- * mints the unbound token this check exists to prevent, which is the one
- * outcome worse than a refusal. It answers 503 rather than the plugin's bare
- * 500, so a client reads a retryable reason instead of an empty body.
  */
 async function guardAuthorizationCodeGrant(
   ctx: HookCtxLite,

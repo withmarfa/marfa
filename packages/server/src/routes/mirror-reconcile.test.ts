@@ -63,7 +63,7 @@ beforeAll(async () => {
   // the file's own: reconciliation is a user gesture, so the suite exercises
   // the reach that actually performs it.
   const memberRes = await request(ctx.app, "POST", "/keys", {
-    key: ctx.spaceKey,
+    key: ctx.workingKey,
     body: {
       label: "reconcile-member",
       source: "reconcile-member-src",

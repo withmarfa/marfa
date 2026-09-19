@@ -41,8 +41,8 @@ describe("which shipped types an instance carries that the build does not", () =
   });
 
   it("never reports a row that is not the platform's", () => {
-    // A space's own registration and a type an integration brought with it
-    // are not the build's to have an opinion about. Scoping on origin is
+    // A runtime registration and a type an integration brought with it are
+    // not the build's to have an opinion about. Scoping on origin is
     // what keeps a prune built on this from reaching either.
     const drift = computePlatformDrift(
       [],

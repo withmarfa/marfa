@@ -35,9 +35,9 @@ import {
   RateLimitWindowCleaner,
   DcrClientCleaner,
   BlobOrphanCleaner,
-  runSpaceCleanup,
+  runSweepAtRetention,
 } from "./storage/retention.js";
-import type { SpaceFanout } from "./storage/retention.js";
+import type { RetentionOverride } from "./storage/retention.js";
 import { initEventLog } from "./pubsub.js";
 import { TextEnrichmentSweeper } from "./enrichment/sweeper.js";
 import { TesseractOcr } from "./enrichment/ocr.js";
@@ -97,24 +97,24 @@ async function main() {
   // job carries the same flag on itself.
   let shuttingDown = false;
 
-  const auditFanout: SpaceFanout = {
+  const auditOverride: RetentionOverride = {
     settings: storage.settings,
     configField: "audit_retention_days",
   };
-  const eventLogFanout: SpaceFanout = {
+  const eventLogOverride: RetentionOverride = {
     settings: storage.settings,
     configField: "event_log_retention_hours",
   };
-  const trashFanout: SpaceFanout = {
+  const trashOverride: RetentionOverride = {
     settings: storage.settings,
     configField: "trash_retention_days",
   };
-  const activityFanout: SpaceFanout = {
+  const activityOverride: RetentionOverride = {
     settings: storage.settings,
     configField: "activity_retention_days",
   };
 
-  // Default 168h; override via MARFA_EVENT_LOG_RETENTION_HOURS or per-space config.
+  // Default 168h; override via MARFA_EVENT_LOG_RETENTION_HOURS or the instance config.
   const eventLogRetentionHours = config.eventLogRetentionHours ?? 168;
   const runEventLogCleanup = () => {
     // Idempotency records ride this sweep rather than getting a sweeper of
@@ -122,12 +122,12 @@ async function main() {
     // `Idempotency-Key` is answerable for exactly as long as the events
     // around it stay replayable, so a client that can still catch up on
     // the stream can still ask what its write did. A second job would be a
-    // second window to keep in step, and per-space retention is already
+    // second window to keep in step, and the effective retention is already
     // resolved here.
     let purgedRecords = 0;
-    return runSpaceCleanup({
+    return runSweepAtRetention({
       jobName: "event-log-cleanup",
-      fanout: eventLogFanout,
+      override: eventLogOverride,
       instanceDefault: eventLogRetentionHours,
       unitMs: 3_600_000,
       sweep: async (retention) => {
@@ -139,7 +139,7 @@ async function main() {
         if (deleted > 0 || purgedRecords > 0)
           log(
             "info",
-            `Purged ${String(deleted)} event_log entries and ${String(purgedRecords)} idempotency records (instance default: ${String(eventLogRetentionHours)} hours; per-space overrides honored)`,
+            `Purged ${String(deleted)} event_log entries and ${String(purgedRecords)} idempotency records (instance default: ${String(eventLogRetentionHours)} hours; a /config override is honored)`,
           );
       })
       .catch((err: unknown) => {
@@ -155,9 +155,9 @@ async function main() {
   );
 
   const runAuditCleanup = () =>
-    runSpaceCleanup({
+    runSweepAtRetention({
       jobName: "audit-cleanup",
-      fanout: auditFanout,
+      override: auditOverride,
       instanceDefault: config.auditRetentionDays,
       unitMs: 86_400_000,
       sweep: (retention) => storage.audit.cleanup(retention),
@@ -166,7 +166,7 @@ async function main() {
         if (deleted > 0)
           log(
             "info",
-            `Purged ${String(deleted)} audit entries (instance default: ${String(config.auditRetentionDays)} days; per-space overrides honored)`,
+            `Purged ${String(deleted)} audit entries (instance default: ${String(config.auditRetentionDays)} days; a /config override is honored)`,
           );
       })
       .catch((err: unknown) => {
@@ -215,7 +215,7 @@ async function main() {
     config.trashRetentionDays,
     config.trashPurgeIntervalMs,
     undefined,
-    trashFanout,
+    trashOverride,
   );
   trashPurger.start();
 
@@ -230,11 +230,11 @@ async function main() {
           config.activityRetentionDays ?? 14,
           activityPurgeIntervalMs,
           undefined,
-          activityFanout,
+          activityOverride,
         )
       : undefined;
-  // Revoked application-grant tombstones. No fan-out: unlike trash and
-  // activity there is no per-space override for this window, because the
+  // Revoked application-grant tombstones. Unlike trash and activity there
+  // is no /config override for this window, because the
   // reason for its length is instance-wide — it tracks the audit retention so
   // the tombstone and the audit row that recorded the revocation cannot
   // disagree about whether a revocation is still visible.
@@ -327,7 +327,7 @@ async function main() {
 
   // Storing a blob and creating the item that references it are separate
   // calls, so an item write refused between them leaves bytes registered,
-  // charged against the space's quotas and pointed at by nothing. The
+  // charged against the instance quotas and pointed at by nothing. The
   // operator route that finds them is a report by default and nothing ran
   // it; this does, behind a grace window so the gap between a legitimate
   // upload and its item write is not mistaken for the leak. Grace `0`
@@ -403,20 +403,17 @@ async function main() {
 
   const oidcSigner = await OidcSigner.init(storage);
 
-  // Admit every space's runtime custom-namespace roots into the OAuth
-  // scope allowlist, before the auth instance is built. Admission only —
-  // nothing user-visible: the consent screen derives the consenting
-  // space's own roots at render time, and the discovery advertisement is
-  // pinned to the baseline. Installed regardless of the bundle override
-  // below, because whether a space's registered namespaces are grantable
-  // is not the operator's consent-curation lever.
+  // Admit the runtime custom-namespace roots into the OAuth scope
+  // allowlist, before the auth instance is built. Admission only — nothing
+  // user-visible: the consent screen derives its roots at render time, and
+  // the discovery advertisement is pinned to the baseline. Installed
+  // regardless of the bundle override below, because whether a registered
+  // namespace is grantable is not the operator's consent-curation lever.
   setRuntimeNamespaceRoots(await resolveAllRegisteredNamespaceRoots(storage));
 
   // Fold the runtime custom-type namespaces into the active permission
   // bundles, so a custom type under a claimed publisher handle is offerable
-  // through the default consent set rather than only `user.*`. The
-  // space-less bucket read here is the whole story in keys mode; hosted
-  // consent screens re-derive per space at render time (auth-consent.ts).
+  // through the default consent set rather than only `user.*`.
   // A *usable* override outranks the derivation and skips it entirely. An
   // override that failed validation does not: it has already fallen back to
   // the shipped bundles, and skipping here as well would drop the handle

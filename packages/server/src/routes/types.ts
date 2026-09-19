@@ -17,7 +17,7 @@ import {
 import type { AppEnv } from "../middleware/auth.js";
 import {
   requireAuth,
-  requireSpacePermission,
+  requirePermission,
   requireMetadataPermission,
 } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
@@ -40,8 +40,8 @@ import { assertParentChain } from "./_parent-chain.js";
  * Reads the live registry rather than a set compiled from the shipped arrays,
  * because the platform vocabulary is seeded data now: an instance can hold a
  * type the running build never shipped, and locking has to follow what the
- * instance actually has. `TYPE_REGISTRY` is the platform map — a space's own
- * registrations live in the per-space overlay and never appear in it — so
+ * instance actually has. `TYPE_REGISTRY` is the platform map — a runtime
+ * registration lives in the runtime overlay and never appears in it — so
  * membership is exactly the "shipped, not yours to edit" question.
  *
  * The lock spans core, integration and system alike. An integration type is
@@ -137,7 +137,7 @@ const listTypesRoute = createRoute({
   tags: ["Types"],
   summary: "List types",
   description:
-    "Returns every type registered in the space — the core type catalog plus any custom types registered via `POST /types`. Use as the schema manifest a type-aware client reads at startup.",
+    "Returns every registered type — the core type catalog plus any custom types registered via `POST /types`. Use as the schema manifest a type-aware client reads at startup.",
   security: [{ bearerAuth: [] }],
   responses: {
     200: {
@@ -166,7 +166,7 @@ const getTypeRoute = createRoute({
   tags: ["Types"],
   summary: "Get a type",
   description:
-    "Returns the full schema for a single type, resolving inheritance so the response reflects the effective fields and policies. Works for both core and space-registered custom types.\n\nA type whose stored inheritance chain cannot be resolved — circular, or deeper than any resolution walk follows — answers `409 type_chain_unresolvable` rather than a server fault. Correcting it through `PUT /types/{id}` still works, because that route reads the stored schema directly instead of resolving it.",
+    "Returns the full schema for a single type, resolving inheritance so the response reflects the effective fields and policies. Works for both core and locally registered custom types.\n\nA type whose stored inheritance chain cannot be resolved — circular, or deeper than any resolution walk follows — answers `409 type_chain_unresolvable` rather than a server fault. Correcting it through `PUT /types/{id}` still works, because that route reads the stored schema directly instead of resolving it.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({
@@ -428,7 +428,7 @@ export function typeRoutes(storage: Storage) {
     // refused whatever credential restores it, precisely because a file is
     // something an attacker can hand you. A registration is no more
     // trustworthy for arriving over a socket. The asymmetry also let one
-    // credentialed mistake put a row in a space's exports that its own
+    // credentialed mistake put a row in the exports that its own
     // restore would then refuse, taking the whole archive down with it.
     if (typeof body.id === "string") {
       const tier = classifyNamespace(body.id);
@@ -512,7 +512,7 @@ export function typeRoutes(storage: Storage) {
 
   router.openapi(updateTypeRoute, async (c) => {
     requireAuth(c);
-    requireSpacePermission(c, "schema.write");
+    requirePermission(c, "schema.write");
     const { id } = c.req.valid("param");
 
     if (!isValidTypeIdentifier(id)) {
@@ -592,7 +592,7 @@ export function typeRoutes(storage: Storage) {
 
   router.openapi(deleteTypeRoute, async (c) => {
     requireAuth(c);
-    requireSpacePermission(c, "schema.write");
+    requirePermission(c, "schema.write");
     const { id } = c.req.valid("param");
 
     if (isLockedPlatformType(id)) {

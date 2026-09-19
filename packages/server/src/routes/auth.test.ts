@@ -34,7 +34,7 @@ describe("authentication", () => {
 
   it("returns 200 with a valid key", async () => {
     const res = await request(ctx.app, "GET", "/items", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
     });
     expect(res.status).toBe(200);
   });
@@ -92,7 +92,7 @@ describe("bootstrap mode", () => {
     });
     expect(res.status).toBe(201);
     const data = (await res.json()) as Record<string, unknown>;
-    // The instance tier is the absence of a space binding rather than a rank,
+    // The instance tier is a flag on the row rather than a rank,
     // so the seed credential is named by `is_operator`.
     expect(data.is_operator).toBe(true);
     expect(data).toHaveProperty("key");
@@ -109,7 +109,7 @@ describe("key management", () => {
     // that reported the wrong one would be indistinguishable from a response
     // that reported nothing.
     const createRes = await request(ctx.app, "POST", "/keys", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         label: "test-narrow",
         source: "test-narrow-src",
@@ -124,7 +124,7 @@ describe("key management", () => {
     expect(created.permissions).toEqual(["webhooks.manage"]);
 
     const listRes = await request(ctx.app, "GET", "/keys", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
     });
     expect(listRes.status).toBe(200);
     const body = (await listRes.json()) as {
@@ -141,7 +141,7 @@ describe("key management", () => {
 
   it("revokes a key", async () => {
     const createRes = await request(ctx.app, "POST", "/keys", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: { label: "to-revoke", source: "to-revoke-src" },
     });
     const created = (await createRes.json()) as Record<string, unknown>;
@@ -150,7 +150,7 @@ describe("key management", () => {
       ctx.app,
       "DELETE",
       `/keys/${created.id as string}`,
-      { key: ctx.spaceKey },
+      { key: ctx.workingKey },
     );
     expect(revokeRes.status).toBe(200);
   });
@@ -159,7 +159,7 @@ describe("key management", () => {
 describe("extension_permissions wiring", () => {
   it("persists and surfaces extension_permissions on POST /keys and GET /keys", async () => {
     const createRes = await request(ctx.app, "POST", "/keys", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         label: "ext-write-key",
         source: "ext-write-key-src",
@@ -178,7 +178,7 @@ describe("extension_permissions wiring", () => {
     });
 
     const listRes = await request(ctx.app, "GET", "/keys", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
     });
     const list = (await listRes.json()) as {
       keys: { id: string; extension_permissions?: Record<string, string> }[];
@@ -192,7 +192,7 @@ describe("extension_permissions wiring", () => {
     // its label. Without the wiring this would fall through to the implicit
     // own-namespace rule and 403 on the non-matching namespace.
     const createKeyRes = await request(ctx.app, "POST", "/keys", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         label: "myapp",
         source: "myapp-grant-src",
@@ -222,7 +222,7 @@ describe("extension_permissions wiring", () => {
     // Metadata-layer permissions ride a dedicated map, default-off for new
     // keys. Nothing reads past it: every credential is held to its maps.
     const createRes = await request(ctx.app, "POST", "/keys", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         label: "metadata-types-key",
         source: "metadata-types-key-src",
@@ -239,7 +239,7 @@ describe("extension_permissions wiring", () => {
     expect(created.metadata_permissions).toEqual({ types: "write" });
 
     const listRes = await request(ctx.app, "GET", "/keys", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
     });
     const list = (await listRes.json()) as {
       keys: { id: string; metadata_permissions?: Record<string, string> }[];
@@ -252,7 +252,7 @@ describe("extension_permissions wiring", () => {
     // Regression guard: the wiring change must not break the
     // "key writes its own namespace" implicit rule for keys with no grants.
     const createKeyRes = await request(ctx.app, "POST", "/keys", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         label: "selfns",
         source: "selfns-src",
@@ -281,7 +281,7 @@ describe("extension_permissions wiring", () => {
 describe("KeyStore.updateLastUsed — DB-side debounce", () => {
   it("collapses rapid updates in the same window to a single write", async () => {
     const createRes = await request(ctx.app, "POST", "/keys", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         label: "last-used-debounce-key",
         source: "last-used-debounce-src",
