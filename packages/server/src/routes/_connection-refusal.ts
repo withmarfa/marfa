@@ -46,7 +46,7 @@ import type { Item } from "@withmarfa/shared";
  * `system.*` type, which its schema cannot name, and the bulk door's
  * reserved-namespace narrowing keeps a connection out of the match set
  * entirely. The properties door is not covered:
- * `status` is an ordinary property a space credential can patch, which is the
+ * `status` is an ordinary property a working credential can patch, which is the
  * remaining way to make a live grant read as revoked, tracked separately.
  */
 export function liveConnectionRefusal(

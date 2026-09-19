@@ -38,8 +38,7 @@ describe("keys.revoke", () => {
         label: `affected-rows ${suffix}`,
         source: `affected-rows-${suffix}`,
         type_permissions: {},
-        // Space-less and operator go together: the row constraint holds the
-        // pair, so a key with no space cannot be anything else.
+        // An operator key, whose empty maps the row constraint requires.
         is_operator: true,
       },
       hashApiKey(`marfa_k1_affected_rows_${suffix}`, TEST_API_KEY_SALT),
@@ -53,8 +52,8 @@ describe("keys.revoke", () => {
 
   // **The two misses are told apart here and nowhere above.** `keys.get`
   // drops revoked rows, so a route asking after the fact cannot separate a
-  // key already retired from an id nobody ever held, and the one caller that
-  // skips the space fence was told success for both.
+  // key already retired from an id nobody ever held, and the caller was told
+  // success for both.
   it("names a key that does not exist rather than lumping it in", async () => {
     expect(await ctx.storage.keys.revoke(randomUUID())).toBe("not_found");
   });

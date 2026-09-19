@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { createTestContext, mintSpaceKey, request } from "../test-utils.js";
+import { createTestContext, mintWorkingKey, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 
 /**
@@ -25,7 +25,7 @@ async function registerTypes(): Promise<void> {
     ],
   ] as const) {
     const res = await request(ctx.app, "POST", "/types", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: { id, version: 1, fields },
     });
     expect([201, 409]).toContain(res.status);
@@ -37,7 +37,7 @@ async function seed(
   type = "user.origin_log",
 ): Promise<string> {
   const res = await request(ctx.app, "POST", "/items/bulk", {
-    key: ctx.spaceKey,
+    key: ctx.workingKey,
     body: {
       items: [{ type, properties: { title: "a thing" }, source_id: sourceId }],
     },
@@ -60,7 +60,7 @@ async function upsert(
   }[];
 }> {
   const res = await request(ctx.app, "POST", "/items/bulk", {
-    key: ctx.spaceKey,
+    key: ctx.workingKey,
     body: {
       atomic: false,
       ...(opts.retype === undefined ? {} : { retype: opts.retype }),
@@ -127,7 +127,7 @@ describe("moving a corpus through the bulk door", () => {
     const stuckId = await seed(stuck);
 
     const res = await request(ctx.app, "POST", "/items/bulk", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         atomic: false,
         retype: true,
@@ -181,11 +181,10 @@ describe("moving a corpus through the bulk door", () => {
     // atomic mode's own pre-check authorizes every declared type up
     // front, so it would answer this whether or not the re-type arm did.
     //
-    // An ordinary working key in the context's space, narrowed to write on
-    // the type being left and nothing else. It has to be bound to that space
-    // to see the types registered there at all, and the type map is then the
-    // only thing left that can refuse the move.
-    const rawKey = await mintSpaceKey(ctx, {
+    // An ordinary working key, narrowed to write on the type being left and
+    // nothing else, so the type map is the only thing that can refuse the
+    // move.
+    const rawKey = await mintWorkingKey(ctx, {
       label: "retype-scoped",
       type_permissions: { "user.origin_log": "write" },
     });

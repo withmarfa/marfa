@@ -18,7 +18,7 @@ describe("POST /items/bulk", () => {
   it("creates items in bulk (upsert default)", async () => {
     const suffix = Math.random().toString(36).slice(2, 8);
     const res = await request(ctx.app, "POST", "/items/bulk", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         items: [
           {
@@ -60,7 +60,7 @@ describe("POST /items/bulk", () => {
     const sourceId = `upsert-${suffix}`;
 
     const first = await request(ctx.app, "POST", "/items/bulk", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         items: [
           {
@@ -77,7 +77,7 @@ describe("POST /items/bulk", () => {
     const originalId = firstBody.results[0]!.id;
 
     const second = await request(ctx.app, "POST", "/items/bulk", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         items: [
           {
@@ -98,7 +98,7 @@ describe("POST /items/bulk", () => {
     expect(body.results[0]!.id).toBe(originalId);
 
     const getRes = await request(ctx.app, "GET", `/items/${originalId}`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
     });
     const itemBody = (await getRes.json()) as {
       item: { properties: { body: string } };
@@ -116,7 +116,7 @@ describe("POST /items/bulk", () => {
     const suffix = Math.random().toString(36).slice(2, 8);
 
     const first = await request(ctx.app, "POST", "/items/bulk", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         items: [
           {
@@ -133,7 +133,7 @@ describe("POST /items/bulk", () => {
     const assignedId = firstBody.results[0]!.id;
 
     const second = await request(ctx.app, "POST", "/items/bulk", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         items: [
           {
@@ -154,7 +154,7 @@ describe("POST /items/bulk", () => {
     expect(body.results[0]!.id).toBe(assignedId);
 
     const getRes = await request(ctx.app, "GET", `/items/${assignedId}`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
     });
     const itemBody = (await getRes.json()) as {
       item: { properties: { body: string } };
@@ -164,7 +164,7 @@ describe("POST /items/bulk", () => {
 
   it("create_only mode skips existing rows matched by id with duplicate_id reason", async () => {
     const first = await request(ctx.app, "POST", "/items/bulk", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         items: [
           {
@@ -180,7 +180,7 @@ describe("POST /items/bulk", () => {
     const assignedId = firstBody.results[0]!.id;
 
     const second = await request(ctx.app, "POST", "/items/bulk", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         items: [
           {
@@ -205,7 +205,7 @@ describe("POST /items/bulk", () => {
     expect(body.results[0]!.reason).toBe("duplicate_id");
 
     const getRes = await request(ctx.app, "GET", `/items/${assignedId}`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
     });
     const itemBody = (await getRes.json()) as {
       item: { properties: { body: string } };
@@ -218,7 +218,7 @@ describe("POST /items/bulk", () => {
     const sourceId = `createonly-${suffix}`;
 
     await request(ctx.app, "POST", "/items/bulk", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         items: [
           {
@@ -232,7 +232,7 @@ describe("POST /items/bulk", () => {
     });
 
     const second = await request(ctx.app, "POST", "/items/bulk", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         items: [
           {
@@ -259,7 +259,7 @@ describe("POST /items/bulk", () => {
     const tag = `atomic-${suffix}`;
 
     const res = await request(ctx.app, "POST", "/items/bulk", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         items: [
           {
@@ -290,7 +290,7 @@ describe("POST /items/bulk", () => {
     // shared tag instead of source_id (filter-SQL doesn't project
     // source_id as a queryable field).
     const list = await request(ctx.app, "GET", `/items?tags=${tag}`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
     });
     const listBody = (await list.json()) as { data: unknown[] };
     expect(listBody.data).toHaveLength(0);
@@ -299,7 +299,7 @@ describe("POST /items/bulk", () => {
   it("atomic=false collects errors and continues", async () => {
     const suffix = Math.random().toString(36).slice(2, 8);
     const res = await request(ctx.app, "POST", "/items/bulk", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         items: [
           {
@@ -337,7 +337,7 @@ describe("POST /items/bulk", () => {
 
     // Create a target item first
     const targetRes = await request(ctx.app, "POST", "/items", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         type: "core.entity",
         properties: { name: "Edge target" },
@@ -348,7 +348,7 @@ describe("POST /items/bulk", () => {
     const targetId = targetBody.item.id;
 
     const res = await request(ctx.app, "POST", "/items/bulk", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         items: [
           {
@@ -368,7 +368,7 @@ describe("POST /items/bulk", () => {
       ctx.app,
       "GET",
       `/items/${sourceId}/edges?edge_type=about`,
-      { key: ctx.spaceKey },
+      { key: ctx.workingKey },
     );
     const edgesBody = (await getRes.json()) as {
       data: { target_id: string }[];
@@ -381,7 +381,7 @@ describe("POST /items/bulk", () => {
     const suffix = Math.random().toString(36).slice(2, 8);
     const mk = async (label: string): Promise<string> => {
       const res = await request(ctx.app, "POST", "/items", {
-        key: ctx.spaceKey,
+        key: ctx.workingKey,
         body: { type: "core.note", properties: { body: label } },
       });
       const b = (await res.json()) as { item: { id: string } };
@@ -393,7 +393,7 @@ describe("POST /items/bulk", () => {
     // `supersedes` is one-to-one: two outbound edges from one source breach
     // the cap. atomic (default) → the whole batch rolls back with 400.
     const res = await request(ctx.app, "POST", "/items/bulk", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         items: [
           {
@@ -415,7 +415,7 @@ describe("POST /items/bulk", () => {
 
     // Seed A and B, then make A parent-of B.
     const seed = await request(ctx.app, "POST", "/items/bulk", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         items: [
           {
@@ -436,7 +436,7 @@ describe("POST /items/bulk", () => {
     const bId = seedBody.results[1]!.id;
 
     const aParent = await request(ctx.app, "POST", "/items/bulk", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         items: [
           {
@@ -452,7 +452,7 @@ describe("POST /items/bulk", () => {
 
     // Upsert B with parent-of A — closes the cycle. atomic → 400 rollback.
     const bParent = await request(ctx.app, "POST", "/items/bulk", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         items: [
           {
@@ -473,7 +473,7 @@ describe("POST /items/bulk", () => {
       ctx.app,
       "GET",
       `/items/${bId}/edges?edge_type=parent-of`,
-      { key: ctx.spaceKey },
+      { key: ctx.workingKey },
     );
     const edgesBody = (await edgesRes.json()) as { data: unknown[] };
     expect(edgesBody.data).toHaveLength(0);
@@ -483,7 +483,7 @@ describe("POST /items/bulk", () => {
     const suffix = Math.random().toString(36).slice(2, 8);
     const mk = async (label: string): Promise<string> => {
       const res = await request(ctx.app, "POST", "/items", {
-        key: ctx.spaceKey,
+        key: ctx.workingKey,
         body: { type: "core.note", properties: { body: label } },
       });
       const b = (await res.json()) as { item: { id: string } };
@@ -496,7 +496,7 @@ describe("POST /items/bulk", () => {
     // still lands. The violating item's delete must not leak — validation
     // failure rolls back applyInlineEdges' own transaction.
     const res = await request(ctx.app, "POST", "/items/bulk", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         atomic: false,
         items: [
@@ -532,7 +532,7 @@ describe("POST /items/bulk", () => {
       properties: { body: `over-cap-${String(i)}` },
     }));
     const res = await request(ctx.app, "POST", "/items/bulk", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: { items },
     });
     expect(res.status).toBe(400);
@@ -542,8 +542,8 @@ describe("POST /items/bulk", () => {
 
   it("admits a credential with write on the item's type (matches POST /items)", async () => {
     // Bulk write authorization mirrors single-item POST /items: a credential
-    // holding write on the type can bulk-create it. Bound to the context's
-    // space, so the type map is the whole of what decides `core.note`.
+    // holding write on the type can bulk-create it, so the type map is the
+    // whole of what decides `core.note`.
     const rawKey = `marfa_k1_scoped_${Math.random().toString(36).slice(2)}`;
     const keyHash = hashApiKey(rawKey, "test-salt");
     await ctx.storage.keys.create(
@@ -635,7 +635,7 @@ describe("POST /items/bulk", () => {
     const payloadSourceId = `stamp-${suffix}`;
 
     const res = await request(ctx.app, "POST", "/items/bulk", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         items: [
           {
@@ -654,7 +654,7 @@ describe("POST /items/bulk", () => {
     const createdId = body.results[0]!.id;
 
     const getRes = await request(ctx.app, "GET", `/items/${createdId}`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
     });
     const item = (await getRes.json()) as {
       item: { source?: string; source_id?: string };
@@ -664,7 +664,7 @@ describe("POST /items/bulk", () => {
     // claim is that the stamp came from the caller's row and not that the
     // fixture happens to name its keys a certain way.
     const credential = await ctx.storage.keys.validate(
-      hashApiKey(ctx.spaceKey, "test-salt"),
+      hashApiKey(ctx.workingKey, "test-salt"),
     );
     expect(item.item.source).toBe(credential?.source);
     expect(item.item.source_id).toBe(payloadSourceId);
@@ -672,7 +672,7 @@ describe("POST /items/bulk", () => {
 
   it("returns an empty-counts shape for an empty items array", async () => {
     const res = await request(ctx.app, "POST", "/items/bulk", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: { items: [] },
     });
     expect(res.status).toBe(200);
@@ -750,7 +750,7 @@ describe("POST /items/bulk — announcing writes", () => {
     const stream = collect(2);
 
     const res = await request(ctx.app, "POST", "/items/bulk", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: { items: noteBatch(suffix), enable_fanout: true },
     });
     expect(res.status).toBe(200);
@@ -780,7 +780,7 @@ describe("POST /items/bulk — announcing writes", () => {
     const stream = collect(3);
 
     const quiet = await request(ctx.app, "POST", "/items/bulk", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: { items: noteBatch(suffix) },
     });
     expect(quiet.status).toBe(200);
@@ -792,7 +792,7 @@ describe("POST /items/bulk — announcing writes", () => {
     expect(written).toHaveLength(2);
 
     const marker = await request(ctx.app, "POST", "/items", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         type: "core.note",
         properties: { body: "sentinel" },
@@ -820,18 +820,21 @@ describe("POST /items/bulk — a repeated id in create_only", () => {
    */
   it("is skipped rather than rolling the batch back, even when trashed", async () => {
     const seed = await request(ctx.app, "POST", "/items", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: { type: "core.note", properties: { body: "seeded" } },
     });
     expect(seed.status).toBe(201);
     const id = ((await seed.json()) as { item: { id: string } }).item.id;
     expect(
-      (await request(ctx.app, "DELETE", `/items/${id}`, { key: ctx.spaceKey }))
-        .status,
+      (
+        await request(ctx.app, "DELETE", `/items/${id}`, {
+          key: ctx.workingKey,
+        })
+      ).status,
     ).toBe(200);
 
     const res = await request(ctx.app, "POST", "/items/bulk", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         mode: "create_only",
         items: [

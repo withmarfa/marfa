@@ -1,12 +1,12 @@
 import { randomBytes } from "node:crypto";
-import type { ApiKey, SpacePermission } from "@withmarfa/shared";
+import type { ApiKey, Permission } from "@withmarfa/shared";
 import { createRoute, z } from "@hono/zod-openapi";
 import {
   MarfaError,
   ErrorCode,
   isValidId,
-  SPACE_PERMISSIONS,
-  isSpacePermission,
+  PERMISSIONS,
+  isPermission,
 } from "@withmarfa/shared";
 import type { Context } from "hono";
 import type { AppEnv } from "../middleware/auth.js";
@@ -18,7 +18,7 @@ import {
   type RequestedReach,
 } from "../auth/mint-clamp.js";
 import {
-  requireSpacePermission,
+  requirePermission,
   requireAuth,
   hashApiKey,
   isReservedCredentialSource,
@@ -75,10 +75,10 @@ const KeyListItemSchema = z.object({
   label: z.string(),
   source: z.string(),
   permissions: z
-    .array(z.enum(SPACE_PERMISSIONS as unknown as [string, ...string[]]))
+    .array(z.enum(PERMISSIONS as unknown as [string, ...string[]]))
     .optional()
     .describe(
-      "The space permissions this credential holds, as the literals themselves. Omitted on a create request takes the creator's whole set; anything named is honoured and clamped to what the creator holds.",
+      "The permissions this credential holds, as the literals themselves. Omitted on a create request takes the creator's whole set; anything named is honoured and clamped to what the creator holds.",
     ),
   oauth_client_id: z
     .string()
@@ -125,7 +125,7 @@ const createKeyRoute = createRoute({
   tags: ["Keys"],
   summary: "Create an API key",
   description:
-    "Creates a new API key. The plaintext `key` is returned only in this response and never shown again, so store it securely.\n\nA credential is a set of permissions and nothing else. `permissions` names the space permissions the key holds; omitting it takes the creator's whole set, and anything named is clamped to what the creator holds, so a mint can narrow and can never widen. The content maps behave the same way, and a signed-in app must hold `keys.mint` to reach this route at all.\n\nThe operator key holds no permissions, because running the instance sits outside the permission model, so it is not a ceiling: a working key it mints holds what the body names, or the whole set when the body names nothing. With `is_operator: true` it mints a second operator key instead, which holds nothing, so a body naming any map entry or space permission on one is refused. `is_operator` is granted only when the caller is itself an operator key.\n\nOn a fresh server with zero keys this runs in bootstrap mode: the key it mints is the operator key, and the request must present the one-time secret the server printed to its log at startup, as a bearer token. That secret works once — the mint consumes it. The operator key is not a working key, so the next call is this route again with it, minting the key to configure a client with.",
+    "Creates a new API key. The plaintext `key` is returned only in this response and never shown again, so store it securely.\n\nA credential is a set of permissions and nothing else. `permissions` names the permissions the key holds; omitting it takes the creator's whole set, and anything named is clamped to what the creator holds, so a mint can narrow and can never widen. The content maps behave the same way, and a signed-in app must hold `keys.mint` to reach this route at all.\n\nThe operator key holds no permissions, because running the instance sits outside the permission model, so it is not a ceiling: a working key it mints holds what the body names, or the whole set when the body names nothing. With `is_operator: true` it mints a second operator key instead, which holds nothing, so a body naming any map entry or permission on one is refused. `is_operator` is granted only when the caller is itself an operator key.\n\nOn a fresh server with zero keys this runs in bootstrap mode: the key it mints is the operator key, and the request must present the one-time secret the server printed to its log at startup, as a bearer token. That secret works once — the mint consumes it. The operator key is not a working key, so the next call is this route again with it, minting the key to configure a client with.",
 
   security: [{ bearerAuth: [] }],
   request: {
@@ -147,9 +147,7 @@ const createKeyRoute = createRoute({
               .min(1, "source display name is required")
               .max(200),
             permissions: z
-              .array(
-                z.enum(SPACE_PERMISSIONS as unknown as [string, ...string[]]),
-              )
+              .array(z.enum(PERMISSIONS as unknown as [string, ...string[]]))
               .optional(),
             default_tier: z.enum(["library", "feed"]).optional(),
             is_operator: z.boolean().optional(),
@@ -304,17 +302,17 @@ const revokeKeyRoute = createRoute({
 
 /**
  * **The operator key reaches these doors by being the operator key**, and holds
- * no space permission to be checked. Key management is instance-tier work when
+ * no permission to be checked. Key management is instance-tier work when
  * the operator does it — it mints the credential an instance works through —
- * so asking a space permission of it would be asking the wrong question, and
+ * so asking a permission of it would be asking the wrong question, and
  * the only answer it could ever give is no, because running the instance is
  * deliberately not expressible as a permission.
  *
  * Everything else is held to `keys.mint`.
  */
-function requireSpaceKeysOrOperator(c: Context<AppEnv>): void {
+function requireKeysMintOrOperator(c: Context<AppEnv>): void {
   if (requireAuth(c).is_operator) return;
-  requireSpacePermission(c, "keys.mint");
+  requirePermission(c, "keys.mint");
 }
 
 // Passthrough — `source` is immutable and rejected explicitly in the handler
@@ -336,7 +334,7 @@ const UpdateKeyBodySchema = z.strictObject({
     .record(z.string(), z.enum(["read", "write"]))
     .optional(),
   permissions: z
-    .array(z.enum(SPACE_PERMISSIONS as unknown as [string, ...string[]]))
+    .array(z.enum(PERMISSIONS as unknown as [string, ...string[]]))
     .optional(),
   enforcement_override: EnforcementOverrideSchema.nullable()
     .optional()
@@ -349,10 +347,10 @@ const KeyDetailSchema = z.object({
   label: z.string(),
   source: z.string(),
   permissions: z
-    .array(z.enum(SPACE_PERMISSIONS as unknown as [string, ...string[]]))
+    .array(z.enum(PERMISSIONS as unknown as [string, ...string[]]))
     .optional()
     .describe(
-      "The space permissions this credential holds, as the literals themselves. Omitted on a create request takes the creator's whole set; anything named is honoured and clamped to what the creator holds.",
+      "The permissions this credential holds, as the literals themselves. Omitted on a create request takes the creator's whole set; anything named is honoured and clamped to what the creator holds.",
     ),
   oauth_client_id: z
     .string()
@@ -548,9 +546,9 @@ function refuseSessionReachAboveGrant(
  * A `none` entry is a denial rather than a request, so it names nothing and
  * is skipped, exactly as the creator ceiling skips it.
  */
-function firstReachOnASpacelessKey(
+function firstReachOnAnOperatorKey(
   requested: RequestedReach,
-  spacePermissions: SpacePermission[] | undefined,
+  permissions: Permission[] | undefined,
 ): string | null {
   const maps = [
     ["type", requested.type_permissions],
@@ -565,7 +563,7 @@ function firstReachOnASpacelessKey(
       return `${axis} ${name}: ${level}`;
     }
   }
-  return spacePermissions?.[0] ?? null;
+  return permissions?.[0] ?? null;
 }
 
 /**
@@ -574,7 +572,7 @@ function firstReachOnASpacelessKey(
  * **Running the instance is not a permission, so the tier that runs it
  * carries none.** That used to be a property of how the operator key happened
  * to be minted rather than a rule any door asked about, and the row constraint
- * `api_keys_space_less_holds_nothing` now holds it at the store. This is the
+ * `api_keys_operator_holds_nothing` now holds it at the store. This is the
  * route's own answer, ahead of the database refusal.
  *
  * **Two doors could write it and both are here.** The creator ceiling exempts
@@ -587,17 +585,17 @@ function firstReachOnASpacelessKey(
  * Bootstrap does not need this. It forces every family empty already, having
  * no creator to derive from and no caller to refuse.
  */
-function refuseReachOnASpacelessKey(
+function refuseReachOnAnOperatorKey(
   requested: RequestedReach,
-  spacePermissions: SpacePermission[] | undefined,
+  permissions: Permission[] | undefined,
 ): void {
-  const named = firstReachOnASpacelessKey(requested, spacePermissions);
+  const named = firstReachOnAnOperatorKey(requested, permissions);
   if (named === null) return;
   const message = `An operator key holds no permissions, so it cannot be given ${named}. Mint a working key with POST /keys and grant it there.`;
   // `required_scope` is attached where there is a scope to name, as every
   // sibling refusal on this route does. A map entry names no scope literal,
-  // so `named` is a space permission exactly when the maps named nothing.
-  if (named === spacePermissions?.[0]) {
+  // so `named` is a permission exactly when the maps named nothing.
+  if (named === permissions?.[0]) {
     throw new MarfaError(ErrorCode.FORBIDDEN, message, {
       required_scope: named,
     });
@@ -647,7 +645,7 @@ function nothingWhereNamed(requested: RequestedReach): RequestedReach {
  * empty by construction; measuring against them would refuse every mint it
  * makes. What it may mint is bounded instead by what the minted key is: a
  * working key is a seed rather than a ceiling, and a second operator key may
- * hold nothing at all, which `refuseReachOnASpacelessKey` above is what says
+ * hold nothing at all, which `refuseReachOnAnOperatorKey` above is what says
  * so.
  *
  * Extensions are compared directly rather than refused. A session cannot be
@@ -710,7 +708,7 @@ function refuseKeyReachAboveCreator(
 function refuseWideningAnAppsKey(
   existing: ApiKey,
   requested: RequestedReach,
-  requestedSpacePermissions: SpacePermission[] | undefined,
+  requestedPermissions: Permission[] | undefined,
 ): void {
   if (existing.oauth_client_id === undefined) return;
 
@@ -738,7 +736,7 @@ function refuseWideningAnAppsKey(
   }
 
   const held = existing.permissions ?? [];
-  const beyond = requestedSpacePermissions?.find((p) => !held.includes(p));
+  const beyond = requestedPermissions?.find((p) => !held.includes(p));
   if (beyond !== undefined) {
     throw new MarfaError(
       ErrorCode.FORBIDDEN,
@@ -825,10 +823,10 @@ export function keyRoutes(storage: Storage, salt: string) {
       // The blanket refusal that used to stand here was doing two jobs at once
       // — withholding the permission, and preventing the escalation a mint
       // makes possible. Both are still done, by two things that can be reasoned
-      // about separately: `requireSpacePermission` here, and the breadth clamp
+      // about separately: `requirePermission` here, and the breadth clamp
       // below. Removing one without the other is the mistake to avoid; see
       // `auth/mint-clamp.ts`.
-      requireSpaceKeysOrOperator(c);
+      requireKeysMintOrOperator(c);
     }
 
     const body = c.req.valid("json");
@@ -940,13 +938,12 @@ export function keyRoutes(storage: Storage, salt: string) {
         extension_permissions: body.extension_permissions,
         profile_permissions: body.profile_permissions,
       };
-      const callerHeldSpacePermissions: SpacePermission[] = isBootstrap
+      const callerHeldPermissions: Permission[] = isBootstrap
         ? []
         : mintingFromSession
-          ? (c.get("oauthGrant")?.scopes ?? []).filter(isSpacePermission)
+          ? (c.get("oauthGrant")?.scopes ?? []).filter(isPermission)
           : (c.get("apiKey")?.permissions ?? []);
-      const requestedSpacePermissions =
-        body.permissions?.filter(isSpacePermission);
+      const requestedPermissions = body.permissions?.filter(isPermission);
 
       // **An operator key holds nothing**, so a body naming reach for one is
       // refused. Asked ahead of the two ceilings below because it is the more
@@ -954,14 +951,14 @@ export function keyRoutes(storage: Storage, salt: string) {
       // message implying that a creator holding it could pass it on, which
       // for this tier is exactly what is not true.
       if (!isBootstrap && mintsOperatorKey) {
-        refuseReachOnASpacelessKey(requested, requestedSpacePermissions);
+        refuseReachOnAnOperatorKey(requested, requestedPermissions);
       }
 
       // The operator key is not clamped, because its own set is empty and it
       // is the seed rather than the ceiling.
-      if (requestedSpacePermissions !== undefined && !callerIsOperator) {
-        const beyond = requestedSpacePermissions.find(
-          (permission) => !callerHeldSpacePermissions.includes(permission),
+      if (requestedPermissions !== undefined && !callerIsOperator) {
+        const beyond = requestedPermissions.find(
+          (permission) => !callerHeldPermissions.includes(permission),
         );
         if (beyond !== undefined) {
           throw new MarfaError(
@@ -977,11 +974,11 @@ export function keyRoutes(storage: Storage, salt: string) {
       // where an operator key could be widened, that set is whatever somebody
       // gave it: the mint would copy an escalation forward through a request
       // that named nothing at all.
-      const spacePermissions = mintsOperatorKey
+      const permissions = mintsOperatorKey
         ? []
         : seedsFromOperator
-          ? (requestedSpacePermissions ?? [...SPACE_PERMISSIONS])
-          : (requestedSpacePermissions ?? callerHeldSpacePermissions);
+          ? (requestedPermissions ?? [...PERMISSIONS])
+          : (requestedPermissions ?? callerHeldPermissions);
 
       // **The ceiling is asked of every creator, not only of a session.** A
       // session is measured against its granted scopes; a key is measured against
@@ -1018,7 +1015,7 @@ export function keyRoutes(storage: Storage, salt: string) {
       const creator = !isBootstrap && namesNoReach ? callerKey : undefined;
       const seed = seedsFromOperator && namesNoReach ? EVERY_TYPE : undefined;
       // **An operator mint takes nothing on any axis, the content maps
-      // included.** The space permissions are already forced empty above;
+      // included.** The permissions are already forced empty above;
       // leaving the four maps to the body would let an unauthenticated first
       // caller name `*: write` on every family and get an operator credential
       // holding it. There is no ceiling to clamp it against either, because
@@ -1062,7 +1059,7 @@ export function keyRoutes(storage: Storage, salt: string) {
           source: body.source.trim(),
           default_tier: body.default_tier,
           is_operator: mintsOperatorKey,
-          permissions: spacePermissions,
+          permissions,
           type_permissions: typePermissions,
           extension_permissions: extensionPermissions,
           edge_permissions: edgePermissions,
@@ -1129,14 +1126,14 @@ export function keyRoutes(storage: Storage, salt: string) {
 
   router.openapi(listKeysRoute, async (c) => {
     requireAuth(c);
-    requireSpaceKeysOrOperator(c);
+    requireKeysMintOrOperator(c);
     const keys = await storage.keys.list();
     return c.json({ keys }, 200);
   });
 
   router.openapi(revokeKeyRoute, async (c) => {
     requireAuth(c);
-    requireSpaceKeysOrOperator(c);
+    requireKeysMintOrOperator(c);
     const { id } = c.req.valid("param");
 
     if (!isValidId(id)) {
@@ -1174,7 +1171,7 @@ export function keyRoutes(storage: Storage, salt: string) {
 
   router.openapi(updateKeyRoute, async (c) => {
     const key = requireAuth(c);
-    requireSpaceKeysOrOperator(c);
+    requireKeysMintOrOperator(c);
     const { id } = c.req.valid("param");
     const body = c.req.valid("json");
 
@@ -1212,17 +1209,12 @@ export function keyRoutes(storage: Storage, salt: string) {
       extension_permissions: body.extension_permissions,
       profile_permissions: body.profile_permissions,
     };
-    const requestedSpacePermissions =
-      body.permissions?.filter(isSpacePermission);
+    const requestedPermissions = body.permissions?.filter(isPermission);
 
     // Before the caller's own ceiling, because it is the more specific answer:
     // a caller who both lacks the reach and is editing an app's key is better
     // told that this key can never hold more than told what it does not hold.
-    refuseWideningAnAppsKey(
-      existing,
-      requestedReach,
-      requestedSpacePermissions,
-    );
+    refuseWideningAnAppsKey(existing, requestedReach, requestedPermissions);
 
     if (c.get("authType") === "oauth") {
       refuseSessionReachAboveGrant(
@@ -1242,18 +1234,18 @@ export function keyRoutes(storage: Storage, salt: string) {
     // place to find out.
     const targetHoldsNothing = existing.is_operator;
     if (targetHoldsNothing) {
-      refuseReachOnASpacelessKey(requestedReach, requestedSpacePermissions);
+      refuseReachOnAnOperatorKey(requestedReach, requestedPermissions);
     }
     const writtenReach = targetHoldsNothing
       ? nothingWhereNamed(requestedReach)
       : requestedReach;
 
-    // **The space permissions are clamped here too, and were not.** They are
+    // **The permissions are clamped here too, and were not.** They are
     // editable through this door like any other family, so a key holding one
     // permission could have given itself every other one in the set.
-    if (requestedSpacePermissions !== undefined && !key.is_operator) {
+    if (requestedPermissions !== undefined && !key.is_operator) {
       const held = key.permissions ?? [];
-      const beyond = requestedSpacePermissions.find(
+      const beyond = requestedPermissions.find(
         (permission) => !held.includes(permission),
       );
       if (beyond !== undefined) {
@@ -1272,11 +1264,11 @@ export function keyRoutes(storage: Storage, salt: string) {
       extension_permissions: writtenReach.extension_permissions,
       edge_permissions: writtenReach.edge_permissions,
       metadata_permissions: writtenReach.metadata_permissions,
-      // The space permissions need no forcing: the guard above refuses a
+      // The permissions need no forcing: the guard above refuses a
       // non-empty list outright, because no entry in one is a denial the way a
       // `none` map entry is, so the only list that reaches an operator row is
       // already the empty one.
-      permissions: requestedSpacePermissions,
+      permissions: requestedPermissions,
       profile_permissions: writtenReach.profile_permissions,
       enforcement_override: body.enforcement_override,
     });

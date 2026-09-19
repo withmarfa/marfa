@@ -72,7 +72,7 @@ async function errorCode(res: Response): Promise<string> {
 
 async function makeNote(): Promise<{ id: string; version: number }> {
   const res = await request(ctx.app, "POST", "/items", {
-    key: ctx.spaceKey,
+    key: ctx.workingKey,
     body: { type: "core.note", properties: GOOD },
   });
   expect(res.status).toBe(201);
@@ -89,7 +89,7 @@ async function bulkEntryOutcome(
   extra: Record<string, unknown> = {},
 ): Promise<BulkEntryResult> {
   const res = await request(ctx.app, "POST", "/items/bulk", {
-    key: ctx.spaceKey,
+    key: ctx.workingKey,
     body: { atomic: false, ...extra, items },
   });
   expect(res.status, await res.clone().text()).toBe(200);
@@ -119,7 +119,7 @@ const doors: { name: string; refuse: () => Promise<string> }[] = [
     refuse: async () =>
       errorCode(
         await request(ctx.app, "POST", "/items", {
-          key: ctx.spaceKey,
+          key: ctx.workingKey,
           body: { type: "core.note", properties: BAD },
         }),
       ),
@@ -130,7 +130,7 @@ const doors: { name: string; refuse: () => Promise<string> }[] = [
       const note = await makeNote();
       return errorCode(
         await request(ctx.app, "PATCH", `/items/${note.id}`, {
-          key: ctx.spaceKey,
+          key: ctx.workingKey,
           body: { properties: BAD, version: note.version },
         }),
       );
@@ -251,7 +251,7 @@ describe("the generic refusal", () => {
     // generic, and moving them too would leave the specific code meaning
     // nothing in particular.
     const res = await request(ctx.app, "POST", "/items", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         type: "core.note",
         properties: GOOD,

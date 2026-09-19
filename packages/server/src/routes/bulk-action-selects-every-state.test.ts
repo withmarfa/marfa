@@ -56,7 +56,7 @@ describe("POST /items/bulk-actions — the filter reaches every state", () => {
         dry_run: true,
         filter: { type: "core.note", state: "revoked" },
       },
-      ctx.spaceKey,
+      ctx.workingKey,
     );
     expect(errorResponse).toBeUndefined();
     expect(initialStatus).toBe(200);
@@ -68,7 +68,7 @@ describe("POST /items/bulk-actions — the filter reaches every state", () => {
     const ids: Record<string, string> = {};
     for (const state of ["active", "archived", "trashed"]) {
       const res = await request(ctx.app, "POST", "/items", {
-        key: ctx.spaceKey,
+        key: ctx.workingKey,
         body: {
           type: "core.note",
           state,
@@ -94,7 +94,7 @@ describe("POST /items/bulk-actions — the filter reaches every state", () => {
             filter: `properties.body eq "note-${state}-${suffix}"`,
           },
         },
-        ctx.spaceKey,
+        ctx.workingKey,
       );
       expect(errorResponse).toBeUndefined();
       expect(initialStatus).toBe(200);
@@ -114,7 +114,7 @@ describe("POST /items/bulk — the create door names the same states as its sibl
   it("still refuses revoked for a type whose lifecycle does not contain it", async () => {
     const suffix = Math.random().toString(36).slice(2, 8);
     const res = await request(ctx.app, "POST", "/items/bulk", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         items: [
           {

@@ -295,8 +295,8 @@ describe("bulk", () => {
     expect(stored.data.item.source_id).toBe(`mixed-good-${ctx.runId}`);
   });
 
-  it("purge is refused to a key holding no space permissions", async () => {
-    const label = `bulk-purge-nospace-${ctx.runId}`;
+  it("purge is refused to a key holding no permissions", async () => {
+    const label = `bulk-purge-noperms-${ctx.runId}`;
     const keyResp = await client.createKey({
       label,
       source: `${ctx.source}-${label}`,
@@ -310,7 +310,7 @@ describe("bulk", () => {
       apiKey: keyResp.data.key,
     });
 
-    const tag = `ba-purge-nospace-${ctx.runId}`;
+    const tag = `ba-purge-noperms-${ctx.runId}`;
     const seeded = await client.createItem(
       createNote({ source: ctx.source, tags: [tag], tier: "library" }),
     );

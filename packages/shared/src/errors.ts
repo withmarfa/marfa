@@ -42,16 +42,16 @@ export enum ErrorCode {
   INTEGRATION_OWNED = "integration_owned",
   TYPE_NOT_PERMITTED = "type_not_permitted",
   /**
-   * A credential whose content reach is narrower than the space attempted an
-   * operation only a credential reaching all of it may perform.
+   * A credential that cannot read everything stored attempted an operation
+   * only a credential reaching all of it may perform.
    *
    * Distinct from the generic `FORBIDDEN` it shares a status with, because
-   * holding more space permissions will not help: what the caller may
+   * holding more permissions will not help: what the caller may
    * administer and what it may read are separate axes, and this is a refusal
    * on the second one. Outbound webhooks are the case this exists for — a
-   * subscription is space-level and carries no credential of its own, so
-   * anything it delivers is bounded by the space rather than by the reach of
-   * whoever registered it.
+   * subscription is instance-wide and carries no credential of its own, so
+   * anything it delivers is bounded by what is stored rather than by the
+   * reach of whoever registered it.
    */
   SCOPED_CREDENTIAL_NOT_PERMITTED = "scoped_credential_not_permitted",
   INVALID_TRANSITION = "invalid_transition",
@@ -207,7 +207,7 @@ export enum ErrorCode {
    * of the same integration wrote. Refused rather than merged.
    *
    * `source` is stamped `integration:<manifest name>` and is deliberately
-   * one value for the whole integration in a space (D34), so that
+   * one value for the whole integration (D34), so that
    * reinstalling adopts the corpus it created rather than duplicating it.
    * The cost is that two live connections of one integration share a
    * natural-key namespace, and nothing in `(source, source_id)` tells them

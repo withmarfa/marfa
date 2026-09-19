@@ -8,7 +8,7 @@ import {
 import type { TestContext } from "../test-utils.js";
 import { writeInstanceConfig } from "../storage/instance-config.js";
 import { hashApiKey } from "../middleware/auth.js";
-import type { SpacePermission } from "@withmarfa/shared";
+import type { Permission } from "@withmarfa/shared";
 
 /**
  * `POST /items/bulk-actions` narrows on every axis a read narrows on.
@@ -24,7 +24,7 @@ import type { SpacePermission } from "@withmarfa/shared";
  * route already said the narrowing was to writable types, which is what made
  * it hard to see.
  *
- * **The space's own source filter.** The three read doors resolve it and this
+ * **The instance's source filter.** The three read doors resolve it and this
  * one passed nothing, so a match set included rows every read hides. It is a
  * narrowing lever, so applying it to a door that writes is the safe reading
  * rather than a new policy.
@@ -39,7 +39,7 @@ let ctx: TestContext;
 /** Writes on bookmarks, reads on notes: the mixed-permission shape this
  *  file narrows on. */
 let readerWriterKey: string;
-/** A source the space's `source_filter` approves, and one it does not. */
+/** A source the instance `source_filter` approves, and one it does not. */
 let trustedKey: string;
 let untrustedKey: string;
 /** Holds `items.purge`, and write on bookmarks but only read on notes. */
@@ -49,7 +49,7 @@ async function mintKey(
   label: string,
   source: string,
   typePermissions: Record<string, "read" | "write">,
-  spacePermissions: SpacePermission[] = [],
+  permissions: Permission[] = [],
 ): Promise<string> {
   const raw = `marfa_k1_axes_${Math.random().toString(36).slice(2, 12)}`;
   await ctx.storage.keys.create(
@@ -57,7 +57,7 @@ async function mintKey(
       label,
       source,
       type_permissions: typePermissions,
-      permissions: spacePermissions,
+      permissions,
       default_tier: "library",
     },
     hashApiKey(raw, TEST_API_KEY_SALT),
@@ -247,7 +247,7 @@ describe("the match set narrows to what the caller may write", () => {
   });
 });
 
-describe("the match set narrows on the space's source filter", () => {
+describe("the match set narrows on the instance source filter", () => {
   it("drops a listed-type row from an unapproved source", async () => {
     const marker = `sf${Math.random().toString(36).slice(2, 8)}`;
     const trustedNote = await seed(

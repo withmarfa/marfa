@@ -37,7 +37,7 @@
  * That screen has toggles, so the refusal is retired and both surfaces
  * withhold by rendering a row unticked.
  *
- * **One rule spans both, and it is `requiresExplicitConsent`.** A space
+ * **One rule spans both, and it is `requiresExplicitConsent`.** A
  * permission is granted by being named and never by silence, so it renders
  * unticked whatever a bundle says about it — asked before the bundle, or a
  * configuration naming one would put administrative authority behind a
@@ -70,10 +70,7 @@ import {
   scopesOfferedOffByDefaultOnly,
 } from "@withmarfa/shared";
 import { getPermissionBundles } from "../config.js";
-import {
-  SPACE_PERMISSION_LABELS,
-  spacePermissionShort,
-} from "./space-permission-labels.js";
+import { PERMISSION_LABELS, permissionShort } from "./permission-labels.js";
 import { oidcLabel, oidcShort } from "./oidc-labels.js";
 import { renderAuthLayout } from "./auth-layout.js";
 import { computeConsentDiff } from "./consent-diff.js";
@@ -120,8 +117,7 @@ interface ConsentParams {
   priorScopes?: readonly string[];
   /**
    * For wildcard scopes, the display names of the types the pattern matches
-   * in this space today, keyed by type pattern (e.g. `user.*` → the space's
-   * custom types). Informative only: the checkbox still carries the wildcard
+   * today, keyed by type pattern (e.g. `user.*` → the custom types). Informative only: the checkbox still carries the wildcard
    * literal, and the copy states that later-defined types are covered too.
    */
   wildcardExpansions?: Record<string, string[]>;
@@ -131,12 +127,11 @@ interface ConsentParams {
    */
   errorMessage?: string;
   /**
-   * The bundle set to group scopes under. The consent route passes the
-   * consenting space's own derivation here (its runtime custom-namespace
-   * roots folded in), so a space's registered types group under the custom
-   * tile rather than the fallback buckets. Absent, the instance-wide
-   * active bundles apply — correct for keys mode and for callers with no
-   * space to scope to.
+   * The bundle set to group scopes under. The consent route passes a
+   * derivation with the runtime custom-namespace roots folded in, so a
+   * runtime-registered type groups under the custom tile rather than the
+   * fallback buckets. Absent, the instance-wide active bundles apply —
+   * correct for keys mode.
    */
   bundles?: PermissionBundle[];
 }
@@ -278,9 +273,9 @@ function buildGroups(
     desc: "Additional things this app asked to change.",
     rows: [],
   };
-  // A space permission needs a bucket of its own, and the reason is the
+  // A permission needs a bucket of its own, and the reason is the
   // heading rather than the tidiness. The read/write split is decided on
-  // `operation`, which a space permission sets to `"none"`, so without this
+  // `operation`, which a permission sets to `"none"`, so without this
   // arm every one of them fell through to the read bucket and a grant to
   // register webhooks or revoke keys was filed under "Additional things this
   // app asked to read". A heading that states the opposite of what the toggle
@@ -289,14 +284,14 @@ function buildGroups(
   // Unticked, and this is the one bucket where that is right. The other two
   // start ticked because a scope the app asked for and no bundle claimed is
   // still ordinary access to content, and unticking it by default would have
-  // this screen invent a policy. A space permission is the opposite case: it
-  // is authority over the space itself rather than over what it holds, and
+  // this screen invent a policy. A permission is the opposite case: it
+  // is authority over the instance itself rather than over what it holds, and
   // the whole reason it became a scope is so somebody has to say yes.
   // Arriving pre-ticked would grant it by silence, which is what it exists
   // to stop.
-  const otherSpacePermission: ScopeGroup = {
-    label: "Space permissions",
-    desc: "Parts of your space this app asked to manage.",
+  const otherPermission: ScopeGroup = {
+    label: "Permissions",
+    desc: "Parts of your server this app asked to manage.",
     rows: [],
   };
   for (const scope of scopes) {
@@ -315,7 +310,7 @@ function buildGroups(
     // claimed. `forceDefaultOn` still outranks both, because a scope already
     // granted is being shown rather than offered.
     if (requiresExplicitConsent(scopeLiteralFor(scope))) {
-      otherSpacePermission.rows.push({ scope, defaultOn: forceDefaultOn });
+      otherPermission.rows.push({ scope, defaultOn: forceDefaultOn });
     } else if (bundle) {
       byBundle.get(bundle.id)?.rows.push({
         scope,
@@ -327,9 +322,9 @@ function buildGroups(
       otherRead.rows.push({ scope, defaultOn: true });
     }
   }
-  // Space permissions last: it is the widest thing on the screen, and a
+  // Permissions last: it is the widest thing on the screen, and a
   // reader scanning downward should not meet it between two content groups.
-  return [...byBundle.values(), otherRead, otherWrite, otherSpacePermission]
+  return [...byBundle.values(), otherRead, otherWrite, otherPermission]
     .filter((g) => g.rows.length > 0)
     .map((g) => ({ ...g, desc: summarize(g) }));
 }
@@ -426,7 +421,7 @@ function summarize(group: ScopeGroup): string {
   // pair. A toggle row is a separately tickable grant whose literal is what
   // the form submits, so folding one into the other would hide a checkbox.
   // The device screen prints every line it resolves and truncates nothing,
-  // so folding there would drop a line to buy space nothing was competing
+  // so folding there would drop a line to buy room nothing was competing
   // for, and cost the reader the shape of the request the client actually
   // made. `consent-operation.test.ts` holds both surfaces to that.
   const foldKey = (scope: ParsedScope): string =>
@@ -466,19 +461,19 @@ function summarize(group: ScopeGroup): string {
     // descriptions through would put paragraph-length registry prose into a
     // comma-joined sentence, which is the failure the docstring above is
     // about, so the fix is a short form rather than the map — the shape
-    // `spacePermissionShort` and `oidcShort` already take.
+    // `permissionShort` and `oidcShort` already take.
     //
-    // Space permissions and the profile scopes resolve through their
+    // Permissions and the profile scopes resolve through their
     // inline-list forms rather than their toggle labels. A toggle label sits
     // alone above a switch, so it is capitalized and free to carry a comma;
     // joined into a sentence, the capital lands mid-clause and the comma
-    // turns one item into two. `SPACE_PERMISSION_SHORT` exists for precisely
+    // turns one item into two. `PERMISSION_SHORT` exists for precisely
     // this and says so. The OIDC lookup is asked only of an OIDC literal. The
     // profile category's pattern is the bare word `profile`, the same string
     // as the OIDC scope, and asked by pattern alone the lookup answered "your
     // name" for a grant over the whole profile surface.
     const label =
-      spacePermissionShort(scope.typePattern) ??
+      permissionShort(scope.typePattern) ??
       (scope.kind === "oidc"
         ? oidcShort(scope.oidcScope ?? scope.typePattern)
         : undefined) ??
@@ -582,9 +577,9 @@ function summarize(group: ScopeGroup): string {
  * why the description now stops where the label does.
  *
  * **Open-endedness is the one thing a label here cannot carry**, and the
- * constraint is the sentence rather than the space above a switch.
+ * constraint is the sentence rather than the room above a switch.
  * {@link summarize} joins these into a list, so an entry holding a comma or
- * an "and" arrives there as two items: "Definitions in your space and any
+ * an "and" arrives there as two items: "Definitions on your server and any
  * added later" joined with "Edge types" reads as one unpunctuated run of
  * three. Saying that a grant reaches things which do not exist yet needs a
  * conjunction, so a label cannot say it and stay a name. {@link subRow}
@@ -651,7 +646,7 @@ export const SCOPE_LABELS: Record<string, string> = {
   // separator guard in `consent-render.test.ts` forbids, correctly, because
   // `summarize` joins these into a list and an "and" inside one arrives there
   // as two items. Closing it needs a short inline form distinct from the
-  // toggle label, the shape `SPACE_PERMISSION_SHORT` already takes for exactly this
+  // toggle label, the shape `PERMISSION_SHORT` already takes for exactly this
   // reason. That is a map, not a word, so it is not in this pass.
   "system.connection": "Connections",
   "system.integration": "Available integrations",
@@ -662,7 +657,7 @@ export const SCOPE_LABELS: Record<string, string> = {
   "profile.name": "Name",
   "profile.email": "Email address",
   "profile.avatar": "Avatar",
-  metadata: "Definitions in your space",
+  metadata: "Definitions on your server",
   // The two metadata sub-resources had no entry at all, so `labelFor` fell to
   // `humanizeType` and answered "Types" and "Edge types" while the row beneath
   // printed the full sentence. Same scope, two registers, one screen — the
@@ -685,7 +680,7 @@ export const SCOPE_LABELS: Record<string, string> = {
  *
  * Lower case and free of anything that reads as an item boundary, because
  * {@link summarize} joins these into a list. That is the same contract
- * `SPACE_PERMISSION_SHORT` and `OIDC_SHORT` carry, and this is the third and last
+ * `PERMISSION_SHORT` and `OIDC_SHORT` carry, and this is the third and last
  * family in that chain to get one — type scopes were the one branch of
  * `summarize`'s resolution with no short form, so a label was doing both
  * jobs and could only ever be good at the harder one.
@@ -738,7 +733,7 @@ const CHEVRON = `<svg class="gchev" viewBox="0 0 24 24" fill="none" stroke="curr
  */
 function scopeLiteralFor(scope: ParsedScope): string {
   if (scope.kind === "oidc") return scope.oidcScope ?? scope.typePattern;
-  if (scope.kind === "space") return scope.spacePermission ?? scope.typePattern;
+  if (scope.kind === "permission") return scope.permission ?? scope.typePattern;
   return `${scope.typePattern}:${scope.operation}`;
 }
 
@@ -770,10 +765,10 @@ export function humanizeType(typePattern: string): string {
  * **Which of the two forms carries it is decided by what the name half
  * turned out to be, rather than by the scope.** The parenthesis
  * {@link withOperation} appends is written for a name, and `SCOPE_LABELS`,
- * the OIDC and space permission maps and the humanized floor all answer one:
+ * the OIDC and permission maps and the humanized floor all answer one:
  * "Notes (read and write)" is what that form is for. The description map
  * answers a sentence instead, so a row resolved through it read "Everything
- * in your space. (read only)", with the bracket stranded past the period.
+ * on your server. (read only)", with the bracket stranded past the period.
  * That is not a corner of this screen: every wildcard but `user.*`, every
  * edge type and three of the `system.*` types have no curated label at all,
  * and a runtime-registered type's description is whatever prose its author
@@ -830,9 +825,9 @@ function scopeName(
     const lit = scope.oidcScope ?? scope.typePattern;
     return { text: oidcLabel(lit) ?? humanizeType(lit), isSentence: false };
   }
-  if (scope.kind === "space" && scope.spacePermission) {
+  if (scope.kind === "permission" && scope.permission) {
     return {
-      text: SPACE_PERMISSION_LABELS[scope.spacePermission],
+      text: PERMISSION_LABELS[scope.permission],
       isSentence: false,
     };
   }
@@ -898,7 +893,7 @@ export function renderConsentScreen(params: ConsentParams): string {
         ? params.wildcardExpansions?.[scope.typePattern]
         : undefined;
     // Open-endedness is stated for every open-ended pattern rather than only
-    // for the ones a space can name members of today, and stated once.
+    // for the ones with members to name today, and stated once.
     // {@link isOpenEnded} is the whole of the condition: this row asks the
     // grammar and nothing else, so no string anywhere can talk it out of
     // saying so.
@@ -1063,7 +1058,7 @@ export function renderConsentScreen(params: ConsentParams): string {
     // Removed scopes are being dropped, not re-granted, so their group names
     // render as a quiet line with no toggles.
     //
-    // Joined into that line, so a space permission resolves through its
+    // Joined into that line, so a permission resolves through its
     // inline-list form for the same reason the summaries do: the toggle
     // labels are capitalized and two of them carry a comma, which turns one
     // item in this list into two fragments.
@@ -1091,7 +1086,7 @@ export function renderConsentScreen(params: ConsentParams): string {
           // literal and the profile category's pattern, so the OIDC label
           // is consulted only for the OIDC kind.
           const name =
-            spacePermissionShort(typePattern) ??
+            permissionShort(typePattern) ??
             (parsed?.kind === "oidc" ? oidcLabel(typePattern) : undefined) ??
             SCOPE_LABELS[typePattern] ??
             humanizeType(typePattern);
@@ -1145,7 +1140,7 @@ export function renderConsentScreen(params: ConsentParams): string {
     ? asksForMore
       ? `You have used <b>${safeClient}</b> before. It is asking for a little more.`
       : `You have used <b>${safeClient}</b> before. It is asking you to confirm what it already has.`
-    : `<b>${safeClient}</b> wants to access your space. You can change this anytime in settings.`;
+    : `<b>${safeClient}</b> wants to access your server. You can change this anytime in settings.`;
   const primaryLabel = showDiff ? "Continue" : "Allow access";
 
   // Each group's master toggle drives its members; members reflect back as an

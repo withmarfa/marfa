@@ -27,7 +27,7 @@ beforeAll(async () => {
   ctx = await createTestContext();
   for (let i = 0; i < 3; i++) {
     const res = await request(ctx.app, "POST", "/items", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         type: "core.note",
         properties: { body: `unknown-key-probe-${String(i)}` },
@@ -51,7 +51,7 @@ afterAll(async () => {
 async function idsFrom(
   path: string,
 ): Promise<{ status: number; ids: string[] }> {
-  const res = await request(ctx.app, "GET", path, { key: ctx.spaceKey });
+  const res = await request(ctx.app, "GET", path, { key: ctx.workingKey });
   if (res.status !== 200) return { status: res.status, ids: [] };
   const body = (await res.json()) as {
     data?: { id: string }[];
@@ -89,7 +89,7 @@ describe("GET /items — an unknown parameter is refused", () => {
 
   it("names the rejected parameter and what the door accepts", async () => {
     const res = await request(ctx.app, "GET", "/items?zzz_nonsense=1", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
     });
     expect(res.status).toBe(400);
     const body = (await res.json()) as {
@@ -107,7 +107,7 @@ describe("GET /items — an unknown parameter is refused", () => {
       ctx.app,
       "GET",
       `/items?limit=5&${encodeURIComponent("edge[about]")}=someid`,
-      { key: ctx.spaceKey },
+      { key: ctx.workingKey },
     );
     expect(res.status).toBe(200);
   });
@@ -133,7 +133,7 @@ describe("GET /items — an unknown parameter is refused", () => {
       ctx.app,
       "GET",
       `/items?limit=50&${encodeURIComponent("edge[about]")}=`,
-      { key: ctx.spaceKey },
+      { key: ctx.workingKey },
     );
     const body = (await named.json()) as { error: { message: string } };
     expect(body.error.message).toContain("edge[about]");
@@ -159,7 +159,7 @@ describe("GET /items — an unknown parameter is refused", () => {
 describe("GET /edges — the door the published rename points at", () => {
   it("refuses an unknown parameter", async () => {
     const res = await request(ctx.app, "GET", "/edges?limit=50&zzz=1", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
     });
     expect(res.status).toBe(400);
   });
@@ -174,7 +174,7 @@ describe("GET /edges — the door the published rename points at", () => {
         ctx.app,
         "GET",
         `/edges?limit=50&${absent}=${FUTURE}`,
-        { key: ctx.spaceKey },
+        { key: ctx.workingKey },
       );
       expect(res.status).toBe(400);
       const body = (await res.json()) as {
@@ -190,7 +190,7 @@ describe("GET /edges — the door the published rename points at", () => {
       ctx.app,
       "GET",
       `/edges?limit=50&updated_after=1970-01-01T00:00:00.000Z`,
-      { key: ctx.spaceKey },
+      { key: ctx.workingKey },
     );
     expect(res.status).toBe(200);
   });
@@ -201,11 +201,11 @@ describe("the per-item edge listings — the sibling doors", () => {
     const id = excluded[0]!;
     for (const path of [`/items/${id}/edges`, `/items/${id}/backrefs`]) {
       const bad = await request(ctx.app, "GET", `${path}?edge_typ=about`, {
-        key: ctx.spaceKey,
+        key: ctx.workingKey,
       });
       expect(bad.status).toBe(400);
       const good = await request(ctx.app, "GET", `${path}?edge_type=about`, {
-        key: ctx.spaceKey,
+        key: ctx.workingKey,
       });
       expect(good.status).toBe(200);
     }
@@ -221,7 +221,7 @@ describe("GET /search and GET /export — the other filtered reads", () => {
 
   it("refuse an unknown parameter on export", async () => {
     const res = await request(ctx.app, "GET", "/export?zzz_nonsense=1", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
     });
     expect(res.status).toBe(400);
   });
@@ -231,7 +231,7 @@ describe("GET /search and GET /export — the other filtered reads", () => {
       ctx.app,
       "GET",
       "/export?format=archive&zzz_nonsense=1",
-      { key: ctx.spaceKey },
+      { key: ctx.workingKey },
     );
     expect(res.status).toBe(400);
   });
@@ -253,7 +253,7 @@ describe("the reserved `_` prefix, on every door that refuses", () => {
       "/export?format=archive&_trace=1",
     ];
     for (const path of doors()) {
-      const res = await request(ctx.app, "GET", path, { key: ctx.spaceKey });
+      const res = await request(ctx.app, "GET", path, { key: ctx.workingKey });
       expect(res.status, `${path} refused a reserved-prefix parameter`).toBe(
         200,
       );
@@ -269,7 +269,7 @@ describe("the reserved `_` prefix, on every door that refuses", () => {
       ctx.app,
       "GET",
       `/items?limit=50&occurred_after=${FUTURE}&_cache_bust=9`,
-      { key: ctx.spaceKey },
+      { key: ctx.workingKey },
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as { data: { id: string }[] };
@@ -287,7 +287,7 @@ describe("the reserved `_` prefix, on every door that refuses", () => {
       ctx.app,
       "GET",
       `/items?limit=50&occurred_aftr=${FUTURE}`,
-      { key: ctx.spaceKey },
+      { key: ctx.workingKey },
     );
     expect(res.status).toBe(400);
   });
@@ -299,7 +299,7 @@ describe("POST /items/bulk-actions — the door where a dropped key costs rows",
     filter: Record<string, unknown>,
   ): Promise<{ status: number; ids: string[] }> {
     const res = await request(ctx.app, "POST", "/items/bulk-actions", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         action: "update_tags",
         add: ["probe"],
@@ -324,13 +324,13 @@ describe("POST /items/bulk-actions — the door where a dropped key costs rows",
     expect(ok.ids).toEqual([]);
   });
 
-  it("does not turn a misspelled bound into the whole space", async () => {
+  it("does not turn a misspelled bound into every item", async () => {
     const bad = await matched({
       type: "core.note",
       ocurred_before: "1970-01-02T00:00:00.000Z",
     });
     // The assertion that matters: none of the seeded rows are in the match
-    // set. Dropped, this filter selects every item in the space and the
+    // set. Dropped, this filter selects every item and the
     // action applies to all of them without erroring.
     for (const id of excluded) expect(bad.ids).not.toContain(id);
     expect(bad.status).toBe(400);
@@ -338,7 +338,7 @@ describe("POST /items/bulk-actions — the door where a dropped key costs rows",
 
   it("names the rejected field", async () => {
     const res = await request(ctx.app, "POST", "/items/bulk-actions", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         action: "update_tags",
         add: ["probe"],
@@ -354,7 +354,7 @@ describe("POST /items/bulk-actions — the door where a dropped key costs rows",
   /** The raw door, so a body can carry a key the typed helper would not. */
   async function post(body: Record<string, unknown>): Promise<Response> {
     return request(ctx.app, "POST", "/items/bulk-actions", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body,
     });
   }
@@ -459,7 +459,7 @@ describe("POST /items/bulk-actions — the door where a dropped key costs rows",
 
   it("refuses a filter field it does not declare, naming what it accepts", async () => {
     const res = await request(ctx.app, "POST", "/items/bulk-actions", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         action: "update_tags",
         add: ["probe"],

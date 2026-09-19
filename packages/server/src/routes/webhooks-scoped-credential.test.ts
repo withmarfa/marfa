@@ -1,10 +1,10 @@
 /**
- * A webhook subscription may only be registered by a credential whose
- * reach is the whole space.
+ * A webhook subscription may only be registered by a credential that can
+ * read everything stored.
  *
- * A subscription is space-level and carries no credential of its own: the
- * row is a url, a secret, an event list and a space, and a delivery is
- * built once and sent to every matching endpoint. There is no principal
+ * A subscription is instance-wide and carries no credential of its own: the
+ * row is a url, a secret and an event list, and a delivery is built once and
+ * sent to every matching endpoint. There is no principal
  * to narrow a payload against, so the only thing that can bound what a
  * webhook delivers is the reach of whoever registered it.
  *
@@ -26,7 +26,7 @@ import {
 } from "../test-utils.js";
 import { hashApiKey } from "../middleware/auth.js";
 import type { TestContext } from "../test-utils.js";
-import { SPACE_PERMISSIONS } from "@withmarfa/shared";
+import { PERMISSIONS } from "@withmarfa/shared";
 
 let ctx: TestContext;
 
@@ -42,17 +42,17 @@ interface ErrorBody {
   error: { code: string };
 }
 
-describe("POST /webhooks and a credential narrower than its space", () => {
-  it("refuses a session holding a subset of the space", async () => {
+describe("POST /webhooks and a credential that cannot read everything", () => {
+  it("refuses a session holding a subset of what is stored", async () => {
     const { token } = await seedOauthBearer(
       ctx.storage,
       ["keys.mint", "webhooks.manage"],
       {},
     );
 
-    // The space permission gate admits it — that is the point. The refusal
+    // The permission gate admits it — that is the point. The refusal
     // has to come from the credential's narrow content reach, not from a
-    // missing scope. Both space permissions are granted so that the request
+    // missing scope. Both permissions are granted so that the request
     // reaches the check this file is about: `keys` for the probe below,
     // `webhooks` for the door itself. Neither buys any data-plane reach, so
     // what the webhook door sees is unchanged.
@@ -77,13 +77,13 @@ describe("POST /webhooks and a credential narrower than its space", () => {
     // a scoped credential there would let it take over a subscription it
     // could not have created.
 
-    // Registered by a credential reaching the whole space, as intended.
+    // Registered by a credential that can read everything, as intended.
     const suffix = Math.random().toString(36).slice(2, 8);
     const adminKey = await ctx.storage.keys.create(
       {
         label: `wh-admin-${suffix}`,
         source: `wh-admin-${suffix}`,
-        permissions: [...SPACE_PERMISSIONS],
+        permissions: [...PERMISSIONS],
         type_permissions: { "*": "write" },
         default_tier: "library",
         is_operator: false,
@@ -104,7 +104,7 @@ describe("POST /webhooks and a credential narrower than its space", () => {
       ["keys.mint", "webhooks.manage"],
       {},
     );
-    // The space permission gate admits it, so the refusal below comes from the
+    // The permission gate admits it, so the refusal below comes from the
     // credential's content reach. The create test asserts the same.
     expect(
       (await request(ctx.app, "GET", "/keys", { key: token })).status,
@@ -121,16 +121,16 @@ describe("POST /webhooks and a credential narrower than its space", () => {
 
   it("refuses one on the delete door too", async () => {
     // Destroying a subscription it could not have created is the same
-    // rationale: the row belongs to the space, and an app holding a
-    // subset of it must not be able to silence deliveries the space
-    // depends on.
+    // rationale: the row belongs to the instance, and an app that can read
+    // only part of what is stored must not be able to silence deliveries
+    // something else depends on.
     const suffix = Math.random().toString(36).slice(2, 8);
     const raw = `marfa_k1_whdel_${suffix}`;
     await ctx.storage.keys.create(
       {
         label: `wh-del-${suffix}`,
         source: `wh-del-${suffix}`,
-        permissions: [...SPACE_PERMISSIONS],
+        permissions: [...PERMISSIONS],
         type_permissions: { "*": "write" },
         default_tier: "library",
         is_operator: false,
@@ -169,7 +169,7 @@ describe("POST /webhooks and a credential narrower than its space", () => {
     ).toContain(webhookId);
   });
 
-  it("admits a credential that reaches the whole space", async () => {
+  it("admits a credential that can read everything", async () => {
     // The control. Without it the refusal above is satisfied by a door
     // that refuses everyone.
     const suffix = Math.random().toString(36).slice(2, 8);
@@ -178,7 +178,7 @@ describe("POST /webhooks and a credential narrower than its space", () => {
       {
         label: `wh-ok-${suffix}`,
         source: `wh-ok-${suffix}`,
-        permissions: [...SPACE_PERMISSIONS],
+        permissions: [...PERMISSIONS],
         type_permissions: { "*": "write" },
         default_tier: "library",
         is_operator: false,

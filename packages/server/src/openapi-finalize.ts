@@ -67,7 +67,8 @@ const PUBLIC_TAGS = [
   },
   {
     name: "Metadata",
-    description: "An item's metadata document and the space's tag vocabulary.",
+    description:
+      "An item's metadata document and the instance's tag vocabulary.",
   },
   {
     name: "Edges",
@@ -113,8 +114,8 @@ const PUBLIC_TAGS = [
     description:
       "Connection credentials — static API tokens and OAuth providers.",
   },
-  { name: "Export", description: "Bulk export of a space's data." },
-  { name: "Audit", description: "The space's audit log." },
+  { name: "Export", description: "Bulk export of the instance's data." },
+  { name: "Audit", description: "The instance's audit log." },
   {
     name: "Events",
     description: "The server-sent events stream of item and edge changes.",
@@ -151,7 +152,7 @@ export const EXTRA_PATHS: Record<string, Record<string, unknown>> = {
       tags: ["Events"],
       summary: "Stream change events",
       description:
-        "Opens a Server-Sent Events stream of item and edge changes for the caller's space. Send `Last-Event-ID` to replay events missed across a reconnect.\n\n" +
+        "Opens a Server-Sent Events stream of item and edge changes the caller can read. Send `Last-Event-ID` to replay events missed across a reconnect.\n\n" +
         'The stream opens with a `stream_cursor` frame, carrying `{ "type": "stream_cursor", "cursor": "<event id>" }` — the log position the stream opened at. It does not wait for anything to happen, so a client that subscribes and then reads a snapshot holds a resume point from the first moment rather than waiting for an event to tell it where it is. The frame deliberately carries no SSE `id:` field: on a reconnect it precedes the backlog, and a client adopting it as its cursor there would discard exactly the events it reconnected for.\n\n' +
         "Treat the frame as the first one delivered rather than as guaranteed. Reading the head is bounded, so a stream opened while the database is not answering carries no cursor instead of holding its events back, and a client that receives none proceeds as it would have before the frame existed. Do not gate hydration on its arrival.\n\n" +
         "The cursor is a position in one ascending sequence, and `type` and `edges` select a subset of that sequence rather than reordering it, so a cursor taken under one filter can be replayed under another without skipping or repeating a row.\n\n" +
@@ -294,7 +295,7 @@ const IDEMPOTENCY_HEADER_PARAM = {
   required: false,
   schema: { type: "string", maxLength: 255 },
   description:
-    "A client-chosen key identifying this write. The server records the status and body it returns against the key and answers a repeat carrying the same key with that stored result, performing no second write. A conflict is recorded like any other outcome, so a retry is told its first attempt collided rather than left to re-derive it. Scoped to the space; a key replayed with a different request is refused with `idempotency_key_reused`.",
+    "A client-chosen key identifying this write. The server records the status and body it returns against the key and answers a repeat carrying the same key with that stored result, performing no second write. A conflict is recorded like any other outcome, so a retry is told its first attempt collided rather than left to re-derive it. Scoped to this instance; a key replayed with a different request is refused with `idempotency_key_reused`.",
 };
 
 /** `/items/:id/purge` as OpenAPI spells it: `/items/{id}/purge`. */

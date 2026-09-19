@@ -26,13 +26,13 @@ import {
 // ---------------------------------------------------------------------------
 
 const exportRoute = createRoute({
-  operationId: "exportSpaceData",
+  operationId: "exportData",
   method: "get",
   path: "/",
   tags: ["Export"],
-  summary: "Export space data",
+  summary: "Export data",
   description:
-    "Streams the space's items with their metadata (tags and extensions) as `{item, metadata}` NDJSON lines, followed by the edges between exported items as `{edge}` lines (default) or, with `format=archive`, a `marfa-archive-v2.tar.gz` carrying `manifest.json`, `items.ndjson`, `edges.ndjson`, `types.ndjson` (the space's type and edge-type registrations, so a restore into an empty space can write the items that use them), and blob bytes that `POST /admin/restore-archive` can ingest. Space-scoped, exporting only what the caller can read; the response streams until the filter is exhausted. Only edges whose endpoints are both in the exported item set are included, so a filtered export never references items it does not carry. " +
+    "Streams the instance's items with their metadata (tags and extensions) as `{item, metadata}` NDJSON lines, followed by the edges between exported items as `{edge}` lines (default) or, with `format=archive`, a `marfa-archive-v2.tar.gz` carrying `manifest.json`, `items.ndjson`, `edges.ndjson`, `types.ndjson` (the type and edge-type registrations, so a restore into an empty database can write the items that use them), and blob bytes that `POST /admin/restore-archive` can ingest. Exports only what the caller can read; the response streams until the filter is exhausted. Only edges whose endpoints are both in the exported item set are included, so a filtered export never references items it does not carry. " +
     UNKNOWN_PARAM_NOTE,
   security: [{ bearerAuth: [] }],
   request: {
@@ -41,13 +41,13 @@ const exportRoute = createRoute({
         .string()
         .optional()
         .describe(
-          "Filter to a single type identifier, subtypes included. A concrete identifier the space does not know is refused with 400 `unknown_type`.",
+          "Filter to a single type identifier, subtypes included. A concrete identifier this instance does not know is refused with 400 `unknown_type`.",
         ),
       state: z
         .string()
         .optional()
         .describe(
-          `Filter by item state. \`${ALL_STATES}\` exports every state including trashed, in one pass — which is what an export meaning "everything this space holds" needs, since the archive is what a restore reads back. Omitting the parameter keeps the default every item read applies, which excludes trashed rows.`,
+          `Filter by item state. \`${ALL_STATES}\` exports every state including trashed, in one pass — which is what an export meaning "everything stored" needs, since the archive is what a restore reads back. Omitting the parameter keeps the default every item read applies, which excludes trashed rows.`,
         ),
       source: z.string().optional().describe("Filter by source credential"),
       occurred_after: z
@@ -110,8 +110,8 @@ export function exportRoutes(storage: Storage, blobBackend: BlobBackend) {
     // One check for both output formats: `format=archive` is handled by a
     // separate function further down but arrives through this handler and
     // shares this query schema, so refusing here covers both. An export
-    // narrowed by a filter that was silently dropped writes the whole
-    // space to a file the caller believes is a slice of it.
+    // narrowed by a filter that was silently dropped writes everything to
+    // a file the caller believes is a slice of it.
     refuseUnknownQueryParams(c.req.raw.url, exportRoute.request.query);
 
     const query = c.req.valid("query");
@@ -123,12 +123,10 @@ export function exportRoutes(storage: Storage, blobBackend: BlobBackend) {
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
       key_id: c.get("apiKey")?.id,
-      action: "export.space",
-      resource_type: "space",
-      resource_id: "me",
+      action: "export.run",
+      resource_type: "export",
       details: {
         format: query.format ?? "ndjson",
-        scope: "space",
       },
     });
 
@@ -363,7 +361,7 @@ async function handleArchiveExport(
       edgeCursor = page.has_more ? (page.cursor ?? undefined) : undefined;
     } while (edgeCursor);
 
-    // The space's own registrations, not the filtered item set's: a
+    // The instance's own registrations, not the filtered item set's: a
     // restore has to be able to write every item the archive carries,
     // and an unfiltered archive is the case that matters. Carrying a
     // type the archive happens not to use costs one line.

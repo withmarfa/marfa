@@ -11,8 +11,8 @@
  *
  * The two properties that matter are *only when asked* and *only those keys*.
  * A sweep that fires unasked destroys credentials nobody chose to destroy; a
- * sweep that keys on the client id alone crosses into another space, because
- * one app holds a grant in every space that connected it.
+ * sweep that keys on the client id alone reaches keys the app did not mint,
+ * because one client id can stand behind more than one grant.
  */
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import {
@@ -60,7 +60,7 @@ async function seedKey(
 
 /** One active grant for `CLIENT`, plus a key that app made and a key the
  *  person made. */
-async function seedSpace() {
+async function seedGrant() {
   const grant = await ctx.storage.items.create({
     type: "system.connection",
     tier: "library",
@@ -88,10 +88,10 @@ async function isLive(id: string): Promise<boolean> {
 
 describe("revoking an app's grant", () => {
   it("leaves the app's keys alone when nothing asked for them", async () => {
-    const { grant, appKeyId, ownKeyId } = await seedSpace();
+    const { grant, appKeyId, ownKeyId } = await seedGrant();
 
     const res = await request(ctx.app, "DELETE", `/auth/grants/${grant.id}`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
     });
     expect(res.status).toBe(204);
 
@@ -100,29 +100,29 @@ describe("revoking an app's grant", () => {
   });
 
   it("takes them when the door is asked to", async () => {
-    const { grant, appKeyId, ownKeyId } = await seedSpace();
+    const { grant, appKeyId, ownKeyId } = await seedGrant();
 
     const res = await request(
       ctx.app,
       "DELETE",
       `/auth/grants/${grant.id}?revoke_keys=true`,
-      { key: ctx.spaceKey },
+      { key: ctx.workingKey },
     );
     expect(res.status).toBe(204);
 
     expect(await isLive(appKeyId)).toBe(false);
     // The person's own key is not the app's to take, and this is the assertion
-    // that separates "swept the app's keys" from "swept the space's keys".
+    // that separates "swept the app's keys" from "swept every key".
     expect(await isLive(ownKeyId)).toBe(true);
   });
 
   it("revokes the grant itself either way", async () => {
-    const { grant } = await seedSpace();
+    const { grant } = await seedGrant();
     const res = await request(
       ctx.app,
       "DELETE",
       `/auth/grants/${grant.id}?revoke_keys=true`,
-      { key: ctx.spaceKey },
+      { key: ctx.workingKey },
     );
     expect(res.status).toBe(204);
     const after = await ctx.storage.items.get(grant.id);

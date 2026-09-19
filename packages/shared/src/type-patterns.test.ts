@@ -169,10 +169,9 @@ describe("typePatternToSql", () => {
 });
 
 describe("resolving names alone", () => {
-  it("consults no registry when the caller supplies no space scope", () => {
-    // Webhook filters and scope parsing match on identifiers only. Omitting the
-    // scope has to keep them on exactly the predicate they always emitted, so
-    // the declared half is opt-in rather than something a pure caller inherits.
+  it("consults no registry where the caller matches on identifiers alone", () => {
+    // Webhook filters and scope parsing match on identifiers only, so the
+    // declared half stays out of the predicate they emit.
     // `typePatternToSql` never resolves it at all — see its own comment.
     expect(typeSubtreeToSql("core.note").extraTypes).toEqual([]);
     expect(typeMatchesPattern("user.elsewhere", "core.note.*")).toBe(false);
@@ -187,13 +186,9 @@ describe("resolving names alone", () => {
  * `typeAnswersSubtreeFilter` exists so the stream, which has no query to
  * hang a predicate on, resolves `?type=` the way `/items` compiles it.
  * That promise is only worth making if the two agree about every input,
- * and the one that is easy to get wrong is the scope argument: the SQL
- * side reads `undefined` as "resolve names only" and `null` as the real
- * null-space bucket, while the registry lookup underneath the predicate
- * treats the two alike. So a predicate that simply forwarded the value
- * would resolve declared parentage where its twin resolves none — the
- * disagreement it exists to prevent, in the one caller who omits the
- * argument.
+ * and the one that is easy to get wrong is the declared clause: a predicate
+ * that resolved declared parentage where its twin resolves none would be
+ * exactly the disagreement this exists to prevent.
  */
 describe("the read filter's predicate answers what its SQL twin selects", () => {
   const OUTSIDE = "user.declared_note";

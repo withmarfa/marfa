@@ -22,7 +22,7 @@ afterAll(async () => {
   await ctx.cleanup();
 });
 
-function spaceKey(): ApiKey {
+function workingKey(): ApiKey {
   return {
     id: "key_events_capacity",
     name: "events capacity",
@@ -37,13 +37,13 @@ function spaceKey(): ApiKey {
   } as unknown as ApiKey;
 }
 
-/** A bare app around eventRoutes with a synthesized space principal, so
+/** A bare app around eventRoutes with a synthesized principal, so
  *  the route options are under the test's control rather than the app
  *  factory's. */
 function makeApp(options: EventRoutesOptions): Hono<AppEnv> {
   const app = new Hono<AppEnv>();
   app.use("*", async (c, next) => {
-    c.set("apiKey", spaceKey());
+    c.set("apiKey", workingKey());
     await next();
   });
   app.route("/events", eventRoutes(ctx.storage, options));

@@ -46,7 +46,7 @@ afterAll(async () => {
 async function keyWithoutEdgePermissions(): Promise<string> {
   const suffix = Math.random().toString(36).slice(2, 10);
   const res = await request(ctx.app, "POST", "/keys", {
-    key: ctx.spaceKey,
+    key: ctx.workingKey,
     body: {
       label: `edge-door-${suffix}`,
       source: `edge-door-${suffix}`,
@@ -62,7 +62,7 @@ async function keyWithoutEdgePermissions(): Promise<string> {
 
 async function note(sourceId?: string): Promise<string> {
   const res = await request(ctx.app, "POST", "/items", {
-    key: ctx.spaceKey,
+    key: ctx.workingKey,
     body: {
       type: "core.note",
       ...(sourceId ? { source_id: sourceId } : {}),
@@ -75,7 +75,7 @@ async function note(sourceId?: string): Promise<string> {
 
 async function edgeCount(sourceItemId: string): Promise<number> {
   const res = await request(ctx.app, "GET", `/items/${sourceItemId}/edges`, {
-    key: ctx.spaceKey,
+    key: ctx.workingKey,
   });
   expect(res.status).toBe(200);
   return ((await res.json()) as { data: unknown[] }).data.length;
@@ -84,7 +84,7 @@ async function edgeCount(sourceItemId: string): Promise<number> {
 /** Give `sourceItemId` one `about` edge, using authority that may do so. */
 async function seedEdge(sourceItemId: string, targetId: string): Promise<void> {
   const res = await request(ctx.app, "POST", "/edges", {
-    key: ctx.spaceKey,
+    key: ctx.workingKey,
     body: { source_id: sourceItemId, target_id: targetId, edge_type: "about" },
   });
   expect(res.status).toBe(201);
@@ -241,7 +241,7 @@ describe.each(DOORS)("$name", (door) => {
   it("still allows the write when the caller does hold the edge permission", async () => {
     const suffix = Math.random().toString(36).slice(2, 10);
     const keyRes = await request(ctx.app, "POST", "/keys", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         label: `edge-door-allowed-${suffix}`,
         source: `edge-door-allowed-${suffix}`,
@@ -288,7 +288,7 @@ describe("the two doors that accept a client-supplied edge id", () => {
     const malformed = "not-an-identifier";
 
     const single = await request(ctx.app, "POST", "/edges", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         id: malformed,
         source_id: source,
@@ -302,7 +302,7 @@ describe("the two doors that accept a client-supplied edge id", () => {
     ).toBe("invalid_id");
 
     const bulk = await request(ctx.app, "POST", "/edges/bulk", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         atomic: false,
         edges: [
@@ -334,7 +334,7 @@ describe("the two doors that accept a client-supplied edge id", () => {
     const singleTarget = await note();
     const singleId = generateId();
     const single = await request(ctx.app, "POST", "/edges", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         id: singleId,
         source_id: singleSource,
@@ -351,7 +351,7 @@ describe("the two doors that accept a client-supplied edge id", () => {
     const bulkTarget = await note();
     const bulkId = generateId();
     const bulk = await request(ctx.app, "POST", "/edges/bulk", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         atomic: false,
         edges: [

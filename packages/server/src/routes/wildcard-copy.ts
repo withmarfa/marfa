@@ -55,7 +55,7 @@ export function deriveWildcardDescription(
   //
   // `isReservedRoot` is the belt, and it is load-bearing rather than
   // decorative: `classifyNamespace` documents that a reserved root with no
-  // tier of its own — `content`, `space` — falls through to
+  // tier of its own — `content`, `audit` — falls through to
   // `publisher`. Neither reaches this function today, because both are
   // claimed by earlier arms of `parseScope`, but a classifier answering
   // "publisher" for a reserved word is not a premise to leave a sentence
@@ -66,7 +66,7 @@ export function deriveWildcardDescription(
   if (!name) return undefined;
   return isEdge
     ? `How ${name} connects your items.`
-    : `Everything ${name} saves in your space.`;
+    : `Everything ${name} saves on your server.`;
 }
 
 /**
@@ -74,8 +74,8 @@ export function deriveWildcardDescription(
  * `acme-corp` becomes "Acme Corp".
  *
  * **The friendly rendering is deliberate and was ruled on.** The proposal
- * once went the other way — render the handle verbatim, so a space claiming
- * `google-drive` could not have a brand supplied for it by this transform.
+ * once went the other way — render the handle verbatim, so a publisher handle
+ * of `google-drive` could not have a brand supplied for it by this transform.
  * That was rejected for the reader's sake, and the vector it guarded against
  * was closed from the other side: the half-protection that reserved `google`
  * while admitting `google-drive` was deleted outright rather than widened,
@@ -87,9 +87,9 @@ export function deriveWildcardDescription(
  * write, which protects the namespace always, where a name list protects it
  * only while the list stays current.
  *
- * A space's own root also renders its member types beside the row —
- * `resolveWildcardExpansions` enumerates what the space actually registered
- * under it — so the sentence is not the only thing a person is given.
+ * A registered root also renders its member types beside the row —
+ * `resolveWildcardExpansions` enumerates what was actually registered under
+ * it — so the sentence is not the only thing a person is given.
  */
 function displayNameForRoot(root: string): string {
   return root

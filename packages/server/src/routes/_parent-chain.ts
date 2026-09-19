@@ -53,10 +53,10 @@ export interface ParentChainMessages {
 
 /**
  * A parent chain must terminate, must not reach back to the type being
- * registered, and must resolve every ancestor within the caller's space.
+ * registered, and must resolve every ancestor through the registry.
  *
- * Parents resolve space-scoped so a custom type may inherit from another
- * of the space's custom types as well as from a core one.
+ * Parents resolve through the registry so a custom type may inherit from
+ * another runtime-registered type as well as from a core one.
  *
  * The messages differ by door because they are read in different contexts:
  * a restore names the offending archive entry, since the caller did not

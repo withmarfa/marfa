@@ -71,13 +71,13 @@ const UNIVERSAL_FIELDS: Record<string, FieldDefinition> = {
   links: { type: "array", items_type: "string" },
 };
 
-// The platform-shipped types are global — bundled with @withmarfa/types and
-// resolvable by every space. This map is read-only after construction. Three
+// The platform-shipped types are bundled with @withmarfa/types and resolve
+// for every caller. This map is read-only after construction. Three
 // families feed it and each stays identifiable afterwards: `ALL_TYPES` is the
 // core set, `ALL_INTEGRATION_TYPES` is the vendor-shaped set an integration writes
 // into, and `ALL_SYSTEM_TYPES` is the platform-internal set. They resolve
 // identically — the split describes provenance so a catalog can say what a
-// space is actually looking at, not a difference in how lookups behave.
+// reader is actually looking at, not a difference in how lookups behave.
 const _coreRegistry = new Map<string, TypeSchema>(
   [...ALL_TYPES, ...ALL_INTEGRATION_TYPES, ...ALL_SYSTEM_TYPES].map(
     (schema) => [schema.id, schema],
@@ -293,7 +293,7 @@ export const SYSTEM_TYPE_IDS: ReadonlySet<string> = _systemTypeIds;
  * The set of type IDs shipped as integration types: one vendor's payload shape,
  * present so an integration has somewhere faithful to write. They carry no
  * behavioral restrictions — the split from the core set is a provenance
- * distinction, so a catalog can tell a space which types are the shared
+ * distinction, so a catalog can tell a reader which types are the shared
  * vocabulary and which exist because a specific upstream service does.
  */
 export const INTEGRATION_TYPE_IDS: ReadonlySet<string> = _integrationTypeIds;
@@ -378,10 +378,9 @@ export function getSourceFilter(
 }
 
 /**
- * The core type registry — the global core + system type schemas by
- * identifier. Custom (space-scoped) types are NOT exposed here; consumers
- * that need a space's full set call `listTypes()`, and lookups go
- * through `getTypeSchema(id)`. The OAuth scope allow-list and consent
+ * The core type registry — the shipped core + system type schemas by
+ * identifier. Custom types are NOT exposed here; consumers that need the
+ * full set call `listTypes()`, and lookups go through `getTypeSchema(id)`. The OAuth scope allow-list and consent
  * descriptions read this for the static core-scope enumeration.
  */
 export const TYPE_REGISTRY: ReadonlyMap<string, TypeSchema> = _coreRegistry;
@@ -520,7 +519,7 @@ export function isPublisherType(id: string): boolean {
 }
 
 /**
- * Registers a custom type schema into the space's overlay and clears the
+ * Registers a custom type schema into the runtime overlay and clears the
  * compiled schemas it invalidates: this id always, and every descendant when
  * an existing registration is being replaced.
  *
@@ -531,8 +530,8 @@ export function isPublisherType(id: string): boolean {
  * hold is a different case and belongs here. An instance's shipped
  * vocabulary is seeded data, so a client can meet a `system.*` type its own
  * build never compiled in, and the overlay is the only place a client may
- * put one — the platform map is global, so writing a space's listing into it
- * would hand that listing to every other space. The lifecycle rules key on
+ * put one — the platform map is the build's own, so a runtime listing does
+ * not belong in it. The lifecycle rules key on
  * the identifier rather than on which map holds the schema, so they answer
  * for such a type identically wherever it sits.
  */
@@ -552,7 +551,7 @@ export function registerTypeSchema(schema: TypeSchema): void {
 }
 
 /**
- * Removes a custom type schema from the space's overlay and clears the
+ * Removes a custom type schema from the runtime overlay and clears the
  * compiled schemas its removal invalidates.
  */
 export function unregisterTypeSchema(id: string): void {
@@ -567,11 +566,7 @@ export function unregisterTypeSchema(id: string): void {
 }
 
 /**
- * Drop a type's compiled Zod schemas for one space.
- *
- * The cache is keyed per space, so clearing only this space's entry is both
- * sufficient and necessary: two spaces may hold different schemas under the
- * same id.
+ * Drop a type's compiled Zod schemas.
  */
 function evictCompiledSchema(id: string): void {
   zodSchemaCache.delete(zodCacheKey(id));
@@ -579,7 +574,7 @@ function evictCompiledSchema(id: string): void {
 }
 
 /**
- * Every type in the space whose declared parent chain reaches `rootId`,
+ * Every registered type whose declared parent chain reaches `rootId`,
  * excluding `rootId` itself.
  *
  * A compiled Zod schema is built from a type's RESOLVED fields, so changing
@@ -675,7 +670,7 @@ export function getResolvedFields(
 
   // Collect the inheritance chain (parent first, then child). A custom type's
   // parent may itself be a custom type, so resolve each ancestor through the
-  // same space scope. The `seen` set guards against a cycle that somehow
+  // same registry. The `seen` set guards against a cycle that somehow
   // reached the registry — without it a cyclic `parent` chain loops forever.
   const chain: TypeSchema[] = [];
   const seen = new Set<string>();
@@ -776,7 +771,7 @@ export function isSubtypeOf(typeId: string, parentId: string): boolean {
  * that is the whole point: a type registered at runtime under a shipped
  * parent never passes through the build-time codegen, so a role flattened at
  * build time would be a role only in-tree types could have. Resolving through
- * the chain means a space's subtype of a container is a container, exactly as
+ * the chain means a runtime subtype of a container is a container, exactly as
  * a subtype already satisfies an ancestor's name constraint.
  *
  * Unknown types answer false — the same fail-closed rule the name-based
@@ -804,7 +799,7 @@ export function typeHasRole(typeId: string, role: TypeRole): boolean {
 }
 
 /**
- * Every type in the space's vocabulary whose declared `parent` chain reaches
+ * Every type in the vocabulary whose declared `parent` chain reaches
  * `rootId`, excluding `rootId` itself and excluding anything already covered by
  * a name-prefix match on `<rootId>.`.
  *
@@ -819,7 +814,7 @@ export function typeHasRole(typeId: string, role: TypeRole): boolean {
  * its own right, and narrowing it would trade a silent omission for a different
  * silent omission.
  *
- * Cost is one pass over the space's types per call, which is small (the
+ * Cost is one pass over the registered types per call, which is small (the
  * platform ships ~42) and only paid when a subtree is actually being resolved.
  */
 export function declaredDescendantsOutsideNamespace(rootId: string): string[] {
@@ -837,14 +832,14 @@ export function declaredDescendantsOutsideNamespace(rootId: string): string[] {
 }
 
 /**
- * The types in the space that name `typeId` as their immediate parent.
+ * The registered types that name `typeId` as their immediate parent.
  *
  * Direct children only, because the question it answers is whether deleting
  * this type would leave a chain pointing at nothing, and a grandchild's chain
  * stays intact as long as its own parent does.
  *
- * A pass over the space's types, which is a few dozen entries: the platform
- * ships about forty-five and a space adds a handful. An index on the declared
+ * A pass over the registered types, which is a few dozen entries: the
+ * platform ships about forty-five and a runtime registry adds a handful. An index on the declared
  * parent would carry more cost in keeping it true than the scan does.
  */
 export function directChildrenOf(typeId: string): string[] {
@@ -864,7 +859,7 @@ export function directChildrenOf(typeId: string): string[] {
  * being submitted. Ten legal updates can therefore take a chain past a cap
  * that refused every step of building it directly.
  *
- * Walks the declared parent of every type in the space, so a subtype named
+ * Walks the declared parent of every registered type, so a subtype named
  * outside its parent's namespace counts exactly like one named under it.
  */
 export function maxDescendantDepth(typeId: string): number {
@@ -1242,7 +1237,7 @@ export function validateTransition(
  * The rules live in `@withmarfa/types`, which the in-tree codegen also calls,
  * so a schema is judged by one implementation whichever path it arrived on.
  * This wrapper only supplies the two things the validator can't reach on its
- * own: space-scoped registry resolution for the inheritance and
+ * own: registry resolution for the inheritance and
  * `compatible_with` checks, and the namespace grammar.
  *
  * Errors carry `field`, `expected`, `actual` and `hint`; the subset that maps

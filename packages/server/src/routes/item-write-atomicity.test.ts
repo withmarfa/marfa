@@ -82,9 +82,8 @@ let seq = 0;
 const uniq = (p: string): string =>
   `${p}-${String(++seq)}-${String(Date.now())}`;
 
-/** Seeded straight into the context's space, because every door below is
- *  reached with a space-bound credential and a row with no space of its own
- *  is outside what that credential can see. */
+/** Seeded through storage rather than through a door, because the doors
+ *  below are what is under test. */
 async function makeNote(body: string): Promise<string> {
   const item = await ctx.storage.items.create({
     type: "core.note",
@@ -115,7 +114,7 @@ async function countNotesWithBody(body: string): Promise<number> {
 
 async function makeEdge(source: string, target: string): Promise<string> {
   const res = await request(ctx.app, "POST", "/edges", {
-    key: ctx.spaceKey,
+    key: ctx.workingKey,
     body: { source_id: source, target_id: target, edge_type: "references" },
   });
   expect(res.status).toBe(201);
@@ -136,7 +135,7 @@ describe("POST /items/{id}/promote", () => {
     let status: number;
     try {
       const res = await request(ctx.app, "POST", `/items/${mirror}/promote`, {
-        key: ctx.spaceKey,
+        key: ctx.workingKey,
       });
       status = res.status;
     } finally {
@@ -157,7 +156,7 @@ describe("POST /items/{id}/promote", () => {
     const mirror = await plantMirror(body);
 
     const res = await request(ctx.app, "POST", `/items/${mirror}/promote`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
     });
     expect(res.status).toBe(201);
     const promoted = (await res.json()) as { item: { id: string } };
@@ -179,14 +178,14 @@ describe("DELETE /items/{id}/purge", () => {
     const inbound = await makeEdge(other, target);
     const outbound = await makeEdge(target, other);
     await request(ctx.app, "DELETE", `/items/${target}`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
     });
 
     const broken = breakWrite(ctx.storage.items, "purge");
     let status: number;
     try {
       const res = await request(ctx.app, "DELETE", `/items/${target}/purge`, {
-        key: ctx.spaceKey,
+        key: ctx.workingKey,
       });
       status = res.status;
     } finally {
@@ -210,11 +209,11 @@ describe("DELETE /items/{id}/purge", () => {
     const inbound = await makeEdge(other, target);
     const outbound = await makeEdge(target, other);
     await request(ctx.app, "DELETE", `/items/${target}`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
     });
 
     const res = await request(ctx.app, "DELETE", `/items/${target}/purge`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
     });
     expect(res.status).toBe(200);
     expect(await ctx.storage.edges.get(inbound)).toBeNull();
@@ -232,14 +231,14 @@ describe("PATCH /items/{id}/metadata", () => {
     const item = await makeNote("bounded");
     const hundred = Array.from({ length: 100 }, (_, i) => `t${String(i)}`);
     const seeded = await request(ctx.app, "PATCH", `/items/${item}/metadata`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: { tags: hundred },
     });
     expect(seeded.status).toBe(200);
     const before = await readUpdatedAt(item);
 
     const res = await request(ctx.app, "PATCH", `/items/${item}/metadata`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: { tags: ["one-too-many"] },
     });
     expect(res.status).toBe(400);
@@ -260,7 +259,7 @@ describe("PATCH /items/{id}/metadata", () => {
   it("still applies a patch that stays inside the bound", async () => {
     const item = await makeNote("bounded");
     const res = await request(ctx.app, "PATCH", `/items/${item}/metadata`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: { tags: ["alpha", "beta"] },
     });
     expect(res.status).toBe(200);

@@ -8,9 +8,9 @@ import {
   RevokedKeyReaper,
   AuthSessionCleaner,
   DcrClientCleaner,
-  runSpaceCleanup,
+  runSweepAtRetention,
 } from "./retention.js";
-import type { SpaceFanout } from "./retention.js";
+import type { RetentionOverride } from "./retention.js";
 import { TEST_API_KEY_SALT } from "../test-utils.js";
 import { hashApiKey } from "../middleware/auth.js";
 import { writeInstanceConfig } from "./instance-config.js";
@@ -231,7 +231,7 @@ describe("TrashPurger — the instance config override", () => {
       ).toISOString(),
     });
 
-    const fanout: SpaceFanout = {
+    const retentionOverride: RetentionOverride = {
       settings: ctx.storage.settings,
       configField: "trash_retention_days",
     };
@@ -240,7 +240,7 @@ describe("TrashPurger — the instance config override", () => {
       30, // the instance default the override beats
       3_600_000,
       () => FIXED_NOW,
-      fanout,
+      retentionOverride,
     );
     const deleted = await purger.runOnce();
     expect(deleted).toBe(1);
@@ -261,7 +261,7 @@ describe("TrashPurger — the instance config override", () => {
       ).toISOString(),
     });
 
-    const fanout: SpaceFanout = {
+    const retentionOverride: RetentionOverride = {
       settings: ctx.storage.settings,
       configField: "trash_retention_days",
     };
@@ -270,7 +270,7 @@ describe("TrashPurger — the instance config override", () => {
       60,
       3_600_000,
       () => FIXED_NOW,
-      fanout,
+      retentionOverride,
     );
     const deleted = await purger.runOnce();
     expect(deleted).toBe(0);
@@ -278,16 +278,16 @@ describe("TrashPurger — the instance config override", () => {
   });
 });
 
-describe("runSpaceCleanup — audit and event-log retention", () => {
+describe("runSweepAtRetention — audit and event-log retention", () => {
   it("calls the sweep function with the effective retention", async () => {
     await writeInstanceConfig(ctx.storage.settings, {
       audit_retention_days: 7,
     });
 
     const calls: { retention: number }[] = [];
-    const total = await runSpaceCleanup({
+    const total = await runSweepAtRetention({
       jobName: "test-audit-cleanup",
-      fanout: {
+      override: {
         settings: ctx.storage.settings,
         configField: "audit_retention_days",
       },
@@ -310,9 +310,9 @@ describe("runSpaceCleanup — audit and event-log retention", () => {
     });
 
     const calls: { retention: number }[] = [];
-    const total = await runSpaceCleanup({
+    const total = await runSweepAtRetention({
       jobName: "test-eventlog-cleanup",
-      fanout: {
+      override: {
         settings: ctx.storage.settings,
         configField: "event_log_retention_hours",
       },
@@ -328,11 +328,11 @@ describe("runSpaceCleanup — audit and event-log retention", () => {
     expect(total).toBe(0);
   });
 
-  it("falls back to a single global sweep when no fanout is provided", async () => {
+  it("falls back to the instance default when no override is provided", async () => {
     const calls: { retention: number }[] = [];
-    const total = await runSpaceCleanup({
-      jobName: "test-no-fanout",
-      fanout: undefined,
+    const total = await runSweepAtRetention({
+      jobName: "test-no-override",
+      override: undefined,
       instanceDefault: 90,
       unitMs: MS_PER_DAY,
       sweep: (retention) => {

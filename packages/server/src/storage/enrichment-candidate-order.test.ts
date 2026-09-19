@@ -54,7 +54,7 @@ async function forceTimes(
 
 async function createFileItem(name: string): Promise<string> {
   const res = await request(ctx.app, "POST", "/items", {
-    key: ctx.spaceKey,
+    key: ctx.workingKey,
     body: {
       type: "core.file",
       properties: {
@@ -101,7 +101,7 @@ describe("the extraction queue", () => {
 
     // An ordinary tag write, through the door a person uses.
     const tagged = await request(ctx.app, "POST", `/items/${middle}/tags`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: { tags: ["receipts"] },
     });
     expect(tagged.status, await tagged.clone().text()).toBe(200);

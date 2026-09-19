@@ -39,7 +39,7 @@ export class SqliteMetadataStore implements MetadataStore {
     const excludedTypes = filters.excludedTypes ?? [];
     // An empty allow-list means "no readable types", not "no restriction",
     // and every other read surface reads it that way. Guarding on a non-empty
-    // list dropped the clause and returned the whole space's tag vocabulary
+    // list dropped the clause and returned the whole tag vocabulary
     // with counts, which names what exists even when no item behind it is
     // readable.
     //

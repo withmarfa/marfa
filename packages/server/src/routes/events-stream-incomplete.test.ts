@@ -53,7 +53,7 @@ async function latestEventId(): Promise<bigint> {
   return rows.reduce((max, row) => (row.id > max ? row.id : max), 0n);
 }
 
-/** Default is a key with no space and no permission map, so nothing is
+/** Default is a key with no permission map, so nothing is
  *  filtered and every emitted event reaches the hold. The probes below
  *  override the permission map to narrow what may be delivered. */
 function makeApp(storage: Storage, key: Partial<ApiKey> = {}): Hono<AppEnv> {
@@ -142,7 +142,7 @@ describe("a catch-up that throws partway through", () => {
    * same throw already ends the stream where the client can see it, and
    * the replay swallowed it.
    *
-   * Registered into the context space's overlay, which is what the
+   * Registered into the runtime overlay, which is what the
    * credential opening the stream below resolves against.
    */
   const CYCLE = ["cyc.alpha", "cyc.beta"] as const;
@@ -168,7 +168,7 @@ describe("a catch-up that throws partway through", () => {
 
   it("tells the client and closes, instead of ending quietly", async () => {
     const seed = await request(ctx.app, "POST", "/items", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: { type: "core.note", properties: { body: "throw seed" } },
     });
     expect(seed.status).toBe(201);
@@ -179,9 +179,6 @@ describe("a catch-up that throws partway through", () => {
     // something to name. Without it the frame would truthfully carry
     // null and the test would prove nothing about where it stopped.
     //
-    // Every row here carries the space the stream is opened in, because the
-    // catch-up read is fenced to the subscriber's space and an unstamped row
-    // is one it never sees.
     const beforeId = await ctx.storage.eventLog.append({
       event_type: "created",
       item_id: "ZZbeforethrowZZ",
@@ -216,7 +213,7 @@ describe("a catch-up that throws partway through", () => {
     });
 
     const res = await request(ctx.app, "GET", "/events?type=core.note", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       headers: { "Last-Event-ID": String(cursor) },
     });
     expect(res.status).toBe(200);
@@ -250,7 +247,7 @@ describe("live frames held past the limit while the catch-up runs", () => {
 
   it("tells the client and closes, instead of growing without a limit", async () => {
     const seed = await request(ctx.app, "POST", "/items", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: { type: "core.note", properties: { body: "overflow seed" } },
     });
     expect(seed.status).toBe(201);
@@ -307,7 +304,7 @@ describe("frames the subscriber would never receive", () => {
 
   it("do not fill the hold when the stream opted out of edges", async () => {
     const seed = await request(ctx.app, "POST", "/items", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: { type: "core.note", properties: { body: "edges-none seed" } },
     });
     expect(seed.status).toBe(201);
@@ -339,7 +336,7 @@ describe("frames the subscriber would never receive", () => {
 
   it("do not fill the hold when the credential cannot read their type", async () => {
     const seed = await request(ctx.app, "POST", "/items", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: { type: "core.note", properties: { body: "scoped seed" } },
     });
     expect(seed.status).toBe(201);

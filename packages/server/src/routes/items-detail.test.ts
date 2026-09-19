@@ -10,8 +10,7 @@
  *  - `neighbors` hydrates the far-end items of the requested edge blocks, each
  *    with its metadata;
  *  - neighbor hydration is NOT an access-control bypass: a neighbor the
- *    caller cannot read by type, or that lives in another space, is silently
- *    omitted, never leaked;
+ *    caller cannot read by type is silently omitted, never leaked;
  *  - `versions` is opt-in.
  */
 
@@ -45,7 +44,7 @@ async function mintKey(
     {
       label,
       source: `${label}-${suffix}`,
-      // No space permission is named because no door here asks for one: the
+      // No permission is named because no door here asks for one: the
       // item read, the edge writes and the neighbor hydration are all decided
       // by the two maps below.
       default_tier: "library",

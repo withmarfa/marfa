@@ -2,15 +2,13 @@
  * How many rows this instance holds whose stored value falls outside the
  * union the build compares that column against.
  *
- * The request-time half of this is already closed. `stored-space-status.ts`
- * and `platform-family.ts` each refuse an unrecognized value, project onto
- * the least capability, and log the row they met it on. What neither can do
- * is answer the question the motivating incident actually turned on: **how
- * many rows**. A rename left every row of one table on both environments
- * holding a value no build recognized, and it stayed that way for a full
- * rename cycle. A per-request log line would not have shortened that. On
- * a broken instance it is a log storm, which is the same as silence, and
- * the previous occurrence proved nobody reads it.
+ * The request-time half of this is already closed. `platform-family.ts`
+ * refuses an unrecognized value, projects onto the least capability, and
+ * logs the row it met it on. What it cannot answer is **how many rows**, and
+ * that is the question that matters: a rename can leave every row of a table
+ * holding a value no build recognizes, and nothing notices until the next
+ * rename cycle. A per-request log line would not shorten it: on a broken
+ * instance that is a log storm, which is the same as silence.
  *
  * So this is a count and not a guard. Nothing here changes what a request
  * sees.

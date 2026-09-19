@@ -11,12 +11,12 @@ import {
 import { OIDC_LABELS, OIDC_SHORT } from "./oidc-labels.js";
 import { DEFAULT_PERMISSION_BUNDLES } from "../config.js";
 import {
-  SPACE_PERMISSION_LABELS,
-  SPACE_PERMISSION_SHORT,
-  spacePermissionLabel,
-} from "./space-permission-labels.js";
+  PERMISSION_LABELS,
+  PERMISSION_SHORT,
+  permissionLabel,
+} from "./permission-labels.js";
 import {
-  SPACE_PERMISSIONS,
+  PERMISSIONS,
   EDGE_TYPE_REGISTRY,
   GLOBAL_TYPE_WILDCARD,
   grantCoversScope,
@@ -207,18 +207,18 @@ describe("renderConsentScreen — soft-tile groups", () => {
         const parsed = parseScope(literal);
         expect(parsed, `unparseable bundle scope: ${literal}`).not.toBeNull();
         if (!parsed) continue;
-        // The space permission arm has to be here or the guard stops guarding:
-        // without it a space permission resolves through `humanizeType` to a
+        // The permission arm has to be here or the guard stops guarding:
+        // without it a permission resolves through `humanizeType` to a
         // truthy "Webhooks" and the case passes while green-lighting the
-        // exact collision `SPACE_PERMISSION_LABELS` exists to prevent.
+        // exact collision `PERMISSION_LABELS` exists to prevent.
         const label =
           parsed.kind === "oidc"
             ? OIDC_LABELS[
                 (parsed.oidcScope ??
                   parsed.typePattern) as keyof typeof OIDC_LABELS
               ]
-            : parsed.kind === "space"
-              ? spacePermissionLabel(parsed.typePattern)
+            : parsed.kind === "permission"
+              ? permissionLabel(parsed.typePattern)
               : (SCOPE_LABELS[parsed.typePattern] ??
                 humanizeType(parsed.typePattern));
         expect(label, `no label resolves for ${literal}`).toBeTruthy();
@@ -561,7 +561,7 @@ describe("renderConsentScreen — re-consent diff", () => {
   /**
    * The one place an OIDC literal still reached `humanizeType`.
    *
-   * "No longer needed" resolved its labels through the space permission map,
+   * "No longer needed" resolved its labels through the permission map,
    * then `SCOPE_LABELS`, then the last-dotted-segment fallback — never
    * through the OIDC copy. So a client that dropped `profile` rendered
    * "Profile" here while the granted row above it said "Your name and
@@ -770,7 +770,7 @@ describe("a grant that reaches things not yet created says so", () => {
    *  same way rather than imported, so the test fails if the renderer's
    *  answer stops matching the grammar's. */
   const openEnded = (scope: ParsedScope): boolean => {
-    if (scope.kind === "oidc" || scope.kind === "space") return false;
+    if (scope.kind === "oidc" || scope.kind === "permission") return false;
     if (scope.typePattern === GLOBAL_TYPE_WILDCARD) return true;
     if (subtreeWildcardRoot(scope.typePattern) !== null) return true;
     return (
@@ -1015,7 +1015,7 @@ describe("a grant that reaches things not yet created says so", () => {
     // arrives, exactly once, on the surface a person actually reads.
     //
     // The global wildcard runs in this loop like everything else. It used to
-    // be exempted, on the argument that "Everything in your space." cannot
+    // be exempted, on the argument that "Everything on your server." cannot
     // be falsified by a type registered tomorrow and that this was all the
     // device screen needed, since the device screen had no second line to
     // state the property on. The device screen composes its own sentence
@@ -1113,9 +1113,9 @@ describe("a grant that reaches things not yet created says so", () => {
     // above is on the row and not in the label: saying it needs an "and",
     // and an "and" breaks the same list a comma does.
     //
-    // The conjunction is asserted here where `SPACE_PERMISSION_SHORT` deliberately
+    // The conjunction is asserted here where `PERMISSION_SHORT` deliberately
     // leaves it alone, and the difference is what the two maps hold. A
-    // space permission's short form is a verb phrase, where "connect and
+    // permission's short form is a verb phrase, where "connect and
     // disconnect services" is one item and reads correctly in a list. Every
     // entry here is the name of a thing, and a name joined by a conjunction
     // is two names: "Notes, People and places and Files" is what this one
@@ -1134,7 +1134,7 @@ describe("a grant that reaches things not yet created says so", () => {
     // conjunction on its row: `system.activity` reads "Activity and
     // notifications" there, where the notifications half is the one a reader
     // cares about, and summarizes as "activity". That is the same split
-    // `SPACE_PERMISSION_SHORT` has always had, arriving on the third and last
+    // `PERMISSION_SHORT` has always had, arriving on the third and last
     // family in the chain.
     const SEPARATORS = [",", ";", "/", "&", " and ", " or ", " plus "];
     for (const [pattern, label] of Object.entries(SCOPE_LABELS)) {
@@ -1456,28 +1456,28 @@ describe("a grant that reaches things not yet created says so", () => {
 // webhook row and the other is the power to point a new webhook anywhere.
 // ---------------------------------------------------------------------------
 
-describe("space permission labels", () => {
-  it("names every space permission in both shapes", () => {
+describe("permission labels", () => {
+  it("names every permission in both shapes", () => {
     // The docstrings claim a test pins this. It is this one.
-    expect(SPACE_PERMISSIONS.length).toBeGreaterThan(0);
-    for (const literal of SPACE_PERMISSIONS) {
+    expect(PERMISSIONS.length).toBeGreaterThan(0);
+    for (const literal of PERMISSIONS) {
       expect(
-        SPACE_PERMISSION_LABELS[literal],
+        PERMISSION_LABELS[literal],
         `no toggle label: ${literal}`,
       ).toBeTruthy();
       expect(
-        SPACE_PERMISSION_SHORT[literal],
+        PERMISSION_SHORT[literal],
         `no short label: ${literal}`,
       ).toBeTruthy();
     }
   });
 
   it("never collides with the humanized fallback it replaces", () => {
-    for (const literal of SPACE_PERMISSIONS) {
-      expect(spacePermissionLabel(literal)).not.toBe(humanizeType(literal));
+    for (const literal of PERMISSIONS) {
+      expect(permissionLabel(literal)).not.toBe(humanizeType(literal));
     }
     // The specific pair that motivated the map.
-    expect(spacePermissionLabel("webhooks.manage")).not.toBe(
+    expect(permissionLabel("webhooks.manage")).not.toBe(
       SCOPE_LABELS["system.webhook"],
     );
   });
@@ -1485,8 +1485,8 @@ describe("space permission labels", () => {
   it("keeps the inline forms comma-free, since they are joined into a list", () => {
     // A label carrying its own comma turns one item into two when the
     // security page lists several in a sentence.
-    for (const literal of SPACE_PERMISSIONS) {
-      expect(SPACE_PERMISSION_SHORT[literal]).not.toContain(",");
+    for (const literal of PERMISSIONS) {
+      expect(PERMISSION_SHORT[literal]).not.toContain(",");
     }
   });
 });
@@ -1549,7 +1549,7 @@ describe("renderConsentScreen — default_on", () => {
   };
   const OFF_BUNDLE = {
     id: "manage",
-    label: "Manage your space",
+    label: "Manage your server",
     description: "",
     scopes: ["core.note:write"],
     default_on: false,
@@ -1568,7 +1568,7 @@ describe("renderConsentScreen — default_on", () => {
 
   it("renders an off-by-default bundle unticked, rows and master alike", () => {
     const html = render();
-    expect(masterChecked(html, "Manage your space")).toBe(false);
+    expect(masterChecked(html, "Manage your server")).toBe(false);
     expect(html).toContain('value="core.note:write"');
     // Stated as the whole submission rather than as a `not.toContain`, which
     // passes on an empty match and so would survive a renderer that emitted
@@ -1630,7 +1630,7 @@ describe("renderConsentScreen — default_on", () => {
     // Ticking a group submits the literals its rows carry, so the property
     // the renderer owns is that those rows are exactly the bundle's scopes:
     // no neighbor's literal rides along, and none of its own is missing.
-    expect(offeredIn(render(), "Manage your space")).toEqual([
+    expect(offeredIn(render(), "Manage your server")).toEqual([
       "core.note:write",
     ]);
     expect(offeredIn(render(), "Read your content")).toEqual([
@@ -1703,7 +1703,7 @@ describe("renderConsentScreen — a scope in two bundles", () => {
       bundles: [
         {
           id: "manage",
-          label: "Manage your space",
+          label: "Manage your server",
           description: "",
           scopes: ["core.note:write"],
           default_on: false,
@@ -1737,7 +1737,7 @@ describe("renderConsentScreen — a scope in two bundles", () => {
       bundles: [
         {
           id: "manage",
-          label: "Manage your space",
+          label: "Manage your server",
           description: "",
           scopes: ["core.task:write"],
           default_on: false,
@@ -1752,7 +1752,7 @@ describe("renderConsentScreen — a scope in two bundles", () => {
       ],
     });
     expect(defaultSubmission(html)).toEqual(["core.task:write"]);
-    expect(offeredIn(html, "Manage your space")).toEqual([]);
+    expect(offeredIn(html, "Manage your server")).toEqual([]);
   });
 
   it("still unticks a scope no on-by-default bundle reaches", () => {
@@ -1766,7 +1766,7 @@ describe("renderConsentScreen — a scope in two bundles", () => {
       bundles: [
         {
           id: "manage",
-          label: "Manage your space",
+          label: "Manage your server",
           description: "",
           scopes: ["user.secret:write"],
           default_on: false,
@@ -1781,15 +1781,17 @@ describe("renderConsentScreen — a scope in two bundles", () => {
       ],
     });
     expect(defaultSubmission(html)).toEqual([]);
-    expect(offeredIn(html, "Manage your space")).toEqual(["user.secret:write"]);
+    expect(offeredIn(html, "Manage your server")).toEqual([
+      "user.secret:write",
+    ]);
   });
 });
 
 /**
  * Every label that reaches a joined sentence needs a sentence form.
  *
- * `summarize` resolves OIDC scopes through `OIDC_SHORT` and space permissions
- * through `SPACE_PERMISSION_SHORT`, both separate maps from the toggle labels.
+ * `summarize` resolves OIDC scopes through `OIDC_SHORT` and permissions
+ * through `PERMISSION_SHORT`, both separate maps from the toggle labels.
  * Two maps with the same keys and no compile-time link is exactly how the
  * capitalization bug this replaced got in: adding a toggle label without
  * its sentence form breaks nothing that anything notices.
@@ -1810,12 +1812,12 @@ describe("sentence forms cover every label that can be joined into one", () => {
     // summarize capitalizes whichever one lands first and nothing else, so a
     // capitalized entry landing second reproduces exactly the defect these
     // maps exist to prevent. A label carrying its own comma turns one list
-    // item into two fragments. SPACE_PERMISSION_SHORT is checked here rather than
+    // item into two fragments. PERMISSION_SHORT is checked here rather than
     // only for commas, because it is the larger map and the one whose toggle
     // labels are full sentences.
     for (const value of [
       ...Object.values(OIDC_SHORT),
-      ...Object.values(SPACE_PERMISSION_SHORT),
+      ...Object.values(PERMISSION_SHORT),
     ]) {
       expect(value).not.toMatch(/,/);
       // A conjunction is NOT checked here, deliberately. It looked like the
@@ -1823,7 +1825,7 @@ describe("sentence forms cover every label that can be joined into one", () => {
       // items, so "your name and picture and your email address" reads as
       // three things. But no regex separates that from "connect and
       // disconnect services", where the conjunction is inside one verb
-      // phrase and reads correctly in a list. Two `SPACE_PERMISSION_SHORT` entries
+      // phrase and reads correctly in a list. Two `PERMISSION_SHORT` entries
       // are of that shape and are right as they stand. The rendered
       // snapshots are what caught the real instance and are the guard that
       // can tell the two apart, because a person reads them.
@@ -1859,7 +1861,7 @@ describe("buildScopeDescriptions covers every kind a person can be shown", () =>
     // them. Whoever requests them is not who reads the screen.
     const out = describeAll("metadata:read", "metadata.types:write");
     expect(out.metadata).toMatch(/\S/);
-    expect(out["metadata.types"]).toBe("Custom data types in your space.");
+    expect(out["metadata.types"]).toBe("Custom data types on your server.");
   });
 
   it("names what a metadata scope reaches rather than what it permits", () => {
@@ -2014,7 +2016,7 @@ describe("buildScopeDescriptions covers every kind a person can be shown", () =>
     // half a person reads.
     const out = describeAll("acme-corp.*:read", "edge.acme-corp.*:read");
     expect(out["acme-corp.*"]).toBe(
-      "Everything Acme Corp saves in your space.",
+      "Everything Acme Corp saves on your server.",
     );
     expect(out["edge.acme-corp.*"]).toBe("How Acme Corp connects your items.");
 
@@ -2049,19 +2051,19 @@ describe("buildScopeDescriptions covers every kind a person can be shown", () =>
     }
   });
 
-  it("leaves a space permission out, because both screens name one without it", () => {
+  it("leaves a permission out, because both screens name one without it", () => {
     // `labelFor` here and `describeScope` on the device screen both resolve a
-    // space permission through `space-permission-labels.ts` and return before
+    // permission through `permission-labels.ts` and return before
     // they reach this map, so an entry would be computed and discarded on
     // every render. That is the whole reason the map has nothing for one.
     //
     // Held by rendering with no map at all rather than by asserting what the
     // map holds. The absence is only safe while both screens still name a
-    // space permission unaided, and asserting the absence alone would pass
+    // permission unaided, and asserting the absence alone would pass
     // equally well on a screen that had started needing an entry and lost the
     // words.
-    expect(SPACE_PERMISSIONS.length).toBeGreaterThan(0);
-    const scopes = SPACE_PERMISSIONS.map(parse);
+    expect(PERMISSIONS.length).toBeGreaterThan(0);
+    const scopes = PERMISSIONS.map(parse);
     expect(buildScopeDescriptions(scopes)).toEqual({});
 
     const authorize = renderConsentScreen({
@@ -2076,11 +2078,11 @@ describe("buildScopeDescriptions covers every kind a person can be shown", () =>
       userCode: "ABCD-EFGH",
     });
 
-    for (const literal of SPACE_PERMISSIONS) {
-      expect(authorize, literal).toContain(SPACE_PERMISSION_LABELS[literal]);
-      expect(device, literal).toContain(SPACE_PERMISSION_LABELS[literal]);
+    for (const literal of PERMISSIONS) {
+      expect(authorize, literal).toContain(PERMISSION_LABELS[literal]);
+      expect(device, literal).toContain(PERMISSION_LABELS[literal]);
       // The device screen's floor when nothing names a scope. Reached by the
-      // same arm, so a space permission arriving here as its own literal is the
+      // same arm, so a permission arriving here as its own literal is the
       // shape a lost label takes rather than a second failure.
       expect(device, literal).not.toContain(`<span>${literal}</span>`);
     }
@@ -2098,8 +2100,8 @@ describe("buildScopeDescriptions covers every kind a person can be shown", () =>
   it("prefers curated copy to the registry's, and falls back to it", () => {
     // **The fixture used to be `google.calendar.event`, and the comment
     // beside it said the fallback serves a type registered at runtime.**
-    // Neither half survived a check. A runtime registration goes to a
-    // per-space overlay that `TYPE_REGISTRY` does not expose, so it cannot
+    // Neither half survived a check. A runtime registration goes to an
+    // overlay that `TYPE_REGISTRY` does not expose, so it cannot
     // reach this lookup at all; and a custom type is not requestable as a
     // row of its own anyway, only through its namespace wildcard. The
     // fallback's entire population was shipped types nobody had curated,
@@ -2150,13 +2152,13 @@ describe("buildScopeDescriptions covers every kind a person can be shown", () =>
     // type can be registered under. Both would have read the type axis's copy
     // the moment the wildcard entries landed beside them.
     const out = describeAll("*:read", "edge.*:read", "edge.metadata:read");
-    expect(out["*"]).toBe("Everything in your space.");
+    expect(out["*"]).toBe("Everything on your server.");
     // `edge.*` has copy of its own now, which makes this check sharper
     // rather than weaker: the failure it guards is `edge.*` resolving the
     // TYPE axis's sentence off the flat map, and an undefined could never
     // have told that apart from the entry simply not existing yet. Now it
     // can, so the assertion is inequality against the string it must not be.
-    expect(out["edge.*"]).toBe("How everything in your space is connected.");
+    expect(out["edge.*"]).toBe("How everything on your server is connected.");
     expect(out["edge.*"]).not.toBe(out["*"]);
     expect(out["edge.metadata"]).toBeUndefined();
     // The curated edge copy still resolves, keyed on the pattern. Held

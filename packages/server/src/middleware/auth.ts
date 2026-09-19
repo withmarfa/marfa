@@ -13,9 +13,9 @@ import {
   edgePermissionCovers,
   metadataPermissionCovers,
   profilePermissionCovers,
-  hasSpacePermission,
+  hasPermission,
 } from "@withmarfa/shared";
-import type { ApiKey, SpacePermission, TypeFilter } from "@withmarfa/shared";
+import type { ApiKey, Permission, TypeFilter } from "@withmarfa/shared";
 import type { Storage } from "../storage/interface.js";
 import type { AppConfig } from "../config.js";
 
@@ -39,11 +39,11 @@ export interface AppEnv extends Record<string, unknown> {
      * three projections beside them translate a token's scopes into
      * `type_permissions`, `edge_permissions` and `metadata_permissions`
      * and drop every literal they do not recognize — deliberately, since a
-     * space permission names authority over an administrative surface rather
+     * permission names authority over an administrative surface rather
      * than over a resource, and admitting one into a projection would put
      * it on the data plane where a wildcard could reach it. So the granted
      * set has to travel beside the projections rather than through them,
-     * and `requireSpacePermission` is the only thing that reads it.
+     * and `requirePermission` is the only thing that reads it.
      *
      * `clientId` and `authUserId` are here for a second reason: an audit
      * row for an action an app took needs to name the grant it was taken
@@ -261,12 +261,9 @@ export function _clearOAuthLastUsedCacheForTesting(): void {
 // ---------------------------------------------------------------------------
 
 /**
- * **The deployment mode is not a parameter here any more, and that is the
- * point.** It was one so that a space-less bearer could be tolerated in keys
- * mode and refused in hosted, which was the last place in this file where
- * what a caller may do depended on how the instance was configured rather
- * than on the credential in hand. Keys mode has a space now, so the answer is
- * the same in both and there is nothing left to branch on.
+ * **Nothing here reads how the instance was configured, and that is the
+ * point.** This was the last place in this file where what a caller may do
+ * turned on a deployment setting rather than on the credential in hand.
  */
 export function authMiddleware(storage: Storage, salt: string) {
   // Bounded LRU keyed by `key:<api-key-id>` for the stored-key path.
@@ -366,7 +363,7 @@ export function authMiddleware(storage: Storage, salt: string) {
         // instance sits outside the permission model, so no consent screen can
         // offer it and no grant can reach it.
         is_operator: false,
-        // The space permissions the door reads come from the grant beside this
+        // The permissions the door reads come from the grant beside this
         // principal rather than from here, because a grant is the live answer
         // and a projection would be a copy of it taken at request time.
         //
@@ -384,7 +381,7 @@ export function authMiddleware(storage: Storage, salt: string) {
       });
       c.set("authType", "oauth");
       // The granted set, beside the projections rather than inside them.
-      // Read only by `requireSpacePermission` and by the audit rows that name
+      // Read only by `requirePermission` and by the audit rows that name
       // the grant an action was taken through.
       c.set("oauthGrant", {
         scopes: oauthToken.scopes,
@@ -484,7 +481,7 @@ export function checkAuth(apiKey: ApiKey | undefined): ApiKey {
  * key is fenced outside the model deliberately: it is never offered on a
  * consent screen, never derivable from a sign-in, and never needed by an app.
  * A surface that belongs inside the permission model wants
- * `requireSpacePermission` instead.
+ * `requirePermission` instead.
  */
 export function checkOperatorKey(apiKey: ApiKey | undefined): ApiKey {
   const key = checkAuth(apiKey);
@@ -522,7 +519,7 @@ export function checkTypeAccess(
 
   // Operator gate. Writes to `system.*` (and the internal-only `marfa.*`)
   // require `is_operator: true`, which is the instance tier and nothing a
-  // space-bound credential can hold. It is a fence rather than a route: the
+  // working credential can hold. It is a fence rather than a route: the
   // operator key's own maps are empty, so in practice the platform's own
   // machinery writes these rows through the storage layer rather than through
   // a credential at all.
@@ -533,8 +530,9 @@ export function checkTypeAccess(
   // refuses a reserved root to every credential, the operator key included,
   // because the shipped vocabulary is a property of the build.
   //
-  // Reads to `system.*` / `marfa.*` are unrestricted (filtered by space
-  // scoping at the storage layer); only writes need `is_operator`.
+  // Only writes are gated. A read of `system.*` or `marfa.*` is bounded by
+  // the caller's own type permissions like any other read, so there is
+  // nothing left for this check to add on that side.
   if (level === "write") {
     const tier = classifyNamespace(type);
     if (
@@ -831,7 +829,7 @@ export function requireMetadataPermission(
 
 /**
  * Authority over one administrative surface, asked of the credential's own
- * permission set. A key carries its space permissions on its row and a
+ * permission set. A key carries its permissions on its row and a
  * sign-in carries them on its grant; nothing here reads what kind of
  * credential arrived, and nothing admits a caller that was never handed the
  * permission.
@@ -850,7 +848,7 @@ export function requireMetadataPermission(
  * credential it is, so a door that should ask this and does not stands open
  * to any authenticated caller. No scan can find one either, because
  * `requireAuth` sits on nearly every handler and leaves no signature to key
- * on; `routes/space-permission-door-census.test.ts` holds the doors that do
+ * on; `routes/permission-door-census.test.ts` holds the doors that do
  * ask to asking for the right surface.
  *
  * **A missing carrier fails closed.** An OAuth request that reached a gate
@@ -862,13 +860,13 @@ export function requireMetadataPermission(
  * nothing to act on, and a client cannot narrow toward a scope nobody told it
  * about.
  */
-export function requireSpacePermission(
+export function requirePermission(
   c: Context<AppEnv>,
-  permission: SpacePermission,
+  permission: Permission,
 ): void {
   const key = checkAuth(c.get("apiKey"));
   // **One question, asked of one list, whichever kind of credential arrived.**
-  // A key carries its space permissions on its row and a sign-in carries them
+  // A key carries its permissions on its row and a sign-in carries them
   // on its grant, and both are the literals themselves — so the door does not
   // branch on what it is looking at, and there is no second implementation to
   // drift.
@@ -876,7 +874,7 @@ export function requireSpacePermission(
     c.get("authType") === "oauth"
       ? (c.get("oauthGrant")?.scopes ?? [])
       : (key.permissions ?? []);
-  if (hasSpacePermission(held, permission)) return;
+  if (hasPermission(held, permission)) return;
   throw new MarfaError(
     ErrorCode.FORBIDDEN,
     `This credential does not hold ${permission}`,

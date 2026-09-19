@@ -51,7 +51,7 @@ interface ErrorResponse {
 
 async function registerType(body: Record<string, unknown>): Promise<Response> {
   return await request(ctx.app, "POST", "/types", {
-    key: ctx.spaceKey,
+    key: ctx.workingKey,
     body,
   });
 }
@@ -71,7 +71,7 @@ async function registerTypeOk(body: Record<string, unknown>): Promise<void> {
 async function createItem(
   type: string,
   properties: Record<string, unknown>,
-  key: string = ctx.spaceKey,
+  key: string = ctx.workingKey,
 ): Promise<string> {
   const res = await request(ctx.app, "POST", "/items", {
     key,
@@ -88,7 +88,7 @@ async function createItem(
 async function join(
   sourceId: string,
   targetId: string,
-  key: string = ctx.spaceKey,
+  key: string = ctx.workingKey,
 ): Promise<Response> {
   return await request(ctx.app, "POST", "/edges", {
     key,
@@ -231,7 +231,7 @@ describe("the role vocabulary is closed", () => {
     // An unknown role matches no type, so the edge would refuse every
     // endpoint while reading as though it admitted a family of them.
     const res = await request(ctx.app, "POST", "/edge-types", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         id: `user.shelved-in-${suffix}`,
         cardinality: "many-to-many",

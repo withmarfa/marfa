@@ -30,7 +30,7 @@ describe("oauth last-used stamp drains at close", () => {
 
   async function createItem(): Promise<string> {
     const res = await request(ctx.app, "POST", "/items", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         type: "core.note",
         properties: { title: "stamp target", body: "" },
@@ -44,9 +44,7 @@ describe("oauth last-used stamp drains at close", () => {
   it("drain() resolves only after an in-flight stamp has landed", async () => {
     const id = await createItem();
 
-    // Fire-and-forget, exactly as the middleware does. The stamp is
-    // space-scoped, so it takes the space the row was written into: a null
-    // space matches only a row with no space and would stamp nothing.
+    // Fire-and-forget, exactly as the middleware does.
     void ctx.storage.oauthProvider!.updateLastUsedAt(id, 30_000);
     await ctx.storage.oauthProvider!.drain();
 

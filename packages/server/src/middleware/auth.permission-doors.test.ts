@@ -1,6 +1,5 @@
 /**
- * The space-scoped administrative doors, and what a credential needs to open
- * one.
+ * The administrative doors, and what a credential needs to open one.
  *
  * Two layers, and both were previously written about a rank:
  *
@@ -10,15 +9,14 @@
  *    never decided: the reserved-namespace write gate, which reads
  *    `is_operator`, and the list-read narrowing, which reads the map.
  *
- * 2. Integration — each door consults the space permission its own surface
- *    names, and a space-bound credential is fenced to its own space once it
- *    is through. The census at `routes/space-permission-door-census.test.ts`
- *    proves every door asks; these prove the answer is obeyed and that the
- *    fence behind it holds, which a scanner cannot see.
+ * 2. Integration — each door consults the permission its own surface
+ *    names. The census at `routes/permission-door-census.test.ts` proves
+ *    every door asks; these prove the answer is obeyed, which a scanner
+ *    cannot see.
  */
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import type { ApiKey, SpacePermission } from "@withmarfa/shared";
+import type { ApiKey, Permission } from "@withmarfa/shared";
 import { checkTypeAccess, computeTypeFilter, hashApiKey } from "./auth.js";
 import {
   createTestContext,
@@ -38,10 +36,9 @@ import {
  * per-test shape is what pushes this file over its budget.
  *
  * Sharing is safe because none of these tests rely on database isolation:
- * every one mints its own randomized space id, and the assertions are all
- * scoped to that space. Rows left behind by a sibling test belong to a
- * different space and are invisible to the route under test — which is
- * itself the property being verified.
+ * every one mints its own randomized credential and tags the rows it makes,
+ * so a row left behind by a sibling test is outside what its assertions
+ * look at.
  */
 let ctx: TestContext;
 
@@ -74,18 +71,18 @@ async function mintKey(
   ctx: TestContext,
   opts: {
     label: string;
-    spacePermissions?: SpacePermission[];
+    permissions?: Permission[];
     typePermissions?: Record<string, "read" | "write" | "none">;
   },
 ): Promise<string> {
   const suffix = Math.random().toString(36).slice(2, 14);
-  const raw = `marfa_k1_space_doors_${suffix}`;
+  const raw = `marfa_k1_permission_doors_${suffix}`;
   const keyHash = hashApiKey(raw, TEST_API_KEY_SALT);
   await ctx.storage.keys.create(
     {
       label: opts.label,
       source: `${opts.label}-${suffix}`,
-      permissions: opts.spacePermissions ?? [],
+      permissions: opts.permissions ?? [],
       default_tier: "library",
       type_permissions: opts.typePermissions ?? {},
     },
@@ -152,7 +149,7 @@ describe("/keys — keys.mint", () => {
     // permission gate decided.
     const caller = await mintKey(ctx, {
       label: "mint-holder-pass",
-      spacePermissions: ["keys.mint"],
+      permissions: ["keys.mint"],
     });
 
     const res = await request(ctx.app, "POST", "/keys", {
@@ -169,10 +166,10 @@ describe("/keys — keys.mint", () => {
     expect(body.key).toBeTruthy();
   });
 
-  it("mints into the caller's own space and cannot claim the operator flag", async () => {
+  it("mints under the caller and cannot claim the operator flag", async () => {
     const caller = await mintKey(ctx, {
       label: "mint-holder",
-      spacePermissions: ["keys.mint"],
+      permissions: ["keys.mint"],
     });
 
     const res = await request(ctx.app, "POST", "/keys", {
@@ -182,7 +179,7 @@ describe("/keys — keys.mint", () => {
         source: `child-key-${Math.random().toString(36).slice(2, 10)}`,
         default_tier: "library",
         // Running the instance sits outside the permission model, so nothing
-        // a space credential holds reaches it.
+        // a working credential holds reaches it.
         is_operator: true,
       },
     });
@@ -209,10 +206,10 @@ describe("/keys — keys.mint", () => {
 });
 
 describe("DELETE /items/:id/purge — items.purge", () => {
-  it("purges an item in the caller's own space", async () => {
+  it("purges an item the caller can write", async () => {
     const caller = await mintKey(ctx, {
       label: "purge-holder",
-      spacePermissions: ["items.purge"],
+      permissions: ["items.purge"],
       typePermissions: { "*": "write" },
     });
 
@@ -259,7 +256,7 @@ describe("/webhooks — webhooks.manage", () => {
     // this permission.
     const caller = await mintKey(ctx, {
       label: "wh-holder",
-      spacePermissions: ["webhooks.manage"],
+      permissions: ["webhooks.manage"],
     });
 
     const res = await request(ctx.app, "GET", "/webhooks", { key: caller });
@@ -294,7 +291,7 @@ describe("/audit — audit.read", () => {
   it("reads the trail for a credential that holds audit.read", async () => {
     const caller = await mintKey(ctx, {
       label: "audit-holder",
-      spacePermissions: ["audit.read"],
+      permissions: ["audit.read"],
     });
 
     const res = await request(ctx.app, "GET", "/audit", { key: caller });
@@ -319,7 +316,7 @@ describe("/config — config.manage", () => {
     // asserted only on the write door would leave that half unstated.
     const caller = await mintKey(ctx, {
       label: "config-holder",
-      spacePermissions: ["config.manage"],
+      permissions: ["config.manage"],
     });
 
     const res = await request(ctx.app, "GET", "/config", {
@@ -358,7 +355,7 @@ describe("DELETE /types/:id — schema.write", () => {
     await seedType(id);
     const caller = await mintKey(ctx, {
       label: "schema-holder",
-      spacePermissions: ["schema.write"],
+      permissions: ["schema.write"],
     });
 
     const res = await request(ctx.app, "DELETE", `/types/${id}`, {

@@ -30,7 +30,7 @@ async function makeKey(
   opts: {
     type_permissions: Record<string, string>;
     edge_permissions?: Record<string, string>;
-    spacePermissions?: readonly string[];
+    permissions?: readonly string[];
   },
 ): Promise<{ key: string; id: string }> {
   const resp = await client.createKey({
@@ -38,7 +38,7 @@ async function makeKey(
     source: `${ctx.source}-${label}`,
     type_permissions: opts.type_permissions,
     edge_permissions: opts.edge_permissions,
-    permissions: opts.spacePermissions ?? [],
+    permissions: opts.permissions ?? [],
   });
   expect(resp.ok).toBe(true);
   trackKey(ctx, resp.data.id);

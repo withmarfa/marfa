@@ -219,7 +219,7 @@ describe("the server sends the headers the spec declares", () => {
 
   it("sends the always-on headers on an ordinary read", async () => {
     const response = await request(ctx.app, "GET", "/items", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
     });
     expect(response.status).toBe(200);
     assertUniversal(response, "GET /items");
@@ -240,7 +240,7 @@ describe("the server sends the headers the spec declares", () => {
     const body = { type: "core.note", properties: { body: "replay probe" } };
 
     const first = await request(ctx.app, "POST", "/items", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       headers: { "Idempotency-Key": key },
       body,
     });
@@ -251,7 +251,7 @@ describe("the server sends the headers the spec declares", () => {
     expect(first.headers.get("Idempotency-Replayed")).toBeNull();
 
     const replay = await request(ctx.app, "POST", "/items", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       headers: { "Idempotency-Key": key },
       body,
     });
@@ -288,7 +288,7 @@ describe("the server sends the headers the spec declares", () => {
       const uploaded = await ctx.app.request("/blobs", {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${ctx.spaceKey}`,
+          Authorization: `Bearer ${ctx.workingKey}`,
           "Content-Type": "application/octet-stream",
         },
         body: new TextEncoder().encode("header probe bytes"),
@@ -299,7 +299,7 @@ describe("the server sends the headers the spec declares", () => {
 
     it("sends them on the NDJSON export stream", async () => {
       const res = await request(ctx.app, "GET", "/export", {
-        key: ctx.spaceKey,
+        key: ctx.workingKey,
       });
       expect(res.status).toBe(200);
       assertUniversal(res, "GET /export");
@@ -308,7 +308,7 @@ describe("the server sends the headers the spec declares", () => {
 
     it("sends them on the gzip export archive", async () => {
       const res = await request(ctx.app, "GET", "/export?format=archive", {
-        key: ctx.spaceKey,
+        key: ctx.workingKey,
       });
       expect(res.status).toBe(200);
       assertUniversal(res, "GET /export?format=archive");
@@ -317,7 +317,7 @@ describe("the server sends the headers the spec declares", () => {
 
     it("sends them on a blob download, keeping the blob's own headers", async () => {
       const res = await request(ctx.app, "GET", `/blobs/${blobHash}`, {
-        key: ctx.spaceKey,
+        key: ctx.workingKey,
       });
       expect(res.status).toBe(200);
       assertUniversal(res, "GET /blobs/{hash}");
@@ -340,7 +340,7 @@ describe("the server sends the headers the spec declares", () => {
       // the handler behind it. A test naming a handler it does not reach is
       // worse than no test: it reads as coverage.
       const res = await request(ctx.app, "HEAD", `/blobs/${blobHash}`, {
-        key: ctx.spaceKey,
+        key: ctx.workingKey,
       });
       expect(res.status).toBe(200);
       assertUniversal(res, "HEAD /blobs/{hash}");
@@ -349,7 +349,7 @@ describe("the server sends the headers the spec declares", () => {
 
     it("sends them on the SSE stream", async () => {
       const res = await request(ctx.app, "GET", "/events", {
-        key: ctx.spaceKey,
+        key: ctx.workingKey,
       });
       expect(res.status).toBe(200);
       assertUniversal(res, "GET /events");
@@ -366,7 +366,7 @@ describe("the server sends the headers the spec declares", () => {
     const key = `header-body-${Date.now().toString(36)}`;
     const body = { type: "core.note", properties: { body: "same bytes" } };
     const opts = {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       headers: { "Idempotency-Key": key },
       body,
     };

@@ -1414,11 +1414,7 @@ describe("directChildrenOf", () => {
     expect(directChildrenOf("acme.leaf")).toEqual([]);
   });
 
-  // Custom types resolve only inside their own space, so a child in another
-  // space is not a child here. Answering otherwise would refuse a delete on
-  // the strength of a type this caller cannot see.
-
-  it("names a child of a platform type the space registered itself", () => {
+  it("names a child of a platform type registered at runtime", () => {
     registerTypeSchema({
       id: "acme.note_subtype",
       version: 1,

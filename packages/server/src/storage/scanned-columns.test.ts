@@ -4,10 +4,9 @@
  *
  * This is the failure demonstrated on the fix itself. Its inventory of
  * bare casts was counted by hand, and by the time the work started one row
- * of it was wrong: `spaces.status` had been closed and consolidated into
- * `storage/stored-space-status.ts`, so the table still named a defect that
- * no longer existed. A list a person maintains by reading the code is a
- * list that is accurate on the day it is written.
+ * of it named a defect that had already been closed. A list a person
+ * maintains by reading the code is a list that is accurate on the day it is
+ * written.
  *
  * So the roster is held to the code instead. Every `row.<column> as <T>` in
  * the storage sources names a claim about what a column contains, and each

@@ -36,7 +36,7 @@ async function listItems(
   query: string,
 ): Promise<{ status: number; page?: Page; code?: string; message?: string }> {
   const res = await request(ctx.app, "GET", `/items?${query}`, {
-    key: ctx.spaceKey,
+    key: ctx.workingKey,
   });
   if (res.status !== 200) {
     const body = (await res.json()) as {
@@ -76,7 +76,7 @@ const bookIds: string[] = [];
 beforeAll(async () => {
   for (const [i, pages] of [12, 34, 56, 78].entries()) {
     const res = await request(ctx.app, "POST", "/items", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         type: "core.media.book",
         properties: {
@@ -281,7 +281,7 @@ describe("GET /edges — the same rule on the sibling listing", () => {
     for (let i = 0; i < count; i++) {
       const mk = async (): Promise<string> => {
         const res = await request(ctx.app, "POST", "/items", {
-          key: ctx.spaceKey,
+          key: ctx.workingKey,
           body: {
             type: "core.note",
             properties: { body: `edge-src-${String(i)}` },
@@ -293,7 +293,7 @@ describe("GET /edges — the same rule on the sibling listing", () => {
       const source = await mk();
       const target = await mk();
       const res = await request(ctx.app, "POST", "/edges", {
-        key: ctx.spaceKey,
+        key: ctx.workingKey,
         body: {
           source_id: source,
           target_id: target,
@@ -311,7 +311,7 @@ describe("GET /edges — the same rule on the sibling listing", () => {
     message?: string;
   }> {
     const res = await request(ctx.app, "GET", `/edges?${query}`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
     });
     if (res.status !== 200) {
       const body = (await res.json()) as {

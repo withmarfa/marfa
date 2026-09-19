@@ -1,12 +1,12 @@
 {
   "@withmarfa/sdk": {
-    "version": "6.4.0",
-    "hash": "5cdefc035411f9e1e2011ea199fbaea5b24b21666cbcf10d6129bf37624fd7c2",
+    "version": "6.5.0",
+    "hash": "d6f23881706c27227df8cfd58c214f85dc41a25b01404048266102e6faaa75e8",
     "exports": 91
   },
   "@withmarfa/shared": {
-    "version": "8.4.0",
-    "hash": "d5096331ae10dbcab7e49a0618455ed5a687ba56f596ac7998a3a4cff3fc5b1b",
+    "version": "8.5.0",
+    "hash": "c908ce78b7db57adbfd91a3e91c573673c34f5d3d79ffc440d8e2e9d1d789451",
     "exports": 212
   }
 }

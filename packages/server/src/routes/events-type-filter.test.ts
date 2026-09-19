@@ -15,7 +15,7 @@
  * declared clause alone, so `*` and `core.*` matched nothing at all while
  * the same spellings on `/items` matched everything and a subtree — a 200
  * carrying no events, which is the one filter failure a client cannot tell
- * from a quiet space. Agreement with the list surface is pinned below by
+ * from a quiet instance. Agreement with the list surface is pinned below by
  * asking both and comparing, rather than by restating what either should
  * return.
  *
@@ -38,7 +38,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import {
   createTestContext,
-  mintSpaceKey,
+  mintWorkingKey,
   readSse,
   request,
   settle,
@@ -74,7 +74,7 @@ async function createItem(
   properties: Record<string, unknown>,
 ): Promise<string> {
   const res = await request(ctx.app, "POST", "/items", {
-    key: ctx.spaceKey,
+    key: ctx.workingKey,
     body: { type, properties },
   });
   expect(res.status).toBe(201);
@@ -91,7 +91,7 @@ async function listed(
     ctx.app,
     "GET",
     `/items?type=${encodeURIComponent(spelling)}&limit=100`,
-    { key: ctx.spaceKey },
+    { key: ctx.workingKey },
   );
   if (res.status !== 200) return { status: res.status, ids: new Set() };
   const body = (await res.json()) as { data: { id: string }[] };
@@ -101,7 +101,7 @@ async function listed(
 describe("GET /events?type= on the live stream", () => {
   it("delivers a subtype of the filtered type, and nothing outside it", async () => {
     const stream = await request(ctx.app, "GET", "/events?type=core.media", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
     });
     expect(stream.status).toBe(200);
 
@@ -157,7 +157,7 @@ describe("GET /events?type= on the Last-Event-ID replay", () => {
     });
 
     const res = await request(ctx.app, "GET", "/events?type=core.media", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       headers: { "Last-Event-ID": String(cursor) },
     });
     expect(res.status).toBe(200);
@@ -202,7 +202,7 @@ describe("GET /events?type= on the Last-Event-ID replay", () => {
     const anchorId = await createItem("core.media", { title: "ZZanchorZZ" });
 
     const filtered = await request(ctx.app, "GET", "/events?type=core.media", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       headers: { "Last-Event-ID": String(cursor) },
     });
     expect(filtered.status).toBe(200);
@@ -216,7 +216,7 @@ describe("GET /events?type= on the Last-Event-ID replay", () => {
     expect(filteredText).not.toContain("ZZtypelessZZ");
 
     const unfiltered = await request(ctx.app, "GET", "/events", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       headers: { "Last-Event-ID": String(cursor) },
     });
     expect(unfiltered.status).toBe(200);
@@ -248,7 +248,7 @@ describe("GET /events?type= on the Last-Event-ID replay", () => {
  * parameter — and rejects anything outside the pattern grammar. The
  * stream used to accept both and then match nothing, which is a 200
  * carrying no events: the one filter failure a client cannot tell from a
- * quiet space.
+ * quiet instance.
  */
 describe("GET /events?type= answers the spellings /items answers", () => {
   /** Registered outside every `core.` namespace and declaring no core
@@ -262,7 +262,7 @@ describe("GET /events?type= answers the spellings /items answers", () => {
 
   beforeAll(async () => {
     const registered = await request(ctx.app, "POST", "/types", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         id: OUTSIDE_TYPE,
         version: 1,
@@ -286,7 +286,7 @@ describe("GET /events?type= answers the spellings /items answers", () => {
 
   it("delivers what the list returns for a subtree wildcard, replaying", async () => {
     const res = await request(ctx.app, "GET", "/events?type=core.*", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       headers: { "Last-Event-ID": String(cursor) },
     });
     expect(res.status).toBe(200);
@@ -306,7 +306,7 @@ describe("GET /events?type= answers the spellings /items answers", () => {
 
   it("delivers what the list returns for a subtree wildcard, live", async () => {
     const res = await request(ctx.app, "GET", "/events?type=core.*", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
     });
     expect(res.status).toBe(200);
 
@@ -344,7 +344,7 @@ describe("GET /events?type= answers the spellings /items answers", () => {
         ctx.app,
         "GET",
         `/events?type=${encodeURIComponent(spelling)}`,
-        { key: ctx.spaceKey },
+        { key: ctx.workingKey },
       );
       expect(res.status).toBe(400);
     });
@@ -373,7 +373,7 @@ describe("GET /events?type= answers the spellings /items answers", () => {
 describe("the replay's two checks on a row that names no item type", () => {
   it("does not hand it to a credential the permission maps apply to", async () => {
     const suffix = Math.random().toString(36).slice(2, 10);
-    const raw = await mintSpaceKey(ctx, {
+    const raw = await mintWorkingKey(ctx, {
       label: "type-filter member",
       source: `type-filter-member-${suffix}`,
       type_permissions: { "core.*": "read" },

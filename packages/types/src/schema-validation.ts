@@ -151,8 +151,8 @@ export type TypeSchemaValidationResult =
 export interface SchemaValidationContext {
   /**
    * Resolves an already-registered schema by identifier, for the inheritance
-   * and `compatible_with` checks. The runtime binds this to the space-scoped
-   * registry lookup; the codegen binds it to the in-tree schema map.
+   * and `compatible_with` checks. The runtime binds this to the registry
+   * lookup; the codegen binds it to the in-tree schema map.
    */
   resolveSchema: (typeId: string) => TypeSchema | undefined;
   /**

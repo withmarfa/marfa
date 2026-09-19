@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
   createTestContext,
-  mintSpaceKey,
+  mintWorkingKey,
   request,
   seedOauthBearer,
   TEST_API_KEY_SALT,
@@ -19,7 +19,7 @@ import { hashApiKey } from "../middleware/auth.js";
 import { ensureBootstrapSecret } from "../auth/bootstrap-secret.js";
 import { KeyResponseSchema } from "./_schemas.js";
 import { extensionLabelOf } from "../auth/extension-label.js";
-import { generateId, SPACE_PERMISSIONS } from "@withmarfa/shared";
+import { generateId, PERMISSIONS } from "@withmarfa/shared";
 
 let ctx: TestContext;
 
@@ -38,7 +38,7 @@ async function createKey(overrides: Record<string, unknown> = {}): Promise<{
 }> {
   const suffix = Math.random().toString(36).slice(2, 10);
   const res = await request(ctx.app, "POST", "/keys", {
-    key: ctx.spaceKey,
+    key: ctx.workingKey,
     body: {
       label: `subject-${suffix}`,
       source: `subject-${suffix}`,
@@ -71,7 +71,7 @@ describe("the key a create route returns", () => {
   it("carries no expiry, because a create route cannot mint one", async () => {
     const suffix = Math.random().toString(36).slice(2, 10);
     const res = await request(ctx.app, "POST", "/keys", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         label: `expiry-${suffix}`,
         source: `expiry-${suffix}`,
@@ -120,7 +120,7 @@ describe("PATCH /keys/{id}", () => {
     const { id, source } = await createKey();
 
     const res = await request(ctx.app, "PATCH", `/keys/${id}`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         label: "renamed",
         default_tier: "library",
@@ -150,7 +150,7 @@ describe("PATCH /keys/{id}", () => {
     });
 
     const res = await request(ctx.app, "PATCH", `/keys/${id}`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: { label: "after" },
     });
     expect(res.status).toBe(200);
@@ -193,7 +193,7 @@ describe("PATCH /keys/{id}", () => {
     const { id } = await createKey();
 
     const res = await request(ctx.app, "PATCH", `/keys/${id}`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: { source: "something-else" },
     });
     expect(res.status).toBe(400);
@@ -205,7 +205,7 @@ describe("PATCH /keys/{id}", () => {
     // Valid UUIDv7 shape, guaranteed not to exist in the store.
     const ghostId = "00000000-0000-7000-8000-000000000000";
     const res = await request(ctx.app, "PATCH", `/keys/${ghostId}`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: { label: "ghost" },
     });
     expect(res.status).toBe(404);
@@ -223,7 +223,7 @@ describe("enforcement_override — the per-credential levers", () => {
       enforcement_override: override,
     });
     const echoed = await request(ctx.app, "GET", "/keys", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
     });
     expect(echoed.status).toBe(200);
     const listed = (
@@ -258,7 +258,7 @@ describe("enforcement_override — the per-credential levers", () => {
 
     // Replaced whole by a PATCH, and cleared by null.
     const narrowed = await request(ctx.app, "PATCH", `/keys/${minted.id}`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         enforcement_override: {
           source_filter: { types: ["core.note"], sources: ["elsewhere"] },
@@ -281,7 +281,7 @@ describe("enforcement_override — the per-credential levers", () => {
     expect(((await filtered.json()) as { data: unknown[] }).data).toEqual([]);
 
     const cleared = await request(ctx.app, "PATCH", `/keys/${minted.id}`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: { enforcement_override: null },
     });
     expect(cleared.status).toBe(200);
@@ -295,13 +295,13 @@ describe("enforcement_override — the per-credential levers", () => {
 });
 
 describe("PATCH /keys/{id} — an operator target", () => {
-  /** A spare credential at the instance tier: no space, and nothing held. */
-  async function mintSpacelessKey(suffix: string): Promise<string> {
+  /** A spare credential at the instance tier, holding nothing. */
+  async function mintOperatorKey(suffix: string): Promise<string> {
     const res = await request(ctx.app, "POST", "/keys", {
       key: ctx.operatorKey,
       body: {
-        label: `spaceless-patch-${suffix}`,
-        source: `spaceless-patch-${suffix}`,
+        label: `operator-patch-${suffix}`,
+        source: `operator-patch-${suffix}`,
         is_operator: true,
       },
     });
@@ -316,7 +316,7 @@ describe("PATCH /keys/{id} — an operator target", () => {
   // removed rather than by the write having been forced empty.
   it("refuses a request naming reach", async () => {
     const suffix = Math.random().toString(36).slice(2, 10);
-    const id = await mintSpacelessKey(suffix);
+    const id = await mintOperatorKey(suffix);
 
     const res = await request(ctx.app, "PATCH", `/keys/${id}`, {
       key: ctx.operatorKey,
@@ -340,7 +340,7 @@ describe("PATCH /keys/{id} — an operator target", () => {
   // family would otherwise reopen this on that family alone.
   it("writes a denial-only map empty rather than sending it at the row constraint", async () => {
     const suffix = Math.random().toString(36).slice(2, 10);
-    const id = await mintSpacelessKey(suffix);
+    const id = await mintOperatorKey(suffix);
 
     const res = await request(ctx.app, "PATCH", `/keys/${id}`, {
       key: ctx.operatorKey,
@@ -373,12 +373,10 @@ describe("DELETE /keys/{id} — the answer is what happened", () => {
     return page.data.length;
   }
 
-  // **The operator key skips the space fence, so nothing stood between it and
-  // a revoke that did nothing.** A space-bound caller is refused earlier by
-  // the cross-space 404: `keys.get` drops revoked rows, so a revoked key and
-  // an unknown one both read as a miss there. The operator carries no space
-  // and takes neither branch, so it reached the store with any id at all.
-  // The route handler carries what that cost.
+  // **Nothing stood between the operator key and a revoke that did
+  // nothing.** `keys.get` drops revoked rows, so a revoked key and an
+  // unknown one both read as a miss, and the store was reached with any id
+  // at all. The route handler carries what that cost.
   it("refuses an unknown id rather than answering ok", async () => {
     const unknown = generateId();
 
@@ -423,9 +421,8 @@ describe("DELETE /keys/{id} — the answer is what happened", () => {
     };
     expect(err.error.code).toBe("api_key_not_found");
     // One status and one code for both misses, because a caller must not be
-    // able to tell an id nobody holds from one in another space. The message
-    // is what separates them for the caller who does hold the key, and an
-    // operator reaches every space, so it costs nothing there.
+    // able to tell an id nobody holds from one already revoked. The message
+    // is what separates them for the caller who does hold the key.
     expect(err.error.message).toMatch(/already revoked/i);
 
     await ctx.storage.audit.drain();
@@ -583,12 +580,8 @@ describe("bootstrap sentinel", () => {
       const body = (await res.json()) as {
         key: string;
         is_operator: boolean;
-        space?: unknown;
-        space_key?: unknown;
       };
       expect(body.is_operator).toBe(true);
-      expect(body.space).toBeUndefined();
-      expect(body.space_key).toBeUndefined();
 
       const working = await request(app, "POST", "/keys", {
         key: body.key,
@@ -633,13 +626,12 @@ describe("bootstrap sentinel", () => {
   });
 
   it("takes no content reach on bootstrap, whatever the body asks for", async () => {
-    // **The operator key holds nothing on any axis.** The space permissions
+    // **The operator key holds nothing on any axis.** The permissions
     // are forced empty and the clamp refuses anything requested, but the four
     // content maps used to come straight off the body — and bootstrap is
-    // unauthenticated with no creator to clamp against. A space-less
-    // credential applies no space predicate at all, so `*: write` here is
-    // read and write over every space at once, in the one row shape the
-    // constraint exists to make unwritable.
+    // unauthenticated with no creator to clamp against, so `*: write` here
+    // is read and write over everything, in the one row shape the constraint
+    // exists to make unwritable.
     const { app, storage, bootstrapSecret, tmpDir } = await freshApp({});
     try {
       const res = await request(app, "POST", "/keys", {
@@ -891,8 +883,8 @@ describe("bootstrap sentinel", () => {
 
       // Second POST authenticated as the bootstrap credential — this is the
       // non-bootstrap branch (sentinel is now stamped).
-      // Naming no reach, because the caller is the operator key: a
-      // space-less credential holds nothing and may give nothing, so the
+      // Naming no reach, because the caller is the operator key: an
+      // operator key holds nothing and may give nothing, so the
       // body that used to name a type map is refused now. What this case is
       // about is which audit action the non-bootstrap branch writes.
       const followUpRes = await request(app, "POST", "/keys", {
@@ -1010,7 +1002,7 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
   // The blanket refusal that used to stand here did two jobs: it withheld the
   // permission, and it prevented the escalation a mint makes possible. Both
   // still hold, through two things that can fail independently — the
-  // space permission gate and the breadth clamp — so each gets its own case
+  // permission gate and the breadth clamp — so each gets its own case
   // rather than one test standing for both.
   let hostedCtx: TestContext;
 
@@ -1025,7 +1017,7 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
     await hostedCtx.cleanup();
   });
 
-  it("refuses every keys door to a session that was not granted the space permission", async () => {
+  it("refuses every keys door to a session that was not granted the permission", async () => {
     const { token } = await seedOauthBearer(hostedCtx.storage, ["openid"], {});
     const doors: [string, string, unknown?][] = [
       ["GET", "/keys"],
@@ -1246,7 +1238,7 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
 
   it("clamps the update door, which reaches keys the session never minted", async () => {
     // A clamp at the mint alone is not a clamp: the maps are writable a moment
-    // later, and this door addresses every key in the space.
+    // later, and this door addresses every key.
     const raw = "marfa_k1_victim_" + Math.random().toString(36).slice(2);
     const victim = await hostedCtx.storage.keys.create(
       {
@@ -1394,7 +1386,7 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
     // `label` is read as identity, the same way `source` is: a namespace
     // equal to the key's label is granted write implicitly. A session chooses
     // its key's label, so without the stamp being consulted an app could name
-    // another vendor's namespace and read it on every item in the space,
+    // another vendor's namespace and read it on every item stored,
     // durably and after the app was revoked.
     const { token } = await seedOauthBearer(
       hostedCtx.storage,
@@ -1471,7 +1463,7 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
       {
         label: "ta-key",
         source: "ta-key",
-        permissions: [...SPACE_PERMISSIONS],
+        permissions: [...PERMISSIONS],
         type_permissions: {},
         default_tier: "library",
         is_operator: false,
@@ -1525,7 +1517,7 @@ describe("POST /keys — what an operator key mints", () => {
     expect(stored?.metadata_permissions).toEqual({ "*": "write" });
     expect(stored?.extension_permissions).toEqual({ "*": "write" });
     expect(stored?.profile_permissions).toEqual({ "*": "write" });
-    expect(stored?.permissions).toEqual([...SPACE_PERMISSIONS]);
+    expect(stored?.permissions).toEqual([...PERMISSIONS]);
   });
 
   it("mints a working key holding only what the body names", async () => {
@@ -1557,8 +1549,8 @@ describe("POST /keys — what an operator key mints", () => {
     const res = await request(hostedCtx.app, "POST", "/keys", {
       key: hostedCtx.operatorKey,
       body: {
-        label: `null-space-narrow-${suffix}`,
-        source: `null-space-narrow-${suffix}`,
+        label: `operator-narrow-${suffix}`,
+        source: `operator-narrow-${suffix}`,
         is_operator: true,
         type_permissions: { "core.note": "read" },
       },
@@ -1577,8 +1569,8 @@ describe("POST /keys — what an operator key mints", () => {
     const res = await request(hostedCtx.app, "POST", "/keys", {
       key: hostedCtx.operatorKey,
       body: {
-        label: `null-space-spare-${suffix}`,
-        source: `null-space-spare-${suffix}`,
+        label: `operator-spare-${suffix}`,
+        source: `operator-spare-${suffix}`,
         is_operator: true,
       },
     });
@@ -1613,8 +1605,8 @@ describe("POST /keys — what an operator key mints", () => {
     const res = await request(hostedCtx.app, "POST", "/keys", {
       key: hostedCtx.operatorKey,
       body: {
-        label: `null-space-denials-${suffix}`,
-        source: `null-space-denials-${suffix}`,
+        label: `operator-denials-${suffix}`,
+        source: `operator-denials-${suffix}`,
         is_operator: true,
         type_permissions: { "core.note": "none" },
       },
@@ -1631,10 +1623,9 @@ describe("POST /keys — what an operator key mints", () => {
   });
 
   it("cannot even be handed a widened operator key to mint from", async () => {
-    // This used to seed a space-less operator key carrying every map and then
-    // assert that a mint from it inherited nothing, because the row
-    // constraint tied `space_id` to `is_operator` and said nothing about the
-    // maps. The database says both halves now, so the caller this case needed
+    // This used to seed an operator key carrying every map and then assert
+    // that a mint from it inherited nothing, because the row constraint said
+    // nothing about the maps. The database says both halves now, so the caller this case needed
     // is a row nothing can write and the route's forcing is unreachable from
     // below rather than merely unused.
     //
@@ -1661,10 +1652,12 @@ describe("POST /keys — what an operator key mints", () => {
         hashApiKey(rawWide, TEST_API_KEY_SALT),
       ),
     ).rejects.toThrow();
-    // Asserted on the row rather than on the message: the driver wraps a
-    // check violation differently on each dialect, and what matters is that
-    // nothing landed. `api_keys_space_less_holds_nothing` is the constraint,
-    // and the migration suite pins its name and its two directions.
+    // Asserted on the row rather than on the message, because the message is
+    // the driver's and carries the constraint's name — which on a database
+    // created before that name changed is still the old one. What matters is
+    // that nothing landed. The constraint itself is
+    // `api_keys_operator_holds_nothing`, declared in `schema.ts` and pinned
+    // by `schema-sql.test.ts` against a database it builds fresh.
     expect(
       (await hostedCtx.storage.keys.list()).some(
         (k) => k.label === `wide-operator-${suffix}`,
@@ -1698,7 +1691,7 @@ describe("POST /keys — what an operator key mints", () => {
     // itself. Pinned here because that suite runs against a deployed server,
     // so a regression would only surface after release.
     const suffix = Math.random().toString(36).slice(2, 10);
-    const harnessKey = await mintSpaceKey(hostedCtx, {
+    const harnessKey = await mintWorkingKey(hostedCtx, {
       label: `harness-${suffix}`,
       source: `harness-${suffix}`,
       type_permissions: { "*": "write" },
@@ -1726,7 +1719,7 @@ describe("POST /keys — what an operator key mints", () => {
       {
         label: `bound-admin-${suffix}`,
         source: `bound-admin-${suffix}`,
-        permissions: [...SPACE_PERMISSIONS],
+        permissions: [...PERMISSIONS],
         type_permissions: {},
         default_tier: "library",
         is_operator: false,

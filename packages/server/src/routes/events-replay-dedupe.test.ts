@@ -105,7 +105,7 @@ async function latestEventId(): Promise<bigint> {
 
 async function createNote(marker: string): Promise<Item> {
   const res = await request(ctx.app, "POST", "/items", {
-    key: ctx.spaceKey,
+    key: ctx.workingKey,
     body: { type: "core.note", properties: { body: marker } },
   });
   expect(res.status).toBe(201);
@@ -146,7 +146,7 @@ describe("GET /events replay dedupe", () => {
       // with an unfiltered operator key cannot tell recording-on-send
       // from recording-on-walk.
       const stream = await request(ctx.app, "GET", "/events?type=core.note", {
-        key: ctx.spaceKey,
+        key: ctx.workingKey,
         headers: { "Last-Event-ID": String(cursor) },
       });
       expect(stream.status).toBe(200);

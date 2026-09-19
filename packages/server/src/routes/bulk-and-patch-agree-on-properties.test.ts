@@ -44,7 +44,7 @@ interface BulkResponse {
 
 async function seed(sourceId: string): Promise<string> {
   const res = await request(ctx.app, "POST", "/items/bulk", {
-    key: ctx.spaceKey,
+    key: ctx.workingKey,
     body: {
       items: [
         {
@@ -73,7 +73,7 @@ describe("a property payload one door refuses, the other refuses too", () => {
     );
 
     const res = await request(ctx.app, "PATCH", `/items/${id}`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       // The seed above is the row's only write, so 1 is the version it is on.
       body: { properties: REFUSED_BY_THE_TYPE, version: 1 },
     });
@@ -88,7 +88,7 @@ describe("a property payload one door refuses, the other refuses too", () => {
     const id = await seed(sourceId);
 
     const res = await request(ctx.app, "POST", "/items/bulk", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         atomic: false,
         items: [
@@ -112,7 +112,7 @@ describe("a property payload one door refuses, the other refuses too", () => {
     // the outcome alone would pass on a door that reported `errored` after
     // storing the row, which is the shape this defect had in reverse.
     const after = await request(ctx.app, "GET", `/items/${id}`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
     });
     expect(after.status).toBe(200);
     const item = (await after.json()) as {
@@ -128,7 +128,7 @@ describe("a property payload one door refuses, the other refuses too", () => {
     const goodId = await seed(good);
 
     const res = await request(ctx.app, "POST", "/items/bulk", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         items: [
           {
@@ -156,7 +156,7 @@ describe("a property payload one door refuses, the other refuses too", () => {
     // what has to be observed rather than the refusal.
     for (const id of [badId, goodId]) {
       const after = await request(ctx.app, "GET", `/items/${id}`, {
-        key: ctx.spaceKey,
+        key: ctx.workingKey,
       });
       const item = (await after.json()) as {
         item: { properties: { body: unknown } };
@@ -170,7 +170,7 @@ describe("a property payload one door refuses, the other refuses too", () => {
     const id = await seed(sourceId);
 
     const res = await request(ctx.app, "POST", "/items/bulk", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         items: [
           {
@@ -188,7 +188,7 @@ describe("a property payload one door refuses, the other refuses too", () => {
     expect(data.counts.errored).toBe(0);
 
     const after = await request(ctx.app, "GET", `/items/${id}`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
     });
     const item = (await after.json()) as {
       item: { properties: { body: unknown } };
@@ -202,12 +202,12 @@ describe("a property payload one door refuses, the other refuses too", () => {
   // `validateProperties` reports an absent schema as `Unknown type` rather
   // than as no opinion, so an unguarded same-type update would refuse every
   // write to a type this request's registry does not carry — a custom type
-  // registered in another space, or one deleted since the row was written.
+  // registered on another server, or one deleted since the row was written.
   // Delete the guard and this case reddens with that refusal.
   it("accepts a same-type update to a type with no schema to judge it against", async () => {
     const orphan = "user.orphaned_by_this_test";
-    // Into the caller's own space: the registry overlay is per space, and a
-    // space-bound credential resolves nothing registered outside its own.
+    // Straight into the runtime overlay, which is where `POST /types` puts
+    // one.
     registerTypeSchema({
       id: orphan,
       version: 1,
@@ -215,7 +215,7 @@ describe("a property payload one door refuses, the other refuses too", () => {
     });
     const sourceId = `agree-orphan-${Math.random().toString(36).slice(2, 8)}`;
     const seeded = await request(ctx.app, "POST", "/items/bulk", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         items: [
           { type: orphan, properties: { note: "fine" }, source_id: sourceId },
@@ -228,7 +228,7 @@ describe("a property payload one door refuses, the other refuses too", () => {
     unregisterTypeSchema(orphan);
 
     const res = await request(ctx.app, "POST", "/items/bulk", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         atomic: false,
         items: [
@@ -254,7 +254,7 @@ describe("a property payload one door refuses, the other refuses too", () => {
     await seed(sourceId);
 
     const res = await request(ctx.app, "POST", "/items/bulk", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         atomic: false,
         retype: true,
@@ -275,7 +275,7 @@ describe("a property payload one door refuses, the other refuses too", () => {
     await seed(sourceId);
 
     const res = await request(ctx.app, "POST", "/items/bulk", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         items: [{ type: "core.note", tier: "library", source_id: sourceId }],
       },

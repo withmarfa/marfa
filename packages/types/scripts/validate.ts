@@ -5,7 +5,7 @@
  * `core/system/` and `core/edges/`, resolves each family in dependency order,
  * and runs `validateTypeSchema` / `validateEdgeTypeSchema` — the same
  * functions the registration routes call. A schema that passes here is one a
- * space could submit over the wire unchanged.
+ * client could submit over the wire unchanged.
  *
  * Usage: pnpm --filter @withmarfa/types validate
  */

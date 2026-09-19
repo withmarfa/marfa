@@ -38,7 +38,6 @@ interface MintedToken {
  */
 async function mintOAuthToken(opts: {
   scopes: string[];
-  spaceId?: string;
 }): Promise<MintedToken> {
   const { token, grantId } = await seedOauthBearer(ctx.storage, opts.scopes, {
     clientName: "Scope Enforcement Test App",
@@ -57,8 +56,8 @@ describe("OAuth scope grammar enforcement on the data plane", () => {
         scopes: ["core.note:read"],
       });
 
-      // First seed an item via the space key so there's something to read.
-      const seeder = ctx.spaceKey;
+      // First seed an item via the working key so there's something to read.
+      const seeder = ctx.workingKey;
       const created = await request(ctx.app, "POST", "/items", {
         key: seeder,
         body: {
@@ -86,7 +85,7 @@ describe("OAuth scope grammar enforcement on the data plane", () => {
 
     it("excludes out-of-scope types from list reads (implicit denial via allowed_types)", async () => {
       // Seed items of two types as the seeder so both are present in the DB.
-      const seeder = ctx.spaceKey;
+      const seeder = ctx.workingKey;
       await request(ctx.app, "POST", "/items", {
         key: seeder,
         body: { type: "core.note", properties: { body: "in-scope" } },
@@ -125,7 +124,7 @@ describe("OAuth scope grammar enforcement on the data plane", () => {
       ];
       for (const typeId of schemas) {
         const registered = await request(ctx.app, "POST", "/types", {
-          key: ctx.spaceKey,
+          key: ctx.workingKey,
           body: {
             id: typeId,
             version: 1,
@@ -134,7 +133,7 @@ describe("OAuth scope grammar enforcement on the data plane", () => {
         });
         expect(registered.status).toBe(201);
         const created = await request(ctx.app, "POST", "/items", {
-          key: ctx.spaceKey,
+          key: ctx.workingKey,
           body: { type: typeId, properties: { title: typeId } },
         });
         expect(created.status).toBe(201);
@@ -157,7 +156,7 @@ describe("OAuth scope grammar enforcement on the data plane", () => {
     });
 
     it("rejects single-item GET on an out-of-scope type with 403", async () => {
-      const seeder = ctx.spaceKey;
+      const seeder = ctx.workingKey;
       const created = (await (
         await request(ctx.app, "POST", "/items", {
           key: seeder,
@@ -206,7 +205,7 @@ describe("OAuth scope grammar enforcement on the data plane", () => {
         scopes: ["core.note:write"],
       });
       // Seed two notes via the seeder so there are referencable items.
-      const seeder = ctx.spaceKey;
+      const seeder = ctx.workingKey;
       const a = (await (
         await request(ctx.app, "POST", "/items", {
           key: seeder,
@@ -239,7 +238,7 @@ describe("OAuth scope grammar enforcement on the data plane", () => {
         scopes: ["core.note:write", "edge.parent-of:write"],
       });
       // Seed two notes via the seeder.
-      const seeder = ctx.spaceKey;
+      const seeder = ctx.workingKey;
       const a = (await (
         await request(ctx.app, "POST", "/items", {
           key: seeder,
@@ -267,7 +266,7 @@ describe("OAuth scope grammar enforcement on the data plane", () => {
       const { rawToken } = await mintOAuthToken({
         scopes: ["core.note:write", "edge.*:write"],
       });
-      const seeder = ctx.spaceKey;
+      const seeder = ctx.workingKey;
       const a = (await (
         await request(ctx.app, "POST", "/items", {
           key: seeder,
@@ -339,7 +338,7 @@ describe("OAuth scope grammar enforcement on the data plane", () => {
 
   describe("malformed scope grants are inert", () => {
     it("a token with only nonsense scopes returns empty data on list and 403 on direct access", async () => {
-      const seeder = ctx.spaceKey;
+      const seeder = ctx.workingKey;
       const created = (await (
         await request(ctx.app, "POST", "/items", {
           key: seeder,
@@ -364,7 +363,7 @@ describe("OAuth scope grammar enforcement on the data plane", () => {
       expect(body.data).toEqual([]);
       // The tag aggregate reads the same empty allow-list and has to agree.
       // It used to skip the type clause on an empty list and hand back the
-      // space's whole vocabulary, naming what exists to a token that can
+      // whole tag vocabulary, naming what exists to a token that can
       // read none of it.
       const tags = await request(ctx.app, "GET", "/metadata/tags", {
         key: rawToken,
@@ -388,23 +387,18 @@ describe("OAuth scope grammar enforcement on the data plane", () => {
 });
 
 // ---------------------------------------------------------------------------
-// The four-bundle keystone: an OAuth token reaches a space's RUNTIME `user.*`
+// The four-bundle keystone: an OAuth token reaches a RUNTIME `user.*`
 // types — which never appear in the static scope allowlist — through the
 // wildcard the generous default bundle grants. No role bypass involved (the
 // token resolves to a synthetic key).
 // ---------------------------------------------------------------------------
 
 describe("wildcard scope reaches runtime user.* types (keystone)", () => {
-  // A runtime type is registered into the space that registered it, so a
-  // token has to be bound to that space to see the type at all. Bound
-  // elsewhere, the write is refused for a missing schema rather than for a
-  // scope, and the read is a fence miss rather than a projection.
-  //
   // The in-memory custom-type registry is a module singleton, so each test
   // registers a distinct `user.*` id to avoid a cross-test 409.
   async function registerUserType(typeId: string): Promise<void> {
     const reg = await request(ctx.app, "POST", "/types", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         id: typeId,
         version: 1,
@@ -429,7 +423,7 @@ describe("wildcard scope reaches runtime user.* types (keystone)", () => {
   it("namespace wildcard user.*:read reads user.* items; writing still needs :write", async () => {
     await registerUserType("user.ks_read");
     await request(ctx.app, "POST", "/items", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: { type: "user.ks_read", properties: { title: "seed" } },
     });
 

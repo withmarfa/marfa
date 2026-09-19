@@ -43,7 +43,7 @@ afterAll(async () => {
   await ctx.cleanup();
 });
 
-function spaceKey(): ApiKey {
+function workingKey(): ApiKey {
   return {
     id: "key_events_cursor_timeout",
     name: "events cursor timeout",
@@ -79,7 +79,7 @@ function withStalledHeadRead(storage: Storage): Storage {
 function makeApp(storage: Storage, options: EventRoutesOptions): Hono<AppEnv> {
   const app = new Hono<AppEnv>();
   app.use("*", async (c, next) => {
-    c.set("apiKey", spaceKey());
+    c.set("apiKey", workingKey());
     await next();
   });
   app.route("/events", eventRoutes(storage, options));

@@ -1,10 +1,10 @@
 /**
  * An archive has to carry the registrations its items depend on.
  *
- * A space's items can be of types the space registered itself, so a restore
- * into an empty space that did not learn about them would fail every such
+ * An item can be of a type registered here rather than shipped, so a restore
+ * into an empty database that did not learn about them would fail every such
  * item as an unknown type while reporting success on whatever was left.
- * These tests pin the round trip end to end — export a space with its own
+ * These tests pin the round trip end to end — export a database with its own
  * type and edge type, restore onto a fresh database, and create a *new*
  * item of the restored type, which proves the live registry and not just
  * the table.
@@ -99,7 +99,7 @@ function uniqueSuffix(): string {
 /** Export the instance as an archive, through the working key. */
 async function exportArchive(ctx: TestContext): Promise<Buffer> {
   const res = await request(ctx.app, "GET", `/export?format=archive`, {
-    key: ctx.spaceKey,
+    key: ctx.workingKey,
   });
   expect(res.status).toBe(200);
   return Buffer.from(await res.arrayBuffer());
@@ -119,7 +119,7 @@ async function restore(ctx: TestContext, archive: Buffer): Promise<Response> {
 }
 
 describe("archives carry type registrations", () => {
-  it("round-trips a space whose items use its own types", async () => {
+  it("round-trips a database whose items use its own types", async () => {
     const source = await newContext();
     const destination = await newContext();
     const suffix = uniqueSuffix();
@@ -297,7 +297,7 @@ describe("archives carry type registrations", () => {
     expect(second.types_skipped).toBe(1);
   });
 
-  it("refuses an archive that redefines a type the space already holds", async () => {
+  it("refuses an archive that redefines a type already registered", async () => {
     const source = await newContext();
     const destination = await newContext();
     const typeId = `user.clash_${uniqueSuffix()}`;
@@ -699,10 +699,10 @@ describe("an archive carries where a type came from", () => {
 
   it("refuses an archive claiming a type is platform-shipped", async () => {
     // The delayed fuse. A restore on a self-host writes into the same
-    // space-less bucket the platform seed uses, and the boot warmup skips
+    // rows the platform seed writes, and the boot warmup skips
     // `platform` rows on the way to projecting them globally, so a
     // replayed claim would seed an attacker-chosen type into the global
-    // registry at the next restart, resolving for every space and
+    // registry at the next restart, resolving for every caller and
     // undeletable. Nothing manifests until then, which is what makes it
     // worth refusing rather than downgrading.
     const source = await newContext();
@@ -776,17 +776,7 @@ describe("a claimed `user` origin is checked against the handle", () => {
     fields: { name: { type: "string", required: true } },
   } as const;
 
-  /**
-   * Builds a one-line archive claiming `provenance` for `typeId`, addressed
-   * to `space`.
-   *
-   * The vehicle is exported from the source's own space, because that is the
-   * only one its key may name, and the manifest is then restamped with the
-   * space the archive is going to be restored into — the restore door
-   * compares the two and refuses a mismatch. Where the destination needs a
-   * real space row of its own, as the hosted cases do for the users foreign
-   * key, that is the id the caller passes here.
-   */
+  /** Builds a one-line archive claiming `provenance` for `typeId`. */
   async function archiveClaiming(
     source: TestContext,
     seedTypeId: string,

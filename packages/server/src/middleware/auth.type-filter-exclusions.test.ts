@@ -4,16 +4,15 @@
  * A `"none"` entry subtracts, and a filter assembled from the granted
  * patterns alone has no way to express a subtraction. `"none"` is a public
  * input, not a hypothetical — it is the third arm of the `z.enum` on POST
- * /keys and POST /admin/spaces/{id}/keys — so these shapes are mintable
+ * /keys and POST /admin/keys/{id}/keys — so these shapes are mintable
  * today.
  *
  * **This file asserts the shape of the returned pair, not what it admits.**
  * Whether the filter and the point check agree about a concrete id is
  * `auth.type-filter-agreement.test.ts`, which is the acceptance; these are
  * the unit assertions underneath it. Asserting on a `GET /items` response
- * instead would prove nothing either way: the storage layer's own space
- * fence can hide system rows independently, so the route
- * passes with the filter broken.
+ * instead would prove nothing either way: the storage layer can hide system
+ * rows independently, so the route passes with the filter broken.
  *
  * How a sign-in's granted scopes reach this same map is not the subject
  * here; `oauth-scope-enforcement.test.ts` covers that projection.
@@ -27,9 +26,9 @@ import {
 import type { ApiKey, TypePermission } from "@withmarfa/shared";
 import { checkTypeAccess, computeTypeFilter } from "./auth.js";
 
-// An ordinary space key: the permission map is the only thing that decides,
+// An ordinary working key: the permission map is the only thing that decides,
 // because nothing bypasses it.
-function spaceKey(type_permissions: Record<string, TypePermission>): ApiKey {
+function workingKey(type_permissions: Record<string, TypePermission>): ApiKey {
   return {
     id: "k1",
     label: "test",
@@ -64,8 +63,8 @@ describe("computeTypeFilter — explicit no-access entries", () => {
     );
     expect(resolveTypePermission("core.note", withExclusion)).toBe("read");
 
-    const before = computeTypeFilter(spaceKey(granted));
-    const after = computeTypeFilter(spaceKey(withExclusion));
+    const before = computeTypeFilter(workingKey(granted));
+    const after = computeTypeFilter(workingKey(withExclusion));
 
     // Without the entry: byte-identical to what this credential shape has
     // always produced.
@@ -85,7 +84,7 @@ describe("computeTypeFilter — explicit no-access entries", () => {
     // The divergence this exists to close: the point check refuses the type
     // the filter must also withhold, and admits the one it must keep.
     expect(() => {
-      checkTypeAccess(spaceKey(withExclusion), "system.credential", "read");
+      checkTypeAccess(workingKey(withExclusion), "system.credential", "read");
     }).toThrow();
     expect(matchesTypeFilter("system.credential", after)).toBe(false);
     expect(matchesTypeFilter("core.note", after)).toBe(true);
@@ -96,7 +95,7 @@ describe("computeTypeFilter — explicit no-access entries", () => {
       [GLOBAL_TYPE_WILDCARD]: "read",
       "system.*": "none",
     };
-    const filter = computeTypeFilter(spaceKey(perms));
+    const filter = computeTypeFilter(workingKey(perms));
     expect(filter.excluded).toEqual(["system.*"]);
     expect(matchesTypeFilter("core.note", filter)).toBe(true);
     expect(matchesTypeFilter("system.credential", filter)).toBe(false);
@@ -111,7 +110,7 @@ describe("computeTypeFilter — explicit no-access entries", () => {
       "user.*": "read",
       "user.secret": "none",
     };
-    const filter = computeTypeFilter(spaceKey(perms));
+    const filter = computeTypeFilter(workingKey(perms));
     expect(filter).toEqual({ allowed: ["user.*"], excluded: ["user.secret"] });
     expect(matchesTypeFilter("user.diary", filter)).toBe(true);
     expect(matchesTypeFilter("user.secret", filter)).toBe(false);
@@ -128,14 +127,14 @@ describe("computeTypeFilter — explicit no-access entries", () => {
     };
     expect(resolveTypePermission("user.secret", perms)).toBe("read");
 
-    const filter = computeTypeFilter(spaceKey(perms));
+    const filter = computeTypeFilter(workingKey(perms));
     expect(matchesTypeFilter("user.secret", filter)).toBe(true);
     expect(matchesTypeFilter("user.diary", filter)).toBe(false);
   });
 
   it("leaves a narrow grant untouched when nothing is excluded", () => {
     const perms: Record<string, TypePermission> = { "core.*": "read" };
-    expect(computeTypeFilter(spaceKey(perms))).toEqual({
+    expect(computeTypeFilter(workingKey(perms))).toEqual({
       allowed: ["core.*"],
       excluded: [],
     });
@@ -149,7 +148,7 @@ describe("computeTypeFilter — explicit no-access entries", () => {
       [GLOBAL_TYPE_WILDCARD]: "none",
       "core.note": "none",
     };
-    const filter = computeTypeFilter(spaceKey(perms));
+    const filter = computeTypeFilter(workingKey(perms));
     expect(filter.allowed).toEqual([]);
     expect(matchesTypeFilter("core.note", filter)).toBe(false);
   });
@@ -166,7 +165,7 @@ describe("computeTypeFilter — explicit no-access entries", () => {
     // byte-identical either way, so a suite built on `{a: "read", b:
     // "write"}` proves the level and says nothing about the exclusion. The
     // wildcard beside the literal is what makes the two arms differ.
-    const key = spaceKey({ "*": "write", "user.secret": "read" });
+    const key = workingKey({ "*": "write", "user.secret": "read" });
 
     expect(computeTypeFilter(key, "write")).toEqual({
       allowed: ["*"],

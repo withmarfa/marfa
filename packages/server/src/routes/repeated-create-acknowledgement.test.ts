@@ -74,7 +74,7 @@ async function createNote(
   body: Record<string, unknown> = {},
 ): Promise<Response> {
   return request(ctx.app, "POST", "/items", {
-    key: ctx.spaceKey,
+    key: ctx.workingKey,
     body: { type: "core.note", id, properties: { body: "first" }, ...body },
   });
 }
@@ -117,7 +117,7 @@ describe("a repeated item create", () => {
     // Read back independently of the response, so the assertion is about
     // the row rather than about what the route chose to echo.
     const read = await request(ctx.app, "GET", `/items/${id}`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
     });
     expect(((await read.json()) as ItemBody).item.properties).toEqual({
       body: "first",
@@ -129,7 +129,7 @@ describe("a repeated item create", () => {
     expect((await createNote(id)).status).toBe(201);
 
     const repeat = await request(ctx.app, "POST", "/items", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: { type: "core.task", id, properties: { title: "different" } },
     });
     expect(repeat.status).toBe(409);
@@ -142,7 +142,7 @@ describe("a repeated item create", () => {
 describe("a repeated edge create", () => {
   async function seedItem(label: string): Promise<string> {
     const res = await request(ctx.app, "POST", "/items", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: { type: "core.note", properties: { body: label } },
     });
     expect(res.status).toBe(201);
@@ -161,7 +161,7 @@ describe("a repeated edge create", () => {
       properties: { note: "first" },
     };
     expect(
-      (await request(ctx.app, "POST", "/edges", { key: ctx.spaceKey, body }))
+      (await request(ctx.app, "POST", "/edges", { key: ctx.workingKey, body }))
         .status,
     ).toBe(201);
 
@@ -170,7 +170,7 @@ describe("a repeated edge create", () => {
     await settle();
 
     const repeat = await request(ctx.app, "POST", "/edges", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: { ...body, properties: { note: "second" } },
     });
     expect(repeat.status).toBe(200);
@@ -195,8 +195,11 @@ describe("the gates an acknowledgement still runs", () => {
     const id = generateId();
     expect((await createNote(id)).status).toBe(201);
     expect(
-      (await request(ctx.app, "DELETE", `/items/${id}`, { key: ctx.spaceKey }))
-        .status,
+      (
+        await request(ctx.app, "DELETE", `/items/${id}`, {
+          key: ctx.workingKey,
+        })
+      ).status,
     ).toBe(200);
 
     const repeat = await createNote(id);
@@ -247,11 +250,11 @@ describe("a repeated edge create under concurrency", () => {
     // collision under test. A race the harness cannot hold still is not
     // evidence about this code — the deterministic version is.
     const source = await request(ctx.app, "POST", "/items", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: { type: "core.note", properties: { body: "race-source" } },
     });
     const target = await request(ctx.app, "POST", "/items", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: { type: "core.note", properties: { body: "race-target" } },
     });
     const sourceId = ((await source.json()) as { item: { id: string } }).item
@@ -267,7 +270,7 @@ describe("a repeated edge create under concurrency", () => {
     };
 
     expect(
-      (await request(ctx.app, "POST", "/edges", { key: ctx.spaceKey, body }))
+      (await request(ctx.app, "POST", "/edges", { key: ctx.workingKey, body }))
         .status,
     ).toBe(201);
 
@@ -303,7 +306,7 @@ describe("a repeated edge create under concurrency", () => {
     let res: Response;
     try {
       res = await request(ctx.app, "POST", "/edges", {
-        key: ctx.spaceKey,
+        key: ctx.workingKey,
         body,
       });
     } finally {
@@ -323,7 +326,7 @@ describe("a repeated edge create under concurrency", () => {
     expect(parsed.edge.id).toBe(id);
 
     const listed = await request(ctx.app, "GET", `/items/${sourceId}/edges`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
     });
     expect(((await listed.json()) as { data: unknown[] }).data).toHaveLength(1);
   });

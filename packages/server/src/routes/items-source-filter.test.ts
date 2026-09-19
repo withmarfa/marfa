@@ -22,7 +22,7 @@ import {
 import type { TestContext } from "../test-utils.js";
 import { writeInstanceConfig } from "../storage/instance-config.js";
 import { hashApiKey } from "../middleware/auth.js";
-import { SPACE_PERMISSIONS } from "@withmarfa/shared";
+import { PERMISSIONS } from "@withmarfa/shared";
 
 let ctx: TestContext;
 let trustedKey: string;
@@ -32,14 +32,14 @@ let untrustedKey: string;
  * Credentials stamp `source` onto every item they write, so "an item from an
  * untrusted source" means "an item written by a second credential".
  */
-async function mintSpaceKey(source: string): Promise<string> {
+async function mintWorkingKey(source: string): Promise<string> {
   const suffix = Math.random().toString(36).slice(2, 12);
   const raw = `marfa_k1_src_${suffix}`;
   await ctx.storage.keys.create(
     {
       label: `source-filter-${source}`,
       source,
-      permissions: [...SPACE_PERMISSIONS],
+      permissions: [...PERMISSIONS],
       // The rank this fixture carried admitted it past its own map, so the
       // map has to say what the rank granted silently.
       type_permissions: { "*": "write" },
@@ -53,8 +53,8 @@ async function mintSpaceKey(source: string): Promise<string> {
 
 beforeAll(async () => {
   ctx = await createTestContext({});
-  trustedKey = await mintSpaceKey("trusted");
-  untrustedKey = await mintSpaceKey("untrusted");
+  trustedKey = await mintWorkingKey("trusted");
+  untrustedKey = await mintWorkingKey("untrusted");
 
   for (const key of [trustedKey, untrustedKey]) {
     const created = await request(ctx.app, "POST", "/items", {

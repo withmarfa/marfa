@@ -4,8 +4,7 @@
  *
  * Anything that grows on every write needs an owner in code. This one has
  * no sweeper of its own — it rides the event-log retention sweep, which
- * already resolves a per-space window and already holds a cluster lock per
- * scope. The behavioral half is below; the structural half reads
+ * already resolves the effective window and already holds a cluster lock. The behavioral half is below; the structural half reads
  * `index.ts`, because "there is no second sweeper" is a claim about what
  * is absent and a running server cannot be asked it.
  */

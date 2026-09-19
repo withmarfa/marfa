@@ -372,14 +372,14 @@ describe("GET /auth/authorize (consent page)", () => {
     expect(html).toContain(clientId);
   });
 
-  it("enumerates the space's custom types under a requested user.* wildcard", async () => {
-    // Hosted mode: the enumeration resolves the consenting user's space
-    // through the `users` store, which only hosted-mode sign-up provisions.
+  it("enumerates the registered custom types under a requested user.* wildcard", async () => {
+    // The enumeration resolves the consenting user through the `users`
+    // store, which only sign-up provisions.
     ctx = await createTestContext({});
     const clientId = await seedClient(ctx, { name: "Custom Types App" });
 
-    // Sign up capturing the auth user id, so the space the enumeration
-    // reads from is resolvable — the shared signInUser helper discards it.
+    // Sign up capturing the auth user id, so the account the enumeration
+    // reads for is resolvable — the shared signInUser helper discards it.
     const email = "custom-types@example.com";
     const password = "correct horse battery";
     await createTestAccount(ctx, email, password, "Test User");
@@ -1433,7 +1433,7 @@ describe("an off-by-default bundle grants nothing without a tick", () => {
     },
     {
       id: "manage",
-      label: "Manage your space",
+      label: "Manage your server",
       description: "",
       scopes: ["core.task:write"],
       default_on: false,
@@ -1493,7 +1493,7 @@ describe("an off-by-default bundle grants nothing without a tick", () => {
     // submission as a narrowing, and a narrowing is treated as a promise
     // that the removed access stops working, so it revokes the client's live
     // tokens. An untouched Continue killed a working integration, and a
-    // space permission granted once would evaporate at the next re-consent.
+    // permission granted once would evaporate at the next re-consent.
     //
     // First consent ticks the off bundle by hand; the return visit touches
     // nothing. The grant has to survive it.

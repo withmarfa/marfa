@@ -34,7 +34,7 @@ afterAll(async () => {
 describe("the page bound", () => {
   it("refuses a zero limit at the door rather than clamping it", async () => {
     const res = await request(ctx.app, "GET", "/items?limit=0", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
     });
     expect(res.status).toBe(400);
   });
@@ -44,7 +44,7 @@ describe("the page bound", () => {
       ctx.app,
       "GET",
       `/items?limit=${String(MAX_PAGE_LIMIT + 1)}`,
-      { key: ctx.spaceKey },
+      { key: ctx.workingKey },
     );
     expect(res.status).toBe(400);
   });
@@ -54,7 +54,7 @@ describe("the page bound", () => {
       ctx.app,
       "GET",
       `/items?limit=${String(MAX_PAGE_LIMIT)}`,
-      { key: ctx.spaceKey },
+      { key: ctx.workingKey },
     );
     expect(res.status).toBe(200);
   });
@@ -65,7 +65,7 @@ describe("the page bound", () => {
     // why this had never been exercised.
     for (const marker of ["floor-a", "floor-b"]) {
       const created = await request(ctx.app, "POST", "/items", {
-        key: ctx.spaceKey,
+        key: ctx.workingKey,
         body: {
           type: "core.note",
           properties: { body: `page-bound-${marker}` },
@@ -88,7 +88,7 @@ describe("the page bound", () => {
 
   it("uses the default when the caller names no limit", async () => {
     const res = await request(ctx.app, "GET", "/items", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
     });
     expect(res.status).toBe(200);
     const body = (await res.json()) as { data: unknown[] };

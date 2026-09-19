@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
-import { SPACE_PERMISSIONS } from "@withmarfa/shared";
+import { PERMISSIONS } from "@withmarfa/shared";
 import { createApp } from "../app.js";
 import { createSqliteStorage } from "../storage/sqlite/index.js";
 import { FilesystemBlobBackend } from "../storage/blob-backend.js";
@@ -16,9 +16,9 @@ const SALT = "test-salt";
 interface Ctx {
   app: Hono<AppEnv>;
   storage: Storage;
-  /** An ordinary working key bound to the instance's one space — the shape a
-   *  self-hoster is handed, and the only shape that carries content reach. */
-  spaceKey: string;
+  /** An ordinary working key — the shape a self-hoster is handed, and the
+   *  only shape that carries content reach. */
+  workingKey: string;
   cleanup: () => Promise<void>;
 }
 
@@ -74,13 +74,13 @@ async function buildCtx(): Promise<Ctx> {
   });
 
   const suffix = Math.random().toString(36).slice(2, 14);
-  const rawKey = `marfa_k1_rl_space_${suffix}`;
+  const rawKey = `marfa_k1_rl_working_${suffix}`;
   await storage.keys.create(
     {
-      label: "rl-space",
-      source: `rl-space-${suffix}`,
+      label: "rl-working",
+      source: `rl-working-${suffix}`,
       is_operator: false,
-      permissions: [...SPACE_PERMISSIONS],
+      permissions: [...PERMISSIONS],
       type_permissions: { "*": "write" },
       default_tier: "feed",
     },
@@ -91,7 +91,7 @@ async function buildCtx(): Promise<Ctx> {
   return {
     app,
     storage,
-    spaceKey: rawKey,
+    workingKey: rawKey,
     cleanup: async () => {
       try {
         await storage.close();
@@ -104,12 +104,12 @@ async function buildCtx(): Promise<Ctx> {
   };
 }
 
-async function makeSpaceKey(ctx: Ctx, label: string): Promise<string> {
+async function makeWorkingKey(ctx: Ctx, label: string): Promise<string> {
   const suffix = Math.random().toString(36).slice(2, 10);
   const res = await ctx.app.request("/keys", {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${ctx.spaceKey}`,
+      Authorization: `Bearer ${ctx.workingKey}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
@@ -139,9 +139,9 @@ afterAll(async () => {
 
 describe("rate-limit keying", () => {
   it("limits per credential, not per IP, for authenticated requests", async () => {
-    // Two different space keys (so they have distinct credential ids).
-    const keyA = await makeSpaceKey(ctx, "rl-a");
-    const keyB = await makeSpaceKey(ctx, "rl-b");
+    // Two different working keys (so they have distinct credential ids).
+    const keyA = await makeWorkingKey(ctx, "rl-a");
+    const keyB = await makeWorkingKey(ctx, "rl-b");
 
     // Limit is 2/window on non-GET, default*2 on GET. Use GET /items which
     // resolves to limit=4. Issue 5 as key A — last one must 429.
@@ -283,10 +283,10 @@ async function buildAggCtx(): Promise<Ctx> {
   const rawKey = `marfa_k1_rl_agg_${suffix}`;
   await storage.keys.create(
     {
-      label: "rl-agg-space",
-      source: `rl-agg-space-${suffix}`,
+      label: "rl-agg-working",
+      source: `rl-agg-working-${suffix}`,
       is_operator: false,
-      permissions: [...SPACE_PERMISSIONS],
+      permissions: [...PERMISSIONS],
       type_permissions: { "*": "write" },
       default_tier: "feed",
     },
@@ -297,7 +297,7 @@ async function buildAggCtx(): Promise<Ctx> {
   return {
     app,
     storage,
-    spaceKey: rawKey,
+    workingKey: rawKey,
     cleanup: async () => {
       try {
         await storage.close();
@@ -331,11 +331,11 @@ describe("rate-limit aggregate per-identifier window", () => {
     // proving the budget didn't multiply group-by-group.
     const hitItems = () =>
       aggCtx.app.request("/items", {
-        headers: { Authorization: `Bearer ${aggCtx.spaceKey}` },
+        headers: { Authorization: `Bearer ${aggCtx.workingKey}` },
       });
     const hitTypes = () =>
       aggCtx.app.request("/types", {
-        headers: { Authorization: `Bearer ${aggCtx.spaceKey}` },
+        headers: { Authorization: `Bearer ${aggCtx.workingKey}` },
       });
 
     expect((await hitItems()).status).toBe(200);
@@ -405,7 +405,7 @@ describe("rate-limit response headers survive the error handler", () => {
   // reference promises the headers and the SDK's retry path reads
   // Retry-After.
   it("a 429 carries Retry-After and the X-RateLimit-* trio", async () => {
-    const key = await makeSpaceKey(ctx, "rl-headers");
+    const key = await makeWorkingKey(ctx, "rl-headers");
     const hit = async () =>
       ctx.app.request("/items", {
         headers: { Authorization: `Bearer ${key}` },
@@ -431,7 +431,7 @@ describe("rate-limit response headers survive the error handler", () => {
   });
 
   it("an ordinary error response carries X-Request-ID", async () => {
-    const key = await makeSpaceKey(ctx, "rl-reqid");
+    const key = await makeWorkingKey(ctx, "rl-reqid");
     const res = await ctx.app.request(
       "/items/019621f0-0000-7000-8000-000000000000",
       { headers: { Authorization: `Bearer ${key}` } },
@@ -462,7 +462,7 @@ describe("rate-limit batched windows", () => {
     // freshly-usable budget.
     const hit = (path: string) =>
       batchCtx.app.request(path, {
-        headers: { Authorization: `Bearer ${batchCtx.spaceKey}` },
+        headers: { Authorization: `Bearer ${batchCtx.workingKey}` },
       });
     for (let i = 0; i < 4; i++) {
       expect((await hit("/items")).status).toBe(200);

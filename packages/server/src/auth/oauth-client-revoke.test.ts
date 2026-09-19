@@ -19,11 +19,10 @@
  * somebody else's grant. And an access-token revoke stays token-only: that
  * is a sign-out, not a disconnect.
  *
- * The last pair is about a token that carries no space, which is what an
- * instance issued before a grant's space resolved and what its rows still
- * hold after the migration moves the projection. Revoking with one has to
- * reach the projection anyway, and rotating one has to be refused rather
- * than answered with another token nothing accepts.
+ * The last pair is about a token carrying a NULL `reference_id`, which is
+ * what an earlier build issued and what its rows still hold. Revoking with
+ * one has to reach the projection anyway, and rotating one has to be refused
+ * rather than answered with another token nothing accepts.
  */
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { createHash, randomBytes } from "node:crypto";
@@ -588,10 +587,9 @@ describe("POST /auth/oauth2/revoke with a refresh token ends the grant", () => {
 });
 
 /**
- * Mint the token pair a deployment issued before a grant's space resolved:
- * both rows carry a NULL `reference_id`. The migration that moves a stranded
- * projection into the space the resolver now answers does not rewrite these,
- * so this is the live shape on an upgraded instance until the tokens expire.
+ * Mint the token pair an earlier build issued: both rows carry a NULL
+ * `reference_id`, and nothing rewrites them, so this is the live shape on an
+ * upgraded instance until the tokens expire.
  *
  * Hashes are computed the way the plugin computes them, prefix stripped, so
  * the presented string resolves through the same lookup a real token does.
@@ -627,12 +625,10 @@ async function seedUnboundTokenPair(
   return { accessToken, refreshToken };
 }
 
-describe("a token minted before the grant's space resolved", () => {
+describe("a token carrying no reference_id", () => {
   it("still ends the grant it belongs to when the client revokes it", async () => {
-    // The cascade reads the space off the presented token, and this token has
-    // none. The projection does: it was written into the space the resolver
-    // answers, or moved there by the migration. Keyed on the token alone the
-    // lookup finds nothing, `revokeProjectedGrant` takes its no-op arm, and
+    // The cascade used to key on the presented token's `reference_id`, and
+    // this token has none. Keyed on the token alone the lookup finds nothing, `revokeProjectedGrant` takes its no-op arm, and
     // the endpoint answers 200 over a grant the security page still lists as
     // active. A revoke that reports success and ends nothing is the failure
     // this whole change exists to close.

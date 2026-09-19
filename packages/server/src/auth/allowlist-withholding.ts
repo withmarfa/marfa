@@ -19,7 +19,7 @@
  * rather than counting it, which is what keeps this paragraph true as the set
  * changes size. What the drop decides is that a *bundle* can never be the
  * reason one is publishable, and that is the half worth keeping: a
- * bundle-claimed space permission leaves the consent screen's unclaimed-scope
+ * bundle-claimed permission leaves the consent screen's unclaimed-scope
  * bucket and would inherit the bundle's `default_on` tick, which is grant by
  * silence — the thing the family exists to stop.
  *
@@ -44,29 +44,29 @@
  * because the allowlist emits all three itself. A bundle naming one adds
  * nothing it did not already hold.
  */
-import { isSpacePermission, type PermissionBundle } from "@withmarfa/shared";
+import { isPermission, type PermissionBundle } from "@withmarfa/shared";
 import { log } from "../middleware/logger.js";
 
 /**
  * Whether this server refuses to publish a literal *because a bundle named
  * it*, even though the grammar recognizes it.
  *
- * Not "is this publishable at all": every space permission is, from the
+ * Not "is this publishable at all": every permission is, from the
  * closed set, emitted by the allowlist directly. This answers the narrower
  * question the bundle doors ask, which is whether a configuration may be the
  * thing that publishes it.
  *
- * Delegates to `isSpacePermission` rather than matching the root, so there is
- * one answer to "is this a space permission" rather than two that can drift.
+ * Delegates to `isPermission` rather than matching the root, so there is
+ * one answer to "is this a permission" rather than two that can drift.
  * It is exact membership of the closed set, which also gives the property
- * that matters here: a literal added to `SPACE_PERMISSIONS` is withheld by
+ * that matters here: a literal added to `PERMISSIONS` is withheld by
  * having been added, rather than by somebody remembering this file.
  *
  * A malformed literal under the root is not this function's problem — it never
  * reaches here, because `isValidScope` refuses it one step earlier.
  */
 export function isWithheldFromAllowlist(scope: string): boolean {
-  return isSpacePermission(scope);
+  return isPermission(scope);
 }
 
 /**

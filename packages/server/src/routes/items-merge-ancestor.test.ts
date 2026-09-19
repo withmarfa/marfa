@@ -39,7 +39,7 @@ async function seed(
   properties: Record<string, unknown>,
 ): Promise<{ id: string; version: number }> {
   const res = await request(ctx.app, "POST", "/items", {
-    key: ctx.spaceKey,
+    key: ctx.workingKey,
     body: { type: "core.note", properties },
   });
   expect(res.status).toBe(201);
@@ -53,14 +53,14 @@ async function patch(
   version: number,
 ): Promise<Response> {
   return request(ctx.app, "PATCH", `/items/${id}`, {
-    key: ctx.spaceKey,
+    key: ctx.workingKey,
     body: { properties, version },
   });
 }
 
 async function read(id: string): Promise<ItemBody["item"]> {
   const res = await request(ctx.app, "GET", `/items/${id}`, {
-    key: ctx.spaceKey,
+    key: ctx.workingKey,
   });
   expect(res.status).toBe(200);
   return ((await res.json()) as ItemBody).item;
@@ -150,7 +150,7 @@ describe("PATCH /items/:id — a versioned write has an ancestor to merge agains
     );
 
     const res = await request(ctx.app, "GET", `/items/${id}/versions`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
     });
     expect(res.status).toBe(200);
     const body = (await res.json()) as { versions: { version: number }[] };

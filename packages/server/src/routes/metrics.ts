@@ -9,7 +9,7 @@ const CACHE_TTL_MS = 60_000;
 const startedAt = Date.now();
 
 // A single module-level cache is sufficient: the platform gate refuses
-// space-bound credentials, so every caller that reaches the handler sees
+// working credentials, so every caller that reaches the handler sees
 // the same instance-wide counts.
 interface CacheEntry {
   response: Record<string, unknown>;
@@ -48,7 +48,7 @@ const getMetricsRoute = createRoute({
   tags: ["Admin"],
   summary: "Get server metrics",
   description:
-    "Instance-wide counters for items, blobs, types, keys, and webhooks, plus process uptime. `keys.total` counts unrevoked keys. Operator key only: most counters are instance-wide rather than space-scoped, so a credential bound to a space is refused.",
+    "Instance-wide counters for items, blobs, types, keys, and webhooks, plus process uptime. `keys.total` counts unrevoked keys. Operator key only: the counters are instance-wide rather than permission-scoped, so a working credential is refused.",
   security: [{ bearerAuth: [] }],
   responses: {
     200: {

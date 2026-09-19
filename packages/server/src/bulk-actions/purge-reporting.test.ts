@@ -4,7 +4,7 @@
  * Purge is the terminal step after a soft delete, so every id it is handed is
  * trashed. The runner's pre-fetch used `items.getMany`, which excludes trashed
  * rows because every read surface treats a soft-deleted item as gone — so the
- * map came back empty, every id fell into the "not found in space scope"
+ * map came back empty, every id fell into the "not found at purge time"
  * branch, and `bulkPurge` deleted them regardless.
  *
  * The result was the worst available shape: an operator saw `succeeded: 0,
@@ -36,13 +36,13 @@ afterAll(async () => {
 
 async function createTrashedNote(title: string): Promise<string> {
   const created = await request(ctx.app, "POST", "/items", {
-    key: ctx.spaceKey,
+    key: ctx.workingKey,
     body: { type: "core.note", properties: { title, body: title } },
   });
   expect(created.status).toBe(201);
   const id = ((await created.json()) as { item: { id: string } }).item.id;
   const trashed = await request(ctx.app, "POST", `/items/${id}/transition`, {
-    key: ctx.spaceKey,
+    key: ctx.workingKey,
     body: { state: "trashed" },
   });
   expect(trashed.status).toBe(200);
@@ -67,7 +67,7 @@ describe("bulk purge reporting", () => {
           filter: `properties.title starts_with "${marker}"`,
         },
       },
-      ctx.spaceKey,
+      ctx.workingKey,
     );
 
     const job = outcome.job;
@@ -79,7 +79,7 @@ describe("bulk purge reporting", () => {
     // And the rows really are gone, so the report and the outcome agree.
     for (const id of ids) {
       const res = await request(ctx.app, "GET", `/items/${id}`, {
-        key: ctx.spaceKey,
+        key: ctx.workingKey,
       });
       expect(res.status).toBe(404);
     }

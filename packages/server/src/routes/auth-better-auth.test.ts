@@ -389,7 +389,7 @@ describe("better-auth /auth/* surface", () => {
     });
 
     const listRes = await request(ctx.app, "GET", "/auth/grants", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
     });
     expect(listRes.status).toBe(200);
     const list = (await listRes.json()) as {
@@ -410,13 +410,13 @@ describe("better-auth /auth/* surface", () => {
       ctx.app,
       "DELETE",
       `/auth/grants/${grant.id}`,
-      { key: ctx.spaceKey },
+      { key: ctx.workingKey },
     );
     expect(revokeRes.status).toBe(204);
 
     // Confirm it's gone from the active list
     const list2Res = await request(ctx.app, "GET", "/auth/grants", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
     });
     const list2 = (await list2Res.json()) as { id: string }[];
     expect(list2.some((g) => g.id === grant.id)).toBe(false);

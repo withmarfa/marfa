@@ -117,8 +117,8 @@ export interface TypePatternSql {
   descendantPattern: string | null;
   /**
    * Declared descendants the name-based clauses above cannot reach, for an
-   * `IN (...)` term. Empty unless a space scope was supplied, so a caller that
-   * resolves names alone emits exactly the predicate it always did.
+   * `IN (...)` term. Always empty on a permission pattern, which resolves
+   * names alone and emits exactly the predicate it always did.
    */
   extraTypes: string[];
 }

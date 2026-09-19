@@ -58,10 +58,7 @@ function sweeper(
   });
 }
 
-/** Puts bytes in the backend and registers them, the way an upload would.
- *  Registered in the context's space, because blob metadata is keyed on
- *  `(space_id, hash)` and the items below live in that space: a row filed
- *  anywhere else is invisible to the sweeper reading the item's own space. */
+/** Puts bytes in the backend and registers them, the way an upload would. */
 async function seedBlob(bytes: Buffer, mimeType: string): Promise<string> {
   const ref = `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
   await ctx.blobBackend.put(ref, bytes, mimeType);
@@ -76,7 +73,7 @@ async function createFileItem(
   extra: Record<string, unknown> = {},
 ): Promise<string> {
   const res = await request(ctx.app, "POST", "/items", {
-    key: ctx.spaceKey,
+    key: ctx.workingKey,
     body: {
       type,
       properties: { blob_ref: blobRef, mime_type: mimeType, ...extra },
@@ -92,7 +89,7 @@ async function createFileItem(
 
 async function readItem(id: string): Promise<Record<string, unknown>> {
   const res = await request(ctx.app, "GET", `/items/${id}`, {
-    key: ctx.spaceKey,
+    key: ctx.workingKey,
   });
   expect(res.status).toBe(200);
   const data = (await res.json()) as {
@@ -103,7 +100,7 @@ async function readItem(id: string): Promise<Record<string, unknown>> {
 
 async function readVersion(id: string): Promise<number> {
   const res = await request(ctx.app, "GET", `/items/${id}`, {
-    key: ctx.spaceKey,
+    key: ctx.workingKey,
   });
   expect(res.status).toBe(200);
   const data = (await res.json()) as { item: { version: number } };
@@ -141,7 +138,7 @@ describe("extraction", () => {
     // findable. FTS indexes every unmarked string property, so the write
     // above is the whole search wiring.
     const search = await request(ctx.app, "GET", "/search?q=quokkadocx", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
     });
     expect(search.status).toBe(200);
     const found = (await search.json()) as {
@@ -168,7 +165,7 @@ describe("extraction", () => {
     expect(String(props.extracted_text)).toContain("page two marker");
 
     const search = await request(ctx.app, "GET", "/search?q=quokkapdf", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
     });
     expect(search.status).toBe(200);
     const found = (await search.json()) as {
@@ -200,7 +197,7 @@ describe("extraction", () => {
     const ref = await seedBlob(bytes, "text/plain");
     const id = await createFileItem(ref, "text/plain");
     await request(ctx.app, "PATCH", `/items/${id}`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         properties: { title: "a title the user set" },
         version: await readVersion(id),
@@ -247,7 +244,7 @@ describe("extraction", () => {
       "text/plain",
     );
     await request(ctx.app, "PATCH", `/items/${id}`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         properties: { blob_ref: replacement },
         version: await readVersion(id),
@@ -308,7 +305,7 @@ describe("extraction", () => {
     // "recognition" is still in flight.
     await expect.poll(() => ocr.calls).toBe(1);
     await request(ctx.app, "PATCH", `/items/${id}`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         properties: { blob_ref: replacement, mime_type: "text/plain" },
         version: await readVersion(id),
@@ -423,7 +420,7 @@ describe("skips", () => {
       await seedBlob(Buffer.from("trashed quokkatrash"), "text/plain"),
       "text/plain",
     );
-    await request(ctx.app, "DELETE", `/items/${id}`, { key: ctx.spaceKey });
+    await request(ctx.app, "DELETE", `/items/${id}`, { key: ctx.workingKey });
 
     const candidates = await ctx.storage.enrichment.listCandidates(
       EXTRACTOR_VERSION,
@@ -476,7 +473,7 @@ describe("skips", () => {
 
     // The claim that matters to a caller: the item is still writable.
     const patch = await request(ctx.app, "PATCH", `/items/${id}`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         properties: { title: "still editable" },
         version: await readVersion(id),
@@ -736,7 +733,7 @@ describe("failures", () => {
       "image/png",
     );
     await request(ctx.app, "PATCH", `/items/${id}`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         properties: { blob_ref: replacement },
         version: await readVersion(id),

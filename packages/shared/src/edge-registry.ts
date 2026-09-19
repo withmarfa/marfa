@@ -15,8 +15,8 @@ import { getTypeSchema, isSubtypeOf, typeHasRole } from "./type-registry.js";
 export type { EdgeCardinality, EdgeCascade, EdgeTypeSchema };
 export { ALL_EDGE_TYPES };
 
-// Core edge types are global — shipped with @withmarfa/types and shared by
-// every space. This map is read-only after construction.
+// Core edge types are shipped with @withmarfa/types and resolve for every
+// caller. This map is read-only after construction.
 const _coreRegistry = new Map<string, EdgeTypeSchema>(
   ALL_EDGE_TYPES.map((schema) => [schema.id, schema]),
 );
@@ -26,10 +26,10 @@ const _coreRegistry = new Map<string, EdgeTypeSchema>(
 const _customRegistry = new Map<string, EdgeTypeSchema>();
 
 /**
- * The core edge-type registry — the eight global edge types by identifier.
- * Custom (space-scoped) edge types are NOT exposed here; consumers that need
- * the full set for a space call `listEdgeTypes()`. The OAuth scope
- * allow-list reads this for the static core-scope enumeration.
+ * The core edge-type registry — the eight shipped edge types by identifier.
+ * Custom edge types are NOT exposed here; consumers that need the full set
+ * call `listEdgeTypes()`. The OAuth scope allow-list reads this for the
+ * static core-scope enumeration.
  */
 export const EDGE_TYPE_REGISTRY: ReadonlyMap<string, EdgeTypeSchema> =
   _coreRegistry;
@@ -65,7 +65,7 @@ export function registerEdgeTypeSchema(schema: EdgeTypeSchema): void {
   bucket.set(schema.id, schema);
 }
 
-/** Removes a custom edge-type schema from the space's overlay. */
+/** Removes a custom edge-type schema from the runtime overlay. */
 export function unregisterEdgeTypeSchema(id: string): void {
   _customRegistry.delete(id);
 }
@@ -106,9 +106,9 @@ export function satisfiesEdgeConstraint(
 ): boolean {
   if (constraints.length === 0) return true;
   if (constraints.includes("*")) return true;
-  // Unknown item types can't be reasoned about — fail closed. Resolve within
-  // the space so a custom item type used as an edge endpoint is recognized
-  // (core/system types resolve regardless of space).
+  // Unknown item types can't be reasoned about — fail closed. Resolved
+  // through the registry so a custom item type used as an edge endpoint is
+  // recognized alongside the shipped ones.
   if (!getTypeSchema(typeId)) return false;
   for (const allowed of constraints) {
     if (allowed === "*") return true;

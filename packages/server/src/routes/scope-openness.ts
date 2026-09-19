@@ -59,16 +59,16 @@ import {
 export function isOpenEnded(scope: ParsedScope): boolean {
   switch (scope.kind) {
     case "oidc":
-    case "space":
+    case "permission":
       // No pattern and no verb between them. An OIDC literal names a claim
-      // set and a space permission names one administrative surface; neither
+      // set and a permission names one administrative surface; neither
       // reaches anything registered later, because neither reaches anything
       // registered at all.
       return false;
     case "content":
       // **Yes, and it is the widest yes in the grammar.** The category is
       // defined as the complement of the system family rather than as a list,
-      // so it reaches every non-system type in the space including those
+      // so it reaches every non-system type including those
       // registered after the grant was made — which is exactly the property
       // the two sentences below exist to state.
       //

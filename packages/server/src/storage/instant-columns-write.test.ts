@@ -61,7 +61,7 @@ async function patchItem(
 beforeAll(async () => {
   ctx = await createTestContext();
   const res = await request(ctx.app, "POST", "/keys", {
-    key: ctx.spaceKey,
+    key: ctx.workingKey,
     body: {
       label: "instant-columns-write",
       source: "instant-columns-src",

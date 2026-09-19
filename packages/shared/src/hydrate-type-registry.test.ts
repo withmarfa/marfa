@@ -21,8 +21,9 @@ import {
 } from "./index.js";
 import { ErrorCode, MarfaError } from "./errors.js";
 
-// A space of its own per file: the registry is a module-level singleton, so a
-// leftover registration is visible to every other test in the process.
+// Every registration is tracked and removed per file: the registry is a
+// module-level singleton, so a leftover is visible to every other test in the
+// process.
 
 const registered: string[] = [];
 
@@ -42,8 +43,8 @@ function hydrate(payload: readonly TypeSchema[]) {
 
 describe("hydrateTypeRegistry", () => {
   it("resolves a payload that lists a child before its parent", () => {
-    // `GET /types` makes no ordering promise, and a space that registered
-    // the child first gets it back first. What this pins is that such a
+    // `GET /types` makes no ordering promise, and a server that stored the
+    // child first hands it back first. What this pins is that such a
     // payload does not corrupt resolution — not that the order is what
     // saves it. Nothing here would fail if the order suddenly mattered;
     // the registration-order test below is the only place that shows.
@@ -208,7 +209,7 @@ describe("hydrateTypeRegistry", () => {
   });
 
   it("does not report a parent the platform registry already ships", () => {
-    // The common case: a space subtypes a core type. The parent is absent
+    // The common case: a runtime type subtypes a core one. The parent is absent
     // from the custom set by construction and resolves globally, and the
     // inherited requirement is enforced.
     const result = hydrate([
@@ -239,7 +240,7 @@ describe("hydrateTypeRegistry", () => {
       validateProperties("acme.retired", { headline: "set" }).success,
     ).toBe(true);
 
-    // The same space, listed again after the type was deleted server-side.
+    // The same listing again, after the type was deleted server-side.
     const result = hydrate([{ id: "acme.kept", version: 1, fields: {} }]);
 
     // The compiled schema goes with the registration. A stale cache entry
@@ -333,7 +334,7 @@ describe("hydrateTypeRegistry", () => {
   });
 
   it("reports each id once when the listing carries it twice", () => {
-    // `GET /types` concatenates the platform map with the space's overlay and
+    // `GET /types` concatenates the platform map with the runtime overlay and
     // deduplicates neither, so an id really does arrive twice — this file
     // already says so where `skippedPlatform` is documented. The report
     // arrays pushed per payload entry while the working map is keyed by id,
@@ -380,7 +381,7 @@ describe("hydrateTypeRegistry", () => {
     expect((caught as MarfaError).code).toBe(ErrorCode.INVALID_TYPE);
     expect((caught as MarfaError).details?.type_id).toBe(7);
     // Raised in the collection loop, ahead of every registration and every
-    // removal, so the space is left exactly as it was found.
+    // removal, so the registry is left exactly as it was found.
     expect(getTypeSchema("acme.standing_id")).toBeDefined();
   });
 
@@ -401,9 +402,9 @@ describe("hydrateTypeRegistry", () => {
 
     expect(() => hydrateTypeRegistry(payload)).toThrow(MarfaError);
 
-    // A refused payload names none of what the space already holds, so
-    // convergence running ahead of the ordering walk would empty the space
-    // and then throw. Registration is held behind the walk for the same
+    // A refused payload names none of what the registry already holds, so
+    // convergence running ahead of the ordering walk would empty it and then
+    // throw. Registration is held behind the walk for the same
     // reason and has a test of its own; this is the other half.
     expect(getTypeSchema("acme.standing")).toBeDefined();
   });

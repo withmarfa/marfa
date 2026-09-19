@@ -9,9 +9,8 @@
  * **Reserved namespaces (core, marfa, system) are closed to every
  * credential.** They used to be fenced to the operator key, with the
  * extension permission map consulted after the flag, so a writer had to hold
- * both. Nothing can: the row constraint makes `is_operator` and space-less
- * the same thing, and a space-less credential holds no permissions at all, so
- * the map refused whatever the fence said. The fence went rather than staying
+ * both. Nothing can: the row constraint holds an operator key to no
+ * permissions at all, so the map refused whatever the fence said. The fence went rather than staying
  * as a gate that could not answer. What writes these namespaces is the
  * platform's own machinery, through the storage layer, which is also what
  * writes a `system.*` row.

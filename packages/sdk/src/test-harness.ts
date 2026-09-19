@@ -87,10 +87,10 @@ function baseConfig(overrides?: Partial<AppConfig>): AppConfig {
 export interface KeysModeFixture {
   /** SDK client wired to call the in-process server via the working key. */
   client: MarfaClient;
-  /** The working key (`marfa_k1_*`) the client bears. Holds every space
+  /** The working key (`marfa_k1_*`) the client bears. Holds every
    *  permission and the whole content set. Use to mint additional keys in
    *  tests that need them. */
-  spaceKey: string;
+  workingKey: string;
   /** The operator key minted by the first, unauthenticated request. Holds no
    *  permission: it reaches the instance routes and nothing else. Use where a
    *  test is about the instance tier rather than about work. */
@@ -208,7 +208,7 @@ export async function createKeysModeFixture(
 
   return {
     client,
-    spaceKey: key,
+    workingKey: key,
     operatorKey,
     fetch,
     storage,

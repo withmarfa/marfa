@@ -23,7 +23,7 @@ import type { Item } from "@withmarfa/shared";
 
 let client: MarfaClient;
 let testFetchFn: typeof globalThis.fetch;
-let spaceKey: string;
+let workingKey: string;
 let testStorage: Storage;
 let cleanup: () => void;
 
@@ -87,10 +87,10 @@ beforeAll(async () => {
   testFetchFn = createTestFetch(app);
   const testFetch = testFetchFn;
 
-  // **The first mint produces the operator key**, which holds no space and no
-  // permission: running the instance sits outside the model. It is not a
-  // working key, so the fixture uses it to create a space and mint one, which
-  // is the setup keys mode is meant to follow.
+  // **The first mint produces the operator key**, which holds no permission:
+  // running the instance sits outside the model. It is not a working key, so
+  // the fixture uses it to mint one, which is the setup keys mode is meant to
+  // follow.
   //
   // It presents the one-time secret the server prints to its boot log, because
   // that call is the product's one unauthenticated write and is bound to
@@ -132,7 +132,7 @@ beforeAll(async () => {
     );
   }
   const key = ((await workingRes.json()) as { key: string }).key;
-  spaceKey = key;
+  workingKey = key;
 
   client = new MarfaClient({
     url: "http://localhost",
@@ -588,7 +588,7 @@ describe("items.update expectedVersion", () => {
     const { fetch, calls } = instrumentFetch();
     const c = new MarfaClient({
       url: "http://localhost",
-      apiKey: spaceKey,
+      apiKey: workingKey,
       fetch,
     });
     return { client: c, calls };
@@ -1072,7 +1072,7 @@ describe("SDK round additions", () => {
     expect(lookup.get("beta") ?? 0).toBeGreaterThanOrEqual(1);
   });
 
-  it("edges.list returns global space-scoped edges of a given type", async () => {
+  it("edges.list returns every edge of a given type", async () => {
     const root = await client.items.create({
       type: "core.note",
       properties: { body: "root" },
@@ -1332,7 +1332,7 @@ describe("items.createWithAttachments", () => {
     };
     const c = new MarfaClient({
       url: "http://localhost",
-      apiKey: spaceKey,
+      apiKey: workingKey,
       fetch: wrapped,
     });
     return { client: c, counts };
@@ -1574,7 +1574,7 @@ describe("items.bulkAction", () => {
     let seen = 0;
     const made = new MarfaClient({
       url: "http://localhost",
-      apiKey: spaceKey,
+      apiKey: workingKey,
       fetch: (input, init) => {
         const url = String(
           typeof input === "string" || input instanceof URL ? input : input.url,
@@ -1605,7 +1605,7 @@ describe("items.bulkAction", () => {
     let seen = 0;
     const made = new MarfaClient({
       url: "http://localhost",
-      apiKey: spaceKey,
+      apiKey: workingKey,
       fetch: (input, init) => {
         const url = String(
           typeof input === "string" || input instanceof URL ? input : input.url,
@@ -1735,7 +1735,7 @@ describe("items.bulkAction", () => {
   function clientWithSlowStatusPolls(delayMs: number): MarfaClient {
     return new MarfaClient({
       url: "http://localhost",
-      apiKey: spaceKey,
+      apiKey: workingKey,
       fetch: async (input, init) => {
         const url = String(
           typeof input === "string" || input instanceof URL ? input : input.url,
@@ -2183,7 +2183,7 @@ describe("the paging helpers and the system opt-in", () => {
       urls,
       client: new MarfaClient({
         url: "http://localhost",
-        apiKey: spaceKey,
+        apiKey: workingKey,
         fetch: (input, init) => {
           urls.push(
             new URL(

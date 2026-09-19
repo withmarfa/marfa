@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach } from "vitest";
 import {
   TEST_API_KEY_SALT,
   createTestContext,
-  mintSpaceKey,
+  mintWorkingKey,
   request,
 } from "../test-utils.js";
 import { hashApiKey } from "../middleware/auth.js";
@@ -108,7 +108,7 @@ describe("a permission map is resolved by name, and the gate agrees", () => {
     ctx = await createTestContext();
     const child = childSchema();
     const reg = await request(ctx.app, "POST", "/types", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: child,
     });
     expect(
@@ -117,12 +117,12 @@ describe("a permission map is resolved by name, and the gate agrees", () => {
     ).toBe(201);
 
     const note = await request(ctx.app, "POST", "/items", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: { type: "core.note", properties: { body: "granted" } },
     });
     expect(note.status).toBe(201);
     const denied = await request(ctx.app, "POST", "/items", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: { type: child.id, properties: { body: "denied" } },
     });
     expect(denied.status).toBe(201);
@@ -133,7 +133,7 @@ describe("a permission map is resolved by name, and the gate agrees", () => {
     // registered type is named under `user` and declares `core.note` as its
     // parent, so it is reachable by one pattern and refused by the other.
     const suffix = Math.random().toString(36).slice(2, 10);
-    const scoped = await mintSpaceKey(ctx, {
+    const scoped = await mintWorkingKey(ctx, {
       label: `deny-${suffix}`,
       source: `test-deny-${suffix}`,
       type_permissions: { "user.*": "none", "core.note.*": "read" },

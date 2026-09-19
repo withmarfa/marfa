@@ -11,7 +11,7 @@ import {
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { hashApiKey } from "../middleware/auth.js";
-import { SPACE_PERMISSIONS } from "@withmarfa/shared";
+import { PERMISSIONS } from "@withmarfa/shared";
 import { initEventLog, __resetEventLogForTests } from "../pubsub.js";
 
 let ctx: TestContext;
@@ -136,7 +136,7 @@ describe("POST /admin/restore-archive", () => {
     expect(data.blobs_imported).toBe(1);
 
     const blobRes = await request(ctx.app, "GET", `/blobs/${blob.hash}`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
     });
     expect(blobRes.status).toBe(200);
     const blobContent = Buffer.from(await blobRes.arrayBuffer());
@@ -210,7 +210,7 @@ describe("POST /admin/restore-archive", () => {
 
     // The point of the case: the refusals leave the process serving.
     const after = await request(ctx.app, "GET", "/items?limit=1", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
     });
     expect(after.status).toBe(200);
   });
@@ -224,7 +224,7 @@ describe("POST /admin/restore-archive", () => {
       {
         label: "restore-member",
         source: `restore-member-${rawKey.slice(-6)}`,
-        permissions: [...SPACE_PERMISSIONS],
+        permissions: [...PERMISSIONS],
         type_permissions: { "*": "write" },
         is_operator: false,
       },
@@ -260,7 +260,7 @@ describe("POST /admin/restore-archive", () => {
     const uploadRes = await ctx.app.request("/blobs", {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${ctx.spaceKey}`,
+        Authorization: `Bearer ${ctx.workingKey}`,
         "Content-Type": "text/plain",
       },
       body: blobContent,
@@ -269,7 +269,7 @@ describe("POST /admin/restore-archive", () => {
 
     const source = `rt-archive-${Math.random().toString(36).slice(2)}`;
     await request(ctx.app, "POST", "/items", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         type: "core.note",
         properties: { body: "Roundtrip", blob_ref: blobHash },
@@ -279,7 +279,7 @@ describe("POST /admin/restore-archive", () => {
     });
 
     const exportRes = await request(ctx.app, "GET", "/export?format=archive", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
     });
     expect(exportRes.status).toBe(200);
     const archiveData = Buffer.from(await exportRes.arrayBuffer());

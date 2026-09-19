@@ -96,7 +96,7 @@ const listEdgesRoute = createRoute({
   tags: ["Edges"],
   summary: "List edges",
   description:
-    "Returns a paginated list of edges across the space, optionally filtered by edge type. Pass `edge_type` as a comma-separated list (up to 10 entries) to scope, or omit it to list every edge.\n\n" +
+    "Returns a paginated list of edges, optionally filtered by edge type. Pass `edge_type` as a comma-separated list (up to 10 entries) to scope, or omit it to list every edge.\n\n" +
     "Edges carry no lifecycle state of their own and are never hidden by the state of the items they join, so this listing has no `state` parameter and needs none: an edge whose endpoints are in the bin is returned like any other. That is deliberate — a client reconciling its copy has to see those edges rather than watch them disappear.\n\n" +
     "Removals are a different question and this read cannot answer it. A deleted edge leaves no row and no tombstone, so nothing here distinguishes one that was removed from one that never existed. The event stream carries the deletions; a client that reconciles completely needs both channels.\n\n" +
     UNKNOWN_PARAM_NOTE +
@@ -175,7 +175,7 @@ const createEdgeRoute = createRoute({
   tags: ["Edges"],
   summary: "Create an edge",
   description:
-    "Creates a single typed edge between two existing items in the space. Writes are dual-gated, requiring write permission on both the source item's type and the edge type, and edge-type constraints and cycle rules are enforced at create time. A caller may supply the edge `id`, as `POST /items` allows for an item, so a client that mints ids locally keeps its own identifier for the row; omit it and the server mints one. An `id` already naming this exact edge is treated as a repeat of a create the server already performed: nothing is written, no event is published, and the stored edge comes back with `acknowledged: true` and status 200. An `id` naming a different edge is refused with 409 `conflict`.",
+    "Creates a single typed edge between two existing items. Writes are dual-gated, requiring write permission on both the source item's type and the edge type, and edge-type constraints and cycle rules are enforced at create time. A caller may supply the edge `id`, as `POST /items` allows for an item, so a client that mints ids locally keeps its own identifier for the row; omit it and the server mints one. An `id` already naming this exact edge is treated as a repeat of a create the server already performed: nothing is written, no event is published, and the stored edge comes back with `acknowledged: true` and status 200. An `id` naming a different edge is refused with 409 `conflict`.",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -256,7 +256,7 @@ const createEdgeRoute = createRoute({
         },
       },
       description:
-        "The supplied `id` is taken by an edge that is not the one this request describes — a different source, target or type — or by one in a space the caller cannot see. An id naming this exact edge is a repeat and answers 200 instead. The response names the id as `existing_id`.",
+        "The supplied `id` is taken by an edge that is not the one this request describes — a different source, target or type. An id naming this exact edge is a repeat and answers 200 instead. The response names the id as `existing_id`.",
     },
   },
 });
@@ -268,7 +268,7 @@ const getEdgeRoute = createRoute({
   tags: ["Edges"],
   summary: "Get an edge",
   description:
-    "Returns one edge by its id. The other ways to read an edge all need something the caller may not have: the whole space filtered by type, or the outbound and inbound listings on an item, which require knowing an endpoint. A client holding only an edge id -- one whose queued update was refused, or whose event arrived before its endpoints did -- could otherwise only scan. Cloaked as 404 across a space boundary, exactly as update and delete are.",
+    "Returns one edge by its id. The other ways to read an edge all need something the caller may not have: every edge filtered by type, or the outbound and inbound listings on an item, which require knowing an endpoint. A client holding only an edge id -- one whose queued update was refused, or whose event arrived before its endpoints did -- could otherwise only scan.",
   security: [{ bearerAuth: [] }],
   request: { params: z.object({ id: z.string().describe("Edge id.") }) },
   responses: {
@@ -587,7 +587,6 @@ export function edgeRoutes(storage: Storage) {
         );
       }
     }
-    // Fence the write to the caller's space — belt to the 404-cloak above.
     const result = await storage.edges.updateProperties(
       id,
       body.properties,
@@ -854,13 +853,13 @@ export function itemEdgeListingRoutes(storage: Storage) {
     // The anchor decides what this call returns, so reading it is a read
     // of the anchor — the same check every write door in this file makes
     // against its source item, and the one the item read doors make. It
-    // is stated here rather than left to the space fence because the
-    // fence and the type map answer different questions: a credential can
-    // be inside the space and still hold no grant on this type.
+    // is stated here rather than left to the credential resolver because
+    // authentication and the type map answer different questions: a caller
+    // can be authenticated and still hold no grant on this type.
     //
     // After the read rather than before it, because the check needs the
     // row's `type` and only the row carries it. The cost is that a
-    // caller inside the space without the grant can tell 403 from 404 and
+    // caller without the grant can tell 403 from 404 and
     // so learns the row exists. Accepted rather than overlooked: the item
     // read door resolves in the same order for the same reason, and
     // trading that away means answering 404 for a row the caller may not
@@ -909,13 +908,13 @@ export function itemEdgeListingRoutes(storage: Storage) {
     // The anchor decides what this call returns, so reading it is a read
     // of the anchor — the same check every write door in this file makes
     // against its source item, and the one the item read doors make. It
-    // is stated here rather than left to the space fence because the
-    // fence and the type map answer different questions: a credential can
-    // be inside the space and still hold no grant on this type.
+    // is stated here rather than left to the credential resolver because
+    // authentication and the type map answer different questions: a caller
+    // can be authenticated and still hold no grant on this type.
     //
     // After the read rather than before it, because the check needs the
     // row's `type` and only the row carries it. The cost is that a
-    // caller inside the space without the grant can tell 403 from 404 and
+    // caller without the grant can tell 403 from 404 and
     // so learns the row exists. Accepted rather than overlooked: the item
     // read door resolves in the same order for the same reason, and
     // trading that away means answering 404 for a row the caller may not

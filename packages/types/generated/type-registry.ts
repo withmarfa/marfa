@@ -949,7 +949,7 @@ export const ALL_INTEGRATION_TYPES: TypeSchema[] = [
 const systemAccountHolder: TypeSchema = {
   id: "system.account_holder",
   label: "Account holder",
-  description: "The graph handle for the person who owns this space. Exactly one row per space, created at provisioning, so edges such as authored-by can name the account holder instead of a free-floating stand-in. It carries no profile fields: the profile endpoints remain the source of truth for username, name, bio and avatar, and mirroring them here would give the same facts two writers. Lifecycle is bounded to active/revoked. Has no tier — the curated/feed dimension does not apply.",
+  description: "The graph handle for the person who owns this instance. Exactly one row, created at provisioning, so edges such as authored-by can name the account holder instead of a free-floating stand-in. It carries no profile fields: the profile endpoints remain the source of truth for username, name, bio and avatar, and mirroring them here would give the same facts two writers. Lifecycle is bounded to active/revoked. Has no tier — the curated/feed dimension does not apply.",
   version: 1,
   fields: {
   },
@@ -984,7 +984,7 @@ const systemApp: TypeSchema = {
 const systemConnection: TypeSchema = {
   id: "system.connection",
   label: "Connection",
-  description: "An approved relationship between this Marfa space and something outside it. `kind` discriminates between variants: `app` (an OAuth client this user has authorized) and `integration` (anything installed from a manifest, whatever its upstream — a vendor service, a protocol, Marfa's own infrastructure, or nothing at all). Lifecycle bounded to active | revoked. Has no tier. The integration kind also carries a `runtime_status` distinct from the lifecycle `status`; runtime_status is server-stamped only (the runtime executor is the legitimate writer).",
+  description: "An approved relationship between this instance and something outside it. `kind` discriminates between variants: `app` (an OAuth client this user has authorized) and `integration` (anything installed from a manifest, whatever its upstream — a vendor service, a protocol, Marfa's own infrastructure, or nothing at all). Lifecycle bounded to active | revoked. Has no tier. The integration kind also carries a `runtime_status` distinct from the lifecycle `status`; runtime_status is server-stamped only (the runtime executor is the legitimate writer).",
   version: 3,
   fields: {
     kind: { type: "enum", description: "Discriminator for connection variant", required: true, enum_values: ["app", "integration"] },

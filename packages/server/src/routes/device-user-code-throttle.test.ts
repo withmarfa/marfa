@@ -9,7 +9,7 @@ import type { TestContext } from "../test-utils.js";
  * The per-IP rate limit (`middleware/rate-limit.ts`) bounds one client
  * guessing codes, but a distributed guesser rotating IPs would slip
  * under it. This throttle keys on the submitted `user_code` itself, so a
- * brute-force sweep against the short user-code space is capped per code
+ * brute-force sweep against the short user-code range is capped per code
  * regardless of source IP. Only failed submissions increment; a valid
  * code that advances to consent never touches the counter.
  *

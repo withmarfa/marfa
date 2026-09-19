@@ -8,9 +8,8 @@
  *                          and system widens which items come back.
  *
  * Read-only counterpart to POST /items/bulk (the upsert path). Every id is
- * resolved through the SAME space-scoped store method the single-item GET
- * uses, so a caller can only ever see items in its own space. Items the
- * caller cannot read — wrong space, type not permitted, soft-deleted — are
+ * resolved through the SAME store method the single-item GET uses. Items
+ * the caller cannot read — type not permitted, soft-deleted — are
  * silently omitted, never errored, mirroring the list endpoint's
  * implicit-denial shape: one missing id does not 404 the whole request.
  */
@@ -63,7 +62,7 @@ const BulkGetRequestSchema = z.object({
 const BulkGetResponseSchema = z.object({
   /**
    * The resolved items, in no guaranteed order relative to the request. Items
-   * the caller cannot read (wrong space, type not permitted, trashed, or
+   * the caller cannot read (type not permitted, trashed, or
    * non-existent) are omitted, so `items.length <= ids.length`.
    */
   items: z.array(ItemSchema),
@@ -85,9 +84,9 @@ const bulkGetRoute = createRoute({
   tags: ["Items"],
   summary: "Bulk get items by id",
   description:
-    "Reads up to 100 items by id in one round-trip. Space-scoped and " +
-    "permission-filtered exactly like the single-item GET: ids the caller " +
-    "cannot read (other space, type not permitted, trashed, or missing) " +
+    "Reads up to 100 items by id in one round-trip, permission-filtered " +
+    "exactly like the single-item GET: ids the caller " +
+    "cannot read (type not permitted, trashed, or missing) " +
     "are silently omitted rather than erroring the whole request. Optional " +
     "`include` takes the same tokens as GET /items: `edges`, `metadata` and " +
     "`extensions` hydrate an extra inline, while `system` widens the result " +

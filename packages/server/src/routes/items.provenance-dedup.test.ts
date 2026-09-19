@@ -27,7 +27,7 @@ afterAll(async () => {
  *  as intended; the dedup behaviour under test does not depend on it. */
 async function integrationKey(label: string, source: string): Promise<string> {
   const res = await request(ctx.app, "POST", "/keys", {
-    key: ctx.spaceKey,
+    key: ctx.workingKey,
     body: {
       label,
       source,
@@ -117,7 +117,7 @@ describe("a mirror the user trashed", () => {
     const id = ((await created.json()) as { item: { id: string } }).item.id;
 
     const trashed = await request(ctx.app, "DELETE", `/items/${id}`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
     });
     expect(trashed.status).toBe(200);
 
@@ -160,9 +160,9 @@ describe("a mirror the user trashed", () => {
     };
     const created = await request(ctx.app, "POST", "/items", { key: k, body });
     const id = ((await created.json()) as { item: { id: string } }).item.id;
-    await request(ctx.app, "DELETE", `/items/${id}`, { key: ctx.spaceKey });
+    await request(ctx.app, "DELETE", `/items/${id}`, { key: ctx.workingKey });
     await request(ctx.app, "POST", `/items/${id}/restore`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
     });
 
     const resync = await request(ctx.app, "POST", "/items", {

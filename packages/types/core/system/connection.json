@@ -1,7 +1,7 @@
 {
   "id": "system.connection",
   "label": "Connection",
-  "description": "An approved relationship between this Marfa space and something outside it. `kind` discriminates between variants: `app` (an OAuth client this user has authorized) and `integration` (anything installed from a manifest, whatever its upstream \u2014 a vendor service, a protocol, Marfa's own infrastructure, or nothing at all). Lifecycle bounded to active | revoked. Has no tier. The integration kind also carries a `runtime_status` distinct from the lifecycle `status`; runtime_status is server-stamped only (the runtime executor is the legitimate writer).",
+  "description": "An approved relationship between this instance and something outside it. `kind` discriminates between variants: `app` (an OAuth client this user has authorized) and `integration` (anything installed from a manifest, whatever its upstream \u2014 a vendor service, a protocol, Marfa's own infrastructure, or nothing at all). Lifecycle bounded to active | revoked. Has no tier. The integration kind also carries a `runtime_status` distinct from the lifecycle `status`; runtime_status is server-stamped only (the runtime executor is the legitimate writer).",
   "version": 3,
   "fields": {
     "kind": {

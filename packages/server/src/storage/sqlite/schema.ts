@@ -169,12 +169,12 @@ export const apiKeys = sqliteTable(
       .default(false),
     connection_id: text("connection_id"),
     /**
-     * The space permissions this credential holds, as a JSON array of the
+     * The permissions this credential holds, as a JSON array of the
      * literals themselves.
      *
-     * A list rather than a map, because a space permission has no read/write
+     * A list rather than a map, because a permission has no read/write
      * axis: it is held or it is not. The same shape a grant carries, so one
-     * `hasSpacePermission` answers for a key and for a sign-in.
+     * `hasPermission` answers for a key and for a sign-in.
      *
      * `[]` is the honest default and the right value for an operator key:
      * running the instance is fenced outside the permission model rather than
@@ -183,7 +183,7 @@ export const apiKeys = sqliteTable(
     permissions: text("permissions").notNull().default("[]"),
     /**
      * **The wildcard default is legal only on a working key.** An operator
-     * row holds nothing on any axis, which `api_keys_space_less_holds_nothing`
+     * row holds nothing on any axis, which `api_keys_operator_holds_nothing`
      * below refuses in bytes, so an operator insert writes `{}` explicitly.
      */
     type_permissions: text("type_permissions")
@@ -227,7 +227,7 @@ export const apiKeys = sqliteTable(
     last_used_at: text("last_used_at"),
   },
   (table) => [
-    uniqueIndex("idx_api_keys_source_per_space")
+    uniqueIndex("idx_api_keys_source_unrevoked")
       .on(table.source)
       .where(sql`revoked_at IS NULL`),
     // **The model's one sentence about the instance tier.** The database is
@@ -243,7 +243,7 @@ export const apiKeys = sqliteTable(
     // an empty map and an empty list take. Compared against `1` rather than
     // against the column, because SQLite holds the boolean as an integer.
     check(
-      "api_keys_space_less_holds_nothing",
+      "api_keys_operator_holds_nothing",
       sql`${table.is_operator} <> 1 OR (
         ${table.type_permissions} = '{}' AND
         ${table.edge_permissions} = '{}' AND

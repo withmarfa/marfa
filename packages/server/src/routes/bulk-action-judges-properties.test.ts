@@ -37,7 +37,7 @@ const REFUSED_BY_THE_TYPE = { body: 12345 };
 
 async function seed(marker: string, type = "core.note"): Promise<string> {
   const res = await request(ctx.app, "POST", "/items", {
-    key: ctx.spaceKey,
+    key: ctx.workingKey,
     body: {
       type,
       properties:
@@ -56,7 +56,7 @@ async function seedOfType(
   properties: Record<string, unknown>,
 ): Promise<string> {
   const res = await request(ctx.app, "POST", "/items", {
-    key: ctx.spaceKey,
+    key: ctx.workingKey,
     body: { type, properties, tags: [marker] },
   });
   expect(res.status).toBe(201);
@@ -75,7 +75,7 @@ async function patchByTag(
   const { initialStatus, result } = await runBulkActionAsync(
     ctx,
     { action: "update_properties", patch, filter: { tags: [marker] } },
-    ctx.spaceKey,
+    ctx.workingKey,
   );
   // 202: this door queues a job and the helper waits for it. Only a dry run
   // answers synchronously.
@@ -89,7 +89,7 @@ async function patchByTag(
 
 async function bodyOf(id: string): Promise<unknown> {
   const res = await request(ctx.app, "GET", `/items/${id}`, {
-    key: ctx.spaceKey,
+    key: ctx.workingKey,
   });
   expect(res.status).toBe(200);
   const { item } = (await res.json()) as {
@@ -160,7 +160,8 @@ describe("the bulk-action door judges a property patch", () => {
     // The guard the single-item door carries. `validateProperties` reports an
     // absent schema as `Unknown type` rather than as no opinion, so judging
     // unguarded would refuse every row of a type this worker's registry does
-    // not hold — a space's own type, or one deleted since the row was written.
+    // not hold — a runtime-registered type, or one deleted since the row
+    // was written.
     const orphan = "user.orphaned_by_the_bulk_action_test";
     registerTypeSchema({
       id: orphan,
@@ -185,7 +186,7 @@ describe("the bulk-action door judges a property patch", () => {
     // Reporting success is not writing. A door that skipped the row and
     // counted it anyway would pass on the counts alone.
     const after = await request(ctx.app, "GET", `/items/${id}`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
     });
     const { item } = (await after.json()) as {
       item: { properties: { note?: unknown } };

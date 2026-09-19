@@ -8,7 +8,7 @@
  * page it got back. `items.list` clamps any limit to 200, so what it
  * actually saw was the 200 most recent events of each type — and it
  * returned that as the calendar, with a 200 and no indication anything
- * was missing. A space passes 200 events without anyone noticing.
+ * was missing. An instance passes 200 events without anyone noticing.
  *
  * The second half of the file goes further than a seeded fixture can and
  * drives the route over a synthetic storage: what an unbounded scan costs
@@ -49,7 +49,7 @@ interface OccurrenceRow {
 beforeAll(async () => {
   ctx = await createTestContext();
   const res = await request(ctx.app, "POST", "/keys", {
-    key: ctx.spaceKey,
+    key: ctx.workingKey,
     body: {
       label: "occurrences-pagination",
       source: "occurrences-page-src",
@@ -344,7 +344,7 @@ function syntheticCalendar(
     items: {
       list: (filters: ItemFilters) => {
         // Only one of the two event types exists here; the other answers
-        // empty, as a space with no Google calendar would.
+        // empty, as an instance with no Google calendar would.
         if (filters.type !== "core.event") {
           return Promise.resolve({ data: [], cursor: null, has_more: false });
         }
@@ -462,7 +462,7 @@ describe("GET /occurrences over a calendar past the old scan ceiling", () => {
   // no bearing on how many rows carry a rule.
   const PAST_THE_OLD_CEILING = 20_500;
 
-  it("serves the window rather than refusing the space", async () => {
+  it("serves the window rather than refusing the read", async () => {
     const rows: SyntheticRow[] = [];
     for (let i = 0; i < PAST_THE_OLD_CEILING; i += 1) {
       rows.push({
@@ -614,8 +614,8 @@ describe("the expansion loop yields", () => {
     // The calibration is the same row count with no rule on it: it walks
     // the same number of pages and expands nothing, so the difference is
     // the expansion loop's own yielding and nothing else. Without it the
-    // two counts are the same, which is a synchronous walk over every rule
-    // in the space with every other request on the process behind it.
+    // two counts are the same, which is a synchronous walk over every
+    // stored rule with every other request on the process behind it.
     const COUNT = 1_000;
     const rules: SyntheticRow[] = [];
     const plain: SyntheticRow[] = [];
@@ -687,7 +687,7 @@ describe("the expansion loop is paced by work, not by series count", () => {
 describe("the reported expansion failures are bounded", () => {
   // `MAX_OCCURRENCES` structurally cannot bound this array: a series that
   // fails to expand emits no occurrence, so every other ceiling here can
-  // sit at zero while this one grows with the space.
+  // sit at zero while this one grows with the corpus.
   function broken(count: number): SyntheticRow[] {
     return Array.from({ length: count }, (_, i) => ({
       id: `broken-${String(i)}`,
@@ -699,7 +699,7 @@ describe("the reported expansion failures are bounded", () => {
     }));
   }
 
-  it("lists every failure in a space sitting on the cap", async () => {
+  it("lists every failure on an instance sitting on the cap", async () => {
     const res = await readWindow(
       appOver(syntheticCalendar(broken(500)).storage),
     );
@@ -718,7 +718,7 @@ describe("the reported expansion failures are bounded", () => {
 
   it("caps the list and says so rather than refusing the calendar", async () => {
     // The whole point of trimming here rather than refusing: the healthy
-    // series in this space expanded perfectly well, and a space with 501
+    // series here expanded perfectly well, and an instance with 501
     // broken rules getting no calendar at all would be the fail-closed
     // ceiling this route exists to have removed.
     const rows = [
@@ -772,7 +772,7 @@ describe("the reported expansion failures are bounded", () => {
   it("bounds one message as well as the count", async () => {
     // A count alone does not bound bytes. The malformed-rule message
     // carries the parser's own text, which is as long as whatever it was
-    // handed, so a space of a few hundred broken rules could still build
+    // handed, so an instance of a few hundred broken rules could still build
     // a response nobody can hold.
     const long = "X".repeat(4_000);
     const res = await readWindow(
@@ -801,7 +801,7 @@ describe("the reported expansion failures are bounded", () => {
 
 describe("the reported failures are scoped to what the request read", () => {
   // Not a defect being fixed but a limit being pinned, because the field
-  // reads like a space-wide health check and is not one. A request
+  // reads like a instance-wide health check and is not one. A request
   // narrowed by `type` reads one type's rules and counts one type's
   // failures; a credential permissioned for one event type is in the
   // same position permanently. Counting the other type would mean
@@ -824,7 +824,7 @@ describe("the reported failures are scoped to what the request read", () => {
         .series_errors,
     ).toBe(600);
 
-    // The same space, read as the other event type. Zero here is true of
+    // The same instance, read as the other event type. Zero here is true of
     // what was read and says nothing about the 600 rules alongside it,
     // which is exactly what the field's description now claims and no
     // more.
@@ -847,10 +847,10 @@ describe("the reported failures are scoped to what the request read", () => {
 });
 
 describe("the occurrence ceiling and the broken-rule cap compose", () => {
-  it("refuses an over-full window in a space whose rules are broken", async () => {
-    // The 400's description used to end by saying a space full of rules
+  it("refuses an over-full window on an instance whose rules are broken", async () => {
+    // The 400's description used to end by saying an instance full of rules
     // that cannot be expanded is not among the reads it refuses. True of
-    // the broken rules on their own and false of this space, which holds
+    // the broken rules on their own and false of this instance, which holds
     // both: the ceiling counts what the healthy rows produce and is
     // indifferent to how many rules failed beside them.
     const rows = [
@@ -924,7 +924,7 @@ describe("the expansion budget bounds the walking that contributes nothing", () 
    *  request must therefore never reach. */
   const TO_FILL = Math.ceil(BUDGET / 100_000);
 
-  it("stops expanding rather than walking every rule in the space", async () => {
+  it("stops expanding rather than walking every stored rule", async () => {
     const rows = [
       ...walkers(TO_FILL + 5),
       {

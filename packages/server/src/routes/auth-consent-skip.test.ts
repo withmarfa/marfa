@@ -1442,7 +1442,7 @@ describe("GET /auth/authorize (consent skip) — concurrent grant changes", () =
 
     // Meanwhile the whole grant is revoked through the grants door.
     const revoke = request(c.app, "DELETE", `/auth/grants/${grantItemId}`, {
-      key: c.spaceKey,
+      key: c.workingKey,
     });
     // Same reason as the narrowing case: the revoke has to be waiting on
     // the lock, not arriving after the holder has already restored.

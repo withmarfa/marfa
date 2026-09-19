@@ -19,7 +19,7 @@ interface ItemResponse {
 
 async function createItem(type = "core.note"): Promise<string> {
   const res = await request(ctx.app, "POST", "/items", {
-    key: ctx.spaceKey,
+    key: ctx.workingKey,
     body: { type, properties: { body: `item-${String(Math.random())}` } },
   });
   const data = (await res.json()) as ItemResponse;
@@ -45,7 +45,7 @@ describe("POST /edges — happy path + validation", () => {
     const source = await createItem();
     const target = await createItem();
     const res = await request(ctx.app, "POST", "/edges", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         source_id: source,
         target_id: target,
@@ -65,7 +65,7 @@ describe("POST /edges — happy path + validation", () => {
     const source = await createItem();
     const target = await createItem();
     const res = await request(ctx.app, "POST", "/edges", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         source_id: source,
         target_id: target,
@@ -80,7 +80,7 @@ describe("POST /edges — happy path + validation", () => {
   it("rejects self-edge", async () => {
     const id = await createItem();
     const res = await request(ctx.app, "POST", "/edges", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: { source_id: id, target_id: id, edge_type: "about" },
     });
     expect(res.status).toBe(400);
@@ -90,12 +90,12 @@ describe("POST /edges — happy path + validation", () => {
     const source = await createItem();
     const target = await createItem();
     const r1 = await request(ctx.app, "POST", "/edges", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: { source_id: source, target_id: target, edge_type: "about" },
     });
     expect(r1.status).toBe(201);
     const r2 = await request(ctx.app, "POST", "/edges", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: { source_id: source, target_id: target, edge_type: "about" },
     });
     expect(r2.status).toBe(400);
@@ -106,7 +106,7 @@ describe("POST /edges — happy path + validation", () => {
   it("rejects missing source item", async () => {
     const target = await createItem();
     const res = await request(ctx.app, "POST", "/edges", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         source_id: "019d0000-0000-7000-a000-000000000000",
         target_id: target,
@@ -124,13 +124,13 @@ describe("Cardinality — parent-of (one-to-many)", () => {
     const child = await createItem();
     // p1 parent-of child — ok
     const r1 = await request(ctx.app, "POST", "/edges", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: { source_id: p1, target_id: child, edge_type: "parent-of" },
     });
     expect(r1.status).toBe(201);
     // p2 parent-of child — reject (child already has a parent)
     const r2 = await request(ctx.app, "POST", "/edges", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: { source_id: p2, target_id: child, edge_type: "parent-of" },
     });
     expect(r2.status).toBe(400);
@@ -145,7 +145,7 @@ describe("Cardinality — in-thread (many-to-one)", () => {
     const thread2 = await createItem();
     const member = await createItem();
     const r1 = await request(ctx.app, "POST", "/edges", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         source_id: member,
         target_id: thread1,
@@ -154,7 +154,7 @@ describe("Cardinality — in-thread (many-to-one)", () => {
     });
     expect(r1.status).toBe(201);
     const r2 = await request(ctx.app, "POST", "/edges", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         source_id: member,
         target_id: thread2,
@@ -171,7 +171,7 @@ describe("Cardinality — supersedes (one-to-one)", () => {
     const newer1 = await createItem();
     const newer2 = await createItem();
     const r1 = await request(ctx.app, "POST", "/edges", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         source_id: newer1,
         target_id: older,
@@ -180,7 +180,7 @@ describe("Cardinality — supersedes (one-to-one)", () => {
     });
     expect(r1.status).toBe(201);
     const r2 = await request(ctx.app, "POST", "/edges", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         source_id: newer2,
         target_id: older,
@@ -198,17 +198,17 @@ describe("Cycle detection — parent-of", () => {
     const b = await createItem();
     const x = await createItem();
     const e1 = await request(ctx.app, "POST", "/edges", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: { source_id: a, target_id: b, edge_type: "parent-of" },
     });
     expect(e1.status).toBe(201);
     const e2 = await request(ctx.app, "POST", "/edges", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: { source_id: b, target_id: x, edge_type: "parent-of" },
     });
     expect(e2.status).toBe(201);
     const cycle = await request(ctx.app, "POST", "/edges", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: { source_id: x, target_id: a, edge_type: "parent-of" },
     });
     expect(cycle.status).toBe(400);
@@ -225,7 +225,7 @@ describe("POST /items — batched atomic edge validation", () => {
     const validTarget = await createItem();
     const missingTarget = "019d0000-0000-7000-a000-000000000000";
     const res = await request(ctx.app, "POST", "/items", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         type: "core.note",
         properties: { body: "batch fails atomically" },
@@ -244,7 +244,7 @@ describe("POST /items — batched atomic edge validation", () => {
     // must see the in-batch accumulator and reject.
     const target = await createItem();
     const res = await request(ctx.app, "POST", "/items", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         type: "core.note",
         properties: { body: "cardinality in-batch" },
@@ -266,12 +266,12 @@ describe("PATCH /items — batched replace triggers cycle detection", () => {
     const a = await createItem();
     const b = await createItem();
     const ab = await request(ctx.app, "POST", "/edges", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: { source_id: a, target_id: b, edge_type: "parent-of" },
     });
     expect(ab.status).toBe(201);
     const cyclePatch = await request(ctx.app, "PATCH", `/items/${b}`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: { version: 1, edges: { "parent-of": [a] } },
     });
     expect(cyclePatch.status).toBe(400);
@@ -285,7 +285,7 @@ describe("PATCH /edges/:id — properties only", () => {
     const source = await createItem();
     const target = await createItem();
     const create = await request(ctx.app, "POST", "/edges", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         source_id: source,
         target_id: target,
@@ -297,7 +297,7 @@ describe("PATCH /edges/:id — properties only", () => {
       edge: { id: string; version: number };
     };
     const patch = await request(ctx.app, "PATCH", `/edges/${created.edge.id}`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: { properties: { position: 2 }, version: created.edge.version },
     });
     expect(patch.status).toBe(200);
@@ -313,7 +313,7 @@ describe("PATCH /edges/:id — properties only", () => {
     const source = await createItem();
     const target = await createItem();
     const create = await request(ctx.app, "POST", "/edges", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         source_id: source,
         target_id: target,
@@ -325,7 +325,7 @@ describe("PATCH /edges/:id — properties only", () => {
       edge: { id: string; version: number };
     };
     const patch = await request(ctx.app, "PATCH", `/edges/${created.edge.id}`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: { properties: { position: 7 }, version: created.edge.version },
     });
     expect(patch.status).toBe(200);
@@ -334,7 +334,7 @@ describe("PATCH /edges/:id — properties only", () => {
     const auditData = await waitForAudit(
       async () => {
         const auditRes = await request(ctx.app, "GET", "/audit?limit=20", {
-          key: ctx.spaceKey,
+          key: ctx.workingKey,
         });
         return (await auditRes.json()) as {
           data: {
@@ -365,7 +365,7 @@ describe("DELETE /edges/:id", () => {
     const source = await createItem();
     const target = await createItem();
     const create = await request(ctx.app, "POST", "/edges", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         source_id: source,
         target_id: target,
@@ -376,7 +376,7 @@ describe("DELETE /edges/:id", () => {
       edge: { id: string; version: number };
     };
     const del = await request(ctx.app, "DELETE", `/edges/${created.edge.id}`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
     });
     expect(del.status).toBe(200);
     const fetched = await request(
@@ -384,7 +384,7 @@ describe("DELETE /edges/:id", () => {
       "PATCH",
       `/edges/${created.edge.id}`,
       {
-        key: ctx.spaceKey,
+        key: ctx.workingKey,
         body: { properties: {}, version: created.edge.version },
       },
     );
@@ -403,17 +403,17 @@ describe("GET /items/:id/edges + /backrefs", () => {
       { source_id: a, target_id: c, edge_type: "about" },
       { source_id: b, target_id: a, edge_type: "about" },
     ]) {
-      await request(ctx.app, "POST", "/edges", { key: ctx.spaceKey, body });
+      await request(ctx.app, "POST", "/edges", { key: ctx.workingKey, body });
     }
     const out = await request(ctx.app, "GET", `/items/${a}/edges`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
     });
     expect(out.status).toBe(200);
     const outData = (await out.json()) as { data: unknown[] };
     expect(outData.data.length).toBe(2);
 
     const back = await request(ctx.app, "GET", `/items/${a}/backrefs`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
     });
     expect(back.status).toBe(200);
     const backData = (await back.json()) as { data: unknown[] };
@@ -441,27 +441,27 @@ describe("GET /items/:id/edges + /backrefs", () => {
     // the trashed item as their own anchor rather than about a live
     // neighbor — which is the only way each door's own lookup is exercised.
     await request(ctx.app, "POST", "/edges", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: { source_id: a, target_id: b, edge_type: "about" },
     });
     await request(ctx.app, "POST", "/edges", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: { source_id: c, target_id: a, edge_type: "about" },
     });
     const trashed = await request(ctx.app, "DELETE", `/items/${a}`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
     });
     expect(trashed.status).toBe(200);
 
     const out = await request(ctx.app, "GET", `/items/${a}/edges`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
     });
     expect(out.status).toBe(200);
     const outData = (await out.json()) as { data: { target_id: string }[] };
     expect(outData.data.map((e) => e.target_id)).toEqual([b]);
 
     const back = await request(ctx.app, "GET", `/items/${a}/backrefs`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
     });
     expect(back.status).toBe(200);
     const backData = (await back.json()) as { data: { source_id: string }[] };
@@ -474,7 +474,7 @@ describe("GET /items/:id/edges + /backrefs", () => {
       `/items/${absent}/edges`,
       `/items/${absent}/backrefs`,
     ]) {
-      const res = await request(ctx.app, "GET", path, { key: ctx.spaceKey });
+      const res = await request(ctx.app, "GET", path, { key: ctx.workingKey });
       expect(res.status).toBe(404);
     }
   });
@@ -483,9 +483,9 @@ describe("GET /items/:id/edges + /backrefs", () => {
    * The anchor decides what these two doors return, so reading it is a
    * read of the anchor. Every write door in this file checks its source
    * item's type and both item read doors check theirs; these two asked
-   * only whether the caller was authenticated, and the space fence is a
-   * different question — a credential can be inside the space and hold no
-   * grant on the type.
+   * only whether the caller was authenticated, which is a different
+   * question — a credential can be authenticated and hold no grant on the
+   * type.
    *
    * The anchor is trashed in both halves deliberately. A trashed anchor
    * used to answer not-found, so the door that now serves its edges is
@@ -502,7 +502,7 @@ describe("GET /items/:id/edges + /backrefs", () => {
     ): Promise<string> {
       const suffix = String(Math.random());
       const res = await request(ctx.app, "POST", "/keys", {
-        key: ctx.spaceKey,
+        key: ctx.workingKey,
         body: {
           label: `edge-read-${suffix}`,
           source: `edge-read-${suffix}`,
@@ -521,15 +521,15 @@ describe("GET /items/:id/edges + /backrefs", () => {
       const anchor = await createItem();
       const other = await createItem();
       await request(ctx.app, "POST", "/edges", {
-        key: ctx.spaceKey,
+        key: ctx.workingKey,
         body: { source_id: anchor, target_id: other, edge_type: "about" },
       });
       await request(ctx.app, "POST", "/edges", {
-        key: ctx.spaceKey,
+        key: ctx.workingKey,
         body: { source_id: other, target_id: anchor, edge_type: "about" },
       });
       const trashed = await request(ctx.app, "DELETE", `/items/${anchor}`, {
-        key: ctx.spaceKey,
+        key: ctx.workingKey,
       });
       expect(trashed.status).toBe(200);
       return anchor;
@@ -569,18 +569,18 @@ describe("GET /items/:id/edges + /backrefs", () => {
     const b = await createItem();
     const c = await createItem();
     await request(ctx.app, "POST", "/edges", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: { source_id: a, target_id: b, edge_type: "about" },
     });
     await request(ctx.app, "POST", "/edges", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: { source_id: a, target_id: c, edge_type: "derived-from" },
     });
     const onlyAbout = await request(
       ctx.app,
       "GET",
       `/items/${a}/edges?edge_type=about`,
-      { key: ctx.spaceKey },
+      { key: ctx.workingKey },
     );
     const aboutData = (await onlyAbout.json()) as { data: unknown[] };
     expect(aboutData.data.length).toBe(1);
@@ -588,7 +588,7 @@ describe("GET /items/:id/edges + /backrefs", () => {
       ctx.app,
       "GET",
       `/items/${a}/edges?edge_type=about,derived-from`,
-      { key: ctx.spaceKey },
+      { key: ctx.workingKey },
     );
     const bothData = (await both.json()) as { data: unknown[] };
     expect(bothData.data.length).toBe(2);
@@ -600,7 +600,7 @@ describe("Atomic POST /items with edges", () => {
     const parent = await createItem();
     const about = await createItem();
     const res = await request(ctx.app, "POST", "/items", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         type: "core.note",
         properties: { body: "atomic" },
@@ -616,7 +616,7 @@ describe("Atomic POST /items with edges", () => {
       ctx.app,
       "GET",
       `/items/${data.item.id}/edges`,
-      { key: ctx.spaceKey },
+      { key: ctx.workingKey },
     );
     const od = (await outbound.json()) as {
       data: { edge_type: string }[];
@@ -627,7 +627,7 @@ describe("Atomic POST /items with edges", () => {
 
   it("rolls back everything when an edge target is missing", async () => {
     const res = await request(ctx.app, "POST", "/items", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         type: "core.note",
         properties: { body: "atomic-fail" },
@@ -645,14 +645,14 @@ describe("Query-language: edge[X]=Y and backref[X]=Y", () => {
     const b = await createItem();
     // a → about → target; b unrelated.
     await request(ctx.app, "POST", "/edges", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: { source_id: a, target_id: target, edge_type: "about" },
     });
     const res = await request(
       ctx.app,
       "GET",
       `/items?type=core.note&limit=200&edge[about]=${target}`,
-      { key: ctx.spaceKey },
+      { key: ctx.workingKey },
     );
     expect(res.status).toBe(200);
     const data = (await res.json()) as { data: { id: string }[] };
@@ -667,14 +667,14 @@ describe("Query-language: edge[X]=Y and backref[X]=Y", () => {
     const b = await createItem();
     // source → about → a. Looking up `backref[about]=source` returns a.
     await request(ctx.app, "POST", "/edges", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: { source_id: source, target_id: a, edge_type: "about" },
     });
     const res = await request(
       ctx.app,
       "GET",
       `/items?type=core.note&limit=200&backref[about]=${source}`,
-      { key: ctx.spaceKey },
+      { key: ctx.workingKey },
     );
     expect(res.status).toBe(200);
     const data = (await res.json()) as { data: { id: string }[] };
@@ -687,7 +687,7 @@ describe("Query-language: edge[X]=Y and backref[X]=Y", () => {
 describe("Custom edge-type registration", () => {
   it("admin registers a custom edge type via POST /edge-types", async () => {
     const res = await request(ctx.app, "POST", "/edge-types", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         id: "test.custom-link",
         cardinality: "many-to-many",
@@ -700,7 +700,7 @@ describe("Custom edge-type registration", () => {
     const a = await createItem();
     const b = await createItem();
     const useRes = await request(ctx.app, "POST", "/edges", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         source_id: a,
         target_id: b,
@@ -712,7 +712,7 @@ describe("Custom edge-type registration", () => {
 
   it("rejects redefinition of a core edge type", async () => {
     const res = await request(ctx.app, "POST", "/edge-types", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         id: "about",
         cardinality: "many-to-many",
@@ -723,7 +723,7 @@ describe("Custom edge-type registration", () => {
 
   it("rejects `extends` on custom edge type", async () => {
     const res = await request(ctx.app, "POST", "/edge-types", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         id: "test.inherit",
         cardinality: "many-to-many",
@@ -738,7 +738,7 @@ describe("Edge permission enforcement", () => {
   it("rejects a key without edge permissions", async () => {
     // A key with type_permissions but no edge_permissions.
     const keyRes = await request(ctx.app, "POST", "/keys", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         label: "member-no-edge",
         source: `member-no-edge-${String(Math.random())}`,
@@ -768,7 +768,7 @@ describe("Edge permission enforcement", () => {
 
   it("accepts a key with edge.*:write wildcard", async () => {
     const keyRes = await request(ctx.app, "POST", "/keys", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         label: "member-edge-all",
         source: `member-edge-all-${String(Math.random())}`,
@@ -802,12 +802,12 @@ describe("Edge hydration on item reads", () => {
     const tgt2 = await createItem();
     for (const target of [tgt1, tgt2]) {
       await request(ctx.app, "POST", "/edges", {
-        key: ctx.spaceKey,
+        key: ctx.workingKey,
         body: { source_id: source, target_id: target, edge_type: "about" },
       });
     }
     const res = await request(ctx.app, "GET", `/items/${source}`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
     });
     expect(res.status).toBe(200);
     const data = (await res.json()) as {
@@ -823,14 +823,14 @@ describe("Edge hydration on item reads", () => {
     const source = await createItem();
     const target = await createItem();
     await request(ctx.app, "POST", "/edges", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: { source_id: source, target_id: target, edge_type: "about" },
     });
     const withoutInclude = await request(
       ctx.app,
       "GET",
       `/items?type=core.note&limit=50`,
-      { key: ctx.spaceKey },
+      { key: ctx.workingKey },
     );
     const data = (await withoutInclude.json()) as {
       data: { id: string; edges?: unknown }[];
@@ -843,7 +843,7 @@ describe("Edge hydration on item reads", () => {
       ctx.app,
       "GET",
       `/items?type=core.note&limit=50&include=edges`,
-      { key: ctx.spaceKey },
+      { key: ctx.workingKey },
     );
     const inclData = (await withInclude.json()) as {
       data: { id: string; edges?: Record<string, unknown> }[];
@@ -884,7 +884,7 @@ describe("PATCH /items/:id with edges (replace-all-for-specified-types)", () => 
 
     // Seed: source has about->aboutTarget1 and derived-from->derivedTarget
     await request(ctx.app, "POST", "/edges", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         source_id: source,
         target_id: aboutTarget1,
@@ -892,7 +892,7 @@ describe("PATCH /items/:id with edges (replace-all-for-specified-types)", () => 
       },
     });
     await request(ctx.app, "POST", "/edges", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         source_id: source,
         target_id: derivedTarget,
@@ -902,13 +902,13 @@ describe("PATCH /items/:id with edges (replace-all-for-specified-types)", () => 
 
     // PATCH replaces `about` with [aboutTarget2], leaves derived-from alone.
     const patch = await request(ctx.app, "PATCH", `/items/${source}`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: { version: 1, edges: { about: [aboutTarget2] } },
     });
     expect(patch.status).toBe(200);
 
     const out = await request(ctx.app, "GET", `/items/${source}/edges`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
     });
     const data = (await out.json()) as {
       data: { edge_type: string; target_id: string }[];
@@ -929,18 +929,18 @@ describe("PATCH /items/:id with edges (replace-all-for-specified-types)", () => 
     const t2 = await createItem();
     for (const target of [t1, t2]) {
       await request(ctx.app, "POST", "/edges", {
-        key: ctx.spaceKey,
+        key: ctx.workingKey,
         body: { source_id: source, target_id: target, edge_type: "about" },
       });
     }
     const patch = await request(ctx.app, "PATCH", `/items/${source}`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: { version: 1, edges: { about: [] } },
     });
     expect(patch.status).toBe(200);
 
     const out = await request(ctx.app, "GET", `/items/${source}/edges`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
     });
     const data = (await out.json()) as { data: unknown[] };
     expect(data.data.length).toBe(0);
@@ -950,7 +950,7 @@ describe("PATCH /items/:id with edges (replace-all-for-specified-types)", () => 
     const source = await createItem();
     const preexistingTarget = await createItem();
     await request(ctx.app, "POST", "/edges", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         source_id: source,
         target_id: preexistingTarget,
@@ -959,7 +959,7 @@ describe("PATCH /items/:id with edges (replace-all-for-specified-types)", () => 
     });
     const goodTarget = await createItem();
     const patch = await request(ctx.app, "PATCH", `/items/${source}`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         version: 1,
         edges: {
@@ -971,7 +971,7 @@ describe("PATCH /items/:id with edges (replace-all-for-specified-types)", () => 
 
     // Rollback: preexisting edge survives, good target was NOT added.
     const out = await request(ctx.app, "GET", `/items/${source}/edges`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
     });
     const data = (await out.json()) as {
       data: { target_id: string }[];
@@ -983,7 +983,7 @@ describe("PATCH /items/:id with edges (replace-all-for-specified-types)", () => 
   it("rejects PATCH with neither properties nor edges", async () => {
     const source = await createItem();
     const patch = await request(ctx.app, "PATCH", `/items/${source}`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: { version: 1 },
     });
     expect(patch.status).toBe(400);
@@ -991,7 +991,7 @@ describe("PATCH /items/:id with edges (replace-all-for-specified-types)", () => 
 
   it("PATCH edges gates by edge-type permission", async () => {
     const keyRes = await request(ctx.app, "POST", "/keys", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         label: "patch-edge-denied",
         source: `patch-edge-denied-${String(Math.random())}`,
@@ -1019,7 +1019,7 @@ describe("Edge permission matrix (all-granted / type-only / edge-only / both / n
     edgePerms: Record<string, "read" | "write"> | undefined,
   ): Promise<string> {
     const res = await request(ctx.app, "POST", "/keys", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         label: `matrix-${String(Math.random())}`,
         source: `matrix-${String(Math.random())}`,
@@ -1033,11 +1033,11 @@ describe("Edge permission matrix (all-granted / type-only / edge-only / both / n
   }
 
   it("a key granted both maps passes create + update + delete", async () => {
-    // ctx.spaceKey carries `*: write` on both maps; demonstrate end-to-end.
+    // ctx.workingKey carries `*: write` on both maps; demonstrate end-to-end.
     const a = await createItem();
     const b = await createItem();
     const create = await request(ctx.app, "POST", "/edges", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: { source_id: a, target_id: b, edge_type: "about" },
     });
     expect(create.status).toBe(201);
@@ -1045,12 +1045,12 @@ describe("Edge permission matrix (all-granted / type-only / edge-only / both / n
       (await create.json()) as { edge: { id: string; version: number } }
     ).edge;
     const patch = await request(ctx.app, "PATCH", `/edges/${edge.id}`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: { properties: { note: "admin" }, version: edge.version },
     });
     expect(patch.status).toBe(200);
     const del = await request(ctx.app, "DELETE", `/edges/${edge.id}`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
     });
     expect(del.status).toBe(200);
   });
@@ -1120,19 +1120,19 @@ describe("Cascade-on-delete for parent-of", () => {
     const childB = await createItem();
     for (const tgt of [childA, childB]) {
       await request(ctx.app, "POST", "/edges", {
-        key: ctx.spaceKey,
+        key: ctx.workingKey,
         body: { source_id: parent, target_id: tgt, edge_type: "parent-of" },
       });
     }
     const del = await request(ctx.app, "DELETE", `/items/${parent}`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
     });
     expect(del.status).toBe(200);
     // GET /items/:id hides trashed items — a 404 means the item is trashed
     // (active items would return 200). Confirms cascade fired.
     for (const id of [parent, childA, childB]) {
       const r = await request(ctx.app, "GET", `/items/${id}`, {
-        key: ctx.spaceKey,
+        key: ctx.workingKey,
       });
       expect(r.status).toBe(404);
     }
@@ -1145,7 +1145,7 @@ describe("GET /edges", () => {
     expect(res.status).toBe(401);
   });
 
-  it("lists edges of a given type across the space", async () => {
+  it("lists every edge of a given type", async () => {
     const tag = `globlist-${String(Math.random()).slice(2, 8)}`;
     const root = await createItem();
     const a = await createItem();
@@ -1154,7 +1154,7 @@ describe("GET /edges", () => {
     // identify the edges in this run.
     for (const target of [a, b]) {
       await request(ctx.app, "POST", "/edges", {
-        key: ctx.spaceKey,
+        key: ctx.workingKey,
         body: {
           source_id: root,
           target_id: target,
@@ -1166,7 +1166,7 @@ describe("GET /edges", () => {
     // Also create a different-typed edge that should not match the filter.
     const other = await createItem();
     await request(ctx.app, "POST", "/edges", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         source_id: root,
         target_id: other,
@@ -1179,7 +1179,7 @@ describe("GET /edges", () => {
       ctx.app,
       "GET",
       "/edges?edge_type=parent-of&limit=500",
-      { key: ctx.spaceKey },
+      { key: ctx.workingKey },
     );
     expect(res.status).toBe(200);
     const data = (await res.json()) as {
@@ -1201,7 +1201,7 @@ describe("GET /edges", () => {
       ",",
     );
     const res = await request(ctx.app, "GET", `/edges?edge_type=${tooMany}`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
     });
     expect(res.status).toBe(400);
   });
@@ -1217,7 +1217,7 @@ describe("GET /edges", () => {
       const tag = `pag-${String(i)}-${String(Math.random()).slice(2, 6)}`;
       tagged.push(tag);
       await request(ctx.app, "POST", "/edges", {
-        key: ctx.spaceKey,
+        key: ctx.workingKey,
         body: {
           source_id: root,
           target_id: child,
@@ -1230,7 +1230,7 @@ describe("GET /edges", () => {
       ctx.app,
       "GET",
       `/edges?edge_type=${edgeType}&limit=2`,
-      { key: ctx.spaceKey },
+      { key: ctx.workingKey },
     );
     const firstData = (await first.json()) as {
       data: { properties: Record<string, unknown> }[];
@@ -1245,7 +1245,7 @@ describe("GET /edges", () => {
       ctx.app,
       "GET",
       `/edges?edge_type=${edgeType}&limit=2&cursor=${encodeURIComponent(firstData.cursor ?? "")}`,
-      { key: ctx.spaceKey },
+      { key: ctx.workingKey },
     );
     const secondData = (await second.json()) as {
       data: { properties: Record<string, unknown> }[];
@@ -1268,7 +1268,7 @@ describe("PATCH/DELETE /edges/:id — source-type gate on trashed source", () =>
   ): Promise<string> {
     const suffix = Math.random().toString(36).slice(2, 10);
     const res = await request(ctx.app, "POST", "/keys", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         label: `edge-gate-${suffix}`,
         source: `edge-gate-${suffix}`,
@@ -1289,7 +1289,7 @@ describe("PATCH/DELETE /edges/:id — source-type gate on trashed source", () =>
     const sourceId = await createItem("core.note");
     const targetId = await createItem("core.note");
     const createEdge = await request(ctx.app, "POST", "/edges", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         source_id: sourceId,
         target_id: targetId,
@@ -1303,7 +1303,7 @@ describe("PATCH/DELETE /edges/:id — source-type gate on trashed source", () =>
 
     // Admin trashes the source item.
     const del = await request(ctx.app, "DELETE", `/items/${sourceId}`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
     });
     expect(del.status).toBe(200);
 
@@ -1327,7 +1327,7 @@ describe("PATCH/DELETE /edges/:id — source-type gate on trashed source", () =>
     const sourceId = await createItem("core.note");
     const targetId = await createItem("core.note");
     const createEdge = await request(ctx.app, "POST", "/edges", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         source_id: sourceId,
         target_id: targetId,
@@ -1337,7 +1337,7 @@ describe("PATCH/DELETE /edges/:id — source-type gate on trashed source", () =>
     const { edge } = (await createEdge.json()) as { edge: { id: string } };
 
     const del = await request(ctx.app, "DELETE", `/items/${sourceId}`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
     });
     expect(del.status).toBe(200);
 
@@ -1356,7 +1356,7 @@ describe("PATCH/DELETE /edges/:id — source-type gate on trashed source", () =>
       ctx.app,
       "GET",
       `/items/${targetId}/backrefs`,
-      { key: ctx.spaceKey },
+      { key: ctx.workingKey },
     );
     expect(listBackrefs.status).toBe(200);
   });
@@ -1365,7 +1365,7 @@ describe("PATCH/DELETE /edges/:id — source-type gate on trashed source", () =>
     const sourceId = await createItem("core.note");
     const targetId = await createItem("core.note");
     const createEdge = await request(ctx.app, "POST", "/edges", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         source_id: sourceId,
         target_id: targetId,
@@ -1375,12 +1375,12 @@ describe("PATCH/DELETE /edges/:id — source-type gate on trashed source", () =>
     const { edge } = (await createEdge.json()) as { edge: { id: string } };
 
     const trash = await request(ctx.app, "DELETE", `/items/${sourceId}`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
     });
     expect(trash.status).toBe(200);
 
     const deleteEdge = await request(ctx.app, "DELETE", `/edges/${edge.id}`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
     });
     expect(deleteEdge.status).toBe(200);
   });
@@ -1389,18 +1389,18 @@ describe("PATCH/DELETE /edges/:id — source-type gate on trashed source", () =>
 describe("an edge conflict names its code in the header", () => {
   it("stamps X-Error-Code on the refusal", async () => {
     const a = await request(ctx.app, "POST", "/items", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: { type: "core.note", properties: { body: "edge header a" } },
     });
     const b = await request(ctx.app, "POST", "/items", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: { type: "core.note", properties: { body: "edge header b" } },
     });
     const aId = ((await a.json()) as { item: { id: string } }).item.id;
     const bId = ((await b.json()) as { item: { id: string } }).item.id;
 
     const created = await request(ctx.app, "POST", "/edges", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: { source_id: aId, target_id: bId, edge_type: "references" },
     });
     expect(created.status).toBe(201);
@@ -1412,12 +1412,12 @@ describe("an edge conflict names its code in the header", () => {
 
     // Move it on, so the version below is stale.
     await request(ctx.app, "PATCH", `/edges/${edge.id}`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: { properties: { weight: 1 }, version: edge.version },
     });
 
     const stale = await request(ctx.app, "PATCH", `/edges/${edge.id}`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: { properties: { weight: 2 }, version: edge.version },
     });
     expect(stale.status).toBe(409);
@@ -1430,18 +1430,18 @@ describe("an edge conflict names its code in the header", () => {
 describe("the edge conflict envelope describes itself", () => {
   it("carries a message, as the item door does", async () => {
     const a = await request(ctx.app, "POST", "/items", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: { type: "core.note", properties: { body: "edge msg a" } },
     });
     const b = await request(ctx.app, "POST", "/items", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: { type: "core.note", properties: { body: "edge msg b" } },
     });
     const aId = ((await a.json()) as { item: { id: string } }).item.id;
     const bId = ((await b.json()) as { item: { id: string } }).item.id;
 
     const created = await request(ctx.app, "POST", "/edges", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: { source_id: aId, target_id: bId, edge_type: "references" },
     });
     const edge = (
@@ -1449,11 +1449,11 @@ describe("the edge conflict envelope describes itself", () => {
     ).edge;
 
     await request(ctx.app, "PATCH", `/edges/${edge.id}`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: { properties: { weight: 1 }, version: edge.version },
     });
     const stale = await request(ctx.app, "PATCH", `/edges/${edge.id}`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: { properties: { weight: 2 }, version: edge.version },
     });
     expect(stale.status).toBe(409);

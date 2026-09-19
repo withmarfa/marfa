@@ -20,7 +20,7 @@ const MS_PER_DAY = 86_400_000;
  * configuration (`InstanceConfig`'s override field, falling back to the
  * instance default) and runs one sweep with it.
  */
-export interface SpaceFanout {
+export interface RetentionOverride {
   settings: SettingsStore;
   /**
    * Field on `InstanceConfig` that holds the retention override. The tick
@@ -46,9 +46,9 @@ export interface SpaceFanout {
  * the deployment running with no trash purge by setting the env var to 0.
  * The default at the config layer is 60.
  *
- * When `fanout` is supplied, a `runOnce()` tick honors the
+ * When `override` is supplied, a `runOnce()` tick honors the
  * `trash_retention_days` override from the instance configuration. When
- * `fanout` is omitted the job sweeps at the instance default.
+ * `override` is omitted the job sweeps at the instance default.
  *
  * **This sweep announces nothing, and neither do its two siblings below.**
  * Every other path that removes a row publishes `item.purged`, and every
@@ -75,7 +75,7 @@ export class TrashPurger {
     private retentionDays: number,
     private intervalMs: number,
     private nowFn: () => Date = () => new Date(),
-    private fanout?: SpaceFanout,
+    private configOverride?: RetentionOverride,
   ) {}
 
   start(): void {
@@ -101,14 +101,14 @@ export class TrashPurger {
    * Computes the cutoff date from the injected clock and asks the
    * `ItemStore` to delete every trashed row strictly older than it.
    *
-   * Returns the total number of rows deleted across every space in
-   * the fan-out (or just the global sweep when fan-out isn't wired).
+   * Returns the number of rows deleted, at the configured override when
+   * one is wired and at the instance default otherwise.
    */
   async runOnce(): Promise<number> {
-    return this.fanout
-      ? runSpaceFanout({
+    return this.configOverride
+      ? runSweepToCutoff({
           jobName: "trash-purge",
-          fanout: this.fanout,
+          override: this.configOverride,
           nowFn: this.nowFn,
           instanceDefault: this.retentionDays,
           unitMs: MS_PER_DAY,
@@ -258,8 +258,8 @@ export class RevokedGrantPurger {
  *
  * A grant lasted for as long as nobody revoked it: the tokens under it
  * rotated forever, the consent row and the projection stood, and the app
- * kept its access to a space it had stopped reading. Three keys holding a
- * whole space accumulated on production from finished sessions the same way,
+ * kept its access to data it had stopped reading. Three keys holding
+ * everything accumulated on production from finished sessions the same way,
  * and the rule for keys is the rule here: standing authority nobody is
  * tracking needs an owner in code.
  *
@@ -275,8 +275,8 @@ export class RevokedGrantPurger {
  * removes that after its own window; and a client with no grant left then
  * falls to `DcrClientCleaner`. Nothing here reaches into either.
  *
- * Instance-wide: the window is a property of the deployment rather than of
- * space policy.
+ * The window is a property of the deployment rather than of anything a
+ * caller configures per credential.
  */
 /** Grants retired by one tick; the remainder wait for the next. */
 const RETIRE_PER_TICK = 500;
@@ -399,7 +399,7 @@ export class ActivityPurger {
     private retentionDays: number,
     private intervalMs: number,
     private nowFn: () => Date = () => new Date(),
-    private fanout?: SpaceFanout,
+    private configOverride?: RetentionOverride,
   ) {}
 
   start(): void {
@@ -421,10 +421,10 @@ export class ActivityPurger {
   }
 
   async runOnce(): Promise<number> {
-    return this.fanout
-      ? runSpaceFanout({
+    return this.configOverride
+      ? runSweepToCutoff({
           jobName: "activity-purge",
-          fanout: this.fanout,
+          override: this.configOverride,
           nowFn: this.nowFn,
           instanceDefault: this.retentionDays,
           unitMs: MS_PER_DAY,
@@ -597,10 +597,9 @@ export class RateLimitWindowCleaner {
  *
  * Conservative: any single grant signal spares the row, so a client a user
  * actually authorized (or one with any live token) is never reaped. The
- * grant check is space-agnostic — a client with zero grants is dead
- * regardless of which space registered it — so this is an instance-wide
- * sweep (like `AuthSessionCleaner` / `RateLimitWindowCleaner`), not a
- * per-space fan-out.
+ * grant check asks only whether a client has any grant left, so this is an
+ * instance-wide sweep like `AuthSessionCleaner` and
+ * `RateLimitWindowCleaner`, with no configurable override.
  *
  * `retentionDays <= 0` disables the job — the operator can leave the
  * deployment running with no DCR reaper by setting the env var to 0.
@@ -672,7 +671,7 @@ export class DcrClientCleaner {
  * Reclaims blobs nothing references.
  *
  * `POST /blobs` and `POST /items` are separate calls, and the bytes are
- * stored and charged against the space's quotas by the first one. An item
+ * stored and charged against the instance quotas by the first one. An item
  * write refused for any reason leaves the blob registered with nothing
  * pointing at it, still counted, and nothing reconciles the two. The
  * operator route that finds these has existed for as long as the leak has;
@@ -683,10 +682,9 @@ export class DcrClientCleaner {
  * write that names it, so the sweep considers only hashes registered
  * longer than `graceMs` ago and lets the rest wait for the next tick.
  *
- * Instance-wide, like the other sweeps with no per-space fan-out: a hash
- * is deleted from the backend once and loses every space's row, so the
- * question "does anything reference this" has to be asked across all of
- * them.
+ * Instance-wide, like the other sweeps with no configurable override: a
+ * hash is deleted from the backend once, so the question "does anything
+ * reference this" has to be asked of every item at once.
  *
  * `graceMs <= 0` disables the job. A zero window would sweep a blob the
  * instant it is unreferenced, which is the defect rather than a
@@ -773,8 +771,8 @@ export class BlobOrphanCleaner {
  *      older than seven days. Per-dispatch machine artifacts, not human
  *      credentials — a week of post-revocation visibility is plenty.
  *
- * Instance-wide, not space-scoped — expiry is a property of the row, not
- * of space policy. Disabled by wiring (interval `0` skips construction in
+ * Instance-wide and not configurable — expiry is a property of the row.
+ * Disabled by wiring (interval `0` skips construction in
  * `index.ts`), matching the other cleaners.
  */
 /**
@@ -793,8 +791,8 @@ export class BlobOrphanCleaner {
  * ordinary keys older than a week, against six on production — the
  * difference being that staging is where every suite and probe mints one.
  *
- * Instance-wide, not space-scoped: revocation age is a property of the
- * row, not of space policy. Matches the runtime reaper on that point.
+ * Instance-wide and not configurable: revocation age is a property of the
+ * row. Matches the runtime reaper on that point.
  */
 export class RevokedKeyReaper {
   private interval: ReturnType<typeof setInterval> | null = null;
@@ -857,30 +855,33 @@ export class RevokedKeyReaper {
 }
 
 // ---------------------------------------------------------------------------
-// Per-space fan-out helper
+// Retention-override helpers
 // ---------------------------------------------------------------------------
 
 /** The retention a job runs at: the instance configuration's override for
  *  the job's field when one is set, the instance default otherwise. */
 async function effectiveRetention(
-  fanout: SpaceFanout,
+  override: RetentionOverride,
   instanceDefault: number,
 ): Promise<number> {
-  const config = await readInstanceConfig(fanout.settings);
-  const override = config?.[fanout.configField];
-  return typeof override === "number" ? override : instanceDefault;
+  const config = await readInstanceConfig(override.settings);
+  const configured = config?.[override.configField];
+  return typeof configured === "number" ? configured : instanceDefault;
 }
 
 /** One sweep at the effective retention. */
-async function runSpaceFanout(opts: {
+async function runSweepToCutoff(opts: {
   jobName: string;
-  fanout: SpaceFanout;
+  override: RetentionOverride;
   nowFn: () => Date;
   instanceDefault: number;
   unitMs: number;
   sweep: (cutoff: string) => Promise<number>;
 }): Promise<number> {
-  const effective = await effectiveRetention(opts.fanout, opts.instanceDefault);
+  const effective = await effectiveRetention(
+    opts.override,
+    opts.instanceDefault,
+  );
   if (effective <= 0) return 0;
   const cutoff = new Date(
     opts.nowFn().getTime() - effective * opts.unitMs,
@@ -898,15 +899,15 @@ async function runSpaceFanout(opts: {
  * `3_600_000` for the event-log job (retention is in hours); passed in by
  * the caller so the helper stays unit-agnostic.
  */
-export async function runSpaceCleanup(opts: {
+export async function runSweepAtRetention(opts: {
   jobName: string;
-  fanout: SpaceFanout | undefined;
+  override: RetentionOverride | undefined;
   instanceDefault: number;
   unitMs: number;
   sweep: (retention: number) => Promise<number>;
 }): Promise<number> {
-  const effective = opts.fanout
-    ? await effectiveRetention(opts.fanout, opts.instanceDefault)
+  const effective = opts.override
+    ? await effectiveRetention(opts.override, opts.instanceDefault)
     : opts.instanceDefault;
   if (effective <= 0) return 0;
   return opts.sweep(effective);

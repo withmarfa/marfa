@@ -53,7 +53,7 @@ async function rowFor(
  */
 async function mintedByTheProduct(): Promise<{
   operator: ApiKey;
-  space: ApiKey;
+  working: ApiKey;
   /** The operator key itself, for driving the doors that mint from it. */
   operatorRaw: string;
   app: Awaited<ReturnType<typeof createUnbootstrappedTestApp>>;
@@ -90,7 +90,7 @@ async function mintedByTheProduct(): Promise<{
     const workingBody = (await working.json()) as { key: string };
     return {
       operator: await rowFor(fresh.storage, body.key),
-      space: await rowFor(fresh.storage, workingBody.key),
+      working: await rowFor(fresh.storage, workingBody.key),
       operatorRaw: body.key,
       app: fresh,
       cleanup: fresh.cleanup,
@@ -109,8 +109,8 @@ describe("the credentials createTestContext authenticates as", () => {
       expect(authorityOf(await rowFor(ctx.storage, ctx.operatorKey))).toEqual(
         authorityOf(minted.operator),
       );
-      expect(authorityOf(await rowFor(ctx.storage, ctx.spaceKey))).toEqual(
-        authorityOf(minted.space),
+      expect(authorityOf(await rowFor(ctx.storage, ctx.workingKey))).toEqual(
+        authorityOf(minted.working),
       );
     } finally {
       await ctx.cleanup();

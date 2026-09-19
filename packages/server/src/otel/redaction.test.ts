@@ -60,7 +60,6 @@ describe("redactAttributes — PII denylist", () => {
   it("keeps correlation + routing attributes untouched", () => {
     const safe = {
       "marfa.request_id": "req_123",
-      "marfa.space_id": "ten_456",
       "marfa.key_id": "key_789",
       "http.request.method": "POST",
       "http.route": "/items/:id",

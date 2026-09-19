@@ -113,7 +113,7 @@ async function onlyGrant(c: TestContext) {
   return items.data[0]!;
 }
 
-/** The app grant projected for one client, when the space holds others. */
+/** The app grant projected for one client, when others are stored beside it. */
 async function grantOf(c: TestContext, clientId: string) {
   const items = await c.storage.items.list({ type: "system.connection" });
   const own = items.data.filter(

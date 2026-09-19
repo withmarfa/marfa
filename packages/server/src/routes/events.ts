@@ -178,11 +178,11 @@ type StreamIncompleteReason =
  *
  * **What the number is actually for.** The hold lasts only as long as the
  * prologue — one head read, plus a replay when the client sent a cursor.
- * The buffer grows as the product of the space's write rate and that
+ * The buffer grows as the product of the instance's write rate and that
  * duration, and the prologue does not get faster because the buffer got
  * bigger, so past some size holding more only defers the same answer at a
  * higher cost. The job of the number is to sit above what an ordinary
- * prologue on a busy space reaches and below what would matter if a
+ * prologue on a busy instance reaches and below what would matter if a
  * pathological one did not stop.
  *
  * Five hundred because that is what this route already treats as a
@@ -283,7 +283,7 @@ function filterReplayPayload(
  * hold this parameter to, and refused on the same terms.** The stream
  * used to accept any string and then match nothing with it, which is the
  * worst answer a filter can give: a 200 and an empty stream, which a
- * client cannot tell from a quiet space. A spelling the list surfaces
+ * client cannot tell from a quiet instance. A spelling the list surfaces
  * reject now reaches the caller as the rejection they already get there
  * rather than as silence.
  *
@@ -397,7 +397,7 @@ export function eventRoutes(
 
           // Aborting detaches the emitter listeners immediately.
           // iterator.return() alone cannot: a generator suspended on an
-          // event that never arrives stays suspended, and a quiet space
+          // event that never arrives stays suspended, and a quiet instance
           // would retain one listener per departed viewer indefinitely.
           const subscriptionAbort = new AbortController();
 
@@ -729,9 +729,9 @@ export function eventRoutes(
            * otherwise be filled entirely by frames its owner cannot
            * receive.
            *
-           * The `?type=` filter and the space fence are not asked here
-           * because they are applied upstream, inside the subscription,
-           * so a frame excluded by either never reaches this function.
+           * The `?type=` filter is not asked here because it is applied
+           * upstream, inside the subscription, so a frame it excludes
+           * never reaches this function.
            * The replay dedupe is the one release-time drop that stays at
            * release: whether a held id was also sent by the replay is not
            * knowable until the replay has finished, so the cap can still
@@ -926,9 +926,7 @@ export function eventRoutes(
                     // names a subtree, so a string comparison drops a
                     // subtype the live stream delivers, and the client
                     // has no way to see that its view narrowed on
-                    // reconnect. Passed the arguments live passes —
-                    // the space included, or a space's own subtype
-                    // answers on one path and not the other — so the
+                    // reconnect. Passed the arguments live passes, so the
                     // two cannot resolve the same filter differently.
                     if (
                       typeParam !== undefined &&

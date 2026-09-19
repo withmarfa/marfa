@@ -73,12 +73,12 @@ export interface AppConfig {
   auditRetentionDays: number;
   auditCleanupIntervalMs: number;
   /** Days a `system.activity` item survives before the purger drops it.
-   *  Default 14; env override `MARFA_ACTIVITY_RETENTION_DAYS`; per-space
+   *  Default 14; env override `MARFA_ACTIVITY_RETENTION_DAYS`; instance-config
    *  override `activity_retention_days`. `0` disables the job.
    *
    *  An integration reports every run as an activity row, including the
    *  runs that found nothing to do, so this is the fastest-growing item
-   *  type on a space with connections and nothing aged it out before.
+   *  type on an instance with connections and nothing aged it out before.
    *
    *  Optional on the type because a dozen test contexts build
    *  `AppConfig` literals, and a required field with
@@ -385,7 +385,7 @@ export function parseOtelSampleRatio(raw: string | undefined): number {
 /**
  * Parses the OTLP exporter headers env var (`OTEL_EXPORTER_OTLP_HEADERS`),
  * a comma-separated list of `key=value` pairs per the OTLP exporter spec
- * (e.g. `Authorization=Bearer abc123,X-Space=acme`). Whitespace around
+ * (e.g. `Authorization=Bearer abc123,X-Scope=acme`). Whitespace around
  * keys/values is trimmed; the value may itself contain `=` (split on the
  * first only). Malformed entries are skipped. Exported for unit testing.
  */
@@ -413,8 +413,8 @@ export function parseOtelHeaders(
  * that is a property of these five rather than of the renderer.
  *
  * The derivation, its family rules, and the rationale each rule carries
- * live in `auth/default-bundles.ts`. Deployments whose spaces registered
- * custom types under their own publisher handles get those namespaces
+ * live in `auth/default-bundles.ts`. A deployment that registered custom
+ * types under its own publisher handles gets those namespaces
  * folded in at boot via {@link setActivePermissionBundles}; this constant
  * is the registry-only baseline.
  */
@@ -522,7 +522,7 @@ export function setActivePermissionBundles(
  * is present, because the override outranks the derivation. Presence and
  * validity are different questions, and only the second one should suppress
  * the derivation: a rejected override falls back to the shipped defaults, so
- * keying on presence alone would drop the handle namespaces a space's own
+ * keying on presence alone would drop the handle namespaces the runtime
  * custom types need on top of dropping the override.
  */
 export function hasUsablePermissionBundleOverride(): boolean {

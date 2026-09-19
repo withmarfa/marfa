@@ -222,7 +222,7 @@ describe("a consent row states the operation, not only the type", () => {
    * **The form follows the copy, because the chain answers in two
    * registers.** A curated label is a name and takes a parenthesis; a
    * description is a sentence and takes one of its own. Bracketing both put
-   * "Everything in your space. (read only)" on the screen, with the suffix
+   * "Everything on your server. (read only)" on the screen, with the suffix
    * stranded past a full stop, and that is not a corner case: every
    * wildcard but `user.*`, every edge type and three `system.*` types reach
    * the description because nothing curated names them.
@@ -231,7 +231,7 @@ describe("a consent row states the operation, not only the type", () => {
     const labels = rowLabels(
       authorize([parse("*:read"), parse("edge.about:write")]),
     );
-    expect(labels).toContain("Everything in your space. Read only.");
+    expect(labels).toContain("Everything on your server. Read only.");
     expect(labels).toContain("What an item is about. Read and write.");
     for (const label of labels) expect(label).not.toMatch(/\.\s*\(read/);
   });
@@ -291,7 +291,7 @@ describe("a consent row states the operation, not only the type", () => {
 });
 
 describe("a scope family with no read/write axis is given none", () => {
-  it("attaches nothing to an OIDC literal or a space permission", () => {
+  it("attaches nothing to an OIDC literal or a permission", () => {
     const scopes = [parse("profile"), parse("webhooks.manage")];
     const rendered = [
       ...rowLabels(authorize(scopes)),
@@ -306,7 +306,7 @@ describe("a scope family with no read/write axis is given none", () => {
   it("answers on the kind rather than on the spelling", () => {
     // `operation` is typed across the whole union and parsing sets it to
     // "none" for the verb-less families, so a rule reading that field
-    // without asking the kind would attach an operation to a space permission
+    // without asking the kind would attach an operation to a permission
     // the moment the value moved. Asked here of the discriminant.
     expect(scopeOperation(parse("profile"))).toBeUndefined();
     expect(scopeOperation(parse("webhooks.manage"))).toBeUndefined();
@@ -345,12 +345,11 @@ describe("a scope family with no read/write axis is given none", () => {
  * names in a group moves the threshold at which that clause disappears, and
  * carrying the operation on every name doubled them: the shipped `custom`
  * bundle emits a read and a write wildcard for every writable root, which
- * tipped it over at two roots — a space that has registered one namespace of
- * its own besides `user`.
+ * tipped it over at two roots — one registered namespace besides `user`.
  */
 describe("an open-ended group keeps saying it is open-ended", () => {
-  /** The `custom` bundle as a space with its own registered namespaces gets
-   *  it: `user` plus whatever `resolveRegisteredNamespaceRoots` returned. */
+  /** The `custom` bundle as this server holds it: `user` plus whatever
+   *  `resolveRegisteredNamespaceRoots` returned. */
   const customBundleAt = (
     ownRoots: string[],
   ): { scopes: ParsedScope[]; bundles: PermissionBundle[] } => {
@@ -411,10 +410,10 @@ describe("an open-ended group keeps saying it is open-ended", () => {
     expect(rowLabels(html)).toEqual([
       "Your custom types (read only)",
       "Your custom types (read and write)",
-      "Everything Acme saves in your space. Read only.",
-      "Everything Acme saves in your space. Read and write.",
-      "Everything Zed saves in your space. Read only.",
-      "Everything Zed saves in your space. Read and write.",
+      "Everything Acme saves on your server. Read only.",
+      "Everything Acme saves on your server. Read and write.",
+      "Everything Zed saves on your server. Read only.",
+      "Everything Zed saves on your server. Read and write.",
     ]);
   });
 

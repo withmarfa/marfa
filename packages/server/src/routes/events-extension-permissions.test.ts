@@ -20,7 +20,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import {
   TEST_API_KEY_SALT,
   createTestContext,
-  mintSpaceKey,
+  mintWorkingKey,
   readSse,
   request,
   seedOauthBearer,
@@ -29,7 +29,7 @@ import {
 import type { TestContext } from "../test-utils.js";
 import { hashApiKey } from "../middleware/auth.js";
 import { initEventLog } from "../pubsub.js";
-import { SPACE_PERMISSIONS } from "@withmarfa/shared";
+import { PERMISSIONS } from "@withmarfa/shared";
 
 let ctx: TestContext;
 
@@ -43,7 +43,7 @@ beforeAll(async () => {
   // does not install one.
   initEventLog(ctx.storage.eventLog);
   const suffix = Math.random().toString(36).slice(2, 10);
-  scopedKey = await mintSpaceKey(ctx, {
+  scopedKey = await mintWorkingKey(ctx, {
     label: `extperm-${suffix}`,
     source: `extperm-${suffix}`,
     type_permissions: { "*": "write" },
@@ -67,7 +67,7 @@ async function itemWithTwoNamespaces(): Promise<{
   version: number;
 }> {
   const created = await request(ctx.app, "POST", "/items", {
-    key: ctx.spaceKey,
+    key: ctx.workingKey,
     body: { type: "core.note", properties: { body: "two-namespaces" } },
   });
   expect(created.status).toBe(201);
@@ -82,7 +82,7 @@ async function itemWithTwoNamespaces(): Promise<{
       ctx.app,
       "PUT",
       `/items/${id}/extensions/${namespace}`,
-      { key: ctx.spaceKey, body: value },
+      { key: ctx.workingKey, body: value },
     );
     expect(res.status).toBe(200);
   }
@@ -109,7 +109,7 @@ describe("metadata.changed on the live stream", () => {
       "PUT",
       `/items/${id}/extensions/mine`,
       {
-        key: ctx.spaceKey,
+        key: ctx.workingKey,
         body: { visible: "updated" },
       },
     );
@@ -138,7 +138,7 @@ describe("metadata.changed on the live stream", () => {
     });
     await settle();
     const patched = await request(ctx.app, "PATCH", `/items/${id}`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: { properties: { body: "touched" }, version },
     });
     expect(patched.status).toBe(200);
@@ -156,14 +156,14 @@ describe("metadata.changed on the live stream", () => {
     // pass.
     const { id } = await itemWithTwoNamespaces();
     const stream = await request(ctx.app, "GET", "/events", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
     });
     const reading = readSse(stream, {
       until: (text) => text.includes("metadata.changed"),
     });
     await settle();
     await request(ctx.app, "PUT", `/items/${id}/extensions/mine`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: { visible: "updated" },
     });
     const { text } = await reading;
@@ -225,17 +225,15 @@ describe("an OAuth-derived subscriber", () => {
       until: (text) => text.includes("metadata.changed"),
     });
     await settle();
-    // Written by a credential inside the space, not by the operator key:
-    // the stream filters on the event's space, and a space-less writer
-    // publishes a frame this subscriber never sees — which would make the
-    // assertions below pass having read nothing.
+    // Written by a working credential rather than the operator key, whose
+    // own maps are empty.
     const suffix = Math.random().toString(36).slice(2, 8);
     const writerKey = `marfa_k1_oauthwriter_${suffix}`;
     await hosted.storage.keys.create(
       {
         label: `oauthwriter-${suffix}`,
         source: `oauthwriter-${suffix}`,
-        permissions: [...SPACE_PERMISSIONS],
+        permissions: [...PERMISSIONS],
         type_permissions: { "*": "write" },
         // Named, because the extension door reads this map and nothing else:
         // the implicit own-namespace write follows the key's label, which is
@@ -281,7 +279,7 @@ describe("metadata.changed on the Last-Event-ID replay", () => {
       ctx.app,
       "PUT",
       `/items/${id}/extensions/mine`,
-      { key: ctx.spaceKey, body: { visible: "replayed" } },
+      { key: ctx.workingKey, body: { visible: "replayed" } },
     );
     expect(write.status).toBe(200);
     // The write really did append, so the replay below has something to
@@ -316,7 +314,7 @@ describe("metadata.changed on the Last-Event-ID replay", () => {
       ? before.map((e) => e.id).reduce((a, b) => (a > b ? a : b))
       : 0n;
     const patched = await request(ctx.app, "PATCH", `/items/${id}`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: { properties: { body: "touched for replay" }, version },
     });
     expect(patched.status).toBe(200);
@@ -390,7 +388,7 @@ describe("the replay's shape guard", () => {
         item: { id: "shape-anchor-no-metadata", type: "core.note" },
       }),
     );
-    // Spaced where `JSON.stringify` would not space it, so byte-identical
+    // Spaced where `JSON.stringify` would not, so byte-identical
     // is something the assertion can see rather than something it assumes.
     const payload =
       '{"type":"item.updated", "item":{"id":"shape-no-metadata","type":"core.note"}}';

@@ -309,7 +309,7 @@ describe("source_filter lever", () => {
    * `GET /items/{id}` is deliberately exempt, and that is worth pinning.
    *
    * The lever narrows a result set; it is not an access-control gate, and the
-   * id read is already fenced by space and type permissions. Quietly adding it
+   * id read is already fenced by the caller's type permissions. Quietly adding it
    * here would turn a filtered-out row into a 404 for a caller holding its id,
    * which reads as data loss rather than as a filter. Without a test the
    * exemption looks like an oversight and gets "fixed".

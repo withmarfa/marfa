@@ -23,7 +23,7 @@
  * or drop it from others. Worth doing deliberately; not worth doing as
  * tidying.
  *
- * The two space shapes differ outright, the administrative one carrying a
+ * The two key shapes differ outright, the administrative one carrying a
  * status the user-facing one does not, so folding them is a surface change in
  * one direction or a regression in the other.
  *
@@ -35,7 +35,7 @@ import {
   ITEM_STATES,
   MarfaError,
   ErrorCode,
-  SPACE_PERMISSIONS,
+  PERMISSIONS,
 } from "@withmarfa/shared";
 import type { ItemState } from "@withmarfa/shared";
 
@@ -72,8 +72,8 @@ export const ALL_STATES = "any";
  * One implementation for every door that reads items, because the doors
  * disagreed: the item listing gained the sentinel and `GET /export` did
  * not, so the one read whose whole purpose is a complete copy was the one
- * that could not ask for every state and quietly returned the space minus
- * its bin. The archive an export writes is what a restore reads back, so
+ * that could not ask for every state and quietly returned everything minus
+ * the bin. The archive an export writes is what a restore reads back, so
  * that omission is silently lossy in the place it matters most.
  *
  * The sentinel is resolved before the membership check rather than after.
@@ -239,9 +239,8 @@ export const EnforcementOverrideSchema = enforcementSchema(false).describe(
 /**
  * An API key as a create route answers it.
  *
- * Two doors mint a key — the space caller's own and the operator one that
- * binds a key to a space — and they answered with two declarations that
- * had drifted apart. One carried `expires_at` and the other did not.
+ * Two doors mint a key — a working caller's own and the operator one — and
+ * they answered with two declarations that had drifted apart. One carried `expires_at` and the other did not.
  *
  * **The one without it was right.** An expiry is settable only through
  * `createRuntimeCredential`, which the storage interface documents as
@@ -260,7 +259,7 @@ export const KeyResponseSchema = z.object({
   label: z.string(),
   source: z.string(),
   permissions: z
-    .array(z.enum(SPACE_PERMISSIONS as unknown as [string, ...string[]]))
+    .array(z.enum(PERMISSIONS as unknown as [string, ...string[]]))
     .optional(),
   oauth_client_id: z.string().optional(),
   default_tier: z.enum(["library", "feed"]),

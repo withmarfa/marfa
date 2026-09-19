@@ -17,7 +17,7 @@
  * refused.
  *
  * **Two credential shapes, deliberately.** The doors are reachable by an
- * ordinary space credential for the types its maps admit, and by an
+ * ordinary working credential for the types its maps admit, and by an
  * integration runtime credential for `system.activity`, through the carve-out
  * in `checkTypeAccess`. A suite written entirely with one shape pins the check
  * for that shape and is blind to the other, which is how a guard goes missing
@@ -92,11 +92,11 @@ describe.each(DOORS)("$name", (door) => {
   it("refuses a state the type's lifecycle does not contain", async () => {
     // `system.*` admits `active | revoked`. `trashed` is a real state and is
     // not in that graph, so nothing can produce it and nothing can leave it.
-    expect(await door.create(ctx.spaceKey, connection("trashed"))).toBe(400);
+    expect(await door.create(ctx.workingKey, connection("trashed"))).toBe(400);
   });
 
   it("refuses `archived` on the same grounds, so the rule is the graph and not one word", async () => {
-    expect(await door.create(ctx.spaceKey, connection("archived"))).toBe(400);
+    expect(await door.create(ctx.workingKey, connection("archived"))).toBe(400);
   });
 
   it("still admits a state the lifecycle does contain", async () => {
@@ -114,7 +114,7 @@ describe.each(DOORS)("$name", (door) => {
     // nothing; `archived` is in this type's graph and not in `system.*`'s,
     // which is the pair the refusals above turn on.
     expect(
-      await door.create(ctx.spaceKey, {
+      await door.create(ctx.workingKey, {
         type: "core.note",
         state: "archived",
         properties: { body: "state-door fixture" },

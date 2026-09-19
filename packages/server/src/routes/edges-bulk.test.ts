@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
-import { createTestContext, mintSpaceKey, request } from "../test-utils.js";
+import { createTestContext, mintWorkingKey, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { generateId } from "@withmarfa/shared";
 
@@ -18,7 +18,7 @@ afterAll(async () => {
 async function makePair(): Promise<{ sourceId: string; targetId: string }> {
   const suffix = Math.random().toString(36).slice(2, 8);
   const src = await request(ctx.app, "POST", "/items", {
-    key: ctx.spaceKey,
+    key: ctx.workingKey,
     body: {
       type: "core.note",
       properties: { body: "source" },
@@ -26,7 +26,7 @@ async function makePair(): Promise<{ sourceId: string; targetId: string }> {
     },
   });
   const tgt = await request(ctx.app, "POST", "/items", {
-    key: ctx.spaceKey,
+    key: ctx.workingKey,
     body: {
       type: "core.entity",
       properties: { name: "target" },
@@ -44,7 +44,7 @@ describe("POST /edges/bulk", () => {
     const b = await makePair();
 
     const res = await request(ctx.app, "POST", "/edges/bulk", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         edges: [
           {
@@ -85,7 +85,7 @@ describe("POST /edges/bulk", () => {
     const { sourceId, targetId } = await makePair();
 
     const first = await request(ctx.app, "POST", "/edges/bulk", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         edges: [
           {
@@ -103,7 +103,7 @@ describe("POST /edges/bulk", () => {
     const originalId = firstBody.results[0]!.id;
 
     const second = await request(ctx.app, "POST", "/edges/bulk", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         edges: [
           {
@@ -134,7 +134,7 @@ describe("POST /edges/bulk", () => {
       ctx.app,
       "GET",
       `/items/${sourceId}/edges?edge_type=about`,
-      { key: ctx.spaceKey },
+      { key: ctx.workingKey },
     );
     const listBody = (await getRes.json()) as {
       data: { id: string; properties: { weight?: number; label?: string } }[];
@@ -148,7 +148,7 @@ describe("POST /edges/bulk", () => {
     const { sourceId, targetId } = await makePair();
 
     await request(ctx.app, "POST", "/edges/bulk", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         edges: [
           {
@@ -162,7 +162,7 @@ describe("POST /edges/bulk", () => {
     });
 
     const second = await request(ctx.app, "POST", "/edges/bulk", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         edges: [
           {
@@ -192,7 +192,7 @@ describe("POST /edges/bulk", () => {
     const bogusTarget = "not-a-valid-id";
 
     const res = await request(ctx.app, "POST", "/edges/bulk", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         edges: [
           {
@@ -221,7 +221,7 @@ describe("POST /edges/bulk", () => {
       ctx.app,
       "GET",
       `/items/${a.sourceId}/edges?edge_type=about`,
-      { key: ctx.spaceKey },
+      { key: ctx.workingKey },
     );
     const listBody = (await list.json()) as { data: unknown[] };
     expect(listBody.data).toHaveLength(0);
@@ -232,7 +232,7 @@ describe("POST /edges/bulk", () => {
     const b = await makePair();
 
     const res = await request(ctx.app, "POST", "/edges/bulk", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         edges: [
           {
@@ -268,7 +268,7 @@ describe("POST /edges/bulk", () => {
   it("surfaces unknown edge_type as validation error", async () => {
     const { sourceId, targetId } = await makePair();
     const res = await request(ctx.app, "POST", "/edges/bulk", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         edges: [
           {
@@ -292,7 +292,7 @@ describe("POST /edges/bulk", () => {
   it("rejects self-edges with edge_constraint_violation", async () => {
     const { sourceId } = await makePair();
     const res = await request(ctx.app, "POST", "/edges/bulk", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         edges: [
           {
@@ -315,7 +315,7 @@ describe("POST /edges/bulk", () => {
   it("rejects cardinality violation (parent-of: target already has parent)", async () => {
     const p1 = await makePair();
     const parent2 = await request(ctx.app, "POST", "/items", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         type: "core.note",
         properties: { body: "second parent" },
@@ -326,7 +326,7 @@ describe("POST /edges/bulk", () => {
 
     // First parent-of edge lands fine.
     const first = await request(ctx.app, "POST", "/edges/bulk", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         edges: [
           {
@@ -342,7 +342,7 @@ describe("POST /edges/bulk", () => {
     // Second edge targeting the same child from a different parent violates
     // the one-to-many cardinality on the target side.
     const second = await request(ctx.app, "POST", "/edges/bulk", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         edges: [
           {
@@ -370,7 +370,7 @@ describe("POST /edges/bulk", () => {
       edge_type: "about",
     }));
     const res = await request(ctx.app, "POST", "/edges/bulk", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: { edges },
     });
     expect(res.status).toBe(400);
@@ -381,9 +381,9 @@ describe("POST /edges/bulk", () => {
   it("admits a key with source-type + edge-type write (matches POST /edges)", async () => {
     // Bulk edge authorization mirrors single-edge POST /edges: a key holding
     // write on the source item's type AND the edge type succeeds.
-    // The subject is the edge map, so the key is an ordinary space-bound one
-    // holding exactly the two families the door reads.
-    const rawKey = await mintSpaceKey(ctx, {
+    // The subject is the edge map, so the key holds exactly the two
+    // families the door reads.
+    const rawKey = await mintWorkingKey(ctx, {
       label: "edges-bulk-member-ok",
       source: `edges-bulk-member-ok-${Math.random().toString(36).slice(2, 8)}`,
       type_permissions: { "*": "write" },
@@ -411,7 +411,7 @@ describe("POST /edges/bulk", () => {
   it("rejects a key lacking edge-type write (atomic 400)", async () => {
     // Has source-type write but no edge_permissions → edge_permission_denied,
     // surfaced as a bulk_atomic_rollback by the atomic pre-check.
-    const rawKey = await mintSpaceKey(ctx, {
+    const rawKey = await mintWorkingKey(ctx, {
       label: "edges-bulk-member-noedge",
       source: `edges-bulk-member-noedge-${Math.random().toString(36).slice(2, 8)}`,
       type_permissions: { "*": "write" },
@@ -441,7 +441,7 @@ describe("POST /edges/bulk", () => {
 
   it("returns an empty-counts shape for an empty edges array", async () => {
     const res = await request(ctx.app, "POST", "/edges/bulk", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: { edges: [] },
     });
     expect(res.status).toBe(200);
@@ -466,7 +466,7 @@ describe("POST /edges/bulk", () => {
   it("atomic pre-check rejects invalid id shape before any write", async () => {
     const { sourceId, targetId } = await makePair();
     const res = await request(ctx.app, "POST", "/edges/bulk", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         edges: [
           { source_id: sourceId, target_id: targetId, edge_type: "about" },
@@ -496,7 +496,7 @@ describe("POST /edges/bulk — the client-supplied id", () => {
     // answering to two rules is the shape that lets one of them drift.
     const pair = await makePair();
     const res = await request(ctx.app, "POST", "/edges/bulk", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         atomic: false,
         edges: [
@@ -522,7 +522,7 @@ describe("POST /edges/bulk — the client-supplied id", () => {
     // the per-edge path.
     const pair = await makePair();
     const res = await request(ctx.app, "POST", "/edges/bulk", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         atomic: true,
         edges: [
@@ -549,7 +549,7 @@ describe("POST /edges/bulk — the client-supplied id", () => {
       ctx.app,
       "GET",
       `/items/${pair.sourceId}/edges`,
-      { key: ctx.spaceKey },
+      { key: ctx.workingKey },
     );
     expect(((await listed.json()) as { data: unknown[] }).data).toHaveLength(0);
   });
@@ -564,7 +564,7 @@ describe("POST /edges/bulk — the client-supplied id", () => {
     const shared = generateId();
 
     const seed = await request(ctx.app, "POST", "/edges", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         id: shared,
         source_id: first.sourceId,
@@ -575,7 +575,7 @@ describe("POST /edges/bulk — the client-supplied id", () => {
     expect(seed.status).toBe(201);
 
     const res = await request(ctx.app, "POST", "/edges/bulk", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         atomic: false,
         edges: [

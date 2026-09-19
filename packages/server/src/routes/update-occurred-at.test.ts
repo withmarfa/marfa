@@ -15,7 +15,7 @@ afterAll(async () => {
 describe("PATCH /items/:id — occurred_at field", () => {
   it("overrides the item's own time", async () => {
     const createRes = await request(ctx.app, "POST", "/items", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         type: "core.note",
         properties: { body: "ts-override" },
@@ -27,13 +27,13 @@ describe("PATCH /items/:id — occurred_at field", () => {
 
     const newTs = "2001-09-11T08:46:00.000Z";
     const patchRes = await request(ctx.app, "PATCH", `/items/${item.id}`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: { occurred_at: newTs, version: item.version },
     });
     expect(patchRes.status).toBe(200);
 
     const getRes = await request(ctx.app, "GET", `/items/${item.id}`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
     });
     const fetched = (await getRes.json()) as {
       item: { occurred_at: string };
@@ -43,7 +43,7 @@ describe("PATCH /items/:id — occurred_at field", () => {
 
   it("rejects non-ISO strings", async () => {
     const createRes = await request(ctx.app, "POST", "/items", {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: {
         type: "core.note",
         properties: { body: "ts-invalid" },
@@ -54,7 +54,7 @@ describe("PATCH /items/:id — occurred_at field", () => {
     };
 
     const res = await request(ctx.app, "PATCH", `/items/${item.id}`, {
-      key: ctx.spaceKey,
+      key: ctx.workingKey,
       body: { occurred_at: "not an ISO date", version: item.version },
     });
     expect(res.status).toBe(400);

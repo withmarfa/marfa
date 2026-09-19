@@ -4,7 +4,7 @@ import {
   generateId,
   MarfaError,
   ErrorCode,
-  isSpacePermission,
+  isPermission,
 } from "@withmarfa/shared";
 import type {
   ApiKey,
@@ -46,7 +46,7 @@ function mapRow(row: typeof apiKeys.$inferSelect): ApiKey {
       row.permissions,
       [],
       "key permissions",
-    ).filter(isSpacePermission),
+    ).filter(isPermission),
     oauth_client_id: row.oauth_client_id ?? undefined,
     type_permissions: safeJsonParse<Record<string, TypePermission>>(
       row.type_permissions,

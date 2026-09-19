@@ -2,24 +2,16 @@
  * Regression suite for authority checks that were hand-rolled instead of
  * going through the shared auth helpers.
  *
- * The operator gate is the absence of a space binding as much as it is the
- * flag, because `POST /admin/spaces/{id}/keys` legitimately mints a
- * space-bound credential whose reach is deliberately one space. Every route
- * that spelled the gate as a bare flag test kept the old meaning and
- * disagreed with `checkOperatorKey` — readmitting exactly the credential the
- * gate exists to exclude, on surfaces whose lookups are unfenced.
- *
- * The space fence runs alongside it and is the other half: a credential
- * holding a space permission holds it *in its own space*, so every lookup
- * behind such a door has to be threaded with the caller's space or the
- * permission reaches every space at once.
+ * Every route that spelled a gate itself rather than asking the shared
+ * predicate drifted from it, readmitting exactly the credential the gate
+ * exists to exclude on surfaces whose lookups are unfenced.
  *
  * Each site is covered twice: the credential that must be refused, and a
  * control proving the legitimate caller still gets through.
  */
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import type { SpacePermission } from "@withmarfa/shared";
+import type { Permission } from "@withmarfa/shared";
 import { hashApiKey, isReservedCredentialSource } from "./auth.js";
 import {
   createTestContext,
@@ -65,7 +57,7 @@ afterAll(async () => {
 let mintCounter = 0;
 
 async function mintKey(opts: {
-  spacePermissions?: SpacePermission[];
+  permissions?: Permission[];
   is_operator?: boolean;
   label?: string;
   source?: string;
@@ -79,7 +71,7 @@ async function mintKey(opts: {
     {
       label: opts.label ?? `authority-${suffix}`,
       source: opts.source ?? `authority-${suffix}`,
-      permissions: opts.spacePermissions ?? [],
+      permissions: opts.permissions ?? [],
       default_tier: "library",
       type_permissions: opts.type_permissions ?? {},
       extension_permissions: opts.extension_permissions,
@@ -117,7 +109,7 @@ describe("POST /keys — integration source prefixes are not mintable", () => {
   it("refuses a source claiming a connection's integration identity", async () => {
     const connectionId = await seedConnection();
     const caller = await mintKey({
-      spacePermissions: ["keys.mint"],
+      permissions: ["keys.mint"],
     });
 
     const res = await request(ctx.app, "POST", "/keys", {
@@ -136,7 +128,7 @@ describe("POST /keys — integration source prefixes are not mintable", () => {
 
   it("still accepts an ordinary source", async () => {
     const caller = await mintKey({
-      spacePermissions: ["keys.mint"],
+      permissions: ["keys.mint"],
     });
 
     const res = await request(ctx.app, "POST", "/keys", {
@@ -152,7 +144,7 @@ describe("POST /keys — integration source prefixes are not mintable", () => {
 // ---------------------------------------------------------------------------
 
 describe("extensions — the reserved namespaces are nobody's", () => {
-  it("refuses a space-bound credential writing a reserved namespace", async () => {
+  it("refuses a working credential writing a reserved namespace", async () => {
     const boundCaller = await mintKey({
       // Granted the namespace outright, so the refusal below can only be the
       // reserved-namespace gate rather than a missing map entry.

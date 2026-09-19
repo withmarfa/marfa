@@ -37,7 +37,7 @@
 import { describe, it, expect } from "vitest";
 import type { ParsedScope } from "@withmarfa/shared";
 import {
-  SPACE_PERMISSIONS,
+  PERMISSIONS,
   EDGE_TYPE_REGISTRY,
   parseScope,
   TYPE_REGISTRY,
@@ -46,10 +46,7 @@ import { buildAllowedScopes } from "../auth/oauth-provider.js";
 import { getPermissionBundles } from "../config.js";
 import { buildScopeDescriptions } from "./auth-consent.js";
 import { humanizeType, renderConsentScreen, SCOPE_LABELS } from "./consent.js";
-import {
-  SPACE_PERMISSION_LABELS,
-  spacePermissionLabel,
-} from "./space-permission-labels.js";
+import { PERMISSION_LABELS, permissionLabel } from "./permission-labels.js";
 import { oidcLabel } from "./oidc-labels.js";
 import { renderDeviceConsentScreen } from "./device-pages.js";
 import { escapeHtml } from "./auth-html.js";
@@ -59,7 +56,7 @@ import { escapeHtml } from "./auth-html.js";
  * table, injected rather than assumed.
  *
  * The allowlist is not knowable from source alone. `setRuntimeNamespaceRoots`
- * is called at boot with every publisher root any space has registered, and
+ * is called at boot with every registered publisher root, and
  * `buildAllowedScopes` folds each one in as `<root>.*:read|write` plus
  * `edge.<root>.*:read|write`. In a test process nothing has booted, so the
  * roots are empty and the widest family in the grammar would be missing from
@@ -117,7 +114,7 @@ function distinctPatterns(
 
 /**
  * The kinds whose row is resolved through the description map. OIDC and
- * space permission literals are not among them: both renderers answer those
+ * permission literals are not among them: both renderers answer those
  * from their own label maps and return before the description map is read, so
  * they are held to those maps instead, further down.
  *
@@ -377,7 +374,7 @@ describe("the consent copy guard derives the scopes it checks", () => {
     }
   });
 
-  it("names an OIDC literal and a space permission without the description map", () => {
+  it("names an OIDC literal and a permission without the description map", () => {
     // Both renderers resolve these through their own maps and return before
     // the description map is read, so the check above cannot see them and
     // an unnamed one would render as its literal on the device screen.
@@ -388,20 +385,20 @@ describe("the consent copy guard derives the scopes it checks", () => {
       expect(oidcLabel(literal), literal).toMatch(/\S/);
     }
 
-    // No bundle emits a space permission literal today, so this loop is usually
+    // No bundle emits a permission literal today, so this loop is usually
     // empty — which is why the set is also held directly below it. A
-    // space permission becoming requestable is the event that makes the loop
+    // permission becoming requestable is the event that makes the loop
     // matter, and it should not be the event that first writes the check.
-    for (const scope of distinctPatterns(["space"])) {
-      const permission = scope.spacePermission ?? scope.typePattern;
+    for (const scope of distinctPatterns(["permission"])) {
+      const permission = scope.permission ?? scope.typePattern;
       // Through the guard the device screen uses rather than an indexed
       // lookup, so a literal outside the closed set is answered rather than
       // asserted into a map that has no entry for it.
-      expect(spacePermissionLabel(permission), permission).toMatch(/\S/);
+      expect(permissionLabel(permission), permission).toMatch(/\S/);
     }
-    expect(SPACE_PERMISSIONS.length).toBeGreaterThan(0);
-    for (const literal of SPACE_PERMISSIONS) {
-      expect(SPACE_PERMISSION_LABELS[literal], literal).toMatch(/\S/);
+    expect(PERMISSIONS.length).toBeGreaterThan(0);
+    for (const literal of PERMISSIONS) {
+      expect(PERMISSION_LABELS[literal], literal).toMatch(/\S/);
     }
   });
 

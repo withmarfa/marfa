@@ -125,14 +125,14 @@ describe("POST /items/:id/restore — the restore obeys the type's graph", () =>
     const c = ctx;
 
     const created = await request(c.app, "POST", "/items", {
-      key: c.spaceKey,
+      key: c.workingKey,
       body: { type: "core.note", properties: { body: "To restore" } },
     });
     expect(created.status).toBe(201);
     const { item } = (await created.json()) as { item: { id: string } };
 
     const deleted = await request(c.app, "DELETE", `/items/${item.id}`, {
-      key: c.spaceKey,
+      key: c.workingKey,
     });
     expect(deleted.status).toBe(200);
     expect((await c.storage.items.getIncludingTrashed(item.id))?.state).toBe(
@@ -140,7 +140,7 @@ describe("POST /items/:id/restore — the restore obeys the type's graph", () =>
     );
 
     const restored = await request(c.app, "POST", `/items/${item.id}/restore`, {
-      key: c.spaceKey,
+      key: c.workingKey,
     });
     expect(restored.status).toBe(200);
     expect((await c.storage.items.get(item.id))?.state).toBe("active");
@@ -156,13 +156,13 @@ describe("POST /items/:id/transition — a transition out of the trash is judged
     const c = ctx;
 
     const created = await request(c.app, "POST", "/items", {
-      key: c.spaceKey,
+      key: c.workingKey,
       body: { type: "core.note", properties: { body: "To move" } },
     });
     expect(created.status).toBe(201);
     const { item } = (await created.json()) as { item: { id: string } };
     const deleted = await request(c.app, "DELETE", `/items/${item.id}`, {
-      key: c.spaceKey,
+      key: c.workingKey,
     });
     expect(deleted.status).toBe(200);
 
@@ -170,7 +170,7 @@ describe("POST /items/:id/transition — a transition out of the trash is judged
       c.app,
       "POST",
       `/items/${item.id}/transition`,
-      { key: c.spaceKey, body: { state: "archived" } },
+      { key: c.workingKey, body: { state: "archived" } },
     );
     expect(archived.status).toBe(400);
     const error = await errorOf(archived);
@@ -184,7 +184,7 @@ describe("POST /items/:id/transition — a transition out of the trash is judged
       c.app,
       "POST",
       `/items/${item.id}/transition`,
-      { key: c.spaceKey, body: { state: "active" } },
+      { key: c.workingKey, body: { state: "active" } },
     );
     expect(activated.status).toBe(200);
     expect((await c.storage.items.get(item.id))?.state).toBe("active");
@@ -198,7 +198,7 @@ describe("POST /items — a create names a state the type's lifecycle contains",
 
     for (const state of ["archived", "trashed"]) {
       const res = await request(c.app, "POST", "/items", {
-        key: c.spaceKey,
+        key: c.workingKey,
         body: {
           type: "core.note",
           state,
@@ -211,7 +211,7 @@ describe("POST /items — a create names a state the type's lifecycle contains",
     // And `revoked`, which the canonical graph does not reach, is refused —
     // the same gate reading a different type's lifecycle.
     const revoked = await request(c.app, "POST", "/items", {
-      key: c.spaceKey,
+      key: c.workingKey,
       body: {
         type: "core.note",
         state: "revoked",
@@ -253,7 +253,7 @@ describe("POST /admin/restore-archive — an archive replays a state the create 
     const c = ctx;
 
     // Exactly the row the create route refuses two describes above. An
-    // archive is a record of what a space held, and rows in this shape exist
+    // archive is a record of what was held, and rows in this shape exist
     // because nothing refused them at the time. Tightening
     // `storage.items.create` alongside the route would make those archives
     // unrestorable, which is why the two gates sit at different layers.
@@ -280,10 +280,6 @@ describe("POST /admin/restore-archive — an archive replays a state the create 
       ],
     );
 
-    // The operator key, which is what this route takes, and the space named
-    // in the query, which is how a caller carrying no space of its own says
-    // where the rows land — the restore has to reach the same space the
-    // credential below reads from.
     const res = await c.app.request(`/admin/restore-archive`, {
       method: "POST",
       headers: {
