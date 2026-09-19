@@ -3,6 +3,10 @@
  * key, and write the env file the run sources.
  *
  *   tsx scripts/marfa-server.ts up [--state <dir>] [--port <n>]
+ *
+ * The port is `--port`, else `PORT`, else one the kernel says is free. The
+ * default is what matters: two boots on one machine never collide, which the
+ * runner pool depends on because it runs on a developer's own Mac.
  *   tsx scripts/marfa-server.ts down [--state <dir>]
  *   tsx scripts/marfa-server.ts status [--state <dir>]
  *
@@ -83,6 +87,19 @@ function paths(state: string) {
     blobs: resolve(state, "blobs"),
     env: resolve(state, "env"),
   };
+}
+
+/** `PORT` from the environment, when it names one. */
+function envPort(): number | undefined {
+  const raw = process.env.PORT;
+  if (raw === undefined || raw.trim() === "") return undefined;
+  const port = Number(raw);
+  if (!Number.isInteger(port) || port <= 0 || port > 65_535) {
+    throw new Error(
+      `PORT is set to ${raw}, which is not a port; unset it or give a number`,
+    );
+  }
+  return port;
 }
 
 async function freePort(): Promise<number> {
@@ -188,7 +205,15 @@ async function up(args: Args): Promise<void> {
   mkdirSync(p.blobs, { recursive: true });
   ensureBuilt();
 
-  const port = args.port ?? (await freePort());
+  // `--port`, then `PORT`, then one the kernel says is free.
+  //
+  // `PORT` is read as well as written because the sibling boot path,
+  // `core/scripts/server-up.sh`, takes its port that way, and an instruction
+  // that works on one and silently does nothing on the other is worse than
+  // having no lever at all: a caller who exported it would believe they were
+  // pinned while nothing had changed. Both default to a free port, so nobody
+  // needs either lever to avoid a collision.
+  const port = args.port ?? envPort() ?? (await freePort());
   const url = `http://127.0.0.1:${String(port)}`;
   const env: NodeJS.ProcessEnv = {
     ...process.env,
