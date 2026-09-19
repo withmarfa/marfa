@@ -1,10 +1,11 @@
 /**
  * In-process worker loop for the bulk_action job substrate.
  *
- * One loop per server process. PG: `claimNext` atomically picks a row
- * via `SELECT … FOR UPDATE SKIP LOCKED` so multiple processes pointed
- * at the same database coordinate naturally. SQLite: single-process, no
- * lock — the subquery-bounded UPDATE in `claimNext` is enough.
+ * One loop per server process, and `claimNext`'s bounded UPDATE is what
+ * stops two of them running the same job: each claim is one statement, so
+ * the second loop's subquery runs after the first loop's claim committed
+ * and picks the next queued row instead. It comes back empty only when the
+ * queue is.
  *
  * Lifecycle: `start()` schedules a poll tick on an interval and runs
  * `runOnce()` immediately. `runOnce()` claims at most one job per call
@@ -275,8 +276,8 @@ export class BulkActionWorker {
           ids: slice,
         });
       } catch (err) {
-        // Whole-chunk failure inside the transaction (e.g. storage
-        // dialect error). Annotate every id and continue to the next
+        // Whole-chunk failure inside the transaction — a database error,
+        // say. Annotate every id and continue to the next
         // chunk — best-effort semantics match the synchronous endpoint.
         const reason = err instanceof Error ? err.message : String(err);
         outcome = {

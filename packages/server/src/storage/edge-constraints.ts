@@ -443,7 +443,7 @@ async function wouldCreateCycle(
   return false;
 }
 
-/** Lightweight row-shape → Edge helper, dialect-agnostic. */
+/** Lightweight row-shape → Edge helper. */
 export function rowToEdge(row: {
   id: string;
   source_id: string;

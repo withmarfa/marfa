@@ -3,8 +3,8 @@
  * registry is filled from, placing a row this build cannot read at the
  * restrictive end rather than the permissive one.
  *
- * Both dialects had the same line — `family: row.family ?? "core"` — and
- * it reads as entirely reasonable until you follow what the family
+ * The line it replaces — `family: row.family ?? "core"` — reads as
+ * entirely reasonable until you follow what the family
  * decides. It is not a label. `seedPlatformTypes` puts every shipped
  * schema in the registry and then uses the family to decide two things:
  * whether the id joins `SYSTEM_TYPE_IDS`, which rejects a caller-supplied

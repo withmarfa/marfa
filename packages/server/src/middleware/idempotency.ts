@@ -140,8 +140,8 @@ const RELEASED_STATUSES = new Set([401, 403]);
  * writing anything, the middleware-level 403 sources are registered ahead
  * of this mount, and the one write-then-403 window — the source-id upsert
  * branch throwing from the inline-edge callback — sits inside a
- * transaction that rolls back on both dialects. So a released key never
- * names a write that happened.
+ * transaction that rolls back. So a released key never names a write that
+ * happened.
  *
  * **Adding a 403 that can be raised after an uncommitted write turns a
  * released key into a duplicate write**, because the retry finds no record
@@ -399,9 +399,9 @@ export function idempotencyMiddleware(opts: {
  *
  * **Retrying here rather than inside the store** is the same split the
  * store's own contract states: it takes a key or reports who holds it, and
- * what an arrival means is decided in one place so the two dialects cannot
- * disagree about it. A retry budget is exactly such a decision, and a copy
- * of it in each store is two copies to keep in step.
+ * what an arrival means is decided in one place, above the store. A retry
+ * budget is exactly such a decision, and a copy of it inside the store is
+ * a second copy to keep in step.
  *
  * **Bounded, and it gives up rather than proceeding.** Each pass does at
  * most one INSERT, one SELECT and one UPDATE, so the work is bounded by

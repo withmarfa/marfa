@@ -3,11 +3,7 @@ import { parseFilter } from "@withmarfa/shared";
 import { filterToRawSql } from "./filter-sql.js";
 
 describe("filterToRawSql", () => {
-  // -------------------------------------------------------------------------
-  // SQLite dialect
-  // -------------------------------------------------------------------------
-
-  describe("sqlite", () => {
+  describe("clauses and parameters", () => {
     it("generates system field equality", () => {
       const expr = parseFilter('state eq "active"');
       const result = filterToRawSql(expr, "i");

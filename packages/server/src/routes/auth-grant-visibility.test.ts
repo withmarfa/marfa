@@ -19,8 +19,8 @@
  * `"active"` (already its value) and stamped a fresh `granted_at`, leaving a
  * record the token step would happily mint against and nobody could reach.
  *
- * The fix is a `state = 'active'` predicate on `findGrantItemId` itself, in
- * both dialects. That makes the fresh insert the only branch a soft-deleted
+ * The fix is a `state = 'active'` predicate on `findGrantItemId` itself.
+ * That makes the fresh insert the only branch a soft-deleted
  * grant can reach, and it fixes the code-flow twin at the same time, since
  * `projectGrantOnConsent` resolves through the same method.
  *

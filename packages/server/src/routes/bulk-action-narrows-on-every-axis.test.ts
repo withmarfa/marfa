@@ -156,7 +156,7 @@ describe("the match set narrows to what the caller may write", () => {
     // well. Under one model `items.purge` says a credential may destroy
     // rows irrecoverably and its type permissions say which, so the filter
     // decides here exactly as it does for every other action.
-    const marker = `pg${Math.random().toString(36).slice(2, 8)}`;
+    const marker = `purge${Math.random().toString(36).slice(2, 8)}`;
     const noteId = await seed(
       trustedKey,
       "core.note",

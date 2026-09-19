@@ -14,8 +14,8 @@
  * problem. That is what makes an ordering test worth having: nothing else
  * would notice.
  *
- * Runs against whichever dialect the suite is running, so both are held to
- * one contract rather than one of them being covered.
+ * Runs against the real store, so the ordering asserted is the one a
+ * request gets rather than one a fake reproduces.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { createTestContext, request } from "../test-utils.js";

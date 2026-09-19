@@ -29,8 +29,9 @@
  *
  * **In-process, and a mutex rather than a lease.** An upload is a user action
  * that has to complete, so a caller waits its turn rather than being told to
- * go away. One process is the deployment, so an in-process mutex covers it
- * by construction.
+ * go away. In-process is enough because of the paragraph above: two
+ * processes contending here are writing byte-identical content, so the
+ * second write is redundant whether or not anything serialized it.
  *
  * A database lock would still be the wrong tool here, for a concrete
  * reason rather than a stylistic one: SQLite admits one writer, and this

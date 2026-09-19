@@ -1,6 +1,6 @@
 /**
  * Periodic GC of terminal bulk_action_jobs rows. Mirrors the
- * RateLimitWindowCleaner pattern — single-process timer, retention window
+ * RateLimitWindowCleaner pattern — in-process timer, retention window
  * measured against `finished_at`.
  */
 import { log } from "../middleware/logger.js";

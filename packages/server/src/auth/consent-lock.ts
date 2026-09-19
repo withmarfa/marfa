@@ -23,9 +23,9 @@
  * a single consent operation, so waiting is bounded by the operation in
  * front.
  *
- * The in-process queue below fully covers one process, which is the whole
- * deployment, and the checked write in `setConsentScopes` stays as the
- * final belt underneath it.
+ * The queue below covers one process. Across processes the checked write
+ * in `setConsentScopes` is what holds, and it is the belt underneath this
+ * either way.
  */
 
 /**

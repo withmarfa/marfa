@@ -8,9 +8,9 @@
  * cannot reject. The guard read as live code and was not, and the test that
  * proved one of them stubbed a rejection the store could not produce.
  *
- * These cases produce a real failure from the real store, in whichever
- * dialect the suite is running. The lever is a `details` payload that cannot
- * be serialized; everything that then happens is the store's own.
+ * These cases produce a real failure from the real store. The lever is a
+ * `details` payload that cannot be serialized; everything that then happens
+ * is the store's own.
  */
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { createTestContext } from "../test-utils.js";

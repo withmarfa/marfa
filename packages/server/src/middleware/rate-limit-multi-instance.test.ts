@@ -8,17 +8,16 @@ import { createTestContext } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 
 /**
- * Cluster-shared rate-limit regression test.
+ * The cap is one budget, not one per middleware.
  *
- * Models two middleware instances bound to the SAME `Storage` handle —
- * every middleware keeps its own in-process per-cap cache, but
- * they share the `rate_limit_windows` rows that hold the actual
- * counters. The key property: the SAME `(family, window_key)` row is
- * seen by both readers, so the cap holds cluster-wide.
+ * Two middleware instances bound to the same `Storage` handle. Neither
+ * holds a count of its own — every request goes to the row — so the
+ * property is that the same `(family, window_key)` row is seen by both,
+ * and a caller cannot buy a second budget by reaching a second instance.
  *
- * SQLite is single-process by file lock, so on a single shared file
- * two middleware instances serialize upserts via the lock — exactly
- * the behavior we want for the assertion.
+ * Two handles rather than two processes, because the row is what the
+ * property is about and a second process would prove the same thing at the
+ * cost of a subprocess.
  */
 
 let ctx: TestContext | undefined;
@@ -74,7 +73,7 @@ async function probe(app: Hono<AppEnv>): Promise<Response> {
   return await app.fetch(new Request("http://test/probe", { method: "GET" }));
 }
 
-describe("rate-limit middleware — cluster-shared cap", () => {
+describe("rate-limit middleware — one cap across instances", () => {
   it("two instances against one DB cannot collectively exceed the per-credential cap", async () => {
     // GET requests double the configured cap, so with defaultLimit=5
     // the effective cap is 10. Send 12 requests alternating across the

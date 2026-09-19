@@ -476,7 +476,7 @@ export class SqliteEdgeStore implements EdgeStore {
       ];
       // Over-fetch the Cartesian intersection, then filter in-memory to the
       // requested pairs. For typical batch sizes (≤ dozens) the filter cost is
-      // negligible and the SQL stays portable across dialects.
+      // negligible.
       const rows = await this.db
         .select({
           source_id: edges.source_id,

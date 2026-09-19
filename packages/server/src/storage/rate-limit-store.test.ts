@@ -5,12 +5,10 @@ import type { TestContext } from "../test-utils.js";
 /**
  * `storage.rateLimits` unit + integration tests.
  *
- * Exercises both the per-call increment semantics (window reset on expiry,
- * count climbs past cap) and the cluster-shared invariant (two store handles
- * backed by the same DB share counter state). The "two store handles, one DB"
- * pattern models multi-instance correctness without spawning real subprocesses
- * — the property is that the SAME `rate_limit_windows` row is seen by both
- * readers, which holds for any number of Storage handles on the same DB.
+ * Exercises the per-call increment semantics — window reset on expiry,
+ * count climbing past the cap — and that concurrent increments through one
+ * handle all land, which is what makes the count a budget rather than a
+ * sample.
  */
 
 let ctx: TestContext | undefined;
@@ -180,7 +178,7 @@ describe("RateLimitStore — single-handle behavior", () => {
   });
 });
 
-describe("RateLimitStore — multi-instance cluster-shared invariant", () => {
+describe("RateLimitStore — concurrent increments all land", () => {
   it("concurrent increments against the same key see strictly increasing counts", async () => {
     ctx = await createTestContext();
     // Fire N parallel upserts; the post-increment counts the store

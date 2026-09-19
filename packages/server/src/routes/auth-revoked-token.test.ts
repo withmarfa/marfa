@@ -9,7 +9,7 @@
  * happened was the app clearing its own local storage on the way out.
  *
  * The scope of this file is the half that was wrong — the store refusing a
- * revoked row, at the API boundary where it matters, in both dialects. That
+ * revoked row, at the API boundary where it matters. That
  * the plugin stamps the column on end-session is its own behavior and is
  * verified against a running deployment rather than re-implemented here.
  */

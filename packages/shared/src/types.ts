@@ -29,10 +29,10 @@ export const TIERS: readonly Tier[] = ["library", "feed"] as const;
  *
  * Exists because the column is plain text with no constraint, and is keyed
  * off `TIERS` rather than repeating the union literal so adding a tier cannot
- * leave this behind. Both dialects' item projections compared the column against
- * two hardcoded literals instead, which is the same defect wearing
- * different syntax: a tier added here would have been dropped to
- * `undefined` by two comparisons nobody would think to update.
+ * leave this behind. The item projection compared the column against two
+ * hardcoded literals instead, which is the same defect wearing different
+ * syntax: a tier added here would have been dropped to `undefined` by a
+ * comparison nobody would think to update.
  *
  * Kept free of any logging concern because this ships to npm.
  */

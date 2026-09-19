@@ -11,9 +11,8 @@ import { normalizeTimeBound } from "../interface.js";
 import { filterToRawSql, sourceFilterToRawSql } from "../filter-sql.js";
 import type { DrizzleDb } from "./connection.js";
 import { rowToItem, rowToMetadata, type ItemRow } from "./helpers.js";
-// Shared FTS text extractor — both dialects consult this so the indexed
-// surface is identical (same fields, same `searchable: false` opt-outs,
-// same long-tail ordering).
+// What text reaches the index is decided in `search-text.ts`, not here, so
+// a change to what is indexed is one edit rather than one per writer.
 import { extractSearchableText } from "../search-text.js";
 
 /**

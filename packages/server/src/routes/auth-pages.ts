@@ -212,7 +212,8 @@ export function authRoutes(
   // many IPs would slip under it. This counter is keyed on the submitted
   // `user_code` itself (independent of IP) and denies once a code has
   // accumulated too many failed lookups — so a brute-force sweep against
-  // the short user-code range is capped per code, cluster-wide. Only
+  // the short user-code range is capped per code across every process
+  // pointed at the database. Only
   // failed submissions increment; a valid code that advances to consent
   // never touches the counter, so the legitimate flow is unaffected.
   // `PerEmailThrottle` is a generic keyed-counter over

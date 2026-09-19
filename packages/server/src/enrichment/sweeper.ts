@@ -97,8 +97,10 @@ function validationRefusal(
  *
  * State-driven, never event-driven: the candidate query is the whole
  * trigger mechanism, so the write the sweeper performs can never feed back
- * as the event that schedules the next sweep. Instance-wide with a
- * cluster-wide job lock, like the retention sweeps it is modeled on.
+ * as the event that schedules the next sweep. Instance-wide and
+ * unsynchronized, like the retention sweeps it is modeled on: nothing
+ * claims a candidate, so two processes sweeping at once would each do the
+ * extraction.
  */
 export class TextEnrichmentSweeper {
   private interval: ReturnType<typeof setInterval> | null = null;

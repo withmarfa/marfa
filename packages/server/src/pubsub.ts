@@ -6,8 +6,7 @@ import type { EventLogStore } from "./storage/interface.js";
 
 /**
  * Whether this event drives outbound side effects as well as being logged
- * and streamed: outbound webhook delivery, and the connector reactions
- * the reactive bridge enqueues.
+ * and streamed: outbound webhook delivery.
  *
  * Absent means yes, so every ordinary write door is unchanged. The bulk
  * doors default it off, because one call there writes thousands of rows
@@ -27,11 +26,11 @@ export interface FanoutControl {
  * so every ordinary write door needs to say nothing.
  *
  * An event rebuilt from a persisted row carries the answer its writer gave,
- * because `event_log` stores it. That is load-bearing rather than tidy: the
- * reactive bridge's drainer is elected across the cluster, so on a split
- * deployment the process that reacts is routinely not the process that
- * wrote, and it knows only what the row tells it. Rows written before the
- * column read as fanning out, which is what they did.
+ * because `event_log` stores it. That is load-bearing rather than tidy: a
+ * catch-up rebuilds events from rows, and a rebuilt event that read as
+ * fanning out when its writer said otherwise would be a different event
+ * from the one that was emitted. Rows written before the column read as
+ * fanning out, which is what they did.
  */
 export function fansOut(event: FanoutControl): boolean {
   return event.enableFanout !== false;
@@ -72,10 +71,12 @@ export type PubsubEventWithId = ItemEventWithId | EdgeEventWithId;
 
 /**
  * Process-local event bus: the distribution channel for Server-Sent
- * Events, outbound webhook dispatch, and the reactive bridges.
+ * Events and outbound webhook dispatch.
  *
- * One process is the deployment, so this emitter is the whole story: every
- * subscriber sees every event the process publishes.
+ * Process-local, and that is the limit of it: a subscriber sees the events
+ * its own process publishes and no others. There is no cross-process
+ * fan-out, so a deployment running more than one process serves each
+ * stream only what its own process wrote.
  */
 const emitter = new EventEmitter();
 emitter.setMaxListeners(envNumber(process.env.MAX_SUBSCRIPTION_LISTENERS, 100));

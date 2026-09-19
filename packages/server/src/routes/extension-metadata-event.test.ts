@@ -66,7 +66,7 @@ function metadataEventsFor(
  *  not the pre-write value" has one possible answer. */
 const PINNED = "2000-01-01T00:00:00.000Z";
 
-/** Forces an item's `updated_at` through the dialect escape hatch. Every
+/** Forces an item's `updated_at` through the store's escape hatch. Every
  *  write path stamps `now`, so a contrived value is the only way to make
  *  the pre-write and post-write timestamps reliably distinguishable. */
 async function forceUpdatedAt(itemId: string, iso: string): Promise<void> {

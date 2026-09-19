@@ -36,7 +36,7 @@ async function ftsRowCount(itemId: string): Promise<number> {
 }
 
 /**
- * Ages an item via the dialect-specific escape hatch, so retention tests
+ * Ages an item via the store's escape hatch, so retention tests
  * can choose timestamps freely (every write path stamps `now`).
  *
  * Both clocks move together, because "make this row look old" is one
@@ -249,9 +249,9 @@ describe("ItemStore.purgeTrashedOlderThan — edge cleanup", () => {
 });
 
 describe("ItemStore.bulkPurge — atomicity", () => {
-  // SQLite is the only dialect with a real FTS desync risk: the items_fts
-  // virtual table is mutated separately from the items table, so without a
-  // transaction a mid-purge failure would leave items present but unsearchable.
+  // `items_fts` is a virtual table mutated separately from `items`, so
+  // without a transaction a mid-purge failure would leave rows present but
+  // unsearchable.
   it("rolls back the items DELETE if a mid-purge FTS removal fails", async () => {
     const id1 = id("bbb1");
     const id2 = id("bbb2");

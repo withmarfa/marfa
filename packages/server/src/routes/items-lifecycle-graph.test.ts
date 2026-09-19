@@ -8,8 +8,7 @@
  * and they chained:
  *
  *   - `items.restore()` wrote `active` unconditionally once the row read
- *     `trashed`, in both dialects, where `delete()` and `transition()` both
- *     validated first.
+ *     `trashed`, where `delete()` and `transition()` both validated first.
  *   - `POST /items` accepted an optional `state` checked only for membership
  *     of the universal state list, so a create naming `trashed` would put a
  *     `system.*` row in a state that type's lifecycle does not contain,

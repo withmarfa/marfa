@@ -1,5 +1,5 @@
 /**
- * Round-trip tests for the client scope ceiling, across both dialects.
+ * Round-trip tests for the client scope ceiling.
  *
  * The plugin resolves the set it validates against as
  * `client.scopes ?? opts.scopes`. That is null-coalescing, so exactly one
@@ -87,7 +87,7 @@ function isAbsent(stored: unknown): boolean {
 }
 
 describe("oauth client scope ceiling", () => {
-  it("writes SQL NULL for no ceiling, on either dialect", async () => {
+  it("writes SQL NULL for no ceiling", async () => {
     ctx = await createTestContext({});
     const stored = await createAndReadRawColumn(ctx, null);
     // The near-miss this rules out: writing the string `"null"` from

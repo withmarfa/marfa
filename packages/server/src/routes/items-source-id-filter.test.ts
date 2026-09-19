@@ -7,8 +7,8 @@
  * folder model depends on could not be written at all, while the public
  * documentation described it as working.
  *
- * Runs on whichever dialect the suite is pointed at, because the predicate
- * is generated per dialect and the two have disagreed before.
+ * Runs against the real store, because the predicate is generated SQL and
+ * a fake would assert its own.
  */
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import { createTestContext, request } from "../test-utils.js";
@@ -112,7 +112,7 @@ describe("GET /items?filter= — source_id is filterable", () => {
     ).toEqual(["Archive/old.md"]);
   });
 
-  it("matches regardless of case, on either dialect", async () => {
+  it("matches regardless of case", async () => {
     // Paths carry human capitalization, and `notes/` for `Notes/` is
     // exactly the near-miss a person types. This pins the documented,
     // case-insensitive meaning.

@@ -1,15 +1,14 @@
 /**
- * SQLite rate-limit / throttle counter store. Mirrors the PG sibling
- * step-for-step; see pg/rate-limit-store.ts for design notes.
+ * The rate-limit and throttle counter store.
  *
- * SQLite is single-process by file lock so "cluster-shared" collapses
- * to "still correct in-process". The same upsert codepath ships on both
- * dialects so a self-hosted instance behaves identically to a hosted one
- * single-instance — no dead code, no dialect-specific branches at the
- * call site.
+ * One upsert per gated request, and `RETURNING` on the upsert (Drizzle's
+ * `.returning(...)` pipes through to libsql) so the new count comes back
+ * without a second read.
  *
- * libsql supports `RETURNING` on UPSERT (Drizzle's `.returning(...)`
- * pipes through), so the round-trip count stays the same as PG.
+ * The counters are rows, so every process pointed at one file increments
+ * the same row and the cap holds across all of them. SQLite takes one
+ * writer at a time, which is what stops two of those increments landing as
+ * one.
  */
 import { lt, sql } from "drizzle-orm";
 import type { RateLimitStore } from "../interface.js";
@@ -62,10 +61,11 @@ export class SqliteRateLimitStore implements RateLimitStore {
     nowIso: string,
   ): Promise<Map<string, { count: number; expires_at: string }>> {
     const result = new Map<string, { count: number; expires_at: string }>();
-    // Sorted and deduplicated to match the PG sibling's lock-order
-    // discipline; SQLite's single writer makes it moot but identical
-    // code keeps the dialects honest mirrors.
-    const unique = [...new Set(keys)].sort();
+    // Deduplicated, because the upsert applies a repeated conflict target
+    // twice rather than refusing it — measured, not assumed. No caller
+    // passes one today, and this is what keeps that a property of the
+    // callers rather than something the cap depends on.
+    const unique = [...new Set(keys)];
     if (unique.length === 0) return result;
     const nextExpiresAt = new Date(
       new Date(nowIso).getTime() + windowMs,

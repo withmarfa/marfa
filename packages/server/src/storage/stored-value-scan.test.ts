@@ -286,7 +286,7 @@ describe("the query the boot runs", () => {
   it("finds a real row through the query the boot uses", async () => {
     // The unit cases above prove the comparison. This proves the thing
     // feeding it: one aggregate per column, against real tables, through
-    // the same seam builder each dialect's boot passes to the scan. A test
+    // the same seam builder boot passes to the scan. A test
     // that wrote its own SQL here would prove only that two hand-written
     // queries agree.
     const ctx = await createTestContext();

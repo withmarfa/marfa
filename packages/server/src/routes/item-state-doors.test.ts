@@ -136,7 +136,7 @@ describe.each(DOORS)("$name", (door) => {
  */
 const NOT_A_STATE_CREATE_DOOR: Record<string, string> = {
   "POST /items/:id/transition":
-    "moves an existing row; `storage.items.transition` validates the graph in both dialect stores",
+    "moves an existing row; `storage.items.transition` validates the graph",
   "POST /items/:id/restore":
     "a transition by another name; gated in the store beside `transition`",
   "POST /items/bulk-actions":

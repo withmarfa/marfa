@@ -14,7 +14,7 @@
  * drives the route over a synthetic storage: what an unbounded scan costs
  * only shows above tens of thousands of rows, and every bound that keeps
  * "slower" from meaning "out of memory" is a property of a calendar too
- * large to write to a database per dialect.
+ * large to write to a database.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT } from "../page-limits.js";
@@ -251,7 +251,7 @@ describe("GET /occurrences past the first page", () => {
 // A calendar larger than any fixture worth writing to a database.
 //
 // The properties below only appear above tens of thousands of rows, and
-// seeding that many real ones would cost minutes per dialect on a machine
+// seeding that many real ones would cost minutes on a machine
 // shared with CI to prove something about loops the rows play no part in.
 // The route is still the thing under test: these drive `GET /occurrences`
 // through the real handler, so reinstating a scan ceiling, moving the

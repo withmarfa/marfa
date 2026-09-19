@@ -697,9 +697,8 @@ const CORE_SEARCH_FIELDS = new Set(["title", "body", "description", "name"]);
  * Returns the names of string-typed fields for a type that are not already
  * covered by the 4 core search fields. Used to index custom type properties.
  * Respects the `searchable: false` opt-out — fields explicitly flagged as
- * non-searchable are excluded, so both FTS backends (SQLite `items_fts.extra`
- * and PG `search_vector`) skip them. Fields without the flag default to
- * searchable.
+ * non-searchable are excluded, so `items_fts.extra` skips them. Fields
+ * without the flag default to searchable.
  */
 export function getSearchableStringFields(typeId: string): string[] {
   const fields = getResolvedFields(typeId);

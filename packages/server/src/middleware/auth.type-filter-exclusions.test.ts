@@ -141,8 +141,8 @@ describe("computeTypeFilter — explicit no-access entries", () => {
   });
 
   it("returns an empty allow-list when nothing at all is granted", () => {
-    // `allowed: []` means "no items visible", not "all items" — both
-    // dialects compile it to `1=0`. Distinct from `allowed: undefined`,
+    // `allowed: []` means "no items visible", not "all items" — it
+    // compiles to `1=0`. Distinct from `allowed: undefined`,
     // which is the no-credential case below.
     const perms: Record<string, TypePermission> = {
       [GLOBAL_TYPE_WILDCARD]: "none",

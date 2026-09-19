@@ -5,9 +5,8 @@
  * The seed is an upsert with no prune, so deleting a type's JSON removes it
  * from a fresh instance and from no existing one. The row keeps resolving
  * and the immutability gate refuses to delete it, because everything in the
- * platform set is locked. Removing one was a hand-written migration on both
- * dialects, guarded on item count, and the next retirement needed it
- * written again.
+ * platform set is locked. Removing one was a hand-written migration,
+ * guarded on item count, and the next retirement needed it written again.
  *
  * **The listing reports and the delete is one explicit act**, which is the
  * whole shape. A prune beside the seed would fire hardest exactly when the

@@ -11,7 +11,7 @@
  * `SQLITE_CONSTRAINT` plus the offending column in its message. Inspect
  * both.
  *
- * One function rather than one per store. The rule is the dialect's, not
+ * One function rather than one per store. The rule is the database's, not
  * the table's, and the tables that need it differ only in which name
  * appears in the message — so a copy per store is a copy of a rule, and
  * the one that got missed would be the one nobody noticed was a copy.

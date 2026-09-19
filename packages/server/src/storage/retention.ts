@@ -39,7 +39,7 @@ export interface RetentionOverride {
 /**
  * Hard-deletes trashed items that entered the bin longer ago than the
  * configured retention window. Pattern mirrors `VersionThinner`:
- * single-process timer, synchronous `runOnce()` entry point for tests,
+ * in-process timer, synchronous `runOnce()` entry point for tests,
  * idempotent sweep.
  *
  * If `retentionDays <= 0`, the job is a no-op — the operator can leave

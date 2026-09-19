@@ -50,8 +50,8 @@ export interface FieldDefinition {
   format?: FieldFormat;
   /**
    * Opt-out flag for full-text search indexing. When `false`, the field's
-   * content is excluded from FTS — both the SQLite FTS5 `extra` column and
-   * the PG `search_vector` materialized tsvector. Defaults to `true` — a
+   * content is excluded from FTS, which is the FTS5 `extra` column.
+   * Defaults to `true` — a
    * field without this flag is indexed. Only meaningful for `string`-typed
    * fields; ignored elsewhere. Use this for fields that carry secrets,
    * opaque ids, or noisy content that shouldn't surface in search results.

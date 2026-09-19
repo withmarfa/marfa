@@ -1,8 +1,9 @@
 import { softDeleteState, type ItemState } from "@withmarfa/shared";
 
 /**
- * The `trashed_at` half of a state write, computed once so the two dialect
- * stores and their three write paths cannot disagree about it.
+ * The `trashed_at` half of a state write, computed once so the four write
+ * paths that set it — `create`, `delete`, `restore` and `transition` —
+ * cannot disagree about it.
  *
  * `trashed_at` records when an item entered its soft-deleted state, and the
  * retention sweep is its only reader. `updated_at` used to stand in for it,

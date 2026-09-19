@@ -144,15 +144,12 @@ export async function createSqliteStorage(sqlitePath: string): Promise<
     eventLog: eventLogStore,
     authSessions: authSessionStore,
     settings: new SqliteSettingsStore(db),
-    // Async bulk-action substrate — single-process; see
-    // bulk-action-job-store.ts for the claim-without-FOR-UPDATE path.
+    // `bulk-action-job-store.ts` carries how a job is claimed without two
+    // loops taking the same one.
     bulkActionJobs: new SqliteBulkActionJobStore(db),
     // A claim has to commit whether or not the write's own transaction
     // does, and `db` is the only instance there is.
     idempotency: new SqliteIdempotencyStore(db),
-    // Rate-limit + per-email throttle counters. Same shape as the PG
-    // wiring; SQLite is single-process by file lock so "cluster-shared"
-    // collapses to "still correct in-process".
     rateLimits: new SqliteRateLimitStore(db),
     /**
      * Genuinely transactional under libsql + ALS routing. Opens a libsql
