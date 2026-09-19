@@ -118,9 +118,12 @@ describe("edge events on every door", () => {
 
     const seeded = await request(ctx.app, "PATCH", `/items/${source}`, {
       key: ctx.spaceKey,
-      body: { edges: { references: [first] } },
+      body: { version: 1, edges: { references: [first] } },
     });
     expect(seeded.status).toBe(200);
+    const seededVersion = (
+      (await seeded.json()) as { item: { version: number } }
+    ).item.version;
     const before = await request(ctx.app, "GET", `/items/${source}/edges`, {
       key: ctx.spaceKey,
     });
@@ -131,7 +134,7 @@ describe("edge events on every door", () => {
     const heard = await edgeEventsDuring(async () => {
       const res = await request(ctx.app, "PATCH", `/items/${source}`, {
         key: ctx.spaceKey,
-        body: { edges: { references: [second] } },
+        body: { version: seededVersion, edges: { references: [second] } },
       });
       expect(res.status).toBe(200);
     });
@@ -558,15 +561,18 @@ describe("the properties the announcement itself has to hold", () => {
     const source = await note("order-source");
     const first = await note("order-target-1");
     const second = await note("order-target-2");
-    await request(ctx.app, "PATCH", `/items/${source}`, {
+    const seeded = await request(ctx.app, "PATCH", `/items/${source}`, {
       key: ctx.spaceKey,
-      body: { edges: { references: [first] } },
+      body: { version: 1, edges: { references: [first] } },
     });
+    const seededVersion = (
+      (await seeded.json()) as { item: { version: number } }
+    ).item.version;
 
     const heard = await edgeEventsDuring(async () => {
       const res = await request(ctx.app, "PATCH", `/items/${source}`, {
         key: ctx.spaceKey,
-        body: { edges: { references: [second] } },
+        body: { version: seededVersion, edges: { references: [second] } },
       });
       expect(res.status).toBe(200);
     });

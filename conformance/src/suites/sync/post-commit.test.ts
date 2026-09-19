@@ -109,6 +109,7 @@ describe("post-commit emission", () => {
       // about a dead stream rather than about the server's ordering.
       const committed = await client.updateItem(id, {
         properties: { body: "post-commit-committed" },
+        version: child.data.item.version,
       });
       expect(committed.ok).toBe(true);
       const committedVersion = committed.data.item.version;
@@ -148,6 +149,10 @@ describe("post-commit emission", () => {
       // refuse the set — inside the transaction, which unwinds all of it.
       const rolledBack = await client.updateItem(id, {
         properties: { body: PHANTOM_BODY },
+        // The current version, so this write reaches the in-transaction edge
+        // check that is the point of the leg. The stale leg above is the
+        // ordering control and is deliberately the only one that conflicts.
+        version: committedVersion,
         edges: { "parent-of": [parentId] },
       });
 

@@ -34,6 +34,7 @@ afterAll(async () => {
 
 interface SeededEdge {
   id: string;
+  version: number;
   source_id: string;
   target_id: string;
 }
@@ -63,8 +64,12 @@ async function seedEdge(): Promise<SeededEdge> {
       `seed edge failed: ${String(edge.status)} ${await edge.text()}`,
     );
   }
+  const created = (
+    (await edge.json()) as { edge: { id: string; version: number } }
+  ).edge;
   return {
-    id: ((await edge.json()) as { edge: { id: string } }).edge.id,
+    id: created.id,
+    version: created.version,
     source_id: ids[0]!,
     target_id: ids[1]!,
   };
@@ -72,14 +77,14 @@ async function seedEdge(): Promise<SeededEdge> {
 
 describe("edge.updated", () => {
   it("is observed by a second subscriber when an edge is edited", async () => {
-    const { id: edgeId } = await seedEdge();
+    const { id: edgeId, version } = await seedEdge();
     const controller = new AbortController();
     const { events, done } = collectEdgeEvents(controller.signal);
     await settle();
 
     const res = await request(ctx.app, "PATCH", `/edges/${edgeId}`, {
       key: ctx.spaceKey,
-      body: { properties: { note: "after" } },
+      body: { properties: { note: "after" }, version },
     });
     expect(res.status).toBe(200);
     await settle();

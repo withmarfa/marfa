@@ -111,6 +111,21 @@ const BulkInputItemSchema = z.object({
   /** Ignored on the wire — server stamps `source` from the credential. */
   source: z.string().optional(),
   source_id: z.string().optional(),
+  /** The version this entry was based on, where it resolves a row that
+   *  already exists. Optional for the same reason it is optional on
+   *  `POST /items`: an entry creating a row it has never read has no
+   *  version to name. Where it does resolve one, the upsert is conditional
+   *  and the entry's outcome carries the refusal rather than the batch
+   *  failing — a queue draining a hundred rows should not lose ninety-nine
+   *  because one was stale. */
+  version: z
+    .number()
+    .int()
+    .min(0)
+    .optional()
+    .describe(
+      "The version this entry was based on, where it resolves a row that already exists. Optional, as on `POST /items`: an entry creating a row it has never read has no version to name. A stale one is refused like every other per-entry refusal here — the page rolls back under the default `atomic`, carrying `version_conflict` in `details.code`, or it is that entry's own `errored` outcome when `atomic` is false.",
+    ),
   device: z.string().optional(),
   tags: z.array(z.string()).optional(),
   /** Inline edges (replace-all semantics per edge_type) applied after
@@ -186,7 +201,7 @@ const bulkRoute = createRoute({
   tags: ["Items"],
   summary: "Bulk upsert items",
   description:
-    "Creates or upserts up to 5000 items in one call, matching existing rows on `(source, source_id)`. Atomic by default; `source` is server-stamped from the credential, so any caller-supplied value is overwritten. Requires write access to each item's type — the credential's own type permissions decide, and nothing bypasses them — and operates only within the caller's space.\n\nAn entry that resolves a row of a different type is refused with `type_mismatch` — a write does not re-type the row it lands on. Passing `retype: true` for the batch moves those rows instead, which is how a corpus is brought onto a type a mapping now names. It is opt-in rather than inferred from a differing type, because a declared type accompanies nearly every write and inferring would move a corpus on an ordinary sync bug. Each move requires write on the type being entered as well as the one being left, and the resulting properties are validated against the destination: an item the destination type cannot accept is reported as an `errored` entry naming why, and the rest of the batch proceeds.\n\nAn ordinary update is validated too, against the row's own type and on the properties the write would leave on it rather than on the body alone, so a patch removing a required field is refused even though it names no invalid value. A refusal is an `errored` entry under `invalid_properties`; with the default `atomic` it rolls the page back instead, carrying that code in `details.code`.",
+    "Creates or upserts up to 5000 items in one call, matching existing rows on `(source, source_id)`. Atomic by default; `source` is server-stamped from the credential, so any caller-supplied value is overwritten. Requires write access to each item's type — the credential's own type permissions decide, and nothing bypasses them — and operates only within the caller's space.\n\nAn entry that resolves a row of a different type is refused with `type_mismatch` — a write does not re-type the row it lands on. Passing `retype: true` for the batch moves those rows instead, which is how a corpus is brought onto a type a mapping now names. It is opt-in rather than inferred from a differing type, because a declared type accompanies nearly every write and inferring would move a corpus on an ordinary sync bug. Each move requires write on the type being entered as well as the one being left, and the resulting properties are validated against the destination: an item the destination type cannot accept is reported as an `errored` entry naming why, and the rest of the batch proceeds.\n\nAn ordinary update is validated too, against the row's own type and on the properties the write would leave on it rather than on the body alone, so a patch removing a required field is refused even though it names no invalid value. A refusal is an `errored` entry under `invalid_properties`; with the default `atomic` it rolls the page back instead, carrying that code in `details.code`. An entry may also carry the `version` it was based on, which makes its upsert conditional and is refused the same two ways.",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -804,8 +819,13 @@ async function processBulkItem(
       ...(resultingType === existing.type ? {} : { type: resultingType }),
       tier: raw.tier,
       timestamp: raw.timestamp,
+      ...(raw.version !== undefined && { version: raw.version }),
     });
     if ("error" in updated) {
+      // Reachable only for an entry that named a version. The message comes
+      // off the store's own refusal rather than being written here, because
+      // the two codes it can carry say different things: one is a stale
+      // version, the other a base version no snapshot still covers.
       return {
         result: {
           index,
@@ -813,7 +833,7 @@ async function processBulkItem(
           id: existing.id,
           error: {
             code: updated.error.code,
-            message: "Version conflict during bulk upsert",
+            message: updated.error.message,
           },
         },
       };

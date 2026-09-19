@@ -416,8 +416,9 @@ const RATE_LIMITED_RESPONSE = {
  * header. That route still returns rather than throws — the exclusion's
  * original wording anticipated the other fix — but it now stamps the header
  * itself, on the code the response actually carries, so the declaration is
- * true of it. The edge conflict envelope, the other 4xx that returns rather
- * than throws, does the same.
+ * true of it. Three responses return rather than throw and each stamps the
+ * header the same way: that one, the edge conflict envelope, and the
+ * conflict a conditional natural-key upsert answers on `post /items`.
  */
 const RESPONSES_WITHOUT_ERROR_CODE = new Set<string>([]);
 

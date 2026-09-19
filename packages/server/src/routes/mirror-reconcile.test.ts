@@ -119,13 +119,17 @@ describe("GET /items/{id}/reconcile", () => {
       `/items/${mirrorId}/promote`,
       { key: memberKey },
     );
-    const promotedId = ((await promoted.json()) as { item: { id: string } })
-      .item.id;
+    const { id: promotedId, version: promotedVersion } = (
+      (await promoted.json()) as { item: { id: string; version: number } }
+    ).item;
 
     // Your side moves.
     await request(ctx.app, "PATCH", `/items/${promotedId}`, {
       key: memberKey,
-      body: { properties: { title: "My title", note: "mine alone" } },
+      body: {
+        properties: { title: "My title", note: "mine alone" },
+        version: promotedVersion,
+      },
     });
     // The upstream moves, and clears a field.
     await resyncMirror(mirrorId, { title: "Renamed upstream", body: null });
@@ -204,11 +208,12 @@ describe("GET /items/{id}/reconcile", () => {
       `/items/${mirrorId}/promote`,
       { key: memberKey },
     );
-    const promotedId = ((await promoted.json()) as { item: { id: string } })
-      .item.id;
+    const { id: promotedId, version: promotedVersion } = (
+      (await promoted.json()) as { item: { id: string; version: number } }
+    ).item;
     await request(ctx.app, "PATCH", `/items/${promotedId}`, {
       key: memberKey,
-      body: { properties: { title: "My title" } },
+      body: { properties: { title: "My title" }, version: promotedVersion },
     });
 
     const read = await request(

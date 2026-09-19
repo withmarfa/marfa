@@ -399,11 +399,16 @@ describe("POST /blobs/cleanup", () => {
       },
     });
     expect(createRes.status).toBe(201);
-    const created = (await createRes.json()) as { item: { id: string } };
+    const created = (await createRes.json()) as {
+      item: { id: string; version: number };
+    };
     const id = created.item.id;
     const patchRes = await request(ctx.app, "PATCH", `/items/${id}`, {
       key: ctx.spaceKey,
-      body: { properties: { attachment_hash: "replaced" } },
+      body: {
+        properties: { attachment_hash: "replaced" },
+        version: created.item.version,
+      },
     });
     if (patchRes.status !== 200) {
       throw new Error(`patch failed: ${await patchRes.text()}`);

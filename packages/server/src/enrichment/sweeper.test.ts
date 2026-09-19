@@ -101,6 +101,15 @@ async function readItem(id: string): Promise<Record<string, unknown>> {
   return data.item.properties;
 }
 
+async function readVersion(id: string): Promise<number> {
+  const res = await request(ctx.app, "GET", `/items/${id}`, {
+    key: ctx.spaceKey,
+  });
+  expect(res.status).toBe(200);
+  const data = (await res.json()) as { item: { version: number } };
+  return data.item.version;
+}
+
 /** The signature the default-config sweeper stamps, for direct store reads. */
 const DEFAULT_SIGNATURE = JSON.stringify({
   max_blob_bytes: 20 * 1024 * 1024,
@@ -192,7 +201,10 @@ describe("extraction", () => {
     const id = await createFileItem(ref, "text/plain");
     await request(ctx.app, "PATCH", `/items/${id}`, {
       key: ctx.spaceKey,
-      body: { properties: { title: "a title the user set" } },
+      body: {
+        properties: { title: "a title the user set" },
+        version: await readVersion(id),
+      },
     });
 
     expect(await sweeper().runOnce()).toEqual({
@@ -236,7 +248,10 @@ describe("extraction", () => {
     );
     await request(ctx.app, "PATCH", `/items/${id}`, {
       key: ctx.spaceKey,
-      body: { properties: { blob_ref: replacement } },
+      body: {
+        properties: { blob_ref: replacement },
+        version: await readVersion(id),
+      },
     });
 
     expect(await sweeper().runOnce()).toEqual({
@@ -296,6 +311,7 @@ describe("extraction", () => {
       key: ctx.spaceKey,
       body: {
         properties: { blob_ref: replacement, mime_type: "text/plain" },
+        version: await readVersion(id),
       },
     });
     release("stale text from the old blob");
@@ -461,7 +477,10 @@ describe("skips", () => {
     // The claim that matters to a caller: the item is still writable.
     const patch = await request(ctx.app, "PATCH", `/items/${id}`, {
       key: ctx.spaceKey,
-      body: { properties: { title: "still editable" } },
+      body: {
+        properties: { title: "still editable" },
+        version: await readVersion(id),
+      },
     });
     expect(patch.status).toBe(200);
   });
@@ -718,7 +737,10 @@ describe("failures", () => {
     );
     await request(ctx.app, "PATCH", `/items/${id}`, {
       key: ctx.spaceKey,
-      body: { properties: { blob_ref: replacement } },
+      body: {
+        properties: { blob_ref: replacement },
+        version: await readVersion(id),
+      },
     });
 
     expect(await s.runOnce()).toEqual({ extracted: 0, skipped: 0, failed: 1 });

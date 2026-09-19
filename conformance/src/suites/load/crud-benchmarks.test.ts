@@ -41,6 +41,13 @@ describe("CRUD micro-benchmarks", () => {
   const corpus = new Corpus({ seed: 7703 });
   /** Rows created by the create benchmark, reused as read/update targets. */
   const created: string[] = [];
+  /**
+   * The version each row was last seen at. The update door requires the
+   * version the caller read, and the create benchmark is the read: holding it
+   * here keeps the measured call one PATCH rather than a GET plus a PATCH,
+   * which would make the update number describe two round trips.
+   */
+  const versions = new Map<string, number>();
   const breakdown: Record<string, LoadMetrics> = {};
   /** Every measured sample, across operations, for the file-level summary. */
   const allDurations: number[] = [];
@@ -96,6 +103,7 @@ describe("CRUD micro-benchmarks", () => {
       );
       if (result.ok) {
         created.push(result.data.item.id);
+        versions.set(result.data.item.id, result.data.item.version);
         trackItem(ctx, result.data.item.id);
         durations.push(durationMs);
       } else {
@@ -129,16 +137,24 @@ describe("CRUD micro-benchmarks", () => {
     let errors = 0;
 
     for (const [i, id] of targets.entries()) {
+      const base = versions.get(id);
+      expect(
+        base,
+        "an update target was never created here, so there is no version it read",
+      ).toBeDefined();
       const { result, durationMs } = await measure(() =>
         client.updateItem(id, {
           properties: {
             title: corpus.title(),
             body: `revision ${i} ${corpus.sentence()}`,
           },
+          version: base!,
         }),
       );
-      if (result.ok) durations.push(durationMs);
-      else errors++;
+      if (result.ok) {
+        durations.push(durationMs);
+        versions.set(id, result.data.item.version);
+      } else errors++;
     }
 
     recordOperation("update", durations, errors);

@@ -272,7 +272,7 @@ describe("PATCH /items — batched replace triggers cycle detection", () => {
     expect(ab.status).toBe(201);
     const cyclePatch = await request(ctx.app, "PATCH", `/items/${b}`, {
       key: ctx.spaceKey,
-      body: { edges: { "parent-of": [a] } },
+      body: { version: 1, edges: { "parent-of": [a] } },
     });
     expect(cyclePatch.status).toBe(400);
     const data = (await cyclePatch.json()) as { error: { code: string } };
@@ -293,10 +293,12 @@ describe("PATCH /edges/:id — properties only", () => {
         properties: { position: 1 },
       },
     });
-    const created = (await create.json()) as { edge: { id: string } };
+    const created = (await create.json()) as {
+      edge: { id: string; version: number };
+    };
     const patch = await request(ctx.app, "PATCH", `/edges/${created.edge.id}`, {
       key: ctx.spaceKey,
-      body: { properties: { position: 2 } },
+      body: { properties: { position: 2 }, version: created.edge.version },
     });
     expect(patch.status).toBe(200);
     const data = (await patch.json()) as {
@@ -319,10 +321,12 @@ describe("PATCH /edges/:id — properties only", () => {
         properties: { position: 1 },
       },
     });
-    const created = (await create.json()) as { edge: { id: string } };
+    const created = (await create.json()) as {
+      edge: { id: string; version: number };
+    };
     const patch = await request(ctx.app, "PATCH", `/edges/${created.edge.id}`, {
       key: ctx.spaceKey,
-      body: { properties: { position: 7 } },
+      body: { properties: { position: 7 }, version: created.edge.version },
     });
     expect(patch.status).toBe(200);
 
@@ -368,7 +372,9 @@ describe("DELETE /edges/:id", () => {
         edge_type: "about",
       },
     });
-    const created = (await create.json()) as { edge: { id: string } };
+    const created = (await create.json()) as {
+      edge: { id: string; version: number };
+    };
     const del = await request(ctx.app, "DELETE", `/edges/${created.edge.id}`, {
       key: ctx.spaceKey,
     });
@@ -379,7 +385,7 @@ describe("DELETE /edges/:id", () => {
       `/edges/${created.edge.id}`,
       {
         key: ctx.spaceKey,
-        body: { properties: {} },
+        body: { properties: {}, version: created.edge.version },
       },
     );
     expect(fetched.status).toBe(404);
@@ -897,7 +903,7 @@ describe("PATCH /items/:id with edges (replace-all-for-specified-types)", () => 
     // PATCH replaces `about` with [aboutTarget2], leaves derived-from alone.
     const patch = await request(ctx.app, "PATCH", `/items/${source}`, {
       key: ctx.spaceKey,
-      body: { edges: { about: [aboutTarget2] } },
+      body: { version: 1, edges: { about: [aboutTarget2] } },
     });
     expect(patch.status).toBe(200);
 
@@ -929,7 +935,7 @@ describe("PATCH /items/:id with edges (replace-all-for-specified-types)", () => 
     }
     const patch = await request(ctx.app, "PATCH", `/items/${source}`, {
       key: ctx.spaceKey,
-      body: { edges: { about: [] } },
+      body: { version: 1, edges: { about: [] } },
     });
     expect(patch.status).toBe(200);
 
@@ -955,6 +961,7 @@ describe("PATCH /items/:id with edges (replace-all-for-specified-types)", () => 
     const patch = await request(ctx.app, "PATCH", `/items/${source}`, {
       key: ctx.spaceKey,
       body: {
+        version: 1,
         edges: {
           about: [goodTarget, "019d0000-0000-7000-a000-000000000000"],
         },
@@ -977,7 +984,7 @@ describe("PATCH /items/:id with edges (replace-all-for-specified-types)", () => 
     const source = await createItem();
     const patch = await request(ctx.app, "PATCH", `/items/${source}`, {
       key: ctx.spaceKey,
-      body: {},
+      body: { version: 1 },
     });
     expect(patch.status).toBe(400);
   });
@@ -1000,7 +1007,7 @@ describe("PATCH /items/:id with edges (replace-all-for-specified-types)", () => 
     const target = await createItem();
     const res = await request(ctx.app, "PATCH", `/items/${source}`, {
       key: memberKey,
-      body: { edges: { about: [target] } },
+      body: { version: 1, edges: { about: [target] } },
     });
     expect(res.status).toBe(403);
   });
@@ -1034,13 +1041,15 @@ describe("Edge permission matrix (all-granted / type-only / edge-only / both / n
       body: { source_id: a, target_id: b, edge_type: "about" },
     });
     expect(create.status).toBe(201);
-    const id = ((await create.json()) as { edge: { id: string } }).edge.id;
-    const patch = await request(ctx.app, "PATCH", `/edges/${id}`, {
+    const edge = (
+      (await create.json()) as { edge: { id: string; version: number } }
+    ).edge;
+    const patch = await request(ctx.app, "PATCH", `/edges/${edge.id}`, {
       key: ctx.spaceKey,
-      body: { properties: { note: "admin" } },
+      body: { properties: { note: "admin" }, version: edge.version },
     });
     expect(patch.status).toBe(200);
-    const del = await request(ctx.app, "DELETE", `/edges/${id}`, {
+    const del = await request(ctx.app, "DELETE", `/edges/${edge.id}`, {
       key: ctx.spaceKey,
     });
     expect(del.status).toBe(200);
@@ -1288,7 +1297,9 @@ describe("PATCH/DELETE /edges/:id — source-type gate on trashed source", () =>
         properties: { note: "v1" },
       },
     });
-    const { edge } = (await createEdge.json()) as { edge: { id: string } };
+    const { edge } = (await createEdge.json()) as {
+      edge: { id: string; version: number };
+    };
 
     // Admin trashes the source item.
     const del = await request(ctx.app, "DELETE", `/items/${sourceId}`, {
@@ -1307,7 +1318,7 @@ describe("PATCH/DELETE /edges/:id — source-type gate on trashed source", () =>
     // must 403.
     const patch = await request(ctx.app, "PATCH", `/edges/${edge.id}`, {
       key: restrictedKey,
-      body: { properties: { note: "v2-should-fail" } },
+      body: { properties: { note: "v2-should-fail" }, version: edge.version },
     });
     expect(patch.status).toBe(403);
   });

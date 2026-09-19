@@ -49,11 +49,11 @@ async function createItem(
 async function patchItem(
   id: string,
   properties: Record<string, unknown>,
-  extra: Record<string, unknown> = {},
+  version: number,
 ): Promise<void> {
   const res = await request(ctx.app, "PATCH", `/items/${id}`, {
     key: memberKey,
-    body: { properties, ...extra },
+    body: { properties, version },
   });
   expect(res.status).toBe(200);
 }
@@ -93,7 +93,7 @@ describe("the instant columns on the write path", () => {
       title: "Moving meeting",
       starts_at: "2026-04-01T09:00:00.000Z",
     });
-    await patchItem(id, { starts_at: "2026-04-02T15:00:00+02:00" });
+    await patchItem(id, { starts_at: "2026-04-02T15:00:00+02:00" }, 1);
     expect((await readColumns(ctx.storage, id))?.starts_at_utc).toBe(
       "2026-04-02T13:00:00.000Z",
     );
@@ -129,7 +129,7 @@ describe("the instant columns on the write path", () => {
       title: "Still dated",
       starts_at: "2026-04-06T09:00:00.000Z",
     });
-    await patchItem(id, { starts_at: null });
+    await patchItem(id, { starts_at: null }, 1);
     expect((await readColumns(ctx.storage, id))?.starts_at_utc).toBe(
       "2026-04-06T09:00:00.000Z",
     );
@@ -242,15 +242,9 @@ describe("the instant columns on the write path", () => {
       title: "Concurrently edited",
       starts_at: "2026-06-01T09:00:00.000Z",
     });
-    await patchItem(id, { title: "Concurrently edited, renamed" });
+    await patchItem(id, { title: "Concurrently edited, renamed" }, 1);
     // Version 1 is now stale; the merge resolves against the snapshot.
-    await patchItem(
-      id,
-      { starts_at: "2026-06-08T11:00:00+02:00" },
-      {
-        version: 1,
-      },
-    );
+    await patchItem(id, { starts_at: "2026-06-08T11:00:00+02:00" }, 1);
     expect((await readColumns(ctx.storage, id))?.starts_at_utc).toBe(
       "2026-06-08T09:00:00.000Z",
     );

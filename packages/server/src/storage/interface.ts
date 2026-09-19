@@ -563,7 +563,19 @@ export interface RestoredRowInput {
 export type StoredCreateItemInput = CreateItemInput & RestoredRowInput;
 
 export type StoredCreateEdgeInput = CreateEdgeInput & RestoredRowInput;
-export type StoredUpdateItemInput = UpdateItemInput & ConflictResolutionInput;
+/**
+ * The store's update input, which differs from the door's in one field.
+ *
+ * `version` is required on `PATCH /items/{id}`: a client that read the row
+ * names what it is based on or it is not an update. It stays optional here
+ * because the server writes rows no client read — a grant being revoked, a
+ * bulk action working from a filter whose ids were frozen when the job was
+ * made, an enrichment sweep, a create that resolved onto an existing row
+ * without naming a version. Those writes are unconditional by design, and
+ * `update` still branches on an absent `version` to serve them.
+ */
+export type StoredUpdateItemInput = Omit<UpdateItemInput, "version"> &
+  ConflictResolutionInput & { version?: number };
 
 export interface ItemStore {
   create(input: StoredCreateItemInput): Promise<Item>;

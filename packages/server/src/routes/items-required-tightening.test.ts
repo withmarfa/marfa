@@ -27,7 +27,9 @@ afterAll(async () => {
 });
 
 /** Register `demo.tightened` with `body` optional, then create one item without it. */
-async function seedLooseItem(id: string): Promise<string> {
+async function seedLooseItem(
+  id: string,
+): Promise<{ itemId: string; version: number }> {
   const registered = await request(ctx.app, "POST", "/types", {
     key: ctx.spaceKey,
     body: {
@@ -46,8 +48,10 @@ async function seedLooseItem(id: string): Promise<string> {
     body: { type: id, properties: { title: "no body here" } },
   });
   expect(created.status).toBe(201);
-  const { item } = (await created.json()) as { item: { id: string } };
-  return item.id;
+  const { item } = (await created.json()) as {
+    item: { id: string; version: number };
+  };
+  return { itemId: item.id, version: item.version };
 }
 
 async function tightenBodyToRequired(id: string): Promise<void> {
@@ -68,14 +72,15 @@ async function tightenBodyToRequired(id: string): Promise<void> {
 describe("tightening required on a type with existing items", () => {
   it("locks an unrelated patch out of every row that predates the change", async () => {
     const typeId = "demo.tightened_locked";
-    const itemId = await seedLooseItem(typeId);
+    const { itemId, version } = await seedLooseItem(typeId);
 
     // Editable before the tightening.
     const before = await request(ctx.app, "PATCH", `/items/${itemId}`, {
       key: ctx.spaceKey,
-      body: { properties: { title: "still fine" } },
+      body: { properties: { title: "still fine" }, version },
     });
     expect(before.status).toBe(200);
+    const edited = (await before.json()) as { item: { version: number } };
 
     await tightenBodyToRequired(typeId);
 
@@ -83,7 +88,10 @@ describe("tightening required on a type with existing items", () => {
     // is what gets validated, and it has no `body`.
     const after = await request(ctx.app, "PATCH", `/items/${itemId}`, {
       key: ctx.spaceKey,
-      body: { properties: { title: "no longer allowed" } },
+      body: {
+        properties: { title: "no longer allowed" },
+        version: edited.item.version,
+      },
     });
     expect(after.status).toBe(400);
     const body = (await after.json()) as {
@@ -97,18 +105,22 @@ describe("tightening required on a type with existing items", () => {
 
   it("is undone by supplying the missing field, which is what a backfill does", async () => {
     const typeId = "demo.tightened_recovered";
-    const itemId = await seedLooseItem(typeId);
+    const { itemId, version } = await seedLooseItem(typeId);
     await tightenBodyToRequired(typeId);
 
     const repaired = await request(ctx.app, "PATCH", `/items/${itemId}`, {
       key: ctx.spaceKey,
-      body: { properties: { body: "" } },
+      body: { properties: { body: "" }, version },
     });
     expect(repaired.status).toBe(200);
+    const backfilled = (await repaired.json()) as { item: { version: number } };
 
     const afterwards = await request(ctx.app, "PATCH", `/items/${itemId}`, {
       key: ctx.spaceKey,
-      body: { properties: { title: "editable again" } },
+      body: {
+        properties: { title: "editable again" },
+        version: backfilled.item.version,
+      },
     });
     expect(afterwards.status).toBe(200);
   });

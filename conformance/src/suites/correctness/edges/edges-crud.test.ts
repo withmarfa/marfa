@@ -85,6 +85,7 @@ describe("edges CRUD", () => {
 
     const updated = await client.updateEdge(created.data.edge.id, {
       properties: { note: "updated", position: 2 },
+      version: created.data.edge.version,
     });
     expect(updated.status).toBe(200);
     await expectMatchesSchema("PATCH", "/edges/{id}", 200, updated.data);
@@ -119,6 +120,7 @@ describe("edges CRUD", () => {
 
     const updated = await client.updateEdge(created.data.edge.id, {
       properties: { position: 2 },
+      version: created.data.edge.version,
     });
     expect(updated.ok).toBe(true);
     expect(updated.data.edge.properties).toEqual({
@@ -244,6 +246,7 @@ describe("edges CRUD", () => {
 
     const patched = await client.updateItem(itemId, {
       edges: { about: [aboutB] },
+      version: created.data.item.version,
     });
     expect(patched.ok).toBe(true);
 

@@ -31,7 +31,10 @@ describe("PATCH /items/:id source_id mutation", () => {
     trackItem(ctx, itemId);
     expect(created.data.item.source_id).toBe(originalSourceId);
 
-    const patched = await client.updateItem(itemId, { source_id: newSourceId });
+    const patched = await client.updateItem(itemId, {
+      source_id: newSourceId,
+      version: created.data.item.version,
+    });
     expect(patched.ok).toBe(true);
     expect(patched.status).toBe(200);
     expect(patched.data.item.source_id).toBe(newSourceId);

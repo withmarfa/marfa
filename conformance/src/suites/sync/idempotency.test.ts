@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
 import { MarfaClient } from "../../client/api.js";
-import type { TestContext } from "../../client/types.js";
+import type { ConflictResponse, TestContext } from "../../client/types.js";
 import {
   createTestContext,
   trackItem,
@@ -403,5 +403,211 @@ describe("idempotency keys", () => {
       repeat.headers.get("Idempotency-Replayed"),
       "a replayed delete did not announce itself",
     ).toBe("true");
+  });
+});
+
+/**
+ * The natural key is the other way a write lands on a row that already
+ * exists, and unlike an idempotency key it is not a retry marker: a create
+ * naming a `(source, source_id)` the server already holds is an upsert, and
+ * the caller may or may not have read the row it is about to overwrite.
+ *
+ * A `version` is how it says which. Sent, the upsert is conditional and
+ * answers exactly what the update door answers; omitted, it stays
+ * unconditional, because a caller creating a row it has never seen has no
+ * version to name. Without that, a client draining a queue of creates against
+ * a library another device has been editing overwrites every row it touches,
+ * and the door that enforces the version on `PATCH` is walked straight around
+ * by a `POST`.
+ */
+describe("a create that resolves an existing row", () => {
+  it("a bulk entry naming a stale version is refused, and rolls the page back or not as atomic says", async () => {
+    // The same walk-around as the create door, through the door a draining
+    // queue is most likely to use. What the batch must not do is fail
+    // whole: ninety-nine good rows should not be lost to one stale entry,
+    // so the refusal is that entry's own outcome.
+    const staleId = `bulk-version-${randomUUID()}`;
+    const freshId = `bulk-version-fresh-${randomUUID()}`;
+
+    const seed = await client.createItem({
+      type: "core.note",
+      source: ctx.source,
+      source_id: staleId,
+      properties: { title: "original", body: "original body" },
+    });
+    expect(
+      seed.ok,
+      `could not seed the row to upsert onto: ${JSON.stringify(seed.error)}`,
+    ).toBe(true);
+    trackItem(ctx, seed.data.item.id);
+    const staleVersion = seed.data.item.version;
+
+    const advanced = await client.updateItem(seed.data.item.id, {
+      properties: { title: "moved on" },
+      version: staleVersion,
+    });
+    expect(advanced.ok).toBe(true);
+
+    // The good entry first and the stale one second, which is what makes the
+    // rollback observable. Processing stops at the first errored entry, so
+    // with the stale one leading, the good one is never attempted and its
+    // absence afterwards would prove nothing about the transaction.
+    const entries = [
+      {
+        type: "core.note",
+        source: ctx.source,
+        source_id: freshId,
+        // A whole note rather than a title alone: this entry is a create,
+        // so it has no stored row to merge a required field in from.
+        properties: { title: "the entry beside it", body: "its body" },
+      },
+      {
+        type: "core.note",
+        source: ctx.source,
+        source_id: staleId,
+        properties: { title: "from a stale writer" },
+        version: staleVersion,
+      },
+    ];
+
+    // Atomic by default, so a stale entry rolls the page back exactly as
+    // every other per-entry refusal on this door does, with the inner code
+    // in `details.code`. The batch is refused, not the entry.
+    const atomic = await client.bulkItems(entries);
+    expect(atomic.status).toBe(400);
+    expect(atomic.error?.error.code).toBe("bulk_atomic_rollback");
+    expect(atomic.error?.error.details?.code).toBe("version_conflict");
+    expect(atomic.error?.error.details?.index).toBe(1);
+
+    // And nothing landed, including the entry that was fine.
+    const afterAtomic = await client.listItems({ source: ctx.source });
+    expect(afterAtomic.ok).toBe(true);
+    // Asserting an absence, so the page has to be the whole of it: a
+    // truncated one makes `.some(...)` false for free and stops looking.
+    expect(afterAtomic.data.has_more).toBe(false);
+    expect(
+      afterAtomic.data.data.some((i) => i.source_id === freshId),
+      "the good entry was written and not rolled back",
+    ).toBe(false);
+
+    // With the page non-atomic the refusal is that entry's own outcome and
+    // the rest of the batch lands, which is what a draining queue needs:
+    // ninety-nine good rows are not lost to one stale one.
+    const perEntry = await client.bulkItems({ items: entries, atomic: false });
+    expect(
+      perEntry.ok,
+      `a non-atomic page was refused whole: ${JSON.stringify(perEntry.error)}`,
+    ).toBe(true);
+
+    const stale = perEntry.data.results.find((r) => r.index === 1);
+    expect(stale?.outcome).toBe("errored");
+    expect(stale?.error?.code).toBe("version_conflict");
+
+    const fresh = perEntry.data.results.find((r) => r.index === 0);
+    expect(
+      fresh?.outcome,
+      `the entry beside the stale one did not land: ${JSON.stringify(fresh)}`,
+    ).toBe("created");
+    if (fresh?.id) trackItem(ctx, fresh.id);
+
+    // And the stale entry wrote nothing either way.
+    const read = await client.getItem(seed.data.item.id);
+    expect(read.ok).toBe(true);
+    expect(read.data.item.properties.title).toBe("moved on");
+  });
+
+  it("a create naming a stale version on an existing row is refused", async () => {
+    const sourceId = `upsert-version-${randomUUID()}`;
+
+    const seed = await client.createItem({
+      type: "core.note",
+      source: ctx.source,
+      source_id: sourceId,
+      properties: { title: "original", body: "original body" },
+    });
+    expect(
+      seed.ok,
+      `could not seed the row to upsert onto: ${JSON.stringify(seed.error)}`,
+    ).toBe(true);
+    const id = seed.data.item.id;
+    trackItem(ctx, id);
+    const staleVersion = seed.data.item.version;
+
+    // The other device's write, which is what makes the version below stale.
+    const advanced = await client.updateItem(id, {
+      properties: { title: "moved on" },
+      version: staleVersion,
+    });
+    expect(
+      advanced.ok,
+      `the first writer's update failed, so there is no stale version to name: ${JSON.stringify(advanced.error)}`,
+    ).toBe(true);
+    expect(advanced.data.item.version).toBeGreaterThan(staleVersion);
+
+    // The same natural key, so this resolves the row above rather than making
+    // a second one, and the version the queued client last read. It collides
+    // on `title` deliberately: a stale write whose fields do not collide is
+    // merged rather than refused, so changing anything else would assert the
+    // merge path and say nothing about the condition.
+    const refused = await client.createItem({
+      type: "core.note",
+      source: ctx.source,
+      source_id: sourceId,
+      properties: { title: "from a stale writer" },
+      version: staleVersion,
+    });
+    expect(
+      refused.status,
+      `a create naming a stale version on an existing row was not refused 409: ${JSON.stringify(refused.error ?? refused.data)}`,
+    ).toBe(409);
+    expect(refused.error?.error.code).toBe("version_conflict");
+
+    // The same envelope the update door gives, because the caller is doing
+    // the same thing and has to resolve it the same way. A bare 409 would
+    // leave a queued client with nothing to rebase onto and no route to call
+    // that the refusal did not already have the answer for.
+    const body = refused.error as unknown as ConflictResponse;
+    expect(body.error.status).toBe(409);
+    expect(body.current.version).toBe(advanced.data.item.version);
+    expect(body.current.properties.title).toBe("moved on");
+    expect(body.ancestor.version).toBe(staleVersion);
+    expect(body.ancestor.properties.title).toBe("original");
+    expect(body.conflicting_fields).toEqual(["title"]);
+
+    // The half that proves the upsert was conditional rather than merely
+    // reported as one. Every assertion above passes on a server that answers
+    // 409 and writes anyway, and on this door that write is the one that
+    // silently discards the other device's edit.
+    const after = await client.getItem(id);
+    expect(after.ok).toBe(true);
+    expect(
+      after.data.item.properties.title,
+      "the refused upsert reached the stored row, so the condition was reported without being enforced",
+    ).toBe("moved on");
+    expect(
+      after.data.item.properties.body,
+      "the refused upsert replaced the row's properties wholesale",
+    ).toBe("original body");
+    expect(after.data.item.version, "a refused upsert moved the version").toBe(
+      advanced.data.item.version,
+    );
+
+    // And it stayed one row: a server that sidestepped the condition by
+    // writing a second row under the same natural key would pass everything
+    // above while leaving the library with a duplicate.
+    //
+    // `has_more` is checked first because the count below is only a count of
+    // the whole set when the listing was not a page of it — a truncated page
+    // would make this assertion quietly stop looking at everything.
+    const listed = await client.listItems({ source: ctx.source, limit: 100 });
+    expect(listed.ok).toBe(true);
+    expect(
+      listed.data.has_more,
+      "the listing was truncated, so a duplicate row could be sitting on a page this assertion never read",
+    ).toBe(false);
+    expect(
+      listed.data.data.filter((item) => item.source_id === sourceId).length,
+      "the refused upsert wrote a second row under the same natural key",
+    ).toBe(1);
   });
 });

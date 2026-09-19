@@ -97,11 +97,11 @@ describe("a repeat is answered from what the first attempt returned", () => {
       key: ctx.spaceKey,
       body: { type: "core.note", properties: { body: "before" } },
     });
-    const id = ((await create.json()) as ItemBody).item.id;
+    const created = ((await create.json()) as ItemBody).item;
 
     const k = key();
-    const patch = { properties: { body: "after" } };
-    const first = await request(ctx.app, "PATCH", `/items/${id}`, {
+    const patch = { properties: { body: "after" }, version: created.version };
+    const first = await request(ctx.app, "PATCH", `/items/${created.id}`, {
       key: ctx.spaceKey,
       headers: { "Idempotency-Key": k },
       body: patch,
@@ -112,7 +112,7 @@ describe("a repeat is answered from what the first attempt returned", () => {
 
     const mark = await eventHighWater();
 
-    const second = await request(ctx.app, "PATCH", `/items/${id}`, {
+    const second = await request(ctx.app, "PATCH", `/items/${created.id}`, {
       key: ctx.spaceKey,
       headers: { "Idempotency-Key": k },
       body: patch,
@@ -121,7 +121,7 @@ describe("a repeat is answered from what the first attempt returned", () => {
     expect(await second.text()).toBe(firstText);
 
     expect(await eventsSince(mark)).toBe(0);
-    const stored = await ctx.storage.items.get(id);
+    const stored = await ctx.storage.items.get(created.id);
     expect(stored?.version).toBe(updated.version);
   });
 
@@ -293,7 +293,9 @@ describe("the key names one request in every dimension, not just the body", () =
     const k = key();
     const first = await seedItem();
     const second = await seedItem();
-    const patch = { properties: { body: "changed" } };
+    // One body for both requests, or the case stops isolating the path.
+    // Both rows are freshly seeded, so one version fits both.
+    const patch = { properties: { body: "changed" }, version: 1 };
 
     const a = await request(ctx.app, "PATCH", `/items/${first}`, {
       key: ctx.spaceKey,
@@ -382,18 +384,18 @@ describe("the digest reads the path, not its spelling", () => {
       body: { type: "core.note", properties: { body: "seed" } },
     });
     expect(create.status).toBe(201);
-    const id = ((await create.json()) as ItemBody).item.id;
-    const patch = { properties: { body: "changed" } };
+    const { item } = (await create.json()) as ItemBody;
+    const patch = { properties: { body: "changed" }, version: item.version };
 
-    const a = await request(ctx.app, "PATCH", `/items/${id}`, {
+    const a = await request(ctx.app, "PATCH", `/items/${item.id}`, {
       key: ctx.spaceKey,
       headers: { "Idempotency-Key": k },
       body: patch,
     });
     expect(a.status).toBe(200);
 
-    const spelled = reEncodeFirst(id);
-    expect(spelled).not.toBe(id);
+    const spelled = reEncodeFirst(item.id);
+    expect(spelled).not.toBe(item.id);
 
     const mark = await eventHighWater();
     const b = await request(ctx.app, "PATCH", `/items/${spelled}`, {
@@ -592,8 +594,9 @@ describe("edges carry the same property as items", () => {
     });
     expect(created.status).toBe(201);
     const createdText = await created.text();
-    const edgeId = (JSON.parse(createdText) as { edge: { id: string } }).edge
-      .id;
+    const { edge } = JSON.parse(createdText) as {
+      edge: { id: string; version: number };
+    };
 
     let mark = await eventHighWater();
     const createdAgain = await request(ctx.app, "POST", "/edges", {
@@ -606,8 +609,8 @@ describe("edges carry the same property as items", () => {
     expect(await eventsSince(mark)).toBe(0);
 
     const patchKey = key();
-    const patchBody = { properties: { note: "second" } };
-    const patched = await request(ctx.app, "PATCH", `/edges/${edgeId}`, {
+    const patchBody = { properties: { note: "second" }, version: edge.version };
+    const patched = await request(ctx.app, "PATCH", `/edges/${edge.id}`, {
       key: ctx.spaceKey,
       headers: { "Idempotency-Key": patchKey },
       body: patchBody,
@@ -616,7 +619,7 @@ describe("edges carry the same property as items", () => {
     const patchedText = await patched.text();
 
     mark = await eventHighWater();
-    const patchedAgain = await request(ctx.app, "PATCH", `/edges/${edgeId}`, {
+    const patchedAgain = await request(ctx.app, "PATCH", `/edges/${edge.id}`, {
       key: ctx.spaceKey,
       headers: { "Idempotency-Key": patchKey },
       body: patchBody,
@@ -624,11 +627,11 @@ describe("edges carry the same property as items", () => {
     expect(patchedAgain.status).toBe(200);
     expect(await patchedAgain.text()).toBe(patchedText);
     expect(await eventsSince(mark)).toBe(0);
-    const stillThere = await ctx.storage.edges.get(edgeId);
+    const stillThere = await ctx.storage.edges.get(edge.id);
     expect(stillThere?.properties.note).toBe("second");
 
     const deleteKey = key();
-    const deleted = await request(ctx.app, "DELETE", `/edges/${edgeId}`, {
+    const deleted = await request(ctx.app, "DELETE", `/edges/${edge.id}`, {
       key: ctx.spaceKey,
       headers: { "Idempotency-Key": deleteKey },
     });
@@ -636,7 +639,7 @@ describe("edges carry the same property as items", () => {
     const deletedText = await deleted.text();
 
     mark = await eventHighWater();
-    const deletedAgain = await request(ctx.app, "DELETE", `/edges/${edgeId}`, {
+    const deletedAgain = await request(ctx.app, "DELETE", `/edges/${edge.id}`, {
       key: ctx.spaceKey,
       headers: { "Idempotency-Key": deleteKey },
     });

@@ -15,7 +15,9 @@ let client: MarfaClient;
 let ctx: TestContext;
 let apiUrl: string;
 let itemId: string;
+let itemVersion: number;
 let edgeId: string;
+let edgeVersion: number;
 let webhookId: string;
 
 beforeAll(async () => {
@@ -27,6 +29,7 @@ beforeAll(async () => {
   expect(a.ok).toBe(true);
   trackItem(ctx, a.data.item.id);
   itemId = a.data.item.id;
+  itemVersion = a.data.item.version;
   const b = await client.createItem(createNote({ source: ctx.source }));
   expect(b.ok).toBe(true);
   trackItem(ctx, b.data.item.id);
@@ -38,6 +41,7 @@ beforeAll(async () => {
   expect(edge.ok).toBe(true);
   trackEdge(ctx, edge.data.edge.id);
   edgeId = edge.data.edge.id;
+  edgeVersion = edge.data.edge.version;
   const hook = await client.createWebhook({
     url: "http://127.0.0.1:9/never-called",
     events: ["item.created"],
@@ -80,28 +84,37 @@ function concretePath(template: string): string {
     .replace("{namespace}", "x");
 }
 
-const BODIES: Record<string, unknown> = {
-  "PATCH /items/{id}": { properties: { body: "x" } },
-  "POST /items/{id}/transition": { state: "archived" },
-  "POST /items/{id}/tags": { tags: ["x"] },
-  "POST /items/bulk": {
-    items: [{ type: "core.note", properties: { body: "x" } }],
-  },
-  "POST /items/bulk-actions": {
-    action: "transition",
-    state: "archived",
-    filter: { tags: ["x"] },
-  },
-  "POST /items/bulk-get": { ids: [] },
-  "PATCH /edges/{id}": { properties: {} },
-  "POST /edges/bulk": { edges: [] },
-  "POST /edge-types": { id: "mock.sweep", cardinality: "many-to-many" },
-  "POST /edges": { source_id: "x", target_id: "x", edge_type: "about" },
-  "POST /items": { type: "core.note", properties: { body: "x" } },
-  "POST /webhooks": { url: "http://127.0.0.1:9/x", events: ["*"] },
-  "POST /keys": { label: "x", source: "x" },
-  "POST /types": { id: "user.sweep", fields: {} },
-};
+/**
+ * Built after `beforeAll` rather than at module scope, because two of these
+ * bodies have to name a version the run has actually read: the update doors
+ * refuse a request naming none with `400 missing_required_field` before they
+ * look for a credential, and a sweep sending one would report those two doors
+ * as refusing a bare request when what it measured was its own malformed body.
+ */
+function bodies(): Record<string, unknown> {
+  return {
+    "PATCH /items/{id}": { properties: { body: "x" }, version: itemVersion },
+    "POST /items/{id}/transition": { state: "archived" },
+    "POST /items/{id}/tags": { tags: ["x"] },
+    "POST /items/bulk": {
+      items: [{ type: "core.note", properties: { body: "x" } }],
+    },
+    "POST /items/bulk-actions": {
+      action: "transition",
+      state: "archived",
+      filter: { tags: ["x"] },
+    },
+    "POST /items/bulk-get": { ids: [] },
+    "PATCH /edges/{id}": { properties: {}, version: edgeVersion },
+    "POST /edges/bulk": { edges: [] },
+    "POST /edge-types": { id: "mock.sweep", cardinality: "many-to-many" },
+    "POST /edges": { source_id: "x", target_id: "x", edge_type: "about" },
+    "POST /items": { type: "core.note", properties: { body: "x" } },
+    "POST /webhooks": { url: "http://127.0.0.1:9/x", events: ["*"] },
+    "POST /keys": { label: "x", source: "x" },
+    "POST /types": { id: "user.sweep", fields: {} },
+  };
+}
 
 const QUERIES: Record<string, string> = {
   "GET /search": "?q=x",
@@ -115,10 +128,11 @@ describe("every published door refuses a request with no credential", () => {
     );
     expect(doors.length).toBeGreaterThan(50);
 
+    const allBodies = bodies();
     const wrong: string[] = [];
     for (const op of doors) {
       const key = `${op.method} ${op.path}`;
-      const body = BODIES[key] ?? {};
+      const body = allBodies[key] ?? {};
       const query = QUERIES[key] ?? "";
       const response = await fetch(
         `${apiUrl}${concretePath(op.path)}${query}`,

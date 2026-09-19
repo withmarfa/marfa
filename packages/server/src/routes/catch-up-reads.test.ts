@@ -220,7 +220,7 @@ describe("what a catch-up can see", () => {
 
     const res = await request(ctx.app, "PATCH", `/items/${id}`, {
       key: ctx.spaceKey,
-      body: { properties: { body: "updated twice" } },
+      body: { properties: { body: "updated twice" }, version: 1 },
     });
     expect(res.status).toBe(200);
 
@@ -402,7 +402,7 @@ describe("a time bound is read as the instant it names", () => {
     const id = await seedNote("timestamp-bound-target");
     const res = await request(ctx.app, "PATCH", `/items/${id}`, {
       key: ctx.spaceKey,
-      body: { timestamp: "2008-08-08T08:08:08.500Z" },
+      body: { timestamp: "2008-08-08T08:08:08.500Z", version: 1 },
     });
     expect(res.status).toBe(200);
 

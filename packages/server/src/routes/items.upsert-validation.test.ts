@@ -159,7 +159,11 @@ describe("the type a write declares", () => {
     const id = await seed("claim-agrees", { title: "Standup" });
     const res = await request(ctx.app, "PATCH", `/items/${id}`, {
       key: RUNTIME_KEY,
-      body: { type: "core.event", properties: { title: "Standup, moved" } },
+      body: {
+        type: "core.event",
+        properties: { title: "Standup, moved" },
+        version: 1,
+      },
     });
     expect(res.status, await res.clone().text()).toBe(200);
 
@@ -177,7 +181,11 @@ describe("the type a write declares", () => {
     const id = await seed("claim-disagrees-patch", { title: "Standup" });
     const res = await request(ctx.app, "PATCH", `/items/${id}`, {
       key: RUNTIME_KEY,
-      body: { type: "core.note", properties: { title: "Re-typed" } },
+      body: {
+        type: "core.note",
+        properties: { title: "Re-typed" },
+        version: 1,
+      },
     });
     expect(res.status).toBe(409);
     const err = (await res.json()) as { error: { code: string } };
@@ -200,7 +208,11 @@ describe("the type a write declares", () => {
     const id = await seed("claim-nonsense", { title: "Standup" });
     const res = await request(ctx.app, "PATCH", `/items/${id}`, {
       key: RUNTIME_KEY,
-      body: { type: { nested: true }, properties: { title: "Re-typed" } },
+      body: {
+        type: { nested: true },
+        properties: { title: "Re-typed" },
+        version: 1,
+      },
     });
     expect(res.status).toBe(400);
     const err = (await res.json()) as { error: { code: string } };

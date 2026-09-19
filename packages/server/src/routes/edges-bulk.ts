@@ -55,6 +55,18 @@ const BulkEdgeInputItemSchema = z.object({
   target_id: z.string(),
   edge_type: z.string(),
   properties: z.record(z.string(), z.unknown()).optional(),
+  /** The version this entry was based on, where the triple resolves an
+   *  edge that already exists. Optional for the same reason it is optional
+   *  on the item bulk door: an entry creating an edge it has never read has
+   *  no version to name. */
+  version: z
+    .number()
+    .int()
+    .min(0)
+    .optional()
+    .describe(
+      "The version the caller read, where this entry resolves an edge that already exists. A stale value is refused as that entry's outcome, or rolls the page back under the default `atomic`.",
+    ),
 });
 
 const BulkEdgeResultOutcomeSchema = z.enum([
@@ -166,6 +178,9 @@ interface BulkEdgeInputItem {
   target_id: string;
   edge_type: string;
   properties?: Record<string, unknown>;
+  /** The version this entry was based on, where the triple resolves an edge
+   *  that already exists. Optional: an entry creating one has none to name. */
+  version?: number;
 }
 
 interface BulkEdgeResult {
@@ -288,12 +303,10 @@ async function processBulkEdge(
     // (defense-in-depth beyond the space-scoped duplicate lookup) cannot
     // be mutated here.
     //
-    // No precondition. A per-entry version would be a different contract
-    // from the single door's — it needs a partial-failure shape for a
-    // batch where some entries are stale and others are not — and nobody
-    // has asked for one. The write still moves the version on, because
-    // the bump lives in the statement rather than in the route that
-    // reached it.
+    // Conditional where the entry named a version, unconditional where it
+    // did not — the same bargain the item bulk door strikes, and for the
+    // same caller: an entry creating an edge it has never read has no
+    // version to name, and one updating an edge it has read does.
     //
     // Wrapped for the same reason the authorization step above is: one
     // entry's failure is that entry's result, not the batch's. The store
@@ -305,6 +318,7 @@ async function processBulkEdge(
       outcome = await storage.edges.updateProperties(
         existing.id,
         raw.properties ?? {},
+        raw.version,
       );
     } catch (err) {
       if (err instanceof MarfaError) {
@@ -319,13 +333,22 @@ async function processBulkEdge(
       throw err;
     }
     if (!outcome.ok) {
-      // Unreachable: a conflict needs a precondition, and this door sends
-      // none. Refused rather than ignored, so that adding one here has to
-      // decide what a batch does about it instead of silently reporting
-      // the entry as updated.
-      throw new Error(
-        "Edge upsert reported a version conflict without a precondition",
-      );
+      // Reachable only for an entry that named a version. That entry's own
+      // outcome, so a page draining a queue does not lose every other edge
+      // to one stale one; under the default `atomic` the caller sees the
+      // rollback instead, which is what every other per-entry refusal on
+      // this door does.
+      return {
+        result: {
+          index,
+          outcome: "errored",
+          id: existing.id,
+          error: {
+            code: ErrorCode.VERSION_CONFLICT,
+            message: `Version ${String(raw.version)} is stale; current version is ${String(outcome.current.version)}`,
+          },
+        },
+      };
     }
     const updated = outcome.edge;
     return {

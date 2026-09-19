@@ -108,6 +108,11 @@
                   "source_id": {
                     "type": "string"
                   },
+                  "version": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "Optional, and meaningful on one path: a `source_id` resolving a live row makes this write an upsert, and a version here makes that upsert conditional exactly as it is on the update door. Everywhere else it is ignored, because nothing is overwritten — a genuine create has no version to have read, and a repeated `id` or a natural key resolving a trashed row is acknowledged rather than written."
+                  },
                   "tier": {
                     "type": "string",
                     "enum": [
@@ -745,41 +750,202 @@
             }
           },
           "409": {
-            "description": "`type_mismatch`: the request resolved an existing item — by the `(source, source_id)` natural key or by a repeated `id` — whose type is not the one declared. Re-typing an item is a deliberate operation, not something a re-sync does in passing. `conflict`: the `id` is held by an item in a space this caller cannot see, so it is somebody else's row rather than a repeat of this caller's own create.",
+            "description": "`type_mismatch`: the request resolved an existing item — by the `(source, source_id)` natural key or by a repeated `id` — whose type is not the one declared. Re-typing an item is a deliberate operation, not something a re-sync does in passing. `conflict`: the `id` is held by an item in a space this caller cannot see, so it is somebody else's row rather than a repeat of this caller's own create. `version_conflict` and `ancestor_unavailable` are reachable only when the request carried a `version` and its `source_id` resolved a live row: that upsert is conditional and answers exactly what the update door answers. A repeated `id` is acknowledged rather than written, so it has no precondition to fail.",
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "properties": {
-                    "error": {
+                  "anyOf": [
+                    {
                       "type": "object",
                       "properties": {
-                        "code": {
-                          "type": "string",
-                          "enum": [
-                            "conflict",
-                            "type_mismatch",
-                            "provenance_collision"
+                        "error": {
+                          "type": "object",
+                          "properties": {
+                            "code": {
+                              "type": "string",
+                              "enum": [
+                                "version_conflict"
+                              ]
+                            },
+                            "status": {
+                              "type": "number",
+                              "enum": [
+                                409
+                              ]
+                            },
+                            "message": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "code",
+                            "status",
+                            "message"
                           ]
                         },
-                        "message": {
-                          "type": "string"
-                        },
-                        "details": {
+                        "current": {
                           "type": "object",
-                          "additionalProperties": {
-                            "nullable": true
+                          "properties": {
+                            "version": {
+                              "type": "number"
+                            },
+                            "properties": {
+                              "type": "object",
+                              "additionalProperties": {
+                                "nullable": true
+                              }
+                            }
+                          },
+                          "required": [
+                            "version",
+                            "properties"
+                          ]
+                        },
+                        "ancestor": {
+                          "type": "object",
+                          "properties": {
+                            "version": {
+                              "type": "number"
+                            },
+                            "properties": {
+                              "type": "object",
+                              "additionalProperties": {
+                                "nullable": true
+                              }
+                            }
+                          },
+                          "required": [
+                            "version",
+                            "properties"
+                          ]
+                        },
+                        "conflicting_fields": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "merge_policy": {
+                          "type": "object",
+                          "properties": {
+                            "fields": {
+                              "type": "object",
+                              "additionalProperties": {
+                                "type": "string",
+                                "enum": [
+                                  "last_writer_wins",
+                                  "keep_both_copies"
+                                ]
+                              }
+                            },
+                            "default": {
+                              "type": "string",
+                              "enum": [
+                                "last_writer_wins",
+                                "keep_both_copies"
+                              ]
+                            }
                           }
                         }
                       },
                       "required": [
-                        "code",
-                        "message"
+                        "error",
+                        "current",
+                        "ancestor",
+                        "conflicting_fields",
+                        "merge_policy"
+                      ]
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "error": {
+                          "type": "object",
+                          "properties": {
+                            "code": {
+                              "type": "string",
+                              "enum": [
+                                "ancestor_unavailable"
+                              ]
+                            },
+                            "status": {
+                              "type": "number",
+                              "enum": [
+                                409
+                              ]
+                            },
+                            "message": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "code",
+                            "status",
+                            "message"
+                          ]
+                        },
+                        "current": {
+                          "type": "object",
+                          "properties": {
+                            "version": {
+                              "type": "number"
+                            },
+                            "properties": {
+                              "type": "object",
+                              "additionalProperties": {
+                                "nullable": true
+                              }
+                            }
+                          },
+                          "required": [
+                            "version",
+                            "properties"
+                          ]
+                        },
+                        "requested_version": {
+                          "type": "number"
+                        }
+                      },
+                      "required": [
+                        "error",
+                        "current",
+                        "requested_version"
+                      ]
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "error": {
+                          "type": "object",
+                          "properties": {
+                            "code": {
+                              "type": "string",
+                              "enum": [
+                                "conflict",
+                                "type_mismatch",
+                                "provenance_collision"
+                              ]
+                            },
+                            "message": {
+                              "type": "string"
+                            },
+                            "details": {
+                              "type": "object",
+                              "additionalProperties": {
+                                "nullable": true
+                              }
+                            }
+                          },
+                          "required": [
+                            "code",
+                            "message"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "error"
                       ]
                     }
-                  },
-                  "required": [
-                    "error"
                   ]
                 }
               }
@@ -3016,7 +3182,7 @@
           "Items"
         ],
         "summary": "Update an item",
-        "description": "Updates an item's properties, tier, timestamp, edges, or natural key. Properties merge shallowly with existing values by default, or become the item's properties outright when `properties_mode` is `replace`, while tier and timestamp always replace; passing `version` opts into optimistic concurrency and a stale value returns 409 with the conflict context to resolve. An item's `type` is not updatable here by default: sending one that matches the item is accepted and ignored, and sending a different one is refused with 409 `type_mismatch` rather than silently dropped. Passing `retype: true` alongside a different `type` moves the item to it — that requires write on the type being entered as well as the one being left, and the resulting properties are validated against the destination.",
+        "description": "Updates an item's properties, tier, timestamp, edges, or natural key. Properties merge shallowly with existing values by default, or become the item's properties outright when `properties_mode` is `replace`, while tier and timestamp always replace; `version` is required, a stale value returns 409 with the conflict context to resolve, and a write naming none is refused 400 `missing_required_field`. An item's `type` is not updatable here by default: sending one that matches the item is accepted and ignored, and sending a different one is refused with 409 `type_mismatch` rather than silently dropped. Passing `retype: true` alongside a different `type` moves the item to it — that requires write on the type being entered as well as the one being left, and the resulting properties are validated against the destination.",
         "security": [
           {
             "bearerAuth": []
@@ -3086,7 +3252,8 @@
                   },
                   "version": {
                     "type": "integer",
-                    "minimum": 0
+                    "minimum": 0,
+                    "description": "The version the caller read. Required: an update carries the version it is based on, or it is not an update but a blind overwrite of whatever arrived since."
                   },
                   "force_snapshot": {
                     "type": "boolean"
@@ -3113,7 +3280,10 @@
                       }
                     }
                   }
-                }
+                },
+                "required": [
+                  "version"
+                ]
               }
             }
           }
@@ -3537,7 +3707,7 @@
             }
           },
           "409": {
-            "description": "Version conflict (optimistic-concurrency mismatch on `properties`), `ancestor_unavailable` (the base version's snapshot has been thinned, so the write cannot be merged and is never auto-resolved), `source_id_conflict` (target natural key already in use by another item under the item's `source`), or `type_mismatch` (the request declared a `type` that is not this item's).",
+            "description": "Version conflict — a stale `version`, whether the write carried properties to merge or only edges, `ancestor_unavailable` (the base version's snapshot has been thinned, so the write cannot be merged and is never auto-resolved), `source_id_conflict` (target natural key already in use by another item under the item's `source`), or `type_mismatch` (the request declared a `type` that is not this item's).",
             "content": {
               "application/json": {
                 "schema": {
@@ -3708,6 +3878,7 @@
                             "code": {
                               "type": "string",
                               "enum": [
+                                "version_conflict",
                                 "source_id_conflict",
                                 "type_mismatch",
                                 "provenance_collision"
@@ -7207,7 +7378,7 @@
           "Items"
         ],
         "summary": "Bulk upsert items",
-        "description": "Creates or upserts up to 5000 items in one call, matching existing rows on `(source, source_id)`. Atomic by default; `source` is server-stamped from the credential, so any caller-supplied value is overwritten. Requires write access to each item's type — the credential's own type permissions decide, and nothing bypasses them — and operates only within the caller's space.\n\nAn entry that resolves a row of a different type is refused with `type_mismatch` — a write does not re-type the row it lands on. Passing `retype: true` for the batch moves those rows instead, which is how a corpus is brought onto a type a mapping now names. It is opt-in rather than inferred from a differing type, because a declared type accompanies nearly every write and inferring would move a corpus on an ordinary sync bug. Each move requires write on the type being entered as well as the one being left, and the resulting properties are validated against the destination: an item the destination type cannot accept is reported as an `errored` entry naming why, and the rest of the batch proceeds.\n\nAn ordinary update is validated too, against the row's own type and on the properties the write would leave on it rather than on the body alone, so a patch removing a required field is refused even though it names no invalid value. A refusal is an `errored` entry under `invalid_properties`; with the default `atomic` it rolls the page back instead, carrying that code in `details.code`.",
+        "description": "Creates or upserts up to 5000 items in one call, matching existing rows on `(source, source_id)`. Atomic by default; `source` is server-stamped from the credential, so any caller-supplied value is overwritten. Requires write access to each item's type — the credential's own type permissions decide, and nothing bypasses them — and operates only within the caller's space.\n\nAn entry that resolves a row of a different type is refused with `type_mismatch` — a write does not re-type the row it lands on. Passing `retype: true` for the batch moves those rows instead, which is how a corpus is brought onto a type a mapping now names. It is opt-in rather than inferred from a differing type, because a declared type accompanies nearly every write and inferring would move a corpus on an ordinary sync bug. Each move requires write on the type being entered as well as the one being left, and the resulting properties are validated against the destination: an item the destination type cannot accept is reported as an `errored` entry naming why, and the rest of the batch proceeds.\n\nAn ordinary update is validated too, against the row's own type and on the properties the write would leave on it rather than on the body alone, so a patch removing a required field is refused even though it names no invalid value. A refusal is an `errored` entry under `invalid_properties`; with the default `atomic` it rolls the page back instead, carrying that code in `details.code`. An entry may also carry the `version` it was based on, which makes its upsert conditional and is refused the same two ways.",
         "security": [
           {
             "bearerAuth": []
@@ -7260,6 +7431,11 @@
                         },
                         "source_id": {
                           "type": "string"
+                        },
+                        "version": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "description": "The version this entry was based on, where it resolves a row that already exists. Optional, as on `POST /items`: an entry creating a row it has never read has no version to name. A stale one is refused like every other per-entry refusal here — the page rolls back under the default `atomic`, carrying `version_conflict` in `details.code`, or it is that entry's own `errored` outcome when `atomic` is false."
                         },
                         "device": {
                           "type": "string"
@@ -12967,7 +13143,7 @@
           "Edges"
         ],
         "summary": "Update an edge",
-        "description": "Updates an edge's properties. Properties merge shallowly with what the edge already holds, as they do on items, so a call naming one property leaves the others standing; there is no replace mode and no way to remove a single property: sending `null` stores a null rather than clearing the key, and deleting the edge to recreate it restarts its version at 1 and emits a delete and a create rather than an update. An edge's property set can therefore only grow. The identity fields (edge type, source, and target) are immutable, so re-pointing an edge means deleting it and creating a new one. Passing `version` opts into optimistic concurrency: a stale value returns 409 carrying the edge as it now stands, and the client re-applies its change over that. Omitting it keeps the previous last-writer-wins behavior. The version moves on either way, and on every update applied rather than only on one that changes the properties — so a bulk upsert that rewrites identical properties still invalidates a version another client is holding.",
+        "description": "Updates an edge's properties. Properties merge shallowly with what the edge already holds, as they do on items, so a call naming one property leaves the others standing; there is no replace mode and no way to remove a single property: sending `null` stores a null rather than clearing the key, and deleting the edge to recreate it restarts its version at 1 and emits a delete and a create rather than an update. An edge's property set can therefore only grow. The identity fields (edge type, source, and target) are immutable, so re-pointing an edge means deleting it and creating a new one. `version` is required: a stale value returns 409 carrying the edge as it now stands, and the client re-applies its change over that, and a write naming none is refused 400 `missing_required_field`. The version moves on with every accepted write, and on every update applied rather than only on one that changes the properties — so a bulk upsert that rewrites identical properties still invalidates a version another client is holding.",
         "security": [
           {
             "bearerAuth": []
@@ -13010,11 +13186,12 @@
                   "version": {
                     "type": "integer",
                     "minimum": 0,
-                    "description": "The version the client read. A stale value is refused with 409; omitted, the write is unconditional."
+                    "description": "The version the caller read. Required, and a stale value is refused with 409: an update carries the version it is based on, or it is not an update but a blind overwrite."
                   }
                 },
                 "required": [
-                  "properties"
+                  "properties",
+                  "version"
                 ]
               }
             }
@@ -13607,6 +13784,11 @@
                           "additionalProperties": {
                             "nullable": true
                           }
+                        },
+                        "version": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "description": "The version the caller read, where this entry resolves an edge that already exists. A stale value is refused as that entry's outcome, or rolls the page back under the default `atomic`."
                         }
                       },
                       "required": [

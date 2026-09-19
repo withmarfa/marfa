@@ -248,9 +248,9 @@ type Family = "item" | "metadata" | "edge" | "bulk";
  * Whatever a door's setup minted, for its own `act` and `landed` to read.
  *
  * Every field is present and every setup fills in the subset it uses, so a
- * door reading one it never minted gets an empty string and a request that
- * fails visibly — rather than the string `undefined` inside a URL, which
- * routes as a malformed id and reads as a real refusal.
+ * door reading one it never minted gets an empty string or a version of 0,
+ * and a request that fails visibly — rather than the string `undefined`
+ * inside a URL, which routes as a malformed id and reads as a real refusal.
  */
 interface DoorState {
   item: string;
@@ -258,6 +258,8 @@ interface DoorState {
   edge: string;
   sourceId: string;
   tag: string;
+  /** The version the door's write names, where its setup moved the row on. */
+  version: number;
 }
 
 const NO_STATE: DoorState = {
@@ -266,6 +268,7 @@ const NO_STATE: DoorState = {
   edge: "",
   sourceId: "",
   tag: "",
+  version: 0,
 };
 
 interface Door {
@@ -472,11 +475,15 @@ const doors: Door[] = [
       const item = await makeNote("before");
       const other = await makeNote("new target");
       const stale = await makeNote("stale target");
-      await request(ctx.app, "PATCH", `/items/${item}`, {
+      const planted = await request(ctx.app, "PATCH", `/items/${item}`, {
         key: ctx.spaceKey,
-        body: { edges: { references: [stale] } },
+        body: { edges: { references: [stale] }, version: 1 },
       });
-      return { item, other };
+      expect(planted.status).toBe(200);
+      const { item: row } = (await planted.json()) as {
+        item: { version: number };
+      };
+      return { item, other, version: row.version };
     },
     act: async (s) => {
       const res = await request(ctx.app, "PATCH", `/items/${s.item}`, {
@@ -484,6 +491,7 @@ const doors: Door[] = [
         body: {
           properties: { body: "after" },
           edges: { references: [s.other] },
+          version: s.version,
         },
       });
       return res.status === 200;
@@ -838,9 +846,11 @@ const doors: Door[] = [
       return { item, other, edge: await makeEdge(item, other) };
     },
     act: async (s) => {
+      // Each run gets its own setup, so the edge is still at the version it
+      // was minted at.
       const res = await request(ctx.app, "PATCH", `/edges/${s.edge}`, {
         key: ctx.spaceKey,
-        body: { properties: { note: "edited" } },
+        body: { properties: { note: "edited" }, version: 1 },
       });
       return res.status === 200;
     },

@@ -73,6 +73,13 @@ export interface Item {
 
 /** Input for creating a new item. */
 export interface CreateItemInput {
+  /**
+   * Optional, and meaningful on one path: where `source_id` resolves a live
+   * row this create is an upsert, and a version here makes it conditional
+   * exactly as on an update. Ignored elsewhere — a genuine create has no
+   * version to have read.
+   */
+  version?: number;
   type: string;
   properties: Record<string, unknown>;
   id?: string;
@@ -129,7 +136,12 @@ export interface UpdateItemInput {
    * calls invalid is refused rather than written.
    */
   type?: string;
-  version?: number;
+  /**
+   * The version the caller read. Required: an update carries the version it
+   * is based on, or it is not an update but a blind overwrite of whatever
+   * arrived since.
+   */
+  version: number;
   /** Force a version snapshot for this update, bypassing the
    *  snapshot-interval throttle in version gating. */
   force_snapshot?: boolean;
@@ -199,9 +211,9 @@ export interface Edge {
    * written in between; two showing different versions mean a write
    * landed, not that anything about the edge is now different.
    *
-   * Pass it back as the `version` precondition on `PATCH /edges/{id}` to
-   * refuse an edit computed from a state the server has since left. An
-   * update that names no version still lands, and still moves the counter.
+   * Pass it back as the `version` precondition on `PATCH /edges/{id}`, which
+   * requires it: an edit computed from a state the server has since left is
+   * refused, and one that names no version at all is refused before that.
    *
    * Unlike an item's, an edge's version has no snapshot behind it — there
    * is no per-version history table for edges and no merge policy — so a
@@ -223,6 +235,9 @@ export interface CreateEdgeInput {
 /** Input for updating an existing edge (properties only — direction/type immutable). */
 export interface UpdateEdgeInput {
   properties: Record<string, unknown>;
+  /** The version the caller read. Required, for the same reason it is on an
+   *  item: an update names what it is based on or it is not an update. */
+  version: number;
 }
 
 /**

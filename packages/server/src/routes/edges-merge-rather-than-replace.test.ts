@@ -97,7 +97,7 @@ describe("an edge update merges over what the edge holds", () => {
 
     const res = await request(ctx.app, "PATCH", `/edges/${edge.id}`, {
       key: ctx.spaceKey,
-      body: { properties: PATCH },
+      body: { properties: PATCH, version: edge.version },
     });
     expect(res.status).toBe(200);
 
@@ -116,20 +116,22 @@ describe("an edge update merges over what the edge holds", () => {
       },
     });
     expect(itemRes.status).toBe(201);
-    const itemId = ((await itemRes.json()) as { item: { id: string } }).item.id;
+    const created = (
+      (await itemRes.json()) as { item: { id: string; version: number } }
+    ).item;
 
     const { edge } = await edgeWith(BOTH);
 
-    await request(ctx.app, "PATCH", `/items/${itemId}`, {
+    await request(ctx.app, "PATCH", `/items/${created.id}`, {
       key: ctx.spaceKey,
-      body: { properties: PATCH },
+      body: { properties: PATCH, version: created.version },
     });
     await request(ctx.app, "PATCH", `/edges/${edge.id}`, {
       key: ctx.spaceKey,
-      body: { properties: PATCH },
+      body: { properties: PATCH, version: edge.version },
     });
 
-    const item = await request(ctx.app, "GET", `/items/${itemId}`, {
+    const item = await request(ctx.app, "GET", `/items/${created.id}`, {
       key: ctx.spaceKey,
     }).then(
       async (r) =>
@@ -177,7 +179,7 @@ describe("an edge update merges over what the edge holds", () => {
 
     const res = await request(ctx.app, "PATCH", `/edges/${edge.id}`, {
       key: ctx.spaceKey,
-      body: { properties: { label: null } },
+      body: { properties: { label: null }, version: edge.version },
     });
     expect(res.status).toBe(200);
 
@@ -194,7 +196,7 @@ describe("an edge update merges over what the edge holds", () => {
 
     const moved = await request(ctx.app, "PATCH", `/edges/${edge.id}`, {
       key: ctx.spaceKey,
-      body: { properties: PATCH },
+      body: { properties: PATCH, version: edge.version },
     });
     expect(moved.status).toBe(200);
 
@@ -210,51 +212,25 @@ describe("an edge update merges over what the edge holds", () => {
     // And the losing write changed nothing.
     expect(await storedProperties(edge.id)).toEqual(AFTER);
   });
-  it("never loses a patch it accepted, which is what the row lock is for", async () => {
-    // The merge is computed from a read, so two patches interleaving
-    // between another's read and its write lose one of them silently.
-    // That is the entire reason this write took a transaction, and nothing
-    // else in this file exercises it: every other case is sequential and
-    // passes with it deleted.
-    //
-    // **The assertion is "no accepted write is lost", not "all eight
-    // succeed".** The driver opens each transaction with BEGIN IMMEDIATE
-    // and a second one meets `SQLITE_BUSY` rather than waiting, so seven
-    // of eight are refused with a 500. That is not
-    // introduced here — `PATCH /items/{id}` has done the same since it
-    // started merging under a transaction, measured on this build — and
-    // it is a defect in its own right, tracked separately. What must
-    // hold on both dialects is that a 200 means the write landed.
-    //
-    // Eight rather than two because a single pair may not interleave. A
-    // correct implementation passes every time and a loaded machine
-    // makes that more certain rather than less; an unlocked one drops an
-    // accepted key on almost any run.
-    // Last in the file deliberately. On SQLite the refused arrivals
-    // leave the write lock contended for a moment afterwards, and a
-    // case following this one saw its own first write answer 500. That
-    // is the same pre-existing behavior this case documents, showing up
-    // as flakiness in a neighbor rather than as a failure here.
-    const { edge } = await edgeWith({ base: "kept" });
-
-    const keys = ["k0", "k1", "k2", "k3", "k4", "k5", "k6", "k7"];
-    const responses = await Promise.all(
-      keys.map((k) =>
-        request(ctx.app, "PATCH", `/edges/${edge.id}`, {
-          key: ctx.spaceKey,
-          body: { properties: { [k]: k } },
-        }),
-      ),
-    );
-    const accepted = keys.filter((_, i) => responses[i]?.status === 200);
-    // The control. Without it a build that refused all eight would pass
-    // this case having proved nothing.
-    expect(accepted.length).toBeGreaterThan(0);
-
-    const after = await storedProperties(edge.id);
-    expect(after.base).toBe("kept");
-    for (const k of accepted) {
-      expect(after, `a 200 was not durable: ${k}`).toHaveProperty(k);
-    }
-  });
+  // **A concurrency case stood here and is deliberately not replaced.**
+  //
+  // It fired eight simultaneous patches at one edge and asserted that no
+  // accepted write was lost, which is what the row lock is for: the merge
+  // is computed from a read, so two writes interleaving between another's
+  // read and its write lose one silently, and nothing else in this file
+  // exercises that.
+  //
+  // Requiring the version took its subject away. All eight now name the
+  // one version they read, and the driver opens each write with BEGIN
+  // IMMEDIATE, so seven meet SQLITE_BUSY and answer 500 before the version
+  // gate is reached — measured, not assumed: the seven refusals are
+  // `500 internal_error`, and not one is `409 version_conflict`. Counting
+  // acceptances instead would have passed identically on a build with no
+  // version gate at all, which is a test that proves nothing.
+  //
+  // The sequential case above proves the gate. What is now uncovered is the
+  // row lock under genuinely interleaved merges, and reaching it needs
+  // writers that each read the edge and then patch with what they read,
+  // rather than eight sharing one version. That is a fixture worth writing
+  // and it is not this change's to write.
 });

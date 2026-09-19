@@ -239,6 +239,7 @@ describe("per-edge-type permissions", () => {
 
     const patch = await targetOnlyClient.updateEdge(edge.data.edge.id, {
       properties: { note: "should not land" },
+      version: edge.data.edge.version,
     });
     expect(patch.ok).toBe(false);
     expect(patch.status).toBe(403);
@@ -260,6 +261,7 @@ describe("per-edge-type permissions", () => {
 
     const patchOk = await sourceOnlyClient.updateEdge(edge.data.edge.id, {
       properties: { note: "ok" },
+      version: edge.data.edge.version,
     });
     expect(patchOk.ok).toBe(true);
 

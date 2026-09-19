@@ -225,7 +225,8 @@ describe("the match set narrows to what the caller may write", () => {
     // has no equivalent per-row check, so its filter has to carry it.
     const patched = await request(ctx.app, "PATCH", `/items/${noteId}`, {
       key: readerWriterKey,
-      body: { properties: { body: "rewritten" } },
+      // The seed above is the row's only write, so 1 is the version it is on.
+      body: { properties: { body: "rewritten" }, version: 1 },
     });
     expect(patched.status).toBe(403);
   });

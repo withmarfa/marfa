@@ -241,6 +241,7 @@ describe("event stream contract", () => {
           (
             await client.updateEdge(edge.data.edge.id, {
               properties: { note: "after" },
+              version: edge.data.edge.version,
             })
           ).ok,
         ).toBe(true);
