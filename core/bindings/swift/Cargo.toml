@@ -16,7 +16,12 @@ path = "src/bin/uniffi-bindgen.rs"
 
 [dependencies]
 marfa-core = { path = "../../marfa-core" }
-serde_json.workspace = true
+# Named rather than inherited: this crate is **excluded** from the `core/`
+# workspace — `cargo-swift` refuses to name a package inside a multi-crate
+# one — so there is no root to inherit from and `workspace = true` does not
+# parse. The feature is spelled out because the folder depends on it: without
+# it a person's frontmatter comes back alphabetised.
+serde_json = { version = "1", features = ["preserve_order"] }
 uniffi = { version = "0.31", features = ["cli"] }
 
 # Its own workspace: cargo-swift will not name a package inside a multi-crate one.
