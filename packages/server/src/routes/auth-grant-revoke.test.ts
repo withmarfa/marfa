@@ -548,7 +548,7 @@ describe("revocation reaches outstanding authorization codes", () => {
     // The guard exists for the window the sweep cannot close — a code minted
     // between the consent delete and the code delete — and for the next
     // revocation path that forgets the codes, which is how this defect arose
-    // the first time. A defence against a future mistake with no test is
+    // the first time. A defense against a future mistake with no test is
     // removed by the first person tidying an unused-looking hook.
     //
     // So this one drives the endpoint. The seeded identifier is the hashed
@@ -659,7 +659,7 @@ describe("revocation reaches outstanding device codes", () => {
     //
     // **The guard this test is about is unaffected and still worth having.**
     // It refuses at poll time on the grant's own state, and it now defends a
-    // state the approval path can no longer produce — which is what defence
+    // state the approval path can no longer produce — which is what defense
     // in depth means, not a reason to delete it. A grant revoked while a code
     // was outstanding, a row restored from a backup taken mid-flight, or a
     // future path that binds somewhere else all arrive here.

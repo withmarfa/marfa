@@ -101,7 +101,7 @@ describe("a decision taken from a pipeline that can exit early", () => {
     );
   });
 
-  it("recognises the shape, and only where pipefail is set", () => {
+  it("recognizes the shape, and only where pipefail is set", () => {
     // Without these the regex could be wrong in a way that passes everything.
     const withPipefail = [
       "      - run: |",

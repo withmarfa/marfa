@@ -133,10 +133,9 @@ const createKeyRoute = createRoute({
     // body does not declare is stripped by an ordinary object, and
     // `permissions` omitted does not mean "none": it means the creator's
     // whole set, or every permission when the operator seeds. So a caller
-    // spelling the field wrong — including one written against the name this
-    // field used to have — asks to narrow and is answered with a credential
-    // wider than the one it asked for, which on a mint hands on the power to
-    // mint again.
+    // spelling the field wrong asks to narrow and is answered with a
+    // credential wider than the one it asked for, which on a mint hands on
+    // the power to mint again.
     body: {
       content: {
         "application/json": {

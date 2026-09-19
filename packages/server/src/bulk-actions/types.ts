@@ -1,5 +1,5 @@
 /**
- * Server-internal types for the bulk_action substrate.
+ * Server-internal types for the bulk_action job queue.
  *
  * Mirrors the public SDK shapes in `@withmarfa/sdk` (`BulkActionInput`,
  * `BulkActionResult`, `BulkActionJob`) so the server can carry them
@@ -23,7 +23,7 @@ import type { DeclaresKeys } from "../routes/_unknown-query-keys.js";
  * against the routes, so it watched the route copy and not this one. Two
  * renames and a missing lifecycle state later, the route imports this
  * instead. Keeping the declaration here rather than in the route is what
- * lets the substrate hold the shape without depending on the published
+ * lets the server hold the shape without depending on the published
  * client package, which is why the copy existed at all.
  */
 export const BulkActionFilterShape = z.object({

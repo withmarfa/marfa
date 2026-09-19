@@ -1,5 +1,5 @@
 /**
- * Async substrate for `POST /items/bulk-actions`.
+ * The job queue behind `POST /items/bulk-actions`.
  *
  * Public surface:
  *   - `BulkActionWorker` — the in-process polling loop. One per server

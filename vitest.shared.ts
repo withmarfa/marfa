@@ -10,7 +10,7 @@
  * Vitest's stock 10s default, and on a machine that also hosts the CI runner
  * pool the first thing to fail whenever anything else was running was a budget
  * nobody had picked. It failed as a timeout, which is indistinguishable at a
- * glance from a defect, and it cost two separate diagnoses in one evening.
+ * glance from a defect.
  *
  * Imported rather than copied into each package. Seven copies of a number
  * drift, and the failure drift produces here is a timeout — the one failure

@@ -28,7 +28,7 @@
  *    refuses those on the resolved row's type; the acknowledgement above it
  *    did not, so the two branches disagreed about who may address one row.
  *
- * The narrowing is modelled by editing the credential that wrote the row,
+ * The narrowing is modeled by editing the credential that wrote the row,
  * because nothing else can reach it: `source` is unique among
  * unrevoked credentials, so no second credential resolves the same natural
  * key. Cutting that one credential's permission map produces the state the

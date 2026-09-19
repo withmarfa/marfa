@@ -12,8 +12,7 @@
  *
  * That is not a failure anyone sees as a failure. It surfaces as a timeout on
  * a busy machine, in a package the change under test never touched, and a
- * timeout reads as a defect until somebody counts the reported budgets. It
- * cost two diagnoses in one evening before the mechanism was found.
+ * timeout reads as a defect until somebody counts the reported budgets.
  *
  * **A green suite cannot catch a recurrence.** A new package with no config,
  * or a config that sets `name` and `include` and no budget, is green on a

@@ -5,9 +5,11 @@
  * and nothing here covered the walk itself: the cap, the cycle check and
  * the registry resolution were all untested at every door.
  *
- * Manifest registration is the third caller, and nothing covers its own
- * ordering or its stalled-batch refusal: the fixture that did left with the
- * in-server connector runtime.
+ * There were three callers and this build has two — `POST /types` and the
+ * archive restore. The third registered from a connector manifest inside
+ * the server, and the fixture covering its ordering and its stalled-batch
+ * refusal went with it, so neither is covered and neither has anything
+ * left to cover.
  */
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import {

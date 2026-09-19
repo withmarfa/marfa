@@ -8,7 +8,7 @@ env_file="${1:-${MARFA_SERVER_ENV:-}}"
 source "${env_file}"
 # **The tree, not the pid, and not the process group.** `server-up.sh` records
 # pnpm's pid; pnpm spawns tsx and tsx spawns the node process that holds the
-# port, so signalling the recorded pid alone leaves that grandchild running
+# port, so signaling the recorded pid alone leaves that grandchild running
 # and the port bound — while reporting success, which is the worst shape of
 # this bug: the next reader sees that cleanup ran and looks elsewhere.
 #

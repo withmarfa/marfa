@@ -87,7 +87,7 @@ const _coreRegistry = new Map<string, TypeSchema>(
 
 /**
  * Which shipped family a platform type belongs to. The split is provenance
- * rather than behaviour, but two consumers key on it — the lifecycle and
+ * rather than behavior, but two consumers key on it — the lifecycle and
  * search restrictions that apply to `system.*`, and the catalog's account of
  * which types exist because a specific upstream service does — so it cannot
  * be derived from the identifier and has to travel with the schema.

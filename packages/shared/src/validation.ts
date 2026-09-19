@@ -141,7 +141,7 @@ export const RESERVED_ROOTS: ReadonlySet<string> = new Set(RESERVED_ROOT_NAMES);
  * naming one is a namespace collision rather than a grammar confusion, and
  * reserving `google` while admitting `google-drive` is a half-protection:
  * the set matches whole handles only, so the obvious neighbours stay
- * claimable and the list reads as a defence it cannot provide. The collision
+ * claimable and the list reads as a defense it cannot provide. The collision
  * is answered where it happens, by the seed refusing to overwrite a
  * registration it did not write, rather than by a name list here.
  *

@@ -28,7 +28,7 @@ import { grantCoversScope } from "@withmarfa/shared";
  * `grantCoversScope` is imported rather than taken as a parameter. Injecting
  * it would keep this module free of the scope grammar, which is the tidier
  * shape and was considered; it was rejected because a screen where a person
- * makes a security decision should have one behaviour rather than a
+ * makes a security decision should have one behavior rather than a
  * configurable one. There is one caller and there has never been an
  * injection point.
  */

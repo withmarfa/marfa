@@ -333,7 +333,7 @@ export function ancestorUnavailable(
 
 /**
  * The sibling id for this write, or a fresh one when the caller sent no
- * idempotency key and there is therefore nothing to recognise a retry by.
+ * idempotency key and there is therefore nothing to recognize a retry by.
  */
 export function conflictedSiblingIdFor(
   itemId: string,

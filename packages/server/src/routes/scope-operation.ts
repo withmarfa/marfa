@@ -78,10 +78,9 @@ export function scopeOperation(scope: ParsedScope): Operation | undefined {
       // arm: `content:read` and `content:write` carry a verb like any type
       // scope, and the breadth that makes the category different is a
       // question for `isOpenEnded`, not for this one. The exhaustiveness
-      // guard below is what surfaced it — the sixth kind arrived from the
-      // other side of this wave and would otherwise have been answered
-      // `undefined`, which reads on the security page as a family the page
-      // cannot characterize.
+      // guard below is what surfaced it: `content` would otherwise have
+      // been answered `undefined`, which reads on the security page as a
+      // family the page cannot characterize.
       return scope.operation === "none" ? undefined : scope.operation;
     case "oidc":
     case "permission":

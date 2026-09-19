@@ -1085,7 +1085,7 @@ describe("scopesOfferedOffByDefaultOnly", () => {
  * Coverage, which is the question every consent comparison was asking and
  * none of them was answering.
  *
- * These pin behaviour that partly already held — exact membership always
+ * These pin behavior that partly already held — exact membership always
  * worked — so there is no red phase to notice and each guard is worth
  * breaking on purpose. The capability arm is the one to break first: it is
  * the only one whose failure is a fail-open rather than a re-prompt.

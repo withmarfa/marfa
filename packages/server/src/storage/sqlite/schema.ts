@@ -417,17 +417,22 @@ export const eventLog = sqliteTable(
   {
     id: integer("id").primaryKey({ autoIncrement: true }),
     event_type: text("event_type").notNull(),
-    // Nullable — migration 0014. Edge events store edge_id only; item
-    // events store item_id only.
+    // Nullable, and separately so: `publish` stamps `item_id`, `publishEdge`
+    // stamps `edge_id`, and neither column is constrained. A row holding
+    // neither is therefore storable, which is not hypothetical — two
+    // fixtures in `events-type-filter.test.ts` append one on purpose, so the
+    // stream has to decide about it rather than assume it away. `events.ts`
+    // reads a null `edge_id` as an item event, which withholds such a row,
+    // and those fixtures are what pin it.
     item_id: text("item_id"),
     edge_id: text("edge_id"),
     payload: text("payload").notNull(),
-    // Whether this event drives outbound side effects: webhook delivery and
+    // Whether this event drives outbound side effects — webhook delivery.
     // Persisted rather than carried only on the emitted event, because a
     // catch-up rebuilds the event from this row: without the column a
     // replayed event would read as fanning out when its writer said
-    // otherwise. Defaults true: that is what
-    // every row written before the column did.
+    // otherwise. Defaults true, so a row appended without naming it fans
+    // out, which is what every ordinary write door wants.
     enable_fanout: integer("enable_fanout", { mode: "boolean" })
       .notNull()
       .default(true),

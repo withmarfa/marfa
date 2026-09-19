@@ -5,10 +5,12 @@
  * naming one property dropped every other property on that edge. Both
  * halves were defensible alone — a client queuing what changed is right,
  * and a replacing endpoint is a coherent design — and nothing had ever put
- * them side by side. What made it costly is that the local engine's
- * projection merges, so the screen went on showing the properties the
- * server had just discarded, until some inbound event happened to correct
- * the row. On a quiet instance that is indefinitely.
+ * them side by side. What made it costly is where the two meet: a client
+ * that merges the response into the copy it already holds never sees a
+ * removal at all, because merging the smaller bag the server returned over
+ * the larger one it has leaves the dropped keys standing. The response
+ * carries the truth — the whole post-write edge — and a merging reader is
+ * exactly the one that cannot read it.
  *
  * The item doors already merged, so the edge doors were the odd ones out
  * and the consistent answer was to move them. The case below drives the

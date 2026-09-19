@@ -359,7 +359,7 @@ describe("a displaced writer cannot touch the claim that replaced it", () => {
  * **The first version of this guard matched a vocabulary rather than
  * writers, and that is the failure it now exists twice to avoid.** It
  * anchored each match on the nearest preceding `async <name>(`, so
- * `takeOverExpiredClaim` was labelled `claim` and never appeared under its
+ * `takeOverExpiredClaim` was labeled `claim` and never appeared under its
  * own name — an exemption naming it would have exempted nothing, and one
  * naming `claim` would have silently exempted the takeover, with the
  * anti-dead-configuration check passing either way because both names
@@ -430,7 +430,7 @@ describe("every writer of a claim row is fenced", () => {
   /**
    * Method name to method body, by brace matching rather than by proximity.
    *
-   * Proximity is what produced the mislabelling this replaces: a regex
+   * Proximity is what produced the mislabeling this replaces: a regex
    * spanning from one `async` to a call site lands wherever the lazy match
    * stops, which is not necessarily inside that method at all.
    */
@@ -455,22 +455,22 @@ describe("every writer of a claim row is fenced", () => {
    *
    * **Fails closed.** A method that names the table and matches none of the
    * shapes below — a raw `sql` execute, an aliased binding, anything not
-   * thought of here — is `unrecognised` rather than absent, so it appears
+   * thought of here — is `unrecognized` rather than absent, so it appears
    * in the roster and fails there. Returning `null` for it was the version
    * of this that let a writer spelled differently pass unseen, which is
-   * the same defect as the mislabelling, one level up.
+   * the same defect as the mislabeling, one level up.
    *
    * These stores address one table, so a write call inside them is a write
    * to it; the call does not have to name the table for this to hold.
    */
   function operationOf(
     body: string,
-  ): "creates" | "mutates" | "reads" | "unrecognised" | null {
+  ): "creates" | "mutates" | "reads" | "unrecognized" | null {
     if (!/idempotencyRecords|idempotency_records/.test(body)) return null;
     if (body.includes(".select(")) return "reads";
     if (/\.(update|delete)\(|onConflictDoUpdate/.test(body)) return "mutates";
     if (body.includes(".insert(")) return "creates";
-    return "unrecognised";
+    return "unrecognized";
   }
 
   /**
@@ -530,7 +530,7 @@ describe("every writer of a claim row is fenced", () => {
     // An excuse naming a method that does not exist, or one that never
     // writes, is dead configuration — and the shape it rots into is one
     // that silently exempts something it was never written for. That is
-    // exactly what the mislabelled version of this guard did.
+    // exactly what the mislabeled version of this guard did.
     for (const method of Object.keys(UNFENCED)) {
       const body = methodsOf(storeSource()).get(method);
       expect(

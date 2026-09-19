@@ -10,12 +10,12 @@ on:
 # Cancels a superseded run on a branch, and deliberately does not on `main`.
 #
 # On a branch a second push means the first answer describes a tree nobody has
-# any more, so cancelling is free. `main` is not a branch in that sense: every
+# any more, so canceling is free. `main` is not a branch in that sense: every
 # commit on it is a release candidate, and `publish.yml` refuses to tag a
 # commit unless a *successful* `ci.yml` run exists at that exact SHA. A
 # cancelled run is not a successful one, so a superseded main commit becomes
 # permanently unpublishable — silently, because nothing errors and the commit
-# looks fine. Six consecutive commits were in that state in one evening.
+# looks fine.
 #
 # Before adding `cancel-in-progress` to any group, ask what consumes the run's
 # result at a specific SHA. Cancellation is safe where only the latest answer
@@ -41,8 +41,8 @@ jobs:
     # The resource is the machine. This job runs vitest's `forks` pool at its
     # default `cpus - 1`, which is one job short of the whole box that hosts
     # the pool, so two of these at once manufactures timeouts in files the
-    # branch never touched. Two sessions hit exactly that within an hour and
-    # both first read it as a defect in their own branch.
+    # branch never touched — which reads as a defect in the branch under
+    # test rather than as contention.
     #
     # `queue: max` rather than the default. The default keeps at most one
     # pending entry per group and CANCELS the previous one when a new job

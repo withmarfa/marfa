@@ -322,9 +322,10 @@ describe("a 409 the update path does not resolve", () => {
     // The transport hands every `409` body back unchanged rather than
     // throwing, so reading "not the first, not the second, therefore
     // success" takes the third for a resolved update and returns its
-    // absent `item`. A refusal then arrives as a successful write of
-    // `undefined` — and in the local engine's drain that settles a
-    // mutation the server rejected and drops it from the queue.
+    // absent `item`. A refusal then arrives as a resolved promise carrying
+    // `undefined` where the signature promises an `Item` — so a caller that
+    // decides a write landed by the absence of a throw is told the server
+    // accepted what it refused.
     const first = await client.items.create({
       type: "core.note",
       properties: { body: "first" },

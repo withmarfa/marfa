@@ -20,7 +20,7 @@ on:
   workflow_dispatch:
 
 # A superseded run on a branch describes a tree nobody has any more, so
-# cancelling it costs nothing. On `main` every commit keeps its own answer.
+# canceling it costs nothing. On `main` every commit keeps its own answer.
 # Nothing reads a run of this workflow at a specific commit — publish.yml
 # names ci.yml — so if that ever changes, this is the line to change with it.
 concurrency:

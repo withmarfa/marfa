@@ -12,7 +12,7 @@ describe("liveConnectionRefusal", () => {
     // The app arm names a door that exists. The connector arm used to name
     // `POST /connections/{id}/uninstall` and promise it would revoke leased
     // tokens, drop cached upstream tokens and disable inbound webhooks —
-    // one route and three subsystems, none of which survived the rip-out.
+    // one route and three subsystems, none of which this build has.
     // This assertion is the reason that sentence stood: it pinned the route
     // by name, so the refusal read as maintained.
     expect(

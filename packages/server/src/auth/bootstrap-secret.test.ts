@@ -1,5 +1,5 @@
 /**
- * The bootstrap secret's own behaviour, at the level the route tests cannot
+ * The bootstrap secret's own behavior, at the level the route tests cannot
  * reach.
  *
  * Every case here is one a route test passes without noticing, because the

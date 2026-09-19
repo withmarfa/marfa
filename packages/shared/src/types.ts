@@ -116,7 +116,7 @@ export interface UpdateItemInput {
    * `replace` says the incoming set IS the item's properties, so a field the
    * row holds and the write does not name is gone.
    *
-   * It exists because the clearing behaviour was otherwise reachable only by
+   * It exists because the clearing behavior was otherwise reachable only by
    * naming every field to be removed, which puts the type's shape in every
    * call site. The result is validated either way, so a replace that drops a
    * required field is refused rather than written.

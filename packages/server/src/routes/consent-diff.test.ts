@@ -9,7 +9,7 @@ import { computeConsentDiff } from "./consent-diff.js";
  * The cases below the first block are the ones that used to be wrong. None
  * of the original eight named a wildcard, so all eight kept passing when the
  * comparison changed from text to coverage — which is exactly why a suite
- * that stays green through a behaviour change proves nothing on its own.
+ * that stays green through a behavior change proves nothing on its own.
  */
 
 describe("computeConsentDiff", () => {
