@@ -278,6 +278,38 @@ impl Hydration {
     }
 }
 
+/// One queued write, as the queue reports it.
+///
+/// A verdict of `None` is a write the server has not answered: the six are
+/// what an answer carries (`queue-and-verdicts.md` 7), and this is the
+/// absence of one. It serializes as `null` rather than as a token, so a
+/// reader has to handle the absence rather than matching a seventh string.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct QueuedWrite {
+    pub id: String,
+    pub kind: String,
+    pub item_id: Option<String>,
+    pub target_id: Option<String>,
+    pub edge_id: Option<String>,
+    pub namespace: Option<String>,
+    pub tag: Option<String>,
+    pub base_version: Option<i64>,
+    pub idempotency_key: String,
+    /// The queue rows this one waits for. Empty when nothing holds it; more
+    /// than one when an edge waits on both of its endpoints.
+    pub depends_on: Vec<String>,
+    pub verdict: Option<String>,
+    pub reason: Option<String>,
+    /// The server's answer, kept whole. A device reports a verdict and never
+    /// acts on one (`queue-and-verdicts.md` 15), so what it reports has to be
+    /// what it was told.
+    pub answer: Option<String>,
+    pub conflicted_copy_id: Option<String>,
+    pub refusals: i64,
+    pub queued_at: String,
+    pub answered_at: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Status {
     pub server_origin: Option<String>,

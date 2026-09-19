@@ -5,7 +5,7 @@ use rusqlite::{Connection, OptionalExtension, params, params_from_iter};
 use serde_json::{Map, Value};
 
 use crate::error::CoreError;
-use crate::model::{Edge, Item, ItemState, Tier};
+use crate::model::{Edge, Item, ItemState, QueuedWrite, Tier};
 use crate::wire::{WireEdge, WireItem, WireType};
 
 pub const SCHEMA: &str = include_str!("schema.sql");
@@ -17,7 +17,7 @@ pub const META_SLICE_TIER: &str = "slice_tier";
 pub const META_EVENT_CURSOR: &str = "event_cursor";
 pub const META_HYDRATE_STATE: &str = "hydrate_state";
 pub const HYDRATE_IN_PROGRESS: &str = "in_progress";
-pub const SCHEMA_VERSION: &str = "provisional-1";
+pub const SCHEMA_VERSION: &str = "1";
 
 const ITEM_COLUMNS: &str = "id, type, state, tier, version, schema_version, source, source_id, device, occurred_at, created_at, updated_at, properties";
 const EDGE_COLUMNS: &str =
@@ -42,7 +42,38 @@ fn prepare(conn: &Connection) -> Result<(), CoreError> {
          PRAGMA foreign_keys = ON;",
     )?;
     conn.busy_timeout(std::time::Duration::from_secs(5))?;
+    // The version is read before the rest of the schema is applied, not
+    // after. `CREATE TABLE IF NOT EXISTS` is silent about a table that
+    // already exists with different columns, so running the whole batch
+    // first would leave a store half of this schema and half of another and
+    // report nothing.
+    //
+    // There are no migrations: a store this schema does not match is
+    // discarded and hydrated again. That costs a pull, and it is what keeps
+    // `schema.sql` readable as a description of what a device holds rather
+    // than as the end of a chain of alterations.
+    //
+    // `meta` is created on its own first because the check reads it, and a
+    // file that has never been opened has no tables at all. Its two columns
+    // are the one shape in here that cannot change without changing how a
+    // version is read in the first place.
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);",
+    )?;
+    if let Some(found) = meta_get(conn, META_SCHEMA_VERSION)?
+        && found != SCHEMA_VERSION
+    {
+        return Err(CoreError::WrongSchema {
+            expected: SCHEMA_VERSION.to_string(),
+            found,
+        });
+    }
     conn.execute_batch(SCHEMA)?;
+    // Only when absent. Writing it on every open would make `marfa queue`
+    // and `marfa status` take a write lock to answer a question about what
+    // is already there, which a reading handle must not do (`device.md` 3).
+    // The refusal above has already dealt with a version that differs, so
+    // the only case left here is a store that carries none.
     if meta_get(conn, META_SCHEMA_VERSION)?.is_none() {
         meta_set(conn, META_SCHEMA_VERSION, SCHEMA_VERSION)?;
     }
@@ -71,16 +102,134 @@ pub fn meta_delete(conn: &Connection, key: &str) -> Result<(), CoreError> {
     Ok(())
 }
 
+/// Whether the hydration that is running, if one is, has finished.
+///
+/// Says nothing about whether one has ever run: a fresh store has no marker
+/// either, which is why reads consult `refuse_unless_hydrated` rather than
+/// this.
 pub fn hydration_complete(conn: &Connection) -> Result<bool, CoreError> {
     Ok(meta_get(conn, META_HYDRATE_STATE)?.as_deref() != Some(HYDRATE_IN_PROGRESS))
 }
 
+/// Whether this store holds a slice it can answer from.
+///
+/// Reading the in-progress marker alone cannot answer it: a store that has
+/// never hydrated carries no marker either, so it looks exactly like one
+/// whose hydration finished. What a hydration leaves behind is the slice and
+/// the cursor, and all three are tested here because all three are what a
+/// read and a catch-up need.
+///
+/// The cursor is the one that moves afterwards: catch-up advances it on
+/// every applied event and deletes it when the log has aged past it. A store
+/// whose cursor has gone cannot be kept current, so it refuses reads until
+/// it is hydrated again (`device.md` 4).
+///
+/// **One predicate, read by the guard and by the status report alike.** They
+/// were written separately and disagreed: an empty type list satisfied one
+/// and not the other, and the tier satisfied neither while catch-up required
+/// it, so a store could report that it had never hydrated and answer a
+/// listing in the same breath.
+pub fn hydrated(conn: &Connection) -> Result<bool, CoreError> {
+    if !hydration_complete(conn)? {
+        return Ok(false);
+    }
+    if meta_get(conn, META_EVENT_CURSOR)?.is_none() {
+        return Ok(false);
+    }
+    if meta_get(conn, META_SLICE_TIER)?.is_none() {
+        return Ok(false);
+    }
+    let types: Vec<String> = match meta_get(conn, META_SLICE_TYPES)? {
+        Some(json) => serde_json::from_str(&json)?,
+        None => return Ok(false),
+    };
+    Ok(!types.is_empty())
+}
+
+/// Refuses a read on a store that holds no slice yet.
+///
+/// A device that answered a listing here would hand a caller an empty page
+/// for a question it never asked the server, and nothing in the answer would
+/// say so: an empty slice and a slice that was never pulled read the same
+/// (`device.md` 4).
 pub fn refuse_unless_hydrated(conn: &Connection) -> Result<(), CoreError> {
-    if hydration_complete(conn)? {
+    if hydrated(conn)? {
         Ok(())
     } else {
         Err(CoreError::HydrationIncomplete)
     }
+}
+
+/// The version of the row held for `id`, or nothing if it is not held.
+pub fn held_version(conn: &Connection, id: &str) -> Result<Option<i64>, CoreError> {
+    Ok(conn
+        .query_row("SELECT version FROM items WHERE id = ?1", [id], |row| {
+            row.get(0)
+        })
+        .optional()?)
+}
+
+const QUEUE_COLUMNS: &str = "id, kind, item_id, target_id, edge_id, namespace, tag, \
+     base_version, idempotency_key, depends_on, verdict, reason, answer, \
+     conflicted_copy_id, refusals, queued_at, answered_at";
+
+/// Every queued write, in the order it was queued.
+///
+/// Answered rows stay until a caller clears them: a drain reports the verdict
+/// of every write it sent (`queue-and-verdicts.md` 6), and a verdict a caller
+/// has not read yet is not a verdict that has been reported.
+pub fn queued_writes(conn: &Connection) -> Result<Vec<QueuedWrite>, CoreError> {
+    let mut statement = conn.prepare(&format!(
+        "SELECT {QUEUE_COLUMNS} FROM queue ORDER BY seq ASC"
+    ))?;
+    // Positional, and the order is `QUEUE_COLUMNS`'s. Two columns of the same
+    // type swapped here would read as valid data, so the two lists are kept
+    // adjacent and a test walks them against the table itself.
+    //
+    // `depends_on` comes back as raw text and is parsed outside the closure,
+    // because a row whose dependencies cannot be read is a refusal rather
+    // than a row with none. Reading it as none would tell a drain that
+    // nothing holds the write, which is precisely the write it must not send.
+    let rows = statement.query_map([], |row| {
+        Ok((
+            QueuedWrite {
+                id: row.get(0)?,
+                kind: row.get(1)?,
+                item_id: row.get(2)?,
+                target_id: row.get(3)?,
+                edge_id: row.get(4)?,
+                namespace: row.get(5)?,
+                tag: row.get(6)?,
+                base_version: row.get(7)?,
+                idempotency_key: row.get(8)?,
+                depends_on: Vec::new(),
+                verdict: row.get(10)?,
+                reason: row.get(11)?,
+                answer: row.get(12)?,
+                conflicted_copy_id: row.get(13)?,
+                refusals: row.get(14)?,
+                queued_at: row.get(15)?,
+                answered_at: row.get(16)?,
+            },
+            row.get::<_, Option<String>>(9)?,
+        ))
+    })?;
+
+    let mut writes = Vec::new();
+    for row in rows {
+        let (mut write, depends_on) = row?;
+        if let Some(json) = depends_on {
+            write.depends_on = serde_json::from_str(&json).map_err(|error| {
+                CoreError::Store(format!(
+                    "queued write {} holds dependencies this build cannot read ({error}); \
+                     the store was written by another build and has no upgrade path",
+                    write.id
+                ))
+            })?;
+        }
+        writes.push(write);
+    }
+    Ok(writes)
 }
 
 pub fn replace_types(conn: &Connection, types: &[WireType]) -> Result<(), CoreError> {
@@ -607,7 +756,43 @@ mod tests {
             meta_get(&conn, META_SCHEMA_VERSION).unwrap().as_deref(),
             Some(SCHEMA_VERSION)
         );
+        // A store that has never hydrated refuses a read. The two ways to
+        // be unhydrated are both here, because they look identical from the
+        // marker alone: a fresh store carries none, and so does one whose
+        // hydration finished.
+        assert_eq!(
+            refuse_unless_hydrated(&conn),
+            Err(CoreError::HydrationIncomplete)
+        );
+        meta_set(&conn, META_EVENT_CURSOR, "10").unwrap();
+        meta_set(&conn, META_SLICE_TYPES, "[\"core.note\"]").unwrap();
+        meta_set(&conn, META_SLICE_TIER, "library").unwrap();
         assert!(refuse_unless_hydrated(&conn).is_ok());
+
+        // Each part of the slice on its own, because the guard and the
+        // status report read one predicate and used to read two: an empty
+        // type list satisfied one of them and the tier satisfied neither,
+        // while catch-up required it.
+        meta_set(&conn, META_SLICE_TYPES, "[]").unwrap();
+        assert_eq!(
+            refuse_unless_hydrated(&conn),
+            Err(CoreError::HydrationIncomplete)
+        );
+        meta_set(&conn, META_SLICE_TYPES, "[\"core.note\"]").unwrap();
+        meta_delete(&conn, META_SLICE_TIER).unwrap();
+        assert_eq!(
+            refuse_unless_hydrated(&conn),
+            Err(CoreError::HydrationIncomplete)
+        );
+        meta_set(&conn, META_SLICE_TIER, "library").unwrap();
+        meta_delete(&conn, META_EVENT_CURSOR).unwrap();
+        assert_eq!(
+            refuse_unless_hydrated(&conn),
+            Err(CoreError::HydrationIncomplete)
+        );
+        meta_set(&conn, META_EVENT_CURSOR, "10").unwrap();
+        assert!(refuse_unless_hydrated(&conn).is_ok());
+
         meta_set(&conn, META_HYDRATE_STATE, HYDRATE_IN_PROGRESS).unwrap();
         assert_eq!(
             refuse_unless_hydrated(&conn),
@@ -615,6 +800,102 @@ mod tests {
         );
         meta_delete(&conn, META_HYDRATE_STATE).unwrap();
         assert!(refuse_unless_hydrated(&conn).is_ok());
+    }
+
+    #[test]
+    fn a_queued_write_round_trips_through_every_column() {
+        let conn = conn();
+        // Every column carries a value distinct from every other, because
+        // the reader is positional: two columns of the same type swapped
+        // would come back as valid data and nothing else in the repository
+        // inserts a queue row.
+        conn.execute(
+            "INSERT INTO queue (
+                 id, kind, item_id, target_id, edge_id, namespace, tag,
+                 base_version, idempotency_key, payload, depends_on, verdict, reason,
+                 answer, conflicted_copy_id, refusals, queued_at, answered_at
+             ) VALUES (
+                 'q-id', 'update_item', 'the-item', 'the-target', 'the-edge',
+                 'the-namespace', 'the-tag', 7, 'the-key', '{}',
+                 '[\"first\",\"second\"]', 'blocked', 'key_spent',
+                 '{\"error\":\"as sent\"}', 'the-sibling', 3,
+                 '2026-01-01T00:00:00Z', '2026-01-02T00:00:00Z'
+             )",
+            [],
+        )
+        .unwrap();
+
+        let writes = queued_writes(&conn).unwrap();
+        assert_eq!(writes.len(), 1);
+        let write = &writes[0];
+        assert_eq!(write.id, "q-id");
+        assert_eq!(write.kind, "update_item");
+        assert_eq!(write.item_id.as_deref(), Some("the-item"));
+        assert_eq!(write.target_id.as_deref(), Some("the-target"));
+        assert_eq!(write.edge_id.as_deref(), Some("the-edge"));
+        assert_eq!(write.namespace.as_deref(), Some("the-namespace"));
+        assert_eq!(write.tag.as_deref(), Some("the-tag"));
+        assert_eq!(write.base_version, Some(7));
+        assert_eq!(write.idempotency_key, "the-key");
+        assert_eq!(write.depends_on, vec!["first", "second"]);
+        assert_eq!(write.verdict.as_deref(), Some("blocked"));
+        assert_eq!(write.reason.as_deref(), Some("key_spent"));
+        assert_eq!(write.answer.as_deref(), Some("{\"error\":\"as sent\"}"));
+        assert_eq!(write.conflicted_copy_id.as_deref(), Some("the-sibling"));
+        assert_eq!(write.refusals, 3);
+        assert_eq!(write.queued_at, "2026-01-01T00:00:00Z");
+        assert_eq!(write.answered_at.as_deref(), Some("2026-01-02T00:00:00Z"));
+    }
+
+    #[test]
+    fn the_queue_refuses_what_the_contract_closes() {
+        let conn = conn();
+        let insert = |id: &str, verdict: &str, refusals: i64, key: &str| {
+            conn.execute(
+                "INSERT INTO queue (id, kind, idempotency_key, payload, verdict, refusals, queued_at)
+                 VALUES (?1, 'create_item', ?2, '{}', ?3, ?4, '2026-01-01T00:00:00Z')",
+                rusqlite::params![id, key, verdict, refusals],
+            )
+        };
+
+        // The control: a row inside every constraint goes in, so the
+        // refusals below are the constraints rather than a broken insert.
+        insert("ok", "accepted", 0, "key-ok").unwrap();
+
+        // A verdict outside the six. The set is the contract's, and a store
+        // carrying a seventh is one no later build can read correctly.
+        assert!(insert("bad-verdict", "maybe", 0, "key-a").is_err());
+
+        // Past the ceiling. Five is a number the contract fixes rather than
+        // configuration, and this file outlives the process that writes it.
+        assert!(insert("over-ceiling", "dead", 6, "key-b").is_err());
+
+        // A second row under a key that has already been used. The server
+        // answers the second from the first's record, so a duplicate means a
+        // write silently discarded and a device told it succeeded.
+        assert!(insert("duplicate-key", "accepted", 0, "key-ok").is_err());
+    }
+
+    #[test]
+    fn a_store_written_by_another_schema_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("core.sqlite");
+        {
+            let conn = open(&path).unwrap();
+            meta_set(&conn, META_SCHEMA_VERSION, "something-else").unwrap();
+        }
+        // Refused rather than migrated, and the message says what to do:
+        // there is no upgrade path, so a caller either deletes the file or
+        // keeps a store this build cannot read correctly.
+        let refused = open(&path);
+        assert!(matches!(
+            refused,
+            Err(CoreError::WrongSchema { ref found, .. }) if found == "something-else"
+        ));
+        // The control: a store this build wrote opens again. Without it the
+        // refusal above would pass against an `open` that refused every file.
+        std::fs::remove_file(&path).unwrap();
+        assert!(open(&path).is_ok());
     }
 
     #[test]

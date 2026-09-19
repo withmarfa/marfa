@@ -201,6 +201,11 @@ pub enum MarfaError {
     HydrationIncomplete {
         message: String,
     },
+    WrongSchema {
+        expected: String,
+        found: String,
+        message: String,
+    },
     CatchUpTooOld {
         min_retained_id: String,
         message: String,
@@ -235,6 +240,7 @@ impl MarfaError {
             | MarfaError::NoServer { message }
             | MarfaError::NoCursor { message }
             | MarfaError::HydrationIncomplete { message }
+            | MarfaError::WrongSchema { message, .. }
             | MarfaError::CatchUpTooOld { message, .. }
             | MarfaError::StreamIncomplete { message, .. }
             | MarfaError::WrongServer { message, .. }
@@ -279,6 +285,11 @@ impl From<marfa_core::CoreError> for MarfaError {
             E::NoServer => MarfaError::NoServer { message },
             E::NoCursor => MarfaError::NoCursor { message },
             E::HydrationIncomplete => MarfaError::HydrationIncomplete { message },
+            E::WrongSchema { expected, found } => MarfaError::WrongSchema {
+                expected,
+                found,
+                message,
+            },
             E::CatchUpTooOld { min_retained_id } => MarfaError::CatchUpTooOld {
                 min_retained_id,
                 message,

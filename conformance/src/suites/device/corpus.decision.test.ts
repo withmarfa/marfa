@@ -38,21 +38,60 @@ interface Statement {
 }
 
 function statements(chapter: string): Statement[] {
+  return read(chapter).found;
+}
+
+/**
+ * A statement that goes on after a blank line, which this parser cannot read.
+ *
+ * The truncation is silent and the hole it leaves is worse than the one that
+ * made it visible. A statement split into paragraphs with its citations in
+ * the first one satisfies every check here — it has citations, and they
+ * resolve — while whatever the later paragraphs claim is read by nothing.
+ * `spec-citations.test.ts` does not cover it either: that one scans a chapter
+ * whole and asks whether each citation resolves, never whether a statement
+ * carries one.
+ *
+ * So the shape is refused rather than parsed. Every statement in the three
+ * chapters is one paragraph, and a rule that needs two is a rule to split in
+ * two.
+ */
+function orphanedContinuations(chapter: string): string[] {
+  return read(chapter).orphans;
+}
+
+function read(chapter: string): { found: Statement[]; orphans: string[] } {
   const lines = readFileSync(resolve(specDir, chapter), "utf8").split("\n");
   const found: Statement[] = [];
+  const orphans: string[] = [];
   let current: Statement | undefined;
+  // The statement a blank line just ended, kept only until the next
+  // non-blank line says whether that line meant to continue it.
+  let ended: Statement | undefined;
   for (const line of lines) {
     const start = /^(\d+)\. (.*)$/.exec(line);
     if (start) {
       current = { chapter, number: start[1], text: start[2] };
+      ended = undefined;
       found.push(current);
       continue;
     }
+    if (/^\s*$/.test(line)) {
+      ended = ended ?? current;
+      current = undefined;
+      continue;
+    }
     // A statement prettier left wrapped continues on an indented line.
-    if (current && /^\s+\S/.test(line)) current.text += ` ${line.trim()}`;
-    else current = undefined;
+    if (current && /^\s+\S/.test(line)) {
+      current.text += ` ${line.trim()}`;
+      continue;
+    }
+    if (ended && /^\s+\S/.test(line)) {
+      orphans.push(`${chapter} ${ended.number}: ${line.trim().slice(0, 60)}`);
+    }
+    ended = undefined;
   }
-  return found;
+  return { found, orphans };
 }
 
 /**
@@ -148,6 +187,20 @@ describe("every device statement is asserted by something", () => {
         `${chapter} parsed to ${String(numbers.length)} statements, which is fewer than it carries`,
       ).toBeGreaterThanOrEqual(15);
     }
+  });
+
+  it("reads every statement whole", () => {
+    // The parse ends a statement at a blank line, so a statement written as
+    // two paragraphs is read as its first one. That passes every check here
+    // when the citations happen to sit in the first paragraph, and passes
+    // `spec-citations.test.ts` too, which scans a chapter whole and asks
+    // only whether each citation resolves. The later paragraphs would then
+    // be a rule nothing reads, reported by nothing.
+    const orphans = CHAPTERS.flatMap(orphanedContinuations);
+    expect(
+      orphans,
+      "a statement goes on past a blank line, so the parse reads part of it and every check below is about the part it read",
+    ).toEqual([]);
   });
 
   it("cites a fixture for every numbered statement", () => {

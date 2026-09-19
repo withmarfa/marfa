@@ -281,6 +281,7 @@ fn failure(error: marfa_core::CoreError) -> Error {
         E::NoServer => ("no_server", error.to_string()),
         E::NoCursor => ("no_cursor", error.to_string()),
         E::HydrationIncomplete => ("hydration_incomplete", error.to_string()),
+        E::WrongSchema { .. } => ("wrong_schema", error.to_string()),
         E::CatchUpTooOld { .. } => ("catch_up_too_old", error.to_string()),
         E::StreamIncomplete { .. } => ("stream_incomplete", error.to_string()),
         E::WrongServer { .. } => ("wrong_server", error.to_string()),

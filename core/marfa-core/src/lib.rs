@@ -21,8 +21,8 @@ use rusqlite::Connection;
 
 pub use error::CoreError;
 pub use model::{
-    CatchUpReport, Edge, HydrateReport, Hydration, Item, ItemState, ListFilters, SearchFilters,
-    SearchHit, Sort, SortDirection, SortField, Status, Tier,
+    CatchUpReport, Edge, HydrateReport, Hydration, Item, ItemState, ListFilters, QueuedWrite,
+    SearchFilters, SearchHit, Sort, SortDirection, SortField, Status, Tier,
 };
 
 pub type Result<T> = std::result::Result<T, CoreError>;
@@ -124,6 +124,21 @@ impl Core {
         search::search(&conn, query, filters, limit)
     }
 
+    /// Every queued write and what became of it.
+    ///
+    /// Answerable without a hydration: a queue is a record of what a caller
+    /// asked for, and a caller who has to hydrate before they can be told
+    /// what is outstanding has been told nothing at the moment they most
+    /// need it (`queue-and-verdicts.md` 6).
+    ///
+    /// A store this build cannot read is a different matter and refuses at
+    /// open, queue and all: the file's shape is what is in question there,
+    /// not whether a slice has been pulled into it.
+    pub fn queue(&self) -> Result<Vec<QueuedWrite>> {
+        let conn = self.conn()?;
+        store::queued_writes(&conn)
+    }
+
     pub fn status(&self) -> Result<Status> {
         let conn = self.conn()?;
         let slice_types = match store::meta_get(&conn, store::META_SLICE_TYPES)? {
@@ -137,7 +152,7 @@ impl Core {
         let event_cursor = store::meta_get(&conn, store::META_EVENT_CURSOR)?;
         let hydration = if !store::hydration_complete(&conn)? {
             Hydration::InProgress
-        } else if event_cursor.is_some() && !slice_types.is_empty() {
+        } else if store::hydrated(&conn)? {
             Hydration::Complete
         } else {
             Hydration::Never
@@ -178,6 +193,20 @@ mod tests {
     #[test]
     fn reads_refuse_while_a_hydration_is_in_progress() {
         let core = Core::open_in_memory(None).unwrap();
+        // A store that has never hydrated refuses rather than answering an
+        // empty page, because the two read the same and only one of them is
+        // a copy of anything.
+        assert_eq!(
+            core.list(&ListFilters::default(), Sort::default()),
+            Err(CoreError::HydrationIncomplete)
+        );
+        assert_eq!(core.status().unwrap().hydration, Hydration::Never);
+        {
+            let conn = core.conn().unwrap();
+            store::meta_set(&conn, store::META_EVENT_CURSOR, "10").unwrap();
+            store::meta_set(&conn, store::META_SLICE_TYPES, "[\"core.note\"]").unwrap();
+            store::meta_set(&conn, store::META_SLICE_TIER, "library").unwrap();
+        }
         assert!(
             core.list(&ListFilters::default(), Sort::default())
                 .unwrap()
@@ -200,7 +229,7 @@ mod tests {
             let conn = core.conn().unwrap();
             store::meta_delete(&conn, store::META_HYDRATE_STATE).unwrap();
         }
-        assert_eq!(core.status().unwrap().hydration, Hydration::Never);
+        assert_eq!(core.status().unwrap().hydration, Hydration::Complete);
     }
 
     #[test]
