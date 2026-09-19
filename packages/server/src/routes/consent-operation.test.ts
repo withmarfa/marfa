@@ -350,7 +350,7 @@ describe("a scope family with no read/write axis is given none", () => {
  */
 describe("an open-ended group keeps saying it is open-ended", () => {
   /** The `custom` bundle as a space with its own registered namespaces gets
-   *  it: `user` plus whatever `resolveRuntimeCustomNamespaces` returned. */
+   *  it: `user` plus whatever `resolveRegisteredNamespaceRoots` returned. */
   const customBundleAt = (
     ownRoots: string[],
   ): { scopes: ParsedScope[]; bundles: PermissionBundle[] } => {

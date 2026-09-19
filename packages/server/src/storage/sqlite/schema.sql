@@ -301,24 +301,13 @@ CREATE TABLE IF NOT EXISTS `bulk_action_jobs` (
 CREATE INDEX IF NOT EXISTS `idx_bulk_action_jobs_status` ON `bulk_action_jobs` (`status`);
 CREATE INDEX IF NOT EXISTS `idx_bulk_action_jobs_gc` ON `bulk_action_jobs` (`status`,`finished_at`);
 CREATE UNIQUE INDEX IF NOT EXISTS `idx_bulk_action_jobs_idempotency` ON `bulk_action_jobs` (`idempotency_key`) WHERE idempotency_key IS NOT NULL;
-CREATE TABLE IF NOT EXISTS `custom_edge_types` (
+CREATE TABLE IF NOT EXISTS `edge_types` (
 	`id` text PRIMARY KEY NOT NULL,
 	`schema` text NOT NULL,
 	`created_at` text NOT NULL,
 	`updated_at` text NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS `custom_types` (
-	`id` text PRIMARY KEY NOT NULL,
-	`schema` text NOT NULL,
-	`origin` text DEFAULT 'user' NOT NULL,
-	`family` text,
-	`owner_integration` text,
-	`created_at` text NOT NULL,
-	`updated_at` text NOT NULL
-);
-
-CREATE INDEX IF NOT EXISTS `idx_custom_types_origin` ON `custom_types` (`origin`);
 CREATE TABLE IF NOT EXISTS `edges` (
 	`id` text PRIMARY KEY NOT NULL,
 	`source_id` text NOT NULL,
@@ -452,6 +441,17 @@ CREATE TABLE IF NOT EXISTS `settings` (
 	`value` text NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS `types` (
+	`id` text PRIMARY KEY NOT NULL,
+	`schema` text NOT NULL,
+	`origin` text DEFAULT 'user' NOT NULL,
+	`family` text,
+	`owner_integration` text,
+	`created_at` text NOT NULL,
+	`updated_at` text NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS `idx_types_origin` ON `types` (`origin`);
 CREATE TABLE IF NOT EXISTS `versions` (
 	`id` text PRIMARY KEY NOT NULL,
 	`item_id` text NOT NULL,

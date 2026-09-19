@@ -35,7 +35,7 @@
  * reserving a root can strand.** The other half is a publisher handle: the
  * same word can already be held by a user, in a different table, and after
  * the reservation that user holds a handle nobody could claim today. Nothing
- * here would ever say so — it is handed `custom_types` rows and has no view
+ * here would ever say so — it is handed `types` rows and has no view
  * of accounts. Every deployment was checked for both before `content` was
  * reserved and held neither, so the gap is in what would be noticed later
  * rather than in what shipped.
@@ -72,7 +72,7 @@ export function reportReservedRootRows(
 
     reported.push(id);
     log("error", "stored type sits under a reserved root that names no tier", {
-      table: "custom_types",
+      table: "types",
       column: "id",
       row_id: id,
       reserved_root: root,

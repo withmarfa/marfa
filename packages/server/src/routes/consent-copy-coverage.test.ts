@@ -55,7 +55,7 @@ import { renderDeviceConsentScreen } from "./device-pages.js";
 import { escapeHtml } from "./auth-html.js";
 
 /**
- * A publisher handle of the shape boot installs from the `custom_types`
+ * A publisher handle of the shape boot installs from the `types`
  * table, injected rather than assumed.
  *
  * The allowlist is not knowable from source alone. `setRuntimeNamespaceRoots`

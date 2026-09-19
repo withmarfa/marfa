@@ -29,7 +29,7 @@ const MetricsResponseSchema = z.object({
   types: z.object({
     core: z.number(),
     integration: z.number(),
-    custom: z.number(),
+    registered: z.number(),
   }),
   keys: z.object({
     total: z.number(),
@@ -92,13 +92,13 @@ export function metricsRoutes(storage: Storage) {
       );
     }
 
-    const [itemStats, blobStats, keyCount, webhookCount, customTypeCount] =
+    const [itemStats, blobStats, keyCount, webhookCount, registeredTypeCount] =
       await Promise.all([
         storage.items.stats(undefined),
         storage.blobs.count(),
         storage.keys.count(),
         storage.outboundWebhooks.count(),
-        storage.types.countCustom(),
+        storage.types.countRegistered(),
       ]);
 
     const total = Object.values(itemStats).reduce((a, b) => a + b, 0);
@@ -117,7 +117,7 @@ export function metricsRoutes(storage: Storage) {
         // vocabulary with the vendor-shaped types an integration writes into.
         core: ALL_TYPES.length,
         integration: ALL_INTEGRATION_TYPES.length,
-        custom: customTypeCount,
+        registered: registeredTypeCount,
       },
       keys: {
         total: keyCount,

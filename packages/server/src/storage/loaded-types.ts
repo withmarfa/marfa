@@ -1,10 +1,7 @@
 /**
- * One mapping from a `custom_types` row to a `LoadedType`, shared by both
- * dialects and by every method that reads the table with provenance.
- *
- * It was written out once per dialect, and this change adds two more
- * readers, so it becomes four copies of one decision about what an
- * unreadable column means unless it becomes none.
+ * One mapping from a `types` row to a `LoadedType`, shared by every method
+ * that reads the table with provenance, so that what an unreadable column
+ * means is decided once rather than per reader.
  *
  * **`family` is passed through rather than validated here, deliberately.**
  * The boot projection is what decides where an unplaceable platform row
@@ -31,11 +28,11 @@ import { log } from "../middleware/logger.js";
 import type { LoadedType } from "./interface.js";
 import { safeJsonParse } from "./json-utils.js";
 
-/** The shape both dialects' `custom_types` selects return. */
-export interface CustomTypeRow {
+/** The shape a `types` select returns. */
+export interface TypeRow {
   id: string;
   schema: string;
-  /** `NOT NULL DEFAULT 'user'` in both dialects, so never absent. */
+  /** `NOT NULL DEFAULT 'user'`, so never absent. */
   origin: string;
   family: string | null;
   owner_integration: string | null;
@@ -45,14 +42,13 @@ export interface CustomTypeRow {
  * Reports a stored origin this build does not recognize, and hands it back
  * unchanged.
  *
- * There is no null branch because the column is `NOT NULL DEFAULT 'user'`
- * in both dialects: rows predating provenance were given `user` by the
- * default rather than left empty.
+ * There is no null branch: the column is `NOT NULL DEFAULT 'user'`, so a
+ * row carries a string whatever wrote it.
  */
 function reportUnknownOrigin(value: string, id: string): void {
   if (isValidTypeOrigin(value)) return;
   log("error", "stored type origin is not one this build recognizes", {
-    table: "custom_types",
+    table: "types",
     column: "origin",
     row_id: id,
     stored_origin: value,
@@ -64,13 +60,13 @@ function reportUnknownOrigin(value: string, id: string): void {
 }
 
 /** Maps rows to `LoadedType`s, dropping any whose schema will not parse. */
-export function toLoadedTypes(rows: readonly CustomTypeRow[]): LoadedType[] {
+export function toLoadedTypes(rows: readonly TypeRow[]): LoadedType[] {
   const results: LoadedType[] = [];
   for (const row of rows) {
     const parsed = safeJsonParse<TypeSchema | null>(
       row.schema,
       null,
-      `custom_types.schema[${row.id}]`,
+      `types.schema[${row.id}]`,
     );
     if (!parsed) continue;
     reportUnknownOrigin(row.origin, row.id);

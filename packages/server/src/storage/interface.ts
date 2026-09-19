@@ -915,30 +915,31 @@ export interface VersionStore {
 
 export interface TypeStore {
   /** Lists every type: the shipped core/system set plus the instance's own
-   *  custom types. */
+   *  registrations. */
   list(): Promise<TypeSchema[]>;
   /** Resolves a type by id: the shipped set, then the instance's own. */
   get(id: string): Promise<TypeSchema | undefined>;
   create(schema: TypeSchema, provenance?: TypeProvenance): Promise<TypeSchema>;
   update(id: string, schema: TypeSchema): Promise<TypeSchema>;
   delete(id: string): Promise<void>;
-  /** The instance's own custom types, without the shipped core and system
+  /** The instance's own registrations, without the shipped core and system
    *  set `list` folds in. Exists because an export has to carry the
    *  registrations a restore would otherwise be missing, and only the
-   *  custom ones are the instance's to carry. */
-  listCustom(): Promise<TypeSchema[]>;
+   *  instance's own are the instance's to carry. */
+  listRegistered(): Promise<TypeSchema[]>;
   /**
-   * The instance's custom types with their stored provenance.
+   * The instance's registrations with their stored provenance.
    *
-   * `listCustom` returns bare schemas, which is all three of its other
+   * `listRegistered` returns bare schemas, which is all three of its other
    * callers need. This exists because deciding what a type IS cannot be
    * done from its identifier: a vendor's `readwise.book` and a person's
    * `jonah.reading_item` under a claimed handle are the same shape, and
    * only the stored `origin` separates them.
    */
-  listCustomWithProvenance(): Promise<LoadedType[]>;
-  /** Load every custom type for server-startup registry warmup. */
-  loadCustomTypes(): Promise<LoadedType[]>;
+  listRegisteredWithProvenance(): Promise<LoadedType[]>;
+  /** Every row for server-startup registry warmup, the platform-seeded
+   *  ones included — which is what separates this from `listRegistered`. */
+  loadAll(): Promise<LoadedType[]>;
   /**
    * Install the shipped vocabulary, and answer with any shipped id that
    * collided with a registration this seed did not write.
@@ -964,7 +965,7 @@ export interface TypeStore {
    * performs.
    */
   deletePlatformType(id: string): Promise<boolean>;
-  countCustom(): Promise<number>;
+  countRegistered(): Promise<number>;
 }
 
 /** Where a registered type came from, written alongside its schema. */
@@ -992,21 +993,21 @@ export interface TypeProvenance {
 /** A type schema as loaded at startup, the shape the warmup registers. */
 export interface LoadedType {
   schema: TypeSchema;
-  /** Provenance as stored. Rows written before types carried provenance
-   *  default to `user`, which is what every row in this table was. */
+  /** Provenance as stored. `NOT NULL DEFAULT 'user'`, so a row carries one
+   *  whatever wrote it. */
   origin: TypeOrigin;
   family?: PlatformTypeFamily;
   owner_integration?: string;
 }
 
 export interface EdgeTypeStore {
-  /** Lists the instance's custom edge types. */
+  /** Every row in the table. There is no narrower read beside this one:
+   *  `edge_types` has no `origin` column and nothing seeds it, so a row is
+   *  there because a caller registered it. */
   list(): Promise<EdgeTypeSchema[]>;
   get(id: string): Promise<EdgeTypeSchema | undefined>;
   create(schema: EdgeTypeSchema): Promise<EdgeTypeSchema>;
   delete(id: string): Promise<void>;
-  /** Load every custom edge type for server-startup registry warmup. */
-  loadCustomEdgeTypes(): Promise<EdgeTypeSchema[]>;
 }
 
 export interface SearchStore {

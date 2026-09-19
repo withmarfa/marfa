@@ -9,7 +9,7 @@
  * boot, flipped `origin` from `user` to `platform`, and stamped a family.
  *
  * Every mechanism that would have surfaced it was disabled by the same write:
- * `listCustom` filters `origin != 'platform'`, so the type left their own
+ * `listRegistered` filters `origin != 'platform'`, so the type left their own
  * registrations and their archive export; `isLockedPlatformType` then refused
  * both `PUT` and `DELETE`; and `computePlatformDrift` could never report it,
  * because afterwards the row genuinely matched a shipped id.
@@ -59,17 +59,17 @@ describe("seedPlatformTypes leaves a registration it did not write", () => {
     expect(collided).toEqual([CONTESTED]);
 
     // The operator's row is untouched on every axis the overwrite moved.
-    const rows = await ctx.storage.types.loadCustomTypes();
+    const rows = await ctx.storage.types.loadAll();
     const row = rows.find((r) => r.schema.id === CONTESTED);
     expect(row?.origin).toBe("user");
     expect(Object.keys(row?.schema.fields ?? {})).toEqual(["note"]);
 
-    // And it is still theirs: `listCustom` filters `origin != 'platform'`, so
+    // And it is still theirs: `listRegistered` filters `origin != 'platform'`, so
     // an overwritten row would vanish from their own registrations and from
     // the archive export built on them.
-    expect((await ctx.storage.types.listCustom()).map((t) => t.id)).toContain(
-      CONTESTED,
-    );
+    expect(
+      (await ctx.storage.types.listRegistered()).map((t) => t.id),
+    ).toContain(CONTESTED);
   });
 
   it("still updates a row the seed itself wrote, which is what the upsert is for", async () => {
@@ -94,7 +94,7 @@ describe("seedPlatformTypes leaves a registration it did not write", () => {
       ),
     ).toEqual([]);
 
-    const rows = await ctx.storage.types.loadCustomTypes();
+    const rows = await ctx.storage.types.loadAll();
     const row = rows.find((r) => r.schema.id === "core.seeded-probe");
     expect(row?.origin).toBe("platform");
     expect(Object.keys(row?.schema.fields ?? {})).toEqual(["b"]);

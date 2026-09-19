@@ -3,8 +3,8 @@
  *
  * Exercises the export-to-restore round trip end to end: the server builds
  * the archive via GET /export?format=archive and accepts it back via
- * POST /admin/restore-archive, which is what proves manifest-v1 and
- * blob-hash verification agree.
+ * POST /admin/restore-archive, which is what proves the manifest contract
+ * and blob-hash verification agree.
  *
  * No tar.gz construction in test code — relying on the server's own
  * archive export keeps this dependency-free and exercises the only archive

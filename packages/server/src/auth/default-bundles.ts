@@ -14,25 +14,19 @@
  * - The registry's own publisher roots, for the namespace wildcards the
  *   scope allowlist admits (`google.*`, `readwise.*`, …) — previously a
  *   second hand list.
- * - The runtime `custom_types` table, for the namespaces of types spaces
+ * - The runtime `types` table, for the namespaces of types spaces
  *   have registered themselves. Their roots extend the custom bundle with
  *   `<root>.*` wildcards so a custom type under any handle is offerable,
  *   not just `user.*`.
  *
- * The runtime source is read on two schedules, because registrations are
- * space-scoped and consent is per-space. At boot, the space-less bucket is
- * folded into the instance-wide bundle set. That bucket holds the
- * platform-shipped registrations and a manifest's declared types, which are
- * meant to be offerable from every space; a self-host's own registrations
- * are not in it and have not been since keys mode got a space, so the fold
- * is about the platform set rather than about a deployment shape. In hosted
- * mode a registration belongs to one space, and folding it in instance-wide
- * would present one space's namespaces on every other space's consent
- * screen; the consent route instead derives
- * that space's own roots at render time ({@link resolveRuntimeCustomNamespaces}
- * with a space id). The scope allowlist, which is an acceptance set rather
- * than anything a person sees, keeps the boot-time restart-re-enumeration
- * model over every space's roots ({@link resolveAllRuntimeCustomNamespaces}).
+ * The runtime source is read by two callers that need different shapes of
+ * the same rows. The OAuth scope allowlist takes the roots flat
+ * ({@link resolveAllRegisteredNamespaceRoots}): it is an acceptance set, so
+ * a literal outside it is narrowed away before consent can see one, and
+ * being in it is not disclosure. The default bundles take the roots split
+ * by provenance ({@link resolveRegisteredNamespaceRoots}), because what a
+ * person is offered turns on whether a root is their own or a connected
+ * service's mirror, which is a distinction the allowlist has no use for.
  */
 import {
   TYPE_REGISTRY,
@@ -47,8 +41,13 @@ import type { Storage } from "../storage/interface.js";
  * `edge.<root>.*` pair) are requestable: `user` and `app` for the runtime
  * tiers, plus every publisher root the shipped registry occupies. Derived,
  * not enumerated — a new integration namespace joins by existing.
+ *
+ * **Not a reader of the `types` table**, which is why it is not named for a
+ * registration: it answers from `TYPE_REGISTRY`, the build's own set, and
+ * the roots a caller registered reach the allowlist by the other path,
+ * {@link resolveAllRegisteredNamespaceRoots}.
  */
-export function deriveCustomTypeNamespaces(): string[] {
+export function deriveRequestableNamespaceRoots(): string[] {
   const roots = new Set<string>(["user", "app"]);
   for (const id of TYPE_REGISTRY.keys()) {
     if (classifyNamespace(id) === "publisher") {
@@ -66,12 +65,8 @@ export function deriveCustomTypeNamespaces(): string[] {
  * custom type in the first place (belt: filtered anyway, since this reads
  * a table rather than the validator's output).
  *
- * The answer is the instance's own registrations, asked at render time so
- * a registration is offerable without a restart. The
- * answer is the space-less bucket, which holds the platform-scoped
- * registrations and nothing a space owns. Never both at once — a space's
- * consent screen deliberately does not inherit the platform bucket, whose
- * types resolve only for space-less callers.
+ * Asked at render time rather than cached, so a registration becomes
+ * offerable without a restart.
  */
 export interface RuntimeNamespaceRoots {
   /** Roots holding types the person registered themselves. */
@@ -79,8 +74,9 @@ export interface RuntimeNamespaceRoots {
   /** Roots holding types an installed integration published. */
   connected: string[];
   /**
-   * Roots holding types whose provenance nobody recorded, restored from an
-   * archive taken before archives carried it.
+   * Roots holding types whose provenance nobody recorded — a row whose
+   * `origin` a newer build wrote and this one does not recognize, or a
+   * hand-written archive line that carried none.
    *
    * Offered as the person's own, because a root that lands in no bundle is
    * a root no application can be granted, and a legitimate backup of your
@@ -92,10 +88,10 @@ export interface RuntimeNamespaceRoots {
   ownReadOnly: string[];
 }
 
-export async function resolveRuntimeCustomNamespaces(
+export async function resolveRegisteredNamespaceRoots(
   storage: Storage,
 ): Promise<RuntimeNamespaceRoots> {
-  const rows = await storage.types.listCustomWithProvenance();
+  const rows = await storage.types.listRegisteredWithProvenance();
   // Split by the stored fact, because the identifier cannot do it:
   // `readwise.book` and `jonah.reading_item` are the same shape to a
   // first-segment test, and one arrived with a connected service while
@@ -133,7 +129,7 @@ export async function resolveRuntimeCustomNamespaces(
 }
 
 /**
- * Every space's runtime custom-namespace roots at once, for the OAuth
+ * Every space's registered namespace roots at once, for the OAuth
  * scope allowlist and nothing user-facing. The allowlist is an acceptance
  * set — a scope literal outside it is narrowed away before consent — so a
  * space's roots have to be in it for that space's grants to be issuable
@@ -141,10 +137,10 @@ export async function resolveRuntimeCustomNamespaces(
  * what a person is shown stays per-space (the consent route), and what the
  * discovery documents advertise stays pinned to the bundle baseline.
  */
-export async function resolveAllRuntimeCustomNamespaces(
+export async function resolveAllRegisteredNamespaceRoots(
   storage: Storage,
 ): Promise<string[]> {
-  const loaded = await storage.types.loadCustomTypes();
+  const loaded = await storage.types.loadAll();
   // Platform rows share this table since the shipped vocabulary became
   // seeded data, and their publisher roots are already in the allowlist's
   // static half. Folding them in again would report the build's own set as
@@ -190,7 +186,7 @@ function namespaceRootsOf(ids: readonly string[]): string[] {
  * - `custom` is the one wildcard bundle, deliberately: types a person
  *   invents do not exist at request time, so no concrete list can name
  *   them. `user.*` always; `extraCustomNamespaces` (the runtime roots from
- *   {@link resolveRuntimeCustomNamespaces}) extend it so custom types under
+ *   {@link resolveRegisteredNamespaceRoots}) extend it so custom types under
  *   a claimed handle are offerable through the same toggle. Registry
  *   publisher roots are excluded here — `connected` already covers their
  *   types concretely, and their namespace wildcards stay requestable
@@ -210,7 +206,7 @@ export function buildDefaultPermissionBundles(
     else if (tier !== "system") connectedTypes.push(id);
   }
 
-  const registryRoots = new Set(deriveCustomTypeNamespaces());
+  const registryRoots = new Set(deriveRequestableNamespaceRoots());
   const customWildcardRoots = [
     "user",
     ...[...new Set(extraCustomNamespaces)]

@@ -32,7 +32,7 @@ const exportRoute = createRoute({
   tags: ["Export"],
   summary: "Export space data",
   description:
-    "Streams the space's items with their metadata (tags and extensions) as `{item, metadata}` NDJSON lines, followed by the edges between exported items as `{edge}` lines (default) or, with `format=archive`, a `marfa-archive-v1.tar.gz` carrying `manifest.json`, `items.ndjson`, `edges.ndjson`, `types.ndjson` (the space's custom type and edge-type registrations, so a restore into an empty space can write the items that use them), and blob bytes that `POST /admin/restore-archive` can ingest. Space-scoped, exporting only what the caller can read; the response streams until the filter is exhausted. Only edges whose endpoints are both in the exported item set are included, so a filtered export never references items it does not carry. " +
+    "Streams the space's items with their metadata (tags and extensions) as `{item, metadata}` NDJSON lines, followed by the edges between exported items as `{edge}` lines (default) or, with `format=archive`, a `marfa-archive-v2.tar.gz` carrying `manifest.json`, `items.ndjson`, `edges.ndjson`, `types.ndjson` (the space's type and edge-type registrations, so a restore into an empty space can write the items that use them), and blob bytes that `POST /admin/restore-archive` can ingest. Space-scoped, exporting only what the caller can read; the response streams until the filter is exhausted. Only edges whose endpoints are both in the exported item set are included, so a filtered export never references items it does not carry. " +
     UNKNOWN_PARAM_NOTE,
   security: [{ bearerAuth: [] }],
   request: {
@@ -265,11 +265,12 @@ interface ArchiveManifest {
   item_count: number;
   edge_count: number;
   blob_count: number;
-  /** Custom type and edge-type registrations carried in `types.ndjson`.
-   *  Optional so an archive written before the member existed still
-   *  parses; absent reads the same as zero. */
-  custom_type_count?: number;
-  custom_edge_type_count?: number;
+  /** The type and edge-type registrations carried in `types.ndjson`. The
+   *  type count is the instance's own registrations only — the export reads
+   *  them through `listRegisteredWithProvenance`, which excludes the
+   *  platform-seeded rows sharing the table. */
+  type_count: number;
+  edge_type_count: number;
   blobs: Record<string, { mime_type: string; size: number }>;
 }
 
@@ -299,8 +300,8 @@ async function handleArchiveExport(
   const lines: string[] = [];
   const edgeLines: string[] = [];
   const typeLines: string[] = [];
-  let customTypeCount = 0;
-  let customEdgeTypeCount = 0;
+  let typeCount = 0;
+  let edgeTypeCount = 0;
   const blobHashes = new Set<string>();
   const blobMeta: Record<string, { mime_type: string; size: number }> = {};
 
@@ -362,7 +363,7 @@ async function handleArchiveExport(
     // and an unfiltered archive is the case that matters. Carrying a
     // type the archive happens not to use costs one line.
     // Provenance rides beside the schema rather than inside it. The
-    // restore validates and normalizes `custom_type` and compares the
+    // restore validates and normalizes `type` and compares the
     // result against the stored row to decide skip-or-conflict, so a
     // field added into the schema would read as a different registration
     // and turn every re-restore into a conflict.
@@ -371,10 +372,10 @@ async function handleArchiveExport(
     // it decides whether the consent screen offers a root read-only or
     // read-and-write. An archive that drops it makes the restore guess,
     // and the default it guessed was the permissive one.
-    for (const row of await storage.types.listCustomWithProvenance()) {
+    for (const row of await storage.types.listRegisteredWithProvenance()) {
       typeLines.push(
         JSON.stringify({
-          custom_type: row.schema,
+          type: row.schema,
           provenance: {
             origin: row.origin,
             ...(row.family !== undefined && { family: row.family }),
@@ -384,11 +385,11 @@ async function handleArchiveExport(
           },
         }),
       );
-      customTypeCount += 1;
+      typeCount += 1;
     }
     for (const schema of await storage.edgeTypes.list()) {
-      typeLines.push(JSON.stringify({ custom_edge_type: schema }));
-      customEdgeTypeCount += 1;
+      typeLines.push(JSON.stringify({ edge_type: schema }));
+      edgeTypeCount += 1;
     }
 
     for (const hash of blobHashes) {
@@ -401,14 +402,14 @@ async function handleArchiveExport(
   await collect();
 
   const manifest: ArchiveManifest = {
-    version: 1,
-    format: "marfa-archive-v1",
+    version: 2,
+    format: "marfa-archive-v2",
     created_at: new Date().toISOString(),
     item_count: lines.length,
     edge_count: edgeLines.length,
     blob_count: Object.keys(blobMeta).length,
-    custom_type_count: customTypeCount,
-    custom_edge_type_count: customEdgeTypeCount,
+    type_count: typeCount,
+    edge_type_count: edgeTypeCount,
     blobs: blobMeta,
   };
 
@@ -427,16 +428,15 @@ async function handleArchiveExport(
     const ndjsonBuf = Buffer.from(lines.join("\n") + "\n");
     pack.entry({ name: "items.ndjson", size: ndjsonBuf.length }, ndjsonBuf);
 
-    // Emitted even when empty so a restore can tell "no edges" from
-    // "an archive predating edge support".
+    // Emitted even when empty, so that a member missing from the tar is a
+    // damaged archive rather than an empty one. The restore has no other
+    // way to tell those apart.
     const edgesBuf = Buffer.from(
       edgeLines.length > 0 ? edgeLines.join("\n") + "\n" : "",
     );
     pack.entry({ name: "edges.ndjson", size: edgesBuf.length }, edgesBuf);
 
-    // Always emitted, empty or not, for the same reason as edges.ndjson:
-    // a restore has to be able to tell "this space registered nothing"
-    // from "this archive predates type registrations".
+    // Always emitted, empty or not, for the same reason as edges.ndjson.
     const typesBuf = Buffer.from(
       typeLines.length > 0 ? typeLines.join("\n") + "\n" : "",
     );

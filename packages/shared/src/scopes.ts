@@ -793,7 +793,7 @@ function contentCategoryPermissions(
  *
  * **This function is registry-dependent, which it was not before.** It reads
  * `SYSTEM_TYPE_IDS`, and that set is data an instance holds rather than a
- * fact about the build: a server seeds it from `custom_types` at boot, and
+ * fact about the build: a server seeds it from `types` at boot, and
  * every caller of this function runs after seeding. In a browser bundle or
  * in the SDK there is no boot, so it resolves against the compiled shipped
  * set — the same contract {@link typeMatchesPattern} already has against

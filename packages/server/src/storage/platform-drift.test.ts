@@ -85,7 +85,7 @@ describe("which shipped types an instance carries that the build does not", () =
 
       const drift = computePlatformDrift(
         shippedPlatformTypes(),
-        await ctx.storage.types.loadCustomTypes(),
+        await ctx.storage.types.loadAll(),
       );
       expect(drift).toContain(retired);
       // And every type the build does ship is absent, which is the half

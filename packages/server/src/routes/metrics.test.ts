@@ -41,7 +41,7 @@ describe("GET /metrics", () => {
     const body = (await res.json()) as {
       items: { total: unknown; by_state: Record<string, unknown> };
       blobs: { count: unknown; total_bytes: unknown };
-      types: { core: unknown; integration: unknown; custom: unknown };
+      types: { core: unknown; integration: unknown; registered: unknown };
       keys: { total: unknown };
       webhooks: { total: unknown };
       uptime_seconds: unknown;
@@ -61,7 +61,7 @@ describe("GET /metrics", () => {
     expect(typeof body.blobs.total_bytes).toBe("number");
     expect(typeof body.types.core).toBe("number");
     expect(typeof body.types.integration).toBe("number");
-    expect(typeof body.types.custom).toBe("number");
+    expect(typeof body.types.registered).toBe("number");
     expect(typeof body.keys.total).toBe("number");
     expect(typeof body.webhooks.total).toBe("number");
     expect(typeof body.uptime_seconds).toBe("number");
@@ -98,7 +98,7 @@ describe("GET /metrics", () => {
   });
 
   it("refuses a space-bound credential", async () => {
-    // Only `items` is space-scoped; blobs, keys, webhooks, custom types,
+    // Only `items` is space-scoped; blobs, keys, webhooks, registrations,
     // connection drift and scheduled-job ticks are all instance-wide. That
     // makes the whole response platform-operator data, so the gate is
     // platform-only and a credential confined to a space is refused

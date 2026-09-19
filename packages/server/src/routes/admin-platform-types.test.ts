@@ -118,7 +118,7 @@ describe("POST /admin/platform-types/{id}/remove", () => {
 
     // Gone from the table, which is what makes it stop resolving at the
     // next boot.
-    const rows = await ctx.storage.types.loadCustomTypes();
+    const rows = await ctx.storage.types.loadAll();
     expect(rows.map((r) => r.schema.id)).not.toContain(id);
   });
 
@@ -140,7 +140,7 @@ describe("POST /admin/platform-types/{id}/remove", () => {
     expect(body.error.code).toBe("conflict");
 
     // And it is still there.
-    const rows = await ctx.storage.types.loadCustomTypes();
+    const rows = await ctx.storage.types.loadAll();
     expect(rows.map((r) => r.schema.id)).toContain("core.note");
   });
 
@@ -171,7 +171,7 @@ describe("POST /admin/platform-types/{id}/remove", () => {
     );
     expect(res.status).toBe(409);
 
-    const rows = await ctx.storage.types.loadCustomTypes();
+    const rows = await ctx.storage.types.loadAll();
     expect(rows.map((r) => r.schema.id)).toContain(parent);
   });
 
@@ -220,7 +220,7 @@ describe("POST /admin/platform-types/{id}/remove", () => {
     );
     expect(res.status).toBe(409);
 
-    const rows = await ctx.storage.types.loadCustomTypes();
+    const rows = await ctx.storage.types.loadAll();
     expect(rows.map((r) => r.schema.id)).toContain(id);
   });
 });

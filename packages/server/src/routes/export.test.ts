@@ -241,8 +241,8 @@ describe("GET /export?format=archive", () => {
       item_count: number;
       blob_count: number;
     };
-    expect(manifest.version).toBe(1);
-    expect(manifest.format).toBe("marfa-archive-v1");
+    expect(manifest.version).toBe(2);
+    expect(manifest.format).toBe("marfa-archive-v2");
     expect(manifest.item_count).toBeGreaterThan(0);
 
     expect(entries.has("items.ndjson")).toBe(true);

@@ -159,7 +159,7 @@ async function declaredChildrenOf(
   storage: Storage,
   id: string,
 ): Promise<string[]> {
-  const rows = await storage.types.loadCustomTypes();
+  const rows = await storage.types.loadAll();
   return rows
     .filter((row) => row.schema.parent === id)
     .map((row) => row.schema.id)
@@ -240,7 +240,7 @@ export function adminPlatformTypeRoutes(storage: Storage) {
     // worse than failing the request.
     await storage.audit.logOrThrow({
       action: "platform_type.removed",
-      resource_type: "custom_type",
+      resource_type: "type",
       resource_id: id,
       client_ip: c.get("clientIp") ?? null,
       details: { type: id },

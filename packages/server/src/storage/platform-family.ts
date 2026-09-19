@@ -89,7 +89,7 @@ export function projectPlatformRows(
     }
 
     log("error", "platform type carries no family this build recognizes", {
-      table: "custom_types",
+      table: "types",
       column: "family",
       row_id: row.schema.id,
       stored_family:
