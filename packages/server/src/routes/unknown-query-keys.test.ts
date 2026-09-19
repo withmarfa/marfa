@@ -67,15 +67,13 @@ describe("GET /items — an unknown parameter is refused", () => {
   it("narrows correctly when the parameter is spelled right", async () => {
     // The control. Without it a misspelled request returning nothing says
     // nothing about whether the refusal is doing the work.
-    const ok = await idsFrom(`/items?limit=50&timestamp_after=${FUTURE}`);
+    const ok = await idsFrom(`/items?limit=50&occurred_after=${FUTURE}`);
     expect(ok.status).toBe(200);
     for (const id of excluded) expect(ok.ids).not.toContain(id);
   });
 
   it("does not answer a misspelled filter with the whole corpus", async () => {
-    const misspelled = await idsFrom(
-      `/items?limit=50&timestmap_after=${FUTURE}`,
-    );
+    const misspelled = await idsFrom(`/items?limit=50&ocurred_after=${FUTURE}`);
     // The load-bearing assertion: the rows the bound was meant to exclude
     // must not reach the caller. This is what a softening to a warning
     // would break, and a status check would not.
@@ -99,7 +97,7 @@ describe("GET /items — an unknown parameter is refused", () => {
     };
     expect(body.error.code).toBe("validation_error");
     expect(body.error.message).toContain("zzz_nonsense");
-    expect(body.error.message).toContain("timestamp_after");
+    expect(body.error.message).toContain("occurred_after");
   });
 
   it("still accepts the edge shorthand, whose keys no schema declares", async () => {
@@ -166,48 +164,25 @@ describe("GET /edges — the door the published rename points at", () => {
     expect(res.status).toBe(400);
   });
 
-  it("refuses the two retired names it never carried, naming the one filter it has", async () => {
-    // This door never had `since` / `until`, so there was nothing to
-    // refuse and no refusal was written — while the release notes describe
-    // the rename as covering it. A client migrating as instructed sent one
-    // here and got a silently unfiltered page at 200 with a good cursor.
-    //
-    // The refusal names `updated_after` and never the renamed filter: an
-    // edge has no item time, so `timestamp_after` does not exist here
-    // either, and a message naming it would send the caller to a parameter
-    // this door strips in silence (the case below).
-    for (const [oldName, renamed] of [
-      ["since", "timestamp_after"],
-      ["until", "timestamp_before"],
-    ] as const) {
+  it("refuses `occurred_after`, which this door does not implement", async () => {
+    // An edge has no time of its own, so the item listing's bounds do not
+    // exist here. Stripped in silence they would answer a silently
+    // unfiltered page at 200 with a good cursor, and the refusal names the
+    // modification-time bounds this door does have.
+    for (const absent of ["occurred_after", "occurred_before"]) {
       const res = await request(
         ctx.app,
         "GET",
-        `/edges?limit=50&${oldName}=${FUTURE}`,
+        `/edges?limit=50&${absent}=${FUTURE}`,
         { key: ctx.spaceKey },
       );
       expect(res.status).toBe(400);
       const body = (await res.json()) as {
-        error: { message: string; details?: { use?: unknown } };
+        error: { message: string; details?: { unknown_parameters?: string[] } };
       };
+      expect(body.error.details?.unknown_parameters).toEqual([absent]);
       expect(body.error.message).toContain("updated_after");
-      expect(body.error.message).not.toContain(renamed);
-      expect(body.error.details?.use).toBe("updated_after");
     }
-  });
-
-  it("refuses `timestamp_after`, which this door does not implement", async () => {
-    // The sharpest case in the report: the rename's documentation sends a
-    // caller here with a parameter this listing has never had.
-    const res = await request(
-      ctx.app,
-      "GET",
-      `/edges?limit=50&timestamp_after=${FUTURE}`,
-      { key: ctx.spaceKey },
-    );
-    expect(res.status).toBe(400);
-    const body = (await res.json()) as { error: { message: string } };
-    expect(body.error.message).toContain("updated_after");
   });
 
   it("still accepts the parameters it does implement", async () => {
@@ -293,7 +268,7 @@ describe("the reserved `_` prefix, on every door that refuses", () => {
     const res = await request(
       ctx.app,
       "GET",
-      `/items?limit=50&timestamp_after=${FUTURE}&_cache_bust=9`,
+      `/items?limit=50&occurred_after=${FUTURE}&_cache_bust=9`,
       { key: ctx.spaceKey },
     );
     expect(res.status).toBe(200);
@@ -311,7 +286,7 @@ describe("the reserved `_` prefix, on every door that refuses", () => {
     const res = await request(
       ctx.app,
       "GET",
-      `/items?limit=50&timestamp_aftr=${FUTURE}`,
+      `/items?limit=50&occurred_aftr=${FUTURE}`,
       { key: ctx.spaceKey },
     );
     expect(res.status).toBe(400);
@@ -343,7 +318,7 @@ describe("POST /items/bulk-actions — the door where a dropped key costs rows",
     // impossible bound.
     const ok = await matched({
       type: "core.note",
-      timestamp_before: "1970-01-02T00:00:00.000Z",
+      occurred_before: "1970-01-02T00:00:00.000Z",
     });
     expect(ok.status).toBe(200);
     expect(ok.ids).toEqual([]);
@@ -352,7 +327,7 @@ describe("POST /items/bulk-actions — the door where a dropped key costs rows",
   it("does not turn a misspelled bound into the whole space", async () => {
     const bad = await matched({
       type: "core.note",
-      timestmap_before: "1970-01-02T00:00:00.000Z",
+      ocurred_before: "1970-01-02T00:00:00.000Z",
     });
     // The assertion that matters: none of the seeded rows are in the match
     // set. Dropped, this filter selects every item in the space and the
@@ -423,8 +398,8 @@ describe("POST /items/bulk-actions — the door where a dropped key costs rows",
       { action: "transition", state: "archived", stat: "trashed" },
       { action: "update_tier", tier: "feed", teir: "library" },
       {
-        action: "update_timestamp",
-        timestamp: "2020-01-01T00:00:00.000Z",
+        action: "update_occurred_at",
+        occurred_at: "2020-01-01T00:00:00.000Z",
         tz: 1,
       },
       { action: "update_properties", patch: { a: 1 }, pathc: { b: 2 } },
@@ -476,13 +451,13 @@ describe("POST /items/bulk-actions — the door where a dropped key costs rows",
       enable_fanout: false,
       filter: {
         type: "core.note",
-        timestamp_before: "1970-01-02T00:00:00.000Z",
+        occurred_before: "1970-01-02T00:00:00.000Z",
       },
     });
     expect(res.status).toBe(200);
   });
 
-  it("still refuses the retired names with their own message", async () => {
+  it("refuses a filter field it does not declare, naming what it accepts", async () => {
     const res = await request(ctx.app, "POST", "/items/bulk-actions", {
       key: ctx.spaceKey,
       body: {
@@ -493,7 +468,13 @@ describe("POST /items/bulk-actions — the door where a dropped key costs rows",
       },
     });
     expect(res.status).toBe(400);
-    const body = (await res.json()) as { error: { message: string } };
-    expect(body.error.message).toContain("timestamp_after");
+    const body = (await res.json()) as {
+      error: {
+        message: string;
+        details?: { unknown_filter_fields?: string[] };
+      };
+    };
+    expect(body.error.details?.unknown_filter_fields).toEqual(["since"]);
+    expect(body.error.message).toContain("occurred_after");
   });
 });

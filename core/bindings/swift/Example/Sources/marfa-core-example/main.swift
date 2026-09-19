@@ -26,7 +26,7 @@ do {
     )
     print("notes:")
     for note in notes {
-        print("  \(note.id)  \(note.timestamp)  \(try title(of: note))")
+        print("  \(note.id)  \(note.occurredAt)  \(try title(of: note))")
     }
 
     let hits = try core.search(query: query, limit: 5)

@@ -127,7 +127,7 @@ export const ItemSchema = z.object({
   device: z.string().optional(),
   capture_latitude: z.number().optional(),
   capture_longitude: z.number().optional(),
-  timestamp: z.string(),
+  occurred_at: z.string(),
   created_at: z.string(),
   updated_at: z.string(),
   /**

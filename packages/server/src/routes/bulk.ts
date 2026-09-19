@@ -11,7 +11,7 @@
  *                             matched item. Actions are a discriminated
  *                             enum (transition / purge / update_tags /
  *                             update_tier / update_properties /
- *                             update_timestamp).
+ *                             update_occurred_at).
  *
  * Both endpoints write one aggregate audit entry per call (never N per-item
  * rows), and both append to the event log for every row they write. That
@@ -75,7 +75,6 @@ import {
   BulkActionJobSchema,
   type BulkActionResult as BulkActionResultType,
 } from "../bulk-actions/types.js";
-import { refuseRenamedTimeFilterKeys } from "./_renamed-time-filters.js";
 import {
   refuseUnknownBodyKeys,
   refuseUnknownFilterKeys,
@@ -107,7 +106,7 @@ const BulkInputItemSchema = z.object({
    *  create doors disagreed. */
   state: ItemStateEnum.optional(),
   tier: z.enum(["library", "feed"]).optional(),
-  timestamp: z.string().optional(),
+  occurred_at: z.string().optional(),
   /** Ignored on the wire — server stamps `source` from the credential. */
   source: z.string().optional(),
   source_id: z.string().optional(),
@@ -269,7 +268,7 @@ const bulkActionRoute = createRoute({
   tags: ["Items"],
   summary: "Apply a bulk action",
   description:
-    "Applies one action (transition, purge, retag, retier, or property/timestamp update) to every item matching a filter. Non-dry-run calls queue an async job; `dry_run: true` returns the matched ids without writing, and `max_items` caps the match set before a `bulk_cap_exceeded` error.\n\n" +
+    "Applies one action (transition, purge, retag, retier, or a property or own-time update) to every item matching a filter. Non-dry-run calls queue an async job; `dry_run: true` returns the matched ids without writing, and `max_items` caps the match set before a `bulk_cap_exceeded` error.\n\n" +
     UNKNOWN_FILTER_FIELD_NOTE,
   security: [{ bearerAuth: [] }],
   request: {
@@ -692,7 +691,7 @@ async function processBulkItem(
     };
   }
 
-  // upsert + existing: update properties/tier/timestamp in place,
+  // upsert + existing: update properties/tier/occurred_at in place,
   // optionally reconciling edges.
   if (existing) {
     // Authorize against the row about to be overwritten. The entry's own
@@ -818,7 +817,7 @@ async function processBulkItem(
       properties: raw.properties,
       ...(resultingType === existing.type ? {} : { type: resultingType }),
       tier: raw.tier,
-      timestamp: raw.timestamp,
+      occurred_at: raw.occurred_at,
       ...(raw.version !== undefined && { version: raw.version }),
     });
     if ("error" in updated) {
@@ -904,7 +903,7 @@ async function processBulkItem(
       ...(raw.id !== undefined && { id: raw.id }),
       ...(raw.state !== undefined && { state: raw.state }),
       ...(raw.tier !== undefined && { tier: raw.tier }),
-      ...(raw.timestamp !== undefined && { timestamp: raw.timestamp }),
+      ...(raw.occurred_at !== undefined && { occurred_at: raw.occurred_at }),
       ...(stampedSource !== undefined && { source: stampedSource }),
       ...(sourceId !== undefined && { source_id: sourceId }),
       ...(raw.device !== undefined && { device: raw.device }),
@@ -998,13 +997,10 @@ export function bulkRoutes(storage: Storage) {
     }
 
     // In atomic mode, pre-validate what can be checked without a database
-    // round trip before any writing starts. Both dialects roll back for
-    // real — the SQLite store's own docblock says so in terms, and this
-    // comment used to claim the opposite and cite lines that have since
-    // moved on to something else — so this is belt and braces rather than
-    // the mechanism. It is kept because refusing a malformed type or
-    // timestamp before touching the database gives the caller the reason
-    // rather than a rollback, and gives both dialects the same answer.
+    // round trip before any writing starts. The store rolls back for real,
+    // so this is belt and braces rather than the mechanism. It is kept
+    // because refusing a malformed type or instant before touching the
+    // database gives the caller the reason rather than a rollback.
     if (atomic) {
       for (const [i, raw] of items.entries()) {
         if (!isValidTypeIdentifier(raw.type)) {
@@ -1018,14 +1014,17 @@ export function bulkRoutes(storage: Storage) {
             },
           );
         }
-        if (raw.timestamp !== undefined && !isValidTimestamp(raw.timestamp)) {
+        if (
+          raw.occurred_at !== undefined &&
+          !isValidTimestamp(raw.occurred_at)
+        ) {
           throw new MarfaError(
             ErrorCode.BULK_ATOMIC_ROLLBACK,
             `Bulk upsert rolled back on item ${String(i)}`,
             {
               index: i,
               code: ErrorCode.VALIDATION_ERROR,
-              message: "timestamp must be an ISO 8601 string",
+              message: "occurred_at must be an ISO 8601 string",
             },
           );
         }
@@ -1184,13 +1183,9 @@ export function bulkRoutes(storage: Storage) {
     //
     // This is the door where silence costs the most. The filter *is* the
     // match set, so a dropped bound does not narrow anything: `{"action":
-    // "purge", "filter": {"since": "..."}}` becomes a purge with an empty
-    // filter, matching every item in the space. Under the match cap it
-    // does not even error — it succeeds, against everything.
-    //
-    // The refusal names no modification-time filter: this door's filter
-    // schema has none, and sending a caller to one it would strip is the
-    // silence the refusal exists to prevent.
+    // "purge", "filter": {"occurred_before": "..."}}` becomes a purge with
+    // an empty filter, matching every item in the space. Under the match
+    // cap it does not even error — it succeeds, against everything.
     //
     // After the auth gates rather than before them, matching the other
     // two doors. Nothing leaked either way — schema validation already
@@ -1199,21 +1194,15 @@ export function bulkRoutes(storage: Storage) {
     const rawBody: unknown = await c.req.json().catch(() => undefined);
     if (typeof rawBody === "object" && rawBody !== null) {
       const raw = rawBody as { filter?: unknown };
-      // The retired names first, wherever they sit, because they have a
-      // replacement to name and the general refusals below do not. Both
-      // filter helpers no-op on a body that carries no filter.
-      refuseRenamedTimeFilterKeys(raw.filter, { catchUpFilter: "none" });
-      // Then the envelope, then what it carries. The envelope is the more
-      // dangerous of the two and the one that had no guard: `dry_run` is
-      // read as `?? false`, so a misspelling is stripped and the action
-      // runs for real. `confirm` is checked by name, which is why `purge`
-      // already failed safe and nothing else did.
+      // The envelope first, then what it carries. The envelope is the more
+      // dangerous of the two: `dry_run` is read as `?? false`, so a
+      // misspelling is stripped and the action runs for real. `confirm` is
+      // checked by name, which is why `purge` fails safe and nothing else
+      // does.
       refuseUnknownBodyKeys(raw, BULK_ACTION_SHAPES[action]);
-      // And the general case inside the filter, of which the two retired
-      // names are one instance. Unconditional on this door regardless of
-      // what the read doors do: a dropped filter field here is not a
-      // narrower match set but the whole space, and under the match cap it
-      // succeeds.
+      // Then the filter. Unconditional on this door regardless of what the
+      // read doors do: a dropped filter field here is not a narrower match
+      // set but the whole space, and under the match cap it succeeds.
       refuseUnknownFilterKeys(raw.filter, BulkActionFilterShape);
     }
 
@@ -1225,10 +1214,13 @@ export function bulkRoutes(storage: Storage) {
         `Invalid type identifier: ${filter.type}`,
       );
     }
-    if (action === "update_timestamp" && !isValidTimestamp(body.timestamp)) {
+    if (
+      action === "update_occurred_at" &&
+      !isValidTimestamp(body.occurred_at)
+    ) {
       throw new MarfaError(
         ErrorCode.VALIDATION_ERROR,
-        "timestamp must be an ISO 8601 string",
+        "occurred_at must be an ISO 8601 string",
       );
     }
     if (action === "update_tags") {
@@ -1363,8 +1355,8 @@ export function bulkRoutes(storage: Storage) {
           callerKey !== undefined &&
           mayWriteReserved(callerKey, filter.type ?? "")
         ),
-        timestamp_after: filter.timestamp_after,
-        timestamp_before: filter.timestamp_before,
+        occurred_after: filter.occurred_after,
+        occurred_before: filter.occurred_before,
         limit: Math.min(200, cap + 1 - matched.length),
         cursor,
       });

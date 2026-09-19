@@ -90,7 +90,6 @@ import { filterMetadataForCaller } from "./util.js";
 import { refuseUnlessUninstalled } from "./_connection-refusal.js";
 import { itemsLifecycleRoutes } from "./items-lifecycle.js";
 import { itemsVersionsRoutes } from "./items-versions.js";
-import { refuseRenamedTimeQueryParams } from "./_renamed-time-filters.js";
 import {
   refuseUnknownQueryParams,
   UNKNOWN_PARAM_NOTE,
@@ -220,7 +219,7 @@ const createItemRoute = createRoute({
             properties: z.record(z.string(), z.unknown()).optional(),
             id: z.string().optional(),
             state: z.string().optional(),
-            timestamp: z.string().optional(),
+            occurred_at: z.string().optional(),
             source: z.string().optional(),
             source_id: z.string().optional(),
             version: z
@@ -520,27 +519,27 @@ const listItemsRoute = createRoute({
       sort: z
         .string()
         .regex(
-          /^(created_at|updated_at|timestamp|properties\.[a-z0-9_]+)$/,
-          "sort must be created_at, updated_at, timestamp, or properties.<field>",
+          /^(created_at|updated_at|occurred_at|properties\.[a-z0-9_]+)$/,
+          "sort must be created_at, updated_at, occurred_at, or properties.<field>",
         )
         .optional()
         .describe(
-          "Field to sort by: a system column (created_at, updated_at, timestamp) or a naturally-orderable custom field via properties.<field> (e.g. properties.due_at). Enum fields like status/priority are not sortable here — their order is semantic, not lexical.",
+          "Field to sort by: a system column (created_at, updated_at, occurred_at) or a naturally-orderable custom field via properties.<field> (e.g. properties.due_at). Enum fields like status/priority are not sortable here — their order is semantic, not lexical.",
         ),
       direction: z.enum(["asc", "desc"]).optional().describe("Sort direction"),
-      timestamp_after: z
+      occurred_after: z
         .string()
         .min(1)
         .optional()
         .describe(
-          "Lower bound on the item's own time — `timestamp`, falling back to `created_at` (inclusive). An RFC 3339 timestamp in any valid spelling; it is normalized before the comparison. Not the modification time; for that use `updated_after`.",
+          "Lower bound on the item's own time — `occurred_at`, falling back to `created_at` (exclusive). An RFC 3339 instant in any valid spelling; it is normalized before the comparison. Not the modification time; for that use `updated_after`.",
         ),
-      timestamp_before: z
+      occurred_before: z
         .string()
         .min(1)
         .optional()
         .describe(
-          "Upper bound on the item's own time — `timestamp`, falling back to `created_at` (inclusive).",
+          "Upper bound on the item's own time — `occurred_at`, falling back to `created_at` (exclusive).",
         ),
       updated_after: z
         .string()
@@ -553,6 +552,13 @@ const listItemsRoute = createRoute({
         .optional()
         .describe(
           "Lower bound on `updated_at`, when the row last changed (inclusive). The catch-up filter: pass the cursor you hold to get everything that changed since. Forces `(updated_at, id)` ascending order, so `sort` and `direction` cannot also be given, and a cursor issued under one ordering is refused under the other. Inclusive because `updated_at` ties across a bulk write, so deduplicate by id — and note that a high-water mark landing on an instant a large bulk write shares means that whole group is re-sent on every reconnect, which terminates but is not free. This read reports changes, never removals: a purge leaves no row behind, so pruning a local copy needs the event stream as well.",
+        ),
+      updated_before: z
+        .string()
+        .min(1)
+        .optional()
+        .describe(
+          "Upper bound on `updated_at` (exclusive), closing the window its lower twin opens. Exclusive where `updated_after` is inclusive, because this is an end point the caller chooses rather than a resume point that must not drop a tie. It does not change the ordering, so it may be given under any sort.",
         ),
       limit: z.coerce
         .number()
@@ -678,7 +684,7 @@ const updateItemRoute = createRoute({
   tags: ["Items"],
   summary: "Update an item",
   description:
-    "Updates an item's properties, tier, timestamp, edges, or natural key. Properties merge shallowly with existing values by default, or become the item's properties outright when `properties_mode` is `replace`, while tier and timestamp always replace; `version` is required, a stale value returns 409 with the conflict context to resolve, and a write naming none is refused 400 `missing_required_field`. An item's `type` is not updatable here by default: sending one that matches the item is accepted and ignored, and sending a different one is refused with 409 `type_mismatch` rather than silently dropped. Passing `retype: true` alongside a different `type` moves the item to it — that requires write on the type being entered as well as the one being left, and the resulting properties are validated against the destination.",
+    "Updates an item's properties, tier, own time, edges, or natural key. Properties merge shallowly with existing values by default, or become the item's properties outright when `properties_mode` is `replace`, while tier and `occurred_at` always replace; `version` is required, a stale value returns 409 with the conflict context to resolve, and a write naming none is refused 400 `missing_required_field`. An item's `type` is not updatable here by default: sending one that matches the item is accepted and ignored, and sending a different one is refused with 409 `type_mismatch` rather than silently dropped. Passing `retype: true` alongside a different `type` moves the item to it — that requires write on the type being entered as well as the one being left, and the resulting properties are validated against the destination.",
   security: [{ bearerAuth: [] }],
   request: {
     params: IdParam,
@@ -744,9 +750,9 @@ const updateItemRoute = createRoute({
             /** Toggle the tier (`library` ↔ `feed`). Independent of the
              *  properties merge path — last-writer-wins. */
             tier: z.enum(["library", "feed"]).optional(),
-            /** Override the user-meaningful timestamp (ISO 8601).
+            /** Override the item's own time (ISO 8601).
              *  Last-writer-wins like `tier`. */
-            timestamp: z.string().optional(),
+            occurred_at: z.string().optional(),
             /** Repoint at a new natural-key identifier under the item's
              *  `source` (the server-stamped value, not the caller's). The
              *  `(source, source_id)` tuple is
@@ -1261,8 +1267,8 @@ export function itemRoutes(storage: Storage) {
     if (body.id && !isValidId(body.id)) {
       throw new MarfaError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
-    if (body.timestamp && !isValidTimestamp(body.timestamp)) {
-      throw new MarfaError(ErrorCode.VALIDATION_ERROR, "Invalid timestamp");
+    if (body.occurred_at && !isValidTimestamp(body.occurred_at)) {
+      throw new MarfaError(ErrorCode.VALIDATION_ERROR, "Invalid occurred_at");
     }
     // A create is not a transition, so it reached none of the graph, and a
     // membership test against the universal state list is a weaker question
@@ -1433,7 +1439,7 @@ export function itemRoutes(storage: Storage) {
     // producing duplicates. Returns 200 on this branch (vs 201 on create) so
     // the caller can distinguish the realized effect.
     //
-    // Update semantics: properties / tier / timestamp via `ItemStore.update`
+    // Update semantics: properties / tier / occurred_at via `ItemStore.update`
     // (shallow-merge); tags via `metadata.set`; edges via `applyInlineEdges`
     // (replace-by-edge-type). Fields only meaningful at create time (id,
     // state, device, capture_*) are ignored — the existing row's id wins.
@@ -1591,8 +1597,8 @@ export function itemRoutes(storage: Storage) {
           const updated = await storage.items.update(existing.id, {
             ...(body.properties !== undefined && { properties }),
             ...(tierValue !== undefined && { tier: tierValue }),
-            ...(body.timestamp !== undefined && {
-              timestamp: body.timestamp,
+            ...(body.occurred_at !== undefined && {
+              occurred_at: body.occurred_at,
             }),
             ...(body.version !== undefined && { version: body.version }),
           });
@@ -1772,7 +1778,7 @@ export function itemRoutes(storage: Storage) {
           id: body.id,
           state: body.state as ItemState | undefined,
           tier: tierValue,
-          timestamp: body.timestamp,
+          occurred_at: body.occurred_at,
           source: stampedSource,
           source_id: body.source_id,
           device: body.device,
@@ -2050,15 +2056,10 @@ export function itemRoutes(storage: Storage) {
     requireAuth(c);
 
     // Before anything reads the validated query, because validation has
-    // already dropped the old names by then and a dropped time filter is
-    // indistinguishable from one that was never sent.
-    refuseRenamedTimeQueryParams(c.req.raw.url, {
-      catchUpFilter: "updated_after",
-    });
-    // After the renamed-name refusal, so a retired name still gets the
-    // message that tells a caller what replaced it rather than the
-    // general one. The edge shorthands are allowed by pattern: the type
-    // is part of the key, so no schema can enumerate them.
+    // already dropped an undeclared key by then and a dropped time filter
+    // is indistinguishable from one that was never sent. The edge
+    // shorthands are allowed by pattern: the type is part of the key, so
+    // no schema can enumerate them.
     refuseUnknownQueryParams(c.req.raw.url, listItemsRoute.request.query, {
       allow: [EDGE_SHORTHAND_KEY],
     });
@@ -2175,9 +2176,10 @@ export function itemRoutes(storage: Storage) {
       // `properties.<field>`; the storage layer re-validates via parseSortField.
       sort: (query.sort as ItemSortField | undefined) ?? undefined,
       direction: query.direction ?? undefined,
-      timestamp_after: query.timestamp_after,
-      timestamp_before: query.timestamp_before,
+      occurred_after: query.occurred_after,
+      occurred_before: query.occurred_before,
       updated_after: query.updated_after,
+      updated_before: query.updated_before,
       all_states: allStates,
       limit: query.limit,
       cursor: query.cursor,
@@ -2395,26 +2397,26 @@ export function itemRoutes(storage: Storage) {
       typeof body.edges === "object" &&
       Object.keys(body.edges).length > 0;
     const hasTier = body.tier !== undefined;
-    const hasTimestamp = body.timestamp !== undefined;
+    const hasOccurredAt = body.occurred_at !== undefined;
     const hasSourceId = body.source_id !== undefined;
 
     if (
       !hasProperties &&
       !hasEdges &&
       !hasTier &&
-      !hasTimestamp &&
+      !hasOccurredAt &&
       !hasSourceId &&
       body.retype !== true
     ) {
       throw new MarfaError(
         ErrorCode.VALIDATION_ERROR,
-        "At least one of `properties`, `edges`, `tier`, `timestamp`, `source_id`, or `retype` is required.",
+        "At least one of `properties`, `edges`, `tier`, `occurred_at`, `source_id`, or `retype` is required.",
       );
     }
-    if (body.timestamp !== undefined && !isValidTimestamp(body.timestamp)) {
+    if (body.occurred_at !== undefined && !isValidTimestamp(body.occurred_at)) {
       throw new MarfaError(
         ErrorCode.VALIDATION_ERROR,
-        "timestamp must be an ISO 8601 string",
+        "occurred_at must be an ISO 8601 string",
       );
     }
     const item = await storage.items.get(id);
@@ -2609,7 +2611,7 @@ export function itemRoutes(storage: Storage) {
       // that envelope hands a resolver two property sets and the fields
       // that collide, and a request carrying no properties has none of
       // them. There is nothing to merge, only a precondition that failed.
-      if (!hasProperties && !hasTier && !hasTimestamp && !hasSourceId) {
+      if (!hasProperties && !hasTier && !hasOccurredAt && !hasSourceId) {
         const current = await storage.items.get(id);
         if (current && body.version !== current.version) {
           throw new MarfaError(
@@ -2625,7 +2627,7 @@ export function itemRoutes(storage: Storage) {
       // resolution report the store attaches on the other arm.
       const updated:
         ResolvedItem | ConflictResponse | AncestorUnavailableResponse =
-        hasProperties || hasTier || hasTimestamp || hasSourceId
+        hasProperties || hasTier || hasOccurredAt || hasSourceId
           ? await storage.items.update(id, {
               properties: body.properties,
               ...(body.properties_mode !== undefined && {
@@ -2645,12 +2647,12 @@ export function itemRoutes(storage: Storage) {
               }),
               force_snapshot: body.force_snapshot === true ? true : undefined,
               tier: hasTier ? body.tier : undefined,
-              timestamp: hasTimestamp ? body.timestamp : undefined,
+              occurred_at: hasOccurredAt ? body.occurred_at : undefined,
               source_id: hasSourceId ? body.source_id : undefined,
             })
           : item;
       if (
-        (hasProperties || hasTier || hasTimestamp || hasSourceId) &&
+        (hasProperties || hasTier || hasOccurredAt || hasSourceId) &&
         "error" in updated
       ) {
         return updated;

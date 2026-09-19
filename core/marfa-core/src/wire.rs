@@ -35,7 +35,7 @@ pub struct WireItem {
     pub source_id: Option<String>,
     #[serde(default)]
     pub device: Option<String>,
-    pub timestamp: String,
+    pub occurred_at: String,
     pub created_at: String,
     pub updated_at: String,
     #[serde(default)]

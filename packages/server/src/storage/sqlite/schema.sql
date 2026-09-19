@@ -38,7 +38,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS `api_keys_key_hash_unique` ON `api_keys` (`key
 CREATE UNIQUE INDEX IF NOT EXISTS `idx_api_keys_source_per_space` ON `api_keys` (`source`) WHERE revoked_at IS NULL;
 CREATE TABLE IF NOT EXISTS `audit_log` (
 	`id` text PRIMARY KEY NOT NULL,
-	`timestamp` text NOT NULL,
+	`created_at` text NOT NULL,
 	`key_id` text,
 	`action` text NOT NULL,
 	`resource_type` text NOT NULL,
@@ -46,7 +46,7 @@ CREATE TABLE IF NOT EXISTS `audit_log` (
 	`details` text DEFAULT '{}' NOT NULL
 );
 
-CREATE INDEX IF NOT EXISTS `idx_audit_log_timestamp` ON `audit_log` (`timestamp`);
+CREATE INDEX IF NOT EXISTS `idx_audit_log_created_at` ON `audit_log` (`created_at`);
 CREATE INDEX IF NOT EXISTS `idx_audit_log_action` ON `audit_log` (`action`);
 CREATE INDEX IF NOT EXISTS `idx_audit_log_resource_type` ON `audit_log` (`resource_type`);
 CREATE TABLE IF NOT EXISTS `auth_account` (
@@ -369,7 +369,7 @@ CREATE TABLE IF NOT EXISTS `items` (
 	`properties` blob NOT NULL,
 	`created_at` text NOT NULL,
 	`updated_at` text NOT NULL,
-	`timestamp` text NOT NULL,
+	`occurred_at` text NOT NULL,
 	`source` text,
 	`source_id` text,
 	`version` integer DEFAULT 1 NOT NULL,
@@ -384,7 +384,7 @@ CREATE TABLE IF NOT EXISTS `items` (
 CREATE INDEX IF NOT EXISTS `idx_items_type` ON `items` (`type`);
 CREATE INDEX IF NOT EXISTS `idx_items_state` ON `items` (`state`);
 CREATE INDEX IF NOT EXISTS `idx_items_created_at` ON `items` (`created_at`);
-CREATE INDEX IF NOT EXISTS `idx_items_timestamp` ON `items` (`timestamp`);
+CREATE INDEX IF NOT EXISTS `idx_items_occurred_at` ON `items` (`occurred_at`);
 CREATE INDEX IF NOT EXISTS `idx_items_updated_at_id` ON `items` (`updated_at`,`id`);
 CREATE UNIQUE INDEX IF NOT EXISTS `idx_items_source_dedup` ON `items` (`source`,`source_id`) WHERE source IS NOT NULL;
 CREATE INDEX IF NOT EXISTS `idx_items_source_id_prefix` ON `items` ("source_id" COLLATE NOCASE) WHERE source_id IS NOT NULL;

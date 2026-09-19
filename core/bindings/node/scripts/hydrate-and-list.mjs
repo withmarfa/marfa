@@ -23,7 +23,7 @@ console.log(`hydrated ${hydrated.items} item(s) in ${hydrated.pages} page(s); cu
 
 console.log("notes:");
 for (const note of core.list({ type: "core.note", limit: 5 })) {
-  console.log(`  ${note.id}  ${note.timestamp}  ${title(note)}`);
+  console.log(`  ${note.id}  ${note.occurred_at}  ${title(note)}`);
 }
 
 console.log(`search "${query}":`);

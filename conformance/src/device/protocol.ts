@@ -30,7 +30,7 @@ export interface Item {
   version: number;
   source: string;
   source_id?: string | null;
-  timestamp: string;
+  occurred_at: string;
   created_at: string;
   updated_at: string;
   tags: string[];

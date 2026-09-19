@@ -416,7 +416,7 @@ describe("the scripted answers match the server's", () => {
           // things.
           "data.0.item.source_id",
           "data.0.item.device",
-          "data.0.item.timestamp",
+          "data.0.item.occurred_at",
           "data.0.item.created_at",
           "data.0.item.updated_at",
         ],

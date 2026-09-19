@@ -17,7 +17,6 @@ import {
 } from "./_schemas.js";
 import { filterMetadataForCaller } from "./util.js";
 import { excludesSystemTypes } from "./_system-type-visibility.js";
-import { refuseRenamedTimeQueryParams } from "./_renamed-time-filters.js";
 import {
   refuseUnknownQueryParams,
   UNKNOWN_PARAM_NOTE,
@@ -107,19 +106,19 @@ const searchRoute = createRoute({
         .string()
         .describe("Structured filter expression, as on `GET /items`.")
         .optional(),
-      timestamp_after: z
+      occurred_after: z
         .string()
         .min(1)
         .optional()
         .describe(
-          "Lower bound on the item's own time — `timestamp`, falling back to `created_at` (inclusive). An RFC 3339 timestamp in any valid spelling; it is normalized before the comparison. Not the modification time.",
+          "Lower bound on the item's own time — `occurred_at`, falling back to `created_at` (exclusive). An RFC 3339 instant in any valid spelling; it is normalized before the comparison. Not the modification time.",
         ),
-      timestamp_before: z
+      occurred_before: z
         .string()
         .min(1)
         .optional()
         .describe(
-          "Upper bound on the item's own time — `timestamp`, falling back to `created_at` (inclusive).",
+          "Upper bound on the item's own time — `occurred_at`, falling back to `created_at` (exclusive).",
         ),
     }),
   },
@@ -141,9 +140,8 @@ const searchRoute = createRoute({
         },
       },
       description:
-        "An invalid type pattern, a time bound that is not a timestamp, " +
-        "an unrecognized query parameter, or one of the two retired " +
-        "time-filter names.",
+        "An invalid type pattern, a time bound that is not an instant, " +
+        "or an unrecognized query parameter.",
     },
     401: {
       content: {
@@ -171,7 +169,6 @@ export function searchRoutes(storage: Storage) {
     // No modification-time filter is named: this door has none, and
     // sending a caller to a parameter it would strip is that same failure
     // reached through the refusal.
-    refuseRenamedTimeQueryParams(c.req.raw.url, { catchUpFilter: "none" });
     refuseUnknownQueryParams(c.req.raw.url, searchRoute.request.query);
 
     const {
@@ -184,8 +181,8 @@ export function searchRoutes(storage: Storage) {
       offset,
       filter,
       include,
-      timestamp_after: timestampAfter,
-      timestamp_before: timestampBefore,
+      occurred_after: occurredAfter,
+      occurred_before: occurredBefore,
     } = c.req.valid("query");
 
     // Grammar, the global wildcard and an unknown concrete type, decided once
@@ -232,8 +229,8 @@ export function searchRoutes(storage: Storage) {
       exclude_system_types: excludeSystemTypes,
       tags: tagsFilter,
       filter,
-      timestamp_after: timestampAfter,
-      timestamp_before: timestampBefore,
+      occurred_after: occurredAfter,
+      occurred_before: occurredBefore,
       allowed_types,
       excluded_types,
       limit,

@@ -18,7 +18,7 @@ interface AuditRow {
   action: string;
   resource_type: string;
   resource_id: string | null;
-  timestamp: string;
+  created_at: string;
   client_ip: string | null;
   details: Record<string, unknown>;
 }
@@ -47,6 +47,21 @@ async function seedAudit(
     resource_type: resourceType,
     resource_id: resourceId,
   });
+}
+
+/** The `test.window` rows, once the fire-and-forget writes have landed,
+ *  oldest first. */
+async function windowRows(count: number): Promise<AuditRow[]> {
+  for (let attempt = 0; attempt < 50; attempt++) {
+    const res = await request(ctx.app, "GET", "/audit?action=test.window", {
+      key: ctx.spaceKey,
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as AuditPage;
+    if (body.data.length === count) return body.data.slice().reverse();
+    await new Promise((r) => setTimeout(r, 10));
+  }
+  throw new Error("the test.window audit rows never landed");
 }
 
 describe("GET /audit", () => {
@@ -123,34 +138,55 @@ describe("GET /audit", () => {
     }
   });
 
-  it("filters by since/until time window", async () => {
-    const before = new Date().toISOString();
-    await seedAudit("test.window", "test", "w-1");
-    // Tight window anchored to "before"; an `until` in the past should
-    // exclude the entry we just wrote.
-    const res = await request(
-      ctx.app,
-      "GET",
-      `/audit?action=test.window&until=${encodeURIComponent(before)}`,
-      { key: ctx.spaceKey },
-    );
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as AuditPage;
-    for (const entry of body.data) {
-      // None of the returned entries should exceed the `until` clamp.
-      expect(entry.timestamp <= before).toBe(true);
+  it("bounds by created_after and created_before, both exclusive", async () => {
+    // Three rows, because fewer cannot tell the failures apart. The row on
+    // the bound's instant proves the comparison is strict rather than
+    // inclusive; the row inside the range proves the predicate reached the
+    // query at all, because a dropped bound and a bound that matched
+    // nothing both leave the boundary row absent; the far row proves the
+    // bound narrows in the direction it claims.
+    for (let i = 0; i < 3; i++) {
+      await seedAudit("test.window", "test", `w-${String(i)}`);
+      await new Promise((r) => setTimeout(r, 5));
     }
+    const rows = await windowRows(3);
+    const [earlier, onBound, later] = rows as [AuditRow, AuditRow, AuditRow];
+    expect(
+      new Set(rows.map((r) => r.created_at)).size,
+      "two rows share an instant, so a bound on one cannot separate them",
+    ).toBe(3);
 
-    // And a since-anchor in the past should include it.
-    const sinceRes = await request(
-      ctx.app,
-      "GET",
-      `/audit?action=test.window&since=${encodeURIComponent(before)}`,
-      { key: ctx.spaceKey },
+    const ids = async (query: string): Promise<string[]> => {
+      const res = await request(
+        ctx.app,
+        "GET",
+        `/audit?action=test.window&limit=200&${query}`,
+        { key: ctx.spaceKey },
+      );
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as AuditPage;
+      // The page has to be whole, or an absence below is a truncation
+      // rather than a bound.
+      expect(
+        body.has_more,
+        "the page was truncated, so a row missing from it proves nothing",
+      ).toBe(false);
+      return body.data.map((e) => e.id);
+    };
+
+    const afterBound = await ids(
+      `created_after=${encodeURIComponent(onBound.created_at)}`,
     );
-    expect(sinceRes.status).toBe(200);
-    const sinceBody = (await sinceRes.json()) as AuditPage;
-    expect(sinceBody.data.length).toBeGreaterThanOrEqual(1);
+    expect(afterBound).not.toContain(onBound.id);
+    expect(afterBound).toContain(later.id);
+    expect(afterBound).not.toContain(earlier.id);
+
+    const beforeBound = await ids(
+      `created_before=${encodeURIComponent(onBound.created_at)}`,
+    );
+    expect(beforeBound).not.toContain(onBound.id);
+    expect(beforeBound).toContain(earlier.id);
+    expect(beforeBound).not.toContain(later.id);
   });
 
   it("rejects limit below 1 with 400", async () => {

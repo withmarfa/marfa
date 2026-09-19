@@ -78,7 +78,7 @@ fn line(item: &Item) -> String {
         "{}  {}  {}  {}{}",
         item.id,
         item.r#type,
-        item.timestamp,
+        item.occurred_at,
         title,
         if item.state.as_str() == "active" {
             String::new()

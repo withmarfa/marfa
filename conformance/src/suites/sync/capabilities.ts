@@ -48,7 +48,6 @@ export type RuleKey =
   | "idempotencyKeys"
   | "updatedAfter"
   | "edgeUpdatedAfter"
-  | "renamedTimeFilters"
   | "itemPurgedEvent"
   | "edgeVersion"
   | "edgeEventsUnderFilter"
@@ -60,7 +59,6 @@ export const RULE_KEYS: RuleKey[] = [
   "idempotencyKeys",
   "updatedAfter",
   "edgeUpdatedAfter",
-  "renamedTimeFilters",
   "itemPurgedEvent",
   "edgeVersion",
   "edgeEventsUnderFilter",
@@ -128,7 +126,6 @@ async function runProbes(args: {
     idempotencyKeys: await probeIdempotencyKeys(args),
     updatedAfter: await probeUpdatedAfter(args),
     edgeUpdatedAfter: await probeEdgeUpdatedAfter(args),
-    renamedTimeFilters: await probeRenamedTimeFilters(args),
     edgeVersion: await probeEdgeVersion(args),
     itemPurgedEvent: await probeItemPurgedEvent(args),
     edgeEventsUnderFilter: await probeEdgeEventsUnderFilter(args),
@@ -538,130 +535,6 @@ async function countEdges(
   const response = await client.rawRequest<{ data?: unknown[] }>(path);
   if (!response.ok) return { rows: -1, status: response.status };
   return { rows: response.data.data?.length ?? -1, status: response.status };
-}
-
-/**
- * Is a request carrying the old name of a renamed time filter refused?
- *
- * A status probe, and the reason it is allowed matters as much as the answer.
- * Everywhere else a status cannot discriminate *because* an unknown key is
- * dropped and answered 200. Here the thing being probed is precisely a
- * refusal the server must produce, and a dropped parameter and a working one
- * both answer 200 — so 200 is `absent` under either reading and there is
- * nothing for the silence to hide.
- *
- * **A nonsense-key control settles this only on a door that ignores the
- * key.** It is there to show that a 400 on `since` is about *that name*
- * rather than about the endpoint refusing unknown input generally. A door
- * that refuses every undeclared key refuses the control too, and a 400 on
- * `since` is then the answer it gives any name it has never heard of, which
- * is evidence of nothing.
- *
- * So when the control is refused, the probe reads the refusal instead of
- * counting it. The two refusals are different statements and each says which
- * it is in `details`: the rename names what replaced it (`renamed_from` /
- * `use`), and the general one names what it did not recognize
- * (`unknown_parameters`). Reading the *message* cannot do this — the general
- * refusal lists every parameter the door accepts, `timestamp_after` among
- * them, so a substring check reports the rename against a server that has
- * never heard of it.
- *
- * The rule is worth its own flag rather than riding on `updatedAfter`, even
- * though one change carries both. `since` reads the item's own time and
- * `updated_after` reads its modification time; a server that added the second
- * without refusing the first leaves every existing caller pointed at the
- * filter whose name says "changed since" and whose behavior is not that.
- */
-async function probeRenamedTimeFilters(args: {
-  client: MarfaClient;
-}): Promise<RuleFinding> {
-  const { client } = args;
-  const control = await client.rawRequest<unknown>(
-    `/items?limit=1&${NONSENSE_KEY}=${IMPOSSIBLE_FUTURE}`,
-  );
-  const probe = await client.rawRequest<unknown>(
-    `/items?limit=1&since=${IMPOSSIBLE_FUTURE}`,
-  );
-  return readRenamedTimeFilterAnswers(control, probe);
-}
-
-/**
- * The verdict, given the two answers. Separated from the two requests and
- * exported so both branches can be driven as unit cases: a live run reaches
- * only the branch its own target implements.
- */
-export function readRenamedTimeFilterAnswers(
-  control: { status: number; ok: boolean; error?: unknown },
-  probe: { status: number; ok: boolean; error?: unknown },
-): RuleFinding {
-  // The server refuses undeclared query keys, so the control cannot separate
-  // the two cases and the refusal's own details have to.
-  if (control.status === 400) {
-    if (probe.status !== 400) {
-      throw new IndeterminateProbe(
-        "renamedTimeFilters",
-        `the endpoint refuses an undeclared key with 400 but answered ${probe.status} for "since", which is neither that refusal nor the rename's`,
-      );
-    }
-    const detail = refusalDetail(probe.error);
-    if (typeof detail.renamed_from === "string") {
-      return {
-        present: true,
-        evidence: `"since" is refused as a renamed filter (renamed_from=${JSON.stringify(detail.renamed_from)}, use=${JSON.stringify(detail.use)}) while an undeclared key is refused as unrecognized`,
-      };
-    }
-    if (Array.isArray(detail.unknown_parameters)) {
-      return {
-        present: false,
-        evidence: `"since" is refused only as an unrecognized parameter (${JSON.stringify(detail.unknown_parameters)}), the same answer the door gives a key it has never heard of — so the rename has not landed here and a caller is told their request is wrong without being told what replaced it`,
-      };
-    }
-    throw new IndeterminateProbe(
-      "renamedTimeFilters",
-      `"since" was refused with 400 but the body names neither a replacement nor an unrecognized parameter (${JSON.stringify(probe.error)}), and an undeclared key is refused too — so nothing separates a rename from a door that refuses everything it does not declare`,
-    );
-  }
-
-  // The other shape, where an undeclared key is dropped and answered 200. A
-  // refusal of "since" can only be about that name, because nothing else is
-  // being refused.
-  if (control.status !== 200) {
-    throw new IndeterminateProbe(
-      "renamedTimeFilters",
-      `a query key the server does not declare answered ${control.status}, which is neither the 200 that means it was ignored nor the 400 that means undeclared keys are refused`,
-    );
-  }
-  if (probe.status === 400) {
-    return {
-      present: true,
-      evidence: `"since" is refused with 400 while an undeclared key is ignored: ${JSON.stringify(probe.error)}`,
-    };
-  }
-  if (probe.ok) {
-    return {
-      present: false,
-      evidence: `"since" answered 200, so a caller still carrying the old name is either being served by it or having it silently dropped — and on the bulk-action door a dropped bound is the whole match set`,
-    };
-  }
-  throw new IndeterminateProbe(
-    "renamedTimeFilters",
-    `"since" answered ${probe.status}, which is neither the refusal the rename requires nor the acceptance that means it has not happened`,
-  );
-}
-
-/**
- * The `details` object an error body carries, or an empty one.
- *
- * Read rather than asserted: `details` is optional on the error envelope, so
- * a refusal without one is a shape to branch on rather than a crash.
- */
-function refusalDetail(error: unknown): Record<string, unknown> {
-  if (typeof error !== "object" || error === null) return {};
-  const inner = (error as { error?: unknown }).error;
-  if (typeof inner !== "object" || inner === null) return {};
-  const details = (inner as { details?: unknown }).details;
-  if (typeof details !== "object" || details === null) return {};
-  return details as Record<string, unknown>;
 }
 
 /**

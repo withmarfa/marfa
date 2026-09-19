@@ -16,7 +16,6 @@ import {
 import { EdgeSchema } from "./_schemas.js";
 import { assertEdgeCanBeCreated } from "../storage/edge-constraints.js";
 import { publishEdge } from "../pubsub.js";
-import { refuseRenamedTimeQueryParams } from "./_renamed-time-filters.js";
 import {
   refuseUnknownQueryParams,
   UNKNOWN_PARAM_NOTE,
@@ -119,7 +118,14 @@ const listEdgesRoute = createRoute({
         .min(1)
         .optional()
         .describe(
-          "Lower bound on `updated_at`, when the edge last changed (inclusive). The catch-up filter, matching `GET /items`. An RFC 3339 timestamp in any valid spelling; it is normalized before the comparison. Changes the order from newest-created-first to `(updated_at, id)` ascending, so a cursor from one ordering cannot be continued under the other and is refused if tried. Inclusive because `updated_at` ties across a bulk write, so deduplicate by id — and a high-water mark landing on an instant a large bulk write shares means that whole group is re-sent on every reconnect.",
+          "Lower bound on `updated_at`, when the edge last changed (inclusive). The catch-up filter, matching `GET /items`. An RFC 3339 instant in any valid spelling; it is normalized before the comparison. Changes the order from newest-created-first to `(updated_at, id)` ascending, so a cursor from one ordering cannot be continued under the other and is refused if tried. Inclusive because `updated_at` ties across a bulk write, so deduplicate by id — and a high-water mark landing on an instant a large bulk write shares means that whole group is re-sent on every reconnect.",
+        ),
+      updated_before: z
+        .string()
+        .min(1)
+        .optional()
+        .describe(
+          "Upper bound on `updated_at` (exclusive), closing the window its lower twin opens. Exclusive where `updated_after` is inclusive, because this is an end point the caller chooses rather than a resume point that must not drop a tie. It leaves the ordering alone.",
         ),
       limit: z.coerce
         .number()
@@ -383,23 +389,16 @@ export function edgeRoutes(storage: Storage) {
   router.openapi(listEdgesRoute, async (c) => {
     requireAuth(c);
 
-    // The edge listing never carried the retired names, so there was
-    // nothing to refuse and no refusal was written. The published
-    // rename says otherwise: it describes the rename as covering this
-    // door, so a client migrating exactly as instructed writes
-    // `timestamp_after` here and, unrefused, receives a silently
-    // unfiltered page at 200 with a well-formed cursor. The refusal names
-    // `updated_after`, the one time filter this door has: an edge has no
-    // item time, so the renamed filters do not exist here either.
-    refuseRenamedTimeQueryParams(c.req.raw.url, {
-      catchUpFilter: "updated_after",
-      hasItemTimeFilters: false,
-    });
+    // An edge has no time of its own, so this door carries only the
+    // modification-time bounds. A caller reaching for `occurred_after`
+    // here has to be refused rather than served an unfiltered page at 200
+    // with a well-formed cursor.
     refuseUnknownQueryParams(c.req.raw.url, listEdgesRoute.request.query);
     const q = c.req.valid("query");
     const result = await storage.edges.list({
       edge_type: parseEdgeTypeFilter(q.edge_type),
       updated_after: q.updated_after,
+      updated_before: q.updated_before,
       limit: q.limit,
       cursor: q.cursor,
     });

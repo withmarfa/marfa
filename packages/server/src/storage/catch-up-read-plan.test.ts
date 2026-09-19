@@ -58,7 +58,7 @@ describe("sqlite catch-up plan", () => {
       const state = i % 5 === 0 ? "trashed" : "active";
       const stamp = `2026-01-${String((i % 28) + 1).padStart(2, "0")}T00:00:00.000Z`;
       rows.push(
-        `INSERT INTO items (id, type, state, tier, properties, created_at, updated_at, timestamp, version) VALUES ('i${String(i)}', 'core.note', '${state}', 'library', '{}', '${stamp}', '${stamp}', '${stamp}', 1);`,
+        `INSERT INTO items (id, type, state, tier, properties, created_at, updated_at, occurred_at, version) VALUES ('i${String(i)}', 'core.note', '${state}', 'library', '{}', '${stamp}', '${stamp}', '${stamp}', 1);`,
         `INSERT INTO edges (id, source_id, target_id, edge_type, properties, created_at, updated_at) VALUES ('e${String(i)}', 'i${String(i)}', 'i${String((i + 1) % 400)}', 'references', '{}', '${stamp}', '${stamp}');`,
       );
     }

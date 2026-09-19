@@ -73,7 +73,7 @@ const SYSTEM_FIELDS = new Set([
   "state",
   "type",
   "source",
-  "timestamp",
+  "occurred_at",
   "created_at",
   "updated_at",
   // System fields beyond the original six. parent_id and in-thread

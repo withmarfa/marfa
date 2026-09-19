@@ -399,15 +399,15 @@ describe("a time bound is read as the instant it names", () => {
   });
 
   it("applies to the item's own time bounds too", async () => {
-    const id = await seedNote("timestamp-bound-target");
+    const id = await seedNote("occurred-at-bound-target");
     const res = await request(ctx.app, "PATCH", `/items/${id}`, {
       key: ctx.spaceKey,
-      body: { timestamp: "2008-08-08T08:08:08.500Z", version: 1 },
+      body: { occurred_at: "2008-08-08T08:08:08.500Z", version: 1 },
     });
     expect(res.status).toBe(200);
 
     const ids = await idsFrom(
-      `timestamp_after=${encodeURIComponent("2008-08-08T08:08:08Z")}&timestamp_before=${encodeURIComponent("2008-08-09T00:00:00Z")}&limit=200`,
+      `occurred_after=${encodeURIComponent("2008-08-08T08:08:08Z")}&occurred_before=${encodeURIComponent("2008-08-09T00:00:00Z")}&limit=200`,
     );
     expect(ids).toContain(id);
   });

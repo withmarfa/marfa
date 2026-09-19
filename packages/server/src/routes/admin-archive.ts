@@ -505,7 +505,7 @@ export function adminArchiveRoutes(storage: Storage, blobBackend: BlobBackend) {
               properties: (item.properties ?? {}) as Record<string, unknown>,
               state: item.state as ItemState | undefined,
               tier: item.tier as Tier | undefined,
-              timestamp: item.timestamp as string | undefined,
+              occurred_at: item.occurred_at as string | undefined,
               source: item.source as string | undefined,
               source_id: item.source_id as string | undefined,
               device: item.device as string | undefined,

@@ -107,7 +107,7 @@ export const RESERVED_ITEM_FIELDS: ReadonlySet<string> = new Set([
   "properties",
   "created_at",
   "updated_at",
-  "timestamp",
+  "occurred_at",
   "source",
   "source_id",
   "version",

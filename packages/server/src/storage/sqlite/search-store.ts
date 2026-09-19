@@ -117,23 +117,24 @@ export class SqliteSearchStore implements SearchStore {
     }
 
     // The item store's twin, and deliberately the same expression:
-    // `COALESCE(timestamp, created_at)`, inclusive, normalized to the
-    // stored width before a lexical text comparison sees it.
-    const timestampAfter = normalizeTimeBound(
-      filters.timestamp_after,
-      "timestamp_after",
+    // `COALESCE(occurred_at, created_at)`, exclusive at both ends,
+    // normalized to the stored width before a lexical text comparison
+    // sees it.
+    const occurredAfter = normalizeTimeBound(
+      filters.occurred_after,
+      "occurred_after",
     );
-    if (timestampAfter !== undefined) {
-      conditions.push("AND COALESCE(i.timestamp, i.created_at) >= ?");
-      params.push(timestampAfter);
+    if (occurredAfter !== undefined) {
+      conditions.push("AND COALESCE(i.occurred_at, i.created_at) > ?");
+      params.push(occurredAfter);
     }
-    const timestampBefore = normalizeTimeBound(
-      filters.timestamp_before,
-      "timestamp_before",
+    const occurredBefore = normalizeTimeBound(
+      filters.occurred_before,
+      "occurred_before",
     );
-    if (timestampBefore !== undefined) {
-      conditions.push("AND COALESCE(i.timestamp, i.created_at) <= ?");
-      params.push(timestampBefore);
+    if (occurredBefore !== undefined) {
+      conditions.push("AND COALESCE(i.occurred_at, i.created_at) < ?");
+      params.push(occurredBefore);
     }
 
     // Items must have ALL specified tags (AND semantics).
@@ -199,7 +200,7 @@ export class SqliteSearchStore implements SearchStore {
         bm25(items_fts) AS rank,
         i.id, i.type, i.state, json(i.properties) AS properties,
         i.created_at, i.updated_at,
-        i.timestamp, i.source, i.source_id, i.version,
+        i.occurred_at, i.source, i.source_id, i.version,
         i.schema_version, i.device, i.tier,
         i.capture_latitude, i.capture_longitude,
         m.item_id AS meta_item_id, m.tags, m.extensions

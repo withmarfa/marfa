@@ -12,8 +12,8 @@ afterAll(async () => {
   await ctx.cleanup();
 });
 
-describe("PATCH /items/:id — timestamp field", () => {
-  it("overrides the user-meaningful timestamp", async () => {
+describe("PATCH /items/:id — occurred_at field", () => {
+  it("overrides the item's own time", async () => {
     const createRes = await request(ctx.app, "POST", "/items", {
       key: ctx.spaceKey,
       body: {
@@ -28,7 +28,7 @@ describe("PATCH /items/:id — timestamp field", () => {
     const newTs = "2001-09-11T08:46:00.000Z";
     const patchRes = await request(ctx.app, "PATCH", `/items/${item.id}`, {
       key: ctx.spaceKey,
-      body: { timestamp: newTs, version: item.version },
+      body: { occurred_at: newTs, version: item.version },
     });
     expect(patchRes.status).toBe(200);
 
@@ -36,12 +36,12 @@ describe("PATCH /items/:id — timestamp field", () => {
       key: ctx.spaceKey,
     });
     const fetched = (await getRes.json()) as {
-      item: { timestamp: string };
+      item: { occurred_at: string };
     };
-    expect(fetched.item.timestamp).toBe(newTs);
+    expect(fetched.item.occurred_at).toBe(newTs);
   });
 
-  it("rejects non-ISO timestamp strings", async () => {
+  it("rejects non-ISO strings", async () => {
     const createRes = await request(ctx.app, "POST", "/items", {
       key: ctx.spaceKey,
       body: {
@@ -55,7 +55,7 @@ describe("PATCH /items/:id — timestamp field", () => {
 
     const res = await request(ctx.app, "PATCH", `/items/${item.id}`, {
       key: ctx.spaceKey,
-      body: { timestamp: "not an ISO date", version: item.version },
+      body: { occurred_at: "not an ISO date", version: item.version },
     });
     expect(res.status).toBe(400);
   });

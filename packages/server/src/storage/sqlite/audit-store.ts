@@ -1,4 +1,4 @@
-import { eq, and, desc, lt, or, gte, lte, like } from "drizzle-orm";
+import { eq, and, desc, gt, lt, or, like } from "drizzle-orm";
 import {
   DEFAULT_PAGE_LIMIT,
   MAX_PAGE_LIMIT,
@@ -8,7 +8,11 @@ import { createHash } from "node:crypto";
 import { generateId } from "@withmarfa/shared";
 import type { PaginatedResult } from "@withmarfa/shared";
 import type { AuditEntry, AuditLogEntry, AuditStore } from "../interface.js";
-import { encodeCursor, decodeCursor } from "../interface.js";
+import {
+  encodeCursor,
+  decodeCursor,
+  normalizeTimeBound,
+} from "../interface.js";
 import { safeJsonParse } from "../json-utils.js";
 import { WriteTracker } from "../write-tracker.js";
 import { auditLog } from "./schema.js";
@@ -28,7 +32,7 @@ function rowToEntry(row: typeof auditLog.$inferSelect): AuditEntry {
     typeof ipRaw === "string" && ipRaw.length > 0 ? ipRaw : null;
   return {
     id: row.id,
-    timestamp: row.timestamp,
+    created_at: row.created_at,
     key_id: row.key_id ?? null,
     action: row.action,
     resource_type: row.resource_type,
@@ -53,7 +57,7 @@ export class SqliteAuditStore implements AuditStore {
     }
     return {
       id: generateId(),
-      timestamp: new Date().toISOString(),
+      created_at: new Date().toISOString(),
       key_id: entry.key_id ?? null,
       action: entry.action,
       resource_type: entry.resource_type,
@@ -95,8 +99,8 @@ export class SqliteAuditStore implements AuditStore {
     action?: string;
     resource_type?: string;
     resource_id?: string;
-    since?: string;
-    until?: string;
+    created_after?: string;
+    created_before?: string;
     limit?: number;
     cursor?: string;
   }): Promise<PaginatedResult<AuditEntry>> {
@@ -115,17 +119,36 @@ export class SqliteAuditStore implements AuditStore {
     if (filters.resource_id) {
       conditions.push(eq(auditLog.resource_id, filters.resource_id));
     }
-    if (filters.since) {
-      conditions.push(gte(auditLog.timestamp, filters.since));
+    // Re-spelled to the width the column is stamped at, like every other
+    // bounded door. The comparison is lexical against text, so a bound
+    // written at second precision names a different string than the
+    // millisecond-wide value stored: `.` sorts below `Z`, which drops the
+    // whole second from a lower bound and keeps it in an upper one. Both
+    // answers are a well-formed 200. This also refuses a bound that is not
+    // an instant, which otherwise reached the comparison as an ordinary
+    // string and answered either the empty trail or the whole one.
+    const createdAfter = normalizeTimeBound(
+      filters.created_after,
+      "created_after",
+    );
+    const createdBefore = normalizeTimeBound(
+      filters.created_before,
+      "created_before",
+    );
+    if (createdAfter !== undefined) {
+      conditions.push(gt(auditLog.created_at, createdAfter));
     }
-    if (filters.until) {
-      conditions.push(lte(auditLog.timestamp, filters.until));
+    if (createdBefore !== undefined) {
+      conditions.push(lt(auditLog.created_at, createdBefore));
     }
+    // The cursor is not a bound a caller chose: it is the last row already
+    // delivered, so it is excluded to advance the page rather than to
+    // answer a question about an instant.
     if (filters.cursor) {
       const { v, id } = decodeCursor(filters.cursor);
       const cursorClause = or(
-        lt(auditLog.timestamp, v),
-        and(eq(auditLog.timestamp, v), lt(auditLog.id, id)),
+        lt(auditLog.created_at, v),
+        and(eq(auditLog.created_at, v), lt(auditLog.id, id)),
       );
       if (cursorClause) conditions.push(cursorClause);
     }
@@ -133,7 +156,7 @@ export class SqliteAuditStore implements AuditStore {
     let query = this.db
       .select()
       .from(auditLog)
-      .orderBy(desc(auditLog.timestamp), desc(auditLog.id))
+      .orderBy(desc(auditLog.created_at), desc(auditLog.id))
       .limit(limit + 1)
       .$dynamic();
 
@@ -148,7 +171,7 @@ export class SqliteAuditStore implements AuditStore {
     if (hasMore) {
       const last = data.at(-1);
       if (!last) throw new Error("unreachable: hasMore but data is empty");
-      nextCursor = encodeCursor(last.timestamp, last.id);
+      nextCursor = encodeCursor(last.created_at, last.id);
     }
 
     return { data, cursor: nextCursor, has_more: hasMore };
@@ -160,14 +183,15 @@ export class SqliteAuditStore implements AuditStore {
     ).toISOString();
     const result = await this.db
       .delete(auditLog)
-      .where(lt(auditLog.timestamp, cutoff))
+      .where(lt(auditLog.created_at, cutoff))
       .run();
     return result.rowsAffected;
   }
 
   async redactForUser(authUserId: string): Promise<number> {
-    // LIKE-prefilter narrows the scan; in-memory parse + exact-equality
-    // recursion is the truth. See pg/audit-store.ts for the full design note.
+    // LIKE-prefilter narrows the scan; the in-memory parse and
+    // exact-equality recursion below is the truth, because a substring hit
+    // on the JSON blob is not a field whose value is this user.
     const sentinel = JSON.stringify({
       redacted: true,
       user_id_sha256: createHash("sha256").update(authUserId).digest("hex"),

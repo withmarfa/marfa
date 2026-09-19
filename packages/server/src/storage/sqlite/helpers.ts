@@ -35,7 +35,7 @@ export function rowToItem(row: ItemRow): Item {
     ),
     created_at: row.created_at,
     updated_at: row.updated_at,
-    timestamp: row.timestamp,
+    occurred_at: row.occurred_at,
     version: row.version,
     source: row.source ?? "unknown",
     ...(row.source_id != null && { source_id: row.source_id }),

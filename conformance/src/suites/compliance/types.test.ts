@@ -120,7 +120,7 @@ describe("type registration and listing", () => {
   });
 
   // Custom-type schemas may not declare property names that collide with
-  // first-class Item wire fields (`device`, `source_id`, `timestamp`,
+  // first-class Item wire fields (`device`, `source_id`, `occurred_at`,
   // `version`, `schema_version`, `tier`, `state`, `capture_latitude`,
   // `capture_longitude`, plus the structural keys). Letting a property
   // shadow a first-class field name produces ambiguous data: two values

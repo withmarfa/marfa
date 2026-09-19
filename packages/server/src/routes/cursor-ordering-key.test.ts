@@ -100,7 +100,7 @@ describe("GET /items — the cursor is bound to the ordering that issued it", ()
     // The premise case: both columns hold an ISO timestamp, so this
     // comparison succeeds against the wrong column when it is not refused.
     expectOrderingRefusal(
-      await listItems(`${TYPE}&sort=timestamp&cursor=${cursor}`),
+      await listItems(`${TYPE}&sort=occurred_at&cursor=${cursor}`),
     );
     expectOrderingRefusal(
       await listItems(`${TYPE}&sort=created_at&cursor=${cursor}`),
@@ -175,7 +175,7 @@ describe("GET /items — the cursor is bound to the ordering that issued it", ()
     expect(honored.page?.data[0]?.id).not.toBe(last.id);
 
     expectOrderingRefusal(
-      await listItems(`${TYPE}&sort=timestamp&cursor=${unkeyed}`),
+      await listItems(`${TYPE}&sort=occurred_at&cursor=${unkeyed}`),
     );
   });
 });
@@ -264,13 +264,13 @@ describe("a cursor minted before the key named the direction", () => {
 
   it("refuses a legacy spelling that named no ordering this server has", async () => {
     // The safe direction, and the reason the map is a map rather than a
-    // "strip the direction and compare" rule: `timestamp` was never a
+    // "strip the direction and compare" rule: `occurred_at` was never a
     // legacy key, so a cursor carrying it is guessed at by nobody.
     const { page } = await listItems(`${TYPE}&limit=1`);
     const last = page!.data[0]!;
     expectOrderingRefusal(
       await listItems(
-        `${TYPE}&sort=timestamp&cursor=${legacyCursor(last.created_at, last.id, "timestamp")}`,
+        `${TYPE}&sort=occurred_at&cursor=${legacyCursor(last.created_at, last.id, "occurred_at")}`,
       ),
     );
   });

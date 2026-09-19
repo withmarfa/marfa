@@ -1,12 +1,11 @@
 /**
- * Search can be bounded by date, which its own description already claimed.
+ * Search can be bounded by date, and its own description claims parity
+ * with `GET /items`.
  *
- * The route says it accepts the same filters as `GET /items`. It took a
- * query, a type, a state, a tier, tags, an include list, a limit, an offset
- * and a filter expression — and neither of the listing's two time bounds.
- * So a date-narrowed search was not expressible, and a caller who read the
- * description and sent one got a 200 over the whole corpus, because an
- * unknown query key is stripped rather than refused.
+ * A bound this door declared and did not apply would be invisible: an
+ * unknown query key is stripped rather than refused, so a caller sending
+ * one gets a 200 over the whole corpus that looks exactly like the narrow
+ * answer they asked for.
  *
  * Asserted by row identity rather than by count: a bound that is dropped
  * and a bound that matched everything are indistinguishable by status, and
@@ -22,13 +21,13 @@
  * see it.
  *
  * Not covered, deliberately, and worth knowing before looking for it: the
- * `COALESCE(timestamp, created_at)` both stores compile cannot be reached
- * from a test, because `items.timestamp` is `NOT NULL` in both dialects
- * and has been since the first migration. No row can have the null the
- * fallback is for. It is written anyway because it is what the item
- * listing compiles, and the parity below is the claim being made; a
- * search store that spelled the expression its own way would be reading
- * the same rows today and diverging the day the column changes.
+ * `COALESCE(occurred_at, created_at)` both stores compile cannot be
+ * reached from a test, because `items.occurred_at` is `NOT NULL`. No row
+ * can have the null the fallback is for. It is written anyway because it
+ * is what the item listing compiles, and the parity below is the claim
+ * being made; a search store that spelled the expression its own way
+ * would be reading the same rows today and diverging the day the column
+ * changes.
  */
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import { createTestContext, request } from "../test-utils.js";
@@ -43,7 +42,7 @@ let newId = "";
 beforeAll(async () => {
   ctx = await createTestContext();
 
-  const seed = async (timestamp: string, label: string): Promise<string> => {
+  const seed = async (occurredAt: string, label: string): Promise<string> => {
     const res = await request(ctx.app, "POST", "/items", {
       key: ctx.spaceKey,
       body: {
@@ -51,7 +50,7 @@ beforeAll(async () => {
         // The FTS token is shared so one query returns all three; the
         // label keeps the rows distinguishable in a failure message.
         properties: { body: `${TOKEN} ${label}` },
-        timestamp,
+        occurred_at: occurredAt,
       },
     });
     expect(res.status).toBe(201);
@@ -86,7 +85,7 @@ describe("GET /search — the time bounds it advertises", () => {
 
   it("excludes a row before the lower bound", async () => {
     const ids = await searchIds(
-      `q=${TOKEN}&timestamp_after=2023-01-01T00:00:00.000Z`,
+      `q=${TOKEN}&occurred_after=2023-01-01T00:00:00.000Z`,
     );
     expect(ids).toEqual([midId, newId].sort());
     expect(ids).not.toContain(oldId);
@@ -94,7 +93,7 @@ describe("GET /search — the time bounds it advertises", () => {
 
   it("excludes a row after the upper bound", async () => {
     const ids = await searchIds(
-      `q=${TOKEN}&timestamp_before=2024-01-01T00:00:00.000Z`,
+      `q=${TOKEN}&occurred_before=2024-01-01T00:00:00.000Z`,
     );
     expect(ids).toEqual([oldId, midId].sort());
     expect(ids).not.toContain(newId);
@@ -102,18 +101,20 @@ describe("GET /search — the time bounds it advertises", () => {
 
   it("composes the two into a window", async () => {
     const ids = await searchIds(
-      `q=${TOKEN}&timestamp_after=2023-01-01T00:00:00.000Z&timestamp_before=2024-01-01T00:00:00.000Z`,
+      `q=${TOKEN}&occurred_after=2023-01-01T00:00:00.000Z&occurred_before=2024-01-01T00:00:00.000Z`,
     );
     expect(ids).toEqual([midId]);
   });
 
-  it("is inclusive at both ends, matching the item listing", async () => {
+  it("is exclusive at both ends, matching the item listing", async () => {
+    // The bound lands exactly on the mid row's own time, so an inclusive
+    // comparison at either end shows up here as that row coming back.
     expect(
-      await searchIds(`q=${TOKEN}&timestamp_after=2023-06-15T12:00:00.000Z`),
-    ).toEqual([midId, newId].sort());
+      await searchIds(`q=${TOKEN}&occurred_after=2023-06-15T12:00:00.000Z`),
+    ).toEqual([newId]);
     expect(
-      await searchIds(`q=${TOKEN}&timestamp_before=2023-06-15T12:00:00.000Z`),
-    ).toEqual([oldId, midId].sort());
+      await searchIds(`q=${TOKEN}&occurred_before=2023-06-15T12:00:00.000Z`),
+    ).toEqual([oldId]);
   });
 
   it("accepts a bound at second precision, normalizing it", async () => {
@@ -121,20 +122,20 @@ describe("GET /search — the time bounds it advertises", () => {
     // RFC 3339 instant at a narrower width would otherwise answer a
     // different question than the one asked.
     expect(
-      await searchIds(`q=${TOKEN}&timestamp_after=2023-06-15T12:00:00Z`),
-    ).toEqual([midId, newId].sort());
+      await searchIds(`q=${TOKEN}&occurred_after=2023-06-15T12:00:00Z`),
+    ).toEqual([newId]);
   });
 
-  it("refuses a bound that is not a timestamp", async () => {
+  it("refuses a bound that is not an instant", async () => {
     const res = await request(
       ctx.app,
       "GET",
-      `/search?q=${TOKEN}&timestamp_after=not-a-date`,
+      `/search?q=${TOKEN}&occurred_after=not-a-date`,
       { key: ctx.spaceKey },
     );
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: { message: string } };
-    expect(body.error.message).toContain("timestamp_after");
+    expect(body.error.message).toContain("occurred_after");
   });
 
   it("answers the same rows as the item listing for the same bound", async () => {
@@ -159,17 +160,17 @@ describe("GET /search — the time bounds it advertises", () => {
     };
 
     for (const bound of [
-      "timestamp_after=2023-01-01T00:00:00.000Z",
-      "timestamp_before=2024-01-01T00:00:00.000Z",
-      "timestamp_after=2023-01-01T00:00:00.000Z&timestamp_before=2024-01-01T00:00:00.000Z",
-      // The inclusive edge, landing exactly on a row's own time, where an
+      "occurred_after=2023-01-01T00:00:00.000Z",
+      "occurred_before=2024-01-01T00:00:00.000Z",
+      "occurred_after=2023-01-01T00:00:00.000Z&occurred_before=2024-01-01T00:00:00.000Z",
+      // The exclusive edge, landing exactly on a row's own time, where an
       // off-by-one in either store shows up as one door returning a row the
       // other does not.
-      "timestamp_after=2023-06-15T12:00:00.000Z",
-      "timestamp_before=2023-06-15T12:00:00.000Z",
+      "occurred_after=2023-06-15T12:00:00.000Z",
+      "occurred_before=2023-06-15T12:00:00.000Z",
       // And the narrower spelling, which is normalized before a lexical
       // comparison sees it — separately in each store.
-      "timestamp_after=2023-06-15T12:00:00Z",
+      "occurred_after=2023-06-15T12:00:00Z",
     ]) {
       expect(
         await searchIds(`q=${TOKEN}&${bound}`),
@@ -178,25 +179,23 @@ describe("GET /search — the time bounds it advertises", () => {
     }
   });
 
-  it("refuses the retired names rather than searching the whole corpus", async () => {
-    // This door never carried `since` / `until`, but the published rename
-    // tells a caller they belong on every filtered read. Stripped in
-    // silence, they return the whole corpus at 200 — the failure the
-    // rename's refusal exists to prevent, reached by following the
-    // instructions.
-    for (const [oldName, replacement] of [
-      ["since", "timestamp_after"],
-      ["until", "timestamp_before"],
-    ] as const) {
+  it("refuses a bound name this door does not declare", async () => {
+    // Stripped in silence, a misspelled bound returns the whole corpus at
+    // 200 — a long answer that looks filtered. The refusal names what the
+    // door does accept, so the caller can see the spelling it wanted.
+    for (const wrong of ["since", "until", "occurred_at_after"]) {
       const res = await request(
         ctx.app,
         "GET",
-        `/search?q=${TOKEN}&${oldName}=2023-01-01T00:00:00.000Z`,
+        `/search?q=${TOKEN}&${wrong}=2023-01-01T00:00:00.000Z`,
         { key: ctx.spaceKey },
       );
       expect(res.status).toBe(400);
-      const body = (await res.json()) as { error: { message: string } };
-      expect(body.error.message).toContain(replacement);
+      const body = (await res.json()) as {
+        error: { message: string; details?: { unknown_parameters?: string[] } };
+      };
+      expect(body.error.details?.unknown_parameters).toEqual([wrong]);
+      expect(body.error.message).toContain("occurred_after");
     }
   });
 });

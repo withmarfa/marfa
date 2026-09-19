@@ -38,7 +38,11 @@ import type { SourceFilterSettings } from "./filter-sql.js";
 
 /** The three system columns that have always been sortable. Their ordering is
  *  a direct column comparison — no JSON extraction. */
-export const SYSTEM_SORTS = ["created_at", "updated_at", "timestamp"] as const;
+export const SYSTEM_SORTS = [
+  "created_at",
+  "updated_at",
+  "occurred_at",
+] as const;
 
 export type SystemSortField = (typeof SYSTEM_SORTS)[number];
 
@@ -66,13 +70,13 @@ function isSystemSort(sort: string): sort is SystemSortField {
 /**
  * Resolve a raw `sort` string into a discriminated sort target.
  *
- * - A system column (`created_at` | `updated_at` | `timestamp`) → `{ kind: "system" }`.
+ * - A system column (`created_at` | `updated_at` | `occurred_at`) → `{ kind: "system" }`.
  * - A `properties.<field>` form with a `^[a-z0-9_]+$` field → `{ kind: "property", field }`.
  * - Anything else (unknown bare column, malformed property field) → throws
- *   `VALIDATION_ERROR`. An undefined input defaults to the legacy `created_at`.
+ *   `VALIDATION_ERROR`. An undefined input defaults to `created_at`.
  *
- * The validation lives here so both dialect stores reject malformed sorts
- * identically before any SQL is built.
+ * The validation lives here so the listing and the search reject malformed
+ * sorts identically before either builds any SQL.
  */
 export function parseSortField(
   sort: ItemSortField | undefined,
@@ -136,18 +140,18 @@ export interface ItemFilters {
   excluded_types?: string[];
   sort?: ItemSortField;
   direction?: SortDirection;
-  /** Inclusive lower bound on the item's own user-meaningful time —
-   *  `timestamp`, falling back to `created_at`. Named for the field it
+  /** Exclusive lower bound on the item's own user-meaningful time —
+   *  `occurred_at`, falling back to `created_at`. Named for the field it
    *  reads. It says nothing about when the row was last written, which
    *  is what `updated_after` is for; the two are easy to confuse and the
    *  cost of confusing them is a catch-up that silently returns the
    *  wrong set. */
-  timestamp_after?: string;
-  /** Inclusive upper bound on the same column. Inclusive, matching its
+  occurred_after?: string;
+  /** Exclusive upper bound on the same column. Exclusive, matching its
    *  lower twin: a bounded window that is closed at one end and open at
    *  the other loses a row on the boundary in one direction only, which
    *  is the harder failure to spot. */
-  timestamp_before?: string;
+  occurred_before?: string;
   /** Inclusive lower bound on `updated_at`, the row's modification time.
    *
    *  This is the catch-up filter: a client that has been away asks what
@@ -167,6 +171,15 @@ export interface ItemFilters {
    *
    *  Implies an `(updated_at, id)` ascending order; see the stores. */
   updated_after?: string;
+  /** Exclusive upper bound on `updated_at`, closing the catch-up window
+   *  at the top.
+   *
+   *  Exclusive, unlike its lower twin, and the asymmetry is the point:
+   *  the lower bound is a resume point that must not drop a tie, while
+   *  this one is an end point a caller chooses, so the ordinary rule
+   *  applies. It does not change the ordering — only `updated_after`
+   *  does that — so it can be given under any sort. */
+  updated_before?: string;
   /** Suppress the default exclusion of trashed rows and return every
    *  lifecycle state.
    *
@@ -213,14 +226,14 @@ export interface SearchFilters {
   /** Items must have ALL specified tags. Mirrors `/items?tags=` semantics. */
   tags?: string[];
   filter?: string;
-  /** Lower bound on the item's own time — `timestamp`, falling back to
-   *  `created_at` — inclusive, exactly as `ItemFilters` reads it. Search
-   *  advertises parity with `GET /items` in its own description and took
-   *  neither bound, so a date-narrowed search was not expressible and a
-   *  caller who sent one got a successful response over the whole corpus. */
-  timestamp_after?: string;
-  /** Upper bound on the same expression, inclusive. */
-  timestamp_before?: string;
+  /** Exclusive lower bound on the item's own time — `occurred_at`,
+   *  falling back to `created_at` — exactly as `ItemFilters` reads it.
+   *  Search advertises parity with `GET /items` in its own description,
+   *  so a bound one door honors and the other strips would be a silent
+   *  difference in what a caller believes they narrowed. */
+  occurred_after?: string;
+  /** Exclusive upper bound on the same expression. */
+  occurred_before?: string;
   allowed_types?: string[];
   /** Mirrors `ItemFilters.excluded_types`. */
   excluded_types?: string[];
@@ -262,8 +275,8 @@ const ZONELESS_DATETIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?$/;
  * caller already meant; local time would move the bound by whatever
  * offset the deployment happens to run in.
  *
- * One column is not server-stamped: the item listing's `timestamp_*`
- * bounds read `COALESCE(timestamp, created_at)`, and `timestamp` is
+ * One column is not server-stamped: the item listing's `occurred_*`
+ * bounds read `COALESCE(occurred_at, created_at)`, and `occurred_at` is
  * whatever the caller wrote. So this makes the comparison exact against
  * every row the server stamped, and leaves it no worse than it already
  * was against one a caller spelled its own way.
@@ -374,7 +387,7 @@ export function decodeCursorNullable(cursor: string): NullableCursorPayload {
  * request from parts, which is the case this exists for; and under the
  * narrow key every one of the item listing's orderings was tagged
  * `created_at`, so a cursor taken under `?sort=updated_at` replayed under
- * `?sort=timestamp` passed the check and bounded the page against the
+ * `?sort=occurred_at` passed the check and bounded the page against the
  * wrong column — the exact failure, reached through the guard against it.
  *
  * Direction is part of the key for the same reason the column is. The
@@ -1709,7 +1722,7 @@ export interface OauthProviderStore {
 
 export interface AuditEntry {
   id: string;
-  timestamp: string;
+  created_at: string;
   key_id: string | null;
   action: string;
   resource_type: string;
@@ -1787,13 +1800,15 @@ export interface AuditStore {
     action?: string;
     resource_type?: string;
     resource_id?: string;
-    since?: string;
-    until?: string;
+    /** Exclusive lower bound on `created_at`, when the entry was written. */
+    created_after?: string;
+    /** Exclusive upper bound on the same column. */
+    created_before?: string;
     limit?: number;
     cursor?: string;
   }): Promise<PaginatedResult<AuditEntry>>;
   /**
-   * Hard-delete rows whose `timestamp` is older than the retention window.
+   * Hard-delete rows whose `created_at` is older than the retention window.
    * Returns the number of rows actually deleted.
    */
   cleanup(retentionDays: number): Promise<number>;
@@ -1805,7 +1820,7 @@ export interface AuditStore {
    * any field whose value equals `authUserId` (exact-equality match —
    * substring matches are ignored to avoid false positives).
    *
-   * The row's `action`, `resource_type`, `timestamp`, and `id` are
+   * The row's `action`, `resource_type`, `created_at`, and `id` are
    * preserved — the audit chain remains intact; only personally identifying
    * payload is scrubbed.
    *
@@ -2072,6 +2087,11 @@ export interface EdgeListFilters {
    *  ordering over one opaque cursor, the cursor records which ordering
    *  issued it and a mismatch is refused — see `encodeKeyedCursor`. */
   updated_after?: string;
+  /** Exclusive upper bound on `updated_at`, matching
+   *  {@link ItemFilters.updated_before}: an end point a caller chooses
+   *  rather than a resume point, so it takes the ordinary exclusive rule
+   *  and leaves the ordering alone. */
+  updated_before?: string;
 }
 
 export interface EdgeStore {

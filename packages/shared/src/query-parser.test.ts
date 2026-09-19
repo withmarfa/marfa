@@ -87,7 +87,7 @@ describe("parseFilter", () => {
     });
 
     it("parses lte operator", () => {
-      const result = parseFilter('timestamp lte "2026-12-31"');
+      const result = parseFilter('occurred_at lte "2026-12-31"');
       expect(result.conditions[0]!.op).toBe("lte");
     });
 
@@ -174,7 +174,7 @@ describe("parseFilter", () => {
         "state",
         "type",
         "source",
-        "timestamp",
+        "occurred_at",
         "created_at",
         "updated_at",
       ];

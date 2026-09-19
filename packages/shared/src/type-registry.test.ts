@@ -787,7 +787,7 @@ describe("RESERVED_ITEM_FIELDS — freshness against Item interface", () => {
       properties: {},
       created_at: "",
       updated_at: "",
-      timestamp: "",
+      occurred_at: "",
       source: "",
       source_id: "",
       version: 1,
@@ -835,7 +835,7 @@ describe("validateTypeSchema — property shadow rule", () => {
       fields: {
         device: { type: "string" },
         source_id: { type: "string" },
-        timestamp: { type: "datetime" },
+        occurred_at: { type: "datetime" },
       },
     });
     expect(result.success).toBe(false);
@@ -845,7 +845,7 @@ describe("validateTypeSchema — property shadow rule", () => {
       .map((e) => e.field);
     expect(fields).toContain("fields.device");
     expect(fields).toContain("fields.source_id");
-    expect(fields).toContain("fields.timestamp");
+    expect(fields).toContain("fields.occurred_at");
   });
 
   it("accepts a schema whose fields don't shadow any first-class Item field", () => {

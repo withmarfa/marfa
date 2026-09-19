@@ -309,7 +309,7 @@ describe("first-class field shadow rejection", () => {
     "tier",
     "created_at",
     "updated_at",
-    "timestamp",
+    "occurred_at",
     "source",
     "source_id",
     "version",
@@ -374,7 +374,7 @@ describe("first-class field shadow rejection", () => {
         fields: {
           device: { type: "string" },
           source_id: { type: "string" },
-          timestamp: { type: "datetime" },
+          occurred_at: { type: "datetime" },
         },
       },
     });
@@ -389,7 +389,7 @@ describe("first-class field shadow rejection", () => {
     const fields = (payload.error.details?.errors ?? []).map((e) => e.field);
     expect(fields).toContain("fields.device");
     expect(fields).toContain("fields.source_id");
-    expect(fields).toContain("fields.timestamp");
+    expect(fields).toContain("fields.occurred_at");
   });
 });
 

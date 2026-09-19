@@ -131,7 +131,7 @@ export enum ErrorCode {
   /**
    * A type registration declared a `fields.<name>` whose key collides
    * with a first-class field on the `Item` wire shape (e.g. `device`,
-   * `source_id`, `timestamp`, `version`, `schema_version`,
+   * `source_id`, `occurred_at`, `version`, `schema_version`,
    * `capture_latitude`, `capture_longitude`). Letting a custom type
    * redefine a first-class field name means every row carries two
    * values under the same name and nothing downstream can tell which is

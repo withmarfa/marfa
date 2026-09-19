@@ -11,7 +11,7 @@
  *
  * On a read that is a long answer that looks filtered. On
  * `POST /items/bulk-actions` the filter *is* the match set, so a dropped
- * key turns `{action: "purge", filter: {timestamp_before: "..."}}` into a
+ * key turns `{action: "purge", filter: {occurred_before: "..."}}` into a
  * purge with an empty filter — every item in the space, and under the
  * match cap it does not even error.
  *
@@ -34,9 +34,7 @@
  *
  * And a door that has not been looked at should not start refusing by
  * accident. Opting in per route bounds this to the doors someone has
- * actually checked for dynamic keys, which is the same reason the renamed
- * time filters are refused per door: a blanket rule there would have
- * refused the audit log's own `since`, which is still correct.
+ * actually checked for dynamic keys.
  *
  * ## The cost, and the escape hatch that pays it
  *
