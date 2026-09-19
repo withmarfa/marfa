@@ -1,7 +1,7 @@
 {
   "id": "google.contacts.contact",
   "label": "Google Contact",
-  "description": "A contact (person) from Google Contacts, captured with upstream fidelity. Mirrors the People API person resource — names, email addresses, phone numbers, postal addresses, organizations, biographies, etag — so a round-trip preserves what Google considers authoritative. Deliberately not `compatible_with: core.entity.person`, which requires `name`; this type carries the display name in `title` and renaming it would orphan the property on every contact already captured. The Google Contacts integration can be configured to write `core.entity.person` instead when cross-app interop matters more than upstream fidelity.",
+  "description": "A contact (person) from Google Contacts, captured with upstream fidelity. Mirrors the People API person resource — names, email addresses, phone numbers, postal addresses, organizations, biographies, etag — so a round-trip preserves what Google considers authoritative. Deliberately not `compatible_with: core.entity.person`, which requires `name`; this type carries the display name in `title` and renaming it would orphan the property on every contact already captured. The Google Contacts connector can be configured to write `core.entity.person` instead when cross-app interop matters more than upstream fidelity.",
   "version": 1,
   "fields": {
     "title": {

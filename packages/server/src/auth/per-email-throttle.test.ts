@@ -6,8 +6,8 @@ import type { TestContext } from "../test-utils.js";
 
 /**
  * Per-email throttle backed by `storage.rateLimits`. The counter is
- * shared via the storage layer, so the test exercises the end-to-end
- * integration: throttle → store → upsert → re-read.
+ * shared via the storage layer, so the test exercises the whole path:
+ * throttle → store → upsert → re-read.
  *
  * Covers: cap behavior, lowercase normalization, window expiry,
  * per-email isolation, and cross-instance counter sharing.

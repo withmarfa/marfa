@@ -1,7 +1,7 @@
 /**
- * Integration provenance, and the two ways it used to collide.
+ * Connector provenance, and the two ways it used to collide.
  *
- * `(source, source_id)` is a natural key an integration re-syncs against.
+ * `(source, source_id)` is a natural key a connector re-syncs against.
  *
  * The other collision is with the user: a
  * mirror they trashed refused every later re-sync, permanently, because
@@ -21,11 +21,11 @@ afterAll(async () => {
   await ctx.cleanup();
 });
 
-/** A credential standing in for an integration runtime.
- *  The real provenance prefix (`integration:`) is reserved to the install
- *  pipeline and refused by this route, which is a separate guard working
- *  as intended; the dedup behaviour under test does not depend on it. */
-async function integrationKey(label: string, source: string): Promise<string> {
+/** A credential standing in for a connector.
+ *  The real provenance prefix (`connector:`) is reserved and refused to
+ *  every minting door, which is a separate guard working as intended; the
+ *  dedup behavior under test does not depend on it. */
+async function connectorKey(label: string, source: string): Promise<string> {
   const res = await request(ctx.app, "POST", "/keys", {
     key: ctx.workingKey,
     body: {
@@ -42,8 +42,8 @@ describe("provenance dedup is scoped, not instance-wide", () => {
   it("lets two credentials hold the same source_id under different sources", async () => {
     // The narrower property the old index did get right, pinned so the
     // widening below cannot quietly take it away.
-    const a = await integrationKey("prov-a", "feed-a");
-    const b = await integrationKey("prov-b", "feed-b");
+    const a = await connectorKey("prov-a", "feed-a");
+    const b = await connectorKey("prov-b", "feed-b");
     const body = {
       type: "core.note",
       properties: { title: "same upstream id", body: "x" },
@@ -59,7 +59,7 @@ describe("provenance dedup is scoped, not instance-wide", () => {
     // The other direction. Loosening the index must not stop it deduping
     // what it exists to dedupe — a second create under the same natural
     // key resolves to the existing row rather than making a new one.
-    const k = await integrationKey("prov-same", "feed-same");
+    const k = await connectorKey("prov-same", "feed-same");
     const body = {
       type: "core.note",
       properties: { title: "first", body: "x" },
@@ -105,8 +105,8 @@ describe("a mirror the user trashed", () => {
     // saw "not found" and fell into create — whose own dedup pre-check
     // does not filter state, found the same row, and refused with a 409.
     // Nothing clears that: the row stays trashed, so every later sync
-    // fails identically and the integration is stuck on one item.
-    const k = await integrationKey("prov-trash", "feed-trash");
+    // fails identically and the connector is stuck on one item.
+    const k = await connectorKey("prov-trash", "feed-trash");
     const body = {
       type: "core.note",
       properties: { title: "mirrored upstream", body: "x" },
@@ -152,7 +152,7 @@ describe("a mirror the user trashed", () => {
 
   it("resumes ordinary updates once the user restores it", async () => {
     // The acknowledge is a hold, not a tombstone.
-    const k = await integrationKey("prov-restore", "feed-restore");
+    const k = await connectorKey("prov-restore", "feed-restore");
     const body = {
       type: "core.note",
       properties: { title: "before", body: "x" },

@@ -749,7 +749,7 @@ export interface ItemStore {
    * lifecycle alone, so the record survives as a record. A sweep keyed on
    * `state` the way the trash purge is would match none of them.
    *
-   * **`kind = 'app'` is load-bearing rather than tidiness.** An integration
+   * **`kind = 'app'` is load-bearing rather than tidiness.** A connector
    * uninstall writes the same `revoked` status onto a `system.connection` row
    * as a matter of routine, and that row is not a tombstone — it is a
    * connection somebody may reinstall. It is separately distinguishable
@@ -985,12 +985,12 @@ export interface TypeStore {
 export interface TypeProvenance {
   origin: TypeOrigin;
   /**
-   * What kind of type this is: core content, an integration's own shape,
+   * What kind of type this is: core content, a connector's own shape,
    * or a structural platform record.
    *
    * **Widened deliberately from "shipped rows only".** It began as a
-   * property of the shipped set, which is why a type travelling with an
-   * integration manifest registered without one. That is a gap rather
+   * property of the shipped set, which is why a type traveling with a
+   * connector manifest registered without one. That is a gap rather
    * than a design: the question "what kind of type is this" is asked of
    * every type, and answering it from the identifier cannot separate a
    * vendor's type from a person's under a claimed handle.
@@ -999,8 +999,8 @@ export interface TypeProvenance {
    * registered belongs to no platform family and never did.
    */
   family?: PlatformTypeFamily;
-  /** Manifest name of the publishing integration, for `integration` rows. */
-  owner_integration?: string;
+  /** Manifest name of the publishing connector, for `connector` rows. */
+  owner_connector?: string;
 }
 
 /** A type schema as loaded at startup, the shape the warmup registers. */
@@ -1010,7 +1010,7 @@ export interface LoadedType {
    *  whatever wrote it. */
   origin: TypeOrigin;
   family?: PlatformTypeFamily;
-  owner_integration?: string;
+  owner_connector?: string;
 }
 
 export interface EdgeTypeStore {
@@ -1846,7 +1846,7 @@ export interface PersistedEvent {
   payload: string;
   /**
    * Whether this event drives outbound side effects — webhook delivery and
-   * the integration reactions the bridge enqueues. Persisted so the
+   * the connector reactions the bridge enqueues. Persisted so the
    * instruction survives replication: the bridge's drainer is elected across
    * the cluster and rebuilds the event from this row, so a process other
    * than the writer has to be able to read it. True on every row written
@@ -2364,7 +2364,7 @@ export interface RateLimitStore {
 
 /**
  * Typed handle that storage implementations expose for the better-auth
- * integration (§3.13). The public Storage contract carries the Drizzle
+ * connector (§3.13). The public Storage contract carries the Drizzle
  * handle as `unknown` so the consumer (auth/instance.ts) is the single
  * site that narrows.
  *
@@ -2524,7 +2524,7 @@ export interface EnrichmentStateRecord extends EnrichmentStateInput {
 /**
  * Bookkeeping for the deterministic text-enrichment sweeper. One row per
  * file item the sweeper has looked at; the candidate query is the whole
- * trigger mechanism (state-based, never event-based, so integration
+ * trigger mechanism (state-based, never event-based, so connector
  * fan-out cannot loop the sweeper).
  */
 export interface EnrichmentStore {

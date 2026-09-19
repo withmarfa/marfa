@@ -89,7 +89,7 @@ describe("reportReservedRootRows", () => {
         row({ id: "core.note", origin: "platform" }),
         row({ id: "system.connection", origin: "platform" }),
         row({ id: "marfa.podcast.show", origin: "platform" }),
-        row({ id: "readwise.highlight", origin: "integration" }),
+        row({ id: "readwise.highlight", origin: "connector" }),
         row({ id: "jonah.reading_item" }),
       ]),
     ).toEqual([]);

@@ -8,13 +8,22 @@ const row = (properties: Record<string, unknown>) => ({
 });
 
 describe("liveConnectionRefusal", () => {
-  it("names the grant routes for a live app and the uninstall route for a live integration", () => {
+  it("names a route for a live app, and no route at all for a live connector", () => {
+    // The app arm names a door that exists. The connector arm used to name
+    // `POST /connections/{id}/uninstall` and promise it would revoke leased
+    // tokens, drop cached upstream tokens and disable inbound webhooks —
+    // one route and three subsystems, none of which survived the rip-out.
+    // This assertion is the reason that sentence stood: it pinned the route
+    // by name, so the refusal read as maintained.
     expect(
       liveConnectionRefusal(row({ kind: "app", status: "active" })),
     ).toContain("DELETE /auth/grants/01a0");
-    expect(
-      liveConnectionRefusal(row({ kind: "integration", status: "active" })),
-    ).toContain("POST /connections/01a0/uninstall");
+
+    const connector = liveConnectionRefusal(
+      row({ kind: "connector", status: "active" }),
+    );
+    expect(connector).toContain("still live");
+    expect(connector).not.toMatch(/\/connections\//);
   });
 
   it("lets a revoked connection of either kind go, and anything that is not a connection", () => {
@@ -22,7 +31,7 @@ describe("liveConnectionRefusal", () => {
       liveConnectionRefusal(row({ kind: "app", status: "revoked" })),
     ).toBeUndefined();
     expect(
-      liveConnectionRefusal(row({ kind: "integration", status: "revoked" })),
+      liveConnectionRefusal(row({ kind: "connector", status: "revoked" })),
     ).toBeUndefined();
     expect(
       liveConnectionRefusal({

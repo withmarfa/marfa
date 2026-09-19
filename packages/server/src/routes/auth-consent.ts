@@ -1565,7 +1565,7 @@ export const CONSENT_SCOPE_DESCRIPTIONS: Record<string, string> = {
   "core.media.series": "Ongoing series.",
   "core.media.song": "Songs.",
 
-  // Integration types: the sixteen this build ships through a connected
+  // Connector types: the sixteen this build ships through a connected
   // service.
   //
   // These reached a person as the type registry's `description` until now,
@@ -1619,7 +1619,7 @@ export const CONSENT_SCOPE_DESCRIPTIONS: Record<string, string> = {
   "system.connection": "Connections to other apps and services.",
   "system.credential": "Keys that give access to your server.",
   "system.device": "Devices signed in to your account.",
-  "system.integration": "Available integrations.",
+  "system.connector": "Available connectors.",
   "system.webhook": "Webhook subscriptions.",
 
   // Edge types: relationships between items.
@@ -1921,7 +1921,7 @@ function describeScope(scope: ParsedScope): string | undefined {
  * reverses what this function used to do.** The skip rested on a claim that
  * `metadata:read` and its siblings are self-explanatory to the audience that
  * requests them. That audience is the wrong one: whoever wrote the
- * integration is not who reads this screen, and the person deciding owns the
+ * connector is not who reads this screen, and the person deciding owns the
  * data rather than operates the server. The device screen had been showing
  * "Register and update custom data types on your server" against
  * `metadata.types` for exactly that reason, and between working copy on one

@@ -102,11 +102,11 @@ export interface CreateItemInput {
 export interface UpdateItemInput {
   properties?: Record<string, unknown>;
   /**
-   * Faithful-mirror semantics for an owning integration's re-sync: an
+   * Faithful-mirror semantics for an owning connector's re-sync: an
    * explicit null deletes the key instead of reading as "leave unset".
    * The upstream cleared the field, so the mirror must clear it too —
    * otherwise a stale value survives every re-sync. Set by the server
-   * for owner writes to integration-owned rows; never caller-supplied.
+   * for owner writes to connector-owned rows; never caller-supplied.
    */
   null_clears?: boolean;
   /**
@@ -358,9 +358,8 @@ export interface ApiKey {
   /**
    * Hard lifetime bound (ISO timestamp). A key past its `expires_at` is
    * refused at the bearer gate exactly like a revoked key. `null` (or
-   * absent) means the key never expires — the shape of every human-minted
-   * key. Runtime credentials are always stamped at mint so the retention
-   * reaper can retire them without an explicit revoke.
+   * absent) means the key never expires, which is the shape of every key
+   * a door mints.
    */
   expires_at?: string | null;
   last_used_at: string | null;

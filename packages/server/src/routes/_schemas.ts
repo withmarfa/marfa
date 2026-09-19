@@ -242,16 +242,14 @@ export const EnforcementOverrideSchema = enforcementSchema(false).describe(
  * Two doors mint a key — a working caller's own and the operator one — and
  * they answered with two declarations that had drifted apart. One carried `expires_at` and the other did not.
  *
- * **The one without it was right.** An expiry is settable only through
- * `createRuntimeCredential`, which the storage interface documents as
- * requiring one and which the integration runtime calls in process. No route
- * reaches it, and `CreateKeyInput` cannot carry an expiry, so every key either
- * door can mint has none. Declaring the field on a create response promised
- * generated clients a property that could never arrive.
+ * **The one without it was right.** `CreateKeyInput` cannot carry an expiry
+ * and nothing on either door sets one, so every key either door can mint has
+ * none. Declaring the field on a create response promised generated clients a
+ * property that could never arrive.
  *
  * It stays real on the read side: `GET /keys` returns stored rows, so a
- * runtime credential's stamp does reach a caller listing keys, and the list
- * schema keeps the field. The expiry belongs to the read, not to the creates.
+ * stamped row's expiry does reach a caller listing keys, and the list schema
+ * keeps the field. The expiry belongs to the read, not to the creates.
  */
 export const KeyResponseSchema = z.object({
   id: z.string(),

@@ -7,7 +7,7 @@ import {
   isValidEmail,
   isValidLanguageCode,
   isValidTypeIdentifier,
-  isValidIntegrationIdentifier,
+  isValidConnectorIdentifier,
   isValidTypePattern,
   isValidHandle,
   isReservedHandle,
@@ -512,54 +512,54 @@ describe("isReservedHandle", () => {
   });
 });
 
-describe("isValidIntegrationIdentifier", () => {
+describe("isValidConnectorIdentifier", () => {
   it("accepts handle-slash-name", () => {
-    expect(isValidIntegrationIdentifier("readwise/reader")).toBe(true);
-    expect(isValidIntegrationIdentifier("marfa/rss-watcher")).toBe(true);
-    expect(isValidIntegrationIdentifier("google/calendar")).toBe(true);
+    expect(isValidConnectorIdentifier("readwise/reader")).toBe(true);
+    expect(isValidConnectorIdentifier("marfa/rss-watcher")).toBe(true);
+    expect(isValidConnectorIdentifier("google/calendar")).toBe(true);
   });
 
   it("accepts a dotted name half, so a family can carry a sub-namespace", () => {
-    expect(isValidIntegrationIdentifier("acme/calendar.events")).toBe(true);
+    expect(isValidConnectorIdentifier("acme/calendar.events")).toBe(true);
   });
 
   it("does not judge reserved words — that is registration's question", () => {
-    // `marfa` is a reserved root and the platform's own integrations live
+    // `marfa` is a reserved root and the platform's own connectors live
     // under `marfa/`, so refusing reserved values syntactically would refuse
     // the shipped set. Whether a publisher may publish under a handle is
     // answered at registration, where the credential is in hand.
-    expect(isValidIntegrationIdentifier("marfa/podcasts")).toBe(true);
-    expect(isValidIntegrationIdentifier("todoist/tasks")).toBe(true);
+    expect(isValidConnectorIdentifier("marfa/podcasts")).toBe(true);
+    expect(isValidConnectorIdentifier("todoist/tasks")).toBe(true);
   });
 
   it("takes exactly one slash, never a path", () => {
-    expect(isValidIntegrationIdentifier("acme/deep/name")).toBe(false);
-    expect(isValidIntegrationIdentifier("/leading")).toBe(false);
-    expect(isValidIntegrationIdentifier("trailing/")).toBe(false);
+    expect(isValidConnectorIdentifier("acme/deep/name")).toBe(false);
+    expect(isValidConnectorIdentifier("/leading")).toBe(false);
+    expect(isValidConnectorIdentifier("trailing/")).toBe(false);
   });
 
   it("holds the handle to the handle grammar", () => {
-    expect(isValidIntegrationIdentifier("ab/short-handle")).toBe(false);
-    expect(isValidIntegrationIdentifier("do--uble/name")).toBe(false);
-    expect(isValidIntegrationIdentifier("Upper/name")).toBe(false);
-    expect(isValidIntegrationIdentifier("-lead/name")).toBe(false);
+    expect(isValidConnectorIdentifier("ab/short-handle")).toBe(false);
+    expect(isValidConnectorIdentifier("do--uble/name")).toBe(false);
+    expect(isValidConnectorIdentifier("Upper/name")).toBe(false);
+    expect(isValidConnectorIdentifier("-lead/name")).toBe(false);
   });
 
-  it("refuses the dot form the integrations shipped under before", () => {
+  it("refuses the dot form the connectors shipped under before", () => {
     // Every stored name carries the slash now, so a dotted value names a
     // type. Accepting both was the migration window, and it is closed.
-    expect(isValidIntegrationIdentifier("readwise.reader")).toBe(false);
-    expect(isValidIntegrationIdentifier("withmarfa.inbox")).toBe(false);
-    expect(isValidIntegrationIdentifier("core.note")).toBe(false);
+    expect(isValidConnectorIdentifier("readwise.reader")).toBe(false);
+    expect(isValidConnectorIdentifier("withmarfa.inbox")).toBe(false);
+    expect(isValidConnectorIdentifier("core.note")).toBe(false);
   });
 
   it("refuses a bare word carrying neither separator", () => {
-    expect(isValidIntegrationIdentifier("nodot")).toBe(false);
+    expect(isValidConnectorIdentifier("nodot")).toBe(false);
   });
 
   it("caps length and refuses non-strings", () => {
-    expect(isValidIntegrationIdentifier(`acme/${"a".repeat(200)}`)).toBe(false);
-    expect(isValidIntegrationIdentifier(undefined as unknown as string)).toBe(
+    expect(isValidConnectorIdentifier(`acme/${"a".repeat(200)}`)).toBe(false);
+    expect(isValidConnectorIdentifier(undefined as unknown as string)).toBe(
       false,
     );
   });
@@ -567,7 +567,7 @@ describe("isValidIntegrationIdentifier", () => {
 
 describe("the two grammars stay apart", () => {
   it("a type identifier never admits a slash", () => {
-    // The whole reason integration names got their own validator: a slash
+    // The whole reason connector names got their own validator: a slash
     // reaching the type grammar would reach every scope literal and
     // permission-map key, where it can only ever name something that does
     // not exist.

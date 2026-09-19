@@ -700,7 +700,7 @@ describe("POST /items/bulk", () => {
  *
  * It always does, and `enable_fanout` does not change that. The flag
  * decides whether those events also drive outbound work — webhook
- * delivery, integration reactions — and defaults off, because one call
+ * delivery, connector reactions — and defaults off, because one call
  * here writes thousands of rows.
  *
  * These watch the emitter, which every published event reaches whatever

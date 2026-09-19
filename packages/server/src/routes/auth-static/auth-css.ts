@@ -1327,7 +1327,7 @@ details.disclosure[open] > summary .disclosure__chevron {
   margin-bottom: 6px;
 }
 
-/* App identity header (integration install). */
+/* App identity header (connector install). */
 .apphead {
   display: flex;
   align-items: center;
@@ -1428,8 +1428,8 @@ details.disclosure[open] > summary .disclosure__chevron {
 
 /* ================================================================ */
 /* Connection surfaces                                              */
-/* The OAuth callback terminals, the integration install terminals, */
-/* and the per-integration configuration forms.                     */
+/* The OAuth callback terminals, the connector install terminals,   */
+/* and the per-connector configuration forms.                       */
 /*                                                                  */
 /* These pages used to carry their own copies of the whole design   */
 /* system — two hand-written stylesheets that redeclared the tokens  */
@@ -1475,7 +1475,7 @@ pre {
    These two had no rule anywhere — not in the shared stylesheet and not in
    the copy the configure page used to carry — so that form has always
    rendered its field names and descriptions unstyled. Nobody noticed,
-   because reaching it means installing an integration that declares a
+   because reaching it means installing a connector that declares a
    configuration contract and then opening its settings. Found by putting
    the page in the preview, which is the argument for the preview. */
 .field-name {

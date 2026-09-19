@@ -1,5 +1,5 @@
 /**
- * Field-by-field comparison between a promoted item and the integration
+ * Field-by-field comparison between a promoted item and the connector
  * mirror it was promoted from.
  *
  * Promotion forks a copy and the mirror keeps re-syncing, so the two drift

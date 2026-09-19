@@ -87,9 +87,9 @@ function mapRow(row: typeof apiKeys.$inferSelect): ApiKey {
 }
 
 /** Rows that are neither revoked nor past their expiry. `expires_at` is
- *  NULL for human-minted keys, so the NULL branch keeps them live. Without
- *  the expiry arm, an expired-but-not-yet-reaped runtime credential reads
- *  as active for up to a full reaper interval. */
+ *  NULL on every key a door mints, so the NULL branch keeps them live. The
+ *  expiry arm is what stops a stamped row reading as active past its
+ *  instant, since nothing revokes it on the way. */
 function notRevokedOrExpired(nowIso: string) {
   return and(
     isNull(apiKeys.revoked_at),

@@ -88,20 +88,20 @@ async function bookmarkRow(
 }
 
 /**
- * An integration's mirror of an external record, written through the store:
- * nothing this server mints can be the owning integration, so the store is
+ * A connector's mirror of an external record, written through the store:
+ * nothing this server mints can be the owning connector, so the store is
  * the only writer a mirror has.
  */
 async function mirrorRow(
-  integration: string,
+  connector: string,
 ): Promise<{ id: string; version: number }> {
   const row = await ctx.storage.items.create({
     type: "core.bookmark",
-    source: `integration:${integration}`,
+    source: `connector:${connector}`,
     source_id: `mirror-${Math.random().toString(36).slice(2, 10)}`,
     properties: {
       url: "https://upstream.example/a",
-      title: "the owning integration's copy",
+      title: "the owning connector's copy",
     },
   });
   return { id: row.id, version: row.version };
@@ -353,8 +353,8 @@ const DOORS: Door[] = [
 /**
  * Mirror protection, on the doors where it can actually refuse.
  *
- * `permitsMirrorWrite` refuses a row whose `source` is an integration's, and
- * nothing this server mints can be that integration. One consequence decides
+ * `permitsMirrorWrite` refuses a row whose `source` is a connector's, and
+ * nothing this server mints can be that connector. One consequence decides
  * where it can be tested at all: **not on the natural-key doors.** The lookup
  * keys on the caller's own `source`, so a row resolved by natural key always
  * carries it and can never be a mirror. Deleting the call from that branch
@@ -373,19 +373,19 @@ describe("mirror protection on the doors that resolve a row by id", () => {
     mine = await credentialFor("acme/mirror-mine");
   });
 
-  it("refuses PATCH /items/{id} on an integration's mirror", async () => {
+  it("refuses PATCH /items/{id} on a connector's mirror", async () => {
     const mirror = await mirrorRow("acme/mirror-sibling");
     const res = await request(ctx.app, "PATCH", `/items/${mirror.id}`, {
       key: mine.key,
       body: { properties: { title: "overwritten" }, version: mirror.version },
     });
     // The rule that refused, not merely that something did.
-    expect(await refusalCode(res)).toBe("integration_owned");
+    expect(await refusalCode(res)).toBe("connector_owned");
     const after = await ctx.storage.items.get(mirror.id);
-    expect(after?.properties.title).toBe("the owning integration's copy");
+    expect(after?.properties.title).toBe("the owning connector's copy");
   });
 
-  it("refuses POST /items/bulk (by id) on an integration's mirror", async () => {
+  it("refuses POST /items/bulk (by id) on a connector's mirror", async () => {
     const { id } = await mirrorRow("acme/mirror-sibling");
     const res = await request(ctx.app, "POST", "/items/bulk", {
       key: mine.key,
@@ -393,12 +393,12 @@ describe("mirror protection on the doors that resolve a row by id", () => {
         items: [{ id, type: "core.bookmark", properties: { title: "x" } }],
       },
     });
-    expect(await refusalCode(res)).toBe("integration_owned");
+    expect(await refusalCode(res)).toBe("connector_owned");
     const after = await ctx.storage.items.get(id);
-    expect(after?.properties.title).toBe("the owning integration's copy");
+    expect(after?.properties.title).toBe("the owning connector's copy");
   });
 
-  it("narrows POST /items/bulk-actions past an integration's mirror", async () => {
+  it("narrows POST /items/bulk-actions past a connector's mirror", async () => {
     // Narrowing rather than refusing: the door takes a filter, and its
     // established answer to a row the caller may not touch is to leave it
     // out of the match set rather than fail the action over every other row.
@@ -411,12 +411,12 @@ describe("mirror protection on the doors that resolve a row by id", () => {
     });
     expect(res.status).toBe(202);
     const mirrorAfter = await ctx.storage.items.get(mirror.id);
-    expect(mirrorAfter?.properties.title).toBe("the owning integration's copy");
+    expect(mirrorAfter?.properties.title).toBe("the owning connector's copy");
     const ownAfter = await ctx.storage.items.get(own.id);
     expect(ownAfter?.properties.title).toBe("patched by bulk action");
   });
 
-  it("still writes a row no integration owns", async () => {
+  it("still writes a row no connector owns", async () => {
     // The permissive direction. Without it a guard that refuses everything
     // satisfies the assertions above and this file would not notice.
     const own = await bookmarkRow(mine, `own-${String(Math.random())}`);

@@ -5,7 +5,7 @@ import type { TypeSchema } from "./schema-types.js";
 import { validateTypeSchema } from "./schema-validation.js";
 import {
   ALL_TYPES,
-  ALL_INTEGRATION_TYPES,
+  ALL_CONNECTOR_TYPES,
   ALL_SYSTEM_TYPES,
 } from "../generated/type-registry.js";
 
@@ -25,7 +25,7 @@ const typesRoot = resolve(import.meta.dirname, "..");
 
 const FAMILIES = [
   { name: "core", dir: join(typesRoot, "core") },
-  { name: "integration", dir: join(typesRoot, "integrations") },
+  { name: "connector", dir: join(typesRoot, "connectors") },
   { name: "system", dir: join(typesRoot, "core", "system") },
 ] as const;
 
@@ -56,7 +56,7 @@ const inTree = load();
 // The emitted registry is the resolved view of the same schemas, and it is what
 // the inheritance and compatible_with checks resolve against.
 const emitted = new Map<string, TypeSchema>(
-  [...ALL_TYPES, ...ALL_INTEGRATION_TYPES, ...ALL_SYSTEM_TYPES].map((s) => [
+  [...ALL_TYPES, ...ALL_CONNECTOR_TYPES, ...ALL_SYSTEM_TYPES].map((s) => [
     s.id,
     s,
   ]),
@@ -459,8 +459,8 @@ describe("compatible_with — optional fields on the target", () => {
   });
 
   it("allows narrowing an optional string to an enum", () => {
-    // Two shipped integrations do exactly this: `core.task.status` and
-    // `core.event.status` are free-text, and the integration knows the closed
+    // Two shipped connectors do exactly this: `core.task.status` and
+    // `core.event.status` are free-text, and the connector knows the closed
     // set the upstream service actually emits. An enum only ever holds a
     // string, so a reader expecting `string` is never surprised.
     const result = validate({

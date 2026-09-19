@@ -25,7 +25,7 @@ import {
   isValidTypePattern,
 } from "./validation.js";
 import {
-  INTEGRATION_TYPE_IDS,
+  CONNECTOR_TYPE_IDS,
   SYSTEM_TYPE_IDS,
   TYPE_REGISTRY,
   isReservedRoot,
@@ -1553,10 +1553,10 @@ describe("the content category projection", () => {
   });
 
   it("never claims a write the reserved-namespace gate refuses", () => {
-    // `marfa.*` types are family `integration`, so they are squarely inside
+    // `marfa.*` types are family `connector`, so they are squarely inside
     // the category and their reads are unrestricted. Their writes are refused
     // by the middleware for every credential that is not `is_operator` or a
-    // manifest-granted runtime credential, and an OAuth token is neither. A
+    // manifest-granted connector credential, and an OAuth token is neither. A
     // parent that claimed the write would put something on a consent screen
     // that will never work.
     const marfaTypes = [...TYPE_REGISTRY.keys()].filter((id) =>
@@ -1568,7 +1568,7 @@ describe("the content category projection", () => {
     for (const id of marfaTypes) {
       // The fixture has to be honest: these are in the category, not
       // excluded from it, so the clamp is a level and not an exclusion.
-      expect(INTEGRATION_TYPE_IDS.has(id), id).toBe(true);
+      expect(CONNECTOR_TYPE_IDS.has(id), id).toBe(true);
       expect(resolveTypePermission(id, write), id).toBe("read");
       expect(resolveTypePermission(id, read), id).toBe("read");
     }
@@ -1635,12 +1635,12 @@ describe("adding the content category to a wildcard grant can narrow it", () => 
     );
   });
 
-  it("clamps an integration type from write to read when the category joins `*:write`", () => {
+  it("clamps a connector type from write to read when the category joins `*:write`", () => {
     const wildcardOnly = scopesToTypePermissions(["*:write"]);
     const withCategory = scopesToTypePermissions(["*:write", "content:write"]);
     // Squarely inside the category rather than excluded from it, which is
     // what makes this a clamp to `read` and not a drop to `none`.
-    expect(INTEGRATION_TYPE_IDS.has("marfa.captured_email")).toBe(true);
+    expect(CONNECTOR_TYPE_IDS.has("marfa.captured_email")).toBe(true);
     expect(resolveTypePermission("marfa.captured_email", wildcardOnly)).toBe(
       "write",
     );

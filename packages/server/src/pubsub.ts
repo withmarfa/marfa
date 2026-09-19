@@ -6,7 +6,7 @@ import type { EventLogStore } from "./storage/interface.js";
 
 /**
  * Whether this event drives outbound side effects as well as being logged
- * and streamed: outbound webhook delivery, and the integration reactions
+ * and streamed: outbound webhook delivery, and the connector reactions
  * the reactive bridge enqueues.
  *
  * Absent means yes, so every ordinary write door is unchanged. The bulk

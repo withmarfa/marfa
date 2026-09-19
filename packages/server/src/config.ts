@@ -76,7 +76,7 @@ export interface AppConfig {
    *  Default 14; env override `MARFA_ACTIVITY_RETENTION_DAYS`; instance-config
    *  override `activity_retention_days`. `0` disables the job.
    *
-   *  An integration reports every run as an activity row, including the
+   *  A connector reports every run as an activity row, including the
    *  runs that found nothing to do, so this is the fastest-growing item
    *  type on an instance with connections and nothing aged it out before.
    *

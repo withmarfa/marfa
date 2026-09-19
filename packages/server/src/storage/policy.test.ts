@@ -207,7 +207,7 @@ describe("resolveTypeSchema roles", () => {
     ]);
   });
 
-  it("returns the role for the integration container too, which has no parent", () => {
+  it("returns the role for the connector container too, which has no parent", () => {
     // The third declaring type, and the only one outside `core.*` with a
     // chain of length one. A mutation keyed on chain length or namespace
     // passes against the two core types and breaks this.

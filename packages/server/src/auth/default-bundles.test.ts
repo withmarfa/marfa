@@ -137,7 +137,7 @@ describe("runtime custom-namespace resolution", () => {
   it("offers the person's own roots and not a connected service's", async () => {
     // The distinction the identifier cannot make. Both ids are
     // publisher-tier by prefix, so the tier test admits each of them; only
-    // the stored origin says one arrived with an integration.
+    // the stored origin says one arrived with a connector.
     //
     // It matters because these roots become a wildcard in the default
     // grant, under a heading about the person's own types. A type a
@@ -157,9 +157,9 @@ describe("runtime custom-namespace resolution", () => {
       await ctx.storage.types.create(
         { id: "acme.widget", ...baseType },
         {
-          origin: "integration",
-          family: "integration",
-          owner_integration: "acme/widgets",
+          origin: "connector",
+          family: "connector",
+          owner_connector: "acme/widgets",
         },
       );
 
@@ -184,8 +184,8 @@ describe("runtime custom-namespace resolution", () => {
       expect(scopesOf("connected")).not.toContain("acme.*:write");
 
       // The allowlist is a different question and keeps both: a scope
-      // outside it cannot be granted at all, so the integration's own
-      // types have to be in it for the integration to reach them.
+      // outside it cannot be granted at all, so the connector's own
+      // types have to be in it for the connector to reach them.
       expect(await resolveAllRegisteredNamespaceRoots(ctx.storage)).toEqual([
         "acme",
         "jonah",

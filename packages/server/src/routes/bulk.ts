@@ -20,7 +20,7 @@
  * about.
  *
  * `enable_fanout` governs the outbound work instead — webhook delivery and
- * the integration reactions the bridge enqueues — and defaults off, because
+ * the connector reactions the bridge enqueues — and defaults off, because
  * one call here writes thousands of rows and a delivery per row per
  * subscriber is not what the caller asked for.
  */
@@ -771,7 +771,7 @@ async function processBulkItem(
         // `null` on any field the type does not require, so a body clearing an
         // optional field writes nothing for it. Judging the raw payload
         // validated a row carrying that `null` while the store wrote the old
-        // value — which is exactly the shape an integration's re-sync sends,
+        // value — which is exactly the shape a connector's re-sync sends,
         // and it is the difference between predicting the write and
         // approximating it. `existing.type` rather than the destination for
         // the same reason: the store resolves against the row's own type.
@@ -1287,7 +1287,7 @@ export function bulkRoutes(storage: Storage) {
     );
 
     // The type axis is not the only one a caller can be narrower than: a
-    // row an integration owns is not this caller's to patch. Narrowing
+    // row a connector owns is not this caller's to patch. Narrowing
     // rather than refusing, because that is the answer this route already
     // gives on the type axis: a row the caller cannot write leaves the match
     // set, instead of failing an action over thousands of rows it
@@ -1295,7 +1295,7 @@ export function bulkRoutes(storage: Storage) {
 
     const patch = body.action === "update_properties" ? body.patch : undefined;
     // Property patches answer to the mirror rule; transitions and retiers
-    // stay user gestures on rows an integration owns.
+    // stay user gestures on rows a connector owns.
     const mayAct = (item: Item): boolean =>
       patch === undefined || permitsMirrorWrite(item);
 
@@ -1342,7 +1342,7 @@ export function bulkRoutes(storage: Storage) {
         // namespace which `PATCH /items/{id}` refuses to the same key.
         //
         // `mayWriteReserved` is that fence in predicate form rather than a
-        // second copy of it, so the integration that legitimately reaches
+        // second copy of it, so the connector that legitimately reaches
         // its own `system.activity` rows here still does — narrowed per row
         // afterwards by the attribution rule, which is where whose rows it
         // may touch is decided.

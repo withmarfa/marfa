@@ -253,7 +253,7 @@ export function buildAllowedScopes(
     "core.*:read",
     "core.*:write",
     // Runtime + connected-service namespace wildcards. These cover an app's
-    // own `user.*` / `app.*` runtime types and the integration namespaces the
+    // own `user.*` / `app.*` runtime types and the connector namespaces the
     // static registry never enumerates. They stay REQUESTABLE (an app can ask
     // for them explicitly) but are deliberately NOT in the default consent
     // bundle — the default grant is the curated, per-type-narrowable content

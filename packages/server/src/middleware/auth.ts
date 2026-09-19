@@ -446,18 +446,28 @@ export function authMiddleware(storage: Storage, salt: string) {
  * per request in this file, never persisted. A minted key carrying that
  * shape would read later as a grant it has no binding to.
  *
- * `integration:` is read as provenance. `itemProvenanceSource` stamps a
+ * `connector:` is read as provenance. `itemProvenanceSource` stamps a
  * credential's source onto the rows it writes, and `permitsMirrorWrite`
- * treats a row carrying this prefix as an integration's mirror of an
+ * treats a row carrying this prefix as a connector's mirror of an
  * external record, which nothing writes over. A minted key carrying the
  * prefix would let any caller plant rows that read as mirrors.
  */
+/**
+ * Prefixes a caller may not claim as its own `source`.
+ *
+ * `integration:` is the name `connector:` replaced, and it is here for the
+ * same reason the retired scope root stays reserved: a prefix that once meant
+ * connector provenance must not become claimable by dropping out of this
+ * list. Without it, a caller could mint a credential stamping rows with the
+ * exact provenance identity a connector used before the rename.
+ */
 export const RESERVED_CREDENTIAL_SOURCE_PREFIXES = [
   "oauth:",
+  "connector:",
   "integration:",
 ] as const;
 
-/** Whether `source` claims one of the reserved integration shapes. */
+/** Whether `source` claims one of the reserved connector shapes. */
 export function isReservedCredentialSource(source: string): boolean {
   const normalized = source.trim().toLowerCase();
   return RESERVED_CREDENTIAL_SOURCE_PREFIXES.some((prefix) =>
@@ -676,14 +686,27 @@ export function itemProvenanceSource(
   return key?.source;
 }
 
-/** The provenance prefix every integration-written row carries. */
-export const INTEGRATION_SOURCE_PREFIX = "integration:";
+/** The provenance prefix every connector-written row carries. */
+export const CONNECTOR_SOURCE_PREFIX = "connector:";
 
 /**
- * One rule: nothing writes to an item an integration owns. Ownership is
- * provenance: a row whose source carries the integration prefix is an
- * integration's mirror of an external record, and nothing this server
- * mints can be that integration, so the copy is refused toward promotion.
+ * The prefix `CONNECTOR_SOURCE_PREFIX` replaced.
+ *
+ * A row this server stamped before the rename still carries it, and mirror
+ * protection is decided by the prefix alone — so a gate that knew only the
+ * new spelling would leave every such row writable by any credential, with
+ * the row still reading as a connector's mirror to `GET /items`. The boot
+ * refusal in `storage/sqlite/connection.ts` means a database holding these
+ * is not opened at all; this constant is what makes the gate correct rather
+ * than merely unreached.
+ */
+const RETIRED_CONNECTOR_SOURCE_PREFIX = "integration:";
+
+/**
+ * One rule: nothing writes to an item a connector owns. Ownership is
+ * provenance: a row whose source carries the connector prefix is a
+ * connector's mirror of an external record, and nothing this server
+ * mints can be that connector, so the copy is refused toward promotion.
  * Two write paths onto one mirror is how user edits and re-syncs silently
  * clobber each other. Lifecycle transitions, tags, and extensions stay
  * user gestures: they do not edit the copy, so they do not answer to this.
@@ -697,8 +720,8 @@ export function requireMirrorProtection(row: {
 }): void {
   if (permitsMirrorWrite(row)) return;
   throw new MarfaError(
-    ErrorCode.INTEGRATION_OWNED,
-    "This item is an integration's copy of an external record; only the owning integration writes it. Promote it to edit your own copy",
+    ErrorCode.CONNECTOR_OWNED,
+    "This item is a connector's copy of an external record; only the owning connector writes it. Promote it to edit your own copy",
     { item_id: row.id, source: row.source },
   );
 }
@@ -709,7 +732,10 @@ export function permitsMirrorWrite(row: {
   id: string;
   source: string;
 }): boolean {
-  return !row.source.startsWith(INTEGRATION_SOURCE_PREFIX);
+  return !(
+    row.source.startsWith(CONNECTOR_SOURCE_PREFIX) ||
+    row.source.startsWith(RETIRED_CONNECTOR_SOURCE_PREFIX)
+  );
 }
 
 /**
@@ -730,7 +756,7 @@ export function permitsMirrorWrite(row: {
  *
  * Refusing here rather than in each caller is the deliberate half, and
  * the reason is stronger than it first looked. Counted against the
- * integrations repository rather than recalled: **no inbound integration
+ * connectors repository rather than recalled: **no inbound connector
  * reads the type of the row it is about to write.** Every `getItem` call
  * in every handler fetches either the connection's own configuration row
  * or, on the outbound path, the item an event names.
@@ -743,7 +769,7 @@ export function permitsMirrorWrite(row: {
  * per-record id to read by.
  *
  * Deliberately no fleet total here. It depends on whether the scaffold
- * package and the one write-only integration are counted, an earlier
+ * package and the one write-only connector are counted, an earlier
  * draft of this comment asserted one, and it was wrong.
  *
  * So there is no caller-side defence to defer to. The door is the only

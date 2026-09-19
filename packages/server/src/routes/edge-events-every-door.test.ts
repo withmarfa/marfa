@@ -393,7 +393,7 @@ describe("the remaining doors that write an edge", () => {
     const mirror = await ctx.storage.items.create({
       type: "core.note",
       properties: { body: "an upstream record" },
-      source: "integration:acme.promotefixture",
+      source: "connector:acme.promotefixture",
       source_id: `mirror-${Math.random().toString(36).slice(2, 8)}`,
     });
 

@@ -1,10 +1,10 @@
 /**
- * D32's one rule at the wire: nothing writes to an item an integration owns.
- * The owning integration re-syncs its mirror (with faithful-mirror null
+ * D32's one rule at the wire: nothing writes to an item a connector owns.
+ * The owning connector re-syncs its mirror (with faithful-mirror null
  * semantics); everyone else, the operator key included, is refused toward
  * promotion, which mints a user-owned copy joined by derived-from. Items
- * outside integration provenance are untouched by the rule, which is also
- * what keeps sync (a client, not an integration) unaffected.
+ * outside connector provenance are untouched by the rule, which is also
+ * what keeps sync (a client, not a connector) unaffected.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { createTestContext, request } from "../test-utils.js";
@@ -13,7 +13,7 @@ import type { TestContext } from "../test-utils.js";
 let ctx: TestContext;
 let memberKey: string;
 
-const MIRROR_SOURCE = "integration:acme.mirror";
+const MIRROR_SOURCE = "connector:acme.mirror";
 
 beforeAll(async () => {
   ctx = await createTestContext();
@@ -38,8 +38,8 @@ afterAll(async () => {
 });
 
 /**
- * An integration's mirror of an external record, written through the store:
- * nothing this server mints can be the owning integration, so the store is
+ * A connector's mirror of an external record, written through the store:
+ * nothing this server mints can be the owning connector, so the store is
  * the only writer a mirror has.
  */
 async function createMirror(
@@ -59,7 +59,7 @@ async function createMirror(
 }
 
 describe("the mirror rule", () => {
-  it("refuses a member write to an integration-owned item", async () => {
+  it("refuses a member write to a connector-owned item", async () => {
     const { id, version } = await createMirror(
       `m-${String(Math.random()).slice(2)}`,
     );
@@ -69,7 +69,7 @@ describe("the mirror rule", () => {
     });
     expect(res.status).toBe(403);
     const body = (await res.json()) as { error: { code: string } };
-    expect(body.error.code).toBe("integration_owned");
+    expect(body.error.code).toBe("connector_owned");
   });
 
   it("refuses the operator key too — one rule, not two", async () => {
@@ -82,7 +82,7 @@ describe("the mirror rule", () => {
     });
     expect(res.status).toBe(403);
     const body = (await res.json()) as { error: { code: string } };
-    expect(body.error.code).toBe("integration_owned");
+    expect(body.error.code).toBe("connector_owned");
   });
 
   it("promotes to a user-owned copy joined by derived-from, untouched by re-sync", async () => {
@@ -102,7 +102,7 @@ describe("the mirror rule", () => {
       };
     };
     expect(promotedBody.item.id).not.toBe(id);
-    expect(promotedBody.item.source.startsWith("integration:")).toBe(false);
+    expect(promotedBody.item.source.startsWith("connector:")).toBe(false);
     expect(promotedBody.item.properties.title).toBe("Mirrored");
 
     const edges = await request(
@@ -137,7 +137,7 @@ describe("the mirror rule", () => {
     );
     expect(edit.status).toBe(200);
 
-    // The upstream moves: the owning integration re-syncs its mirror.
+    // The upstream moves: the owning connector re-syncs its mirror.
     await ctx.storage.items.update(id, {
       properties: { title: "Upstream renamed again" },
     });
@@ -169,8 +169,8 @@ describe("the mirror rule", () => {
     expect(res.status).toBe(400);
   });
 
-  it("leaves items outside integration provenance untouched by the rule", async () => {
-    // Sync's items arrive under a client credential with no integration
+  it("leaves items outside connector provenance untouched by the rule", async () => {
+    // Sync's items arrive under a client credential with no connector
     // provenance, so this is also the D43 exemption, structurally.
     const own = await request(ctx.app, "POST", "/items", {
       key: memberKey,

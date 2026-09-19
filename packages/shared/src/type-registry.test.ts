@@ -1676,7 +1676,7 @@ describe("isPlatformTypeFamily", () => {
     // set it joins fails here as well as there.
     expect([...PLATFORM_TYPE_FAMILIES]).toEqual([
       "core",
-      "integration",
+      "connector",
       "system",
     ]);
   });

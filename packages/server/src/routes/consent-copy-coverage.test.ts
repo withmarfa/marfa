@@ -209,7 +209,7 @@ interface UncoveredPattern {
  * **Empty, and the mechanism stays.** Every entry was a scope somebody could
  * be asked to approve while being shown a raw literal or a paragraph of
  * schema rationale. The last of them closed in two changes: sixteen shipped
- * integration types got curated sentences, and the eleven namespace
+ * connector types got curated sentences, and the eleven namespace
  * wildcards got a rule deriving one from their root.
  *
  * It is written down rather than filtered out because the alternative shapes
@@ -328,7 +328,7 @@ describe("the consent copy guard derives the scopes it checks", () => {
     // diff and in front of a reviewer. **Lowering these numbers was the
     // work and it is done**: the wildcards went to zero when a derivation
     // rule reached them, taking the synthetic pair with them, and the
-    // integration types went to zero when somebody wrote their sentences.
+    // connector types went to zero when somebody wrote their sentences.
     //
     // At zero the bound does more rather than less. Every count below is an
     // equality against zero, so re-populating this list is a deliberate

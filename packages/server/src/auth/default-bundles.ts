@@ -9,7 +9,7 @@
  *
  * - The static type registry, for the shipped families: every `core.*` type
  *   lands in the read and write bundles, every publisher-tier registry type
- *   (the integration set) lands in the read-only connected bundle, and
+ *   (the connector set) lands in the read-only connected bundle, and
  *   `system.*` stays out except the `system.connection:read` toggle.
  * - The registry's own publisher roots, for the namespace wildcards the
  *   scope allowlist admits (`google.*`, `readwise.*`, …) — previously a
@@ -40,7 +40,7 @@ import type { Storage } from "../storage/interface.js";
  * The namespace roots whose wildcard scopes (`<root>.*:read|write`, plus the
  * `edge.<root>.*` pair) are requestable: `user` and `app` for the runtime
  * tiers, plus every publisher root the shipped registry occupies. Derived,
- * not enumerated — a new integration namespace joins by existing.
+ * not enumerated — a new connector namespace joins by existing.
  *
  * **Not a reader of the `types` table**, which is why it is not named for a
  * registration: it answers from `TYPE_REGISTRY`, the build's own set, and
@@ -71,7 +71,7 @@ export function deriveRequestableNamespaceRoots(): string[] {
 export interface RuntimeNamespaceRoots {
   /** Roots holding types the person registered themselves. */
   own: string[];
-  /** Roots holding types an installed integration published. */
+  /** Roots holding types an installed connector published. */
   connected: string[];
   /**
    * Roots holding types whose provenance nobody recorded — a row whose
@@ -100,7 +100,7 @@ export async function resolveRegisteredNamespaceRoots(
   // Both are offered; what differs is how. A person's own root gets the
   // read-and-write wildcard, because types they have not invented yet
   // cannot be enumerated. A service's root is offered read-only, matching
-  // every other connected type: an integration's row is a faithful mirror
+  // every other connected type: a connector's row is a faithful mirror
   // of an upstream record, and a third-party write forks it.
   //
   // Neither is dropped. Removing a service's types from the person's
@@ -113,7 +113,7 @@ export async function resolveRegisteredNamespaceRoots(
     ),
     connected: namespaceRootsOf(
       rows
-        .filter((row) => row.origin === "integration")
+        .filter((row) => row.origin === "connector")
         .map((row) => row.schema.id),
     ),
     // A row whose provenance nobody recorded. Deliberately its own bucket
@@ -178,9 +178,9 @@ function namespaceRootsOf(ids: readonly string[]): string[] {
  * - Everything in `system.*` stays out except `system.connection:read` (the
  *   "Connections" toggle), so an app reading "your content" cannot
  *   read security internals (credentials, devices, webhooks).
- * - Publisher-tier registry types (the integration set) are the person's
+ * - Publisher-tier registry types (the connector set) are the person's
  *   own synced content, so `connected` covers them for READ. Writes stay
- *   request-only: an integration row is a vendor-faithful mirror, and a
+ *   request-only: a connector row is a vendor-faithful mirror, and a
  *   third-party write would fork it from upstream.
  * - `custom` is the one wildcard bundle, deliberately: types a person
  *   invents do not exist at request time, so no concrete list can name
@@ -250,9 +250,9 @@ export function buildDefaultPermissionBundles(
       id: "connected",
       label: "Content from your connected services",
       description:
-        "What your integrations have synced, like Google and Readwise.",
+        "What your connectors have synced, like Google and Readwise.",
       // Shipped publisher types are enumerated; locally installed
-      // integrations publish types this build has never heard of, so
+      // connectors publish types this build has never heard of, so
       // their roots ride as wildcards. Read-only either way, which is the
       // rule for a mirror rather than a property of how it is named.
       scopes: [

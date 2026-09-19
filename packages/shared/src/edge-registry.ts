@@ -93,7 +93,7 @@ export function listEdgeTypes(): EdgeTypeSchema[] {
  * The role form exists because a list of names can only ever admit the types
  * whoever wrote the edge had already thought of. A core edge naming its
  * permitted endpoints is unextendable by anyone who cannot edit the core edge,
- * which is every integration publisher who is not us; a role is something the
+ * which is every connector publisher who is not us; a role is something the
  * type being pointed at declares about itself, so the edge stays closed on
  * meaning while staying open on membership.
  *

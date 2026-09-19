@@ -65,11 +65,11 @@ export function liveConnectionRefusal(
     );
   }
   // **`kind`, not just the type.** `system.connection` covers both kinds
-  // and only `integration` has a runtime credential minted for it. A row
+  // and only `connector` has a credential minted for it. A row
   // with neither kind cannot be written through a validating door; if one
   // is here anyway, nothing knows what hangs off it, so it stays.
   if (props?.status === "revoked") return undefined;
-  if (props?.kind !== "integration") {
+  if (props?.kind !== "connector") {
     return (
       `Connection ${item.id} has no recognized kind and is not revoked; ` +
       `nothing knows what credentials hang off it, so it stays. A row in ` +
@@ -78,11 +78,9 @@ export function liveConnectionRefusal(
     );
   }
   return (
-    `Connection ${item.id} is still live. Uninstall it first with ` +
-    `POST /connections/${item.id}/uninstall, which revokes its runtime ` +
-    `credentials and leased tokens, drops its cached upstream tokens and ` +
-    `disables its inbound webhooks. Removing the row here would leave ` +
-    `those behind with nothing naming their owner.`
+    `Connection ${item.id} is still live. Revoke the credentials it holds ` +
+    `and the grants it was given before removing the row, or they are left ` +
+    `behind with nothing naming their owner.`
   );
 }
 

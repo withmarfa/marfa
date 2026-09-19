@@ -20,7 +20,7 @@ import {
   EDGE_TYPE_REGISTRY,
   GLOBAL_TYPE_WILDCARD,
   grantCoversScope,
-  INTEGRATION_TYPE_IDS,
+  CONNECTOR_TYPE_IDS,
   scopesToMetadataPermissions,
   seedPlatformTypes,
   shippedPlatformTypes,
@@ -1588,7 +1588,7 @@ describe("renderConsentScreen — default_on", () => {
     // route reads the resulting submission as a narrowing. A narrowing is
     // treated as a promise that the removed access stops working, so it
     // revokes the client's live tokens. An untouched Continue killed a
-    // working integration.
+    // working connector.
     const html = renderConsentScreen({
       ...PARAMS,
       scopes: REQUESTED,
@@ -1946,7 +1946,7 @@ describe("buildScopeDescriptions covers every kind a person can be shown", () =>
     // both axes and was false on the edge one, so this half is pinned rather
     // than trusted.
     //
-    // **This used to exempt the integration namespaces, and the exemption
+    // **This used to exempt the connector namespaces, and the exemption
     // was the defect.** It read that they "fall back to the registry by
     // design" — but nobody designed that, and the sixteen types it excused
     // were reaching a person as up to 796 characters of schema rationale on
@@ -1964,10 +1964,10 @@ describe("buildScopeDescriptions covers every kind a person can be shown", () =>
     // rather than an absence. Re-introduce a filter on the line above and
     // every assertion below still passes on whatever survived it, which is
     // exactly how sixteen types sat outside this check. Named against
-    // `INTEGRATION_TYPE_IDS` rather than a literal, so a seventeenth is
+    // `CONNECTOR_TYPE_IDS` rather than a literal, so a seventeenth is
     // covered without anybody remembering to add it here.
-    expect(INTEGRATION_TYPE_IDS.size).toBeGreaterThan(0);
-    expect(shipped).toEqual(expect.arrayContaining([...INTEGRATION_TYPE_IDS]));
+    expect(CONNECTOR_TYPE_IDS.size).toBeGreaterThan(0);
+    expect(shipped).toEqual(expect.arrayContaining([...CONNECTOR_TYPE_IDS]));
     const out = buildScopeDescriptions(
       shipped.map((id) => parse(`${id}:read`)),
     );
@@ -2010,7 +2010,7 @@ describe("buildScopeDescriptions covers every kind a person can be shown", () =>
     // publisher roots boot installs from the `types` table, so a
     // wildcard can reach a consent screen on a running instance that no list
     // written here could name. A table closes today's set and reopens on the
-    // next integration; this is the case that tells the two apart.
+    // next connector; this is the case that tells the two apart.
     //
     // The root is deliberately hyphenated, because the display name is the
     // half a person reads.
@@ -2105,7 +2105,7 @@ describe("buildScopeDescriptions covers every kind a person can be shown", () =>
     // reach this lookup at all; and a custom type is not requestable as a
     // row of its own anyway, only through its namespace wildcard. The
     // fallback's entire population was shipped types nobody had curated,
-    // which is what the sixteen integration entries just closed — so a
+    // which is what the sixteen connector entries just closed — so a
     // fixture drawn from the shipped set now proves the opposite of what it
     // was written to prove.
     //
@@ -2122,7 +2122,7 @@ describe("buildScopeDescriptions covers every kind a person can be shown", () =>
         description:
           "A widget shape a previous build shipped and this one does not.",
       },
-      family: "integration" as const,
+      family: "connector" as const,
     };
     seedPlatformTypes([...shippedPlatformTypes(), retired]);
 

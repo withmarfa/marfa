@@ -157,6 +157,30 @@ describe("a retired registry table is refused on open", () => {
     await expect(createConnection(path)).rejects.toThrow(path);
   });
 
+  it("refuses a types table that predates the owner_connector rename", async () => {
+    // The second unindexed column, and it fails later than the api_keys one
+    // rather than louder. `idx_types_origin` is the only index on this
+    // table, so the DDL passes against a file still carrying
+    // `owner_integration`; the boot then reads the registry with a select
+    // that names every column, and the open dies on `no such column`
+    // after the PRAGMAs have already rewritten the header.
+    const path = scratch();
+    const seed = createClient({ url: `file:${path}` });
+    await seed.execute(
+      "CREATE TABLE types (id TEXT PRIMARY KEY, owner_integration TEXT)",
+    );
+    seed.close();
+    const before = createHash("sha256")
+      .update(readFileSync(path))
+      .digest("hex");
+
+    await expect(createConnection(path)).rejects.toThrow(/no owner_connector/);
+    await expect(createConnection(path)).rejects.toThrow(path);
+    expect(createHash("sha256").update(readFileSync(path)).digest("hex")).toBe(
+      before,
+    );
+  });
+
   it("refuses settings still keyed to the retired config name", async () => {
     // The quietest of the three. Nothing fails: the table and the column are
     // both there, the read finds no row and answers an empty object, and the
@@ -228,6 +252,54 @@ describe("a retired registry table is refused on open", () => {
 
     const opened = await createConnection(path);
     await opened.close();
+  });
+
+  it("refuses rows stamped with the retired provenance prefix", async () => {
+    // The one refusal in this file guarding a security property rather than a
+    // readable database. Mirror protection is decided by the prefix on
+    // `items.source`, so a row an earlier build stamped `integration:` reads
+    // as a connector's copy and — before the gate learned both spellings —
+    // was writable by any credential.
+    const path = scratch();
+    const seed = createClient({ url: `file:${path}` });
+    await seed.execute(
+      // `occurred_at` so the renamed-column probe above is satisfied and
+      // this case reaches the prefix check rather than stopping short of it.
+      "CREATE TABLE items (id TEXT PRIMARY KEY, source TEXT NOT NULL, occurred_at TEXT)",
+    );
+    await seed.execute(
+      "INSERT INTO items (id, source) VALUES ('i1', 'integration:acme/thing')",
+    );
+    seed.close();
+    const before = createHash("sha256")
+      .update(readFileSync(path))
+      .digest("hex");
+
+    await expect(createConnection(path)).rejects.toThrow(/integration:/);
+    await expect(createConnection(path)).rejects.toThrow(path);
+    expect(createHash("sha256").update(readFileSync(path)).digest("hex")).toBe(
+      before,
+    );
+  });
+
+  it("does not refuse a source carrying the current prefix", async () => {
+    // The control, and it asserts the absence of this refusal rather than a
+    // successful open: the seeded `items` is a stub, so the real DDL fails
+    // later building an index over a column it does not have. That is fine
+    // for what is being proved — refusing on the column rather than on the
+    // prefix would refuse every database that has ever held a connector row,
+    // and this case would catch it.
+    const path = scratch();
+    const seed = createClient({ url: `file:${path}` });
+    await seed.execute(
+      "CREATE TABLE items (id TEXT PRIMARY KEY, source TEXT NOT NULL, occurred_at TEXT)",
+    );
+    await seed.execute(
+      "INSERT INTO items (id, source) VALUES ('i1', 'connector:acme/thing')",
+    );
+    seed.close();
+
+    await expect(createConnection(path)).rejects.not.toThrow(/integration:/);
   });
 
   it("opens a fresh database, and one it has already opened", async () => {

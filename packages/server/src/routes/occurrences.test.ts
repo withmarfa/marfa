@@ -237,7 +237,7 @@ describe("GET /occurrences", () => {
   });
 
   it("returns a zoned series at the instants its zone names, across the daylight-saving change", async () => {
-    // Stored exactly as the calendar integration writes it: an
+    // Stored exactly as the calendar connector writes it: an
     // offset-bearing instant plus the series zone alongside.
     const id = await createEvent({
       title: "Berlin standup",

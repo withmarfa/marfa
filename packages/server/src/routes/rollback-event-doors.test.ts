@@ -610,16 +610,16 @@ const doors: Door[] = [
     survivesBreakage: false,
   },
   {
-    name: "POST /items/{id}/promote copies an integration's row",
+    name: "POST /items/{id}/promote copies a connector's row",
     family: "item",
     transactions: 1,
     setup: async () => {
-      // Promotion is defined against a row an integration wrote, and no
+      // Promotion is defined against a row a connector wrote, and no
       // route stamps that source, so the mirror is planted through storage.
       const mirror = await ctx.storage.items.create({
         type: "core.note",
         properties: { body: "upstream copy" },
-        source: "integration:promote-fixture",
+        source: "connector:promote-fixture",
         source_id: uniq("mirror"),
       });
       return { item: mirror.id };

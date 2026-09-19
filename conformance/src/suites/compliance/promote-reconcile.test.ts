@@ -20,7 +20,7 @@ afterAll(async () => {
 });
 
 /**
- * Both doors act on an item that is an integration's copy. No integration
+ * Both doors act on an item that is a connector's copy. No connector
  * runs on the server under test, so the success paths are unreachable over
  * the wire; what a caller can reach is every refusal, and those are the
  * contract asserted here.

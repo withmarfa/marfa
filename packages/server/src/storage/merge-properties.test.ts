@@ -66,7 +66,7 @@ describe("an ordinary update", () => {
   });
 });
 
-describe("an owning integration's re-sync", () => {
+describe("an owning connector's re-sync", () => {
   it("clears the keys the upstream cleared, and only those", () => {
     const incoming = resolveIncomingProperties(
       "core.note",

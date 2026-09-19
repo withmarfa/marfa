@@ -1,4 +1,4 @@
-// Auto-generated from core/*.json, integrations/*.json and core/system/*.json — do not edit manually.
+// Auto-generated from core/*.json, connectors/*.json and core/system/*.json — do not edit manually.
 // Run `pnpm --filter @withmarfa/types generate` to regenerate.
 
 import type { TypeSchema } from "../src/schema-types.js";
@@ -536,7 +536,7 @@ export const ALL_TYPES: TypeSchema[] = [
 const marfaCapturedEmail: TypeSchema = {
   id: "marfa.captured_email",
   label: "Captured Email",
-  description: "An email captured by the marfa/inbox integration via Cloudflare Email Routing → Email Worker → webhook. Parsed MIME landed as a structured item. Not yet `compatible_with: core.note`, though it is shaped for it: a note requires `body`, and captures written before the handler always populated that field do not carry it. Claiming compatibility would require `body` here, and re-validating a merged property set is how `PATCH /items/:id` works — so the claim would make every one of those older captures permanently un-editable. It can be restored once those rows are backfilled. Attachment blob upload is not yet supported; v1 captures attachment metadata (filename, mime_type, size_bytes) only.",
+  description: "An email captured by the marfa/inbox connector via Cloudflare Email Routing → Email Worker → webhook. Parsed MIME landed as a structured item. Not yet `compatible_with: core.note`, though it is shaped for it: a note requires `body`, and captures written before the handler always populated that field do not carry it. Claiming compatibility would require `body` here, and re-validating a merged property set is how `PATCH /items/:id` works — so the claim would make every one of those older captures permanently un-editable. It can be restored once those rows are backfilled. Attachment blob upload is not yet supported; v1 captures attachment metadata (filename, mime_type, size_bytes) only.",
   version: 1,
   fields: {
     from_address: { type: "string", description: "RFC 5321 envelope sender address, lower-cased (the `From:` header's address part).", required: true },
@@ -551,7 +551,7 @@ const marfaCapturedEmail: TypeSchema = {
     in_reply_to: { type: "string", description: "RFC 5322 `In-Reply-To:` header. Sets up thread inference for follow-up replies on the same conversation." },
     references: { type: "array", description: "RFC 5322 `References:` header, split on whitespace. Each entry a Message-ID of an ancestor in the conversation thread.", items_type: "string" },
     headers: { type: "object", description: "Selected subset of normalized lower-case header keys → values. Pruned at parse time to a documented allowlist (List-Id, List-Unsubscribe, X-Mailer, Reply-To, Return-Path); the raw header set is not retained to keep the item shape bounded." },
-    attachments: { type: "array", description: "Per-attachment metadata `{ filename, mime_type, size_bytes }`. Blob upload is not yet supported — v1 captures metadata only. `blob_ref` will be wired in a follow-on once the runtime SDK gains an upload primitive.", items_type: "object" },
+    attachments: { type: "array", description: "Per-attachment metadata `{ filename, mime_type, size_bytes }`. Blob upload is not yet supported — v1 captures metadata only. `blob_ref` is wired in a follow-on.", items_type: "object" },
   },
   display_hints: { title_field: "subject", body_field: "text_body" },
 };
@@ -675,7 +675,7 @@ const readwiseHighlight: TypeSchema = {
 const todoistTask: TypeSchema = {
   id: "todoist.task",
   label: "Todoist Task",
-  description: "A task on a Todoist project, captured with upstream fidelity. Mirrors Todoist's Sync API item resource closely so a round-trip preserves what Todoist considers authoritative (content, description, project_id, section_id, parent_id, labels, priority, due, child_order, completed, url, comment_count). Deliberately not `compatible_with: core.task` — the two disagree on `priority`, which is Todoist's integer 1-4 here and a `low | medium | high | urgent` enum there, so a `core.task` reader would be handed `4` where it expects `\"urgent\"`. Retyping the field would both discard the upstream fidelity this type exists for and orphan the property on every task already captured. The Todoist integration can be configured to write `core.task` instead when cross-app interop matters more than fidelity.",
+  description: "A task on a Todoist project, captured with upstream fidelity. Mirrors Todoist's Sync API item resource closely so a round-trip preserves what Todoist considers authoritative (content, description, project_id, section_id, parent_id, labels, priority, due, child_order, completed, url, comment_count). Deliberately not `compatible_with: core.task` — the two disagree on `priority`, which is Todoist's integer 1-4 here and a `low | medium | high | urgent` enum there, so a `core.task` reader would be handed `4` where it expects `\"urgent\"`. Retyping the field would both discard the upstream fidelity this type exists for and orphan the property on every task already captured. The Todoist connector can be configured to write `core.task` instead when cross-app interop matters more than fidelity.",
   version: 1,
   fields: {
     title: { type: "string", description: "Task title (maps to Todoist `content`).", required: true },
@@ -697,7 +697,7 @@ const todoistTask: TypeSchema = {
 const googleCalendarEvent: TypeSchema = {
   id: "google.calendar.event",
   label: "Google Calendar Event",
-  description: "An event on a Google Calendar, captured with upstream fidelity. Mirrors the Calendar API event resource closely so a round-trip preserves the fields Google considers authoritative. For cross-app interop with non-Google consumers, the Google Calendar integration can also be configured to write to `core.event` instead, but the default and the fidelity choice is this type.",
+  description: "An event on a Google Calendar, captured with upstream fidelity. Mirrors the Calendar API event resource closely so a round-trip preserves the fields Google considers authoritative. For cross-app interop with non-Google consumers, the Google Calendar connector can also be configured to write to `core.event` instead, but the default and the fidelity choice is this type.",
   version: 2,
   fields: {
     title: { type: "string", description: "Event summary (maps to Calendar `summary`)", required: true },
@@ -728,7 +728,7 @@ const googleCalendarEvent: TypeSchema = {
 const googleContactsContact: TypeSchema = {
   id: "google.contacts.contact",
   label: "Google Contact",
-  description: "A contact (person) from Google Contacts, captured with upstream fidelity. Mirrors the People API person resource — names, email addresses, phone numbers, postal addresses, organizations, biographies, etag — so a round-trip preserves what Google considers authoritative. Deliberately not `compatible_with: core.entity.person`, which requires `name`; this type carries the display name in `title` and renaming it would orphan the property on every contact already captured. The Google Contacts integration can be configured to write `core.entity.person` instead when cross-app interop matters more than upstream fidelity.",
+  description: "A contact (person) from Google Contacts, captured with upstream fidelity. Mirrors the People API person resource — names, email addresses, phone numbers, postal addresses, organizations, biographies, etag — so a round-trip preserves what Google considers authoritative. Deliberately not `compatible_with: core.entity.person`, which requires `name`; this type carries the display name in `title` and renaming it would orphan the property on every contact already captured. The Google Contacts connector can be configured to write `core.entity.person` instead when cross-app interop matters more than upstream fidelity.",
   version: 1,
   fields: {
     title: { type: "string", description: "Display name (maps to People API `names[0].displayName`). Falls back to a join of given+family names.", required: true },
@@ -756,7 +756,7 @@ const googleContactsContact: TypeSchema = {
 const googleDriveFile: TypeSchema = {
   id: "google.drive.file",
   label: "Google Drive File",
-  description: "A file on Google Drive, captured with upstream fidelity. Mirrors the Drive v3 file resource closely so a round-trip preserves what Drive considers authoritative (id, name, mimeType, size, ownership, parents, links, checksums). Direction is inbound-only in v1 — the integration reads files into Marfa but does not write back. Metadata-only captures do not claim `core.file` compatibility because they have no required blob reference.",
+  description: "A file on Google Drive, captured with upstream fidelity. Mirrors the Drive v3 file resource closely so a round-trip preserves what Drive considers authoritative (id, name, mimeType, size, ownership, parents, links, checksums). Direction is inbound-only in v1 — the connector reads files into Marfa but does not write back. Metadata-only captures do not claim `core.file` compatibility because they have no required blob reference.",
   version: 1,
   fields: {
     title: { type: "string", description: "File name (maps to Drive `name`).", required: true },
@@ -782,7 +782,7 @@ const googleDriveFile: TypeSchema = {
 const googleTasksTask: TypeSchema = {
   id: "google.tasks.task",
   label: "Google Task",
-  description: "A task on a Google Tasks list, captured with upstream fidelity. Mirrors the Tasks API task resource closely so a round-trip preserves what Google considers authoritative (notes, due, status, completed, position, parent, links). For cross-app interop with non-Google consumers, the Google Tasks integration can also be configured to write to `core.task` instead, but the default and the fidelity choice is this type.",
+  description: "A task on a Google Tasks list, captured with upstream fidelity. Mirrors the Tasks API task resource closely so a round-trip preserves what Google considers authoritative (notes, due, status, completed, position, parent, links). For cross-app interop with non-Google consumers, the Google Tasks connector can also be configured to write to `core.task` instead, but the default and the fidelity choice is this type.",
   version: 1,
   fields: {
     title: { type: "string", description: "Task title (maps to Tasks `title`)", required: true },
@@ -927,7 +927,7 @@ const marfaPodcastShow: TypeSchema = {
   roles: ["container"],
 };
 
-export const ALL_INTEGRATION_TYPES: TypeSchema[] = [
+export const ALL_CONNECTOR_TYPES: TypeSchema[] = [
   marfaCapturedEmail,
   raindropCollection,
   raindropRaindrop,
@@ -958,7 +958,7 @@ const systemAccountHolder: TypeSchema = {
 const systemActivity: TypeSchema = {
   id: "system.activity",
   label: "Activity",
-  description: "User-meaningful telemetry emitted by an external-service integration at semantic boundaries — sync runs, errors, things that need user attention. Severity drives surfacing: `info` is routine, `warning` is operational, `error` is recoverable failure, `action_required` is surfaced as a Repairs-style inbox (the user has to do something — re-authorize, resolve a tombstone conflict, etc.). Per-Connection feed-eligibility lives on the emitting `system.connection.feed_activity`; when true, server stamps tier:'feed' on activity items the integration writes. Lifecycle bounded to active | revoked. Has no tier by default.",
+  description: "User-meaningful telemetry emitted by an external-service connector at semantic boundaries — sync runs, errors, things that need user attention. Severity drives surfacing: `info` is routine, `warning` is operational, `error` is recoverable failure, `action_required` is surfaced as a Repairs-style inbox (the user has to do something — re-authorize, resolve a tombstone conflict, etc.). Per-Connection feed-eligibility lives on the emitting `system.connection.feed_activity`; when true, server stamps tier:'feed' on activity items the connector writes. Lifecycle bounded to active | revoked. Has no tier by default.",
   version: 1,
   fields: {
     connection_id: { type: "string", description: "Id of the emitting system.connection item", required: true },
@@ -984,36 +984,52 @@ const systemApp: TypeSchema = {
 const systemConnection: TypeSchema = {
   id: "system.connection",
   label: "Connection",
-  description: "An approved relationship between this instance and something outside it. `kind` discriminates between variants: `app` (an OAuth client this user has authorized) and `integration` (anything installed from a manifest, whatever its upstream — a vendor service, a protocol, Marfa's own infrastructure, or nothing at all). Lifecycle bounded to active | revoked. Has no tier. The integration kind also carries a `runtime_status` distinct from the lifecycle `status`; runtime_status is server-stamped only (the runtime executor is the legitimate writer).",
-  version: 3,
+  description: "An approved relationship between this instance and something outside it. `kind` discriminates between variants: `app` (an OAuth client this user has authorized) and `connector` (anything installed from a manifest, whatever its upstream — a vendor service, a protocol, Marfa's own infrastructure, or nothing at all). Lifecycle bounded to active | revoked. Has no tier. The connector kind also carries a `runtime_status` distinct from the lifecycle `status`; runtime_status is server-stamped only.",
+  version: 4,
   fields: {
-    kind: { type: "enum", description: "Discriminator for connection variant", required: true, enum_values: ["app", "integration"] },
+    kind: { type: "enum", description: "Discriminator for connection variant", required: true, enum_values: ["app", "connector"] },
     client_id: { type: "string", description: "OAuth client identifier (for kind: app)" },
     scopes: { type: "array", description: "Granted scope strings", items_type: "string" },
     status: { type: "enum", description: "Lifecycle status (universal across all kinds)", required: true, enum_values: ["active", "revoked"] },
     granted_at: { type: "datetime", description: "When the grant was approved", required: true },
     last_used_at: { type: "datetime", description: "Most recent successful use of any token issued under this grant" },
     revoked_at: { type: "datetime", description: "When the grant was revoked, if any" },
-    integration_ref: { type: "string", description: "For kind: integration — id of the Integration manifest this connection implements" },
-    credential_ref: { type: "string", description: "For kind: integration — id of a system.credential item holding the credential the integration authenticates its upstream with" },
-    configuration: { type: "object", description: "For kind: integration — per-Integration JSON config payload (shape determined by the Integration manifest)" },
-    direction: { type: "enum", description: "For kind: integration — does this integration read from its upstream, write to it, or both", enum_values: ["read", "write", "both"] },
-    triggers: { type: "array", description: "For kind: integration — array of trigger declarations, absent when the manifest declares none. Each entry shape: { type: 'schedule' | 'webhook' | 'item-event' | 'manual', ...per-type config }. The Integration manifest constrains which trigger types are valid, and a manifest whose code runs on the user's machine declares no triggers at all.", items_type: "object" },
-    attached_device: { type: "string", description: "For kind: integration — id of a system.device item; set when the integration's manifest declares runs_on: client and names the machine its code runs on (e.g. a sync agent host)" },
-    runtime_status: { type: "enum", description: "For kind: integration — operational health, distinct from the universal lifecycle `status`. Server-stamped only (the runtime executor is the legitimate writer; there is no client write surface). `revoked` means the runtime is gone: uninstall stamps it so the field cannot keep reporting the health of something that no longer runs.", enum_values: ["healthy", "degraded", "failing", "paused", "reauth_required", "revoked"] },
-    last_sync_at: { type: "datetime", description: "For kind: integration — last successful sync run timestamp" },
-    next_run_at: { type: "datetime", description: "For kind: integration — next scheduled run, when applicable" },
-    last_error_at: { type: "datetime", description: "For kind: integration — most recent failure timestamp (cleared on next success)" },
-    feed_activity: { type: "boolean", description: "For kind: integration — when true, system.activity items emitted by this integration are server-stamped tier:'feed' (otherwise tier is omitted, as for all other system.* writes)" },
-    mapping: { type: "object", description: "Per-connection user mapping: conditions on the incoming record choose the target type and fields are assigned onto its schema. Platform-validated as a whole document at PUT /connections/{id}/mapping; shape and semantics live with the shared mapping module, not this schema." },
-    mapping_reapply_until: { type: "datetime", description: "For kind: integration — while this instant is in the future, the runtime brings items already stored onto the type the mapping now names rather than being refused as a type mismatch. Set when a mapping is saved and the person answers yes to bringing the existing corpus along. A deadline rather than a boolean, so the state cannot outlive the intent that set it: a sweep that parks and never resumes, or a connection paused mid-run, would otherwise leave every future sweep re-typing a corpus nobody asked it to. Cleared when a mapping is saved and the answer is no." },
+    connector_id: { type: "string", description: "For kind: connector — id of the Connector manifest this connection implements" },
+    credential_id: { type: "string", description: "For kind: connector — id of a system.credential item holding the credential the connector authenticates its upstream with" },
+    configuration: { type: "object", description: "For kind: connector — per-Connector JSON config payload (shape determined by the Connector manifest)" },
+    direction: { type: "enum", description: "For kind: connector — does this connector read from its upstream, write to it, or both", enum_values: ["read", "write", "both"] },
+    triggers: { type: "array", description: "For kind: connector — array of trigger declarations, absent when the manifest declares none. Each entry shape: { type: 'schedule' | 'webhook' | 'item-event' | 'manual', ...per-type config }. The Connector manifest constrains which trigger types are valid, and a manifest whose code runs on the user's machine declares no triggers at all.", items_type: "object" },
+    attached_device: { type: "string", description: "For kind: connector — id of a system.device item; set when the connector's manifest declares runs_on: client and names the machine its code runs on (e.g. a sync agent host)" },
+    runtime_status: { type: "enum", description: "For kind: connector — operational health of the connector itself, distinct from the universal lifecycle `status`. No door writes it in this build. `revoked` means the connector is gone, so the field cannot keep reporting the health of something that no longer runs.", enum_values: ["healthy", "degraded", "failing", "paused", "reauth_required", "revoked"] },
+    last_sync_at: { type: "datetime", description: "For kind: connector — last successful sync run timestamp" },
+    next_run_at: { type: "datetime", description: "For kind: connector — next scheduled run, when applicable" },
+    last_error_at: { type: "datetime", description: "For kind: connector — most recent failure timestamp (cleared on next success)" },
+    feed_activity: { type: "boolean", description: "For kind: connector — when true, system.activity items emitted by this connector are server-stamped tier:'feed' (otherwise tier is omitted, as for all other system.* writes)" },
+    mapping: { type: "object", description: "Per-connection user mapping: conditions on the incoming record choose the target type and fields are assigned onto its schema. Validated as a whole document rather than field by field; shape and semantics live with the shared mapping module, not this schema." },
+    mapping_reapply_until: { type: "datetime", description: "For kind: connector — while this instant is in the future, the runtime brings items already stored onto the type the mapping now names rather than being refused as a type mismatch. Set when a mapping is saved and the person answers yes to bringing the existing corpus along. A deadline rather than a boolean, so the state cannot outlive the intent that set it: a sweep that parks and never resumes, or a connection paused mid-run, would otherwise leave every future sweep re-typing a corpus nobody asked it to. Cleared when a mapping is saved and the answer is no." },
+  },
+};
+
+const systemConnector: TypeSchema = {
+  id: "system.connector",
+  label: "Connector",
+  description: "A registered Connector release — the persisted form of a Connector manifest. One item per (`manifest_name`, `manifest_version`) pair: subsequent releases of the same Connector land as sibling items, not in-place updates, so a Connection installed against v1.0 keeps pointing at the manifest it was installed with even after v1.1 lands. The `manifest` field carries the full validated ConnectorManifest blob; `manifest_name`, `manifest_version`, `publisher`, and `direction` are denormalized onto the item for cheap query/list. A `system.connection` of kind `connector` names the item it implements in `connector_id`.",
+  version: 2,
+  fields: {
+    manifest_name: { type: "string", description: "The Connector's identifier, `<namespace>/<name>`, e.g. `acme/calendar-sync`. The namespace is the data the Connector owns rather than whoever wrote it, and a Connector may declare types under that namespace and nowhere else. Together with `manifest_version` identifies a unique installable release.", required: true },
+    manifest_version: { type: "string", description: "Semver of this Connector release (e.g. `1.0.3`). Distinct from `manifest_schema_version` (which is the contract version of the manifest format itself).", required: true },
+    publisher: { type: "string", description: "Handle of whoever wrote the Connector and is accountable for it, e.g. `acme`. A different question from the namespace in `manifest_name`, and often a different answer. Carried over from manifest.publisher for list-view display.", required: true },
+    summary: { type: "string", description: "Short Connector description from the manifest, surfaced on the install consent screen." },
+    direction: { type: "enum", description: "Read/write direction declared by the manifest. Drives consent-screen wording.", enum_values: ["read", "write", "both"] },
+    manifest: { type: "object", description: "Full validated ConnectorManifest blob. Immutable for the lifetime of this item — new releases register as siblings.", required: true },
+    registered_at: { type: "datetime", description: "When the manifest was registered with the server.", required: true },
   },
 };
 
 const systemCredential: TypeSchema = {
   id: "system.credential",
   label: "Credential",
-  description: "An API key or OAuth approval. Surfaces a Credentials list; carries permissions and last-used time; revocable. Lifecycle is bounded to active/revoked. Has no tier. For kind: oauth_token, the integration's OAuth provider config (upstream URLs, client id) is stored under `oauth_provider_config` and the client secret under `secret_encrypted` (AES-256-GCM via the connectionOauthToken HKDF domain). For kind: api_token, the upstream API base URL is stored under `api_token_config.upstream_base_url` and the user-supplied bearer token under `secret_encrypted` (same HKDF domain — no separate key minting). The companion connection items reference credentials via `credential_ref`.",
+  description: "An API key or OAuth approval. Surfaces a Credentials list; carries permissions and last-used time; revocable. Lifecycle is bounded to active/revoked. Has no tier. For kind: oauth_token, the connector's OAuth provider config (upstream URLs, client id) is stored under `oauth_provider_config` and the client secret under `secret_encrypted` (AES-256-GCM via the connectionOauthToken HKDF domain). For kind: api_token, the upstream API base URL is stored under `api_token_config.upstream_base_url` and the user-supplied bearer token under `secret_encrypted` (same HKDF domain — no separate key minting). The companion connection items reference credentials via `credential_id`.",
   version: 1,
   fields: {
     label: { type: "string", description: "Human-readable label", required: true },
@@ -1038,22 +1054,6 @@ const systemDevice: TypeSchema = {
   },
 };
 
-const systemIntegration: TypeSchema = {
-  id: "system.integration",
-  label: "Integration",
-  description: "A registered Integration release — the persisted form of an Integration manifest. One item per (`manifest_name`, `manifest_version`) pair: subsequent releases of the same Integration land as sibling items, not in-place updates, so a Connection installed against v1.0 keeps pointing at the manifest it was installed with even after v1.1 lands. The `manifest` field carries the full validated IntegrationManifest blob the install pipeline persists; `manifest_name`, `manifest_version`, `publisher`, and `direction` are denormalized onto the item for cheap query/list. Installed at runtime via POST /integrations (operator key gated). system.connection.integration references the item id via integration_ref.",
-  version: 2,
-  fields: {
-    manifest_name: { type: "string", description: "The Integration's identifier, `<namespace>/<name>`, e.g. `acme/calendar-sync`. The namespace is the data the Integration owns rather than whoever wrote it, and an Integration may declare types under that namespace and nowhere else. Together with `manifest_version` identifies a unique installable release.", required: true },
-    manifest_version: { type: "string", description: "Semver of this Integration release (e.g. `1.0.3`). Distinct from `manifest_schema_version` (which is the contract version of the manifest format itself).", required: true },
-    publisher: { type: "string", description: "Handle of whoever wrote the Integration and is accountable for it, e.g. `acme`. A different question from the namespace in `manifest_name`, and often a different answer. Carried over from manifest.publisher for list-view display.", required: true },
-    summary: { type: "string", description: "Short Integration description from the manifest, surfaced on the install consent screen." },
-    direction: { type: "enum", description: "Read/write direction declared by the manifest. Drives consent-screen wording.", enum_values: ["read", "write", "both"] },
-    manifest: { type: "object", description: "Full validated IntegrationManifest blob. Immutable for the lifetime of this item — new releases register as siblings.", required: true },
-    registered_at: { type: "datetime", description: "When the manifest was registered with the server (POST /integrations).", required: true },
-  },
-};
-
 const systemWebhook: TypeSchema = {
   id: "system.webhook",
   label: "Webhook",
@@ -1072,9 +1072,9 @@ export const ALL_SYSTEM_TYPES: TypeSchema[] = [
   systemActivity,
   systemApp,
   systemConnection,
+  systemConnector,
   systemCredential,
   systemDevice,
-  systemIntegration,
   systemWebhook,
 ];
 
@@ -1119,9 +1119,9 @@ export const ALL_TYPE_IDS = [
   "system.activity",
   "system.app",
   "system.connection",
+  "system.connector",
   "system.credential",
   "system.device",
-  "system.integration",
   "system.webhook",
   "todoist.task",
 ] as const;

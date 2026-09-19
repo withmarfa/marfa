@@ -4,7 +4,7 @@
  * `POST /items` short-circuits to an acknowledgement when `(source,
  * source_id)` resolves a row the user has trashed: nothing is written and
  * nothing is published, because reviving the row would overturn a deletion
- * the user chose and refusing forever wedges the integration on one item.
+ * the user chose and refusing forever wedges the connector on one item.
  *
  * **The acknowledgement is right and what it hands back was never decided.**
  * It sat above every gate on the resolved row, so the answer to "what may a
@@ -20,7 +20,7 @@
  *    natural key at all. `extension_permissions` are per credential, so a
  *    row can carry namespaces the caller holds nothing on — written by a
  *    a person, by another tool, or by a sibling Connection of the same
- *    integration, all of which share the source that resolved it.
+ *    connector, all of which share the source that resolved it.
  *  - **The type: no.** The natural key resolves on the credential's stamped
  *    `source`, which outlives any narrowing of what that credential may
  *    write, so a credential whose `type_permissions` are cut back still
@@ -116,13 +116,13 @@ async function trashedRow(cred: SyncKey, sourceId: string): Promise<string> {
     `/items/${id}/extensions/${GRANTED_NS}`,
     {
       key: cred.key,
-      body: { note: "written by the integration" },
+      body: { note: "written by the connector" },
     },
   );
   expect(own.status).toBe(200);
 
-  // The namespace the caller holds nothing on. An admin annotating an
-  // integration's row is the ordinary way this happens.
+  // The namespace the caller holds nothing on. An admin annotating a
+  // connector's row is the ordinary way this happens.
   const admin = await request(
     ctx.app,
     "PUT",
@@ -165,7 +165,7 @@ describe("the trashed-row acknowledgement", () => {
     expect(namespaces).not.toContain(PRIVATE_NS);
   });
 
-  it("still acknowledges, so the integration is not wedged", async () => {
+  it("still acknowledges, so the connector is not wedged", async () => {
     // The behavior this branch exists for. Pinned beside the filter so a
     // later tightening cannot quietly reintroduce the 409-forever bug it
     // was written to fix.

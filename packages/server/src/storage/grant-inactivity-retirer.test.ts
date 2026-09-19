@@ -172,7 +172,7 @@ async function tokenRows(c: TestContext, clientId: string): Promise<number> {
 }
 
 describe("GrantInactivityRetirer.runOnce", () => {
-  it("retires a grant unused for longer than the window, with an audit row, and leaves a recent one and an integration alone", async () => {
+  it("retires a grant unused for longer than the window, with an audit row, and leaves a recent one and a connector alone", async () => {
     ctx = await createTestContext({});
     const clientId = await seedClient(ctx);
     const cookie = await signInUser(ctx, "forgotten@example.com");
@@ -186,13 +186,13 @@ describe("GrantInactivityRetirer.runOnce", () => {
     const freshClientId = await seedClient(ctx);
     const freshCookie = await signInUser(ctx, "present@example.com");
     await deviceGrant(ctx, freshClientId, freshCookie);
-    const integration = await ctx.storage.items.create({
+    const connector = await ctx.storage.items.create({
       type: "system.connection",
       tier: "library",
       state: "active",
       properties: {
-        kind: "integration",
-        integration_id: "int_dormant",
+        kind: "connector",
+        connector_id: "int_dormant",
         status: "active",
         granted_at: new Date(Date.now() - 400 * DAY_MS).toISOString(),
         last_used_at: new Date(Date.now() - 400 * DAY_MS).toISOString(),
@@ -214,7 +214,7 @@ describe("GrantInactivityRetirer.runOnce", () => {
       "active",
     );
     expect(await tokenRows(ctx, freshClientId)).toBe(2);
-    const untouched = await ctx.storage.items.get(integration.id);
+    const untouched = await ctx.storage.items.get(connector.id);
     expect(untouched?.properties.status).toBe("active");
     expect(await tokenRows(ctx, clientId)).toBe(0);
     expect(await consentRows(ctx, clientId)).toBe(0);

@@ -53,13 +53,13 @@ afterAll(async () => {
  * Through storage rather than the API because the API gate is the very
  * thing under test: a working credential cannot create one, and the operator
  * key holds no permissions to create one with. That combination is exactly
- * the situation an integration's corpus is in.
+ * the situation a connector's corpus is in.
  */
 async function seedReservedRow(sourceId: string): Promise<string> {
   const item = await ctx.storage.items.create({
     type: "marfa.podcast.show",
     properties: { title: "A show", feed_url: "https://example.com/feed.xml" },
-    source: "integration:marfa/podcasts",
+    source: "connector:marfa/podcasts",
     source_id: sourceId,
   });
   return item.id;

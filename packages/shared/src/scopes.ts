@@ -792,9 +792,9 @@ export function expandWildcardScopes(
  *   and stops being so the moment a system-family type is named anything
  *   else.
  * - **`marfa.*` reads but does not write.** Those types are family
- *   `integration`, so they are squarely in the category and their reads are
+ *   `connector`, so they are squarely in the category and their reads are
  *   unrestricted. But the middleware refuses every `marfa.*` write from a
- *   credential that is not `is_operator` or a manifest-granted runtime
+ *   credential that is not `is_operator` or a manifest-granted connector
  *   credential, and an OAuth token is neither. **A parent must never claim
  *   what a hard gate will refuse**: a grant that reads as covering a write
  *   nothing will ever permit is a consent screen telling a person something

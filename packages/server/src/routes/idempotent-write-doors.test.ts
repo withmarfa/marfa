@@ -6,7 +6,7 @@
  * property is about a write, and walking `/items` and `/edges` for
  * POST/PATCH/DELETE finds only the sites that happen to have a URL. Most
  * of the writers here do not: the sign-up provisioner, the four connection
- * lifecycle pipelines, the integration supervisor, the enrichment sweeper,
+ * lifecycle pipelines, the connector supervisor, the enrichment sweeper,
  * the bulk-action worker and the archive restore all reach the same store
  * methods with no request behind them at all. A route walk cannot show
  * that those are excluded on purpose rather than missed, and "a caller

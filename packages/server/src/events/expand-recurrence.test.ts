@@ -5,7 +5,7 @@
  * would run forever.
  *
  * Every fixture stores an instant, offset-bearing where a zone is
- * involved, because that is what the calendar integration writes and
+ * involved, because that is what the calendar connector writes and
  * what the type declares. A test that only ever feeds floating-with-Z
  * timestamps cannot see the difference between instant and wall-clock
  * arithmetic, which is exactly the blindness that let the double
@@ -207,7 +207,7 @@ describe("expandSeries", () => {
 
   it("lets an exception shadow the occurrence it replaces", () => {
     // The exception's original start is stored offset-bearing, exactly
-    // as the calendar integration writes it. It has to meet the
+    // as the calendar connector writes it. It has to meet the
     // expanded occurrence on the instant they share.
     const out = expandSeries(
       weekly(),

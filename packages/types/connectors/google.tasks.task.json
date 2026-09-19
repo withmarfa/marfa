@@ -1,7 +1,7 @@
 {
   "id": "google.tasks.task",
   "label": "Google Task",
-  "description": "A task on a Google Tasks list, captured with upstream fidelity. Mirrors the Tasks API task resource closely so a round-trip preserves what Google considers authoritative (notes, due, status, completed, position, parent, links). For cross-app interop with non-Google consumers, the Google Tasks integration can also be configured to write to `core.task` instead, but the default and the fidelity choice is this type.",
+  "description": "A task on a Google Tasks list, captured with upstream fidelity. Mirrors the Tasks API task resource closely so a round-trip preserves what Google considers authoritative (notes, due, status, completed, position, parent, links). For cross-app interop with non-Google consumers, the Google Tasks connector can also be configured to write to `core.task` instead, but the default and the fidelity choice is this type.",
   "version": 1,
   "compatible_with": ["core.task"],
   "fields": {

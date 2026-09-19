@@ -839,7 +839,7 @@ describe("bootstrap sentinel", () => {
         key: bootstrapSecret,
         body: {
           label: "reserved-source",
-          // A source claiming an integration's identity is refused, so the
+          // A source claiming a connector's identity is refused, so the
           // request can never mint.
           source: "oauth:stray",
         },
