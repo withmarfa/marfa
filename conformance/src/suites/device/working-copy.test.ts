@@ -1,6 +1,12 @@
 import { readFileSync } from "node:fs";
-import { describe, it, expect, afterEach } from "vitest";
-import { KEY, startHarness, scriptHydration, type Harness } from "./harness.js";
+import { describe, it, expect, afterEach, vi } from "vitest";
+import {
+  KEY,
+  hydratedHarness,
+  startHarness,
+  scriptHydration,
+  type Harness,
+} from "./harness.js";
 import { notWrittenYet, skipIfPending } from "./pending.js";
 import {
   connected,
@@ -275,9 +281,76 @@ describe("the working copy belongs to one server", () => {
     ).toBe(false);
   });
 
-  it("gives a second opener a reading handle that refuses writes", async (context) => {
-    skipIfPending(context);
-    notWrittenYet("a second opener getting a reading handle");
+  it("gives a second opener a reading handle that refuses writes", async () => {
+    harness = await hydratedHarness("one-writer", {
+      rows: { "core.note": [{ item: { id: "n1" } }] },
+    });
+    // A command that holds the store: a drain whose write the server accepts
+    // and never answers. Every other command opens the store, does its work
+    // and exits, so two of them never overlap and both are legitimately the
+    // writer — the rule is about two at once, and nothing else here makes
+    // that happen.
+    const queued = await harness.device.create({
+      type: "core.note",
+      properties: { title: "held open", body: "held open" },
+    });
+    expect(queued.ok).toBe(true);
+    harness.server.answer("POST", "/items", { kind: "stall" });
+    const writer = harness.device.hold(["drain"]);
+
+    try {
+      await vi.waitFor(
+        () => {
+          expect(
+            writer.running(),
+            `the writer exited before it could hold anything: ${writer.stderr}`,
+          ).toBe(true);
+          expect(
+            harness?.server.requests.some(
+              (request) => request.method === "POST",
+            ),
+            "the held drain has not reached the server, so it may not have opened the store",
+          ).toBe(true);
+        },
+        { timeout: 10_000, interval: 25 },
+      );
+
+      const second = harness.device.reopen();
+      // It reads. A second opener is limited rather than refused, because a
+      // file one process is writing is still a file another can read, and
+      // refusing to open it would make a running watcher lock a person out
+      // of their own copy.
+      const listed = await second.list();
+      expect(
+        listed.ok,
+        `a second opener could not read at all, so the store is locked rather than held by one writer: ${JSON.stringify(listed)}`,
+      ).toBe(true);
+      expect(listed.ok ? listed.value.length : 0).toBeGreaterThan(0);
+      expect((await second.status()).ok).toBe(true);
+      expect((await second.search("n1")).ok).toBe(true);
+
+      // And it writes nothing.
+      const wrote = await second.create({
+        type: "core.note",
+        properties: { title: "from the reader", body: "from the reader" },
+      });
+      expect(
+        wrote.ok,
+        "two processes both held the writer handle for one store, so both queue into one file and neither sees the other's rows",
+      ).toBe(false);
+      if (!wrote.ok) {
+        expect(
+          wrote.refusal.code,
+          `the second opener was refused for some other reason, so nothing here shows it was given a reading handle: ${wrote.refusal.raw}`,
+        ).toBe("reading_handle");
+      }
+      expect(
+        writer.running(),
+        "the process holding the writer handle exited while this ran, so the refusal above was a store with no writer rather than one with another",
+      ).toBe(true);
+    } finally {
+      await writer.stop();
+    }
   });
 });
 
@@ -620,5 +693,108 @@ describe("a local read answers the active state unless asked otherwise", () => {
       binned.ok && binned.value !== null,
       "a row in the bin is readable by id, so a device hands back a row the server it copies answers 404 for",
     ).toBe(false);
+  });
+});
+
+describe("a local list narrows on the item's own time", () => {
+  /**
+   * Both bounds are exclusive, which is one rule across the whole API
+   * (`search-and-filters.md` 6). A device that read either of them
+   * inclusively would answer a bounded list differently from the server it
+   * copies, and the row that tells the two apart is the one sitting exactly
+   * on the instant.
+   */
+  const ON_LOWER = "2026-03-01T00:00:00.000Z";
+  const INSIDE = "2026-03-02T00:00:00.000Z";
+  const ON_UPPER = "2026-03-03T00:00:00.000Z";
+  const OUTSIDE = "2026-03-09T00:00:00.000Z";
+
+  async function hydrateFourRows(label: string): Promise<void> {
+    harness = await startHarness(label);
+    scriptHydration(harness.server, {
+      head: "10",
+      rows: {
+        "core.note": [
+          { item: { id: "on-lower", occurred_at: ON_LOWER } },
+          { item: { id: "inside", occurred_at: INSIDE } },
+          { item: { id: "on-upper", occurred_at: ON_UPPER } },
+          { item: { id: "outside", occurred_at: OUTSIDE } },
+        ],
+      },
+    });
+    expect(
+      (await harness.device.hydrate(["core.note"], "library")).ok,
+      "the hydration failed, so nothing below is a statement about a bound",
+    ).toBe(true);
+  }
+
+  it("excludes a row sitting exactly on either bound", async () => {
+    await hydrateFourRows("bounds-exclusive");
+    const listed = await harness!.device.list({
+      occurredAfter: ON_LOWER,
+      occurredBefore: ON_UPPER,
+    });
+    expect(
+      listed.ok,
+      `a bounded local list was refused: ${JSON.stringify(listed)}`,
+    ).toBe(true);
+    if (!listed.ok) return;
+    const ids = listed.value.map((item) => item.id);
+
+    // The witness. Without a row the query must return, both absences below
+    // are satisfied by a bound that dropped its predicate and matched
+    // nothing at all.
+    expect(
+      ids,
+      "a bounded list answers nothing at all, so the exclusions below are free and say nothing about either bound",
+    ).toContain("inside");
+    expect(
+      ids,
+      "the lower bound is inclusive here and exclusive on the server, so a device and the server answer one query two ways",
+    ).not.toContain("on-lower");
+    expect(
+      ids,
+      "the upper bound is inclusive here and exclusive on the server, so the same query returns a different set on each side",
+    ).not.toContain("on-upper");
+    expect(
+      ids,
+      "a row outside the window came back, so the bounds narrow nothing",
+    ).not.toContain("outside");
+  });
+
+  it("takes each bound on its own", async () => {
+    await hydrateFourRows("bounds-single");
+    const device = harness!.device;
+
+    // One bound at a time, because a pair can agree by accident: a filter
+    // that applied only the lower bound would pass the case above for the
+    // upper one, since nothing there sits above the window and below it.
+    const above = await device.list({ occurredAfter: ON_LOWER });
+    expect(above.ok).toBe(true);
+    if (above.ok) {
+      const ids = above.value.map((item) => item.id);
+      expect(
+        ids,
+        "a lower bound on its own drops rows above it, so it is narrowing something other than the item's own time",
+      ).toEqual(expect.arrayContaining(["inside", "on-upper", "outside"]));
+      expect(
+        ids,
+        "a lower bound on its own keeps the row sitting on it, so that bound alone is inclusive",
+      ).not.toContain("on-lower");
+    }
+
+    const below = await device.list({ occurredBefore: ON_UPPER });
+    expect(below.ok).toBe(true);
+    if (below.ok) {
+      const ids = below.value.map((item) => item.id);
+      expect(
+        ids,
+        "an upper bound on its own drops rows below it, so it is narrowing something other than the item's own time",
+      ).toEqual(expect.arrayContaining(["on-lower", "inside"]));
+      expect(
+        ids,
+        "an upper bound on its own keeps the row sitting on it, so that bound alone is inclusive",
+      ).not.toContain("on-upper");
+    }
   });
 });

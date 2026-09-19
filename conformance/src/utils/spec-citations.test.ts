@@ -33,6 +33,18 @@ interface Citation {
  * nor any suite can see it: those resolve to fixture files and test titles,
  * and this is a reference between two documents.
  */
+/** Every file under `dir` with this extension, at any depth. */
+function walk(dir: string, extension: string): string[] {
+  if (!existsSync(dir)) return [];
+  const found: string[] = [];
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const path = resolve(dir, entry.name);
+    if (entry.isDirectory()) found.push(...walk(path, extension));
+    else if (entry.name.endsWith(extension)) found.push(path);
+  }
+  return found;
+}
+
 function statementNumbers(file: string): Set<number> {
   const text = readFileSync(resolve(specDir, file), "utf8");
   const out = new Set<number>();
@@ -135,6 +147,59 @@ describe("specification citations", () => {
         dangling.push(`${spec}: ${target} ${String(entry)}`);
       }
     }
+    expect(dangling).toEqual([]);
+  });
+
+  /**
+   * The same check, over the code that cites the chapters.
+   *
+   * There are more citations in Rust comments and in the fixtures than in
+   * the chapters themselves, and nothing looked at any of them. A comment
+   * citing a statement number reads as authority — it is how the next
+   * person finds the rule a piece of code exists for — so one that resolves
+   * to nothing, or to a chapter with fewer statements than it names, sends
+   * them somewhere else entirely.
+   *
+   * This catches a number that does not exist. It cannot catch a number
+   * that exists and is the wrong one; that needs a reader, and one was how
+   * `device.md` 21's citation of `queue-and-verdicts.md` 14 was found.
+   */
+  it("every citation in the code names a statement that exists", () => {
+    const sources = [
+      ...walk(resolve(root, "..", "core", "marfa-core", "src"), ".rs"),
+      ...walk(resolve(root, "..", "core", "marfa-cli", "src"), ".rs"),
+      ...walk(resolve(root, "src"), ".ts"),
+    ];
+    const defined = new Map<string, Set<number>>();
+    const dangling: string[] = [];
+    let counted = 0;
+    for (const file of sources) {
+      const text = readFileSync(file, "utf8");
+      // "`folders.md` 13", and the same with several numbers after it.
+      const pattern = /`([a-z-]+\.md)`\s+((?:\d+(?:\s*(?:,|and|to)\s*)?)+)/g;
+      for (const found of text.matchAll(pattern)) {
+        const target = found[1];
+        if (!existsSync(resolve(specDir, target))) {
+          dangling.push(`${file}: ${target} (no such chapter)`);
+          continue;
+        }
+        const numbers = defined.get(target) ?? statementNumbers(target);
+        defined.set(target, numbers);
+        for (const raw of found[2].match(/\d+/g) ?? []) {
+          counted += 1;
+          const entry = Number(raw);
+          if (!numbers.has(entry)) {
+            dangling.push(`${file}: ${target} ${raw}`);
+          }
+        }
+      }
+    }
+    // The positive control. These are read out of comments by a regex, and
+    // a zero count passes the assertion below for the wrong reason.
+    expect(
+      counted,
+      "no citation was found in the code at all, so the assertion below is about nothing",
+    ).toBeGreaterThan(50);
     expect(dangling).toEqual([]);
   });
 

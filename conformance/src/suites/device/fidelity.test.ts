@@ -12,8 +12,10 @@ import {
   answers,
   itemEvent,
   itemsPage,
+  scriptedType,
   wireItem,
   wireType,
+  writeAnswers,
 } from "../../device/marfa-answers.js";
 import type { Answer } from "../../device/scripted-server.js";
 
@@ -88,6 +90,35 @@ interface Fields {
   same?: string[];
   /** Paths where only the JSON kind can be compared, because a run mints the value. */
   shape?: string[];
+  /**
+   * Keys the two sides deliberately differ on, each one a decision rather
+   * than an oversight.
+   *
+   * Written as a list because the check below is otherwise total: every key
+   * one side returns must be one the other returns too. Without that, the
+   * control only ever compared the paths somebody remembered to list, and a
+   * field the server grew — or one nobody thought of — was invisible to it.
+   * A device reading such a field is green here and meets something else in
+   * production, which is the single thing this file exists to prevent.
+   *
+   * An entry covers the path and everything under it, so a subtree the
+   * scripted server has no reason to mirror is one line rather than sixty.
+   */
+  absent?: string[];
+}
+
+/** Every key path in an object, depth-first, arrays counted as leaves. */
+function keyPaths(value: unknown, prefix = ""): string[] {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return [];
+  }
+  const paths: string[] = [];
+  for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+    const path = prefix === "" ? key : `${prefix}.${key}`;
+    paths.push(path);
+    paths.push(...keyPaths(child, path));
+  }
+  return paths;
 }
 
 /**
@@ -124,6 +155,35 @@ function expectFidelity(
       `the scripted answer for ${name} and the server disagree about whether \`${path}\` is there and what kind of thing it is, so a device satisfying this suite would meet something else in production`,
     ).toBe(kindAt(real.body, path));
   }
+  // Total over the keys, in both directions, rather than over the ones this
+  // call listed. The two lists above say what has to agree; these say that
+  // nothing on either side went unnoticed, which is the failure the lists
+  // cannot catch, because a field nobody listed is a field nobody compared.
+  const declared = fields.absent ?? [];
+  // A declared path covers its own subtree: `error.details` stands for
+  // `error.details` and everything below it.
+  const isDeclared = (path: string): boolean =>
+    declared.some((entry) => path === entry || path.startsWith(`${entry}.`));
+  const scriptedKeys = new Set(keyPaths(body));
+  const realKeys = new Set(keyPaths(real.body));
+  const missing = [...realKeys].filter(
+    (path) => !scriptedKeys.has(path) && !isDeclared(path),
+  );
+  expect(
+    missing,
+    `the server answers ${name} with ${missing.join(", ")}, and the scripted server does not. A device that reads one of those is green against this suite and meets something else in production. Model the field, or list it under \`absent\` with the reason it is not modeled.`,
+  ).toEqual([]);
+  // The other direction, and it is the one the harness already worried about
+  // for the `state` parameter: a scripted server more generous than the real
+  // one lets a device depend on a field production never sends, and the
+  // suite stays green the whole time.
+  const invented = [...scriptedKeys].filter(
+    (path) => !realKeys.has(path) && !isDeclared(path),
+  );
+  expect(
+    invented,
+    `the scripted server answers ${name} with ${invented.join(", ")}, and the real server does not. A device may come to depend on one of those and find nothing there in production. Drop the field, or list it under \`absent\` with the reason the two differ.`,
+  ).toEqual([]);
 }
 
 async function note(
@@ -154,7 +214,14 @@ describe("the scripted answers match the server's", () => {
     expectFidelity(
       "a create",
       { status: created.status, body: created.data },
-      answers.created({ id: created.data.item.id, version: 1, properties: {} }),
+      answers.created(
+        wireItem({
+          id: created.data.item.id,
+          version: 1,
+          properties: { title: "fidelity", body: "created" },
+          source: ctx.source,
+        }),
+      ),
       { same: ["item.id", "metadata.tags"], shape: ["item.version"] },
     );
 
@@ -170,7 +237,14 @@ describe("the scripted answers match the server's", () => {
     expectFidelity(
       "an update",
       { status: updated.status, body: updated.data },
-      answers.updated({ id: updated.data.item.id, version: 2, properties: {} }),
+      answers.updated(
+        wireItem({
+          id: updated.data.item.id,
+          version: 2,
+          properties: { title: "fidelity", body: "updated" },
+          source: ctx.source,
+        }),
+      ),
       { same: ["item.id", "metadata.tags"], shape: ["item.version"] },
     );
   });
@@ -199,8 +273,8 @@ describe("the scripted answers match the server's", () => {
       "a stale write with a retained base",
       { status: stale.status, body: stale.error },
       answers.versionConflict(
-        { version: 2, properties: {} },
-        { version: 1, properties: {} },
+        { version: 2, properties: { title: "winner", body: "winner" } },
+        { version: 1, properties: { title: "base", body: "base" } },
         ["body", "title"],
         // core.note declares both of its text fields keep-both
         // (`versions.md` 12); a policy naming one of them would send a device
@@ -239,7 +313,10 @@ describe("the scripted answers match the server's", () => {
     expectFidelity(
       "a write naming a version with no snapshot",
       { status: refused.status, body: refused.error },
-      answers.ancestorUnavailable({ version: 1, properties: {} }, 0),
+      answers.ancestorUnavailable(
+        { version: 1, properties: { title: "base", body: "base" } },
+        0,
+      ),
       {
         same: ["error.code", "error.status", "requested_version", "ancestor"],
         shape: ["current.version", "current.properties"],
@@ -279,7 +356,12 @@ describe("the scripted answers match the server's", () => {
       "a resolution keeping both copies",
       { status: resolved.status, body: resolved.data },
       answers.resolved(
-        { id: both.id, version: 3, properties: {} },
+        wireItem({
+          id: both.id,
+          version: 3,
+          properties: { title: "winner", body: "winner" },
+          source: ctx.source,
+        }),
         { body: "keep_both_copies", title: "last_writer_wins" },
         "a-sibling-id",
       ),
@@ -318,7 +400,12 @@ describe("the scripted answers match the server's", () => {
       "a resolution on a last-writer-wins field alone",
       { status: resolvedLww.status, body: resolvedLww.data },
       answers.resolved(
-        { id: lww.id, version: 3, properties: {} },
+        wireItem({
+          id: lww.id,
+          version: 3,
+          properties: { title: "winner", body: "untouched" },
+          source: ctx.source,
+        }),
         { title: "last_writer_wins" },
       ),
       {
@@ -341,7 +428,17 @@ describe("the scripted answers match the server's", () => {
       "a body missing a required field",
       { status: missing.status, body: missing.error },
       answers.validation("missing_required_field", "type is required"),
-      { same: ["error.code"], shape: ["error.message"] },
+      {
+        same: ["error.code"],
+        shape: ["error.message"],
+        // The server's diagnostics for a validation refusal, naming the
+        // field that failed. Not mirrored because a device classifies a
+        // refusal by its code (`queue-and-verdicts.md` 12) and reports the
+        // envelope whole (15), so nothing in the device reads inside it; a
+        // scripted `details` on the shared refusal builder would put it on
+        // every refusal, and the server puts it on this one.
+        absent: ["error.details"],
+      },
     );
 
     const scoped = await client.createKey({
@@ -381,6 +478,109 @@ describe("the scripted answers match the server's", () => {
       { status: unauthorized.status, body: unauthorized.error },
       answers.unauthorized(),
       { same: ["error.code"], shape: ["error.message"] },
+    );
+  });
+
+  /**
+   * The doors that answer something other than an item.
+   *
+   * Ten of the fourteen sendable write kinds go to one of these, and none of
+   * their answers carries an `item`. They were scripted with item-shaped
+   * bodies, which no server returns, and that is what hid a device reading
+   * every one of them as an answer it could not understand — counting a
+   * refusal against a write the server had already taken.
+   */
+  it("matches the write doors that do not answer with an item", async () => {
+    const seeded = await note({ title: "sidecar", body: "sidecar" });
+    const other = await note({ title: "other end", body: "other end" });
+
+    const tagged = await client.rawRequest(`/items/${seeded.id}/tags`, {
+      method: "POST",
+      body: { tags: ["fidelity"] },
+    });
+    expect(
+      tagged.ok,
+      `the fixture could not put a tag on: ${JSON.stringify(tagged.error)}`,
+    ).toBe(true);
+    expectFidelity(
+      "a tag written",
+      { status: tagged.status, body: tagged.data },
+      writeAnswers.metadata(seeded.id, ["fidelity"]),
+      { same: ["metadata.item_id", "metadata.tags", "metadata.extensions"] },
+    );
+
+    const merged = await client.rawRequest(`/items/${seeded.id}/metadata`, {
+      method: "PATCH",
+      body: { tags: ["also"] },
+    });
+    expect(merged.ok).toBe(true);
+    expectFidelity(
+      "a metadata write",
+      { status: merged.status, body: merged.data },
+      writeAnswers.metadata(seeded.id, ["fidelity", "also"]),
+      {
+        same: ["metadata.item_id"],
+        shape: ["metadata.tags", "metadata.extensions"],
+      },
+    );
+
+    const extended = await client.rawRequest(
+      `/items/${seeded.id}/extensions/app.fidelity`,
+      { method: "PUT", body: { pinned: true } },
+    );
+    expect(extended.ok).toBe(true);
+    expectFidelity(
+      "an extension written",
+      { status: extended.status, body: extended.data },
+      writeAnswers.extensions({ "app.fidelity": { pinned: true } }),
+      { same: ["extensions.app.fidelity.pinned"] },
+    );
+
+    const linked = await client.rawRequest("/edges", {
+      method: "POST",
+      body: {
+        source_id: seeded.id,
+        target_id: other.id,
+        edge_type: "references",
+      },
+    });
+    expect(
+      linked.ok,
+      `the fixture could not link two items: ${JSON.stringify(linked.error)}`,
+    ).toBe(true);
+    expectFidelity(
+      "an edge created",
+      { status: linked.status, body: linked.data },
+      writeAnswers.edge({
+        id: "01a00000-0000-7000-8000-0000000000ee",
+        source_id: seeded.id,
+        target_id: other.id,
+      }),
+      {
+        same: [
+          "edge.source_id",
+          "edge.target_id",
+          "edge.edge_type",
+          "edge.properties",
+        ],
+        shape: [
+          "edge.id",
+          "edge.version",
+          "edge.created_at",
+          "edge.updated_at",
+        ],
+      },
+    );
+
+    const removed = await client.rawRequest(`/items/${other.id}`, {
+      method: "DELETE",
+    });
+    expect(removed.ok).toBe(true);
+    expectFidelity(
+      "an item deleted",
+      { status: removed.status, body: removed.data },
+      writeAnswers.ok(),
+      { same: ["ok"] },
     );
   });
 
@@ -446,7 +646,7 @@ describe("the scripted answers match the server's", () => {
       {
         kind: "json",
         status: registry.status,
-        body: { row: wireType("core.note") },
+        body: { row: scriptedType("core.note") },
       },
       {
         same: ["row.id", "row.display_hints.title_field"],
@@ -471,7 +671,21 @@ describe("the scripted answers match the server's", () => {
       },
       {
         same: ["row.id", "row.parent", "row.display_hints.title_field"],
-        shape: ["row.label"],
+        // `row.fields` by kind, so the two sides agree there is a field
+        // schema and not on what is in it.
+        shape: ["row.label", "row.fields"],
+        // A type's own field schema is the deployment's rather than the
+        // protocol's: `core.entity.person` carries twenty fields here and
+        // would carry a different twenty elsewhere. A device reads a type
+        // for its parent and its title field and nothing else (`device.md`
+        // 15), so mirroring the schema would be this file holding a copy of
+        // a seed that changes without it.
+        absent: [
+          "row.fields",
+          "row.merge_policy",
+          "row.description",
+          "row.version",
+        ],
       },
     );
   });

@@ -20,4 +20,17 @@ rusqlite = { version = "0.40", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
+# Frontmatter. `serde_yaml` is deprecated by its author and `serde_norway`
+# has not shipped in over a year; this one is current. It parses to its own
+# value type rather than through serde, and the conversion to an item's
+# properties is written out in `folder/document.rs` on purpose: "nothing a
+# file carries is dropped on the way in" (`folders.md` 5) is a rule about
+# exactly that conversion, so it is visible and tested here rather than
+# being a derive nobody reads.
+yaml-rust2 = "0.13"
 ureq = { version = "3", features = ["json"] }
+# v7 because a client-minted item id has to be one the server accepts, and
+# the ids it mints itself are time-sortable: a device minting v4 would put
+# every local create at a random point in an ordering the server treats as
+# chronological.
+uuid = { version = "1", features = ["v7"] }

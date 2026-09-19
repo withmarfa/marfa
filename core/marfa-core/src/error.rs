@@ -39,6 +39,10 @@ pub enum CoreError {
     #[error("hydration did not complete; hydrate again before reading")]
     HydrationIncomplete,
     #[error(
+        "this is a reading handle: another process holds the writer handle for this store, and one store has one writer"
+    )]
+    ReadingHandle,
+    #[error(
         "this store was written by schema {found} and this build expects {expected}; there are no migrations, so delete {path} and hydrate again"
     )]
     WrongSchema {
