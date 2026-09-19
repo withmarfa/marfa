@@ -512,25 +512,44 @@ impl Folder {
         if item_id.is_empty() {
             return Ok(());
         }
-        let held: Vec<String> = self
-            .core
-            .edges_from(item_id)
-            .unwrap_or_default()
-            .into_iter()
-            .map(|edge| edge.target_id)
-            .collect();
+        let edges = self.core.edges_from(item_id).unwrap_or_default();
+        let held: Vec<&str> = edges.iter().map(|edge| edge.target_id.as_str()).collect();
+        let mut named: HashSet<String> = HashSet::new();
         for target in links {
             let resolved = self.resolve_link(target)?;
             let Some(resolved) = resolved else { continue };
-            if held.contains(&resolved) {
+            if !held.contains(&resolved.as_str()) {
+                self.core.create_edge(&crate::model::EdgeDraft {
+                    source_id: item_id.to_string(),
+                    target_id: resolved.clone(),
+                    edge_type: LINK_EDGE.into(),
+                    ..Default::default()
+                })?;
+            }
+            named.insert(resolved);
+        }
+        // A link the body no longer names takes its edge with it
+        // (`folders.md` 21). Without this the edge outlives the link, the
+        // next pull renders it back into the file, and the person deletes
+        // the same line for ever.
+        //
+        // Only the folder's own kind, and only where the copy holds the
+        // target: an edge of another type is one the folder could not have
+        // made and cannot make again, and one whose target the copy does not
+        // hold is one `resolve_link` could never have named — so its absence
+        // from the body says nothing about what the person meant.
+        //
+        // Read from the copy, so this can only reach an edge the device has
+        // caught up with. An edge made elsewhere that has not arrived yet is
+        // invisible here rather than deleted.
+        for edge in edges {
+            if edge.edge_type != LINK_EDGE
+                || named.contains(&edge.target_id)
+                || self.core.get(&edge.target_id)?.is_none()
+            {
                 continue;
             }
-            self.core.create_edge(&crate::model::EdgeDraft {
-                source_id: item_id.to_string(),
-                target_id: resolved,
-                edge_type: "references".into(),
-                ..Default::default()
-            })?;
+            self.core.delete_edge(&edge.id)?;
         }
         Ok(())
     }
@@ -816,6 +835,9 @@ impl Folder {
         document::write(&properties)
     }
 }
+
+/// The kind of edge a link becomes, and the only kind a folder removes.
+pub const LINK_EDGE: &str = "references";
 
 /// The frontmatter field a folder writes an item's id into.
 pub const ID_FIELD: &str = "marfa_id";

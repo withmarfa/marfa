@@ -11,7 +11,7 @@ A folder is a device surface: a directory on a machine that holds a slice as fil
 ## Files and items
 
 4. A file in the folder is an item on the server and an item in the slice is a file in the folder. `device/folders.test.ts › makes a file an item and an item a file`.
-5. Frontmatter becomes properties and the body is the body. A property the type does not declare travels as a property; nothing a file carries is dropped on the way in (`device.md` 23). `device/folders.test.ts › carries frontmatter to properties and the body to the body`.
+5. Frontmatter becomes properties and the body is the body. A property the type does not declare travels as a property; nothing a file carries is dropped on the way in (`device.md` 23), and **the order the fields were written in is one of the things it carries**. `device/folders.test.ts › carries frontmatter to properties and the body to the body`, `› writes a person's frontmatter back in the order they wrote it`.
 6. **Frontmatter is only what a file opens with and delimits as frontmatter.** A body that opens with a horizontal rule is a body. Reading it as frontmatter loses the first paragraph and then writes the loss back to the server, which is silent data loss in both directions. `device/folders.test.ts › treats a body opening with a horizontal rule as a body`.
 7. Links in the body become edges, and the edges of an item appear as links. An edge the folder cannot express as a link is kept on the item rather than dropped. `device/folders.test.ts › carries links to edges and edges to links`.
 
@@ -36,6 +36,7 @@ A folder is a device surface: a directory on a machine that holds a slice as fil
 18. `.marfa/` inside the folder is the folder's own state — its mapping, its journal, its queue — and is never watched and never pushed. `device/folders.test.ts › keeps its own state in .marfa and never pushes it`.
 19. A file of a type outside the folder's slice is not pushed, and an item outside the slice does not become a file. `device/folders.test.ts › leaves a file outside the slice alone`.
 20. **A folder writes only inside itself.** A path that resolves out of the folder is reported and not written. The path rule refuses a key leading out by `..` or a separator; a directory on the way that is a symlink is the case it cannot see, and a file written through one is a file the folder's own walk never finds again. `device/folders.test.ts › refuses to write a file outside the folder`.
+21. **A link the body no longer names takes its edge with it**, where that edge is one the folder could have made: its own kind, and a target this copy holds. An edge of another kind, or one to an item the copy does not hold, is not the folder's to remove and stays. `device/folders.test.ts › takes the edge with a link the body no longer names`.
 
 ## What the real server cannot be made to produce
 

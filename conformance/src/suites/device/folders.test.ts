@@ -108,6 +108,11 @@ function scriptFolderWrites(
     status: 204,
     body: {},
   });
+  harness.server.answer("DELETE", /^\/edges\/[^/]+$/, {
+    kind: "json",
+    status: 204,
+    body: {},
+  });
 }
 
 /** What the folder sent to the items door, parsed. */
@@ -325,6 +330,30 @@ describe("files and items", () => {
     ).toBe("The body.\n");
   });
 
+  it("writes a person's frontmatter back in the order they wrote it", async () => {
+    harness = await folderHarness("folder-frontmatter-order");
+    scriptFolderWrites(harness);
+    put(
+      harness,
+      "note.md",
+      "---\nzebra: last in the alphabet\napple: first\ntitle: Ordered\n---\nbody\n",
+    );
+    expect((await harness.folder.push()).ok).toBe(true);
+
+    const written = read(harness, "note.md");
+    const fields = [...written.matchAll(/^([a-z_]+):/gm)].map(
+      (found) => found[1],
+    );
+    expect(
+      fields.length,
+      "no frontmatter was found at all, so the assertion below is about an empty list",
+    ).toBeGreaterThan(3);
+    expect(
+      fields.filter((field) => field !== "marfa_id"),
+      "the folder rewrote the person's frontmatter in an order nobody asked for, which is a change to their file on the first pull and one no scan can tell from a change they made",
+    ).toEqual(["zebra", "apple", "title"]);
+  });
+
   it("treats a body opening with a horizontal rule as a body", async () => {
     harness = await folderHarness("folder-rule");
     scriptFolderWrites(harness);
@@ -357,6 +386,42 @@ describe("files and items", () => {
       again.value.updated,
       "the file changed under the folder's own hand, so every pass pushes a change nobody made",
     ).toBe(0);
+  });
+
+  it("takes the edge with a link the body no longer names", async () => {
+    harness = await folderHarness("folder-link-removed");
+    scriptFolderWrites(harness);
+    put(harness, "target.md", "---\ntitle: Target\n---\nthe other end\n");
+    expect((await harness.folder.scan()).ok).toBe(true);
+    put(
+      harness,
+      "source.md",
+      "---\ntitle: Source\n---\nsee [[target]] for more\n",
+    );
+    expect((await harness.folder.push()).ok).toBe(true);
+
+    // The person takes the line out. The edge is the folder's own kind and
+    // its target is a file in the same folder, so it is the folder's to
+    // remove.
+    writeFileSync(
+      join(harness.dir, "source.md"),
+      "---\ntitle: Source\n---\nsee nothing for more\n",
+    );
+    expect((await harness.folder.scan()).ok).toBe(true);
+
+    const queued = await harness.folder.device().queue();
+    expect(queued.ok).toBe(true);
+    if (!queued.ok) return;
+    expect(
+      queued.value.filter((row) => row.kind === "delete_edge").length,
+      "the edge outlived the link, so the next pull writes the line back and the person deletes it again for ever",
+    ).toBe(1);
+
+    expect((await harness.folder.push()).ok).toBe(true);
+    expect(
+      read(harness, "source.md"),
+      "the folder put the link back into the file after the person took it out, which is a fight the person cannot win",
+    ).not.toContain("[[target]]");
   });
 
   it("carries links to edges and edges to links", async () => {

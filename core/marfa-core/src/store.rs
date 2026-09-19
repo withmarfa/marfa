@@ -918,7 +918,11 @@ mod tests {
         assert_eq!(body, "B\nx\ny");
         let (title, body) = fts_text(properties.as_object().unwrap(), Some("body"));
         assert_eq!(title, "B");
-        assert_eq!(body, "x\ny\nT");
+        // The document's order, not the map's: properties preserve the order
+        // they arrived in, so what is indexed here follows the item rather
+        // than the alphabet. Nothing reads the order back — this is one blob
+        // to match against — and it is pinned only so a change to it is seen.
+        assert_eq!(body, "T\nx\ny");
     }
 
     #[test]

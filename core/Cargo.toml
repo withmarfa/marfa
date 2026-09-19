@@ -18,7 +18,11 @@ directories = "6"
 notify = "8"
 rusqlite = { version = "0.40", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+# `preserve_order`, because a folder writes a person's frontmatter back.
+# Without it `Map` is a `BTreeMap` and every pull returns their fields in
+# alphabetical order, which is a change to their file the folder made for
+# no reason and which no scan can tell from one they made.
+serde_json = { version = "1", features = ["preserve_order"] }
 thiserror = "2"
 # Frontmatter. `serde_yaml` is deprecated by its author and `serde_norway`
 # has not shipped in over a year; this one is current. It parses to its own
