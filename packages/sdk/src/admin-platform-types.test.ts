@@ -90,13 +90,13 @@ describe("client.admin.platformTypes.drift", () => {
 });
 
 describe("client.admin.platformTypes.remove", () => {
-  it("POSTs to the per-type remove route", async () => {
+  it("DELETEs the per-type route", async () => {
     const mockFetch = vi.fn(
       (url: string | URL | Request, init?: RequestInit): Promise<Response> => {
         expect(urlOf(url)).toBe(
-          "http://example.test/admin/platform-types/withmarfa.captured_email/remove",
+          "http://example.test/admin/platform-types/withmarfa.captured_email",
         );
-        expect(init?.method).toBe("POST");
+        expect(init?.method).toBe("DELETE");
         return Promise.resolve(
           makeJsonResponse(200, {
             removed: true,
@@ -123,7 +123,7 @@ describe("client.admin.platformTypes.remove", () => {
     const mockFetch = vi.fn(
       (url: string | URL | Request): Promise<Response> => {
         expect(urlOf(url)).toBe(
-          "http://example.test/admin/platform-types/acme%2Fdeal%3Fx%3D1/remove",
+          "http://example.test/admin/platform-types/acme%2Fdeal%3Fx%3D1",
         );
         return Promise.resolve(
           makeJsonResponse(200, { removed: true, id: "acme/deal?x=1" }),

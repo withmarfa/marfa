@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Marfa API",
-    "version": "5.5.0",
+    "version": "5.6.0",
     "description": "Typed data layer for structured personal data"
   },
   "components": {
@@ -14917,7 +14917,7 @@
           "Types"
         ],
         "summary": "List types",
-        "description": "Returns every type this instance resolves: the catalog this build ships, everything registered through `POST /types`, and any platform row an earlier build seeded that this one no longer ships. That third group is drift rather than vocabulary — a type retired by a rename survives on an instance upgraded across it, and keeps resolving and listing here until an operator retires the row. `GET /admin/platform-types/drift` names them and `POST /admin/platform-types/{id}/remove` removes one. Use as the schema manifest a type-aware client reads at startup.",
+        "description": "Returns every type this instance resolves: the catalog this build ships, everything registered through `POST /types`, and any platform row an earlier build seeded that this one no longer ships. That third group is drift rather than vocabulary — a type retired by a rename survives on an instance upgraded across it, and keeps resolving and listing here until an operator retires the row. `GET /admin/platform-types/drift` names them and `DELETE /admin/platform-types/{id}` removes one. Use as the schema manifest a type-aware client reads at startup.",
         "security": [
           {
             "bearerAuth": []
@@ -21320,7 +21320,7 @@
             "bearerAuth": []
           }
         ],
-        "description": "Lists platform type rows this instance still carries that the running build no longer ships, each with how many items still carry the identifier. A row here keeps resolving and keeps listing at `GET /types`, so a type a rename retired outlives the rename on every instance upgraded across it until somebody acts; `POST /admin/platform-types/{id}/remove` is that act, one row per call, and a row reporting `removable: true` is one it would accept today, unless this process has already removed it — the drifted set is derived once at boot, so a row removed since then is still listed here and the remove door answers `404` for it. `/health` publishes the count of these as `platform_types`, a report that carries no status and never degrades the response; this is where the identifiers live, because that endpoint is unauthenticated. The count is read live rather than cached at boot: it is the part that changes without a restart, and a removal reasoning from a stale copy is the failure worth avoiding. Operator key only.",
+        "description": "Lists platform type rows this instance still carries that the running build no longer ships, each with how many items still carry the identifier. A row here keeps resolving and keeps listing at `GET /types`, so a type a rename retired outlives the rename on every instance upgraded across it until somebody acts; `DELETE /admin/platform-types/{id}` is that act, one row per call, and a row reporting `removable: true` is one it would accept today, unless this process has already removed it — the drifted set is derived once at boot, so a row removed since then is still listed here and the remove door answers `404` for it. `/health` publishes the count of these as `platform_types`, a report that carries no status and never degrades the response; this is where the identifiers live, because that endpoint is unauthenticated. The count is read live rather than cached at boot: it is the part that changes without a restart, and a removal reasoning from a stale copy is the failure worth avoiding. Operator key only.",
         "responses": {
           "200": {
             "description": "The drifted rows, with their live item counts",
@@ -21548,8 +21548,8 @@
         }
       }
     },
-    "/admin/platform-types/{id}/remove": {
-      "post": {
+    "/admin/platform-types/{id}": {
+      "delete": {
         "operationId": "adminRemovePlatformType",
         "tags": [
           "Types"

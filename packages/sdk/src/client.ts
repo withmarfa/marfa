@@ -2250,8 +2250,8 @@ export class MarfaClient {
        */
       remove: async (id: string): Promise<{ removed: true; id: string }> => {
         return this.transport.request<{ removed: true; id: string }>(
-          "POST",
-          path`/admin/platform-types/${id}/remove`,
+          "DELETE",
+          path`/admin/platform-types/${id}`,
         );
       },
     },

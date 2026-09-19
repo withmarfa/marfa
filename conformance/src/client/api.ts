@@ -892,13 +892,19 @@ export class MarfaClient {
     return this.request("/admin/platform-types/drift");
   }
 
-  /** `POST /admin/platform-types/{id}/remove`: the operator key only. */
+  /**
+   * `DELETE /admin/platform-types/{id}`: the operator key only.
+   *
+   * Encoded because the identifier is now the last segment: a `?` or a `#`
+   * in one would otherwise end the path early and the door would answer a
+   * plausible refusal about a shorter identifier than the fixture sent.
+   */
   async removePlatformType(
     id: string,
   ): Promise<ApiResponse<{ removed: true; id: string }>> {
     return this.request<{ removed: true; id: string }>(
-      `/admin/platform-types/${id}/remove`,
-      { method: "POST" },
+      `/admin/platform-types/${encodeURIComponent(id)}`,
+      { method: "DELETE" },
     );
   }
 
