@@ -98,15 +98,27 @@ jobs:
         working-directory: core
         run: |
           set -euo pipefail
+          # **The trap is installed before the boot, not after.** A boot that
+          # fails partway has already started a server, and a trap armed
+          # afterwards never runs for it: the step dies, the server keeps the
+          # port, and every later run on this runner fails to bind against a
+          # process nothing remembers starting.
+          #
+          # `|| true` because a command failing inside an EXIT trap becomes
+          # the shell's status, so cleanup trouble would be reported as a
+          # failing test. server-down.sh says what went wrong on stderr.
+          #
+          # It reads the env file by its path rather than the exported name,
+          # because the export only exists once `eval` has run.
+          # Named before the boot, so the trap can find it whether the boot
+          # succeeded, failed partway, or never got as far as printing.
+          export MARFA_SERVER_ENV="${RUNNER_TEMP:-/tmp}/marfa-core-proof.env"
+          trap 'scripts/server-down.sh "${MARFA_SERVER_ENV}" || true' EXIT
           # Assigned before it is evaluated. `eval "$(scripts/server-up.sh)"`
           # swallows a failed boot, because evaluating an empty string
           # succeeds; an assignment carries the script's own status.
           server_env="$(scripts/server-up.sh)"
           eval "${server_env}"
-          # `|| true` because a command failing inside an EXIT trap becomes
-          # the shell's status, so cleanup trouble would be reported as a
-          # failing test. server-down.sh says what went wrong on stderr.
-          trap 'scripts/server-down.sh || true' EXIT
           cargo test -p marfa-core -- --include-ignored
 
       # Compiled, not packaged: the XCFramework carries arm64 macOS only this
