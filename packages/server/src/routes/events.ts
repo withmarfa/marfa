@@ -5,6 +5,7 @@ import {
   MarfaError,
   isValidTypePattern,
   matchesTypeFilter,
+  malformedTypeIdentifier,
 } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { withPreparedHeaders } from "../prepared-headers.js";
@@ -307,10 +308,7 @@ function parseTypeFilter(raw: string | undefined): string[] | undefined {
   }
   for (const part of parts) {
     if (part === GLOBAL_TYPE_WILDCARD || !isValidTypePattern(part)) {
-      throw new MarfaError(
-        ErrorCode.VALIDATION_ERROR,
-        "Invalid type identifier",
-      );
+      throw malformedTypeIdentifier("type", `Invalid type identifier: ${part}`);
     }
   }
   return parts;

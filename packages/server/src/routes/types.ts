@@ -13,6 +13,7 @@ import {
   diffTypeSchemas,
   isValidVersionBump,
   TYPE_ROLES,
+  malformedTypeIdentifier,
 } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import {
@@ -431,8 +432,8 @@ export function typeRoutes(storage: Storage) {
     const body = c.req.valid("json");
 
     if (typeof body.id === "string" && !isValidTypeIdentifier(body.id)) {
-      throw new MarfaError(
-        ErrorCode.INVALID_TYPE,
+      throw malformedTypeIdentifier(
+        "id",
         "Invalid type identifier. Must follow the five-tier namespace grammar: core.<type>, system.<type>, app.<app-name>.<type>, user.<type>, or <publisher>.<type>. Forward slashes and reserved-root collisions are rejected.",
       );
     }
@@ -534,10 +535,7 @@ export function typeRoutes(storage: Storage) {
     const { id } = c.req.valid("param");
 
     if (!isValidTypeIdentifier(id)) {
-      throw new MarfaError(
-        ErrorCode.VALIDATION_ERROR,
-        "Invalid type identifier",
-      );
+      throw malformedTypeIdentifier("id", `Invalid type identifier: ${id}`);
     }
 
     if (isLockedPlatformType(id)) {

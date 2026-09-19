@@ -72,7 +72,13 @@ describe("namespace grammar", () => {
     });
     expect(r.ok).toBe(false);
     expect(r.status).toBe(400);
-    expect(r.error?.error.code).toBe("invalid_type");
+    expect(r.error?.error.code).toBe("validation_error");
+    // The field is the witness. `validation_error` is the code every other
+    // shape failure on this door answers with, so the code alone would still
+    // pass if the grammar gate went and the body were refused elsewhere.
+    const errors = r.error?.error.details?.errors as
+      { path: string }[] | undefined;
+    expect(errors?.[0]?.path).toBe("type");
   });
 
   it("rejects forward-slash type identifiers", async () => {
@@ -82,7 +88,10 @@ describe("namespace grammar", () => {
     });
     expect(r.ok).toBe(false);
     expect(r.status).toBe(400);
-    expect(r.error?.error.code).toBe("invalid_type");
+    expect(r.error?.error.code).toBe("validation_error");
+    const errors = r.error?.error.details?.errors as
+      { path: string }[] | undefined;
+    expect(errors?.[0]?.path).toBe("type");
   });
 
   // A reserved namespace is a property of the build, not of the request:

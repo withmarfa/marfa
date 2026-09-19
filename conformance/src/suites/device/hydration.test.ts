@@ -59,7 +59,7 @@ describe("what a hydration declares", () => {
       request.query.get("type") === "bookmark"
         ? refusal(
             400,
-            "invalid_type",
+            "validation_error",
             "Type identifier must have at least two segments",
           )
         : itemsPage([{ item: wireItem({ id: "n1" }) }]),

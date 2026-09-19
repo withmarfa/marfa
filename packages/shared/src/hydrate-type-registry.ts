@@ -1,5 +1,5 @@
 import type { TypeSchema } from "@withmarfa/types";
-import { ErrorCode, MarfaError } from "./errors.js";
+import { ErrorCode, MarfaError, malformedTypeIdentifier } from "./errors.js";
 import {
   MAX_RESOLUTION_DEPTH,
   PLATFORM_TIERS,
@@ -192,8 +192,8 @@ export function hydrateTypeRegistry(
     // registry exactly as it found it.
     const id: unknown = schema.id;
     if (typeof id !== "string") {
-      throw new MarfaError(
-        ErrorCode.INVALID_TYPE,
+      throw malformedTypeIdentifier(
+        "schema.id",
         `Hydration payload carried a type identifier of type ${typeof id} where a string was required`,
         { type_id: id },
       );

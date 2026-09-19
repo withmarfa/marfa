@@ -38,6 +38,7 @@ import {
   validateProperties,
   getTypeSchema,
   resolveEnforcement,
+  malformedTypeIdentifier,
 } from "@withmarfa/shared";
 import type { Item, Metadata } from "@withmarfa/shared";
 import {
@@ -572,7 +573,7 @@ async function processBulkItem(
         index,
         outcome: "errored",
         error: {
-          code: ErrorCode.INVALID_TYPE,
+          code: ErrorCode.VALIDATION_ERROR,
           message: `Invalid type identifier: ${raw.type}`,
         },
       },
@@ -1014,7 +1015,7 @@ export function bulkRoutes(storage: Storage) {
             `Bulk upsert rolled back on item ${String(i)}`,
             {
               index: i,
-              code: ErrorCode.INVALID_TYPE,
+              code: ErrorCode.VALIDATION_ERROR,
               message: `Invalid type identifier: ${raw.type}`,
             },
           );
@@ -1214,8 +1215,8 @@ export function bulkRoutes(storage: Storage) {
     // Validate filter fields up-front so a caller with a bad filter gets
     // a 400 before any matching happens.
     if (filter.type && !isValidTypeIdentifier(filter.type)) {
-      throw new MarfaError(
-        ErrorCode.VALIDATION_ERROR,
+      throw malformedTypeIdentifier(
+        "filter.type",
         `Invalid type identifier: ${filter.type}`,
       );
     }

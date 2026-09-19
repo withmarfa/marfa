@@ -36,8 +36,9 @@ describe("type identifier validation on item creation", () => {
     // Five-tier namespace grammar: three-segment IDs are reserved for
     // `app.<app-name>.<type>`. The identifier clears the grammar gate; being
     // unregistered, the create stops at the registration gate with
-    // `unknown_type` (not `invalid_type`), confirming the grammar accepted the
-    // three-segment app form. Register via POST /types to create items of it.
+    // `unknown_type` (not `validation_error`), confirming the grammar
+    // accepted the three-segment app form. Register via POST /types to
+    // create items of it.
     const r = await client.createItem({
       type: "app.example.bookmark",
       properties: {
@@ -73,7 +74,13 @@ describe("type identifier validation on item creation", () => {
     });
     expect(r.ok).toBe(false);
     expect(r.status).toBe(400);
-    expect(r.error?.error.code).toBe("invalid_type");
+    expect(r.error?.error.code).toBe("validation_error");
+    // The field is the witness. `validation_error` is the code every other
+    // shape failure on this door answers with, so the code alone would still
+    // pass if the grammar gate went and the body were refused elsewhere.
+    const errors = r.error?.error.details?.errors as
+      { path: string }[] | undefined;
+    expect(errors?.[0]?.path).toBe("type");
   });
 
   it("rejects uppercase characters in type identifier (Core.Bookmark)", async () => {
@@ -83,7 +90,10 @@ describe("type identifier validation on item creation", () => {
     });
     expect(r.ok).toBe(false);
     expect(r.status).toBe(400);
-    expect(r.error?.error.code).toBe("invalid_type");
+    expect(r.error?.error.code).toBe("validation_error");
+    const errors = r.error?.error.details?.errors as
+      { path: string }[] | undefined;
+    expect(errors?.[0]?.path).toBe("type");
   });
 
   it("accepts underscores in type identifier segments (eval.custom_type)", async () => {
@@ -132,6 +142,9 @@ describe("type identifier validation on item creation", () => {
     });
     expect(r.ok).toBe(false);
     expect(r.status).toBe(400);
-    expect(r.error?.error.code).toBe("invalid_type");
+    expect(r.error?.error.code).toBe("validation_error");
+    const errors = r.error?.error.details?.errors as
+      { path: string }[] | undefined;
+    expect(errors?.[0]?.path).toBe("type");
   });
 });

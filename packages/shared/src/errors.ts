@@ -7,14 +7,16 @@ export enum ErrorCode {
   BLOB_NOT_FOUND = "blob_not_found",
   VALIDATION_ERROR = "validation_error",
   MISSING_REQUIRED_FIELD = "missing_required_field",
-  INVALID_TYPE = "invalid_type",
   /**
    * A create / upsert named a type identifier that is well-formed but not
-   * registered. Distinct from `INVALID_TYPE` (the identifier is malformed,
-   * e.g. contains a slash) and `TYPE_NOT_FOUND` (a `/types/:id` lookup miss).
-   * An unregistered type has no schema to validate against, so the write is
-   * rejected rather than persisting an unvalidated, typo-prone item. Register
-   * the type via `POST /types` first.
+   * registered — a lookup answer, distinct from `TYPE_NOT_FOUND` (a
+   * `/types/:id` miss) and from `TYPE_NOT_PERMITTED` (the caller may not
+   * reach this type here, which is decided without a lookup). An unregistered type has no schema to
+   * validate against, so the write is rejected rather than persisting an
+   * unvalidated, typo-prone item. Register the type via `POST /types` first.
+   *
+   * A **malformed** identifier is neither: it never reached a lookup, so it
+   * answers the generic `VALIDATION_ERROR` with the field named.
    */
   UNKNOWN_TYPE = "unknown_type",
   INVALID_ID = "invalid_id",
@@ -263,7 +265,6 @@ const STATUS_MAP: Record<ErrorCode, number> = {
   [ErrorCode.BLOB_NOT_FOUND]: 404,
   [ErrorCode.VALIDATION_ERROR]: 400,
   [ErrorCode.MISSING_REQUIRED_FIELD]: 400,
-  [ErrorCode.INVALID_TYPE]: 400,
   [ErrorCode.UNKNOWN_TYPE]: 400,
   [ErrorCode.INVALID_ID]: 400,
   [ErrorCode.VERSION_CONFLICT]: 409,
@@ -363,4 +364,30 @@ export class MarfaError extends Error {
     }
     return response;
   }
+}
+
+/**
+ * A type identifier the grammar refused, which never reached a lookup.
+ *
+ * `unknown_type` is a lookup answer and `type_not_permitted` is a permission
+ * one, so neither fits a string that is not a type identifier at all. That
+ * leaves the generic validation refusal, and the point of routing it through
+ * one function is the shape: `details.errors[].path` is what the router's own
+ * schema failures carry, so a caller reads one envelope whether the grammar
+ * was checked by a zod schema or by hand.
+ *
+ * `context` carries whatever else a producer wants in `details` and is closed
+ * over `errors`, which this function owns. Accepting one and overwriting it
+ * would drop a caller's own list without saying so, and accepting one and
+ * keeping it would put back the second envelope this exists to remove.
+ */
+export function malformedTypeIdentifier(
+  path: string,
+  message: string,
+  context?: Record<string, unknown> & { errors?: never },
+): MarfaError {
+  return new MarfaError(ErrorCode.VALIDATION_ERROR, message, {
+    ...context,
+    errors: [{ path, message }],
+  });
 }

@@ -39,13 +39,18 @@ describe("error codes", () => {
     });
   });
 
-  describe("invalid_type", () => {
+  describe("validation_error on a malformed type identifier", () => {
     it("rejects item with malformed type identifier", async () => {
       const response = await client.createItem({
         type: "invalid type with spaces",
       });
       expect(response.status).toBe(400);
-      expect(response.error?.error.code).toBe("invalid_type");
+      expect(response.error?.error.code).toBe("validation_error");
+      // The field, which is what a generic code has to carry to be useful:
+      // without it a caller cannot tell this from a body wrong elsewhere.
+      const errors = response.error?.error.details?.errors as
+        { path: string }[] | undefined;
+      expect(errors?.[0]?.path).toBe("type");
     });
   });
 

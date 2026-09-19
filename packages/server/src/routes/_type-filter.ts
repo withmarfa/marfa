@@ -4,6 +4,7 @@ import {
   MarfaError,
   getTypeSchema,
   isValidTypePattern,
+  malformedTypeIdentifier,
 } from "@withmarfa/shared";
 
 /**
@@ -42,7 +43,8 @@ import {
 export function assertTypeFilter(type: string | undefined): void {
   if (!type) return;
   if (type === GLOBAL_TYPE_WILDCARD || !isValidTypePattern(type)) {
-    throw new MarfaError(ErrorCode.VALIDATION_ERROR, "Invalid type identifier");
+    // Every caller reads it from a `type` query parameter.
+    throw malformedTypeIdentifier("type", `Invalid type identifier: ${type}`);
   }
   if (type.endsWith(".*")) return;
   if (getTypeSchema(type) === undefined) {

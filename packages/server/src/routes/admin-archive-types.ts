@@ -21,6 +21,7 @@ import {
   isValidEdgeTypeIdentifier,
   registerEdgeTypeSchema,
   validateTypeSchema,
+  malformedTypeIdentifier,
 } from "@withmarfa/shared";
 import type {
   EdgeTypeSchema,
@@ -198,8 +199,8 @@ function parseTypeEntries(entries: ArchiveTypeEntry[]): {
     if (entry.type !== undefined) {
       const raw = entry.type as { id?: unknown };
       if (typeof raw.id !== "string" || !isValidTypeIdentifier(raw.id)) {
-        throw new MarfaError(
-          ErrorCode.INVALID_TYPE,
+        throw malformedTypeIdentifier(
+          "type.id",
           `Archive carries a type with an invalid identifier: ${String(raw.id)}`,
         );
       }
