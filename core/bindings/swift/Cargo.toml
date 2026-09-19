@@ -16,7 +16,7 @@ path = "src/bin/uniffi-bindgen.rs"
 
 [dependencies]
 marfa-core = { path = "../../marfa-core" }
-serde_json = "1"
+serde_json.workspace = true
 uniffi = { version = "0.31", features = ["cli"] }
 
 # Its own workspace: cargo-swift will not name a package inside a multi-crate one.

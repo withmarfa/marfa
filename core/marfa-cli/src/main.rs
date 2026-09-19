@@ -784,16 +784,7 @@ fn folders(command: FoldersCommand, json: bool) -> Result<(), CliError> {
         }
         FoldersCommand::Pull { dir } => {
             let report = Folder::open(&dir, None)?.pull()?;
-            output::report(&report, json, || {
-                format!(
-                    "{} written, {} rewritten, {} moved, {} unchanged, {} skipped",
-                    report.written,
-                    report.rewritten,
-                    report.moved,
-                    report.unchanged,
-                    report.skipped
-                )
-            })
+            output::report(&report, json, || describe_pull(&report))
         }
         FoldersCommand::Push { dir, server } => {
             let folder = Folder::open(&dir, Some(server.into()))?;
@@ -822,6 +813,35 @@ fn folders(command: FoldersCommand, json: bool) -> Result<(), CliError> {
             watch::watch(&dir, server.into(), r#for.map(Duration::from_secs), json)
         }
     }
+}
+
+/// What a pull did, for somebody who did not ask for JSON.
+///
+/// The three counts after the semicolon are items that have no file and are
+/// not going to get one, which `folders.md` 20 requires be reported and which
+/// a line of the first five numbers alone says nothing about: a person
+/// reading five zeroes has been told the pull was quiet, not that it declined
+/// to write. Left off when they are zero, because the ordinary pull is the
+/// one nobody needs to read twice.
+fn describe_pull(report: &marfa_core::PullReport) -> String {
+    let mut line = format!(
+        "{} written, {} rewritten, {} moved, {} unchanged, {} skipped",
+        report.written, report.rewritten, report.moved, report.unchanged, report.skipped
+    );
+    let held: Vec<String> = [
+        (report.unwritten, "changed since the folder wrote them"),
+        (report.collided, "wanting a path another item took"),
+        (report.outside, "wanting a path outside the folder"),
+    ]
+    .into_iter()
+    .filter(|(count, _)| *count > 0)
+    .map(|(count, why)| format!("{count} {why}"))
+    .collect();
+    if !held.is_empty() {
+        line.push_str("; not written: ");
+        line.push_str(&held.join(", "));
+    }
+    line
 }
 
 fn describe_scan(report: &marfa_core::ScanReport) -> String {

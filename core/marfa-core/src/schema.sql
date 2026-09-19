@@ -229,6 +229,11 @@ CREATE TABLE IF NOT EXISTS folder_files (
   -- suppression have no gap (`folders.md` 14): a change whose content the
   -- folder already holds is a change the folder made.
   content_hash TEXT NOT NULL,
+  -- The item ids the links in those bytes named, as a JSON array. What tells
+  -- a link the person removed from an edge that has not been rendered yet
+  -- (`folders.md` 21): both are an edge the copy holds that the body does not
+  -- name, and only this says which of them the file used to carry.
+  links TEXT NOT NULL DEFAULT '[]',
   seen_at TEXT NOT NULL
 ) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS folder_files_item ON folder_files (item_id);

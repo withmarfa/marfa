@@ -24,7 +24,7 @@ use rusqlite::Connection;
 
 pub use drain::{DrainReport, DrainVerdict};
 pub use error::CoreError;
-pub use folder::{Folder, ScanReport, Slice};
+pub use folder::{Folder, PullReport, ScanReport, Slice};
 pub use lock::Handle;
 pub use model::{
     CatchUpReport, Draft, Edge, EdgeDraft, EdgeEdit, Edit, HydrateReport, Hydration, Item,

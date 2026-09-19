@@ -112,14 +112,23 @@ fn step(folder: &Folder, json: bool) -> Result<(), CliError> {
         &serde_json::json!({ "scan": scanned, "drain": drained, "pull": pulled }),
         json,
         || {
+            // The counts that mean an item has no file are named rather than
+            // left out: a watcher that prints zeroes while declining to write
+            // is a watcher telling somebody nothing is wrong.
+            let held = pulled.unwritten + pulled.collided + pulled.outside;
             format!(
-                "{} created, {} updated, {} renamed, {} deleted; sent {}; {} file(s) written",
+                "{} created, {} updated, {} renamed, {} deleted; sent {}; {} file(s) written{}",
                 scanned.created,
                 scanned.updated,
                 scanned.renamed,
                 scanned.deleted,
                 drained.sent,
-                pulled.written + pulled.rewritten
+                pulled.written + pulled.rewritten,
+                if held > 0 {
+                    format!(", {held} not written")
+                } else {
+                    String::new()
+                }
             )
         },
     )

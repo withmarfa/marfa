@@ -206,12 +206,10 @@ impl Folder {
     pub fn scan(&self) -> Result<ScanReport> {
         let mut report = ScanReport::default();
         let paths = self.files()?;
-        // Over the files the folder holds, not every file in the tree.
         // Resolving is fail-closed on a shared identity, so a file the
         // folder never touches — a hard link to a note, a copy some tool
-        // made — takes the note's identity away with it and the note's
-        // next rename becomes a second item. It is also a stat per file
-        // per scan, and the watcher scans once a second.
+        // made — would take the note's identity away with it and the
+        // note's next rename would become a second item.
         let held: Vec<PathBuf> = paths
             .iter()
             .filter(|path| self.holds(path))
@@ -222,17 +220,22 @@ impl Folder {
 
         for path in &paths {
             let key = identity::natural_key(&self.root, path)?;
+            // Seen before it is judged. A file the walk found is a file that
+            // is there, whatever its extension, and leaving an unheld one out
+            // of `seen` journals it missing and then deletes the item it is
+            // bound to — which is what happened to a file a pull had written
+            // under a name `holds` rejects.
+            seen.insert(key.clone());
             if !self.holds(path) {
                 report.skipped += 1;
                 continue;
             }
-            // Seen before it is read. A file the walk found is a file that
+            // Read after it is seen. A file the walk found is a file that
             // is there, and journaling it because the read failed starts
             // the delete clock on a file sitting on the disk — which two
             // scans later deletes the item, because `journal_missing` pins
             // the moment to the first failure. A dataless placeholder in
             // iCloud or Dropbox fails to materialise routinely.
-            seen.insert(key.clone());
             let Ok(bytes) = std::fs::read(path) else {
                 // Unreadable now. The next scan reads it, and until then
                 // the folder holds what it last agreed with.
@@ -256,7 +259,14 @@ impl Folder {
                         report.unchanged += 1;
                         continue;
                     }
-                    self.queue_update(&bound.item_id, &text, &key, mark.as_deref(), &hash)?;
+                    self.queue_update(
+                        &bound.item_id,
+                        &text,
+                        &key,
+                        mark.as_deref(),
+                        &hash,
+                        &bound.links,
+                    )?;
                     report.updated += 1;
                 }
                 None => {
@@ -289,6 +299,9 @@ impl Folder {
                                         item_id: from.item_id,
                                         identity: mark.clone(),
                                         content_hash: hash,
+                                        // The bytes did not change, so the
+                                        // links in them did not either.
+                                        links: from.links,
                                     },
                                 )?;
                             } else {
@@ -298,6 +311,7 @@ impl Folder {
                                     &key,
                                     mark.as_deref(),
                                     &hash,
+                                    &from.links,
                                 )?;
                             }
                             report.renamed += 1;
@@ -446,7 +460,9 @@ impl Folder {
         };
         let queued = self.core.create_item(&draft)?;
         let item_id = queued.item_id.unwrap_or_default();
-        self.queue_links(&item_id, &document.links)?;
+        // No bytes this folder agreed with before, so no link it can say has
+        // gone: a create only ever adds.
+        let named = self.queue_links(&item_id, &document.links, &[])?;
         let conn = self.core.conn()?;
         state::bind(
             &conn,
@@ -455,6 +471,7 @@ impl Folder {
                 item_id,
                 identity: mark.map(str::to_string),
                 content_hash: hash.to_string(),
+                links: named,
             },
         )?;
         Ok(())
@@ -467,6 +484,7 @@ impl Folder {
         key: &str,
         mark: Option<&str>,
         hash: &str,
+        had: &[String],
     ) -> Result<()> {
         let document = document::read(text);
         // The row this file is bound to, as the copy holds it. Absent when
@@ -489,7 +507,7 @@ impl Folder {
             base_version: Some(held.version),
         };
         self.core.update_item(item_id, &edit)?;
-        self.queue_links(item_id, &document.links)?;
+        let named = self.queue_links(item_id, &document.links, had)?;
         let conn = self.core.conn()?;
         state::bind(
             &conn,
@@ -498,26 +516,37 @@ impl Folder {
                 item_id: item_id.to_string(),
                 identity: mark.map(str::to_string),
                 content_hash: hash.to_string(),
+                links: named,
             },
         )?;
         Ok(())
     }
 
-    /// Links in the body become edges (`folders.md` 7).
+    /// Links in the body become edges (`folders.md` 7), and a link the body
+    /// has lost takes its edge with it (`folders.md` 21).
     ///
     /// Only the ones whose target this folder holds: a link to something
     /// outside the slice is text in the body and stays there, rather than
-    /// becoming an edge to a row the server may not have.
-    fn queue_links(&self, item_id: &str, links: &[String]) -> Result<()> {
+    /// becoming an edge to a row the server may not have. Answers the targets
+    /// the body named, which is what the mapping records so the next scan can
+    /// tell a link the person removed from one that was never there.
+    fn queue_links(&self, item_id: &str, links: &[String], had: &[String]) -> Result<Vec<String>> {
         if item_id.is_empty() {
-            return Ok(());
+            return Ok(Vec::new());
         }
         let edges = self.core.edges_from(item_id).unwrap_or_default();
         let held: Vec<&str> = edges.iter().map(|edge| edge.target_id.as_str()).collect();
-        let mut named: HashSet<String> = HashSet::new();
+        let mut named: Vec<String> = Vec::new();
+        let mut every_link_resolved = true;
         for target in links {
-            let resolved = self.resolve_link(target)?;
-            let Some(resolved) = resolved else { continue };
+            let Some(resolved) = self.resolve_link(target)? else {
+                // A link that names nothing the copy can find. It is still a
+                // link, and the removal below cannot tell it from a link the
+                // person deleted, so the whole pass stands down rather than
+                // guess. A rename in the same window is enough to reach this.
+                every_link_resolved = false;
+                continue;
+            };
             if !held.contains(&resolved.as_str()) {
                 self.core.create_edge(&crate::model::EdgeDraft {
                     source_id: item_id.to_string(),
@@ -526,32 +555,34 @@ impl Folder {
                     ..Default::default()
                 })?;
             }
-            named.insert(resolved);
+            if !named.contains(&resolved) {
+                named.push(resolved);
+            }
         }
-        // A link the body no longer names takes its edge with it
-        // (`folders.md` 21). Without this the edge outlives the link, the
-        // next pull renders it back into the file, and the person deletes
-        // the same line for ever.
+        if !every_link_resolved {
+            return Ok(named);
+        }
+        // **The file used to carry it and now does not.** That is the whole
+        // test, and it is why the mapping holds the links: an edge the copy
+        // holds that the body does not name is either a link the person
+        // removed or an edge that arrived from somewhere else and has not
+        // been rendered yet. Both look identical in the body, and the scan
+        // always runs before the pull that would render it — so without this
+        // a single keystroke in a file would destroy an edge another device
+        // had just made.
         //
-        // Only the folder's own kind, and only where the copy holds the
-        // target: an edge of another type is one the folder could not have
-        // made and cannot make again, and one whose target the copy does not
-        // hold is one `resolve_link` could never have named — so its absence
-        // from the body says nothing about what the person meant.
-        //
-        // Read from the copy, so this can only reach an edge the device has
-        // caught up with. An edge made elsewhere that has not arrived yet is
-        // invisible here rather than deleted.
+        // And only the folder's own kind: an edge of another kind is one the
+        // folder could not have made and cannot make again.
         for edge in edges {
             if edge.edge_type != LINK_EDGE
                 || named.contains(&edge.target_id)
-                || self.core.get(&edge.target_id)?.is_none()
+                || !had.contains(&edge.target_id)
             {
                 continue;
             }
             self.core.delete_edge(&edge.id)?;
         }
-        Ok(())
+        Ok(named)
     }
 
     /// The item a link names: an id the copy holds, or a file in this folder.
@@ -663,23 +694,28 @@ impl Folder {
                 state::bound_to_item(&conn, &item.id)?
             };
             let want = self.path_for(item, bound.as_ref());
+            // Before the path is counted as taken: a path the folder will
+            // not write is not a path anything took, and counting it makes
+            // the next item to want it a collision against nothing.
+            if !plainly_inside(&self.root, &want) {
+                report.outside += 1;
+                continue;
+            }
             if !taken.insert(want.clone()) {
                 report.collided += 1;
                 continue;
             }
             let path = self.root.join(&want);
-            // Inside the folder, resolved rather than read. `path_for`
-            // refuses a key that leads out by `..` or a separator, and
-            // that is the whole guard until a directory in the folder is
-            // a symlink: `create_dir_all` and `write` both follow one,
-            // and the walk never descends one — so a file written through
-            // it is a file this folder cannot see, and the next scan
-            // journals it missing and the grace turns that into a delete.
-            if !inside(&self.root, &path) {
-                report.outside += 1;
+            // A file already at this path that the folder never wrote. `pull`
+            // runs no scan first, so somebody who makes a note and pulls
+            // before scanning would lose it to whichever item wants the same
+            // name; the `unwritten` guard below only ever runs for a path the
+            // mapping already holds.
+            if bound.is_none() && path.exists() {
+                report.unwritten += 1;
                 continue;
             }
-            let text = self.render(item)?;
+            let (text, wrote) = self.render(item)?;
             let bytes = text.as_bytes().to_vec();
             let hash = state::hash(&bytes);
 
@@ -704,7 +740,7 @@ impl Folder {
                 // A rename on the server moves the file (`folders.md` 12).
                 // The old path goes first, so the scan that follows does not
                 // find the file under both names and make a second item.
-                if bound.path != want {
+                if bound.path != want && plainly_inside(&self.root, &bound.path) {
                     let from = self.root.join(&bound.path);
                     let _ = std::fs::remove_file(&from);
                     let conn = self.core.conn()?;
@@ -731,6 +767,7 @@ impl Folder {
                         item_id: item.id.clone(),
                         identity: None,
                         content_hash: hash,
+                        links: wrote.clone(),
                     },
                 )?;
             }
@@ -761,6 +798,7 @@ impl Folder {
                         item_id: item.id.clone(),
                         identity: Some(found.key()),
                         content_hash: state::hash(&bytes),
+                        links: wrote,
                     },
                 )?;
             }
@@ -799,8 +837,9 @@ impl Folder {
     }
 
     /// An item as the bytes of a file, with its id written in as the
-    /// folder's own identity record (`folders.md` 11).
-    fn render(&self, item: &Item) -> Result<String> {
+    /// folder's own identity record (`folders.md` 11), and the targets of
+    /// the links it put in the body.
+    fn render(&self, item: &Item) -> Result<(String, Vec<String>)> {
         let mut properties = item.properties.clone();
         // The folder's record, not the natural key. A file that has lost it
         // is still the same item when the key matches, and one carrying an
@@ -815,13 +854,23 @@ impl Folder {
         // An edge the folder cannot express as a link is kept on the item
         // rather than dropped (`folders.md` 7), so this only adds.
         let held = document::links(&body);
+        let mut wrote = Vec::new();
         for edge in self.core.edges_from(&item.id).unwrap_or_default() {
+            // An edge the copy holds nothing for is one the folder cannot
+            // express (`folders.md` 7) and one statement 21 will not let it
+            // remove. Writing it anyway put a bare id in the body that the
+            // person could delete and the next pull would write back, which
+            // is the same unwinnable fight 21 exists to end.
+            if self.core.get(&edge.target_id)?.is_none() {
+                continue;
+            }
             let target = {
                 let conn = self.core.conn()?;
                 state::bound_to_item(&conn, &edge.target_id)?
                     .map(|bound| bound.path)
-                    .unwrap_or(edge.target_id)
+                    .unwrap_or_else(|| edge.target_id.clone())
             };
+            wrote.push(edge.target_id.clone());
             let name = target.strip_suffix(".md").unwrap_or(&target).to_string();
             if !held.iter().any(|link| link == &name || link == &target) {
                 if !body.ends_with('\n') && !body.is_empty() {
@@ -832,7 +881,7 @@ impl Folder {
             }
         }
         properties.insert(document::BODY_FIELD.into(), Value::String(body));
-        document::write(&properties)
+        Ok((document::write(&properties)?, wrote))
     }
 }
 
@@ -874,31 +923,43 @@ pub struct PullReport {
 /// next render would write out again; and a file somebody copied would
 /// carry the id of the item it was copied from onto a new one.
 fn sendable(mut properties: Map<String, Value>) -> Map<String, Value> {
-    properties.remove(ID_FIELD);
+    // `shift_remove` rather than `remove`: with `preserve_order` on,
+    // `remove` is `swap_remove` and moves the last field into the hole,
+    // which reorders the frontmatter of any file that carries a `body:`
+    // of its own — the one thing `folders.md` 5 says will not happen.
+    properties.shift_remove(ID_FIELD);
     properties
 }
 
-/// Whether a path the folder is about to write lands inside the folder.
+/// Whether every component of a path the folder is about to write is a plain
+/// name inside the folder (`folders.md` 20).
 ///
-/// Resolved, so a symlink anywhere on the way is followed here rather
-/// than by the write. The path itself does not exist yet, so the deepest
-/// ancestor that does is the one that answers; a root that cannot be
-/// resolved answers no, because a folder nobody can locate is not one
-/// anything should be written into.
-fn inside(root: &Path, path: &Path) -> bool {
-    let Ok(root) = root.canonicalize() else {
-        return false;
-    };
-    let mut ancestor = path;
-    loop {
-        if let Ok(resolved) = ancestor.canonicalize() {
-            return resolved.starts_with(&root);
+/// The question is not where the path *resolves to*. A link pointing out of
+/// the folder loses the file; a link pointing back *in* is worse, because the
+/// write lands on another item's file and truncates it, the mapping then
+/// holds a path the walk will never return, and the grace turns that into a
+/// delete of the item that was written. Both are one `symlink_metadata` away,
+/// and neither is a place a folder has any business writing.
+///
+/// A component that does not exist yet is one this pull will make, and
+/// `create_dir_all` makes a directory rather than a link.
+///
+/// This is a guard and not a boundary: `create_dir_all` and the write
+/// re-resolve everything checked here, so a component replaced between the
+/// two is not caught. Closing that needs `O_NOFOLLOW`, which is not what this
+/// module is for.
+fn plainly_inside(root: &Path, relative: &str) -> bool {
+    let mut here = root.to_path_buf();
+    for part in relative.split('/') {
+        if part.is_empty() || part == "." || part == ".." {
+            return false;
         }
-        match ancestor.parent() {
-            Some(parent) => ancestor = parent,
-            None => return false,
+        here.push(part);
+        if std::fs::symlink_metadata(&here).is_ok_and(|found| found.is_symlink()) {
+            return false;
         }
     }
+    true
 }
 
 /// A title as a file name, with the separators and the dot-lead taken out.

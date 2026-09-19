@@ -18,7 +18,7 @@ pub const META_SLICE_TIER: &str = "slice_tier";
 pub const META_EVENT_CURSOR: &str = "event_cursor";
 pub const META_HYDRATE_STATE: &str = "hydrate_state";
 pub const HYDRATE_IN_PROGRESS: &str = "in_progress";
-pub const SCHEMA_VERSION: &str = "2";
+pub const SCHEMA_VERSION: &str = "3";
 
 const ITEM_COLUMNS: &str = "id, type, state, tier, version, schema_version, source, source_id, device, occurred_at, created_at, updated_at, properties";
 const EDGE_COLUMNS: &str =
@@ -918,10 +918,9 @@ mod tests {
         assert_eq!(body, "B\nx\ny");
         let (title, body) = fts_text(properties.as_object().unwrap(), Some("body"));
         assert_eq!(title, "B");
-        // The document's order, not the map's: properties preserve the order
-        // they arrived in, so what is indexed here follows the item rather
-        // than the alphabet. Nothing reads the order back — this is one blob
-        // to match against — and it is pinned only so a change to it is seen.
+        // The order the copy holds them in, not the map type's. Nothing
+        // reads it back — this is one blob to match against — and it is
+        // pinned only so a change to it is seen.
         assert_eq!(body, "T\nx\ny");
     }
 
