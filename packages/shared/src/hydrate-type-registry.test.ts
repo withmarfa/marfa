@@ -378,8 +378,13 @@ describe("hydrateTypeRegistry", () => {
     }
 
     expect(caught).toBeInstanceOf(MarfaError);
-    expect((caught as MarfaError).code).toBe(ErrorCode.INVALID_TYPE);
+    expect((caught as MarfaError).code).toBe(ErrorCode.VALIDATION_ERROR);
     expect((caught as MarfaError).details?.type_id).toBe(7);
+    // The field as well as the value: the path says which field, the value
+    // says what was in it, and neither stands in for the other.
+    expect(
+      (caught as MarfaError).details?.errors as { path: string }[] | undefined,
+    ).toEqual([{ path: "schema.id", message: expect.any(String) as string }]);
     // Raised in the collection loop, ahead of every registration and every
     // removal, so the registry is left exactly as it was found.
     expect(getTypeSchema("acme.standing_id")).toBeDefined();

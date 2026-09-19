@@ -94,7 +94,13 @@ describe("type identifier validation", () => {
       source: ctx.source,
     });
     expect(r.status).toBe(400);
-    expect(r.error?.error.code).toBe("invalid_type");
+    expect(r.error?.error.code).toBe("validation_error");
+    // The field is the witness. `validation_error` is the code every other
+    // shape failure on this door answers with, so the code alone would still
+    // pass if the grammar gate went and the body were refused elsewhere.
+    const errors = r.error?.error.details?.errors as
+      { path: string }[] | undefined;
+    expect(errors?.[0]?.path).toBe("type");
   });
 
   it("accepts type identifier with exactly 2 segments", async () => {
@@ -116,14 +122,17 @@ describe("type identifier validation", () => {
       source: ctx.source,
     });
     expect(r.status).toBe(400);
-    expect(r.error?.error.code).toBe("invalid_type");
+    expect(r.error?.error.code).toBe("validation_error");
+    const errors = r.error?.error.details?.errors as
+      { path: string }[] | undefined;
+    expect(errors?.[0]?.path).toBe("type");
   });
 
   it("accepts type identifier at exactly 128 characters (grammar boundary)", async () => {
     // The grammar permits identifiers up to 128 chars. This well-formed but
     // unregistered 128-char identifier clears the grammar gate, so the create
     // fails at the registration gate with `unknown_type` rather than the
-    // length-rejection `invalid_type` a 129-char identifier gets. The
+    // generic `validation_error` a 129-char identifier gets. The
     // `unknown_type` code is the positive signal that the grammar accepted it.
     const typeId = `${"a".repeat(63)}.${"b".repeat(64)}`;
     expect(typeId.length).toBe(128);
@@ -138,7 +147,7 @@ describe("type identifier validation", () => {
 
   it("accepts hyphens in type identifier segments (grammar boundary)", async () => {
     // Hyphens are valid within a segment. `core.my-notes` clears the grammar
-    // gate (no `invalid_type`); being unregistered, it stops at the
+    // gate (no `validation_error`); being unregistered, it stops at the
     // registration gate with `unknown_type` — confirming the hyphen was
     // grammatically accepted.
     const r = await client.createItem({

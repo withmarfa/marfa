@@ -87,8 +87,14 @@ describe("POST /types", () => {
       body: { ...baseType, id: "demo/bad-type", label: "Bad Type" },
     });
     expect(res.status).toBe(400);
-    const body = (await res.json()) as { error: { code: string } };
-    expect(body.error.code).toBe("invalid_type");
+    const body = (await res.json()) as {
+      error: { code: string; details?: { errors?: { path: string }[] } };
+    };
+    expect(body.error.code).toBe("validation_error");
+    // The field, not just the refusal. A malformed identifier answers the
+    // generic code, so naming the offending field is the whole of what
+    // distinguishes it from a body that was wrong somewhere unsaid.
+    expect(body.error.details?.errors?.[0]?.path).toBe("id");
   });
 
   it("auto-generates label from type ID when missing", async () => {

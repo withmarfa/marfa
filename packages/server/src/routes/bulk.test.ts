@@ -329,7 +329,7 @@ describe("POST /items/bulk", () => {
     expect(body.counts.created).toBe(2);
     expect(body.counts.errored).toBe(1);
     expect(body.results[1]!.outcome).toBe("errored");
-    expect(body.results[1]!.error?.code).toBe("invalid_type");
+    expect(body.results[1]!.error?.code).toBe("validation_error");
   });
 
   it("accepts inline edges on create", async () => {

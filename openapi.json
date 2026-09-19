@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Marfa API",
-    "version": "5.8.0",
+    "version": "5.9.0",
     "description": "Typed data layer for structured personal data"
   },
   "components": {
@@ -584,7 +584,6 @@
                           "enum": [
                             "validation_error",
                             "missing_required_field",
-                            "invalid_type",
                             "unknown_type",
                             "invalid_id",
                             "invalid_properties",

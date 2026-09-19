@@ -20,6 +20,7 @@ import {
   resolveEnforcement,
   isTypeInStrictMode,
   getSourceAllowlist,
+  malformedTypeIdentifier,
 } from "@withmarfa/shared";
 import type {
   AncestorUnavailableResponse,
@@ -279,7 +280,6 @@ const createItemRoute = createRoute({
           schema: makeErrorResponseSchema([
             "validation_error",
             "missing_required_field",
-            "invalid_type",
             "unknown_type",
             "invalid_id",
             "invalid_properties",
@@ -1253,10 +1253,7 @@ export function itemRoutes(storage: Storage) {
       );
     }
     if (!isValidTypeIdentifier(type)) {
-      throw new MarfaError(
-        ErrorCode.INVALID_TYPE,
-        `Invalid type identifier: ${type}`,
-      );
+      throw malformedTypeIdentifier("type", `Invalid type identifier: ${type}`);
     }
 
     const properties = body.properties ?? {};

@@ -1261,7 +1261,7 @@ describe("items.bulk", () => {
     expect(result.counts.created).toBe(1);
     expect(result.counts.errored).toBe(1);
     expect(result.results[1]?.outcome).toBe("errored");
-    expect(result.results[1]?.error?.code).toBe("invalid_type");
+    expect(result.results[1]?.error?.code).toBe("validation_error");
   });
 
   it("supports inline edges on bulk create", async () => {

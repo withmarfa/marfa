@@ -49,9 +49,12 @@ export function createOpenAPIRouter<
   const router = new OpenAPIHono<T>({
     defaultHook: (result) => {
       if (!result.success) {
-        // Check for missing required fields — map to MISSING_REQUIRED_FIELD
-        // to preserve backwards-compatible error codes.
-        // Zod v4 issues: { code: "invalid_type", message: "...received undefined" }
+        // A field the schema required and the body did not carry reads, in
+        // Zod v4, as `{ code: "invalid_type", message: "...received
+        // undefined" }`. That `invalid_type` is Zod's own issue code and has
+        // nothing to do with a type identifier — the wire vocabulary has no
+        // such code. Matched here so the caller is told which field is
+        // missing rather than that its body failed validation somewhere.
         const missingField = result.error.issues.find(
           (i) =>
             i.code === "invalid_type" &&

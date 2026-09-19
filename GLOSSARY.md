@@ -83,6 +83,6 @@ Its sibling `updated_before` closes the same window at the top and is **exclusiv
 ## Errors
 
 - `unknown_type` — there is no such type. A lookup answer.
-- `invalid_type` — the type exists but is not allowed here.
+- `type_not_permitted` — the type is not one this credential may reach here. A `403`, decided by the namespace and the credential's permission map rather than by the identifier. It consults no registry, so it is not a statement that the type exists.
 - A **malformed** identifier is neither: it never reached a lookup, so it answers the generic `validation_error` with the field named.
 - `edge_cycle` — an edge that would close a cycle. A **self-loop** is refused on every edge type; a longer cycle is detected only on the cycle-prone types, `parent-of` and `supersedes`, where the graph is not acyclic by construction.

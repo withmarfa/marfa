@@ -126,6 +126,38 @@ interface OpenAPIDoc {
  * the only record. A client branching on the `400` or the `404` it used to
  * get without a credential reads the refusal now.
  *
+ * It moved to 5.9.0 for `invalid_type`, which is gone. It meant a malformed
+ * type identifier, and a malformed identifier never reached a lookup, so it
+ * was never an answer about the catalog at all — it is a bad request, and it
+ * answers the generic `validation_error` with `details.errors[].path` naming
+ * the field, in the shape the router's own schema failures already use.
+ * `unknown_type` keeps the lookup answer and `type_not_permitted` keeps the
+ * one about what a credential may reach, which is the meaning the glossary
+ * had put on the retired code and no door ever gave it.
+ *
+ * Six producers moved, five of them on the wire, and exactly one declared
+ * the code: `POST /items`, whose `400` list is the only shape in this
+ * document that moves. `POST /types` declares no `400` at all and
+ * `POST /admin/restore-archive` is excluded from the reference, so for those
+ * two this note is the only record. So is it for the bulk pair, both on
+ * `POST /items/bulk`, where the code rides a result entry and a rollback's
+ * `details` — free-form strings this document does not constrain. That pair
+ * is also the one place the field does not come with the code: a result
+ * entry is a `code` and a `message`, with nowhere to put a path.
+ *
+ * The sixth producer never reaches the wire and is not why this number
+ * moved. `hydrateTypeRegistry` refuses a malformed id in the consumer's own
+ * process, so it travels with `@withmarfa/shared`'s version instead.
+ *
+ * Four more refusals gained the field without ever having carried the retired
+ * code: `PUT /types/{id}`, the `filter.type` check on `POST
+ * /items/bulk-actions`, the `type` query filter the read doors share, and the
+ * `type` filter on `GET /events`. All four answered `validation_error` with
+ * no `details` at all, and a claim that one envelope covers every malformed
+ * identifier is worth nothing while four of them answer differently. Adding a
+ * key to `details` takes nothing away from a caller, so it is additive and
+ * would not have moved this number on its own.
+ *
  * **One change, one number**, even where it carries several breaks. The
  * version records that the contract moved and what a caller may have been
  * reading; a second increment inside one change would say the contract moved
@@ -138,7 +170,7 @@ interface OpenAPIDoc {
  */
 export const OPENAPI_DOCUMENT_INFO = {
   title: "Marfa API",
-  version: "5.8.0",
+  version: "5.9.0",
   description: "Typed data layer for structured personal data",
 } as const;
 
