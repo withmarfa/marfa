@@ -145,6 +145,50 @@ function sentCreates(harness: FolderHarness): Array<Record<string, unknown>> {
     .map((request) => JSON.parse(request.body) as Record<string, unknown>);
 }
 
+/** Which item the folder created under each natural key. */
+function keysByItem(harness: FolderHarness): Map<string, string> {
+  return new Map(
+    sentCreates(harness).map((create) => [
+      String(create.id),
+      String(create.source_id ?? ""),
+    ]),
+  );
+}
+
+function itemFor(started: Map<string, string>, key: string): string {
+  const found = [...started].find(([, held]) => held === key);
+  return found?.[0] ?? `no item was created under ${key}`;
+}
+
+/**
+ * Every natural key the folder sent, replayed against who held what.
+ *
+ * A key another item still holds is one the server refuses, so the folder
+ * has to free it first (`folders.md` 24). The scripted server cannot refuse
+ * one, which is exactly why this reads the requests rather than the answers.
+ */
+function replayKeys(
+  harness: FolderHarness,
+  started: Map<string, string>,
+): { collisions: string[]; ended: Map<string, string> } {
+  const ended = new Map(started);
+  const collisions: string[] = [];
+  for (const request of harness.server.requests) {
+    if (request.method !== "PATCH") continue;
+    if (!/^\/items\/[^/]+$/.test(request.pathname)) continue;
+    const id = request.pathname.split("/").at(-1) ?? "";
+    const body = JSON.parse(request.body) as { source_id?: string };
+    if (body.source_id === undefined) continue;
+    const taken = [...ended].find(
+      ([other, key]) => other !== id && key === body.source_id,
+    );
+    if (taken)
+      collisions.push(`${id} -> ${body.source_id} (held by ${taken[0]})`);
+    ended.set(id, body.source_id);
+  }
+  return { collisions, ended };
+}
+
 /** The natural keys the folder sent, in order. */
 function sentKeys(harness: FolderHarness): string[] {
   return sentCreates(harness).map((sent) => String(sent.source_id ?? ""));
@@ -1194,6 +1238,78 @@ describe("identity", () => {
       [keys.get(one), keys.get(two)],
       "the two items did not end up under each other's names, so the swap did not reach the server",
     ).toEqual(["two.md", "one.md"]);
+  });
+
+  it("follows a three-way rotation without a name landing on a held one", async () => {
+    harness = await folderHarness("folder-rotate");
+    scriptFolderWrites(harness);
+    put(harness, "a.md", "---\ntitle: Alpha\n---\nalpha\n");
+    put(harness, "b.md", "---\ntitle: Beta\n---\nbeta\n");
+    put(harness, "c.md", "---\ntitle: Gamma\n---\ngamma\n");
+    expect((await harness.folder.push()).ok).toBe(true);
+    const started = keysByItem(harness);
+    expect(
+      started.size,
+      "the three files never became items, so there is nothing to rotate",
+    ).toBe(3);
+
+    // a -> b -> c -> a. A cycle of three, which a swap's two-step park does
+    // not obviously generalise to.
+    renameSync(join(harness.dir, "a.md"), join(harness.dir, ".hold"));
+    renameSync(join(harness.dir, "c.md"), join(harness.dir, "a.md"));
+    renameSync(join(harness.dir, "b.md"), join(harness.dir, "c.md"));
+    renameSync(join(harness.dir, ".hold"), join(harness.dir, "b.md"));
+    expect((await harness.folder.push()).ok).toBe(true);
+
+    const { collisions, ended } = replayKeys(harness, started);
+    expect(
+      collisions,
+      "the folder asked for a name another item still held, which a server refuses — so one item lands under the wrong name and another under none",
+    ).toEqual([]);
+    expect(
+      [...ended.entries()].sort(),
+      "the three items did not come to rest under the names their files now have",
+    ).toEqual(
+      [
+        [itemFor(started, "a.md"), "b.md"],
+        [itemFor(started, "b.md"), "c.md"],
+        [itemFor(started, "c.md"), "a.md"],
+      ].sort(),
+    );
+  });
+
+  it("follows a chain of renames that frees its own last name", async () => {
+    harness = await folderHarness("folder-chain");
+    scriptFolderWrites(harness);
+    put(harness, "a.md", "---\ntitle: Alpha\n---\nalpha\n");
+    put(harness, "b.md", "---\ntitle: Beta\n---\nbeta\n");
+    put(harness, "c.md", "---\ntitle: Gamma\n---\ngamma\n");
+    expect((await harness.folder.push()).ok).toBe(true);
+    const started = keysByItem(harness);
+    expect(started.size).toBe(3);
+
+    // c -> d, b -> c, a -> b. Not a cycle: the last name is free, and every
+    // other is held by something that is itself about to move.
+    renameSync(join(harness.dir, "c.md"), join(harness.dir, "d.md"));
+    renameSync(join(harness.dir, "b.md"), join(harness.dir, "c.md"));
+    renameSync(join(harness.dir, "a.md"), join(harness.dir, "b.md"));
+    expect((await harness.folder.push()).ok).toBe(true);
+
+    const { collisions, ended } = replayKeys(harness, started);
+    expect(
+      collisions,
+      "the folder asked for a name another item still held part-way along the chain",
+    ).toEqual([]);
+    expect(
+      [...ended.entries()].sort(),
+      "the chain did not come to rest where the files did",
+    ).toEqual(
+      [
+        [itemFor(started, "a.md"), "b.md"],
+        [itemFor(started, "b.md"), "c.md"],
+        [itemFor(started, "c.md"), "d.md"],
+      ].sort(),
+    );
   });
 
   it("moves the file when the item is renamed on the server", async () => {

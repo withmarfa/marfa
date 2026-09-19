@@ -322,7 +322,23 @@ impl Folder {
                         holder.remove(key.as_str());
                         holder.insert(parked, other);
                     }
-                    holder.remove(&bound.path);
+                    // Only where the old name is still recorded as this
+                    // item's. In a cycle longer than a swap the snapshot's
+                    // path for this item can already have been taken by an
+                    // earlier move, and removing it then would drop a record
+                    // that is live.
+                    //
+                    // No fixture holds this, and none can: for the wrong
+                    // removal to cost anything, a later file would have to
+                    // want a name an earlier file had already been given,
+                    // which is two files at one path. The rotation and the
+                    // chain below both come out right with the loose version
+                    // in place. It is written the strict way because the map
+                    // is meant to say who holds what, and a map that is
+                    // wrong in a way nothing can reach is still wrong.
+                    if holder.get(bound.path.as_str()) == Some(&bound.item_id) {
+                        holder.remove(&bound.path);
+                    }
                     holder.insert(key.clone(), bound.item_id.clone());
                     // The same file under a new name.
                     {
