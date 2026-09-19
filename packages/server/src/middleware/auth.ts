@@ -111,9 +111,10 @@ export function hashApiKey(raw: string, salt: string): string {
  * what this replaced, means every field added to `ApiKey` afterwards is
  * dropped until someone remembers to extend the list, and dropped
  * silently: the types agree either way because the missing fields are
- * optional. `item_source` was carried on the credential row and lost
- * exactly here, so item provenance kept rotating with the credential
- * while every layer that could have noticed was looking elsewhere.
+ * optional. `oauth_client_id` is the field that shows what that costs —
+ * it is optional, it is stamped by the server rather than asked for, and
+ * `extensionLabelOf` refuses a label claim on it, so a rebuild that
+ * forgot it would hand every app-minted key a label it may not have.
  * Naming what to remove fails closed on the next field; naming what to
  * keep fails open.
  */

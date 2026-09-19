@@ -83,7 +83,7 @@ function deriveKey(info: string): Buffer {
  * Encrypt a plaintext string into an opaque hex-encoded ciphertext that
  * round-trips through `decryptSecret(..., info)`. The `info` string
  * scopes the HKDF derivation — callers MUST use a stable, descriptive
- * label per use (e.g. "inbound-webhook-secrets",
+ * label per use (e.g. "connection-oauth-tokens",
  * "connection-oauth-tokens"). Different infos produce different keys;
  * mismatched infos at decrypt-time fail loudly.
  */
@@ -142,27 +142,16 @@ export function decryptSecret(ciphertextHex: string, info: string): string {
 }
 
 /**
- * Domain-tag constants for the two known consumers. Adding a new
- * consumer? Add the info string here so the call sites all read from
- * one place.
+ * Domain-tag constants, so every call site reads its info string from one
+ * place. Add one here when a new consumer arrives.
+ *
+ * `connectionOauthToken` outlives the table it was named for: the
+ * `system.credential` type still documents `secret_encrypted` as keyed on
+ * this domain, so the tag is part of a shipped schema rather than of the
+ * storage that went.
  */
 export const SECRET_INFO = {
-  inboundWebhookSecret: "inbound-webhook-secrets",
   connectionOauthToken: "connection-oauth-tokens",
-  /**
-   * API-key credentials carried by `system.credential` rows of
-   * `kind: api_key`. Used by integrations that re-present an existing
-   * long-lived API key as a Connection's credential — the sync agent
-   * re-presentation is the first consumer.
-   *
-   * The plaintext key continues to live on the local machine that
-   * uses it (e.g. `~/.marfa/sync.connection.json` for the sync agent);
-   * the encrypted copy on the server is for record-keeping and a
-   * future self-service refresh flow. Different domain than
-   * `connectionOauthToken` so a future operator audit can
-   * distinguish the two ciphertext sets.
-   */
-  apiKeyCredential: "api-key-credentials",
   /**
    * OAuth callback state. Used by `signOAuthState` /
    * `verifyOAuthState` to opaquely tamper-proof the `state` query

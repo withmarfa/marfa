@@ -17,8 +17,8 @@ let ctx: TestContext;
 let memberKey: string;
 
 interface InstantRow {
-  starts_at_utc: string | null;
-  ends_at_utc: string | null;
+  starts_at: string | null;
+  ends_at: string | null;
 }
 
 async function readColumns(
@@ -29,7 +29,7 @@ async function readColumns(
     __sqliteAll: (q: string) => Promise<unknown[]>;
   };
   const rows = (await sqlite.__sqliteAll(
-    `SELECT starts_at_utc, ends_at_utc FROM items WHERE id = '${id}'`,
+    `SELECT starts_at, ends_at FROM items WHERE id = '${id}'`,
   )) as InstantRow[];
   return rows[0];
 }
@@ -83,8 +83,8 @@ describe("the instant columns on the write path", () => {
       ends_at: "2026-03-24T09:30:00+01:00",
     });
     expect(await readColumns(ctx.storage, id)).toEqual({
-      starts_at_utc: "2026-03-24T08:00:00.000Z",
-      ends_at_utc: "2026-03-24T08:30:00.000Z",
+      starts_at: "2026-03-24T08:00:00.000Z",
+      ends_at: "2026-03-24T08:30:00.000Z",
     });
   });
 
@@ -94,7 +94,7 @@ describe("the instant columns on the write path", () => {
       starts_at: "2026-04-01T09:00:00.000Z",
     });
     await patchItem(id, { starts_at: "2026-04-02T15:00:00+02:00" }, 1);
-    expect((await readColumns(ctx.storage, id))?.starts_at_utc).toBe(
+    expect((await readColumns(ctx.storage, id))?.starts_at).toBe(
       "2026-04-02T13:00:00.000Z",
     );
   });
@@ -115,8 +115,8 @@ describe("the instant columns on the write path", () => {
       null_clears: true,
     });
     expect(await readColumns(ctx.storage, id)).toEqual({
-      starts_at_utc: null,
-      ends_at_utc: null,
+      starts_at: null,
+      ends_at: null,
     });
   });
 
@@ -130,7 +130,7 @@ describe("the instant columns on the write path", () => {
       starts_at: "2026-04-06T09:00:00.000Z",
     });
     await patchItem(id, { starts_at: null }, 1);
-    expect((await readColumns(ctx.storage, id))?.starts_at_utc).toBe(
+    expect((await readColumns(ctx.storage, id))?.starts_at).toBe(
       "2026-04-06T09:00:00.000Z",
     );
   });
@@ -162,8 +162,8 @@ describe("the instant columns on the write path", () => {
       "core.note",
     );
     expect(await readColumns(ctx.storage, undeclared)).toEqual({
-      starts_at_utc: null,
-      ends_at_utc: null,
+      starts_at: null,
+      ends_at: null,
     });
   });
 
@@ -175,7 +175,7 @@ describe("the instant columns on the write path", () => {
       { body: "a note that names a time", starts_at: "2026-05-05T09:00:00Z" },
       "core.note",
     );
-    expect((await readColumns(ctx.storage, id))?.starts_at_utc).toBe(
+    expect((await readColumns(ctx.storage, id))?.starts_at).toBe(
       "2026-05-05T09:00:00.000Z",
     );
   });
@@ -202,8 +202,8 @@ describe("the instant columns on the write path", () => {
     const page = await ctx.storage.items.list({
       type: "core.event",
       state: "active",
-      startsAtUtcFrom: "2028-01-01T00:00:00.000Z",
-      startsAtUtcTo: "2028-01-02T00:00:00.000Z",
+      startsAtFrom: "2028-01-01T00:00:00.000Z",
+      startsAtTo: "2028-01-02T00:00:00.000Z",
     });
     const ids = page.data.map((item) => item.id);
     expect(ids).toContain(inside);
@@ -245,7 +245,7 @@ describe("the instant columns on the write path", () => {
     await patchItem(id, { title: "Concurrently edited, renamed" }, 1);
     // Version 1 is now stale; the merge resolves against the snapshot.
     await patchItem(id, { starts_at: "2026-06-08T11:00:00+02:00" }, 1);
-    expect((await readColumns(ctx.storage, id))?.starts_at_utc).toBe(
+    expect((await readColumns(ctx.storage, id))?.starts_at).toBe(
       "2026-06-08T09:00:00.000Z",
     );
   });

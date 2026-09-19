@@ -1,12 +1,12 @@
 /**
  * The write-path half of the normalized event instant columns.
  *
- * `starts_at` and `ends_at` are stored exactly as their upstream wrote
- * them, which means an instant in whatever offset that upstream happened
- * to use. Two instants written `+02:00` and `Z` compare as strings in the
- * wrong order, so SQL cannot narrow a calendar window on the stored
- * value at all. `items.starts_at_utc` / `ends_at_utc` carry the same
- * instants re-serialized in one shape, and this is what computes them.
+ * The `starts_at` and `ends_at` properties are stored exactly as their
+ * upstream wrote them, which means an instant in whatever offset that
+ * upstream happened to use. Two instants written `+02:00` and `Z` compare
+ * as strings in the wrong order, so SQL cannot narrow a calendar window on
+ * the property at all. The `items.starts_at` / `ends_at` columns carry the
+ * same instants re-serialized in one shape, and this is what computes them.
  *
  * The shape is exactly what `Date.prototype.toISOString()` emits:
  * millisecond precision, `Z` suffix, fixed width. That fixed width is the
@@ -21,8 +21,8 @@ const BARE_DATE = /^\d{4}-\d{2}-\d{2}$/;
 const NAIVE_DATETIME = /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(:\d{2}(\.\d+)?)?$/;
 
 export interface InstantColumnValues {
-  starts_at_utc: string | null;
-  ends_at_utc: string | null;
+  starts_at: string | null;
+  ends_at: string | null;
 }
 
 function normalizeInstant(value: unknown): string | null {
@@ -66,7 +66,7 @@ export function instantColumnValues(
   properties: Record<string, unknown>,
 ): InstantColumnValues {
   return {
-    starts_at_utc: normalizeInstant(properties.starts_at),
-    ends_at_utc: normalizeInstant(properties.ends_at),
+    starts_at: normalizeInstant(properties.starts_at),
+    ends_at: normalizeInstant(properties.ends_at),
   };
 }

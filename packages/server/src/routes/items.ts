@@ -1960,8 +1960,8 @@ export function itemRoutes(storage: Storage) {
     // pushing the copy back out makes that integration create a SECOND
     // upstream record for the thing the mirror already reflects, which is
     // the duplication the mirror-and-promote split exists to prevent.
-    // Dispatch suppresses only the originating connection and a person
-    // promoting has none, so nothing else would stop it. Declining costs
+    // Dispatch has nothing left to suppress a write on, so nothing else
+    // would stop it. Declining costs
     // this announcement nothing: fan-out governs neither the event log nor
     // the stream, and those are what the announcement is for.
     await publish({

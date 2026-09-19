@@ -86,49 +86,39 @@ export async function createConnection(sqlitePath: string): Promise<{
   // cannot express FTS5, so it is applied separately.
   await client.executeMultiple(CREATE_FTS);
 
-  // FTS5 doesn't support ALTER TABLE; a database whose index predates the
-  // newest column is rebuilt from the rows.
-  let needsFtsRebuild = false;
-  try {
-    await client.execute("SELECT tags FROM items_fts LIMIT 0");
-  } catch {
-    needsFtsRebuild = true;
-  }
-  if (needsFtsRebuild) {
-    await client.executeMultiple("DROP TABLE IF EXISTS items_fts");
-    await client.executeMultiple(CREATE_FTS);
-    // Re-index all items (extra defaults to empty since we don't have type
-    // context here). json() projects the stored JSONB blob back to text —
-    // reading the raw column would hand JSON.parse a binary value. The tags
-    // come off the sidecar, space-joined the way the store indexes them.
-    const allItems = await client.execute(
-      `SELECT i.id, json(i.properties) AS properties,
-              (SELECT group_concat(je.value, ' ')
-                 FROM metadata m, json_each(m.tags) je
-                WHERE m.item_id = i.id) AS tags
-         FROM items i
-        WHERE i.state != 'trashed'`,
+  // An index that predates the schema is refused, not repaired.
+  //
+  // This rebuilt it: dropped the table and re-indexed every row. That is an
+  // in-place upgrade of an old database, and the decisions in force allow
+  // none — nothing is upgraded, an old instance is exported through the API
+  // or discarded. Repairing on open is also the shape that hides the
+  // problem, because it runs silently on every boot and a half-finished
+  // re-index leaves a search index nobody knows is partial.
+  //
+  // **The remedy names the previous build deliberately.** This throw is on
+  // the open path, so the server that would serve `GET /export` cannot
+  // start; telling an operator to export through the API from here would
+  // name an action the refusal itself has taken away.
+  //
+  // FTS5 has no ALTER TABLE, so probing for the column is the only way to
+  // tell an index of this shape from an older one. Only a missing column
+  // means "older": anything else — corruption, a locked file, an I/O error
+  // — is a different problem and is rethrown with its own message, because
+  // reporting those as staleness would tell an operator to discard a
+  // database that is merely unreadable this second.
+  const probe = await client.execute("SELECT tags FROM items_fts LIMIT 0").then(
+    () => null,
+    (err: unknown) =>
+      err instanceof Error ? err : new Error(JSON.stringify(err)),
+  );
+  if (probe !== null) {
+    if (!/no such column/i.test(probe.message)) throw probe;
+    throw new Error(
+      `The full-text index in ${sqlitePath} predates the current schema, and nothing is upgraded in place. ` +
+        "Export the instance with the build it was last opened by, then load that export into a fresh " +
+        "instance on this one — or discard it.",
+      { cause: probe },
     );
-    for (const row of allItems.rows) {
-      try {
-        const id = row.id as string;
-        const propertiesText = row.properties as string;
-        const props = JSON.parse(propertiesText) as Record<string, unknown>;
-        const title = typeof props.title === "string" ? props.title : "";
-        const body = typeof props.body === "string" ? props.body : "";
-        const desc =
-          typeof props.description === "string" ? props.description : "";
-        const name = typeof props.name === "string" ? props.name : "";
-        const tags = typeof row.tags === "string" ? row.tags : "";
-        await client.execute({
-          sql: `INSERT INTO items_fts(item_id, title, body, description, name, extra, tags)
-                VALUES (?, ?, ?, ?, ?, ?, ?)`,
-          args: [id, title, body, desc, name, "", tags],
-        });
-      } catch {
-        // skip rows with unparseable properties
-      }
-    }
   }
 
   const db = drizzle(client, { schema });

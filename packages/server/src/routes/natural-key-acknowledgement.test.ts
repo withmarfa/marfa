@@ -21,18 +21,19 @@
  *    row can carry namespaces the caller holds nothing on — written by a
  *    a person, by another tool, or by a sibling Connection of the same
  *    integration, all of which share the source that resolved it.
- *  - **The type: no.** `item_source` is keyed on the manifest name and
- *    stable across mints, so a manifest that narrows leaves rows reachable
- *    whose type the credential no longer holds. The update branch below
+ *  - **The type: no.** The natural key resolves on the credential's stamped
+ *    `source`, which outlives any narrowing of what that credential may
+ *    write, so a credential whose `type_permissions` are cut back still
+ *    reaches every row it wrote before the cut. The update branch below
  *    refuses those on the resolved row's type; the acknowledgement above it
  *    did not, so the two branches disagreed about who may address one row.
  *
- * The narrowing is modelled directly rather than through two Connections: a
- * credential's `source` is unique per space, so two credentials cannot share
- * one, and the cross-credential path in production is `item_source` on a
- * runtime credential. Editing the permission map of the credential that
- * wrote the row reproduces the same end state — a reachable row the caller
- * may no longer write — without standing up a second Connection to say it.
+ * The narrowing is modelled by editing the credential that wrote the row,
+ * because nothing else can reach it: `source` is unique per space among
+ * unrevoked credentials, so no second credential resolves the same natural
+ * key. Cutting that one credential's permission map produces the state the
+ * resolved-row gates exist for, a reachable row the caller may no longer
+ * write.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import {
@@ -197,8 +198,8 @@ describe("the trashed-row acknowledgement", () => {
     });
     await trashedRow(cred, "row-3");
 
-    // The manifest narrows: the row stays reachable by natural key and the
-    // credential loses write on its type.
+    // The narrowing: the row stays reachable by natural key and the
+    // credential that wrote it loses write on its type.
     await ctx.storage.keys.update(cred.id, {
       type_permissions: { "core.note": "write" },
     });

@@ -51,8 +51,6 @@ afterAll(async () => {
 
 interface Credential {
   key: string;
-  /** The provenance stamp every row this credential writes carries. */
-  itemSource: string;
 }
 
 /** An ordinary credential, holding write on the two types the doors write. */
@@ -66,7 +64,7 @@ async function credentialFor(name: string): Promise<Credential> {
     },
     hashApiKey(raw, TEST_API_KEY_SALT),
   );
-  return { key: raw, itemSource: name };
+  return { key: raw };
 }
 
 /** A bookmark written by `owner`, addressable by id and by natural key. */

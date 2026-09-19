@@ -8,56 +8,60 @@ import {
 describe("secret-encryption", () => {
   it("round-trips a plaintext through encrypt + decrypt", () => {
     const plain = "abc123-test-secret-value";
-    const ciphertext = encryptSecret(plain, SECRET_INFO.inboundWebhookSecret);
+    const ciphertext = encryptSecret(plain, SECRET_INFO.connectionOauthToken);
     const decrypted = decryptSecret(
       ciphertext,
-      SECRET_INFO.inboundWebhookSecret,
+      SECRET_INFO.connectionOauthToken,
     );
     expect(decrypted).toBe(plain);
   });
 
   it("produces a different ciphertext on each call (per-row IV)", () => {
-    const a = encryptSecret("same-input", SECRET_INFO.inboundWebhookSecret);
-    const b = encryptSecret("same-input", SECRET_INFO.inboundWebhookSecret);
+    const a = encryptSecret("same-input", SECRET_INFO.connectionOauthToken);
+    const b = encryptSecret("same-input", SECRET_INFO.connectionOauthToken);
     expect(a).not.toBe(b);
   });
 
   it("rejects ciphertext encrypted under a different info string", () => {
+    // Two domains that something actually writes, not one used twice: the
+    // claim is that a ciphertext does not travel between them, which needs
+    // two, and a tag nothing writes would take the test with it when it
+    // goes.
     const ciphertext = encryptSecret(
       "topsecret",
-      SECRET_INFO.inboundWebhookSecret,
+      SECRET_INFO.connectionOauthToken,
     );
     expect(() =>
-      decryptSecret(ciphertext, SECRET_INFO.connectionOauthToken),
+      decryptSecret(ciphertext, SECRET_INFO.oauthCallbackState),
     ).toThrow(/decrypt/i);
   });
 
   it("rejects truncated ciphertext", () => {
     const ciphertext = encryptSecret(
       "topsecret",
-      SECRET_INFO.inboundWebhookSecret,
+      SECRET_INFO.connectionOauthToken,
     );
     const truncated = ciphertext.slice(0, 20);
     expect(() =>
-      decryptSecret(truncated, SECRET_INFO.inboundWebhookSecret),
+      decryptSecret(truncated, SECRET_INFO.connectionOauthToken),
     ).toThrow();
   });
 
   it("rejects tampered ciphertext (auth tag mismatch)", () => {
     const ciphertext = encryptSecret(
       "topsecret",
-      SECRET_INFO.inboundWebhookSecret,
+      SECRET_INFO.connectionOauthToken,
     );
     // Flip the last byte — corrupts the GCM ciphertext, fails AEAD.
     const last = ciphertext.slice(-1);
     const tampered = ciphertext.slice(0, -1) + (last === "0" ? "1" : "0");
     expect(() =>
-      decryptSecret(tampered, SECRET_INFO.inboundWebhookSecret),
+      decryptSecret(tampered, SECRET_INFO.connectionOauthToken),
     ).toThrow(/decrypt/i);
   });
 
   it("hex output decodes cleanly", () => {
-    const ciphertext = encryptSecret("x", SECRET_INFO.inboundWebhookSecret);
+    const ciphertext = encryptSecret("x", SECRET_INFO.connectionOauthToken);
     expect(ciphertext).toMatch(/^[0-9a-f]+$/);
     // 12-byte IV + 16-byte tag + at-least-1-byte ciphertext = ≥29 bytes = ≥58 hex chars.
     expect(ciphertext.length).toBeGreaterThanOrEqual(58);
@@ -85,7 +89,7 @@ describe("secret-encryption production fail-closed", () => {
     process.env.NODE_ENV = "production";
     delete process.env.MARFA_AUTH_SECRET;
     expect(() =>
-      encryptSecret("topsecret", SECRET_INFO.inboundWebhookSecret),
+      encryptSecret("topsecret", SECRET_INFO.connectionOauthToken),
     ).toThrow(/MARFA_AUTH_SECRET/);
   });
 
@@ -94,9 +98,9 @@ describe("secret-encryption production fail-closed", () => {
     process.env.MARFA_AUTH_SECRET = "p".repeat(32);
     const ciphertext = encryptSecret(
       "topsecret",
-      SECRET_INFO.inboundWebhookSecret,
+      SECRET_INFO.connectionOauthToken,
     );
-    expect(decryptSecret(ciphertext, SECRET_INFO.inboundWebhookSecret)).toBe(
+    expect(decryptSecret(ciphertext, SECRET_INFO.connectionOauthToken)).toBe(
       "topsecret",
     );
   });

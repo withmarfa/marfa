@@ -586,13 +586,11 @@ export class SqliteItemStore implements ItemStore {
     // The normalized instant columns compare as text because they are
     // written in one fixed-width shape, so the calendar's window is a
     // range scan rather than a read of every event.
-    if (filters.startsAtUtcFrom !== undefined) {
-      conditions.push(
-        sql`${items.starts_at_utc} >= ${filters.startsAtUtcFrom}`,
-      );
+    if (filters.startsAtFrom !== undefined) {
+      conditions.push(sql`${items.starts_at} >= ${filters.startsAtFrom}`);
     }
-    if (filters.startsAtUtcTo !== undefined) {
-      conditions.push(sql`${items.starts_at_utc} < ${filters.startsAtUtcTo}`);
+    if (filters.startsAtTo !== undefined) {
+      conditions.push(sql`${items.starts_at} < ${filters.startsAtTo}`);
     }
 
     if (filters.hasProperty !== undefined) {

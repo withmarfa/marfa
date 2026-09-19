@@ -12,9 +12,7 @@ CREATE TABLE IF NOT EXISTS `api_keys` (
 	`source` text NOT NULL,
 	`default_tier` text DEFAULT 'library' NOT NULL,
 	`is_operator` integer DEFAULT false NOT NULL,
-	`is_runtime_credential` integer DEFAULT false NOT NULL,
 	`connection_id` text,
-	`item_source` text,
 	`space_permissions` text DEFAULT '[]' NOT NULL,
 	`type_permissions` text DEFAULT '{"*":"write"}' NOT NULL,
 	`extension_permissions` text DEFAULT '{}' NOT NULL,
@@ -38,7 +36,6 @@ CREATE TABLE IF NOT EXISTS `api_keys` (
 
 CREATE UNIQUE INDEX IF NOT EXISTS `api_keys_key_hash_unique` ON `api_keys` (`key_hash`);
 CREATE UNIQUE INDEX IF NOT EXISTS `idx_api_keys_source_per_space` ON `api_keys` (`source`) WHERE revoked_at IS NULL;
-CREATE INDEX IF NOT EXISTS `idx_api_keys_runtime_credential` ON `api_keys` (`is_runtime_credential`) WHERE is_runtime_credential;
 CREATE TABLE IF NOT EXISTS `audit_log` (
 	`id` text PRIMARY KEY NOT NULL,
 	`timestamp` text NOT NULL,
@@ -304,35 +301,6 @@ CREATE TABLE IF NOT EXISTS `bulk_action_jobs` (
 CREATE INDEX IF NOT EXISTS `idx_bulk_action_jobs_status` ON `bulk_action_jobs` (`status`);
 CREATE INDEX IF NOT EXISTS `idx_bulk_action_jobs_gc` ON `bulk_action_jobs` (`status`,`finished_at`);
 CREATE UNIQUE INDEX IF NOT EXISTS `idx_bulk_action_jobs_idempotency` ON `bulk_action_jobs` (`idempotency_key`) WHERE idempotency_key IS NOT NULL;
-CREATE TABLE IF NOT EXISTS `connection_leased_tokens` (
-	`id` text PRIMARY KEY NOT NULL,
-	`connection_id` text NOT NULL,
-	`space_id` text,
-	`capability_id` text NOT NULL,
-	`lease_token_hash` text NOT NULL,
-	`scopes` text DEFAULT '[]' NOT NULL,
-	`expires_at` text NOT NULL,
-	`revoked_at` text,
-	`issued_by_key_id` text,
-	`created_at` text NOT NULL
-);
-
-CREATE UNIQUE INDEX IF NOT EXISTS `idx_connection_leased_tokens_hash` ON `connection_leased_tokens` (`lease_token_hash`);
-CREATE INDEX IF NOT EXISTS `idx_connection_leased_tokens_connection_id` ON `connection_leased_tokens` (`connection_id`,`expires_at`);
-CREATE TABLE IF NOT EXISTS `connection_oauth_tokens` (
-	`id` text PRIMARY KEY NOT NULL,
-	`connection_id` text NOT NULL,
-	`space_id` text,
-	`access_token_encrypted` text NOT NULL,
-	`refresh_token_encrypted` text,
-	`expires_at` text NOT NULL,
-	`scopes` text DEFAULT '[]' NOT NULL,
-	`previous_refresh_hash` text,
-	`created_at` text NOT NULL,
-	`updated_at` text NOT NULL
-);
-
-CREATE UNIQUE INDEX IF NOT EXISTS `idx_connection_oauth_tokens_connection_id` ON `connection_oauth_tokens` (`connection_id`);
 CREATE TABLE IF NOT EXISTS `custom_edge_types` (
 	`id` text PRIMARY KEY NOT NULL,
 	`schema` text NOT NULL,
@@ -383,15 +351,12 @@ CREATE TABLE IF NOT EXISTS `event_log` (
 	`item_id` text,
 	`edge_id` text,
 	`payload` text NOT NULL,
-	`originating_connection_id` text,
-	`hop_count` integer DEFAULT 0 NOT NULL,
 	`enable_fanout` integer DEFAULT true NOT NULL,
 	`created_at` text NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS `idx_event_log_created_at` ON `event_log` (`created_at`);
 CREATE INDEX IF NOT EXISTS `idx_event_log_edge_id` ON `event_log` (`edge_id`);
-CREATE INDEX IF NOT EXISTS `idx_event_log_originating_connection_id` ON `event_log` (`originating_connection_id`,`id`);
 CREATE TABLE IF NOT EXISTS `idempotency_records` (
 	`id` text PRIMARY KEY NOT NULL,
 	`idempotency_key` text NOT NULL,
@@ -406,36 +371,6 @@ CREATE TABLE IF NOT EXISTS `idempotency_records` (
 
 CREATE UNIQUE INDEX IF NOT EXISTS `idx_idempotency_records_key` ON `idempotency_records` (`idempotency_key`);
 CREATE INDEX IF NOT EXISTS `idx_idempotency_records_gc` ON `idempotency_records` (`created_at`);
-CREATE TABLE IF NOT EXISTS `inbound_webhook_events` (
-	`id` text PRIMARY KEY NOT NULL,
-	`inbound_webhook_id` text NOT NULL,
-	`external_delivery_id` text NOT NULL,
-	`received_at` text NOT NULL,
-	`payload` text NOT NULL,
-	`verified` integer NOT NULL,
-	`processed_at` text,
-	`processing_error` text,
-	`retry_count` integer DEFAULT 0 NOT NULL,
-	`next_attempt_at` text
-);
-
-CREATE UNIQUE INDEX IF NOT EXISTS `idx_inbound_webhook_events_dedup` ON `inbound_webhook_events` (`inbound_webhook_id`,`external_delivery_id`);
-CREATE INDEX IF NOT EXISTS `idx_inbound_webhook_events_pending` ON `inbound_webhook_events` (`next_attempt_at`) WHERE processed_at IS NULL AND processing_error IS NULL;
-CREATE TABLE IF NOT EXISTS `inbound_webhooks` (
-	`id` text PRIMARY KEY NOT NULL,
-	`space_id` text,
-	`connection_id` text NOT NULL,
-	`external_service_id` text,
-	`secret_encrypted` text NOT NULL,
-	`verification_method` text NOT NULL,
-	`verification_adapter_id` text,
-	`events` text DEFAULT '[]' NOT NULL,
-	`disabled` integer DEFAULT 0 NOT NULL,
-	`created_at` text NOT NULL,
-	`updated_at` text NOT NULL
-);
-
-CREATE INDEX IF NOT EXISTS `idx_inbound_webhooks_connection_id` ON `inbound_webhooks` (`connection_id`);
 CREATE TABLE IF NOT EXISTS `items` (
 	`id` text PRIMARY KEY NOT NULL,
 	`type` text NOT NULL,
@@ -448,14 +383,13 @@ CREATE TABLE IF NOT EXISTS `items` (
 	`timestamp` text NOT NULL,
 	`source` text,
 	`source_id` text,
-	`written_by_connection_id` text,
 	`version` integer DEFAULT 1 NOT NULL,
 	`schema_version` integer,
 	`device` text,
 	`capture_latitude` real,
 	`capture_longitude` real,
-	`starts_at_utc` text,
-	`ends_at_utc` text
+	`starts_at` text,
+	`ends_at` text
 );
 
 CREATE INDEX IF NOT EXISTS `idx_items_type` ON `items` (`type`);
@@ -465,7 +399,7 @@ CREATE INDEX IF NOT EXISTS `idx_items_timestamp` ON `items` (`timestamp`);
 CREATE INDEX IF NOT EXISTS `idx_items_updated_at_id` ON `items` (`updated_at`,`id`);
 CREATE UNIQUE INDEX IF NOT EXISTS `idx_items_source_dedup` ON `items` (`source`,`source_id`) WHERE source IS NOT NULL;
 CREATE INDEX IF NOT EXISTS `idx_items_source_id_prefix` ON `items` ("source_id" COLLATE NOCASE) WHERE source_id IS NOT NULL;
-CREATE INDEX IF NOT EXISTS `idx_items_starts_at_utc` ON `items` (`starts_at_utc`) WHERE starts_at_utc IS NOT NULL;
+CREATE INDEX IF NOT EXISTS `idx_items_starts_at` ON `items` (`starts_at`) WHERE starts_at IS NOT NULL;
 CREATE INDEX IF NOT EXISTS `idx_items_enrichment_candidates` ON `items` (`created_at`) WHERE (type = 'core.file' OR type LIKE 'core.file.%') AND state <> 'trashed' AND json_extract(properties, '$.blob_ref') IS NOT NULL;
 CREATE TABLE IF NOT EXISTS `metadata` (
 	`item_id` text PRIMARY KEY NOT NULL,

@@ -89,7 +89,7 @@
  *     pass exists to feed.
  *   - **Narrow the exception pass by the window.** `original_starts_at`
  *     has no normalized or indexed column — only `starts_at`/`ends_at`
- *     are normalized, into `starts_at_utc`/`ends_at_utc`. Comparing the
+ *     are normalized, into the `starts_at`/`ends_at` columns. Comparing the
  *     raw property text instead would reproduce exactly the bug that
  *     normalization exists to fix, because an offset-bearing stored time
  *     does not order against a `Z` one as text.
@@ -437,7 +437,7 @@ interface ScanBudget {
 /** The storage-side narrowing one pass applies on top of type and state. */
 type EventScanNarrowing = Pick<
   ItemFilters,
-  "hasProperty" | "startsAtUtcFrom" | "startsAtUtcTo"
+  "hasProperty" | "startsAtFrom" | "startsAtTo"
 >;
 
 /**
@@ -1068,8 +1068,8 @@ export function occurrenceRoutes(
       wanted,
       budget,
       {
-        startsAtUtcFrom: from.toISOString(),
-        startsAtUtcTo: to.toISOString(),
+        startsAtFrom: from.toISOString(),
+        startsAtTo: to.toISOString(),
       },
       projectWindow,
     );

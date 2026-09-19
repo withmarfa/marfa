@@ -175,16 +175,16 @@ export interface ItemFilters {
    *  string reaching that comparison would match no row while looking
    *  like a filter. A boolean cannot be passed to `eq` by accident. */
   all_states?: boolean;
-  /** Inclusive lower bound on the normalized `starts_at_utc` column, and
-   *  so implicitly `starts_at_utc IS NOT NULL`. Serves the calendar's
+  /** Inclusive lower bound on the normalized `items.starts_at` column, and
+   *  so implicitly `starts_at IS NOT NULL`. Serves the calendar's
    *  window scan: the column is written in the exact shape
    *  `toISOString()` emits, which is what lets a text comparison answer a
    *  question about instants. Internal — not reachable through the
    *  public `?filter=` grammar. */
-  startsAtUtcFrom?: string;
-  /** Exclusive upper bound on `starts_at_utc`. Exclusive because a
+  startsAtFrom?: string;
+  /** Exclusive upper bound on `items.starts_at`. Exclusive because a
    *  calendar window's end belongs to the next window. */
-  startsAtUtcTo?: string;
+  startsAtTo?: string;
   /** Restrict to rows whose top-level property of this name is present
    *  and not JSON `null`: a key written as `null` is a cleared value, and
    *  reads as absent here. Serves the calendar's series and exception
@@ -1040,7 +1040,7 @@ export interface KeyStore {
    * Mint a key.
    *
    * `oauth_client_id` is an intersection rather than a field on
-   * `CreateKeyInput` for the same reason `is_runtime_credential` is not one:
+   * `CreateKeyInput` for the same reason `keyHash` is a separate parameter:
    * it is set by the server from who is calling, never from a request body,
    * and `CreateKeyInput` is published — an SDK consumer can construct one, and
    * a settable field there would read as something a caller may ask for. It
