@@ -1073,8 +1073,7 @@ mod tests {
             Cli::try_parse_from(["marfa", "status"]).unwrap().command,
             Command::Status
         ));
-        // A folder watch needs a server now: it sends what the folder
-        // queues, where the old stub only printed what changed.
+        // A folder watch needs a server: it drains what the scan queues.
         assert!(
             Cli::try_parse_from(["marfa", "folders", "watch", "."]).is_err(),
             "`folders watch` was accepted with no server, and a watch that \

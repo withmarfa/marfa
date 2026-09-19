@@ -233,7 +233,7 @@ CREATE TABLE IF NOT EXISTS folder_files (
   -- a link the person removed from an edge that has not been rendered yet
   -- (`folders.md` 21): both are an edge the copy holds that the body does not
   -- name, and only this says which of them the file used to carry.
-  links TEXT NOT NULL DEFAULT '[]',
+  links TEXT NOT NULL,
   seen_at TEXT NOT NULL
 ) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS folder_files_item ON folder_files (item_id);

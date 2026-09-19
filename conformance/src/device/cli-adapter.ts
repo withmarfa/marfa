@@ -59,7 +59,6 @@ const REFUSAL_OPENINGS: ReadonlyArray<readonly [string, string]> = [
   ["decoding:", "decoding"],
   ["store:", "store"],
   ["no data directory", "no_data_directory"],
-  ["output closed", "closed_output"],
 ];
 
 function classify(stderr: string, exitCode: number | null): Refusal {
@@ -546,7 +545,8 @@ export class CliFolder {
   }
 
   private async run<T>(args: string[]): Promise<Outcome<T>> {
-    // No `--db`: a folder's store is its own, under `.marfa`.
+    // A folder's store is its own, under `.marfa`, so the device this
+    // builds is pointed at that rather than at any `--db` a fixture holds.
     return new CliDevice({
       binary: this.options.binary,
       store: this.store,

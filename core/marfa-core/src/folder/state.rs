@@ -15,8 +15,7 @@ pub struct Bound {
     pub identity: Option<String>,
     pub content_hash: String,
     /// The item ids the links in those bytes named, as the folder last read
-    /// or wrote them. Empty where the file named none, and on a row written
-    /// before this column existed.
+    /// or wrote them. Empty where the file named none.
     pub links: Vec<String>,
 }
 

@@ -175,19 +175,19 @@ enum Shape {
 
 /// Which shape a kind's door answers with.
 ///
-/// Exhaustive over `store::WRITE_KINDS` on purpose, with no default arm: a
-/// kind added to the set and not named here would be read against whichever
-/// shape the default chose, and a write the server took would come back as
-/// a failure with nothing saying so.
+/// A kind is matched by name, so the compiler cannot make this exhaustive
+/// over `store::WRITE_KINDS` and a default arm is unavoidable. A kind added
+/// to the set and not named here answers `None`, which the drain reads as a
+/// door this build does not know — and a write the server took would come
+/// back as a failure with nothing saying so. What keeps that from happening
+/// quietly is a test rather than the compiler:
+/// `the_shape_of_every_write_kind_is_decided` below.
 fn shape_of(kind: &str) -> Option<Shape> {
     Some(match kind {
         "create_item" | "update_item" | "restore_item" | "transition_item" => Shape::Item,
         "create_edge" | "update_edge" => Shape::Edge,
         "delete_item" | "delete_edge" | "replace_metadata" | "merge_metadata" | "add_tag"
         | "remove_tag" | "write_extension" | "delete_extension" => Shape::Plain,
-        // A kind with no door yet. `address` refuses it before a body can
-        // be read, so reaching here means the two have drifted apart.
-        "upload_blob" => return None,
         _ => return None,
     })
 }
@@ -828,4 +828,49 @@ fn reconcile_inner(core: &Core, row: &QueuedWrite) -> Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The kinds in `store::WRITE_KINDS` with no door yet. `address` refuses
+    /// one before a body can be read, so the drain never asks `shape_of`
+    /// about it — and the test below needs that written down to tell a kind
+    /// nobody has built a door for from one somebody forgot.
+    const NO_DOOR_YET: &[&str] = &["upload_blob"];
+
+    /// Every kind the queue accepts either has a shape or is declared as
+    /// having no door.
+    ///
+    /// The compiler cannot say this: `shape_of` matches a name, so it needs
+    /// a default arm, and a kind added to `WRITE_KINDS` and not named there
+    /// falls into it in silence. That is the shape of the worst defect this
+    /// module has had — ten of the fourteen sendable kinds could not read
+    /// their own success, the server did the work, and the drain counted a
+    /// refusal and killed the write on the fifth pass.
+    #[test]
+    fn the_shape_of_every_write_kind_is_decided() {
+        let undecided: Vec<&str> = crate::store::WRITE_KINDS
+            .iter()
+            .copied()
+            .filter(|kind| shape_of(kind).is_none() && !NO_DOOR_YET.contains(kind))
+            .collect();
+        assert!(
+            undecided.is_empty(),
+            "{undecided:?} can be queued and the drain cannot read what the \
+             server answers them with, so a write the server took comes back \
+             as a refusal and the fifth one kills it"
+        );
+        let unreachable: Vec<&str> = NO_DOOR_YET
+            .iter()
+            .copied()
+            .filter(|kind| !crate::store::WRITE_KINDS.contains(kind))
+            .collect();
+        assert!(
+            unreachable.is_empty(),
+            "{unreachable:?} is excused from having a shape and is not a kind \
+             anything can queue, so the excuse is about nothing"
+        );
+    }
 }

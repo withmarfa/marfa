@@ -1,5 +1,6 @@
-//! A local, read-only working copy of a declared slice of one Marfa server:
-//! hydrated over HTTP, kept current from the event log, queried locally.
+//! A local working copy of a declared slice of one Marfa server: hydrated
+//! over HTTP, kept current from the event log, read locally, and written to
+//! through a queue that holds every write until the server answers it.
 
 mod catalog;
 mod catch_up;
@@ -886,8 +887,8 @@ mod tests {
         };
         // **Every door, not the two that were easy to reach.** The comment
         // above claims the guard is consulted by all of them, and a test
-        // covering two of fifteen proves that for two: delete the call from
-        // any of the other thirteen and nothing was red.
+        // covering two of seventeen proves that for two: delete the call
+        // from any of the other fifteen and nothing was red.
         let refusals: Vec<(&str, CoreError)> = vec![
             ("create_item", reader.create_item(&draft).unwrap_err()),
             ("update_item", reader.update_item("x", &edit).unwrap_err()),
@@ -934,6 +935,9 @@ mod tests {
             // missing server, which is why this is a `ReadingHandle` and not
             // a `NoServer`.
             ("drain", reader.drain().unwrap_err()),
+            // Clearing answered rows is a write to the queue like any
+            // other, and it was the door this list had missed.
+            ("forget_answered", reader.forget_answered().unwrap_err()),
         ];
         for (door, refusal) in &refusals {
             assert_eq!(
@@ -949,7 +953,7 @@ mod tests {
         // above is a door nothing here covers, and this is what says so.
         assert_eq!(
             refusals.len(),
-            16,
+            17,
             "the write surface has changed. Every method on `Core` that calls \
              `refuse_unless_writer` belongs in the list above, and this count \
              is what notices when one does not."

@@ -32,15 +32,6 @@ pub enum Handle {
     Reader,
 }
 
-impl Handle {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Handle::Writer => "writer",
-            Handle::Reader => "reader",
-        }
-    }
-}
-
 /// The writer's claim on a store, held for as long as the value lives.
 pub struct WriterLock {
     /// Dropped with the value, which is what releases the lock. Held rather

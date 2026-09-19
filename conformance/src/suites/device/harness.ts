@@ -153,10 +153,10 @@ export async function hydratedHarness(
 /**
  * The door a write goes to, and the answers it gets, in order.
  *
- * Both doors are scripted on every call whether or not the fixture uses
- * both, because an unscripted door answers 501 and a device reads that as
- * one more refusal — which a fixture asserting a refusal then reads as the
- * refusal it was testing for.
+ * A door is scripted only where the fixture names one. An unscripted door
+ * answers 501, and a device reads that as one more refusal — which a fixture
+ * asserting a refusal would then read as the refusal it was testing for, so
+ * the harness collects the unmatched requests and throws them at `stop`.
  */
 export interface ScriptedWrites {
   create?: Responder[];
