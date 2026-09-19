@@ -482,9 +482,11 @@ describe("identity", () => {
   });
 
   it("binds the same file to the same item whether it was present at start or arrived while running", async () => {
-    // Two folders, the same bytes at the same path. One has the file before
-    // it ever scans; the other gets it after a scan that found nothing. Two
-    // identity rules would make these two different items.
+    // **One of these is a real watcher.** The other pushes a file that was
+    // there before anything ran. Two identity rules — one on the startup
+    // path and one on the live path — would make the same bytes at the same
+    // path two different items depending on when they appeared, and a
+    // fixture that drove both through `scan` would never find out.
     const text = "---\ntitle: Same bytes\n---\nidentical\n";
     harness = await folderHarness("folder-at-start");
     second = await folderHarness("folder-while-running");
@@ -494,20 +496,44 @@ describe("identity", () => {
     put(harness, "note.md", text);
     expect((await harness.folder.push()).ok).toBe(true);
 
-    // The other folder scans an empty directory first, which is the state a
-    // watcher starts in, and the file arrives after.
-    const empty = await second.folder.scan();
-    expect(empty.ok).toBe(true);
-    if (!empty.ok) return;
-    expect(empty.value.created).toBe(0);
-    put(second, "note.md", text);
-    expect((await second.folder.push()).ok).toBe(true);
+    const watching = second.folder.watch();
+    try {
+      // It starts on an empty directory, which is the state a watcher
+      // begins in, and the file arrives while it is running.
+      await vi.waitFor(
+        () => {
+          expect(
+            watching.running(),
+            `the watcher exited before it could see anything: ${watching.stderr}`,
+          ).toBe(true);
+          expect(
+            second?.server.requests.some(
+              (request) => request.pathname === "/types",
+            ),
+            "the watcher has not opened the folder yet",
+          ).toBe(true);
+        },
+        { timeout: 15_000, interval: 100 },
+      );
+      put(second, "note.md", text);
+      await vi.waitFor(
+        () => {
+          expect(
+            sentKeys(second!),
+            `the watcher never pushed the file that arrived while it was running: ${watching.stderr}`,
+          ).toEqual(["note.md"]);
+        },
+        { timeout: 20_000, interval: 250 },
+      );
+    } finally {
+      await watching.stop();
+    }
 
     const atStart = sentKeys(harness);
     const whileRunning = sentKeys(second);
     expect(
       atStart,
-      "the file present at start reached a different natural key than the same file arriving later, so one file is two items depending on when it appeared",
+      "the file present at start reached a different natural key than the same file arriving to a running watcher, so one file is two items depending on when it appeared",
     ).toEqual(whileRunning);
     expect(atStart.length).toBe(1);
   });
