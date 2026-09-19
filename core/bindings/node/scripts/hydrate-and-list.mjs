@@ -27,7 +27,7 @@ for (const note of core.list({ type: "core.note", limit: 5 })) {
 }
 
 console.log(`search "${query}":`);
-for (const hit of core.search(query, 5)) {
+for (const hit of core.search(query, {}, 5)) {
   console.log(`  ${hit.score.toFixed(3)}  ${hit.item.type}  ${title(hit.item)}`);
 }
 
