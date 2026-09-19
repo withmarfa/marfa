@@ -537,6 +537,55 @@ describe("files and items", () => {
     ).toEqual([]);
   });
 
+  it("remembers a link it stood down over, so a later removal still lands", async () => {
+    harness = await folderHarness("folder-stand-down-memory");
+    scriptFolderWrites(harness);
+    put(harness, "one.md", "---\ntitle: One\n---\nfirst\n");
+    put(harness, "two.md", "---\ntitle: Two\n---\nsecond\n");
+    expect((await harness.folder.scan()).ok).toBe(true);
+    put(
+      harness,
+      "source.md",
+      "---\ntitle: Source\n---\nsee [[one]] and [[two]]\n",
+    );
+    expect((await harness.folder.push()).ok).toBe(true);
+
+    const device = harness.folder.device();
+    const first = await device.queue();
+    expect(first.ok).toBe(true);
+    if (!first.ok) return;
+    expect(
+      first.value.filter((row) => row.kind === "create_edge").length,
+      "the two links never became edges, so there is nothing for a later removal to land on",
+    ).toBe(2);
+
+    // `two` stops resolving, in the same window as an edit. The folder stands
+    // the removal down — and must not forget that the file carried the link.
+    renameSync(join(harness.dir, "two.md"), join(harness.dir, "moved.md"));
+    writeFileSync(
+      join(harness.dir, "source.md"),
+      "---\ntitle: Source\n---\nsee [[one]] and [[two]], plus a word\n",
+    );
+    expect((await harness.folder.scan()).ok).toBe(true);
+
+    // The person takes the stale link out. Every link left resolves, so the
+    // removal runs — and it can only reach the edge if the folder still
+    // remembers the file used to carry it.
+    writeFileSync(
+      join(harness.dir, "source.md"),
+      "---\ntitle: Source\n---\nsee [[one]] only\n",
+    );
+    expect((await harness.folder.scan()).ok).toBe(true);
+
+    const queued = await device.queue();
+    expect(queued.ok).toBe(true);
+    if (!queued.ok) return;
+    expect(
+      queued.value.filter((row) => row.kind === "delete_edge").length,
+      "the stand-down dropped the link out of the folder's memory for good, so removing it later does nothing and the next pull writes it back for ever",
+    ).toBe(1);
+  });
+
   it("keeps an edge of a kind it could not have made", async () => {
     harness = await folderHarness("folder-foreign-edge");
     scriptFolderWrites(harness);
@@ -1463,6 +1512,59 @@ describe("what a folder does not watch", () => {
       pulled.value.unwritten,
       "the folder left the file alone and said nothing about it, so the item it could not write reads as an ordinary quiet pull",
     ).toBeGreaterThan(0);
+  });
+
+  it("takes back a file of its own the mapping had lost", async () => {
+    const rows = {
+      "core.note": [
+        {
+          item: {
+            id: "01a00000-0000-7000-8000-000000000013",
+            source_id: "note.md",
+            properties: { title: "Recovered", body: "the item\n" },
+          },
+        },
+      ],
+    };
+    harness = await folderHarness("folder-recover-a", { rows });
+    scriptFolderWrites(harness);
+    expect((await harness.folder.pull()).ok).toBe(true);
+    // The bytes this item renders to, which only this item can render: the
+    // render carries its id. A second folder on the same item stands in for
+    // the folder whose mapping lost the file — a write that made the file and
+    // failed before the bytes landed unbinds exactly this way.
+    const bytes = read(harness, "note.md");
+    expect(bytes, "the first folder wrote nothing to copy").toContain(
+      "01a00000-0000-7000-8000-000000000013",
+    );
+
+    second = await folderHarness("folder-recover-b", { rows });
+    scriptFolderWrites(second);
+    writeFileSync(join(second.dir, "note.md"), bytes);
+    const pulled = await second.folder.pull();
+    expect(
+      pulled.ok,
+      `the folder could not pull: ${JSON.stringify(pulled)}`,
+    ).toBe(true);
+    if (!pulled.ok) return;
+    expect(
+      pulled.value.unwritten,
+      "the folder refused its own file because the mapping had lost it, so the item has no file and will never be given one",
+    ).toBe(0);
+    expect(
+      pulled.value.unchanged,
+      "the folder neither wrote the file nor took it back, so the assertion below is about a binding nothing made",
+    ).toBe(1);
+
+    // The binding is what this is for: without it the next scan makes the
+    // file a second item.
+    const scanned = await second.folder.scan();
+    expect(scanned.ok).toBe(true);
+    if (!scanned.ok) return;
+    expect(
+      scanned.value.created,
+      "the file the folder had written became a second item, because nothing bound it back",
+    ).toBe(0);
   });
 
   it("leaves a file outside the slice alone", async () => {

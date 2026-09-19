@@ -818,18 +818,22 @@ fn folders(command: FoldersCommand, json: bool) -> Result<(), CliError> {
 /// What a pull did, for somebody who did not ask for JSON.
 ///
 /// The three counts after the semicolon are items that have no file and are
-/// not going to get one, which `folders.md` 20 requires be reported and which
-/// a line of the first five numbers alone says nothing about: a person
-/// reading five zeroes has been told the pull was quiet, not that it declined
-/// to write. Left off when they are zero, because the ordinary pull is the
-/// one nobody needs to read twice.
+/// not going to get one on this pass. `folders.md` 20 requires the third be
+/// reported and 22 the first; a line of the first five numbers alone says
+/// nothing about any of them, so a person reading five zeroes has been told
+/// the pull was quiet rather than that it declined to write. Left off when
+/// they are zero, because the ordinary pull is the one nobody needs to read
+/// twice.
 fn describe_pull(report: &marfa_core::PullReport) -> String {
     let mut line = format!(
         "{} written, {} rewritten, {} moved, {} unchanged, {} skipped",
         report.written, report.rewritten, report.moved, report.unchanged, report.skipped
     );
     let held: Vec<String> = [
-        (report.unwritten, "changed since the folder wrote them"),
+        (
+            report.unwritten,
+            "the folder did not write and would not write over",
+        ),
         (report.collided, "wanting a path another item took"),
         (report.outside, "wanting a path outside the folder"),
     ]

@@ -14,8 +14,9 @@ pub struct Bound {
     /// the file becomes a new item rather than a guess (`folders.md` 8).
     pub identity: Option<String>,
     pub content_hash: String,
-    /// The item ids the links in those bytes named. Empty where the folder
-    /// has not written the file yet, which is the same as naming none.
+    /// The item ids the links in those bytes named, as the folder last read
+    /// or wrote them. Empty where the file named none, and on a row written
+    /// before this column existed.
     pub links: Vec<String>,
 }
 

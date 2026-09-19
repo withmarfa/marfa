@@ -560,10 +560,21 @@ impl Folder {
             }
         }
         if !every_link_resolved {
-            return Ok(named);
+            // The record grows rather than narrows. Returning only what
+            // resolved would drop the unresolvable link's target out of the
+            // mapping for good, and statement 21's removal would then never
+            // fire for it again — so the guard against destroying an edge
+            // would destroy the rule it guards.
+            let mut kept = named;
+            for target in had {
+                if !kept.contains(target) {
+                    kept.push(target.clone());
+                }
+            }
+            return Ok(kept);
         }
-        // **The file used to carry it and now does not.** That is the whole
-        // test, and it is why the mapping holds the links: an edge the copy
+        // **The file used to carry it and now does not.** That is the test,
+        // and it is why the mapping holds the links: an edge the copy
         // holds that the body does not name is either a link the person
         // removed or an edge that arrived from somewhere else and has not
         // been rendered yet. Both look identical in the body, and the scan
@@ -701,23 +712,52 @@ impl Folder {
                 report.outside += 1;
                 continue;
             }
+            let path = self.root.join(&want);
+            let (text, wrote) = self.render(item)?;
+            let bytes = text.as_bytes().to_vec();
+            let hash = state::hash(&bytes);
+            // A file already at this path that the mapping does not hold.
+            // `pull` runs no scan of its own, so a note somebody typed since
+            // the last one is a file nothing has queued, and the guard below
+            // only ever runs for a path already bound.
+            //
+            // Unless it is byte for byte what this item renders to, in which
+            // case it is this item's file and the mapping has lost it: a
+            // render carries the item's own id, so two items can never render
+            // the same bytes. Binding it is how a write that failed half way
+            // — the file made, the bytes not written, the mapping unbound —
+            // stops leaving the item with no file it can ever be given.
+            //
+            // Decided before the path counts as taken, for the reason above:
+            // a path this item is not going to be written to is not a path it
+            // took, and leaving it in would starve whichever item comes next.
+            if bound.is_none() && path.exists() {
+                if std::fs::read(&path).is_ok_and(|found| state::hash(&found) == hash) {
+                    let conn = self.core.conn()?;
+                    state::bind(
+                        &conn,
+                        &state::Bound {
+                            path: want.clone(),
+                            item_id: item.id.clone(),
+                            identity: std::fs::symlink_metadata(&path)
+                                .ok()
+                                .and_then(|found| identity::of(&found))
+                                .map(|found| found.key()),
+                            content_hash: hash,
+                            links: wrote,
+                        },
+                    )?;
+                    taken.insert(want);
+                    report.unchanged += 1;
+                    continue;
+                }
+                report.unwritten += 1;
+                continue;
+            }
             if !taken.insert(want.clone()) {
                 report.collided += 1;
                 continue;
             }
-            let path = self.root.join(&want);
-            // A file already at this path that the folder never wrote. `pull`
-            // runs no scan first, so somebody who makes a note and pulls
-            // before scanning would lose it to whichever item wants the same
-            // name; the `unwritten` guard below only ever runs for a path the
-            // mapping already holds.
-            if bound.is_none() && path.exists() {
-                report.unwritten += 1;
-                continue;
-            }
-            let (text, wrote) = self.render(item)?;
-            let bytes = text.as_bytes().to_vec();
-            let hash = state::hash(&bytes);
 
             if let Some(bound) = &bound {
                 if bound.path == want && bound.content_hash == hash {
@@ -740,9 +780,16 @@ impl Folder {
                 // A rename on the server moves the file (`folders.md` 12).
                 // The old path goes first, so the scan that follows does not
                 // find the file under both names and make a second item.
-                if bound.path != want && plainly_inside(&self.root, &bound.path) {
-                    let from = self.root.join(&bound.path);
-                    let _ = std::fs::remove_file(&from);
+                if bound.path != want {
+                    // Only the removal is guarded. The unbinding below has to
+                    // happen either way: a mapping still naming a path the
+                    // walk cannot reach is a path journaled missing, and the
+                    // grace turns that into a delete of the item this pull is
+                    // in the middle of writing.
+                    if plainly_inside(&self.root, &bound.path) {
+                        let from = self.root.join(&bound.path);
+                        let _ = std::fs::remove_file(&from);
+                    }
                     let conn = self.core.conn()?;
                     state::unbind(&conn, &bound.path)?;
                     state::journal_clear(&conn, &bound.path)?;
@@ -854,31 +901,37 @@ impl Folder {
         // An edge the folder cannot express as a link is kept on the item
         // rather than dropped (`folders.md` 7), so this only adds.
         let held = document::links(&body);
+        // What the bytes this answers with name, which is what the mapping
+        // records. Not the edges considered: an edge skipped below whose link
+        // the body already carries is still a link in the file, and recording
+        // otherwise would tell the next scan the person had never had it.
         let mut wrote = Vec::new();
         for edge in self.core.edges_from(&item.id).unwrap_or_default() {
-            // An edge the copy holds nothing for is one the folder cannot
-            // express (`folders.md` 7) and one statement 21 will not let it
-            // remove. Writing it anyway put a bare id in the body that the
-            // person could delete and the next pull would write back, which
-            // is the same unwinnable fight 21 exists to end.
-            if self.core.get(&edge.target_id)?.is_none() {
-                continue;
-            }
             let target = {
                 let conn = self.core.conn()?;
                 state::bound_to_item(&conn, &edge.target_id)?
                     .map(|bound| bound.path)
                     .unwrap_or_else(|| edge.target_id.clone())
             };
-            wrote.push(edge.target_id.clone());
             let name = target.strip_suffix(".md").unwrap_or(&target).to_string();
-            if !held.iter().any(|link| link == &name || link == &target) {
-                if !body.ends_with('\n') && !body.is_empty() {
-                    body.push('\n');
-                }
-                body.push_str(&document::render_link(&name));
+            if held.iter().any(|link| link == &name || link == &target) {
+                wrote.push(edge.target_id.clone());
+                continue;
+            }
+            // An edge the copy holds nothing for is one the folder cannot
+            // express (`folders.md` 7) and one statement 21 will not let it
+            // remove. Adding it put a bare id in the body that the person
+            // could delete and the next pull would write back, which is the
+            // unwinnable fight 21 exists to end.
+            if self.core.get(&edge.target_id)?.is_none() {
+                continue;
+            }
+            wrote.push(edge.target_id.clone());
+            if !body.ends_with('\n') && !body.is_empty() {
                 body.push('\n');
             }
+            body.push_str(&document::render_link(&name));
+            body.push('\n');
         }
         properties.insert(document::BODY_FIELD.into(), Value::String(body));
         Ok((document::write(&properties)?, wrote))
@@ -899,9 +952,14 @@ pub struct PullReport {
     pub moved: usize,
     pub unchanged: usize,
     pub skipped: usize,
-    /// Files left alone because the person had changed them since the
-    /// folder last wrote them. The next scan queues that change; writing
-    /// over it here would lose it with nothing reporting it.
+    /// Files the pull would not write over: one the person changed since
+    /// the folder last wrote it, and one at a path the mapping does not hold
+    /// at all. Writing over either loses it with nothing reporting it.
+    ///
+    /// The two do not end the same way. The first is queued by the next scan
+    /// as a change to the item it is bound to. The second becomes a **new**
+    /// item, and the item that wanted the path has no file and will not get
+    /// one until it wants a different name.
     pub unwritten: usize,
     /// Items whose file would have landed outside the folder, because a
     /// directory on the way to it is a symlink. Reported rather than
