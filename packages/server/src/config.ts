@@ -308,13 +308,19 @@ export interface AppConfig {
    *  Errors export at 100% regardless — see `otel/error-aware-sampler.ts`. */
   otelSampleRatio?: number;
   /** Liveness heartbeat target (`MARFA_HEARTBEAT_URL`). Empty = off, the
-   *  default. When set, the server GETs this URL on a timer so something
-   *  running elsewhere can notice when the pings stop — a process cannot
-   *  report its own death. A ping, not a report: no payload leaves. */
+   *  default. When set, the server GETs this URL on its housekeeping
+   *  cadence so something running elsewhere can notice when the pings
+   *  stop — a process cannot report its own death. A ping, not a report:
+   *  no payload leaves. */
   heartbeatUrl?: string;
   /** Heartbeat cadence in ms (`MARFA_HEARTBEAT_INTERVAL_MS`, default
    *  60000). Ignored while `heartbeatUrl` is unset. */
   heartbeatIntervalMs?: number;
+  /** How often (ms) the housekeeping scheduler asks its table what is due
+   *  (`MARFA_HOUSEKEEPING_POLL_INTERVAL_MS`, default 1000). The floor on
+   *  how late a job runs after it falls due, and on how soon a wake is
+   *  answered. Optional on the type; `index.ts` applies the default. */
+  housekeepingPollIntervalMs?: number;
   /** Ceiling on concurrent SSE viewers per server instance
    *  (`MARFA_SSE_MAX_VIEWERS`, default 0 = uncapped). A deliberate
    *  memory bound: viewers hold no database connection, so any limit is
@@ -759,6 +765,10 @@ export function loadConfig(): AppConfig {
     heartbeatIntervalMs: envNumber(
       process.env.MARFA_HEARTBEAT_INTERVAL_MS,
       60_000,
+    ),
+    housekeepingPollIntervalMs: envNumber(
+      process.env.MARFA_HOUSEKEEPING_POLL_INTERVAL_MS,
+      1_000,
     ),
     sseMaxViewers: parseSseMaxViewers(process.env.MARFA_SSE_MAX_VIEWERS),
   };

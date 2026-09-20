@@ -201,7 +201,7 @@ describe("GrantInactivityRetirer.runOnce", () => {
     });
 
     // Recent: nothing to retire.
-    const retirer = new GrantInactivityRetirer(ctx.storage, 365, DAY_MS);
+    const retirer = new GrantInactivityRetirer(ctx.storage, 365);
     expect(await retirer.runOnce()).toBe(0);
     expect((await grantOf(ctx, clientId)).properties.status).toBe("active");
 
@@ -263,11 +263,11 @@ describe("GrantInactivityRetirer.runOnce", () => {
       null_clears: true,
     });
 
-    const disabled = new GrantInactivityRetirer(ctx.storage, 0, DAY_MS);
+    const disabled = new GrantInactivityRetirer(ctx.storage, 0);
     expect(await disabled.runOnce()).toBe(0);
     expect((await onlyGrant(ctx)).properties.status).toBe("active");
 
-    const retirer = new GrantInactivityRetirer(ctx.storage, 365, DAY_MS);
+    const retirer = new GrantInactivityRetirer(ctx.storage, 365);
     expect(await retirer.runOnce()).toBe(1);
     expect((await onlyGrant(ctx)).properties.status).toBe("revoked");
   });

@@ -453,57 +453,28 @@ export class WebhookConsumer {
 
 // ---------------------------------------------------------------------------
 // WebhookPoller — picks up pending deliveries from the database and attempts
-// HTTP delivery with durable retry. Survives server restarts.
+// HTTP delivery with durable retry. Survives server restarts: the
+// housekeeping scheduler runs it on the cadence below, and first at boot.
 // ---------------------------------------------------------------------------
 
 export const WEBHOOK_POLL_INTERVAL_MS = 30_000;
 
 export class WebhookPoller {
-  private interval: ReturnType<typeof setInterval> | null = null;
-
   constructor(private deliveryStore: WebhookDeliveryStore) {}
 
-  start(): void {
-    this.interval = setInterval(
-      () => void this.poll(),
-      WEBHOOK_POLL_INTERVAL_MS,
+  /** One poll: every pending delivery that is due is attempted. Reports
+   *  how many were. A failure to read the queue is the scheduler's to
+   *  classify. */
+  async runOnce(): Promise<{ attempted: number }> {
+    const pending = await this.deliveryStore.getPending(
+      new Date().toISOString(),
+      50,
     );
-    // Also poll immediately on start to pick up any pending from before restart
-    void this.poll();
-  }
-
-  stop(): void {
-    if (this.interval) {
-      clearInterval(this.interval);
-      this.interval = null;
-    }
-  }
-
-  /** One poll on demand, so a caller need not wait out the interval. */
-  runOnce(): Promise<void> {
-    return this.poll();
-  }
-
-  private async poll(): Promise<void> {
-    try {
-      const pending = await this.deliveryStore.getPending(
-        new Date().toISOString(),
-        50,
-      );
-      await Promise.allSettled(
-        pending.map((d) =>
-          deliverWebhookAttempt(
-            this.deliveryStore,
-            d,
-            POLLER_TIMEOUT_MS,
-            false,
-          ),
-        ),
-      );
-    } catch (err) {
-      log("error", "Webhook poller error", {
-        error: err instanceof Error ? err.message : String(err),
-      });
-    }
+    await Promise.allSettled(
+      pending.map((d) =>
+        deliverWebhookAttempt(this.deliveryStore, d, POLLER_TIMEOUT_MS, false),
+      ),
+    );
+    return { attempted: pending.length };
   }
 }

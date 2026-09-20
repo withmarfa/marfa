@@ -217,6 +217,27 @@ export interface BlobLocationRow {
   verified_at: string | null;
 }
 
+export interface HousekeepingJobRow {
+  name: string;
+  interval_ms: number;
+  next_run_at: string;
+  running_since: string | null;
+  last_started_at: string | null;
+  last_finished_at: string | null;
+  last_outcome: "ok" | "error" | null;
+  last_error: string | null;
+  last_result: unknown;
+}
+
+export interface HousekeepingRun {
+  name: string;
+  started_at: string;
+  finished_at: string;
+  outcome: "ok" | "error";
+  result: unknown;
+  error: string | null;
+}
+
 export interface ErrorResponse {
   error: {
     code: string;

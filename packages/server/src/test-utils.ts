@@ -9,6 +9,7 @@ import type { MarfaAuth } from "./auth/instance.js";
 import { createSqliteStorage } from "./storage/sqlite/index.js";
 import { createBlobLayer } from "./storage/blob-layer.js";
 import type { BlobLayer } from "./storage/blob-layer.js";
+import { Housekeeping } from "./housekeeping/scheduler.js";
 import { hashApiKey } from "./middleware/auth.js";
 import type { Storage } from "./storage/interface.js";
 import type { Hono } from "hono";
@@ -61,6 +62,9 @@ export interface TestContext {
   app: TestApp;
   storage: Storage;
   blobs: BlobLayer;
+  /** The scheduler behind `/housekeeping`, with nothing registered and not
+   *  started: a test registers what it wants to see run. */
+  housekeeping: Housekeeping;
   /** What the app was built with, so a test can build a second app over
    *  the same database. */
   config: AppConfig;
@@ -395,6 +399,7 @@ export interface UnbootstrappedTestApp {
   app: TestApp;
   storage: Storage;
   blobs: BlobLayer;
+  housekeeping: Housekeeping;
   config: AppConfig;
   tmpDir: string;
   cleanup: () => Promise<void>;
@@ -447,10 +452,14 @@ async function buildUnbootstrappedApp(
     ...overrides,
   };
   const blobs = await createBlobLayer(storage, config);
+  const housekeeping = new Housekeeping(storage.housekeeping, {
+    pollIntervalMs: 1_000,
+  });
   const oidcSigner = await OidcSigner.init(storage);
   const app = createApp(
     storage,
     blobs,
+    housekeeping,
     config,
     await ensureInstanceId(storage.settings),
     oidcSigner,
@@ -463,6 +472,7 @@ async function buildUnbootstrappedApp(
     app,
     storage,
     blobs,
+    housekeeping,
     config,
     tmpDir,
     auth: app.auth,
@@ -504,7 +514,7 @@ async function buildTestContext(
   tmpDir: string,
   overrides?: Partial<AppConfig>,
 ): Promise<TestContext> {
-  const { app, storage, blobs, config, cleanup, auth } =
+  const { app, storage, blobs, housekeeping, config, cleanup, auth } =
     await buildUnbootstrappedApp(tmpDir, overrides);
 
   const suffix = Math.random().toString(36).slice(2, 14);
@@ -564,6 +574,7 @@ async function buildTestContext(
     app,
     storage,
     blobs,
+    housekeeping,
     config,
     operatorKey: rawKey,
     workingKey: workingRawKey,

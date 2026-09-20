@@ -217,6 +217,16 @@ export const DELIBERATELY_UNSCANNED: readonly {
       "family to the restrictive end at the boot projection and logs the " +
       "value it found.",
   },
+  {
+    table: "housekeeping",
+    column: "last_outcome",
+    castType: "HousekeepingOutcome",
+    because:
+      "A record, not a decision. Nothing branches on the value: the " +
+      "scheduler writes it after every run and the housekeeping door " +
+      "shows it to the operator as it is, so an unrecognized value is " +
+      "displayed, never mishandled, and the next run overwrites it.",
+  },
 ];
 
 /** One `GROUP BY` row: a stored value and how many rows hold it. */

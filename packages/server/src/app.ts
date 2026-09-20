@@ -30,6 +30,8 @@ import { searchRoutes } from "./routes/search.js";
 import { occurrenceRoutes } from "./routes/occurrences.js";
 import { metadataRoutes } from "./routes/metadata.js";
 import { blobRoutes } from "./routes/blobs.js";
+import { housekeepingRoutes } from "./routes/housekeeping.js";
+import type { Housekeeping } from "./housekeeping/scheduler.js";
 import { keyRoutes } from "./routes/keys.js";
 import { exportRoutes } from "./routes/export.js";
 import { adminArchiveRoutes } from "./routes/admin-archive.js";
@@ -63,6 +65,9 @@ import { healthRoutes } from "./routes/health.js";
 export function createApp(
   storage: Storage,
   blobs: BlobLayer,
+  /** The scheduler the housekeeping doors list and drive. Registered and
+   *  started by the caller; the app only reads it and runs jobs on demand. */
+  housekeeping: Housekeeping,
   config: AppConfig,
   /**
    * The name this instance answers to, resolved by the caller before the
@@ -527,6 +532,7 @@ export function createApp(
   app.route("/occurrences", occurrenceRoutes(storage));
   app.route("/metadata", metadataRoutes(storage));
   app.route("/blobs", blobRoutes(storage, blobs, config));
+  app.route("/housekeeping", housekeepingRoutes(housekeeping));
   app.route("/keys", keyRoutes(storage, config.apiKeySalt));
   app.route("/config", configRoutes(storage, instanceId));
   app.route("/admin", adminArchiveRoutes(storage, blobs));

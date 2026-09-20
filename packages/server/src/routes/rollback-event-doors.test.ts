@@ -279,8 +279,8 @@ interface Door {
    * asserted by exact equality against the count taken on the unbroken run.
    *
    * A count rather than a yes-or-no. The breakage throws out of the FIRST
-   * transaction it sees, so a door that grew a preflight transaction — a
-   * quota reservation, a lock — would be broken there, never reach the write
+   * transaction it sees, so a door that grew a preflight transaction (a
+   * lock, a reservation) would be broken there, never reach the write
    * this file is about, and pass while proving nothing. Pinning the number
    * makes that door redden on the unbroken run instead, where the message
    * says what changed.

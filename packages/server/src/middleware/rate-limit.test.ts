@@ -4,6 +4,7 @@ import { createApp } from "../app.js";
 import { ensureInstanceId } from "../storage/instance-id.js";
 import { createSqliteStorage } from "../storage/sqlite/index.js";
 import { createBlobLayer } from "../storage/blob-layer.js";
+import { Housekeeping } from "../housekeeping/scheduler.js";
 import { hashApiKey } from "./auth.js";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
@@ -44,6 +45,7 @@ async function buildCtx(): Promise<Ctx> {
   const app = createApp(
     storage,
     blobs,
+    new Housekeeping(storage.housekeeping, { pollIntervalMs: 1_000 }),
     {
       port: 0,
       sqlitePath: "",
@@ -262,6 +264,7 @@ async function buildAggCtx(): Promise<Ctx> {
   const app = createApp(
     storage,
     blobs,
+    new Housekeeping(storage.housekeeping, { pollIntervalMs: 1_000 }),
     {
       port: 0,
       sqlitePath: "",

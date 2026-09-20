@@ -2598,6 +2598,63 @@ export interface EnrichmentStore {
   delete(itemId: string): Promise<void>;
 }
 
+export type HousekeepingOutcome = "ok" | "error";
+
+/** One housekeeping job as the table holds it: its schedule and its last run. */
+export interface HousekeepingRow {
+  name: string;
+  interval_ms: number;
+  next_run_at: string;
+  running_since: string | null;
+  last_started_at: string | null;
+  last_finished_at: string | null;
+  last_outcome: HousekeepingOutcome | null;
+  last_error: string | null;
+  /** Whatever the last run reported, as it was given. */
+  last_result: unknown;
+}
+
+export interface HousekeepingFinish {
+  finishedAt: string;
+  outcome: HousekeepingOutcome;
+  error: string | null;
+  result: unknown;
+  /** When the job is next due, unless a wake during the run moved
+   *  `next_run_at` past the run's start; the earlier of the two holds. */
+  nextRunAt: string;
+}
+
+/**
+ * The polling table the scheduler runs the server's own jobs from. Every
+ * claim is one statement conditioned on `running_since IS NULL`, which is
+ * what makes a job exclusive to one run at a time.
+ */
+export interface HousekeepingStore {
+  /**
+   * Write a job's row at boot. A new name is inserted due at `nextRunAt`; an
+   * existing one takes the interval and keeps its own `next_run_at`, unless
+   * `nextRunAt` is earlier (an interval shortened by configuration).
+   */
+  upsert(name: string, intervalMs: number, nextRunAt: string): Promise<void>;
+  /** Delete every row no registration names. Returns their names. */
+  removeExcept(names: readonly string[]): Promise<string[]>;
+  /** Clear every `running_since` left by a run that never finished. Returns
+   *  the names it cleared. */
+  clearRunning(): Promise<string[]>;
+  /** Names of the jobs due at `now` and not running. */
+  listDue(now: string): Promise<string[]>;
+  /** Claim a job that is due and not running. `null` when it is neither. */
+  claimDue(name: string, now: string): Promise<HousekeepingRow | null>;
+  /** Claim a job whether or not it is due. `null` when it is running or
+   *  unknown. */
+  claim(name: string, now: string): Promise<HousekeepingRow | null>;
+  finish(name: string, outcome: HousekeepingFinish): Promise<void>;
+  /** Make a job due now. False when there is no such job. */
+  wake(name: string, now: string): Promise<boolean>;
+  list(): Promise<HousekeepingRow[]>;
+  get(name: string): Promise<HousekeepingRow | null>;
+}
+
 export interface Storage extends Partial<BetterAuthStorageAdapter> {
   items: ItemStore;
   metadata: MetadataStore;
@@ -2644,6 +2701,9 @@ export interface Storage extends Partial<BetterAuthStorageAdapter> {
   /** Deterministic text-enrichment bookkeeping. The sweeper is the only
    *  consumer. */
   enrichment: EnrichmentStore;
+  /** The server's own periodic jobs. The scheduler is the only writer; the
+   *  housekeeping doors read it through the scheduler. */
+  housekeeping: HousekeepingStore;
   runInTransaction<T>(fn: () => T | Promise<T>): Promise<T>;
   close(): Promise<void>;
 }

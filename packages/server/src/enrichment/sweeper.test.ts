@@ -50,7 +50,6 @@ function sweeper(
     storage: ctx.storage,
     blobs: ctx.blobs,
     ocr: overrides.ocr ?? null,
-    intervalMs: 30_000,
     batchSize: overrides.batchSize ?? 8,
     itemTimeoutMs: overrides.itemTimeoutMs ?? 60_000,
     maxBlobBytes: overrides.maxBlobBytes ?? 20 * 1024 * 1024,

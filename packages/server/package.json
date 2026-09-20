@@ -46,7 +46,6 @@
     "@opentelemetry/semantic-conventions": "^1.43.0",
     "@withmarfa/shared": "workspace:*",
     "better-auth": "1.7.1",
-    "cron-parser": "^5.10.0",
     "drizzle-orm": "^0.45.2",
     "hono": "^4.13.5",
     "ical.js": "^2.2.1",

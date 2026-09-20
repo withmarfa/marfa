@@ -6,72 +6,41 @@ import {
   type ResolvedPolicy,
 } from "./version-thinning.js";
 import { log } from "../middleware/logger.js";
-import { logJobTickFailure } from "./job-tick.js";
 
 const BATCH_SIZE = 100;
 const DELETE_CHUNK_SIZE = 200;
 
+/**
+ * Prunes item version history to each type's policy. One `runOnce()` takes
+ * a batch of the items with the most versions and thins them; the
+ * housekeeping scheduler owns the cadence.
+ */
 export class VersionThinner {
-  private interval: ReturnType<typeof setInterval> | null = null;
-  private startupTimeout: ReturnType<typeof setTimeout> | null = null;
-  private stopped = false;
-
   constructor(
     private versionStore: VersionStore,
     private globalDefaults: ResolvedPolicy,
-    private intervalMs: number,
   ) {}
 
-  start(): void {
-    this.stopped = false;
-    this.startupTimeout = setTimeout(() => void this.poll(), 5_000);
-    this.interval = setInterval(() => void this.poll(), this.intervalMs);
-  }
-
-  stop(): void {
-    this.stopped = true;
-    if (this.startupTimeout) {
-      clearTimeout(this.startupTimeout);
-      this.startupTimeout = null;
-    }
-    if (this.interval) {
-      clearInterval(this.interval);
-      this.interval = null;
-    }
-  }
-
-  /** One tick, for schedulers that own the cadence themselves. Keeps the
-   *  failure logging the timer path applies. */
-  runOnce(): Promise<void> {
-    return this.poll();
-  }
-
-  private async poll(): Promise<void> {
-    try {
-      await this.doPoll();
-    } catch (err) {
-      logJobTickFailure("Version thinning", err, this.stopped);
-    }
-  }
-
-  private async doPoll(): Promise<void> {
+  /** One batch. Reports how many versions were pruned across how many
+   *  items. */
+  async runOnce(): Promise<{ pruned: number; items: number }> {
     const candidates = await this.versionStore.listThinningCandidates(
       2,
       BATCH_SIZE,
     );
 
-    let totalDeleted = 0;
+    let pruned = 0;
     for (const candidate of candidates) {
-      const deleted = await this.thinItem(candidate.itemId, candidate.type);
-      totalDeleted += deleted;
+      pruned += await this.thinItem(candidate.itemId, candidate.type);
     }
 
-    if (totalDeleted > 0) {
+    if (pruned > 0) {
       log(
         "info",
-        `Version thinning: pruned ${String(totalDeleted)} versions across ${String(candidates.length)} items`,
+        `Version thinning: pruned ${String(pruned)} versions across ${String(candidates.length)} items`,
       );
     }
+    return { pruned, items: candidates.length };
   }
 
   private async thinItem(itemId: string, itemType: string): Promise<number> {

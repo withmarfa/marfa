@@ -389,8 +389,8 @@ describe("validateProperties", () => {
   it("accepts a media file with no dimensions on it", () => {
     // The upload half of the contract: a client that cannot measure the
     // file still gets the item written, and the server fills what it can
-    // work out afterwards. Required dimensions refused the file after its
-    // blob was already stored and charged against quota.
+    // work out afterwards: a required dimension would refuse the file
+    // after its bytes were already stored.
     for (const typeId of [
       "core.file.image",
       "core.file.audio",

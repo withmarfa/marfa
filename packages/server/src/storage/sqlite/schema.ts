@@ -936,3 +936,29 @@ export const idempotencyRecords = sqliteTable(
     index("idx_idempotency_records_gc").on(table.created_at),
   ],
 );
+
+// ---------------------------------------------------------------------------
+// housekeeping — the server's own periodic jobs, one row per job.
+//
+// The row is the schedule and the record in one: the scheduler polls it for
+// jobs whose `next_run_at` has passed, claims one by setting `running_since`
+// where it is null (SQLite's single writer makes that claim exclusive), and
+// writes the outcome back when the run ends. `next_run_at` survives a
+// restart, so a daily job that ran two hours before a deploy runs in
+// twenty-two hours rather than at boot.
+// ---------------------------------------------------------------------------
+export const housekeeping = sqliteTable("housekeeping", {
+  name: text("name").primaryKey(),
+  interval_ms: integer("interval_ms").notNull(),
+  next_run_at: text("next_run_at").notNull(),
+  /** Set while a run holds the job; a value found at boot was left by a
+   *  process that died mid-run. */
+  running_since: text("running_since"),
+  last_started_at: text("last_started_at"),
+  last_finished_at: text("last_finished_at"),
+  /** `ok` or `error`. */
+  last_outcome: text("last_outcome"),
+  last_error: text("last_error"),
+  /** JSON: whatever the last run reported. */
+  last_result: text("last_result"),
+});

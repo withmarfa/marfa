@@ -21,8 +21,12 @@ import { ensureInstanceId } from "./storage/instance-id.js";
 import { createSqliteStorage } from "./storage/sqlite/index.js";
 import { createBlobLayer } from "./storage/blob-layer.js";
 import type { Storage } from "./storage/interface.js";
-import { WebhookConsumer, WebhookPoller } from "./webhooks/delivery.js";
-import { logJobTickFailure } from "./storage/job-tick.js";
+import {
+  WebhookConsumer,
+  WebhookPoller,
+  WEBHOOK_POLL_INTERVAL_MS,
+} from "./webhooks/delivery.js";
+import { Housekeeping } from "./housekeeping/scheduler.js";
 import { HeartbeatPinger } from "./heartbeat.js";
 import { VersionThinner } from "./storage/version-thinner.js";
 import {
@@ -84,12 +88,12 @@ async function main() {
   });
   initEventLog(storage.eventLog);
 
-  // Declared ahead of the jobs rather than beside `shutdown()` because the
-  // two inline cleanups below close over it: a sweep that loses its pool
-  // because the process is going away is a cancellation, not a failure, and
-  // this is the only thing that tells the two apart. Every other background
-  // job carries the same flag on itself.
-  let shuttingDown = false;
+  // Every periodic job the server runs on itself registers here and runs
+  // from the housekeeping table. A job disabled by configuration is not
+  // registered, so it is not listed either.
+  const housekeeping = new Housekeeping(storage.housekeeping, {
+    pollIntervalMs: config.housekeepingPollIntervalMs ?? 1_000,
+  });
 
   const auditOverride: RetentionOverride = {
     settings: storage.settings,
@@ -110,65 +114,56 @@ async function main() {
 
   // Default 168h; override via MARFA_EVENT_LOG_RETENTION_HOURS or the instance config.
   const eventLogRetentionHours = config.eventLogRetentionHours ?? 168;
-  const runEventLogCleanup = () => {
-    // Idempotency records ride this sweep rather than getting a sweeper of
-    // their own, and the window is the same one deliberately: an
-    // `Idempotency-Key` is answerable for exactly as long as the events
-    // around it stay replayable, so a client that can still catch up on
-    // the stream can still ask what its write did. A second job would be a
-    // second window to keep in step, and the effective retention is already
-    // resolved here.
-    let purgedRecords = 0;
-    return runSweepAtRetention({
-      override: eventLogOverride,
-      instanceDefault: eventLogRetentionHours,
-      sweep: async (retention) => {
-        purgedRecords += await storage.idempotency.cleanup(retention);
-        return storage.eventLog.cleanup(retention);
-      },
-    })
-      .then((deleted) => {
-        if (deleted > 0 || purgedRecords > 0)
-          log(
-            "info",
-            `Purged ${String(deleted)} event_log entries and ${String(purgedRecords)} idempotency records (instance default: ${String(eventLogRetentionHours)} hours; a /config override is honored)`,
-          );
-      })
-      .catch((err: unknown) => {
-        logJobTickFailure("Event-log cleanup", err, shuttingDown);
+  housekeeping.register({
+    name: "event-log-cleanup",
+    intervalMs: config.eventLogCleanupIntervalMs ?? 3_600_000,
+    firstRunDelayMs: 10_000,
+    run: async () => {
+      // Idempotency records ride this sweep rather than getting a sweeper
+      // of their own, and the window is the same one deliberately: an
+      // `Idempotency-Key` is answerable for exactly as long as the events
+      // around it stay replayable, so a client that can still catch up on
+      // the stream can still ask what its write did. A second job would be
+      // a second window to keep in step, and the effective retention is
+      // already resolved here.
+      let purgedRecords = 0;
+      const deleted = await runSweepAtRetention({
+        override: eventLogOverride,
+        instanceDefault: eventLogRetentionHours,
+        sweep: async (retention) => {
+          purgedRecords += await storage.idempotency.cleanup(retention);
+          return storage.eventLog.cleanup(retention);
+        },
       });
-  };
-  let eventLogCleanupDelay: ReturnType<typeof setTimeout> | null = null;
-  let eventLogCleanupInterval: ReturnType<typeof setInterval> | null = null;
-  eventLogCleanupDelay = setTimeout(() => void runEventLogCleanup(), 10_000);
-  eventLogCleanupInterval = setInterval(
-    () => void runEventLogCleanup(),
-    config.eventLogCleanupIntervalMs ?? 3_600_000,
-  );
+      if (deleted > 0 || purgedRecords > 0) {
+        log(
+          "info",
+          `Purged ${String(deleted)} event_log entries and ${String(purgedRecords)} idempotency records (instance default: ${String(eventLogRetentionHours)} hours; a /config override is honored)`,
+        );
+      }
+      return { deleted, purged_records: purgedRecords };
+    },
+  });
 
-  const runAuditCleanup = () =>
-    runSweepAtRetention({
-      override: auditOverride,
-      instanceDefault: config.auditRetentionDays,
-      sweep: (retention) => storage.audit.cleanup(retention),
-    })
-      .then((deleted) => {
-        if (deleted > 0)
-          log(
-            "info",
-            `Purged ${String(deleted)} audit entries (instance default: ${String(config.auditRetentionDays)} days; a /config override is honored)`,
-          );
-      })
-      .catch((err: unknown) => {
-        logJobTickFailure("Audit cleanup", err, shuttingDown);
+  housekeeping.register({
+    name: "audit-cleanup",
+    intervalMs: config.auditCleanupIntervalMs,
+    firstRunDelayMs: 5_000,
+    run: async () => {
+      const deleted = await runSweepAtRetention({
+        override: auditOverride,
+        instanceDefault: config.auditRetentionDays,
+        sweep: (retention) => storage.audit.cleanup(retention),
       });
-  let auditCleanupDelay: ReturnType<typeof setTimeout> | null = null;
-  let auditCleanupInterval: ReturnType<typeof setInterval> | null = null;
-  auditCleanupDelay = setTimeout(() => void runAuditCleanup(), 5_000);
-  auditCleanupInterval = setInterval(
-    () => void runAuditCleanup(),
-    config.auditCleanupIntervalMs,
-  );
+      if (deleted > 0) {
+        log(
+          "info",
+          `Purged ${String(deleted)} audit entries (instance default: ${String(config.auditRetentionDays)} days; a /config override is honored)`,
+        );
+      }
+      return { deleted };
+    },
+  });
 
   const webhookConsumer = new WebhookConsumer(
     storage.outboundWebhooks,
@@ -176,72 +171,92 @@ async function main() {
   );
   webhookConsumer.start();
 
+  // No delay: a delivery left pending by the last process is picked up as
+  // soon as this one is listening.
   const webhookPoller = new WebhookPoller(storage.outboundWebhookDeliveries);
-  webhookPoller.start();
+  housekeeping.register({
+    name: "webhook-poll",
+    intervalMs: WEBHOOK_POLL_INTERVAL_MS,
+    firstRunDelayMs: 0,
+    run: () => webhookPoller.runOnce(),
+  });
 
   // Opt-in liveness heartbeat: off unless the operator names a receiver.
-  const heartbeat = config.heartbeatUrl
-    ? new HeartbeatPinger(
-        config.heartbeatUrl,
-        config.heartbeatIntervalMs ?? 60_000,
-      )
-    : null;
-  heartbeat?.start();
+  // Pinged at once, so a freshly booted instance is visible before the
+  // first interval elapses.
+  if (config.heartbeatUrl) {
+    const heartbeat = new HeartbeatPinger(config.heartbeatUrl);
+    housekeeping.register({
+      name: "heartbeat",
+      intervalMs: config.heartbeatIntervalMs ?? 60_000,
+      firstRunDelayMs: 0,
+      run: () => heartbeat.runOnce(),
+    });
+  }
 
-  const versionThinner = new VersionThinner(
-    storage.versions,
-    {
-      recentDays: config.versionRecentDays,
-      dailySnapshotDays: config.versionDailySnapshotDays,
-      weeklySnapshotDays: config.versionWeeklySnapshotDays,
-      maxVersions: config.versionMaxVersions,
-    },
-    config.versionThinningIntervalMs,
-  );
-  versionThinner.start();
+  const versionThinner = new VersionThinner(storage.versions, {
+    recentDays: config.versionRecentDays,
+    dailySnapshotDays: config.versionDailySnapshotDays,
+    weeklySnapshotDays: config.versionWeeklySnapshotDays,
+    maxVersions: config.versionMaxVersions,
+  });
+  housekeeping.register({
+    name: "version-thinning",
+    intervalMs: config.versionThinningIntervalMs,
+    firstRunDelayMs: 5_000,
+    run: () => versionThinner.runOnce(),
+  });
 
+  // Registered whatever the instance default, because the retention can
+  // be turned on through `/config` while the process runs.
   const trashPurger = new TrashPurger(
     storage.items,
     config.trashRetentionDays,
-    config.trashPurgeIntervalMs,
     undefined,
     trashOverride,
   );
-  trashPurger.start();
+  housekeeping.register({
+    name: "trash-purge",
+    intervalMs: config.trashPurgeIntervalMs,
+    firstRunDelayMs: 5_000,
+    run: async () => ({ deleted: await trashPurger.runOnce() }),
+  });
 
   // Activity rows are ordinary items, one per connector run, so they are
   // the fastest-growing type on an instance with connections and the one
   // that needs a bound of its own. Same fan-out shape as trash; `0` on the
   // interval disables.
   const activityPurgeIntervalMs = config.activityPurgeIntervalMs ?? 3_600_000;
-  const activityPurger =
-    activityPurgeIntervalMs > 0
-      ? new ActivityPurger(
-          storage.items,
-          config.activityRetentionDays ?? 14,
-          activityPurgeIntervalMs,
-          undefined,
-          activityOverride,
-        )
-      : undefined;
-  // Revoked application-grant tombstones. Unlike trash and activity there
-  // is no /config override for this window, because the
-  // reason for its length is instance-wide — it tracks the audit retention so
-  // the tombstone and the audit row that recorded the revocation cannot
-  // disagree about whether a revocation is still visible.
-  const revokedGrantPurgeIntervalMs = activityPurgeIntervalMs;
-  const revokedGrantPurger =
-    revokedGrantPurgeIntervalMs > 0
-      ? new RevokedGrantPurger(
-          storage.items,
-          config.revokedGrantRetentionDays ?? 90,
-          revokedGrantPurgeIntervalMs,
-          undefined,
-        )
-      : undefined;
-  if (revokedGrantPurger) {
-    revokedGrantPurger.start();
+  if (activityPurgeIntervalMs > 0) {
+    const activityPurger = new ActivityPurger(
+      storage.items,
+      config.activityRetentionDays ?? 14,
+      undefined,
+      activityOverride,
+    );
+    housekeeping.register({
+      name: "activity-purge",
+      intervalMs: activityPurgeIntervalMs,
+      firstRunDelayMs: 15_000,
+      run: async () => ({ deleted: await activityPurger.runOnce() }),
+    });
+    // Revoked application-grant tombstones. Unlike trash and activity there
+    // is no /config override for this window, because the reason for its
+    // length is instance-wide — it tracks the audit retention so the
+    // tombstone and the audit row that recorded the revocation cannot
+    // disagree about whether a revocation is still visible.
+    const revokedGrantPurger = new RevokedGrantPurger(
+      storage.items,
+      config.revokedGrantRetentionDays ?? 90,
+    );
+    housekeeping.register({
+      name: "revoked-grant-purge",
+      intervalMs: activityPurgeIntervalMs,
+      firstRunDelayMs: 20_000,
+      run: async () => ({ deleted: await revokedGrantPurger.runOnce() }),
+    });
   }
+
   // A grant nobody has used for a year is retired through the same cascade
   // a Disconnect runs, with an audit row saying why. The tombstone it leaves
   // then falls to the revoked-grant purge above, and a client left with no
@@ -249,68 +264,65 @@ async function main() {
   // Daily, and deliberately not configurable: the window is measured in
   // days, so a finer cadence changes nothing but load, and the DCR reaper's
   // interval is that job's setting rather than this one's.
-  const grantInactivityIntervalMs = 86_400_000;
   const grantInactivityDays = config.grantInactivityDays ?? 365;
-  const grantInactivityRetirer =
-    grantInactivityDays > 0
-      ? new GrantInactivityRetirer(
-          storage,
-          grantInactivityDays,
-          grantInactivityIntervalMs,
-          undefined,
-        )
-      : undefined;
-  if (grantInactivityRetirer) {
-    grantInactivityRetirer.start();
-  }
-  if (activityPurger) {
-    activityPurger.start();
+  if (grantInactivityDays > 0) {
+    const grantInactivityRetirer = new GrantInactivityRetirer(
+      storage,
+      grantInactivityDays,
+    );
+    housekeeping.register({
+      name: "grant-inactivity-retirement",
+      intervalMs: 86_400_000,
+      firstRunDelayMs: 40_000,
+      run: async () => ({ retired: await grantInactivityRetirer.runOnce() }),
+    });
   }
 
-  const revokedKeyReaper = new RevokedKeyReaper(
-    storage,
-    activityPurgeIntervalMs,
-    undefined,
-  );
-  revokedKeyReaper.start();
+  // On the activity purge's cadence, which is the hourly one; hourly when
+  // that purge is off, because its interval is then no cadence at all.
+  const revokedKeyReaper = new RevokedKeyReaper(storage);
+  housekeeping.register({
+    name: "revoked-key-reap",
+    intervalMs:
+      activityPurgeIntervalMs > 0 ? activityPurgeIntervalMs : 3_600_000,
+    firstRunDelayMs: 45_000,
+    run: async () => ({ deleted: await revokedKeyReaper.runOnce() }),
+  });
 
   // Gated on authSessions being wired; test contexts that skip better-auth omit it.
-  const authSessionCleaner = storage.authSessions
-    ? new AuthSessionCleaner(
-        storage.authSessions,
-        config.authSessionCleanupIntervalMs ?? 3_600_000,
-        undefined,
-      )
-    : undefined;
-  if (authSessionCleaner) {
-    authSessionCleaner.start();
+  if (storage.authSessions) {
+    const authSessionCleaner = new AuthSessionCleaner(storage.authSessions);
+    housekeeping.register({
+      name: "auth-session-cleanup",
+      intervalMs: config.authSessionCleanupIntervalMs ?? 3_600_000,
+      firstRunDelayMs: 10_000,
+      run: async () => ({ deleted: await authSessionCleaner.runOnce() }),
+    });
   }
 
   // GC keeps the table bounded; expired rows are correctness-safe (upsert path
   // overwrites them transparently).
-  const rateLimitCleaner = new RateLimitWindowCleaner(
-    storage,
-    config.rateLimitCleanupIntervalMs ?? 3_600_000,
-    undefined,
-  );
-  rateLimitCleaner.start();
+  const rateLimitCleaner = new RateLimitWindowCleaner(storage);
+  housekeeping.register({
+    name: "rate-limit-cleanup",
+    intervalMs: config.rateLimitCleanupIntervalMs ?? 3_600_000,
+    firstRunDelayMs: 20_000,
+    run: async () => ({ deleted: await rateLimitCleaner.runOnce() }),
+  });
 
   // Reap grantless DCR clients so unauthenticated registration doesn't grow
   // `auth_oauth_client` unbounded. Gated on a positive retention window
   // (`0` disables) and on the oauth-provider store being wired (test
   // contexts that skip better-auth omit it).
   const dcrRetentionDays = config.dcrClientRetentionDays ?? 30;
-  const dcrClientCleaner =
-    dcrRetentionDays > 0 && storage.oauthProvider
-      ? new DcrClientCleaner(
-          storage,
-          dcrRetentionDays,
-          config.dcrClientCleanupIntervalMs ?? 86_400_000,
-          undefined,
-        )
-      : undefined;
-  if (dcrClientCleaner) {
-    dcrClientCleaner.start();
+  if (dcrRetentionDays > 0 && storage.oauthProvider) {
+    const dcrClientCleaner = new DcrClientCleaner(storage, dcrRetentionDays);
+    housekeeping.register({
+      name: "dcr-client-cleanup",
+      intervalMs: config.dcrClientCleanupIntervalMs ?? 86_400_000,
+      firstRunDelayMs: 25_000,
+      run: async () => ({ deleted: await dcrClientCleaner.runOnce() }),
+    });
   }
 
   // Storing a blob and creating the item that references it are separate
@@ -319,45 +331,47 @@ async function main() {
   // gap between a legitimate upload and its item write is not mistaken for
   // the leak. Grace `0` disables the job.
   const blobCleanupGraceMs = config.blobCleanupGraceMs ?? 86_400_000;
-  const blobCleanupIntervalMs = config.blobCleanupIntervalMs ?? 86_400_000;
-  const blobOrphanCleaner =
-    blobCleanupGraceMs > 0
-      ? new BlobOrphanCleaner(
-          storage,
-          blobs,
-          blobCleanupGraceMs,
-          blobCleanupIntervalMs,
-          undefined,
-        )
-      : undefined;
-  if (blobOrphanCleaner) {
-    blobOrphanCleaner.start();
+  if (blobCleanupGraceMs > 0) {
+    const blobOrphanCleaner = new BlobOrphanCleaner(
+      storage,
+      blobs,
+      blobCleanupGraceMs,
+    );
+    housekeeping.register({
+      name: "blob-orphans",
+      intervalMs: config.blobCleanupIntervalMs ?? 86_400_000,
+      firstRunDelayMs: 30_000,
+      run: async () => ({ removed: await blobOrphanCleaner.runOnce() }),
+    });
   }
 
   // Text extraction from uploaded files, on by default: a document nobody
   // can find is barely stored. The OCR engine is constructed eagerly but
-  // loads nothing until an image actually reaches it.
-  const enrichmentSweeper =
-    config.enrichmentEnabled !== false
-      ? new TextEnrichmentSweeper({
-          storage,
-          blobs,
-          ocr:
-            config.enrichmentOcrEnabled !== false
-              ? new TesseractOcr({
-                  cachePath: config.enrichmentTessdataDir ?? "./data/tessdata",
-                })
-              : null,
-          intervalMs: config.enrichmentIntervalMs ?? 30_000,
-          batchSize: config.enrichmentBatchSize ?? 8,
-          itemTimeoutMs: config.enrichmentItemTimeoutMs ?? 60_000,
-          maxBlobBytes: config.enrichmentMaxBlobBytes ?? 20 * 1024 * 1024,
-          maxTextChars: config.enrichmentMaxTextChars ?? 200_000,
-          maxAttempts: config.enrichmentMaxAttempts ?? 3,
-        })
-      : undefined;
-  if (enrichmentSweeper) {
-    enrichmentSweeper.start();
+  // loads nothing until an image actually reaches it. The first sweep
+  // waits, because boot is the busiest the process ever is and nothing
+  // here is urgent.
+  if (config.enrichmentEnabled !== false) {
+    const enrichmentSweeper = new TextEnrichmentSweeper({
+      storage,
+      blobs,
+      ocr:
+        config.enrichmentOcrEnabled !== false
+          ? new TesseractOcr({
+              cachePath: config.enrichmentTessdataDir ?? "./data/tessdata",
+            })
+          : null,
+      batchSize: config.enrichmentBatchSize ?? 8,
+      itemTimeoutMs: config.enrichmentItemTimeoutMs ?? 60_000,
+      maxBlobBytes: config.enrichmentMaxBlobBytes ?? 20 * 1024 * 1024,
+      maxTextChars: config.enrichmentMaxTextChars ?? 200_000,
+      maxAttempts: config.enrichmentMaxAttempts ?? 3,
+    });
+    housekeeping.register({
+      name: "enrichment-sweep",
+      intervalMs: config.enrichmentIntervalMs ?? 30_000,
+      firstRunDelayMs: 20_000,
+      run: () => enrichmentSweeper.runOnce(),
+    });
   }
 
   const bulkActionWorker = new BulkActionWorker({
@@ -375,16 +389,21 @@ async function main() {
     bulkActionWorker.wake();
   });
   await bulkActionWorker.start();
-  const bulkActionGc = new BulkActionJobGcSweeper(
-    storage,
-    config.bulkActionJobRetentionMs ?? 7 * 24 * 3_600_000,
-    config.bulkActionJobGcIntervalMs ?? 3_600_000,
-    undefined,
-  );
-  // Gated the same way the sweeper's own start() gates itself: a zero or
-  // negative retention disables the job.
-  if ((config.bulkActionJobRetentionMs ?? 7 * 24 * 3_600_000) > 0) {
-    bulkActionGc.start();
+  // A zero or negative retention disables the sweep, and the table grows
+  // unbounded.
+  const bulkActionJobRetentionMs =
+    config.bulkActionJobRetentionMs ?? 7 * 24 * 3_600_000;
+  if (bulkActionJobRetentionMs > 0) {
+    const bulkActionGc = new BulkActionJobGcSweeper(
+      storage,
+      bulkActionJobRetentionMs,
+    );
+    housekeeping.register({
+      name: "bulk-action-gc",
+      intervalMs: config.bulkActionJobGcIntervalMs ?? 3_600_000,
+      firstRunDelayMs: 60_000,
+      run: async () => ({ deleted: await bulkActionGc.runOnce() }),
+    });
   }
 
   const oidcSigner = await OidcSigner.init(storage);
@@ -448,11 +467,21 @@ async function main() {
   // door answerable on an instance whose database has since gone.
   const instanceId = await ensureInstanceId(storage.settings);
 
-  const app = createApp(storage, blobs, config, instanceId, oidcSigner);
+  const app = createApp(
+    storage,
+    blobs,
+    housekeeping,
+    config,
+    instanceId,
+    oidcSigner,
+  );
+  await housekeeping.start();
+  log("info", "Housekeeping started", { jobs: housekeeping.names() });
   const server = serve({ fetch: app.fetch, port: config.port }, (info) => {
     log("info", `Marfa server listening on port ${String(info.port)}`);
   });
 
+  let shuttingDown = false;
   const shutdown = (): void => {
     // A second signal must not restart the sequence. The platform sends
     // SIGTERM and then, shortly after, SIGKILL; some supervisors send SIGTERM
@@ -468,25 +497,7 @@ async function main() {
     // it has to get out.
     log("info", "Shutting down...");
     webhookConsumer.stop();
-    webhookPoller.stop();
-    heartbeat?.stop();
-    if (eventLogCleanupDelay) clearTimeout(eventLogCleanupDelay);
-    if (eventLogCleanupInterval) clearInterval(eventLogCleanupInterval);
-    if (auditCleanupDelay) clearTimeout(auditCleanupDelay);
-    if (auditCleanupInterval) clearInterval(auditCleanupInterval);
-    versionThinner.stop();
-    trashPurger.stop();
-    activityPurger?.stop();
-    revokedKeyReaper.stop();
-    authSessionCleaner?.stop();
-    rateLimitCleaner.stop();
-    dcrClientCleaner?.stop();
-    revokedGrantPurger?.stop();
-    grantInactivityRetirer?.stop();
-    blobOrphanCleaner?.stop();
-    enrichmentSweeper?.stop();
     bulkActionWorker.stop();
-    bulkActionGc.stop();
     // Each step bounded and reported separately: a shared catch produced a
     // warning that could not say which step overran, and it fired on every
     // production shutdown for a week before anything made it loud.
@@ -498,6 +509,15 @@ async function main() {
         error: serializeError(error),
       });
       exitCode = 1;
+    }
+    // Before the storage closes, so a run in flight can write its record;
+    // one that outlives the bound meets the closed client and stands down.
+    try {
+      await withTimeout(housekeeping.stop(), SHUTDOWN_STEP_TIMEOUT_MS);
+    } catch (error) {
+      log("warn", "Graceful shutdown: housekeeping did not stop in time", {
+        error: serializeError(error),
+      });
     }
     try {
       await withTimeout(storage.close(), SHUTDOWN_STEP_TIMEOUT_MS);

@@ -180,6 +180,11 @@ export enum ErrorCode {
    * rather than the server returning an HTTP error.
    */
   BULK_JOB_NOT_FOUND = "bulk_job_not_found",
+  /** `POST /housekeeping/:name/run` named a job this instance does not
+   *  run: unregistered, or disabled by configuration. */
+  HOUSEKEEPING_JOB_NOT_FOUND = "housekeeping_job_not_found",
+  /** The job is in the middle of a run, and a job never overlaps itself. */
+  HOUSEKEEPING_JOB_RUNNING = "housekeeping_job_running",
   /**
    * Every streaming connection slot is in use and none freed within the
    * reservation window. Retryable by definition: streams end and slots
@@ -297,6 +302,8 @@ const STATUS_MAP: Record<ErrorCode, number> = {
   [ErrorCode.BULK_CAP_EXCEEDED]: 400,
   [ErrorCode.BULK_ATOMIC_ROLLBACK]: 400,
   [ErrorCode.BULK_JOB_NOT_FOUND]: 404,
+  [ErrorCode.HOUSEKEEPING_JOB_NOT_FOUND]: 404,
+  [ErrorCode.HOUSEKEEPING_JOB_RUNNING]: 409,
   [ErrorCode.STREAM_CAPACITY_EXHAUSTED]: 503,
   [ErrorCode.SOURCE_ID_CONFLICT]: 409,
   [ErrorCode.TYPE_MISMATCH]: 409,

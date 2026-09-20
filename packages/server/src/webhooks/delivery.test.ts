@@ -150,14 +150,9 @@ function makeStubStore(pending: PendingDelivery[]): {
   return { store, calls };
 }
 
-/** Drain `poll()` once. The poller is started for its side-effect of an
- *  immediate poll, then stopped to clear the 30s interval. We then yield
- *  to the microtask queue until the spies have settled. */
+/** One poll, the way the housekeeping scheduler drives it. */
 async function pollOnce(poller: WebhookPoller): Promise<void> {
-  poller.start();
-  poller.stop();
-  // Allow the immediate poll() promise chain to settle.
-  for (let i = 0; i < 5; i++) await Promise.resolve();
+  await poller.runOnce();
 }
 
 describe("WebhookPoller retry behavior", () => {

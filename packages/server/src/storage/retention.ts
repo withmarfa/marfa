@@ -8,9 +8,17 @@ import type { InstanceConfig } from "@withmarfa/shared";
 import { readInstanceConfig } from "./instance-config.js";
 import type { BlobLayer } from "./blob-layer.js";
 import { log } from "../middleware/logger.js";
-import { logJobTickFailure } from "./job-tick.js";
+import { isConnectionLostError } from "./job-tick.js";
 import { sweepUnreferencedBlobs } from "./blob-orphans.js";
 import { revokeProjectedGrant } from "../auth/grant-lifecycle.js";
+
+/**
+ * The retention sweeps. Each is a class with one `runOnce()` that does a
+ * sweep and answers a count; the housekeeping scheduler owns the cadence,
+ * records the outcome and classifies a failure, so nothing here keeps a
+ * timer or logs a tick. A sweep that found something to do says so at
+ * `info`; one that found nothing is silent.
+ */
 
 const MS_PER_DAY = 86_400_000;
 
@@ -38,15 +46,13 @@ export interface RetentionOverride {
 
 /**
  * Hard-deletes trashed items that entered the bin longer ago than the
- * configured retention window. Pattern mirrors `VersionThinner`:
- * in-process timer, synchronous `runOnce()` entry point for tests,
- * idempotent sweep.
+ * configured retention window. Idempotent.
  *
  * If `retentionDays <= 0`, the job is a no-op — the operator can leave
  * the deployment running with no trash purge by setting the env var to 0.
  * The default at the config layer is 60.
  *
- * When `override` is supplied, a `runOnce()` tick honors the
+ * When `override` is supplied, a `runOnce()` honors the
  * `trash_retention_days` override from the instance configuration. When
  * `override` is omitted the job sweeps at the instance default.
  *
@@ -66,54 +72,37 @@ export interface RetentionOverride {
  * decision; an absence discovered later would be a defect.
  */
 export class TrashPurger {
-  private interval: ReturnType<typeof setInterval> | null = null;
-  private startupTimeout: ReturnType<typeof setTimeout> | null = null;
-  private stopped = false;
-
   constructor(
     private items: ItemStore,
     private retentionDays: number,
-    private intervalMs: number,
     private nowFn: () => Date = () => new Date(),
     private configOverride?: RetentionOverride,
   ) {}
 
-  start(): void {
-    this.stopped = false;
-    this.startupTimeout = setTimeout(() => void this.poll(), 5_000);
-    this.interval = setInterval(() => void this.poll(), this.intervalMs);
-  }
-
-  stop(): void {
-    this.stopped = true;
-    if (this.startupTimeout) {
-      clearTimeout(this.startupTimeout);
-      this.startupTimeout = null;
-    }
-    if (this.interval) {
-      clearInterval(this.interval);
-      this.interval = null;
-    }
-  }
-
   /**
-   * Synchronous-style entry point used by tests and the `start()` poller.
-   * Computes the cutoff date from the injected clock and asks the
-   * `ItemStore` to delete every trashed row strictly older than it.
+   * One sweep. Computes the cutoff date from the injected clock and asks
+   * the `ItemStore` to delete every trashed row strictly older than it.
    *
    * Returns the number of rows deleted, at the configured override when
    * one is wired and at the instance default otherwise.
    */
   async runOnce(): Promise<number> {
-    return this.configOverride
-      ? runSweepToCutoff({
+    const deleted = this.configOverride
+      ? await runSweepToCutoff({
           override: this.configOverride,
           nowFn: this.nowFn,
           instanceDefault: this.retentionDays,
           unitMs: MS_PER_DAY,
           sweep: (cutoff) => this.items.purgeTrashedOlderThan(cutoff),
         })
-      : this.runOnceGlobal();
+      : await this.runOnceGlobal();
+    if (deleted > 0) {
+      log("info", "Trash purge", {
+        deleted,
+        retentionDays: this.retentionDays,
+      });
+    }
+    return deleted;
   }
 
   private async runOnceGlobal(): Promise<number> {
@@ -122,26 +111,6 @@ export class TrashPurger {
       this.nowFn().getTime() - this.retentionDays * MS_PER_DAY,
     ).toISOString();
     return this.items.purgeTrashedOlderThan(cutoff);
-  }
-
-  /** Scheduler entry point: the same locked, logged tick the timer path
-   *  drives — `runOnce()` alone is the bare test seam and has neither. */
-  runScheduled(): Promise<void> {
-    return this.poll();
-  }
-
-  private async poll(): Promise<void> {
-    try {
-      const deleted = await this.runOnce();
-      if (deleted > 0) {
-        log("info", "Trash purge", {
-          deleted,
-          retentionDays: this.retentionDays,
-        });
-      }
-    } catch (err) {
-      logJobTickFailure("Trash purge", err, this.stopped);
-    }
   }
 }
 
@@ -181,58 +150,22 @@ export class TrashPurger {
  * `kind = 'app'`.
  */
 export class RevokedGrantPurger {
-  private interval: ReturnType<typeof setInterval> | null = null;
-  private startupTimeout: ReturnType<typeof setTimeout> | null = null;
-  private stopped = false;
-
   constructor(
     private items: ItemStore,
     private retentionDays: number,
-    private intervalMs: number,
     private nowFn: () => Date = () => new Date(),
   ) {}
-
-  start(): void {
-    this.stopped = false;
-    this.startupTimeout = setTimeout(() => void this.poll(), 20_000);
-    this.interval = setInterval(() => void this.poll(), this.intervalMs);
-  }
-
-  stop(): void {
-    this.stopped = true;
-    if (this.startupTimeout) {
-      clearTimeout(this.startupTimeout);
-      this.startupTimeout = null;
-    }
-    if (this.interval) {
-      clearInterval(this.interval);
-      this.interval = null;
-    }
-  }
 
   async runOnce(): Promise<number> {
     if (this.retentionDays <= 0) return 0;
     const cutoff = new Date(
       this.nowFn().getTime() - this.retentionDays * MS_PER_DAY,
     ).toISOString();
-    return this.items.purgeRevokedAppGrantsOlderThan(cutoff);
-  }
-
-  /** Scheduler entry point: the same locked, logged tick the timer drives. */
-  runScheduled(): Promise<void> {
-    return this.poll();
-  }
-
-  private async poll(): Promise<void> {
-    if (this.stopped) return;
-    try {
-      const deleted = await this.runOnce();
-      if (deleted > 0) {
-        log("info", "Revoked grant tombstones purged", { deleted });
-      }
-    } catch (err) {
-      logJobTickFailure("Revoked grant purge", err, this.stopped);
+    const deleted = await this.items.purgeRevokedAppGrantsOlderThan(cutoff);
+    if (deleted > 0) {
+      log("info", "Revoked grant tombstones purged", { deleted });
     }
+    return deleted;
   }
 }
 
@@ -265,37 +198,14 @@ export class RevokedGrantPurger {
 const RETIRE_PER_TICK = 500;
 
 export class GrantInactivityRetirer {
-  private interval: ReturnType<typeof setInterval> | null = null;
-  private startupTimeout: ReturnType<typeof setTimeout> | null = null;
-  private stopped = false;
-
   constructor(
     private storage: Storage,
     private inactivityDays: number,
-    private intervalMs: number,
     private nowFn: () => Date = () => new Date(),
   ) {}
 
-  start(): void {
-    this.stopped = false;
-    this.startupTimeout = setTimeout(() => void this.poll(), 40_000);
-    this.interval = setInterval(() => void this.poll(), this.intervalMs);
-  }
-
-  stop(): void {
-    this.stopped = true;
-    if (this.startupTimeout) {
-      clearTimeout(this.startupTimeout);
-      this.startupTimeout = null;
-    }
-    if (this.interval) {
-      clearInterval(this.interval);
-      this.interval = null;
-    }
-  }
-
-  /** Test entry point: retires every grant inactive past the window and
-   *  returns how many. */
+  /** One sweep: retires every grant inactive past the window and returns
+   *  how many. */
   async runOnce(): Promise<number> {
     if (this.inactivityDays <= 0) return 0;
     const cutoff = new Date(
@@ -318,13 +228,13 @@ export class GrantInactivityRetirer {
           authUserId: grant.authUserId ?? undefined,
         });
       } catch (err) {
-        // Through the one classifier every job's failure takes, so a tick
-        // cut short by shutdown stands down at info here as everywhere.
-        logJobTickFailure(
-          `Inactive grant retirement (grant ${grant.id})`,
-          err,
-          this.stopped,
-        );
+        // A lost client ends the sweep, not one grant: the scheduler
+        // classifies it. Anything else is this grant's own fault.
+        if (isConnectionLostError(err)) throw err;
+        log("error", "Inactive grant retirement error", {
+          grant_item_id: grant.id,
+          error: err instanceof Error ? err.message : String(err),
+        });
         continue;
       }
       // Fire-and-forget like every other revoke door's row: the tracker
@@ -348,71 +258,41 @@ export class GrantInactivityRetirer {
       });
       retired += 1;
     }
-    return retired;
-  }
-
-  /** Scheduler entry point: the same locked, logged tick the timer drives. */
-  runScheduled(): Promise<void> {
-    return this.poll();
-  }
-
-  private async poll(): Promise<void> {
-    if (this.stopped) return;
-    try {
-      const retired = await this.runOnce();
-      if (retired > 0) {
-        log("info", "Inactive grants retired", {
-          retired,
-          inactivityDays: this.inactivityDays,
-        });
-      }
-    } catch (err) {
-      logJobTickFailure("Inactive grant retirement", err, this.stopped);
+    if (retired > 0) {
+      log("info", "Inactive grants retired", {
+        retired,
+        inactivityDays: this.inactivityDays,
+      });
     }
+    return retired;
   }
 }
 
 export class ActivityPurger {
-  private interval: ReturnType<typeof setInterval> | null = null;
-  private startupTimeout: ReturnType<typeof setTimeout> | null = null;
-  private stopped = false;
-
   constructor(
     private items: ItemStore,
     private retentionDays: number,
-    private intervalMs: number,
     private nowFn: () => Date = () => new Date(),
     private configOverride?: RetentionOverride,
   ) {}
 
-  start(): void {
-    this.stopped = false;
-    this.startupTimeout = setTimeout(() => void this.poll(), 15_000);
-    this.interval = setInterval(() => void this.poll(), this.intervalMs);
-  }
-
-  stop(): void {
-    this.stopped = true;
-    if (this.startupTimeout) {
-      clearTimeout(this.startupTimeout);
-      this.startupTimeout = null;
-    }
-    if (this.interval) {
-      clearInterval(this.interval);
-      this.interval = null;
-    }
-  }
-
   async runOnce(): Promise<number> {
-    return this.configOverride
-      ? runSweepToCutoff({
+    const deleted = this.configOverride
+      ? await runSweepToCutoff({
           override: this.configOverride,
           nowFn: this.nowFn,
           instanceDefault: this.retentionDays,
           unitMs: MS_PER_DAY,
           sweep: (cutoff) => this.items.purgeActivityOlderThan(cutoff),
         })
-      : this.runOnceGlobal();
+      : await this.runOnceGlobal();
+    if (deleted > 0) {
+      log("info", "Activity purge", {
+        deleted,
+        retentionDays: this.retentionDays,
+      });
+    }
+    return deleted;
   }
 
   private async runOnceGlobal(): Promise<number> {
@@ -422,145 +302,57 @@ export class ActivityPurger {
     ).toISOString();
     return this.items.purgeActivityOlderThan(cutoff);
   }
-
-  /** Scheduler entry point: the same locked, logged tick the timer path
-   *  drives — `runOnce()` alone is the bare test seam and has neither. */
-  runScheduled(): Promise<void> {
-    return this.poll();
-  }
-
-  private async poll(): Promise<void> {
-    try {
-      const deleted = await this.runOnce();
-      if (deleted > 0) {
-        log("info", "Activity purge", {
-          deleted,
-          retentionDays: this.retentionDays,
-        });
-      }
-    } catch (err) {
-      logJobTickFailure("Activity purge", err, this.stopped);
-    }
-  }
 }
 
 /**
- * Drops expired better-auth `auth_session` rows on a periodic tick.
- * Better Auth itself owns the session TTL via `expiresAt`; this job exists
- * only so the table doesn't grow unbounded between natural expiries
- * (browser-side ephemeral cookies vanish on tab close, but the server-side
- * row stays around until the sweep catches up).
+ * Drops expired better-auth `auth_session` rows. Better Auth itself owns
+ * the session TTL via `expiresAt`; this job exists only so the table
+ * doesn't grow unbounded between natural expiries (browser-side ephemeral
+ * cookies vanish on tab close, but the server-side row stays around until
+ * the sweep catches up).
  *
  * Instance-wide: the deletion criterion is purely time-based.
  */
 export class AuthSessionCleaner {
-  private interval: ReturnType<typeof setInterval> | null = null;
-  private startupTimeout: ReturnType<typeof setTimeout> | null = null;
-  private stopped = false;
-
   constructor(
     private store: AuthSessionStore,
-    private intervalMs: number,
     private nowFn: () => Date = () => new Date(),
   ) {}
 
-  start(): void {
-    this.stopped = false;
-    this.startupTimeout = setTimeout(() => void this.poll(), 10_000);
-    this.interval = setInterval(() => void this.poll(), this.intervalMs);
-  }
-
-  stop(): void {
-    this.stopped = true;
-    if (this.startupTimeout) {
-      clearTimeout(this.startupTimeout);
-      this.startupTimeout = null;
-    }
-    if (this.interval) {
-      clearInterval(this.interval);
-      this.interval = null;
-    }
-  }
-
-  /** Test entry point — drops every row whose `expires_at` is strictly
-   *  before the injected clock. */
+  /** One sweep — drops every row whose `expires_at` is strictly before
+   *  the injected clock. */
   async runOnce(): Promise<number> {
-    return this.store.deleteExpired(this.nowFn());
-  }
-
-  /** Scheduler entry point — see TrashPurger.runScheduled. */
-  runScheduled(): Promise<void> {
-    return this.poll();
-  }
-
-  private async poll(): Promise<void> {
-    try {
-      const deleted = await this.runOnce();
-      if (deleted > 0) {
-        log("info", "Auth session cleanup", { deleted });
-      }
-    } catch (err) {
-      logJobTickFailure("Auth session cleanup", err, this.stopped);
+    const deleted = await this.store.deleteExpired(this.nowFn());
+    if (deleted > 0) {
+      log("info", "Auth session cleanup", { deleted });
     }
+    return deleted;
   }
 }
 
 /**
- * Drops expired `rate_limit_windows` rows on a periodic tick. Expired rows
- * aren't a correctness risk (the upsert path overwrites them transparently);
- * the GC just keeps the table from growing unboundedly across the long tail
- * of one-shot windows (e.g. a single IP that hit `/auth/sign-up` once).
+ * Drops expired `rate_limit_windows` rows. Expired rows aren't a
+ * correctness risk (the upsert path overwrites them transparently); the GC
+ * just keeps the table from growing unboundedly across the long tail of
+ * one-shot windows (e.g. a single IP that hit `/auth/sign-up` once).
  *
  * Instance-wide.
  */
 export class RateLimitWindowCleaner {
-  private interval: ReturnType<typeof setInterval> | null = null;
-  private startupTimeout: ReturnType<typeof setTimeout> | null = null;
-  private stopped = false;
-
   constructor(
     private storage: Storage,
-    private intervalMs: number,
     private nowFn: () => Date = () => new Date(),
   ) {}
 
-  start(): void {
-    this.stopped = false;
-    this.startupTimeout = setTimeout(() => void this.poll(), 20_000);
-    this.interval = setInterval(() => void this.poll(), this.intervalMs);
-  }
-
-  stop(): void {
-    this.stopped = true;
-    if (this.startupTimeout) {
-      clearTimeout(this.startupTimeout);
-      this.startupTimeout = null;
-    }
-    if (this.interval) {
-      clearInterval(this.interval);
-      this.interval = null;
-    }
-  }
-
-  /** Test entry point — drops every expired window row. */
+  /** One sweep — drops every expired window row. */
   async runOnce(): Promise<number> {
-    return this.storage.rateLimits.cleanup(this.nowFn().toISOString());
-  }
-
-  /** Scheduler entry point — see TrashPurger.runScheduled. */
-  runScheduled(): Promise<void> {
-    return this.poll();
-  }
-
-  private async poll(): Promise<void> {
-    try {
-      const deleted = await this.runOnce();
-      if (deleted > 0) {
-        log("info", "Rate-limit window cleanup", { deleted });
-      }
-    } catch (err) {
-      logJobTickFailure("Rate-limit window cleanup", err, this.stopped);
+    const deleted = await this.storage.rateLimits.cleanup(
+      this.nowFn().toISOString(),
+    );
+    if (deleted > 0) {
+      log("info", "Rate-limit window cleanup", { deleted });
     }
+    return deleted;
   }
 }
 
@@ -587,38 +379,15 @@ export class RateLimitWindowCleaner {
  * deployment running with no DCR reaper by setting the env var to 0.
  */
 export class DcrClientCleaner {
-  private interval: ReturnType<typeof setInterval> | null = null;
-  private startupTimeout: ReturnType<typeof setTimeout> | null = null;
-  private stopped = false;
-
   constructor(
     private storage: Storage,
     private retentionDays: number,
-    private intervalMs: number,
     private nowFn: () => Date = () => new Date(),
   ) {}
 
-  start(): void {
-    this.stopped = false;
-    this.startupTimeout = setTimeout(() => void this.poll(), 25_000);
-    this.interval = setInterval(() => void this.poll(), this.intervalMs);
-  }
-
-  stop(): void {
-    this.stopped = true;
-    if (this.startupTimeout) {
-      clearTimeout(this.startupTimeout);
-      this.startupTimeout = null;
-    }
-    if (this.interval) {
-      clearInterval(this.interval);
-      this.interval = null;
-    }
-  }
-
-  /** Test entry point — deletes grantless clients older than the window.
-   *  No-op when the job is disabled or the oauth-provider store is absent
-   *  (test contexts that skip better-auth). */
+  /** One sweep — deletes grantless clients older than the window. No-op
+   *  when the job is disabled or the oauth-provider store is absent (test
+   *  contexts that skip better-auth). */
   async runOnce(): Promise<number> {
     if (this.retentionDays <= 0) return 0;
     const provider = this.storage.oauthProvider;
@@ -626,26 +395,14 @@ export class DcrClientCleaner {
     const cutoff = new Date(
       this.nowFn().getTime() - this.retentionDays * MS_PER_DAY,
     ).toISOString();
-    return provider.deleteGrantlessClientsOlderThan(cutoff);
-  }
-
-  /** Scheduler entry point — see TrashPurger.runScheduled. */
-  runScheduled(): Promise<void> {
-    return this.poll();
-  }
-
-  private async poll(): Promise<void> {
-    try {
-      const deleted = await this.runOnce();
-      if (deleted > 0) {
-        log("info", "DCR client cleanup", {
-          deleted,
-          retentionDays: this.retentionDays,
-        });
-      }
-    } catch (err) {
-      logJobTickFailure("DCR client cleanup", err, this.stopped);
+    const deleted = await provider.deleteGrantlessClientsOlderThan(cutoff);
+    if (deleted > 0) {
+      log("info", "DCR client cleanup", {
+        deleted,
+        retentionDays: this.retentionDays,
+      });
     }
+    return deleted;
   }
 }
 
@@ -671,37 +428,14 @@ export class DcrClientCleaner {
  * configuration of it, so the value doubles as the operator's off switch.
  */
 export class BlobOrphanCleaner {
-  private interval: ReturnType<typeof setInterval> | null = null;
-  private startupTimeout: ReturnType<typeof setTimeout> | null = null;
-  private stopped = false;
-
   constructor(
     private storage: Storage,
     private blobs: BlobLayer,
     private graceMs: number,
-    private intervalMs: number,
     private nowFn: () => Date = () => new Date(),
   ) {}
 
-  start(): void {
-    this.stopped = false;
-    this.startupTimeout = setTimeout(() => void this.poll(), 30_000);
-    this.interval = setInterval(() => void this.poll(), this.intervalMs);
-  }
-
-  stop(): void {
-    this.stopped = true;
-    if (this.startupTimeout) {
-      clearTimeout(this.startupTimeout);
-      this.startupTimeout = null;
-    }
-    if (this.interval) {
-      clearInterval(this.interval);
-      this.interval = null;
-    }
-  }
-
-  /** Test entry point. Returns the number of blobs removed this tick. */
+  /** One sweep. Returns the number of blobs removed. */
   async runOnce(): Promise<number> {
     if (this.graceMs <= 0) return 0;
     const result = await sweepUnreferencedBlobs({
@@ -712,23 +446,13 @@ export class BlobOrphanCleaner {
         this.nowFn().getTime() - this.graceMs,
       ).toISOString(),
     });
-    return result.removed;
-  }
-
-  /** Scheduler entry point — see TrashPurger.runScheduled. */
-  runScheduled(): Promise<void> {
-    return this.poll();
-  }
-
-  private async poll(): Promise<void> {
-    try {
-      const removed = await this.runOnce();
-      if (removed > 0) {
-        log("info", "Blob cleanup", { removed, graceMs: this.graceMs });
-      }
-    } catch (err) {
-      logJobTickFailure("Blob cleanup", err, this.stopped);
+    if (result.removed > 0) {
+      log("info", "Blob cleanup", {
+        removed: result.removed,
+        graceMs: this.graceMs,
+      });
     }
+    return result.removed;
   }
 }
 
@@ -741,10 +465,6 @@ export class BlobOrphanCleaner {
  * row.
  */
 export class RevokedKeyReaper {
-  private interval: ReturnType<typeof setInterval> | null = null;
-  private startupTimeout: ReturnType<typeof setTimeout> | null = null;
-  private stopped = false;
-
   /** Post-revocation retention before hard delete. Generous because a
    *  revoked human credential is worth reading back, and there are few
    *  enough of them that keeping a month of them costs nothing. */
@@ -752,50 +472,19 @@ export class RevokedKeyReaper {
 
   constructor(
     private storage: Storage,
-    private intervalMs: number,
     private nowFn: () => Date = () => new Date(),
   ) {}
 
-  start(): void {
-    this.stopped = false;
-    this.startupTimeout = setTimeout(() => void this.poll(), 45_000);
-    this.interval = setInterval(() => void this.poll(), this.intervalMs);
-  }
-
-  stop(): void {
-    this.stopped = true;
-    if (this.startupTimeout) {
-      clearTimeout(this.startupTimeout);
-      this.startupTimeout = null;
-    }
-    if (this.interval) {
-      clearInterval(this.interval);
-      this.interval = null;
-    }
-  }
-
-  /** Test entry point — one sweep, reporting the count. */
+  /** One sweep, reporting the count. */
   async runOnce(): Promise<number> {
     const cutoff = new Date(
       this.nowFn().getTime() - RevokedKeyReaper.REVOKED_RETENTION_MS,
     ).toISOString();
-    return this.storage.keys.deleteRevokedKeysOlderThan(cutoff);
-  }
-
-  /** Scheduler entry point — see TrashPurger.runScheduled. */
-  runScheduled(): Promise<void> {
-    return this.poll();
-  }
-
-  private async poll(): Promise<void> {
-    try {
-      const deleted = await this.runOnce();
-      if (deleted > 0) {
-        log("info", "Revoked key reap", { deleted });
-      }
-    } catch (err) {
-      logJobTickFailure("Revoked key reap", err, this.stopped);
+    const deleted = await this.storage.keys.deleteRevokedKeysOlderThan(cutoff);
+    if (deleted > 0) {
+      log("info", "Revoked key reap", { deleted });
     }
+    return deleted;
   }
 }
 

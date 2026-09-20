@@ -25,7 +25,6 @@ export interface TextEnrichmentSweeperOptions {
   blobs: BlobLayer;
   /** OCR engine, or null when image extraction is disabled. */
   ocr: OcrEngine | null;
-  intervalMs: number;
   batchSize: number;
   itemTimeoutMs: number;
   maxBlobBytes: number;
@@ -85,8 +84,8 @@ function validationRefusal(
 }
 
 /**
- * Derives what a file's own bytes can say, on a periodic tick, and writes
- * it back onto the item.
+ * Derives what a file's own bytes can say, one batch per housekeeping run,
+ * and writes it back onto the item.
  *
  * Two kinds, both best-effort and neither able to fail a write: text, onto
  * `extracted_text`, which the search indexer picks up on the same write;
@@ -103,28 +102,7 @@ function validationRefusal(
  * extraction.
  */
 export class TextEnrichmentSweeper {
-  private interval: ReturnType<typeof setInterval> | null = null;
-  private startupTimeout: ReturnType<typeof setTimeout> | null = null;
-
   constructor(private opts: TextEnrichmentSweeperOptions) {}
-
-  start(): void {
-    // Same delayed first tick as the retention sweeps: boot is the busiest
-    // the process ever is, and nothing here is urgent.
-    this.startupTimeout = setTimeout(() => void this.poll(), 20_000);
-    this.interval = setInterval(() => void this.poll(), this.opts.intervalMs);
-  }
-
-  stop(): void {
-    if (this.startupTimeout) {
-      clearTimeout(this.startupTimeout);
-      this.startupTimeout = null;
-    }
-    if (this.interval) {
-      clearInterval(this.interval);
-      this.interval = null;
-    }
-  }
 
   /**
    * The configuration a skip is decided under. Written onto every state
@@ -146,7 +124,7 @@ export class TextEnrichmentSweeper {
     });
   }
 
-  /** Test entry point — processes one batch and reports what it did. */
+  /** One sweep: processes one batch and reports what it did. */
   async runOnce(): Promise<{
     extracted: number;
     skipped: number;
@@ -174,6 +152,9 @@ export class TextEnrichmentSweeper {
       else skipped += 1;
     }
 
+    if (extracted + failed > 0) {
+      log("info", "Text enrichment sweep", { extracted, skipped, failed });
+    }
     return { extracted, skipped, failed };
   }
 
@@ -486,25 +467,6 @@ export class TextEnrichmentSweeper {
       return await Promise.race([deriveDimensions(bytes, mimeType), timeout]);
     } finally {
       if (timer) clearTimeout(timer);
-    }
-  }
-
-  /** Scheduler entry point: the same logged tick the timer path drives —
-   *  `runOnce()` alone is the bare test seam and has no logging. */
-  runScheduled(): Promise<void> {
-    return this.poll();
-  }
-
-  private async poll(): Promise<void> {
-    try {
-      const result = await this.runOnce();
-      if (result.extracted + result.failed > 0) {
-        log("info", "Text enrichment sweep", result);
-      }
-    } catch (err) {
-      log("error", "Text enrichment sweep error", {
-        error: err instanceof Error ? err.message : String(err),
-      });
     }
   }
 }

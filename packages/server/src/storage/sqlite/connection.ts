@@ -109,6 +109,11 @@ const RETIRED_COLUMNS: readonly (readonly [string, string, string])[] = [
   ["blobs", "storage_path", "mime_type"],
 ];
 
+/** Longer than any write transaction the server opens, so a writer waits
+ *  its turn rather than failing; short enough that a lock held by a stuck
+ *  process surfaces as an error rather than a hang. */
+const BUSY_TIMEOUT_MS = 5_000;
+
 export type DrizzleDb = ReturnType<typeof drizzle<typeof schema>>;
 export type RawDb = Client;
 
@@ -149,7 +154,17 @@ export async function createConnection(sqlitePath: string): Promise<{
     }
   }
 
-  const client = createClient({ url: toLibsqlUrl(sqlitePath) });
+  // `timeout` is the busy timeout: how long a statement waits for the
+  // write lock before failing with `SQLITE_BUSY`. A client option rather
+  // than a `PRAGMA busy_timeout`, because a pragma reaches one connection
+  // and the transaction path opens its own; the option reaches them all.
+  // Without it every write fails the instant another holds the lock, and
+  // the housekeeping scheduler's bookkeeping meets the request path's
+  // transactions all day.
+  const client = createClient({
+    url: toLibsqlUrl(sqlitePath),
+    timeout: BUSY_TIMEOUT_MS,
+  });
 
   // A database still carrying the retired registry tables is refused, not
   // migrated.

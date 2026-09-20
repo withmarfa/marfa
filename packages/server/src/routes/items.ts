@@ -1307,11 +1307,6 @@ export function itemRoutes(storage: Storage) {
 
     requireTypeAccess(c, type, "write");
 
-    // The items quota is reserved around the write itself, further down,
-    // rather than checked here. A count taken at this point is a check
-    // against a number the write is about to change, so N concurrent
-    // creates each see room and the count lands at limit + N - 1.
-
     if (Array.isArray(body.tags) && body.tags.length > MAX_TAGS_PER_ITEM) {
       throw new MarfaError(
         ErrorCode.VALIDATION_ERROR,
@@ -1700,14 +1695,11 @@ export function itemRoutes(storage: Storage) {
     // it. So the contract answers success and hands back the row.
     //
     // **Both a pre-check and a catch, and each covers what the other
-    // cannot.** The pre-check has to exist because the write path is not
-    // reachable at every moment the acknowledgment is owed: the
-    // transaction reserves quota before it inserts, so an instance at its
-    // item ceiling would answer a repeat with `quota_exceeded` for a row
-    // it already holds — the same permanent refusal in another code. The
-    // catch has to exist because the pre-check races: two sends of one id
-    // can both find nothing, and the loser of the insert still needs an
-    // answer other than 409.
+    // cannot.** The pre-check answers a repeat without entering the write
+    // path, whose refusals are about a write this caller is not making
+    // again. The catch has to exist because the pre-check races: two sends
+    // of one id can both find nothing, and the loser of the insert still
+    // needs an answer other than 409.
     //
     // One comparison serves both, so the two paths cannot disagree about
     // what a repeat is or which gates it passes.

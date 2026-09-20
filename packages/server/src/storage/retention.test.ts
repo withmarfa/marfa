@@ -141,12 +141,7 @@ describe("TrashPurger.runOnce — behavioral", () => {
       ).toISOString(),
     });
 
-    const purger = new TrashPurger(
-      ctx.storage.items,
-      60,
-      3_600_000,
-      () => FIXED_NOW,
-    );
+    const purger = new TrashPurger(ctx.storage.items, 60, () => FIXED_NOW);
 
     const deleted = await purger.runOnce();
     expect(deleted).toBe(2);
@@ -169,12 +164,7 @@ describe("TrashPurger.runOnce — behavioral", () => {
       ).toISOString(),
     });
 
-    const disabled = new TrashPurger(
-      ctx.storage.items,
-      0,
-      3_600_000,
-      () => FIXED_NOW,
-    );
+    const disabled = new TrashPurger(ctx.storage.items, 0, () => FIXED_NOW);
     expect(await disabled.runOnce()).toBe(0);
     expect(await rowExists(itemId)).toBe(true);
   });
@@ -191,12 +181,7 @@ describe("TrashPurger.runOnce — behavioral", () => {
       ).toISOString(),
     });
 
-    const purger = new TrashPurger(
-      ctx.storage.items,
-      60,
-      3_600_000,
-      () => FIXED_NOW,
-    );
+    const purger = new TrashPurger(ctx.storage.items, 60, () => FIXED_NOW);
     expect(await purger.runOnce()).toBe(0);
     expect(await rowExists(itemId)).toBe(true);
 
@@ -204,7 +189,6 @@ describe("TrashPurger.runOnce — behavioral", () => {
     const laterPurger = new TrashPurger(
       ctx.storage.items,
       60,
-      3_600_000,
       () => new Date(FIXED_NOW.getTime() + 31 * MS_PER_DAY),
     );
     expect(await laterPurger.runOnce()).toBe(1);
@@ -238,7 +222,6 @@ describe("TrashPurger — the instance config override", () => {
     const purger = new TrashPurger(
       ctx.storage.items,
       30, // the instance default the override beats
-      3_600_000,
       () => FIXED_NOW,
       retentionOverride,
     );
@@ -268,7 +251,6 @@ describe("TrashPurger — the instance config override", () => {
     const purger = new TrashPurger(
       ctx.storage.items,
       60,
-      3_600_000,
       () => FIXED_NOW,
       retentionOverride,
     );
@@ -405,7 +387,6 @@ describe("AuthSessionCleaner.runOnce — drops expired auth_session rows", () =>
 
     const cleaner = new AuthSessionCleaner(
       ctx.storage.authSessions,
-      3_600_000,
       () => FIXED_NOW,
     );
 
@@ -429,7 +410,6 @@ describe("AuthSessionCleaner.runOnce — drops expired auth_session rows", () =>
 
     const cleaner = new AuthSessionCleaner(
       ctx.storage.authSessions,
-      3_600_000,
       () => FIXED_NOW,
     );
 
@@ -547,12 +527,7 @@ describe("DcrClientCleaner.runOnce — reaps grantless DCR clients", () => {
       source: "test/dcr-reaper",
     });
 
-    const cleaner = new DcrClientCleaner(
-      ctx.storage,
-      30,
-      3_600_000,
-      () => FIXED_NOW,
-    );
+    const cleaner = new DcrClientCleaner(ctx.storage, 30, () => FIXED_NOW);
 
     const deleted = await cleaner.runOnce();
     expect(deleted).toBe(1);
@@ -568,12 +543,7 @@ describe("DcrClientCleaner.runOnce — reaps grantless DCR clients", () => {
       clientId: "client_disabled_job",
       createdAt: new Date(FIXED_NOW.getTime() - 365 * MS_PER_DAY),
     });
-    const disabled = new DcrClientCleaner(
-      ctx.storage,
-      0,
-      3_600_000,
-      () => FIXED_NOW,
-    );
+    const disabled = new DcrClientCleaner(ctx.storage, 0, () => FIXED_NOW);
     expect(await disabled.runOnce()).toBe(0);
     expect(await oauthClientExists("client_disabled_job")).toBe(true);
   });
@@ -645,12 +615,7 @@ describe("ActivityPurger.runOnce — behavioral", () => {
       ).toISOString(),
     });
 
-    const purger = new ActivityPurger(
-      ctx.storage.items,
-      14,
-      3_600_000,
-      () => FIXED_NOW,
-    );
+    const purger = new ActivityPurger(ctx.storage.items, 14, () => FIXED_NOW);
 
     expect(await purger.runOnce()).toBe(1);
     expect(await rowExists(ids.youngActivity)).toBe(true);
@@ -667,12 +632,7 @@ describe("ActivityPurger.runOnce — behavioral", () => {
         FIXED_NOW.getTime() - 900 * MS_PER_DAY,
       ).toISOString(),
     });
-    const disabled = new ActivityPurger(
-      ctx.storage.items,
-      0,
-      3_600_000,
-      () => FIXED_NOW,
-    );
+    const disabled = new ActivityPurger(ctx.storage.items, 0, () => FIXED_NOW);
     expect(await disabled.runOnce()).toBe(0);
     expect(await rowExists(only)).toBe(true);
   });
@@ -741,11 +701,7 @@ describe("RevokedKeyReaper.runOnce — behavioral", () => {
       new Date(FIXED_NOW.getTime() - 29 * MS_PER_DAY).toISOString(),
     );
 
-    const reaper = new RevokedKeyReaper(
-      ctx.storage,
-      3_600_000,
-      () => FIXED_NOW,
-    );
+    const reaper = new RevokedKeyReaper(ctx.storage, () => FIXED_NOW);
     expect(await reaper.runOnce()).toBe(1);
 
     // Read the table directly: `keys.get` hides revoked rows, so it
@@ -827,14 +783,14 @@ describe("RevokedGrantPurger.runOnce — the tombstone sweep", () => {
 
   it("is a no-op at retentionDays 0, like every other job here", async () => {
     const id = await seedTombstone(OLD);
-    const purger = new RevokedGrantPurger(ctx.storage.items, 0, 3_600_000);
+    const purger = new RevokedGrantPurger(ctx.storage.items, 0);
     expect(await purger.runOnce()).toBe(0);
     expect(await ctx.storage.items.get(id)).not.toBeNull();
   });
 
   it("sweeps through the purger at its configured window", async () => {
     const id = await seedTombstone(OLD);
-    const purger = new RevokedGrantPurger(ctx.storage.items, 90, 3_600_000);
+    const purger = new RevokedGrantPurger(ctx.storage.items, 90);
     expect(await purger.runOnce()).toBe(1);
     await expect(ctx.storage.items.get(id)).resolves.toBeNull();
   });
