@@ -69,3 +69,7 @@ version.json
 # Deployment env files live on the box, never in git.
 infra/digitalocean/.env
 infra/digitalocean/server.env
+
+# Holding folders for things a session was refused permission to delete
+_trash/
+_archive/
