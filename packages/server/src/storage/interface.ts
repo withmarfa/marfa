@@ -270,10 +270,10 @@ const ZONELESS_DATETIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?$/;
  * is still refused.
  *
  * A date-time carrying no zone is read as UTC rather than handed to
- * `Date`, which reads it as the server's local time. The comparison it
- * used to reach was against UTC-stamped text, so UTC preserves what the
- * caller already meant; local time would move the bound by whatever
- * offset the deployment happens to run in.
+ * `Date`, which reads it as the server's local time. The stamped text it
+ * is compared against is UTC, so UTC preserves what the caller already
+ * meant; local time would move the bound by whatever offset the deployment
+ * happens to run in.
  *
  * One column is not server-stamped: the item listing's `occurred_*`
  * bounds read `COALESCE(occurred_at, created_at)`, and `occurred_at` is
@@ -709,12 +709,11 @@ export interface ItemStore {
    *
    * The window is measured from `trashed_at`, the time of the transition
    * into the soft-deleted state, falling back to `updated_at` for a row
-   * carrying no stamp. `updated_at` alone used to decide it, and it is
+   * carrying no stamp. `updated_at` alone cannot decide it, because it is
    * the modification time rather than the removal time: any write to a
-   * trashed row moved it, so editing something already in the bin
-   * restarted its retention clock. The fallback covers only rows soft-
-   * deleted by a build predating the column, where reproducing the old
-   * behavior beats a row nothing can purge.
+   * trashed row moves it, so editing something already in the bin would
+   * restart its retention clock. The fallback covers only rows carrying no
+   * `trashed_at`, where a clock that moves beats a row nothing can purge.
    *
    * Unlike `bulkPurge`, this drops the purged items' edges itself (both
    * directions, inside the same transaction). It is the terminal step of
@@ -972,8 +971,8 @@ export interface TypeStore {
    * row was actually deleted.
    *
    * **Scoped to `origin = 'platform'`.** Nothing else writes that origin,
-   * which used to be true by accident and is now a rule the archive restore
-   * enforces by refusing to write a platform origin.
+   * a rule the archive restore enforces by refusing to write a platform
+   * origin.
    *
    * No guard of its own: whether removal is safe is a question about
    * items, which this layer cannot see. The caller decides and this
@@ -1780,18 +1779,16 @@ export interface AuditStore {
    * Write an audit row and propagate a failure to the caller.
    *
    * For the operations where an unaudited success is worse than a loud
-   * failure: an account hard-delete, and the connection install and
-   * uninstall, which are the two ways a credential's whole authority
-   * changes hands. Untracked deliberately — the caller is awaiting it, so
-   * there is nothing in flight for shutdown to drain.
+   * failure: removing a platform type, creating the owner. Untracked
+   * deliberately, because the caller is awaiting it, so there is nothing
+   * in flight for shutdown to drain.
    *
    * **Propagating is the whole of what this promises.** It is not by
    * itself a transactional write. Which connection the insert lands on is
    * decided by the db handle the store was built with and by whatever
    * request context is installed around the call, neither of which is this
    * method's to choose. A caller that needs the row to commit or roll back
-   * with its own transaction has to put the store on that transaction; the
-   * account cascade is the one that does, and it says how.
+   * with its own transaction has to put the store on that transaction.
    */
   logOrThrow(entry: AuditLogEntry): Promise<void>;
   /**
@@ -2142,13 +2139,11 @@ export interface EdgeStore {
    * than by a comparison before it.
    *
    * **Properties merge shallowly over what the edge holds**, as the item
-   * doors do. They used to replace, so an update naming one property
-   * dropped every property it did not name. The response carried the
-   * truncated edge, so the loss was reported — but only to a reader that
-   * replaces its copy with it, and a client merging the answer into what it
-   * already holds sees no removal at all. The merge is computed from a
-   * read, so this takes a transaction; a replacing write had none and
-   * needed none.
+   * doors do. A replacing write would drop every property an update did
+   * not name, and the response carrying the truncated edge would report
+   * that loss only to a reader that replaces its copy with it; a client
+   * merging the answer into what it already holds would see no removal at
+   * all. The merge is computed from a read, so this takes a transaction.
    *
    * **There is no way to remove a single property from an edge**, and the
    * two things that look like one are not. These doors carry no
@@ -2305,18 +2300,38 @@ export interface AuthSessionStore {
   deleteExpired(now: Date): Promise<number>;
 }
 
+/** The person an instance belongs to, as the sign-in surface holds them. */
+export interface OwnerRecord {
+  id: string;
+  email: string;
+  name: string;
+  createdAt: Date;
+}
+
 /**
- * The rate-limit and per-email throttle counters.
+ * The owner: the one account on the instance's sign-in surface.
+ *
+ * Sign-up is disabled on every instance and `POST /owner` refuses once an
+ * account exists, so the account created first is the owner and there is
+ * no second. Read from `auth_user` rather than kept as a separate marker,
+ * because a marker could name a row the sign-in surface no longer holds.
+ */
+export interface OwnerStore {
+  /** The owner, or `null` on an instance that has none yet. */
+  find(): Promise<OwnerRecord | null>;
+}
+
+/**
+ * The rate-limit and throttle counters.
  *
  * Backing table `rate_limit_windows` keyed on (family, window_key). Two
- * production consumers ride the same store:
+ * consumers ride the same store:
  *
- *   - `rate-limit middleware` (family = "rate") — per-credential request
- *     windows. Window keys take the shape
- *     "<credential-id-or-ip>:<path-prefix>";
- *     window size from `AppConfig.rateLimitWindowMs` (default 60s).
- *   - `forgot-password per-email throttle` (family = "throttle") —
- *     window key "forgot-password:<lowercased-email>"; window size 1h.
+ *   - the rate-limit middleware (family = "rate"): per-credential request
+ *     windows, keyed "<credential-id-or-ip>:<path-prefix>", sized by
+ *     `AppConfig.rateLimitWindowMs`.
+ *   - the device verification page's failed-attempt throttle per user code
+ *     (`routes/auth-pages.ts`, family = "device-user-code").
  *
  * The single primitive — atomic increment-counter-bounded-by-window —
  * services both. The counters are rows, so every process pointed at the
@@ -2575,6 +2590,9 @@ export interface Storage extends Partial<BetterAuthStorageAdapter> {
    *  test contexts that don't wire better-auth (the cleanup job in
    *  `index.ts` is gated on this being present). */
   authSessions?: AuthSessionStore;
+  /** The owner behind the sign-in surface. Absent, like `authSessions`, on
+   *  a storage that wires no better-auth tables. */
+  owner?: OwnerStore;
   settings: SettingsStore;
   /** The job table behind `POST /items/bulk-actions`. The worker module
    *  reads and writes through this store; the route handler creates jobs
@@ -2586,10 +2604,9 @@ export interface Storage extends Partial<BetterAuthStorageAdapter> {
   idempotency: IdempotencyStore;
 
   /**
-   * Rate-limit and per-email throttle counters, shared by every process
-   * pointed at the file. The middleware and the forgot-password route
-   * consult it. Required (not optional) because the rate-limit middleware
-   * can't degrade gracefully without it — a missing store would silently
+   * Rate-limit and throttle counters, shared by every process pointed at
+   * the file. The middleware and the device verification page consult it.
+   * Required rather than optional because a missing store would silently
    * degrade to "no rate limit", which is the wrong default.
    */
   rateLimits: RateLimitStore;

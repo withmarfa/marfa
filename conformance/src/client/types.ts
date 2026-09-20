@@ -169,6 +169,14 @@ export interface ApiKeyRequest {
   is_operator?: boolean;
 }
 
+/** The one account behind the instance's sign-in surface. */
+export interface Owner {
+  id: string;
+  email: string;
+  name: string;
+  created_at: string;
+}
+
 export interface ApiKeyResponse {
   id: string;
   key: string;

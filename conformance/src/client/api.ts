@@ -12,6 +12,7 @@ import type {
   PaginatedResult,
   ApiKeyRequest,
   ApiKeyResponse,
+  Owner,
   BlobUploadResponse,
   BulkInput,
   BulkItemInput,
@@ -876,6 +877,20 @@ export class MarfaClient {
     return this.request<PaginatedResult<AuditEntry>>(
       `/audit${encoded ? `?${encoded}` : ""}`,
     );
+  }
+
+  /** `GET /owner`: the operator key only. */
+  async getOwner(): Promise<ApiResponse<Owner>> {
+    return this.request<Owner>("/owner");
+  }
+
+  /** `POST /owner`: the operator key only. */
+  async createOwner(body: {
+    email: string;
+    password: string;
+    name?: string;
+  }): Promise<ApiResponse<Owner>> {
+    return this.request<Owner>("/owner", { method: "POST", body });
   }
 
   /** `GET /admin/platform-types/drift`: the operator key only. */

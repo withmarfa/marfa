@@ -130,6 +130,11 @@ Tests are isolated by credential: each file mints a key with a unique
 `source`, writes through it, and `cleanup` in `afterAll` deletes every tracked
 resource and revokes the key. No shared state between files.
 
+A door whose answer is the instance's whole history rather than rows a key
+can isolate, such as the owner, is asserted against a server the file boots
+for itself with `bootFreshServer` in `utils/fresh-server.ts`, through the
+same script as the run's server, and stops in `afterAll`.
+
 ## Continuous integration
 
 The `conformance` job in `.github/workflows/ci.yml` is the gate, on every pull

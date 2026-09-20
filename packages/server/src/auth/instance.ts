@@ -14,11 +14,10 @@ import {
 import { withIdempotentConsent } from "./consent-idempotent-adapter.js";
 
 /**
- * The first parameter type of better-auth's drizzleAdapter — used to type
- * the `db` handle threaded through `MarfaAuthOptions` so the call site no
- * longer needs an `as never` escape hatch (§3.13). When better-auth bumps
- * and tightens the adapter signature, this alias surfaces the mismatch
- * at compile time at the consumer rather than masking it with a cast.
+ * The first parameter type of better-auth's `drizzleAdapter`, so the `db`
+ * handle threaded through `MarfaAuthOptions` is checked against it without
+ * a cast: when better-auth tightens the adapter signature, the mismatch
+ * surfaces at compile time at the consumer.
  */
 type DrizzleAdapterDb = Parameters<typeof drizzleAdapter>[0];
 
@@ -30,10 +29,10 @@ type DrizzleAdapterDb = Parameters<typeof drizzleAdapter>[0];
 
 export interface MarfaAuthOptions {
   /** Drizzle handle from the storage factory. Typed against better-auth's
-   *  `drizzleAdapter` first-parameter so the call site is statically
-   *  checked without an `as never` cast. The Storage interface widens it
-   *  to `unknown` (BetterAuthStorageAdapter trait); narrowing happens
-   *  here at the only consumer. */
+   *  `drizzleAdapter` first parameter so the call site is checked without a
+   *  cast. The Storage interface widens it to `unknown`
+   *  (`BetterAuthStorageAdapter`); narrowing happens here at the only
+   *  consumer. */
   db: DrizzleAdapterDb;
   /** Hosting issuer URL — protocol + host (and port) the server is reached
    *  at. Used by better-auth to set cookie domains and base paths.
@@ -95,7 +94,12 @@ interface BetterAuthCredentialContext {
     createUser: (
       user: Record<string, unknown>,
       source: { method: string },
-    ) => Promise<{ id: string; email: string } | null>;
+    ) => Promise<{
+      id: string;
+      email: string;
+      name: string;
+      createdAt: Date;
+    } | null>;
     linkAccount: (account: Record<string, unknown>) => Promise<unknown>;
   };
 }
@@ -106,7 +110,13 @@ interface BetterAuthCredentialContext {
  * caller that forgets one gets a compile error instead of a 500.
  */
 export type CreateEmailAccountResult =
-  | { ok: true; authUserId: string; email: string }
+  | {
+      ok: true;
+      authUserId: string;
+      email: string;
+      name: string;
+      createdAt: Date;
+    }
   | { ok: false; reason: "email_exists" }
   | { ok: false; reason: "password_too_short"; minLength: number }
   | { ok: false; reason: "password_too_long"; maxLength: number };
@@ -168,10 +178,9 @@ export interface MarfaAuth {
    * already proven, because whoever calls this asked for the account
    * rather than a stranger claiming it.
    *
-   * No HTTP door calls this. It is the programmatic seam the test harness
-   * uses to put a user behind the OAuth provider's sign-in page; how an
-   * instance gets its first user is an open design question, not this
-   * function's decision.
+   * `POST /owner` is the door over this, and it is how an instance gets
+   * its owner; the test harness calls it directly to put a person behind
+   * the sign-in page without going through that door.
    */
   createEmailAccount: (params: {
     email: string;
@@ -532,7 +541,9 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
     const submittedName = params.name?.trim() ?? "";
     const name =
       submittedName === "" ? (email.split("@")[0] ?? email) : submittedName;
-    let user: { id: string; email: string } | null;
+    let user: Awaited<
+      ReturnType<BetterAuthCredentialContext["internalAdapter"]["createUser"]>
+    >;
     try {
       user = await authContext.internalAdapter.createUser(
         { email, name, emailVerified: true },
@@ -565,7 +576,13 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
       accountId: user.id,
       password,
     });
-    return { ok: true, authUserId: user.id, email: user.email };
+    return {
+      ok: true,
+      authUserId: user.id,
+      email: user.email,
+      name: user.name,
+      createdAt: user.createdAt,
+    };
   };
 
   return {

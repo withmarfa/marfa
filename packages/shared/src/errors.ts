@@ -63,12 +63,11 @@ export enum ErrorCode {
   INVALID_CLIENT = "invalid_client",
   INVALID_SCOPE = "invalid_scope",
   /**
-   * RFC 6749 §5.2 parity. The OAuth device-flow endpoints continue to
-   * emit the flat RFC error shape (`{ error: "invalid_request", ... }`)
-   * directly for spec compliance; this enum entry exists so non-OAuth
-   * call sites that want a generic "the request itself is malformed"
-   * code can throw a `MarfaError` instead of leaning on `VALIDATION_ERROR`
-   * (which is reserved for body-shape failures).
+   * The request itself is malformed in a way that is not a body-shape
+   * failure, which is what `VALIDATION_ERROR` is for. Spelled as RFC 6749
+   * section 5.2 spells it; the OAuth doors answer that flat RFC shape
+   * directly, and this is the same word for the call sites that answer the
+   * envelope.
    */
   INVALID_REQUEST = "invalid_request",
   EXPIRED_TOKEN = "expired_token",
@@ -100,17 +99,17 @@ export enum ErrorCode {
   TYPE_CHAIN_UNRESOLVABLE = "type_chain_unresolvable",
   CORE_TYPE_IMMUTABLE = "core_type_immutable",
   WEBHOOK_NOT_FOUND = "webhook_not_found",
-  /**
-   * API key lookup by id returned no row. Replaces generic `NOT_FOUND`
-   * on `/keys/:id` routes.
-   */
+  /** No key row carries this id. */
   API_KEY_NOT_FOUND = "api_key_not_found",
-  /**
-   * OAuth grant (`oauth_codes` / token row) lookup returned no row.
-   * Replaces generic `NOT_FOUND` on grant-revocation and
-   * grant-introspection paths.
-   */
+  /** No grant row carries this id. */
   OAUTH_GRANT_NOT_FOUND = "oauth_grant_not_found",
+  /**
+   * The instance already has an owner, so `POST /owner` has nothing to
+   * create. `GET /owner` says who.
+   */
+  OWNER_EXISTS = "owner_exists",
+  /** The instance has no owner yet; `POST /owner` creates one. */
+  OWNER_NOT_FOUND = "owner_not_found",
   BLOB_TOO_LARGE = "blob_too_large",
   /**
    * The request body exceeded the global JSON-write size cap
@@ -212,13 +211,14 @@ export enum ErrorCode {
    * A write resolved an existing row whose type is not the one the request
    * declared. The write is refused rather than reinterpreted.
    *
-   * Every door that addresses a row by something other than its type —
-   * `(source, source_id)` on `POST /items` and `POST /items/bulk`, and an
-   * id on `PATCH /items/{id}` and on the bulk path — used to take the
-   * resolved row's type and merge the submitted properties onto it. A caller declaring one type and
-   * landing on another got a 200 and a row of the other shape. That is
-   * silent, and it is reachable from both directions: a mapping added
-   * re-types on the way in, a mapping removed re-types on the way back.
+   * Every door that addresses a row by something other than its type,
+   * `(source, source_id)` on `POST /items` and `POST /items/bulk` and an id
+   * on `PATCH /items/{id}` and on the bulk path, would otherwise take the
+   * resolved row's type and merge the submitted properties onto it: a
+   * caller declaring one type and landing on another would get a 200 and a
+   * row of the other shape. That is silent, and it is reachable from both
+   * directions: a mapping added re-types on the way in, a mapping removed
+   * re-types on the way back.
    *
    * 409 rather than 400: the request is well-formed, and it is the state
    * of the stored row that makes it impossible. Moving a corpus between
@@ -293,6 +293,8 @@ const STATUS_MAP: Record<ErrorCode, number> = {
   [ErrorCode.WEBHOOK_NOT_FOUND]: 404,
   [ErrorCode.API_KEY_NOT_FOUND]: 404,
   [ErrorCode.OAUTH_GRANT_NOT_FOUND]: 404,
+  [ErrorCode.OWNER_EXISTS]: 409,
+  [ErrorCode.OWNER_NOT_FOUND]: 404,
   [ErrorCode.VERSION_BUMP_MISMATCH]: 422,
   [ErrorCode.COMPATIBLE_WITH_VIOLATION]: 422,
   [ErrorCode.BLOB_TOO_LARGE]: 413,
@@ -321,11 +323,9 @@ const STATUS_MAP: Record<ErrorCode, number> = {
   // sent, not because of what the server holds, and a client branching on
   // 409 to mean "somebody else got there first" must not catch this.
   [ErrorCode.IDEMPOTENCY_KEY_REUSED]: 422,
-  // 422 for the same reason, applied consistently. Nothing got there
-  // first: the record exists, the write is not repeated, and the only
-  // thing missing is the body — so a client that reads 409 as a conflict
-  // would act on this exactly wrongly. Keeping it a 409 while the reuse
-  // code moved to 422 was the inconsistency, not the reasoning.
+  // 422 for the same reason. Nothing got there first: the record exists,
+  // the write is not repeated, and the only thing missing is the body, so a
+  // client that reads 409 as a conflict would act on this exactly wrongly.
   [ErrorCode.IDEMPOTENCY_RESULT_NOT_RETAINED]: 422,
 };
 

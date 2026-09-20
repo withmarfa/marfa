@@ -34,6 +34,7 @@ import { keyRoutes } from "./routes/keys.js";
 import { exportRoutes } from "./routes/export.js";
 import { adminArchiveRoutes } from "./routes/admin-archive.js";
 import { adminPlatformTypeRoutes } from "./routes/admin-platform-types.js";
+import { ownerRoutes } from "./routes/owner.js";
 import { authRoutes } from "./routes/auth-pages.js";
 import { oauthPluginFenceRoutes } from "./routes/oauth-plugin-fence.js";
 import {
@@ -267,11 +268,10 @@ export function createApp(
     "edges",
     "admin_archive",
   ];
-  // §3.15: derive the deployed `version` from `version.json` (read at
-  // startup by index.ts and threaded through `config.versionSha`). The
-  // OpenAPI spec carries a separate, semantically-distinct API-contract
-  // version (`info.version` below) — that's a stable literal bumped on
-  // wire-shape changes, not on every deploy.
+  // The deployed `version` comes from `version.json`, read at startup by
+  // index.ts and threaded through `config.versionSha`. The OpenAPI document
+  // carries the separate API-contract version (`info.version` below), a
+  // literal that moves on wire-shape changes and not on a deploy.
   const deployedVersion = config.versionSha ?? "dev";
   // `instance_id` names the deployment, and the root is where a caller that
   // holds no credential can read it: the id is what distinguishes two
@@ -399,10 +399,9 @@ export function createApp(
   // is registered AFTER the explicit /auth routes so explicit handlers
   // win for `/auth/clients`, `/auth/authorize`, `/auth/oauth2/*`, etc.
   //
-  // §3.13: the better-auth handles are typed fields on the Storage
-  // interface (BetterAuthStorageAdapter trait). No `as` cast needed —
-  // both fields are optional, so a Storage that doesn't wire better-auth
-  // simply skips the auth mount.
+  // The better-auth handles are typed fields on the Storage interface
+  // (`BetterAuthStorageAdapter`), both optional, so a Storage that wires no
+  // better-auth simply skips the auth mount.
   let auth: MarfaAuth | undefined;
   if (storage.betterAuthDb) {
     const trustedOrigins = [config.authBaseUrl, ...config.corsOrigins].filter(
@@ -539,6 +538,16 @@ export function createApp(
   app.route("/config", configRoutes(storage, instanceId));
   app.route("/admin", adminArchiveRoutes(storage, blobBackend));
   app.route("/admin", adminPlatformTypeRoutes(storage));
+  // The owner door creates the account on the sign-in surface, so it is
+  // served exactly when that surface is.
+  if (auth) {
+    if (!storage.owner) {
+      throw new Error(
+        "storage wires better-auth without an owner store, so the owner door cannot be served",
+      );
+    }
+    app.route("/owner", ownerRoutes(storage.owner, auth, storage.audit));
+  }
   app.route("/export", exportRoutes(storage, blobBackend, instanceId));
   app.route("/auth", authRoutes(storage, auth, oidcSigner));
   // `/auth/authorize` consent page (the @better-auth/oauth-provider plugin's
