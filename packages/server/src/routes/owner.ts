@@ -19,11 +19,8 @@ import type { AppEnv } from "../middleware/auth.js";
 import { requireOperatorKey } from "../middleware/auth.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import type { MarfaAuth } from "../auth/instance.js";
-import type {
-  AuditStore,
-  OwnerRecord,
-  OwnerStore,
-} from "../storage/interface.js";
+import { log } from "../middleware/logger.js";
+import type { OwnerRecord, Storage } from "../storage/interface.js";
 
 const OwnerSchema = z
   .object({
@@ -96,7 +93,7 @@ const createOwnerRoute = createRoute({
   summary: "Create the owner",
   security: [{ bearerAuth: [] }],
   description:
-    "Creates the one account on this instance's sign-in surface, with an email address and a password. Sign-up is disabled on every instance, so this is the only way a person comes to exist behind the consent screen, and the account can sign in at `POST /auth/sign-in/email` the moment this answers. Refused `409 owner_exists` once an owner exists, whatever the body; the password is judged by the sign-in surface's own length rule and a refusal is `400 validation_error` naming `password` and the bound. Operator key only: the operator key is what proves the person running the instance, and it outlives the bootstrap secret.",
+    "Creates the one account on this instance's sign-in surface, with an email address and a password. Sign-up is disabled on every instance, so this is the only way a person comes to exist behind the consent screen, and the account can sign in at `POST /auth/sign-in/email` the moment this answers. Refused `409 owner_exists` once an owner exists, for any body the schema accepts; the password is judged by the sign-in surface's own length rule and a refusal is `400 validation_error` naming `password` and the bound. Operator key only: the operator key is what proves the person running the instance, and it outlives the bootstrap secret.",
   request: {
     body: {
       content: { "application/json": { schema: CreateOwnerBodySchema } },
@@ -157,26 +154,29 @@ function ownerExists(): MarfaError {
   );
 }
 
-export function ownerRoutes(
-  owner: OwnerStore,
-  auth: MarfaAuth,
-  audit: AuditStore,
-) {
+/** The settings row that says an owner is being, or has been, created. */
+const OWNER_CLAIM = "owner";
+
+export function ownerRoutes(storage: Storage, auth: MarfaAuth) {
+  const owner = storage.owner;
+  if (!owner) {
+    throw new Error(
+      "storage wires better-auth without an owner store, so the owner door cannot be served",
+    );
+  }
   const router = createOpenAPIRouter<AppEnv>();
 
-  // One creation at a time in this process. The existence check and the
-  // account write are two steps with a password hash between them, so two
-  // asks arriving together would both pass the check and both create. The
-  // address's unique index catches the same address twice; this catches
-  // two different ones.
-  let creating: Promise<unknown> = Promise.resolve();
-  const oneAtATime = <T>(work: () => Promise<T>): Promise<T> => {
-    const run = creating.then(work, work);
-    creating = run.then(
-      () => undefined,
-      () => undefined,
-    );
-    return run;
+  // The claim is given back only when the failure left no account behind:
+  // a claim held with nobody behind it would close the door for good, and
+  // one released while an account exists would let a second in.
+  const releaseUnlessCreated = async () => {
+    try {
+      if (!(await owner.find())) await storage.settings.release(OWNER_CLAIM);
+    } catch (error) {
+      log("error", "the owner claim could not be released", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   };
 
   router.openapi(getOwnerRoute, async (c) => {
@@ -194,19 +194,28 @@ export function ownerRoutes(
   router.openapi(createOwnerRoute, async (c) => {
     const operator = requireOperatorKey(c);
     const body = c.req.valid("json");
-    const outcome = await oneAtATime(async () => {
-      const existing = await owner.find();
-      if (existing) return { exists: true as const };
-      const created = await auth.createEmailAccount({
+    if (await owner.find()) throw ownerExists();
+    // The existence check and the account write are two steps with a
+    // password hash between them, so two asks arriving together, in one
+    // process or in two on the same file, would both pass the check. The
+    // claim is one atomic INSERT, so exactly one of them creates; the
+    // address's unique index catches the same address twice besides.
+    if (!(await storage.settings.claim(OWNER_CLAIM, "claimed"))) {
+      throw ownerExists();
+    }
+    let result;
+    try {
+      result = await auth.createEmailAccount({
         email: body.email,
         password: body.password,
         name: body.name,
       });
-      return { exists: false as const, created };
-    });
-    if (outcome.exists) throw ownerExists();
-    const result = outcome.created;
+    } catch (error) {
+      await releaseUnlessCreated();
+      throw error;
+    }
     if (!result.ok) {
+      await releaseUnlessCreated();
       switch (result.reason) {
         case "password_too_short":
           throw refusedPassword(
@@ -224,7 +233,7 @@ export function ownerRoutes(
     }
     // Awaited, because an owner nobody can see being created is worse
     // than the request failing.
-    await audit.logOrThrow({
+    await storage.audit.logOrThrow({
       key_id: operator.id,
       action: "owner.created",
       resource_type: "owner",

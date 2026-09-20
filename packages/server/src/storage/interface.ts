@@ -36,8 +36,8 @@ import type { SourceFilterSettings } from "./filter-sql.js";
 // Filter types
 // ---------------------------------------------------------------------------
 
-/** The three system columns that have always been sortable. Their ordering is
- *  a direct column comparison — no JSON extraction. */
+/** The three system columns sortable by a direct column comparison, with
+ *  no JSON extraction. */
 export const SYSTEM_SORTS = [
   "created_at",
   "updated_at",
@@ -373,22 +373,21 @@ export function decodeCursorNullable(cursor: string): NullableCursorPayload {
  * no signal anywhere.
  *
  * So the key travels with the cursor and a mismatch is refused. A cursor
- * carrying no key at all is read as the created-at ordering, which is the
- * only one that existed before this: an in-flight page keeps working, and
- * the same cursor handed to the new ordering is refused rather than
- * silently honored.
+ * carrying no key at all is read as the created-at ordering, so a page in
+ * flight keeps working, and the same cursor handed to another ordering is
+ * refused rather than silently honored.
  *
  * **The key names the ordering the request actually resolved to**, column
  * and direction, rather than only naming the catch-up ordering against
- * everything else. An earlier version drew that narrower split on the
- * argument that `sort` is set explicitly, so dropping it between pages is
- * a visible caller error while dropping a filter is the ordinary one. The
- * argument holds for a hand-written client and not for one assembling a
- * request from parts, which is the case this exists for; and under the
- * narrow key every one of the item listing's orderings was tagged
- * `created_at`, so a cursor taken under `?sort=updated_at` replayed under
- * `?sort=occurred_at` passed the check and bounded the page against the
- * wrong column — the exact failure, reached through the guard against it.
+ * everything else. The narrower split would rest on `sort` being set
+ * explicitly, so that dropping it between pages is a visible caller error
+ * while dropping a filter is the ordinary one; that holds for a
+ * hand-written client and not for one assembling a request from parts,
+ * which is the case this exists for. And under the narrow key every one of
+ * the item listing's orderings would be tagged `created_at`, so a cursor
+ * taken under `?sort=updated_at` replayed under `?sort=occurred_at` would
+ * pass the check and bound the page against the wrong column: the exact
+ * failure, reached through the guard against it.
  *
  * Direction is part of the key for the same reason the column is. The
  * comparison flips with it, so the same cursor replayed under the
@@ -508,15 +507,6 @@ export function decodeKeyedCursorNullable(
 // ---------------------------------------------------------------------------
 
 /**
- * How this write wants a collision handled, carried down to the store because
- * the resolution happens inside the update's transaction.
- *
- * **Server-internal, like `ItemWriterInput`.** `conflict_mode` comes from the
- * request's own query parameter rather than from the caller's body, and
- * `idempotency_key` is read off the header the replay cache already owns —
- * neither is a field a client sets on an update payload.
- */
-/**
  * An item, plus what the server did if this write resolved a collision.
  *
  * The report rides on the returned object rather than widening the store's
@@ -544,9 +534,17 @@ export type ResolvedItem = Item & {
   conflict_sibling?: Item;
 };
 
+/**
+ * How this write wants a collision handled, carried down to the store because
+ * the resolution happens inside the update's transaction.
+ *
+ * **Server-internal.** `conflict_mode` comes from the request's own query
+ * parameter rather than from the caller's body, and `idempotency_key` is
+ * read off the header the replay cache already owns; neither is a field a
+ * client sets on an update payload.
+ */
 export interface ConflictResolutionInput {
-  /** Absent means `manual`: the envelope, which is what every existing
-   *  caller was written against. */
+  /** Absent means `manual`: the envelope. */
   conflict_mode?: ConflictMode;
   /**
    * The caller's `Idempotency-Key`, when it sent one. Only used to derive the
@@ -594,22 +592,16 @@ export interface ItemStore {
   create(input: StoredCreateItemInput): Promise<Item>;
   get(id: string): Promise<Item | null>;
   /**
-   * Batched `get` — returns a map keyed by item id for every id in `ids` that
-   * resolves to a non-trashed item. Missing ids
-   * are simply absent from the map; no errors. Used by the edge-validation
-   * batcher to collapse per-pair item fetches into a single IN query.
-   */
-  /**
-   * Fetch many items by id.
+   * Fetch many items by id, as a map keyed by id; an id that resolves to
+   * nothing is absent from the map rather than an error.
    *
    * Trashed rows are excluded by default, because every read surface treats a
    * soft-deleted item as gone. Two callers pass `includeTrashed`, both in
    * `bulk-actions/runner.ts`: purge, whose whole input is trashed rows, and
    * the tag chunk, which says at its own call site why it is load-bearing
-   * there rather than defensive. Without it the
-   * purge runner's pre-fetch came back empty, so it reported every id as
-   * "not found" while the delete underneath it succeeded — a
-   * job that removed four thousand rows and said it had removed none.
+   * there rather than defensive. Without it the purge runner's pre-fetch
+   * would come back empty, so it would report every id as "not found" while
+   * the delete underneath it succeeded.
    */
   getMany(
     ids: string[],
@@ -994,12 +986,10 @@ export interface TypeProvenance {
    * What kind of type this is: core content, a connector's own shape,
    * or a structural platform record.
    *
-   * **Widened deliberately from "shipped rows only".** It began as a
-   * property of the shipped set, which is why a type traveling with a
-   * connector manifest registered without one. That is a gap rather
-   * than a design: the question "what kind of type is this" is asked of
-   * every type, and answering it from the identifier cannot separate a
-   * vendor's type from a person's under a claimed handle.
+   * **Asked of every type, not of the shipped set alone.** The question
+   * "what kind of type is this" is asked of every type, and answering it
+   * from the identifier cannot separate a vendor's type from a person's
+   * under a claimed handle.
    *
    * Absent for `user` rows, which is not a gap — a type a person
    * registered belongs to no platform family and never did.
@@ -1095,8 +1085,7 @@ export interface KeyStore {
   count(): Promise<number>;
   /**
    * Hard-delete revoked keys whose `revoked_at` is older than `cutoffIso`.
-   * Returns the number deleted. Nothing swept these at all before, which is
-   * how a staging instance reached 3,044 revoked keys older than a week.
+   * Returns the number deleted.
    */
   deleteRevokedKeysOlderThan(cutoffIso: string): Promise<number>;
 }
@@ -1718,12 +1707,6 @@ export interface OauthProviderStore {
   ): Promise<void>;
 }
 
-// `OauthProviderStore.updateGrantScopes` was dropped. The re-consent path
-// now updates the projection via the standard `storage.items.update` route
-// (writes a `versions` snapshot, bumps `updated_at` + `version`, lets the
-// projection participate in `/items?sort=updated_at` correctly).
-// See `projectGrantOnConsent` in `routes/auth-consent.ts`.
-
 // ---------------------------------------------------------------------------
 // Audit store
 // ---------------------------------------------------------------------------
@@ -1766,11 +1749,11 @@ export interface AuditStore {
    * That is the right contract for almost every audit row, and it is a
    * contract, not an accident — the guarantee is what lets a route emit one
    * without a try/catch. What it is not is a guarantee that the row landed,
-   * and awaiting it does not make it one. Sixteen call sites awaited it
-   * inside a try/catch built to fail the operation on an unaudited write;
-   * every one of those was unreachable. Awaiting is still worth doing where
-   * the row has to be issued inside the caller's transaction, but say so at
-   * the call site, because the failure handling reads as live otherwise.
+   * and awaiting it does not make it one: a try/catch around the await,
+   * built to fail the operation on an unaudited write, is unreachable.
+   * Awaiting is still worth doing where the row has to be issued inside the
+   * caller's transaction, but say so at the call site, because the failure
+   * handling reads as live otherwise.
    *
    * Use `logOrThrow` when an unaudited operation must not stand.
    */
@@ -1900,10 +1883,6 @@ export interface EventLogStore {
 }
 
 // ---------------------------------------------------------------------------
-// Settings store (instance-wide KV for bootstrap sentinel etc.)
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
 // Idempotency records
 // ---------------------------------------------------------------------------
 
@@ -1940,14 +1919,14 @@ export interface ClaimIdempotencyKeyInput {
  * or the retention sweep landing in that gap — so nobody holds the key and
  * nobody is coming to complete it.
  *
- * **Reported rather than folded into `claimed: true`.** That is what the
- * first version of this did, and it was wrong in the one direction this
- * whole mechanism exists to prevent: the caller went on to run the write
- * believing it owned a record that had never been inserted, `complete()`
- * updated nothing, and the next repeat of the same key found no record and
- * wrote for real. A duplicate write, produced inside the feature whose
- * purpose is to remove duplicate writes. The two cases have to be
- * distinguishable at the seam or the caller cannot act on the difference.
+ * **Reported rather than folded into `claimed: true`.** Folded in, it
+ * would be wrong in the one direction this whole mechanism exists to
+ * prevent: the caller would go on to run the write believing it owned a
+ * record that had never been inserted, `complete()` would update nothing,
+ * and the next repeat of the same key would find no record and write for
+ * real, a duplicate write produced inside the feature whose purpose is to
+ * remove duplicate writes. The two cases have to be distinguishable at the
+ * seam or the caller cannot act on the difference.
  */
 export type IdempotencyClaim =
   | { claimed: true }
@@ -2069,10 +2048,6 @@ export interface SettingsStore {
    *  instead, which is the property that was missing. */
   release(key: string): Promise<void>;
 }
-
-// ---------------------------------------------------------------------------
-// Aggregate storage interface
-// ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
 // Edge store
@@ -2385,10 +2360,9 @@ export interface RateLimitStore {
 }
 
 /**
- * Typed handle that storage implementations expose for the better-auth
- * connector (§3.13). The public Storage contract carries the Drizzle
- * handle as `unknown` so the consumer (auth/instance.ts) is the single
- * site that narrows.
+ * The handle storage implementations expose for better-auth. The public
+ * Storage contract carries the Drizzle handle as `unknown` so the consumer
+ * (auth/instance.ts) is the single site that narrows.
  *
  * Optional on `Storage` because not every test fixture needs to wire
  * better-auth — leaving it unset disables the adapter mount in `app.ts`.

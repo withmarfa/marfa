@@ -59,19 +59,7 @@ export enum ErrorCode {
   INVALID_TRANSITION = "invalid_transition",
   TYPE_NOT_FOUND = "type_not_found",
   DUPLICATE_SOURCE = "duplicate_source",
-  INVALID_GRANT = "invalid_grant",
   INVALID_CLIENT = "invalid_client",
-  INVALID_SCOPE = "invalid_scope",
-  /**
-   * The request itself is malformed in a way that is not a body-shape
-   * failure, which is what `VALIDATION_ERROR` is for. Spelled as RFC 6749
-   * section 5.2 spells it; the OAuth doors answer that flat RFC shape
-   * directly, and this is the same word for the call sites that answer the
-   * envelope.
-   */
-  INVALID_REQUEST = "invalid_request",
-  EXPIRED_TOKEN = "expired_token",
-  TOKEN_REUSE_DETECTED = "token_reuse_detected",
   RATE_LIMITED = "rate_limited",
   CONFLICT = "conflict",
   TYPE_ALREADY_EXISTS = "type_already_exists",
@@ -114,10 +102,10 @@ export enum ErrorCode {
   /**
    * The request body exceeded the global JSON-write size cap
    * (`MARFA_MAX_REQUEST_BYTES`, default 1 MB). Distinct from
-   * `BLOB_TOO_LARGE`, the much larger blob-upload-specific cap
-   * (`MAX_BLOB_SIZE`, default 50 MB) enforced inside the blob / avatar
-   * handlers — those routes are deliberately exempt from this global cap.
-   * Both surface as HTTP 413; the code distinguishes which limit fired.
+   * `BLOB_TOO_LARGE`, the much larger cap on a blob upload
+   * (`MAX_BLOB_SIZE`, default 50 MB) enforced by the blob upload route,
+   * which is exempt from this global cap. Both surface as HTTP 413; the
+   * code distinguishes which limit fired.
    */
   REQUEST_TOO_LARGE = "request_too_large",
   INVALID_PROPERTIES = "invalid_properties",
@@ -202,7 +190,7 @@ export enum ErrorCode {
    * uniqueness invariant `(source, source_id)` matches the create-time
    * constraint — re-pointing an item at an in-use natural key would create
    * two rows with the same lookup tuple, breaking the create-or-update
-   * contract that downstream importers and the sync agent rely on. Rejected
+   * contract that an importer and a device's drain rely on. Rejected
    * pre-write so no partial state lands. PATCHing the same `source_id` the
    * item already carries is a no-op success, not a conflict.
    */
@@ -222,7 +210,7 @@ export enum ErrorCode {
    *
    * 409 rather than 400: the request is well-formed, and it is the state
    * of the stored row that makes it impossible. Moving a corpus between
-   * types is a deliberate operation rather than a side effect of a sync.
+   * types is a deliberate operation rather than a side effect of a drain.
    */
   TYPE_MISMATCH = "type_mismatch",
   /**
@@ -277,12 +265,7 @@ const STATUS_MAP: Record<ErrorCode, number> = {
   [ErrorCode.INVALID_TRANSITION]: 400,
   [ErrorCode.TYPE_NOT_FOUND]: 404,
   [ErrorCode.DUPLICATE_SOURCE]: 409,
-  [ErrorCode.INVALID_GRANT]: 400,
   [ErrorCode.INVALID_CLIENT]: 400,
-  [ErrorCode.INVALID_SCOPE]: 400,
-  [ErrorCode.INVALID_REQUEST]: 400,
-  [ErrorCode.EXPIRED_TOKEN]: 401,
-  [ErrorCode.TOKEN_REUSE_DETECTED]: 400,
   [ErrorCode.RATE_LIMITED]: 429,
   [ErrorCode.CONFLICT]: 409,
   [ErrorCode.TYPE_ALREADY_EXISTS]: 409,

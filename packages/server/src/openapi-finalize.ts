@@ -129,7 +129,7 @@ const PUBLIC_TAGS = [
   },
   {
     name: "Auth",
-    description: "Sign-in and OAuth dynamic client registration.",
+    description: "OAuth dynamic client registration.",
   },
 ];
 
@@ -322,15 +322,14 @@ const IDEMPOTENT_OPERATIONS = new Set(
  * The response headers the server sets, and what each one means.
  *
  * None of these can be reflected. Every one is set by middleware or by the
- * error handler rather than declared on a `createRoute` response, so the
- * published spec described no response header at all until they were
- * written here — a client could only learn that any of them existed by
+ * error handler rather than declared on a `createRoute` response, so
+ * without this a client could learn that any of them existed only by
  * reading the server. They are the whole set: `Cache-Control` and `Pragma`
  * in `routes/no-store.ts` sit on the plain-Hono auth HTML pages, which are
  * not part of the reflected API surface and are deliberately left out.
  *
  * Held in `components.headers` and referenced from each response, so the
- * meaning is written once rather than restated on 106 operations.
+ * meaning is written once rather than restated on every operation.
  */
 const RESPONSE_HEADER_COMPONENTS: Record<string, unknown> = {
   "X-Request-ID": {
@@ -415,17 +414,13 @@ const RATE_LIMITED_RESPONSE = {
  * error handler, so `X-Error-Code` is never set on them.
  *
  * Empty, and worth keeping empty rather than deleting: it is the seam where
- * a future response that answers 4xx without throwing gets declared honestly
- * instead of silently claiming a header it does not send.
- *
- * It held `patch /items/{id} 409` until the conflict envelope stopped being
- * the one response whose fresh answer and replay differed in a declared
- * header. That route still returns rather than throws — the exclusion's
- * original wording anticipated the other fix — but it now stamps the header
- * itself, on the code the response actually carries, so the declaration is
- * true of it. Three responses return rather than throw and each stamps the
- * header the same way: that one, the edge conflict envelope, and the
- * conflict a conditional natural-key upsert answers on `post /items`.
+ * a response that answers 4xx without throwing gets declared honestly
+ * instead of silently claiming a header it does not send. Three responses
+ * return rather than throw today and each stamps the header itself, on the
+ * code the response actually carries, so the declaration is true of them:
+ * the item conflict envelope on `patch /items/{id}`, the edge conflict
+ * envelope, and the conflict a conditional natural-key upsert answers on
+ * `post /items`.
  */
 const RESPONSES_WITHOUT_ERROR_CODE = new Set<string>([]);
 
@@ -433,9 +428,8 @@ const RESPONSES_WITHOUT_ERROR_CODE = new Set<string>([]);
  * Statuses an idempotency claim releases rather than records.
  *
  * `RELEASED_STATUSES` in the middleware gives the key back on 401 and 403,
- * so neither is ever stored and neither can ever be replayed. Declaring the
- * replay marker on them is the same over-claiming this change exists to
- * remove.
+ * so neither is ever stored and neither can ever be replayed, and the
+ * replay marker is not declared on them.
  */
 const NEVER_REPLAYED_STATUSES = new Set([401, 403]);
 

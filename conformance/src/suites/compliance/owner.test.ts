@@ -74,8 +74,12 @@ describe("the owner", () => {
   });
 
   it("is the operator key's to read and to create", async () => {
-    expect((await anonymous.getOwner()).status).toBe(401);
-    expect((await anonymous.createOwner(OWNER)).status).toBe(401);
+    const bareRead = await anonymous.getOwner();
+    expect(bareRead.status).toBe(401);
+    expect(bareRead.error?.error.code).toBe("unauthorized");
+    const bareCreate = await anonymous.createOwner(OWNER);
+    expect(bareCreate.status).toBe(401);
+    expect(bareCreate.error?.error.code).toBe("unauthorized");
     const read = await working.getOwner();
     expect(read.status).toBe(403);
     expect(read.error?.error.code).toBe("forbidden");
@@ -97,6 +101,18 @@ describe("the owner", () => {
       {
         path: "password",
         message: expect.stringMatching(/^must be at least \d+ characters$/),
+      },
+    ]);
+    const long = await operator.createOwner({
+      email: OWNER.email,
+      password: "x".repeat(1000),
+    });
+    expect(long.status).toBe(400);
+    expect(long.error?.error.code).toBe("validation_error");
+    expect(long.error?.error.details?.errors).toEqual([
+      {
+        path: "password",
+        message: expect.stringMatching(/^must be at most \d+ characters$/),
       },
     ]);
     expect((await operator.getOwner()).status).toBe(404);

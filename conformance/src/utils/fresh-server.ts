@@ -14,8 +14,8 @@ import { parseEnvFile } from "./target.js";
  * a door whose answer is the instance's whole history, rather than rows a
  * file can isolate under its own key, cannot be asserted against it: the
  * first file to reach the door decides what every later one sees, and a
- * re-run against the same server sees the last run. A boot here costs a few
- * seconds and buys a story that starts at the beginning.
+ * re-run against the same server sees the last run. A boot here buys a
+ * story that starts at the beginning.
  */
 export interface FreshServer {
   apiUrl: string;
@@ -33,6 +33,10 @@ const conformanceRoot = resolve(
   "..",
   "..",
 );
+
+/** Past the script's own health budget, so its failure is reported rather
+ *  than cut off. */
+const BOOT_BUDGET_MS = 240_000;
 
 async function mintWorkingKey(
   apiUrl: string,
@@ -70,10 +74,17 @@ export async function bootFreshServer(label: string): Promise<FreshServer> {
       // The script pins the port to `PORT` when one is set, and the run's
       // own server may already hold it.
       env: { ...process.env, PORT: "" },
+      // Bounded, because the call blocks the worker and vitest's own hook
+      // timeout cannot fire while it does.
+      timeout: BOOT_BUDGET_MS,
     });
 
   const up = run("up");
   if (up.status !== 0) {
+    // The script spawns the server detached before anything that can
+    // fail, so a failed boot may have left one running; `down` finds it
+    // through the pid file, which is why the directory goes only after.
+    run("down");
     rmSync(state, { recursive: true, force: true });
     throw new Error(
       `could not boot a server into ${state}:\n${up.stdout}${up.stderr}`,
@@ -85,12 +96,12 @@ export async function bootFreshServer(label: string): Promise<FreshServer> {
     if (stopped) return;
     stopped = true;
     const down = run("down");
-    rmSync(state, { recursive: true, force: true });
     if (down.status !== 0) {
       throw new Error(
-        `could not stop the server booted into ${state}:\n${down.stdout}${down.stderr}`,
+        `could not stop the server booted into ${state}, whose state is left in place:\n${down.stdout}${down.stderr}`,
       );
     }
+    rmSync(state, { recursive: true, force: true });
   };
 
   const env = parseEnvFile(readFileSync(join(state, "env"), "utf8"));

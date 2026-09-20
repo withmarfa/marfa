@@ -104,12 +104,12 @@ export function createApp(
   });
   app.onError(errorHandler);
 
-  // An unmatched route never throws, so it never reaches `onError` — Hono
-  // answers it with a bare `404 Not Found` in plain text. That is the one
-  // error a person is most likely to reach by hand, from a mistyped address
-  // or a link that has moved, and it was the least presentable thing the
-  // server produced. Same negotiation as every other error: a page for a
-  // browser, the documented JSON shape for everything else.
+  // An unmatched route never throws, so it never reaches `onError`, and
+  // Hono would answer it with a bare `404 Not Found` in plain text. That is
+  // the one error a person is most likely to reach by hand, from a mistyped
+  // address or a link that has moved, so it gets the same negotiation as
+  // every other error: a page for a browser, the documented JSON shape for
+  // everything else.
   app.notFound((c) => {
     const body = {
       error: { code: "not_found", message: "Not found" },
@@ -246,10 +246,9 @@ export function createApp(
   // this deployment. Keep it in sync with the routes mounted below; entries
   // here are an honest signal to discovery clients, not a marketing list.
   //
-  // Entries are lower_snake_case. The list carried one hyphenated name for a
-  // door that had already left, and a reader cannot tell a second convention
-  // from a typo, so the spelling is stated rather than inferred from the two
-  // multi-word entries that happen to be here.
+  // Entries are lower_snake_case, stated rather than inferred from the
+  // multi-word entries that happen to be here, because a reader cannot tell
+  // a second convention from a typo.
   const features = [
     "items",
     "search",
@@ -357,9 +356,6 @@ export function createApp(
           "/auth/oauth2/authorize": 30,
           "/auth/authorize/decision": 30,
           "/auth/authorize": 60,
-          // The old `/auth/token` route has been removed; the plugin lives
-          // at `/auth/oauth2/token`. This entry is intentionally absent
-          // to avoid a dead prefix in the table.
         },
         trustedProxyCidrs: config.trustedProxyCidrs,
         trustedProxyHeader: config.trustedProxyHeader ?? null,
@@ -380,7 +376,7 @@ export function createApp(
   // **Registered outside any write transaction deliberately.** A claim has
   // to commit whether or not the write's own transaction does; inside it
   // the claim would roll back with a failed write and the retry would then
-  // write for real, which is the defect this removes.
+  // write for real.
   //
   // Registered per door through Hono's own router rather than matched by
   // hand: the table is the registered patterns, so the coverage test can
@@ -399,9 +395,9 @@ export function createApp(
   // is registered AFTER the explicit /auth routes so explicit handlers
   // win for `/auth/clients`, `/auth/authorize`, `/auth/oauth2/*`, etc.
   //
-  // The better-auth handles are typed fields on the Storage interface
-  // (`BetterAuthStorageAdapter`), both optional, so a Storage that wires no
-  // better-auth simply skips the auth mount.
+  // The better-auth handle is one optional field on the Storage interface
+  // (`BetterAuthStorageAdapter`), so a Storage that wires no better-auth
+  // simply skips the auth mount.
   let auth: MarfaAuth | undefined;
   if (storage.betterAuthDb) {
     const trustedOrigins = [config.authBaseUrl, ...config.corsOrigins].filter(
@@ -499,11 +495,9 @@ export function createApp(
     // `/.well-known/openid-configuration` are deliberately absent, and a
     // request to either is a plain 404. Per RFC 8414 §3 those paths belong to
     // an issuer of `<base>` with no path component, which this server is not,
-    // so answering there returned a document whose `issuer` could not match
-    // what the client asked about. That turned a client holding the wrong
-    // issuer into a server-shaped error — "the metadata document is invalid"
-    // — and cost several releases of dead sign-in in one app before anyone
-    // read the two identifiers side by side. A 404 names its own cause.
+    // so answering there would serve a document whose `issuer` could not
+    // match what the client asked about, and a client holding the wrong
+    // issuer would meet a server-shaped error. A 404 names its own cause.
     app.get("/.well-known/oauth-authorization-server/auth", (c) =>
       augmentMetadata(authServerMeta, c.req.raw),
     );
@@ -540,14 +534,7 @@ export function createApp(
   app.route("/admin", adminPlatformTypeRoutes(storage));
   // The owner door creates the account on the sign-in surface, so it is
   // served exactly when that surface is.
-  if (auth) {
-    if (!storage.owner) {
-      throw new Error(
-        "storage wires better-auth without an owner store, so the owner door cannot be served",
-      );
-    }
-    app.route("/owner", ownerRoutes(storage.owner, auth, storage.audit));
-  }
+  if (auth) app.route("/owner", ownerRoutes(storage, auth));
   app.route("/export", exportRoutes(storage, blobBackend, instanceId));
   app.route("/auth", authRoutes(storage, auth, oidcSigner));
   // `/auth/authorize` consent page (the @better-auth/oauth-provider plugin's

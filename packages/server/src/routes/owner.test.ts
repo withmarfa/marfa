@@ -128,11 +128,17 @@ describe("POST /owner", () => {
       ctx.workingKey,
     );
     expect(working.status).toBe(403);
-    // Neither refusal created anything.
+    // Neither refusal created anything, and the same body under the
+    // operator key does.
     const none = await request(ctx.app, "GET", "/owner", {
       key: ctx.operatorKey,
     });
     expect(none.status).toBe(404);
+    const created = await create(ctx, {
+      email: "owner@example.com",
+      password: PASSWORD,
+    });
+    expect(created.status).toBe(201);
   });
 
   it("refuses a malformed body and a password outside the sign-in surface's rule", async () => {

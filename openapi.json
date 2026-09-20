@@ -22203,7 +22203,7 @@
             "bearerAuth": []
           }
         ],
-        "description": "Creates the one account on this instance's sign-in surface, with an email address and a password. Sign-up is disabled on every instance, so this is the only way a person comes to exist behind the consent screen, and the account can sign in at `POST /auth/sign-in/email` the moment this answers. Refused `409 owner_exists` once an owner exists, whatever the body; the password is judged by the sign-in surface's own length rule and a refusal is `400 validation_error` naming `password` and the bound. Operator key only: the operator key is what proves the person running the instance, and it outlives the bootstrap secret.",
+        "description": "Creates the one account on this instance's sign-in surface, with an email address and a password. Sign-up is disabled on every instance, so this is the only way a person comes to exist behind the consent screen, and the account can sign in at `POST /auth/sign-in/email` the moment this answers. Refused `409 owner_exists` once an owner exists, for any body the schema accepts; the password is judged by the sign-in surface's own length rule and a refusal is `400 validation_error` naming `password` and the bound. Operator key only: the operator key is what proves the person running the instance, and it outlives the bootstrap secret.",
         "requestBody": {
           "required": true,
           "content": {
@@ -25523,7 +25523,7 @@
     },
     {
       "name": "Auth",
-      "description": "Sign-in and OAuth dynamic client registration."
+      "description": "OAuth dynamic client registration."
     }
   ]
 }

@@ -171,9 +171,9 @@ export interface MarfaAuth {
   /**
    * Create an email + password account without going through sign-up.
    *
-   * `POST /auth/sign-up/email` is the only endpoint that mints a password
-   * account, and it refuses on every instance because `disableSignUp` is
-   * set unconditionally. This runs the same machinery the endpoint does:
+   * Better Auth's own `POST /auth/sign-up/email` refuses on every instance
+   * because `disableSignUp` is set unconditionally, so this runs the same
+   * machinery that endpoint would:
    * Better Auth's own hasher and its internal adapter. The address arrives
    * already proven, because whoever calls this asked for the account
    * rather than a stranger claiming it.
@@ -367,11 +367,11 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
         httpOnly: true,
         // `Secure` is conditional on the auth baseURL using HTTPS.
         // Chrome silently drops `Secure` cookies on plain-HTTP origins
-        // except localhost — including HTTP-over-Tailscale, intranet
-        // hostnames, and dev deploys behind reverse proxies that
-        // terminate TLS upstream. Hardcoding `secure: true` made the
-        // session cookie unstoreable in those cases, breaking sign-in
-        // entirely. HttpOnly + SameSite=Lax remain unconditional.
+        // except localhost, including an intranet hostname and a deploy
+        // behind a reverse proxy that terminates TLS upstream, so an
+        // unconditional `secure: true` would make the session cookie
+        // unstoreable there and sign-in impossible. HttpOnly and
+        // SameSite=Lax are unconditional.
         secure: options.baseURL.startsWith("https://"),
         sameSite: "lax",
       },

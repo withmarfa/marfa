@@ -16,7 +16,6 @@ describe("ErrorCode", () => {
   });
 
   it("includes resource-specific codes", () => {
-    expect(ErrorCode.INVALID_REQUEST).toBe("invalid_request");
     expect(ErrorCode.API_KEY_NOT_FOUND).toBe("api_key_not_found");
     expect(ErrorCode.OAUTH_GRANT_NOT_FOUND).toBe("oauth_grant_not_found");
   });
@@ -38,7 +37,6 @@ describe("httpStatus", () => {
   });
 
   it("maps resource-specific codes to expected statuses", () => {
-    expect(httpStatus(ErrorCode.INVALID_REQUEST)).toBe(400);
     expect(httpStatus(ErrorCode.API_KEY_NOT_FOUND)).toBe(404);
     expect(httpStatus(ErrorCode.OAUTH_GRANT_NOT_FOUND)).toBe(404);
   });

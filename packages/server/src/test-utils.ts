@@ -230,8 +230,9 @@ export async function seedOauthBearer(
 /**
  * Put a password account behind the OAuth provider's sign-in page.
  *
- * There is no HTTP door that creates a user: sign-up is disabled on every
- * instance, so this goes through the programmatic seam the app exposes.
+ * Goes around `POST /owner`, through the seam the app exposes, so a test
+ * can put any number of people behind the sign-in page without the one
+ * owner the door allows.
  * The account arrives verified, so a test signs in through
  * `POST /auth/sign-in/email` (or the form at `POST /auth/sign-in`) right
  * away. A refusal throws rather than returning, because a fixture with no
