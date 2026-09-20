@@ -300,7 +300,7 @@ export interface SearchFilters {
    *
    * Declared here because the route has always read it and this type has never
    * offered it, so no caller could reach those rows through search while the
-   * sibling listing could. The value already travelled -- `search` spreads its
+   * sibling listing could. The value already traveled -- `search` spreads its
    * filters straight into the query -- so the gap was the declaration alone.
    */
   include?: string;

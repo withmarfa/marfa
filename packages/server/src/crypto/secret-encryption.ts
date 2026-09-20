@@ -53,8 +53,8 @@ function getMasterSecret(): Buffer {
   // enforces this at boot; this is the fail-closed backstop so a code path
   // that reaches here without a valid secret throws rather than silently
   // deriving a per-process random key — that key would not survive a
-  // restart, leaving every at-rest ciphertext (OAuth tokens, webhook
-  // secrets, OAuth callback state, system.credential rows) undecryptable.
+  // restart, leaving every at-rest ciphertext undecryptable — today the
+  // `secret_encrypted` field `system.credential` declares.
   if (process.env.NODE_ENV === "production") {
     throw new SecretCryptoError(
       "MARFA_AUTH_SECRET must be set to at least 32 characters in production",
@@ -83,8 +83,8 @@ function deriveKey(info: string): Buffer {
  * Encrypt a plaintext string into an opaque hex-encoded ciphertext that
  * round-trips through `decryptSecret(..., info)`. The `info` string
  * scopes the HKDF derivation — callers MUST use a stable, descriptive
- * label per use (e.g. "connection-oauth-tokens",
- * "connection-oauth-tokens"). Different infos produce different keys;
+ * label per use, such as `"connection-oauth-tokens"`. Different infos
+ * produce different keys;
  * mismatched infos at decrypt-time fail loudly.
  */
 export function encryptSecret(plaintext: string, info: string): string {
@@ -152,14 +152,4 @@ export function decryptSecret(ciphertextHex: string, info: string): string {
  */
 export const SECRET_INFO = {
   connectionOauthToken: "connection-oauth-tokens",
-  /**
-   * OAuth callback state. Used by `signOAuthState` /
-   * `verifyOAuthState` to opaquely tamper-proof the `state` query
-   * param across the round trip from `POST /connections/:id/oauth/start`
-   * → upstream provider → `GET /oauth/callback`. Encrypts
-   * a small JSON envelope so the callback can recover the
-   * connection_id and validate freshness without trusting
-   * query-string contents.
-   */
-  oauthCallbackState: "oauth-callback-state",
 } as const;

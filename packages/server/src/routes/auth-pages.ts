@@ -128,8 +128,6 @@ async function createUserAppGrant(
       // it guards the axis the lookup does not: a row the store admits can
       // still hold `status: "revoked"`, and merging against a withdrawn
       // scope set is what the clause below refuses.
-      // `connections/revoked-connection.ts` carries the relationship
-      // between the two axes and which disagreements are legitimate.
       //
       // Tested FOR "active" on both rather than against "revoked", which
       // decides the absent and unrecognized cases the safe way round: a

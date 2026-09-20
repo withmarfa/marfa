@@ -10,7 +10,8 @@ import { bulkActionJobs } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
 
 /**
- * SQLite implementation of the bulk_action job substrate.
+ * The SQLite implementation of `BulkActionJobStore`, over
+ * `bulk_action_jobs`.
  *
  * A bounded UPDATE on the oldest queued row is what stops two worker loops
  * claiming the same job. The subquery is uncorrelated, so it runs once per

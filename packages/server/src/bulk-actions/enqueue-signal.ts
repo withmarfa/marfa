@@ -36,6 +36,6 @@ export function notifyBulkJobEnqueued(): void {
   try {
     listener?.();
   } catch {
-    // A wake is an optimisation over the poll, not a delivery mechanism.
+    // A wake is an optimization over the poll, not a delivery mechanism.
   }
 }

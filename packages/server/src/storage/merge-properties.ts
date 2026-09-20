@@ -33,7 +33,7 @@ export function resolveIncomingProperties(
  * The properties the row ends up holding, given the resolved incoming set.
  *
  * `replace` is for a caller that means the incoming set to BE the row's
- * properties rather than to be laid over them. The clearing behaviour is
+ * properties rather than to be laid over them. The clearing behavior is
  * reachable without it — an owning connector's re-sync already has a null
  * delete a key — but only by naming every field it wants gone, which means
  * every call site keeping its own list of the fields it is not sending. Nine

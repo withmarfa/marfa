@@ -5,7 +5,7 @@ import { HttpTransport } from "./transport.js";
 import type { MarfaEvent, MarfaItemEvent } from "./events.js";
 
 /** Build a transport whose fetch replays a scripted sequence of streams, one
- *  per connection attempt, so reconnect behaviour is observable. */
+ *  per connection attempt, so reconnect behavior is observable. */
 function transportOver(bodies: (string[] | { status: number })[]): {
   transport: HttpTransport;
   calls: Request[];

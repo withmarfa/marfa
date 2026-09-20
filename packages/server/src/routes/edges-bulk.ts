@@ -16,8 +16,8 @@
  * pubsub enum had no `edge_updated` variant; it does now, and a bulk edit
  * propagates like a single one.
  *
- * `enable_fanout` governs the outbound work instead — webhook delivery and
- * the connector reactions the bridge enqueues — and defaults off, so a
+ * `enable_fanout` governs the outbound work instead — webhook delivery —
+ * and defaults off, so a
  * multi-batch migration does not call out once per edge it moves.
  *
  * Authorization mirrors single-edge `POST /edges`: the caller needs write

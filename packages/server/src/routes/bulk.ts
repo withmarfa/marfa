@@ -19,8 +19,8 @@
  * replays, so a write missing from it is one that client can never learn
  * about.
  *
- * `enable_fanout` governs the outbound work instead — webhook delivery and
- * the connector reactions the bridge enqueues — and defaults off, because
+ * `enable_fanout` governs the outbound work instead — webhook delivery —
+ * and defaults off, because
  * one call here writes thousands of rows and a delivery per row per
  * subscriber is not what the caller asked for.
  */
@@ -165,7 +165,7 @@ const BulkResponseSchema = z.object({
 });
 
 // The request shape is `BulkActionInputSchema`, declared once in the
-// bulk-action substrate and imported here. The filter half was deduped
+// bulk-action module and imported here. The filter half was deduped
 // first and the envelope around it was left behind, which is the same
 // two-declarations-of-one-thing that let `dry_run` and `max_items` drift
 // out of step with the copy the specification is generated from.

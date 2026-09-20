@@ -866,7 +866,7 @@ export async function readSse(
  *
  * **Call this before the write, and await it after.** The listener has to
  * be attached before the publish or it hears nothing, and a test built the
- * other way round passes or fails on scheduling rather than on behaviour.
+ * other way round passes or fails on scheduling rather than on behavior.
  * Attachment happens synchronously inside this call — the generator body
  * runs as far as its `on()` registration on the first `next()`, and that
  * `next()` is issued here — so by the time this returns its promise the

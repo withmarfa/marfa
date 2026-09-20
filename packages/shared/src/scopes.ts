@@ -546,7 +546,7 @@ const METADATA_SUB_SCOPE_RE = /^metadata\.([a-z][a-z0-9_-]*):(read|write)$/;
  *
  * **A row added here reaches a `profile:read` holder and does not reach a
  * `profile.name:read` holder**, which falls out of the parent/row split
- * without anybody writing that behaviour a second time. That property is the
+ * without anybody writing that behavior a second time. That property is the
  * main argument for cloning `metadata` rather than inventing a shape.
  */
 export const PROFILE_ROWS = ["name", "email", "avatar"] as const;

@@ -6,7 +6,7 @@
  *  - the base shape (item + outbound edges + metadata) is unchanged when no
  *    include is passed;
  *  - `backrefs` hydrates inbound edges grouped by type, with per-type cap +
- *    pagination signalling;
+ *    pagination signaling;
  *  - `neighbors` hydrates the far-end items of the requested edge blocks, each
  *    with its metadata;
  *  - neighbor hydration is NOT an access-control bypass: a neighbor the

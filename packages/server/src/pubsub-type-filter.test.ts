@@ -10,7 +10,7 @@
  * It did not. The subscription compared the event's type to the requested
  * one with string equality, so a subscriber narrowing to a parent type
  * received nothing at all for its children — and nothing anywhere asserted
- * the behaviour in either direction. The documentation, three sibling read
+ * the behavior in either direction. The documentation, three sibling read
  * surfaces and the type registry all agreed with each other and not with
  * this one comparison.
  */

@@ -152,7 +152,7 @@ describe("a property payload one door refuses, the other refuses too", () => {
     expect(body.error.code).toBe("bulk_atomic_rollback");
     expect(body.error.details?.code).toBe("invalid_properties");
 
-    // The valid entry travelled with the refused one, so the rollback is
+    // The valid entry traveled with the refused one, so the rollback is
     // what has to be observed rather than the refusal.
     for (const id of [badId, goodId]) {
       const after = await request(ctx.app, "GET", `/items/${id}`, {

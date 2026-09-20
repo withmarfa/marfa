@@ -130,7 +130,7 @@ function permissionWithin(
  * Whether `line` sits inside the body of a gate helper rather than a handler.
  *
  * Walks back to the nearest function declaration, stopping at a route
- * registration, so a helper defined between two routes is still recognised.
+ * registration, so a helper defined between two routes is still recognized.
  */
 function insideGateHelper(lines: readonly string[], line: number): boolean {
   for (let i = line - 1; i >= 0; i--) {

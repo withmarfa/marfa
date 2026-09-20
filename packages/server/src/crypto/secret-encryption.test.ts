@@ -23,17 +23,18 @@ describe("secret-encryption", () => {
   });
 
   it("rejects ciphertext encrypted under a different info string", () => {
-    // Two domains that something actually writes, not one used twice: the
-    // claim is that a ciphertext does not travel between them, which needs
-    // two, and a tag nothing writes would take the test with it when it
-    // goes.
+    // The live tag against a literal, because `SECRET_INFO` now holds one
+    // entry. The claim is that a ciphertext does not travel between two
+    // domains, which needs two strings rather than two live consumers. The
+    // second tag this used to name had no writer once the module that used
+    // it was deleted, and it went with it.
     const ciphertext = encryptSecret(
       "topsecret",
       SECRET_INFO.connectionOauthToken,
     );
-    expect(() =>
-      decryptSecret(ciphertext, SECRET_INFO.oauthCallbackState),
-    ).toThrow(/decrypt/i);
+    expect(() => decryptSecret(ciphertext, "some-other-domain")).toThrow(
+      /decrypt/i,
+    );
   });
 
   it("rejects truncated ciphertext", () => {

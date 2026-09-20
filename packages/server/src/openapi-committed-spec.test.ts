@@ -11,9 +11,8 @@
  * The second half is not hypothetical. `generate:openapi` writes to **stdout**,
  * so regenerating means `... > openapi.json` and a run without the redirect
  * prints the whole spec and changes nothing — while exiting 0, which reads as
- * success. That happened twice in one sitting during the one-permission-model
- * change, and the false claims it left were caught by eye rather than by
- * anything here.
+ * success, and the false claims that leaves are caught by eye or not at all
+ * — which is what this file replaces.
  *
  * Compared as parsed JSON rather than as text, so the failure is about content
  * and not about a trailing newline. The generator is deterministic — a plain

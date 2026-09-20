@@ -1519,7 +1519,7 @@ export interface OauthProviderStore {
    * sweep them. `hasConsent: false` means the user has revoked the app and
    * the code must not be redeemable.
    *
-   * Returns null for a code this store does not recognise, which the caller
+   * Returns null for a code this store does not recognize, which the caller
    * treats as "not ours" and passes through rather than refusing.
    */
   findAuthorizationCodeGrantKey(codeHash: string): Promise<{
@@ -1678,7 +1678,7 @@ export interface OauthProviderStore {
    * the window between the two writes, for a grant soft-deleted out of the
    * active state, and for one whose projection was purged.
    *
-   * Returns null for a code this store does not recognise, or one no person
+   * Returns null for a code this store does not recognize, or one no person
    * has claimed yet, which the caller passes through to the plugin.
    */
   findDeviceCodeGrantKey(deviceCode: string): Promise<{
@@ -2141,10 +2141,12 @@ export interface EdgeStore {
    *
    * **Properties merge shallowly over what the edge holds**, as the item
    * doors do. They used to replace, so an update naming one property
-   * dropped every property it did not name — and a client that queues a
-   * patch, which is what the local engine does, lost the rest of the edge
-   * with nothing reporting it. The merge is computed from a read, so this
-   * takes a transaction; a replacing write had none and needed none.
+   * dropped every property it did not name. The response carried the
+   * truncated edge, so the loss was reported — but only to a reader that
+   * replaces its copy with it, and a client merging the answer into what it
+   * already holds sees no removal at all. The merge is computed from a
+   * read, so this takes a transaction; a replacing write had none and
+   * needed none.
    *
    * **There is no way to remove a single property from an edge**, and the
    * two things that look like one are not. These doors carry no

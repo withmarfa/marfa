@@ -3,8 +3,8 @@
  * `client.items.bulkAction` to drive async-job lifecycles.
  *
  * Reusable across async-job endpoints — the default 250 → 500 → 1000
- * → 2000ms schedule suits a job-table-backed substrate where the worker
- * picks up a new job within ~500ms of the INSERT. Callers can tune via
+ * → 2000ms schedule suits a job table whose worker picks up a new row
+ * within ~500ms of the INSERT. Callers can tune via
  * `pollIntervalMs` / `maxWaitMs` / `maxPollIntervalMs`.
  */
 

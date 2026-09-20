@@ -471,8 +471,8 @@ describe("a retried update never conflicts with itself", () => {
   it("replays the first attempt rather than refusing the version it already moved", async () => {
     // Rule 2's third clause, and the one the other update case here cannot
     // reach: that one sends a version-less patch, where the un-keyed
-    // behaviour is a second success rather than a conflict, so it does not
-    // discriminate. With `version` the un-keyed behaviour IS a 409 — the
+    // behavior is a second success rather than a conflict, so it does not
+    // discriminate. With `version` the un-keyed behavior IS a 409 — the
     // first attempt moved the row past the version the retry names — which
     // is exactly the wrong answer to "did my write land?".
     //

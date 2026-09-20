@@ -53,7 +53,7 @@ fi
 
 # The subshell `exec`s into pnpm, which spawns tsx, which spawns node, so the
 # pid recorded here is pnpm's and the process holding the port is two levels
-# below it. `server-down.sh` walks down from this pid rather than signalling
+# below it. `server-down.sh` walks down from this pid rather than signaling
 # it alone.
 #
 # **A process group would be tidier and is not reliable here.** `set -m` gives

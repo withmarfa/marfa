@@ -1,5 +1,5 @@
 /**
- * In-process worker loop for the bulk_action job substrate.
+ * In-process worker loop over `bulk_action_jobs`.
  *
  * One loop per server process, and `claimNext`'s bounded UPDATE is what
  * stops two of them running the same job: each claim is one statement, so

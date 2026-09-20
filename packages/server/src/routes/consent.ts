@@ -49,7 +49,7 @@
  * a subset of concrete scopes both passes that check and narrows the token.
  *
  * Re-consent diff: when the caller passes `priorScopes` (the scope set the
- * user previously approved on this client), the screen renders three labelled
+ * user previously approved on this client), the screen renders three labeled
  * sections — "New", "Already allowed", and "No longer needed" — instead of the
  * first-time grouping. First-time consent (no prior grant) renders the plain
  * three-group shape.

@@ -20,7 +20,7 @@
  * the input stays a label descendant and implicit label association (by
  * containment) is preserved. The button is `type="button"` so it never
  * submits the form, and it's interactive content, so a click on it is not
- * forwarded to the labelled input.
+ * forwarded to the labeled input.
  */
 
 export const PASSWORD_TOGGLE_JS = `(function () {

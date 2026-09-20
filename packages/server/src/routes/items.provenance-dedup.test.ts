@@ -1,11 +1,14 @@
 /**
  * Connector provenance, and the two ways it used to collide.
  *
- * `(source, source_id)` is a natural key a connector re-syncs against.
+ * `(source, source_id)` is a natural key a connector re-syncs against. The
+ * first collision is with another connector: the index was instance-wide,
+ * so two credentials that happened to share a `source_id` collided even
+ * though neither had seen the other's upstream.
  *
- * The other collision is with the user: a
- * mirror they trashed refused every later re-sync, permanently, because
- * two dedup checks on the same write path disagreed about state.
+ * The second is with the owner: a mirror they trashed refused every later
+ * re-sync, permanently, because two dedup checks on the same write path
+ * disagreed about state.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { createTestContext, request } from "../test-utils.js";

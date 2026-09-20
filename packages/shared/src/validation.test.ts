@@ -624,7 +624,7 @@ describe("the reserved roots are derived rather than typed out", () => {
     // Deliberate, and the reason is on `isReservedHandle`. A handle naming a
     // shipped publisher root is a namespace collision rather than a grammar
     // confusion, and reserving `google` while admitting `google-drive` is a
-    // half-protection rather than a defence. `google.calendar.event` also has
+    // half-protection rather than a defense. `google.calendar.event` also has
     // to stay a valid identifier, which putting the root in this set would
     // prevent.
     expect(isValidHandle("google")).toBe(true);

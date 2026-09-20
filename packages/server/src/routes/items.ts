@@ -2630,7 +2630,7 @@ export function itemRoutes(storage: Storage) {
               ...(retypeTo !== undefined && { type: retypeTo }),
               version: body.version,
               // Who resolves a collision, and the key that makes a retry
-              // recognisable as one. Both are request-level facts rather
+              // recognizable as one. Both are request-level facts rather
               // than fields of the item, which is why they ride here
               // rather than in the body.
               ...(conflictMode !== undefined && {
@@ -2759,7 +2759,7 @@ export function itemRoutes(storage: Storage) {
     // below already covers it.** `planCascadeDelete` walks post-order and
     // pushes the root itself, so `toDelete` always contains the row named in
     // the URL and the loop inside the transaction asks the refusal of it like
-    // any other. A second call here was a duplicate rather than a defence.
+    // any other. A second call here was a duplicate rather than a defense.
     //
     // The check itself stays where the cascade is, and has to: the type gate
     // above ran against the named row alone, and a `parent-of` edge can carry

@@ -12,9 +12,9 @@
  * for every approved grant. A device refresh token minted without
  * `offline_access` was therefore never eligible for rotation: presenting it
  * returned a fresh access token and left the row untouched, indefinitely.
- * Nothing could make it stale, so the replay defence never had anything to
+ * Nothing could make it stale, so the replay defense never had anything to
  * fire on and the credential lasted until someone deleted the row by hand.
- * The grants that behaviour reached are the least-watched ones there are —
+ * The grants that behavior reached are the least-watched ones there are —
  * a device is signed in once and left alone.
  *
  * The two paths now agree: no `offline_access`, no refresh token. With it,
@@ -379,7 +379,7 @@ describe("refresh-token issuance is gated on offline_access", () => {
     const liveAccess = rotated.body.access_token as string;
     expect(await callWithAccessToken(ctx, liveAccess)).toBe(200);
 
-    // The replay defence: presenting the spent token is terminal, and it
+    // The replay defense: presenting the spent token is terminal, and it
     // poisons the whole chain rather than just refusing the one request.
     const replay = await refresh(ctx, clientId, original);
     expect(replay.status).toBe(400);

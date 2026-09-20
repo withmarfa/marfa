@@ -476,7 +476,7 @@ describe("the provider's own consent skip is audited", () => {
 
     // The client asked to be asked: the plugin renders consent, so the
     // Location carries no code and the code check alone already answers
-    // this; the prompt guard in the hook is defence in depth for a plugin
+    // this; the prompt guard in the hook is defense in depth for a plugin
     // that one day skips under `prompt=consent`.
     const asked = await request(
       c.app,

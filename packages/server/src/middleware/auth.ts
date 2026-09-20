@@ -612,7 +612,7 @@ export function computeTypeFilter(
   /**
    * Which grants count as permitting a type.
    *
-   * `"read"` is the default and the historical behaviour, and it is right for
+   * `"read"` is the default and the historical behavior, and it is right for
    * a listing: a caller may see anything it may read or write. A door that
    * *writes* what it matched has to ask the narrower question, and the one
    * that did not was `POST /items/bulk-actions` — filter-in, no per-row
@@ -784,7 +784,7 @@ export function permitsMirrorWrite(row: {
  * package and the one write-only connector are counted, an earlier
  * draft of this comment asserted one, and it was wrong.
  *
- * So there is no caller-side defence to defer to. The door is the only
+ * So there is no caller-side defense to defer to. The door is the only
  * place the disagreement can be seen at all, which is also why it does
  * not care why the two types differ — a type a caller derives fresh on
  * every run from configuration the user can change is the likeliest

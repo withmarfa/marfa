@@ -1151,7 +1151,7 @@ async function cascadeClientRevoke(
 
 /**
  * Before-hook for `/oauth2/token` with `grant_type=refresh_token`. One
- * lookup of the refresh-token row drives two behaviours:
+ * lookup of the refresh-token row drives two behaviors:
  *
  *  1. **Unknown token → clean `invalid_grant` (400).** The
  *     @better-auth/oauth-provider plugin 500s when handed a refresh token
@@ -1941,7 +1941,7 @@ async function catchUpDeviceCeiling(
  * whose grant the user has revoked, for the reasons the authorization-code
  * guard below gives: revocation sweeps the codes, and this holds for a code
  * approved in the window between the two writes. Fails open on a lookup
- * error and on a code this store does not recognise, or one nobody has
+ * error and on a code this store does not recognize, or one nobody has
  * claimed, which the plugin refuses on its own terms.
  */
 async function guardDeviceCodeGrant(
