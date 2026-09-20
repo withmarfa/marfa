@@ -479,6 +479,19 @@ impl Folder {
                 continue;
             };
             if item.source_id.as_deref().is_some_and(is_parked) {
+                // **The name has to be free**, and the mapping's path is not
+                // proof of that: the row this pass wants to recover may have
+                // had its path taken while it was parked, and asking for it
+                // is a name another item still holds — which the server
+                // refuses, leaving this pass to ask again on every scan and
+                // the item parked for good.
+                let taken = {
+                    let conn = self.core.conn()?;
+                    state::bound_at(&conn, &row.path)?
+                };
+                if taken.is_some_and(|other| other.item_id != row.item_id) {
+                    continue;
+                }
                 self.queue_rekey(&row.item_id, &row.path)?;
                 report.parked += 1;
             }

@@ -1222,7 +1222,7 @@ describe("identity", () => {
 
   it("follows a swap without giving either item the other's name", async () => {
     harness = await folderHarness("folder-swap");
-    scriptFolderWrites(harness);
+    const held = scriptFolderWrites(harness);
     put(harness, "one.md", "---\ntitle: One\n---\nfirst\n");
     put(harness, "two.md", "---\ntitle: Two\n---\nsecond\n");
     expect((await harness.folder.push()).ok).toBe(true);
@@ -1236,7 +1236,10 @@ describe("identity", () => {
       String(before.find((create) => create.source_id === key)?.id ?? "");
     const one = idOf("one.md");
     const two = idOf("two.md");
-    expect([one, two].every(Boolean)).toBe(true);
+    expect(
+      [one, two].every(Boolean),
+      "one of the two items could not be resolved from what the folder sent, so every assertion below compares an empty id against another and holds for nothing",
+    ).toBe(true);
 
     renameSync(join(harness.dir, "one.md"), join(harness.dir, ".swap"));
     renameSync(join(harness.dir, "two.md"), join(harness.dir, "one.md"));
@@ -1271,6 +1274,15 @@ describe("identity", () => {
       [keys.get(one), keys.get(two)],
       "the two items did not end up under each other's names, so the swap did not reach the server",
     ).toEqual(["two.md", "one.md"]);
+
+    // **What each item ended up holding**, not only what it is called. Names
+    // alone cannot tell a swap that moved two names from one that moved two
+    // names and crossed the bodies over, and the second is the failure a
+    // person would actually notice.
+    expect(
+      [held.get(one)?.properties?.body, held.get(two)?.properties?.body],
+      "the two items swapped bodies as well as names, so each note now holds the other's contents and the keys look right",
+    ).toEqual(["first\n", "second\n"]);
   });
 
   it("does not write a new file's body onto the item whose name it took", async () => {
@@ -1407,7 +1419,10 @@ describe("identity", () => {
     put(harness, "c.md", "---\ntitle: Gamma\n---\ngamma\n");
     expect((await harness.folder.push()).ok).toBe(true);
     const started = keysByItem(harness);
-    expect(started.size).toBe(3);
+    expect(
+      started.size,
+      "the three files never became three items, so there is no chain to follow and the assertions below pass against a shorter one",
+    ).toBe(3);
 
     // c -> d, b -> c, a -> b. Not a cycle: the last name is free, and every
     // other is held by something that is itself about to move.
@@ -1419,7 +1434,7 @@ describe("identity", () => {
     const { collisions, ended } = replayKeys(harness, started);
     expect(
       collisions,
-      "the folder asked for a name another item still held part-way along the chain",
+      "the folder asked for a name another item still held part-way along the chain, which the server refuses — leaving one item under the wrong name and the next with none",
     ).toEqual([]);
     expect(
       [...ended.entries()].sort(),
