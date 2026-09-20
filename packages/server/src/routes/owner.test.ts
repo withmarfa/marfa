@@ -422,6 +422,52 @@ describe("POST /owner", () => {
     expect(await ctx.storage.settings.get("owner")).toBeNull();
   });
 
+  it("asks again under the claim, so an account that lands after the first check is seen", async () => {
+    const ctx = await newContext();
+    // The account lands in the gap between the check and the claim: the
+    // claim itself is wrapped so the first one taken finds the row there.
+    const settings = ctx.storage.settings;
+    const claim = settings.claim.bind(settings);
+    settings.claim = async (key, value) => {
+      settings.claim = claim;
+      await createTestAccount(ctx, "landed@example.com", PASSWORD);
+      return claim(key, value);
+    };
+    const res = await create(ctx, {
+      email: "owner@example.com",
+      password: PASSWORD,
+    });
+    expect(res.status).toBe(409);
+    expect(((await res.json()) as Envelope).error.code).toBe("owner_exists");
+    const db = ctx.storage.betterAuthDb as DrizzleDb;
+    expect(await db.select({ id: auth_user.id }).from(auth_user)).toHaveLength(
+      1,
+    );
+    expect(await settings.get("owner")).toBeNull();
+  });
+
+  it("answers the creation even when the claim cannot be given back", async () => {
+    const ctx = await newContext();
+    const settings = ctx.storage.settings;
+    const release = settings.release.bind(settings);
+    settings.release = () => {
+      settings.release = release;
+      return Promise.reject(new Error("the settings table is gone"));
+    };
+    const created = await create(ctx, {
+      email: "owner@example.com",
+      password: PASSWORD,
+    });
+    expect(created.status).toBe(201);
+    // The claim is left behind for the lease to repair, and the owner is
+    // there for everyone to see.
+    expect(await settings.get("owner")).not.toBeNull();
+    const read = await request(ctx.app, "GET", "/owner", {
+      key: ctx.operatorKey,
+    });
+    expect(read.status).toBe(200);
+  });
+
   it("answers owner_exists when an account with the address lands around the door", async () => {
     const ctx = await newContext();
     const real = ctx.auth.createEmailAccount;

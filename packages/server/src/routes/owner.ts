@@ -22,7 +22,6 @@ import type { CreateEmailAccountResult, MarfaAuth } from "../auth/instance.js";
 import { log } from "../middleware/logger.js";
 import type {
   OwnerRecord,
-  OwnerStore,
   SettingsStore,
   Storage,
 } from "../storage/interface.js";
@@ -178,12 +177,12 @@ const CLAIM_LEASE_MS = 60_000;
  * record, and a marker outliving the row would close the door with nobody
  * behind it.
  */
-async function take(settings: SettingsStore, owner: OwnerStore): Promise<void> {
+async function take(settings: SettingsStore): Promise<void> {
   const now = Date.now();
   if (await settings.claim(OWNER_CLAIM, String(now))) return;
   const held = Number(await settings.get(OWNER_CLAIM));
   const stale = !Number.isFinite(held) || now - held > CLAIM_LEASE_MS;
-  if (!stale || (await owner.find())) throw ownerExists();
+  if (!stale) throw ownerExists();
   await settings.release(OWNER_CLAIM);
   if (!(await settings.claim(OWNER_CLAIM, String(now)))) throw ownerExists();
 }
@@ -225,7 +224,7 @@ export function ownerRoutes(storage: Storage, auth: MarfaAuth) {
     const operator = requireOperatorKey(c);
     const body = c.req.valid("json");
     if (await owner.find()) throw ownerExists();
-    await take(storage.settings, owner);
+    await take(storage.settings);
     let result: CreateEmailAccountResult;
     try {
       // Asked again under the claim: the account may have landed between
