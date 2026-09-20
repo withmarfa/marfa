@@ -1387,7 +1387,7 @@ describe("identity", () => {
     ).toBe(3);
 
     // a -> b -> c -> a. A cycle of three, which a swap's two-step park does
-    // not obviously generalise to.
+    // not obviously generalize to.
     renameSync(join(harness.dir, "a.md"), join(harness.dir, ".hold"));
     renameSync(join(harness.dir, "c.md"), join(harness.dir, "a.md"));
     renameSync(join(harness.dir, "b.md"), join(harness.dir, "c.md"));

@@ -1,6 +1,7 @@
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readdirSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   CliDevice,
   CliFolder,
@@ -34,7 +35,61 @@ export function requireBinary(): string {
       "MARFA_DEVICE_BIN is unset. Build the binary (`cargo build -p marfa-cli` under core/) and point this at it; the conformance job does both.",
     );
   }
+  refuseIfStale(binary);
   return binary;
+}
+
+/**
+ * Refuses a binary older than the source it was built from.
+ *
+ * **This suite tests an artifact, not a checkout.** Nothing in the local
+ * chain rebuilds it, so a run after an edit exercises the previous build.
+ * The false alarm that costs an hour is the mild direction; the dangerous
+ * one is the false pass, where a change that breaks the device is measured
+ * against a binary that predates it and reads as green.
+ */
+function refuseIfStale(binary: string): void {
+  let built: number;
+  try {
+    built = statSync(binary).mtimeMs;
+  } catch {
+    throw new Error(
+      `MARFA_DEVICE_BIN points at ${binary}, which does not exist. Build it with \`cargo build -p marfa-cli\` under core/.`,
+    );
+  }
+  const root = resolve(
+    fileURLToPath(new URL(".", import.meta.url)),
+    "../../../../core",
+  );
+  let newest = 0;
+  let newestPath = "";
+  const walk = (dir: string): void => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (entry.name === "target" || entry.name === "node_modules") continue;
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        walk(full);
+      } else if (entry.name.endsWith(".rs") || entry.name === "schema.sql") {
+        const at = statSync(full).mtimeMs;
+        if (at > newest) {
+          newest = at;
+          newestPath = full;
+        }
+      }
+    }
+  };
+  try {
+    walk(root);
+  } catch {
+    return; // No source tree beside the suite: nothing to be stale against.
+  }
+  if (newest > built) {
+    throw new Error(
+      `the device binary is older than the source it is built from — ${newestPath} changed after ` +
+        `${binary} was built, so this run would measure the previous build and report it as this one. ` +
+        "Run `cargo build -p marfa-cli` under core/ and try again.",
+    );
+  }
 }
 
 export interface Harness {

@@ -468,7 +468,7 @@ impl Folder {
         // **A park that was never followed by its move.** The two are
         // ordered rows in a durable queue, so this only happens when the
         // move was refused or the queue is blocked — and then the item sits
-        // under a name that is not a path, where the next device to enrol on
+        // under a name that is not a path, where the next device to enroll on
         // this folder would make a second item for the same file
         // (`folders.md` 24, and 10 for what it costs).
         for row in {
@@ -620,8 +620,10 @@ impl Folder {
         //
         // Zero always, rather than the row's version, would refuse every
         // create onto an existing row for ever and leave the file
-        // permanently unpushable. The zero-means-absent convention is this
-        // device's and not yet the contract's; it is in the open questions.
+        // permanently unpushable. `folders.md` 13 carries the convention
+        // itself: the version is the one the copy holds under that natural
+        // key, and zero where it holds none, which the server reads as a
+        // create conditional on there being nothing there.
         let version = self
             .held_under_key(key)?
             .map(|item| item.version)
