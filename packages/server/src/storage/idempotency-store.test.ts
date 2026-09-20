@@ -575,8 +575,10 @@ describe("retention has one owner", () => {
     // call sits in, and both jobs delete rows on the same cadence — a
     // behavioral test cannot tell one from the other.
     const start = indexTs.indexOf('name: "event-log-cleanup"');
-    const job = indexTs.slice(start, indexTs.indexOf('name: "audit-cleanup"'));
+    const end = indexTs.indexOf('name: "audit-cleanup"');
     expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+    const job = indexTs.slice(start, end);
     expect(job).toContain("storage.idempotency.cleanup(retention)");
   });
 

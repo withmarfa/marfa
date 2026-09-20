@@ -89,8 +89,10 @@ async function main() {
   initEventLog(storage.eventLog);
 
   // Every periodic job the server runs on itself registers here and runs
-  // from the housekeeping table. A job disabled by configuration is not
-  // registered, so it is not listed either.
+  // from the housekeeping table. A job its configuration switches off is
+  // not registered, so it is not listed either; a job whose retention
+  // `/config` can set while the process runs is registered whatever the
+  // instance default, and sweeps nothing until the retention is positive.
   const housekeeping = new Housekeeping(storage.housekeeping, {
     pollIntervalMs: config.housekeepingPollIntervalMs ?? 1_000,
   });
@@ -171,8 +173,8 @@ async function main() {
   );
   webhookConsumer.start();
 
-  // No delay: a delivery left pending by the last process is picked up as
-  // soon as this one is listening.
+  // No first-run delay: on a fresh table a delivery left pending is picked
+  // up at the first poll; on a restart, at the previous schedule.
   const webhookPoller = new WebhookPoller(storage.outboundWebhookDeliveries);
   housekeeping.register({
     name: "webhook-poll",
@@ -182,8 +184,8 @@ async function main() {
   });
 
   // Opt-in liveness heartbeat: off unless the operator names a receiver.
-  // Pinged at once, so a freshly booted instance is visible before the
-  // first interval elapses.
+  // No first-run delay, so a fresh instance is visible at its first poll;
+  // a restarted one pings at its previous schedule.
   if (config.heartbeatUrl) {
     const heartbeat = new HeartbeatPinger(config.heartbeatUrl);
     housekeeping.register({
@@ -244,17 +246,20 @@ async function main() {
     // is no /config override for this window, because the reason for its
     // length is instance-wide — it tracks the audit retention so the
     // tombstone and the audit row that recorded the revocation cannot
-    // disagree about whether a revocation is still visible.
-    const revokedGrantPurger = new RevokedGrantPurger(
-      storage.items,
-      config.revokedGrantRetentionDays ?? 90,
-    );
-    housekeeping.register({
-      name: "revoked-grant-purge",
-      intervalMs: activityPurgeIntervalMs,
-      firstRunDelayMs: 20_000,
-      run: async () => ({ deleted: await revokedGrantPurger.runOnce() }),
-    });
+    // disagree about whether a revocation is still visible. `0` disables.
+    const revokedGrantRetentionDays = config.revokedGrantRetentionDays ?? 90;
+    if (revokedGrantRetentionDays > 0) {
+      const revokedGrantPurger = new RevokedGrantPurger(
+        storage.items,
+        revokedGrantRetentionDays,
+      );
+      housekeeping.register({
+        name: "revoked-grant-purge",
+        intervalMs: activityPurgeIntervalMs,
+        firstRunDelayMs: 20_000,
+        run: async () => ({ deleted: await revokedGrantPurger.runOnce() }),
+      });
+    }
   }
 
   // A grant nobody has used for a year is retired through the same cascade
@@ -498,6 +503,10 @@ async function main() {
     log("info", "Shutting down...");
     webhookConsumer.stop();
     bulkActionWorker.stop();
+    // The poll stops here, so no run starts while the server drains; the
+    // wait for runs already in flight comes after the drain, ahead of the
+    // storage closing so a run can still write its record.
+    const housekeepingStopped = housekeeping.stop();
     // Each step bounded and reported separately: a shared catch produced a
     // warning that could not say which step overran, and it fired on every
     // production shutdown for a week before anything made it loud.
@@ -510,10 +519,11 @@ async function main() {
       });
       exitCode = 1;
     }
-    // Before the storage closes, so a run in flight can write its record;
-    // one that outlives the bound meets the closed client and stands down.
+    // A run that outlives the bound meets the closed client and stands
+    // down; that is a long sweep cut short, which the next boot reruns, and
+    // not a failed shutdown, so the exit code stays.
     try {
-      await withTimeout(housekeeping.stop(), SHUTDOWN_STEP_TIMEOUT_MS);
+      await withTimeout(housekeepingStopped, SHUTDOWN_STEP_TIMEOUT_MS);
     } catch (error) {
       log("warn", "Graceful shutdown: housekeeping did not stop in time", {
         error: serializeError(error),

@@ -952,7 +952,7 @@ export const housekeeping = sqliteTable("housekeeping", {
   interval_ms: integer("interval_ms").notNull(),
   next_run_at: text("next_run_at").notNull(),
   /** Set while a run holds the job; a value found at boot was left by a
-   *  process that died mid-run. */
+   *  run the last process never finished. */
   running_since: text("running_since"),
   last_started_at: text("last_started_at"),
   last_finished_at: text("last_finished_at"),

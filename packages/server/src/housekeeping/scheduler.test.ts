@@ -318,6 +318,7 @@ describe("Housekeeping", () => {
       const c = clock(T0);
       const hk = scheduler(c.nowFn);
       let releaseSlow: () => void = () => undefined;
+      let slowRuns = 0;
       const slowStarted = new Promise<void>((resolve) => {
         hk.register({
           name: "slow",
@@ -325,6 +326,7 @@ describe("Housekeeping", () => {
           firstRunDelayMs: 0,
           run: () =>
             new Promise<null>((done) => {
+              slowRuns += 1;
               resolve();
               releaseSlow = () => {
                 done(null);
@@ -356,11 +358,19 @@ describe("Housekeeping", () => {
       // and `runNow` is refused the same way.
       await hk.poll();
       expect(await hk.runNow("slow")).toEqual({ kind: "running" });
+      expect(slowRuns).toBe(1);
       releaseSlow();
       await hk.settle();
       expect((await ctx.storage.housekeeping.get("slow"))?.running_since).toBe(
         null,
       );
+      // The witness: once released, the same job runs again on demand.
+      const again = hk.runNow("slow");
+      await vi.waitFor(() => {
+        expect(slowRuns).toBe(2);
+      });
+      releaseSlow();
+      expect((await again).kind).toBe("ran");
       await hk.stop();
     });
 
@@ -412,6 +422,38 @@ describe("Housekeeping", () => {
       await hk.poll();
       await hk.settle();
       expect(runs).toBe(3);
+      await hk.stop();
+    });
+
+    it("keeps a wake that lands in the same millisecond as the claim", async () => {
+      ctx = await createTestContext();
+      const c = clock(T0);
+      const hk = scheduler(c.nowFn);
+      let releaseRun: () => void = () => undefined;
+      hk.register({
+        name: "instant",
+        intervalMs: 3_600_000,
+        firstRunDelayMs: 0,
+        run: () =>
+          new Promise<null>((done) => {
+            releaseRun = () => {
+              done(null);
+            };
+          }),
+      });
+      await hk.start();
+      await hk.poll();
+      // Claimed at T0 and woken at T0: the wake is recorded a millisecond
+      // after the start, so the finish can tell it from the schedule.
+      await hk.wake("instant");
+      expect((await ctx.storage.housekeeping.get("instant"))?.next_run_at).toBe(
+        new Date(T0 + 1).toISOString(),
+      );
+      releaseRun();
+      await hk.settle();
+      expect((await ctx.storage.housekeeping.get("instant"))?.next_run_at).toBe(
+        new Date(T0 + 1).toISOString(),
+      );
       await hk.stop();
     });
 
@@ -486,6 +528,22 @@ describe("Housekeeping", () => {
         (await ctx.storage.housekeeping.get("on-demand"))?.next_run_at,
       ).toBe(new Date(T0 + 3_600_000).toISOString());
       expect(await hk.runNow("nothing-here")).toEqual({ kind: "unknown" });
+      await hk.stop();
+    });
+
+    it("answers unknown for a registered job the scheduler has not started", async () => {
+      ctx = await createTestContext();
+      const hk = scheduler(clock(T0).nowFn);
+      hk.register({
+        name: "not-yet",
+        intervalMs: 3_600_000,
+        firstRunDelayMs: 0,
+        run: () => Promise.resolve(null),
+      });
+      // No row yet: to a caller, a job the instance does not run.
+      expect(await hk.runNow("not-yet")).toEqual({ kind: "unknown" });
+      await hk.start();
+      expect((await hk.runNow("not-yet")).kind).toBe("ran");
       await hk.stop();
     });
 
@@ -605,6 +663,8 @@ describe("one scheduler owns every job's cadence and the level of its failure", 
     "../webhooks/delivery.ts",
   ])("%s keeps no interval timer and classifies no failed run", (file) => {
     const source = here(file);
+    // The witness that the file is a job module at all: it has runs.
+    expect(source).toContain("runOnce(");
     expect(source).not.toContain("setInterval(");
     expect(source).not.toContain("logJobTickFailure(");
   });

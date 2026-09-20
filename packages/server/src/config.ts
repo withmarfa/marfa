@@ -318,7 +318,7 @@ export interface AppConfig {
   heartbeatIntervalMs?: number;
   /** How often (ms) the housekeeping scheduler asks its table what is due
    *  (`MARFA_HOUSEKEEPING_POLL_INTERVAL_MS`, default 1000). The floor on
-   *  how late a job runs after it falls due, and on how soon a wake is
+   *  how late a housekeeping job runs after it falls due, and on how soon a wake is
    *  answered. Optional on the type; `index.ts` applies the default. */
   housekeepingPollIntervalMs?: number;
   /** Ceiling on concurrent SSE viewers per server instance

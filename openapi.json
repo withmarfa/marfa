@@ -19344,7 +19344,7 @@
           "Housekeeping"
         ],
         "summary": "List the instance's housekeeping jobs",
-        "description": "Every periodic job the server runs on itself, with its cadence, when it is next due, whether a run holds it now, and what its last run did. A job disabled by configuration is not listed. Operator key only.",
+        "description": "Every periodic job the server runs on itself, with its cadence, when it is next due, whether a run holds it now, and what its last run did. A job switched off by configuration is not listed; one whose retention `/config` can set is listed whatever the instance default. Operator key only.",
         "security": [
           {
             "bearerAuth": []

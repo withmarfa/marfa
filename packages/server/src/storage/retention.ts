@@ -16,7 +16,7 @@ import { revokeProjectedGrant } from "../auth/grant-lifecycle.js";
  * The retention sweeps. Each is a class with one `runOnce()` that does a
  * sweep and answers a count; the housekeeping scheduler owns the cadence,
  * records the outcome and classifies a failure, so nothing here keeps a
- * timer or logs a tick. A sweep that found something to do says so at
+ * timer or logs a run. A sweep that found something to do says so at
  * `info`; one that found nothing is silent.
  */
 
@@ -24,14 +24,14 @@ const MS_PER_DAY = 86_400_000;
 
 /**
  * Optional instance-config wiring shared by the retention jobs. When
- * provided, a tick resolves the effective retention from the instance
+ * provided, a run resolves the effective retention from the instance
  * configuration (`InstanceConfig`'s override field, falling back to the
  * instance default) and runs one sweep with it.
  */
 export interface RetentionOverride {
   settings: SettingsStore;
   /**
-   * Field on `InstanceConfig` that holds the retention override. The tick
+   * Field on `InstanceConfig` that holds the retention override. The run
    * reads `config[configField]` and treats `0` as "disabled" (matches
    * env-default semantics for `TRASH_RETENTION_DAYS=0`).
    */
@@ -115,15 +115,6 @@ export class TrashPurger {
 }
 
 /**
- * Ages out `system.activity` items, the one item type written per run
- * rather than per record, and so the one that grows without a bound of its
- * own. Same shape as `TrashPurger` above: honors the
- * `activity_retention_days` override when the instance configuration is
- * wired, and sweeps at the instance default otherwise.
- *
- * This job bounds the rows; it does not decide whether a run deserves one.
- */
-/**
  * Hard-deletes revoked application-grant tombstones once they are older than
  * the configured window.
  *
@@ -172,12 +163,11 @@ export class RevokedGrantPurger {
 /**
  * Retires app grants nobody has used for a long time.
  *
- * A grant lasted for as long as nobody revoked it: the tokens under it
- * rotated forever, the consent row and the projection stood, and the app
- * kept its access to data it had stopped reading. Three keys holding
- * everything accumulated on production from finished sessions the same way,
- * and the rule for keys is the rule here: standing authority nobody is
- * tracking needs an owner in code.
+ * A grant lasts for as long as nobody revokes it: the tokens under it
+ * rotate forever, the consent row and the projection stand, and the app
+ * keeps its access to data it has stopped reading. The rule for keys is
+ * the rule here: standing authority nobody is tracking needs an owner in
+ * code.
  *
  * Every live app grant whose `last_used_at`, or `granted_at` where it was
  * never used, is older than the window goes through the same cascade the
@@ -194,8 +184,8 @@ export class RevokedGrantPurger {
  * The window is a property of the deployment rather than of anything a
  * caller configures per credential.
  */
-/** Grants retired by one tick; the remainder wait for the next. */
-const RETIRE_PER_TICK = 500;
+/** Grants retired by one run; the remainder wait for the next. */
+const RETIRE_PER_RUN = 500;
 
 export class GrantInactivityRetirer {
   constructor(
@@ -213,13 +203,13 @@ export class GrantInactivityRetirer {
     ).toISOString();
     const inactive = await this.storage.items.listInactiveAppGrants(cutoff);
     let retired = 0;
-    // The first tick on a mature instance meets every dormant grant at once;
-    // the cap keeps one tick's cascade, and the lock it holds, bounded, and
+    // The first run on a mature instance meets every dormant grant at once;
+    // the cap keeps one run's cascade, and the lock it holds, bounded, and
     // the rest go tomorrow. One grant that cannot be revoked is logged and
     // passed over rather than costing every grant behind it: the cascade
     // aborts on a fault by design, and a persistent fault on one row would
     // otherwise stall the sweep at that row every day.
-    for (const grant of inactive.slice(0, RETIRE_PER_TICK)) {
+    for (const grant of inactive.slice(0, RETIRE_PER_RUN)) {
       try {
         await revokeProjectedGrant(this.storage, {
           itemId: grant.id,
@@ -268,6 +258,15 @@ export class GrantInactivityRetirer {
   }
 }
 
+/**
+ * Ages out `system.activity` items, the one item type written per run
+ * rather than per record, and so the one that grows without a bound of its
+ * own. Same shape as `TrashPurger` above: honors the
+ * `activity_retention_days` override when the instance configuration is
+ * wired, and sweeps at the instance default otherwise.
+ *
+ * This job bounds the rows; it does not decide whether a run deserves one.
+ */
 export class ActivityPurger {
   constructor(
     private items: ItemStore,
@@ -362,7 +361,7 @@ export class RateLimitWindowCleaner {
  * Unauthenticated DCR (`allowUnauthenticatedClientRegistration: true`)
  * lets anyone register an `auth_oauth_client` row; without a reaper those
  * rows accumulate forever (DB growth) — most are abandoned registrations a
- * user never consented to. Each tick deletes every client that is BOTH:
+ * user never consented to. Each run deletes every client that is BOTH:
  *
  *   - older than the retention window (`created_at < now - retentionDays`),
  *     AND
@@ -417,7 +416,7 @@ export class DcrClientCleaner {
  * The grace window is what makes running it unattended safe. Unreferenced
  * is also the ordinary state of a blob between its upload and the item
  * write that names it, so the sweep considers only hashes registered
- * longer than `graceMs` ago and lets the rest wait for the next tick.
+ * longer than `graceMs` ago and lets the rest wait for the next run.
  *
  * Instance-wide, like the other sweeps with no configurable override: a
  * hash is deleted from every store once, so the question "does anything
@@ -526,7 +525,7 @@ async function runSweepToCutoff(opts: {
  * Cleanup runner for the audit + event-log jobs that live inline in
  * `index.ts`. Same shape as the in-class runner above but exposed for
  * callsites that don't have their own Purger class. Returns the number of
- * rows deleted this tick.
+ * rows deleted this run.
  *
  * The retention reaches `sweep` in whatever unit the job keeps it in — days
  * for the audit job, hours for the event log — because nothing here converts

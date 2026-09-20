@@ -297,7 +297,7 @@ export class TextEnrichmentSweeper {
       // Re-read before writing: extraction can take most of a minute, and
       // both the write and the bookkeeping must describe the item as it is
       // now, not as the candidate row had it. A gone or re-pointed item
-      // gets nothing recorded — the next tick sees the current shape.
+      // gets nothing recorded — the next run sees the current shape.
       const fresh = await storage.items.get(candidate.item_id);
       if (!fresh) return "skipped";
       if (fresh.properties.blob_ref !== candidate.blob_ref) return "skipped";
@@ -365,7 +365,7 @@ export class TextEnrichmentSweeper {
         version: fresh.version,
       });
       // A conflict response means the item moved between the re-read and
-      // the write. Nothing recorded: the row is re-offered next tick and
+      // the write. Nothing recorded: the row is re-offered next run and
       // judged against whatever the item has become.
       if (!("id" in updated)) return "skipped";
 

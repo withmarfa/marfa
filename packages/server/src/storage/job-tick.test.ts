@@ -57,7 +57,7 @@ describe("isConnectionLostError", () => {
 });
 
 describe("logJobTickFailure", () => {
-  it("stands a canceled tick down at info", () => {
+  it("stands a canceled run down at info", () => {
     const captured = captureLog();
     logJobTickFailure(
       "Housekeeping revoked-key-reap",

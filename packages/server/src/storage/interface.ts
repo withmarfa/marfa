@@ -1228,7 +1228,7 @@ export interface WebhookDeliveryStore {
    * when the row is still `status = 'pending'` and still past its
    * `next_attempt_at` — otherwise returns `null`. On success, the row's
    * `next_attempt_at` is pushed forward to `claimExpiry` so the poller's
-   * next tick doesn't see it. Same lock-ttl semantics as `getPending`.
+   * next run does not see it. Same lock-ttl semantics as `getPending`.
    */
   claimById(
     id: string,
@@ -2619,8 +2619,9 @@ export interface HousekeepingFinish {
   outcome: HousekeepingOutcome;
   error: string | null;
   result: unknown;
-  /** When the job is next due, unless a wake during the run moved
-   *  `next_run_at` past the run's start; the earlier of the two holds. */
+  /** When the job is next due. A `next_run_at` already past the run's
+   *  start (a wake during the run, or the schedule of a run started ahead
+   *  of it) holds instead when it is the earlier of the two. */
   nextRunAt: string;
 }
 

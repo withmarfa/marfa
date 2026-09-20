@@ -181,9 +181,10 @@ export enum ErrorCode {
    */
   BULK_JOB_NOT_FOUND = "bulk_job_not_found",
   /** `POST /housekeeping/:name/run` named a job this instance does not
-   *  run: unregistered, or disabled by configuration. */
+   *  run: unregistered, or switched off by configuration. */
   HOUSEKEEPING_JOB_NOT_FOUND = "housekeeping_job_not_found",
-  /** The job is in the middle of a run, and a job never overlaps itself. */
+  /** The housekeeping job is in the middle of a run, and a housekeeping job
+   *  never overlaps itself. */
   HOUSEKEEPING_JOB_RUNNING = "housekeeping_job_running",
   /**
    * Every streaming connection slot is in use and none freed within the

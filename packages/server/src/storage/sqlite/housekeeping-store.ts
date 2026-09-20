@@ -126,9 +126,11 @@ export class SqliteHousekeepingStore implements HousekeepingStore {
         last_error: outcome.error,
         last_result:
           outcome.result === undefined ? null : JSON.stringify(outcome.result),
-        // A wake during the run moved `next_run_at` past the run's start, and
-        // the earlier of the two is what holds; otherwise the run sets the
-        // next one. Compared as ISO strings, which order as instants do.
+        // A `next_run_at` past the run's start is either a wake that arrived
+        // during the run or the schedule of a run started ahead of it, and
+        // either holds unless the interval falls earlier; a run started on
+        // or after its schedule sets the next one. Compared as ISO strings,
+        // which order as instants do.
         next_run_at: sql`CASE WHEN ${housekeeping.next_run_at} > ${housekeeping.running_since} THEN min(${housekeeping.next_run_at}, ${outcome.nextRunAt}) ELSE ${outcome.nextRunAt} END`,
       })
       .where(eq(housekeeping.name, name))
@@ -136,18 +138,27 @@ export class SqliteHousekeepingStore implements HousekeepingStore {
   }
 
   async wake(name: string, now: string): Promise<boolean> {
-    // A job in the middle of a run is marked due at `now`, which is after
-    // its start, so `finish` can tell the wake from the schedule the run
-    // was claimed under and keep it.
-    const rows = await this.db
+    const row = await this.get(name);
+    if (!row) return false;
+    // A job in the middle of a run is marked due strictly after its start,
+    // so `finish` can tell the wake from the schedule the run was claimed
+    // under and keep it; a wake in the same millisecond as the claim would
+    // otherwise be lost to that comparison.
+    const due =
+      row.running_since !== null && row.running_since >= now
+        ? new Date(new Date(row.running_since).getTime() + 1).toISOString()
+        : now;
+    await this.db
       .update(housekeeping)
       .set({
-        next_run_at: sql`CASE WHEN ${housekeeping.running_since} IS NOT NULL THEN ${now} ELSE min(${housekeeping.next_run_at}, ${now}) END`,
+        next_run_at:
+          row.running_since === null
+            ? sql`min(${housekeeping.next_run_at}, ${due})`
+            : due,
       })
       .where(eq(housekeeping.name, name))
-      .returning({ name: housekeeping.name })
-      .all();
-    return rows.length > 0;
+      .run();
+    return true;
   }
 
   async list(): Promise<HousekeepingRow[]> {

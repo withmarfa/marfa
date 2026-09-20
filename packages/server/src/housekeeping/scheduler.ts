@@ -14,13 +14,14 @@ import { log } from "../middleware/logger.js";
  * run did. The scheduler polls the table, claims each job that is due with
  * one conditional update (exclusive per name under SQLite's single writer),
  * runs it, and writes the outcome back. Jobs run concurrently across names
- * and never overlap themselves: one enrichment tick can legitimately take
+ * and never overlap themselves: one enrichment run can legitimately take
  * minutes, and nothing else should wait behind it.
  *
  * Because the schedule is in the table, a restart keeps it: a daily job
  * that ran two hours before a deploy runs in twenty-two, not at boot. A
- * `running_since` found at boot was left by a process that died mid-run,
- * and is cleared with a log line; the job is due whenever its row says.
+ * `running_since` found at boot was left by a run the last process never
+ * finished, whether it died or stopped before the run could end, and is
+ * cleared with a log line; the job is due whenever its row says.
  */
 export interface HousekeepingJob {
   /** Lowercase, hyphenated: the name in the table, the log and the door. */
@@ -127,9 +128,11 @@ export class Housekeeping {
   }
 
   /**
-   * Stop polling and wait for runs in flight. The caller bounds the wait:
-   * a run that outlives the bound loses its storage client when the caller
-   * closes it, and its bookkeeping is classified as stood down.
+   * Stop polling and wait for runs in flight. Polling stops before the
+   * first await, so a caller that wants the poll off at once and the wait
+   * later can hold the promise. The caller bounds the wait: a run that
+   * outlives the bound loses its storage client when the caller closes it,
+   * and its bookkeeping is classified as stood down.
    */
   async stop(): Promise<void> {
     this.stopped = true;
@@ -137,7 +140,11 @@ export class Housekeeping {
       clearTimeout(this.timer);
       this.timer = null;
     }
-    await Promise.allSettled([...this.inFlight]);
+    // Until empty rather than one snapshot: a poll that was between its
+    // read and its claims when the flag went up may still start a run.
+    while (this.inFlight.size > 0) {
+      await Promise.allSettled([...this.inFlight]);
+    }
   }
 
   /** Make a job due now. Unknown names are ignored: a wake is a hint. */
@@ -157,7 +164,12 @@ export class Housekeeping {
         ? { kind: "running" }
         : { kind: "unknown" };
     }
-    return { kind: "ran", run: await this.execute(job, claimed) };
+    // Tracked like a polled run, so `stop()` waits for it too.
+    const running = this.execute(job, claimed);
+    const tracked = running.then(() => undefined);
+    this.inFlight.add(tracked);
+    void tracked.finally(() => this.inFlight.delete(tracked));
+    return { kind: "ran", run: await running };
   }
 
   list(): Promise<HousekeepingRow[]> {
@@ -188,6 +200,8 @@ export class Housekeeping {
     const now = this.nowFn().toISOString();
     try {
       for (const name of await this.store.listDue(now)) {
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- `stop()` flips the flag while this loop awaits; the narrowing from the check at the top does not survive an await.
+        if (this.stopped) break;
         const job = this.jobs.get(name);
         if (!job) continue;
         const claimed = await this.store.claimDue(name, now);

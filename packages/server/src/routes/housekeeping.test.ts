@@ -143,7 +143,11 @@ describe("POST /housekeeping/:name/run", () => {
     expect(body.error.code).toBe("housekeeping_job_not_found");
   });
 
-  it("answers 400 for a name outside the grammar", async () => {
+  it("answers 400 for a name outside the grammar, where a name inside it runs", async () => {
+    const inside = await request(ctx.app, "POST", "/housekeeping/counter/run", {
+      key: ctx.operatorKey,
+    });
+    expect(inside.status).toBe(200);
     const res = await request(
       ctx.app,
       "POST",
