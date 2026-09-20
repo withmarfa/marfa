@@ -1,7 +1,8 @@
 -- The local store, written to the contract in `conformance/spec/device.md`
--- and `queue-and-verdicts.md`. One file, no migrations: a store this schema
--- does not match is discarded and hydrated again, which costs a pull and
--- keeps this file readable as a description of what a device holds.
+-- and `queue-and-verdicts.md`. One file and no migrations: a store this
+-- schema does not match is refused by name, for a person to discard and
+-- hydrate again. What that buys is this file readable as a description of
+-- what a device holds rather than the end of a chain of alterations.
 
 -- `meta` is not declared here. `store::prepare` creates it on its own before
 -- this file runs, because it reads the schema version out of it in order to
@@ -79,10 +80,29 @@ CREATE TABLE IF NOT EXISTS queue (
   -- tie under a fast caller and leave the order to the planner.
   seq INTEGER PRIMARY KEY,
   id TEXT NOT NULL UNIQUE,
-  -- One of the closed set in `queue-and-verdicts.md` 32. Text because the set
-  -- is the contract's rather than SQLite's, and a value outside it is refused
-  -- before it reaches here.
-  kind TEXT NOT NULL,
+  -- One of the closed set in `queue-and-verdicts.md` 32. The `CHECK` is here
+  -- for the reason `verdict`'s is, eleven lines down: this file outlives
+  -- every process that writes it, and a kind outside the set is a row no
+  -- build can ever send. There is no refusal upstream of this to rely on.
+  kind TEXT NOT NULL CHECK (
+    kind IN (
+      'create_item',
+      'update_item',
+      'delete_item',
+      'restore_item',
+      'transition_item',
+      'create_edge',
+      'update_edge',
+      'delete_edge',
+      'replace_metadata',
+      'merge_metadata',
+      'add_tag',
+      'remove_tag',
+      'write_extension',
+      'delete_extension',
+      'upload_blob'
+    )
+  ),
   -- What the write is about. An item write names an item; an edge write names
   -- the edge and both of its endpoints, because an edge create can depend on
   -- two local creates that have not been answered (`queue-and-verdicts.md` 4
@@ -166,6 +186,12 @@ CREATE TABLE IF NOT EXISTS queue (
   -- that outlives the process. The contract says it is a number the contract
   -- fixes rather than configuration, and a constant in the binary alone would
   -- let two builds disagree about a store they both write.
+  --
+  -- **A release resets this to zero**, and the constraint is what requires
+  -- it: a released row that is refused a sixth time would increment past the
+  -- ceiling and abort its transaction rather than going `dead` a second time
+  -- (`queue-and-verdicts.md` 27). The requirement lives here because this is
+  -- where it is enforced, not in the code that has to satisfy it.
   refusals INTEGER NOT NULL DEFAULT 0 CHECK (refusals BETWEEN 0 AND 5),
   queued_at TEXT NOT NULL,
   answered_at TEXT
@@ -175,5 +201,9 @@ CREATE INDEX IF NOT EXISTS queue_verdict_seq ON queue (verdict, seq);
 -- A local read shows a row the device wrote and has not had answered
 -- (`queue-and-verdicts.md` 31), which is a lookup by item.
 CREATE INDEX IF NOT EXISTS queue_item ON queue (item_id);
--- Releasing a held write when its dependency is answered (24).
-CREATE INDEX IF NOT EXISTS queue_depends_on ON queue (depends_on);
+-- No index on `depends_on`. It holds a JSON array, and releasing a held write
+-- means finding every row whose array *contains* an answered id — which an
+-- index on the serialised text cannot answer: `EXPLAIN QUERY PLAN` on a
+-- containment query reports a scan, and the only shape that could ever search
+-- is equality on the whole string, which misses every row waiting on two
+-- creates. An index here would say the lookup was cheap without making it so.

@@ -39,9 +39,13 @@ pub enum CoreError {
     #[error("hydration did not complete; hydrate again before reading")]
     HydrationIncomplete,
     #[error(
-        "this store was written by schema {found} and this build expects {expected}; there are no migrations, so delete the file and hydrate again"
+        "this store was written by schema {found} and this build expects {expected}; there are no migrations, so delete {path} and hydrate again"
     )]
-    WrongSchema { expected: String, found: String },
+    WrongSchema {
+        expected: String,
+        found: String,
+        path: String,
+    },
     #[error(
         "the event log no longer holds the cursor (oldest retained id {min_retained_id}); hydrate again"
     )]

@@ -25,7 +25,19 @@ const EDGE_COLUMNS: &str =
 
 pub fn open(path: &Path) -> Result<Connection, CoreError> {
     let conn = Connection::open(path)?;
-    prepare(&conn)?;
+    // The path travels with the refusal. A person told to delete a store and
+    // not told where it is cannot act on the advice: the location is a
+    // platform data directory nobody has reason to know by heart.
+    prepare(&conn).map_err(|err| match err {
+        CoreError::WrongSchema {
+            expected, found, ..
+        } => CoreError::WrongSchema {
+            expected,
+            found,
+            path: path.display().to_string(),
+        },
+        other => other,
+    })?;
     Ok(conn)
 }
 
@@ -48,10 +60,13 @@ fn prepare(conn: &Connection) -> Result<(), CoreError> {
     // first would leave a store half of this schema and half of another and
     // report nothing.
     //
-    // There are no migrations: a store this schema does not match is
-    // discarded and hydrated again. That costs a pull, and it is what keeps
-    // `schema.sql` readable as a description of what a device holds rather
-    // than as the end of a chain of alterations.
+    // There are no migrations. A store this schema does not match is
+    // **refused**, naming its own path, and a person discards it and
+    // hydrates again — the refusal is not a discard, because this file can
+    // hold writes the server has never seen and deleting it on a version
+    // mismatch would throw them away without anyone asking. What the absence
+    // of migrations buys is `schema.sql` readable as a description of what a
+    // device holds rather than as the end of a chain of alterations.
     //
     // `meta` is created on its own first because the check reads it, and a
     // file that has never been opened has no tables at all. Its two columns
@@ -66,6 +81,7 @@ fn prepare(conn: &Connection) -> Result<(), CoreError> {
         return Err(CoreError::WrongSchema {
             expected: SCHEMA_VERSION.to_string(),
             found,
+            path: String::new(),
         });
     }
     conn.execute_batch(SCHEMA)?;
@@ -802,6 +818,42 @@ mod tests {
         assert!(refuse_unless_hydrated(&conn).is_ok());
     }
 
+    /// The list the reader indexes into, against the table it reads from.
+    ///
+    /// The round-trip case below gives every value a distinct string, which
+    /// catches the *reader's* indices drifting out of step with
+    /// `QUEUE_COLUMNS`. It cannot catch `QUEUE_COLUMNS` drifting out of step
+    /// with the table: a column added to the schema and left out of the list
+    /// is simply never read, and a column renamed in one place and not the
+    /// other fails at runtime on a query nothing in the suite runs.
+    #[test]
+    fn the_column_list_names_every_column_the_queue_has() {
+        let conn = conn();
+        let mut table: Vec<String> = conn
+            .prepare("SELECT name FROM pragma_table_info('queue')")
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(0))
+            .unwrap()
+            .map(|name| name.unwrap())
+            .collect();
+        let mut named: Vec<String> = QUEUE_COLUMNS
+            .split(',')
+            .map(|column| column.trim().to_string())
+            .collect();
+        // `seq` is the rowid the queue is ordered by and is deliberately not
+        // read back; `payload` and `spent_keys` are read by the drain through
+        // their own queries rather than this list.
+        table.retain(|name| !matches!(name.as_str(), "seq" | "payload" | "spent_keys"));
+        table.sort();
+        named.sort();
+        assert_eq!(
+            named, table,
+            "the column list the queue reader indexes into no longer matches \
+             the table it reads from, so a write comes back with one field's \
+             value in another field and nothing anywhere reports it"
+        );
+    }
+
     #[test]
     fn a_queued_write_round_trips_through_every_column() {
         let conn = conn();
@@ -892,8 +944,23 @@ mod tests {
             refused,
             Err(CoreError::WrongSchema { ref found, .. }) if found == "something-else"
         ));
+        // The refusal names the file, because a person told to delete a store
+        // and not told where it is cannot act on the advice.
+        assert!(
+            format!("{}", refused.unwrap_err()).contains(&path.display().to_string()),
+            "the refusal does not say which file to delete, so the one remedy \
+             it offers names a path in a platform data directory the person \
+             reading it has no way to find"
+        );
+
         // The control: a store this build wrote opens again. Without it the
         // refusal above would pass against an `open` that refused every file.
+        //
+        // **This is the control and not a demonstration of recovery.** The
+        // discard is the person's — nothing here deletes a store on a version
+        // mismatch, because the file can hold writes the server has never
+        // seen. The `remove_file` is this test doing by hand what the error
+        // tells a person to do.
         std::fs::remove_file(&path).unwrap();
         assert!(open(&path).is_ok());
     }

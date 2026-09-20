@@ -571,6 +571,29 @@ describe("a cursor the log no longer holds", () => {
       ).toBe("hydration_incomplete");
     }
 
+    // What the report says about a store in this state, pinned rather than
+    // left to be discovered. It reads `never` while carrying the slice and
+    // the rows a hydration left, because the predicate behind it wants a
+    // cursor and the aging deleted one. The advice is right — a hydration is
+    // owed — and the fact is wrong, and a caller reading the two lines
+    // together is told a copy that holds three rows has never hydrated.
+    // Whether that wants a fourth value of its own is in the open questions.
+    const reported = await device.status();
+    expect(
+      reported.ok,
+      `the status door was refused, so nothing below says what an aged-out store reports: ${JSON.stringify(reported)}`,
+    ).toBe(true);
+    if (reported.ok) {
+      expect(
+        reported.value.hydration,
+        "the report for an aged-out store changed without the statement changing with it, so a caller learns something different about the same state",
+      ).toBe("never");
+      expect(
+        reported.value.slice_types,
+        "the report says the slice is empty as well, so `never` would be a plain description rather than the mismatch this pins",
+      ).toContain("core.note");
+    }
+
     // And a hydration clears it, which is what makes the refusal a state to
     // leave rather than a store to discard.
     server.answer("GET", "/events", headRead("900"));
