@@ -2220,11 +2220,13 @@ describe("the paging helpers and the system opt-in", () => {
 
   /**
    * **The system row is seeded through storage, because no credential writes
-   * one.** `system.*` belongs to the platform's own machinery — the manifest
-   * registrar, the connection bridge, the provider store — and every one of
-   * those writes through the storage layer rather than through a credential.
-   * The API door refuses the namespace outright, and the only credential that
-   * used to reach it did so through the role bypass this model removed.
+   * one.** `system.*` belongs to the platform's own machinery, which writes
+   * through the storage layer rather than through a credential. The API door
+   * refuses the namespace outright, and the only credential that used to
+   * reach it did so through the role bypass this model removed. No list of
+   * those writers is given here on purpose: the last one drifted out of date
+   * and named two that no longer exist, and the seeding does not depend on
+   * which they are.
    */
   async function seedPair(
     marker: string,

@@ -34,35 +34,28 @@
  * from `c.res` first.
  */
 /**
- * **Which responses this covers, enumerated rather than assumed.** Every
- * hand-built `Response` in the server was read to draw this line, because
- * the first pass at it missed `HEAD /blobs/:hash` sitting three lines above
- * the `GET` that was fixed.
+ * **Which responses this covers, enumerated rather than assumed.** The list
+ * below is every `withPreparedHeaders` call site, and it is kept by reading
+ * them rather than by remembering them: an earlier version of this comment
+ * named three surfaces that no longer exist, which is worse than naming none.
  *
- * Wrapped, because they are the API surface a client calls: the SSE stream,
- * both export shapes, the blob download, and `GET
- * /profile/placeholder/:filename` — a plain route only because its body is
- * SVG rather than JSON, undeclared for that reason alone. It is not in the
- * specification, so it contradicts nothing the document claims, but it is an
- * answer to an API request and a caller correlating it with a log line needs
- * the same id as on any other.
+ * Wrapped, because they are the API surface a client calls: the SSE stream
+ * (`routes/events.ts`), both export shapes (`routes/export.ts`), the blob
+ * download (`routes/blobs.ts`), and a replayed answer served from the
+ * idempotency store (`middleware/idempotency.ts`). The last is the one a
+ * reader is most likely to miss, because it is served from the middleware
+ * rather than from a route: a replay is still an answer to an API request,
+ * and a caller correlating it with a log line needs the same id as on any
+ * other.
  *
- * Not wrapped, having been read and found unreachable: the `.on("HEAD",
- * "/:hash")` handler in `routes/blobs.ts`. A HEAD is answered by the GET
- * route, so a HEAD response already carries these headers through the merge
- * above and wrapping that handler would only decorate dead code. The reason
- * is recorded at the handler itself.
+ * A `HEAD /blobs/:hash` is answered by the `GET` route, so it carries these
+ * headers through the merge above without a wrapper of its own.
  *
  * Deliberately not wrapped: the browser and protocol surfaces. The auth HTML
- * pages and their redirects, the OAuth discovery documents, the MCP
- * transport's refusal, and the account-deletion guard's 401. These are not
- * the typed API and declare none of these headers, so there is nothing to
- * make honest. The guard's response is the one to leave alone on purpose
- * rather than merely by scope: it is constructed byte-for-byte identical to
- * the wrong-password answer it stands in for, so that a network observer
- * cannot enumerate accounts pending deletion, and a header added on one side
- * of that pair and not the other is the distinguisher it exists to avoid.
- * Extending the rule there is a security question, not a formatting one.
+ * pages and their redirects (`routes/auth-pages.ts`, `routes/auth-consent.ts`),
+ * the OAuth discovery documents (`app.ts`), and the error pages and bodies
+ * (`middleware/error-handler.ts`). These are not the typed API and declare
+ * none of these headers, so there is nothing to make honest.
  */
 export function withPreparedHeaders(
   c: { res: Response },

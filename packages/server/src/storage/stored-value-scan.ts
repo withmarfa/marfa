@@ -19,9 +19,8 @@
  * weaker:
  *
  * - One image runs `web`, `worker` and `both` from the same
- *   `createPgStorage` / `createSqliteStorage` path. A throw is every
- *   replica of every role exiting at once, including the workers that
- *   drain the queues.
+ *   `createSqliteStorage` path. A throw is every replica of every role
+ *   exiting at once, including the workers that drain the queues.
  * - The realistic population is a rollback: a value a newer build wrote,
  *   met by an older one. Refusing makes the recovery action the thing that
  *   cannot complete.
@@ -280,8 +279,8 @@ export interface StoredValueScan {
  * orders of magnitude above the observed cost, and it is not here for
  * today's data.
  *
- * It is here for a freshly restored database, where `relallvisible` is 0
- * until the first `VACUUM` and the planner falls back to a sequential
+ * It is here for a freshly restored database, where the planner has no
+ * statistics until the first `ANALYZE` and falls back to a sequential
  * scan — which is nothing at seven thousand rows and is not nothing
  * forever. Boot is the one place where waiting is expensive, because a
  * deploy's health check is waiting on it.

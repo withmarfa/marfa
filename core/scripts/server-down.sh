@@ -18,7 +18,7 @@ source "${env_file}"
 # either misses or, worse, names a group with the caller in it.
 #
 # Walking `pgrep -P` is slower and has no such failure. Children are
-# collected before anything is signalled, because a parent that dies first
+# collected before anything is signaled, because a parent that dies first
 # reparents its children to init and they can no longer be found this way.
 descendants() {
   local parent="$1" child

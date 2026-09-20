@@ -809,7 +809,7 @@ export function typeHasRole(typeId: string, role: TypeRole): boolean {
  * silent omission.
  *
  * Cost is one pass over the registered types per call, which is small (the
- * platform ships ~42) and only paid when a subtree is actually being resolved.
+ * platform ships 45) and only paid when a subtree is actually being resolved.
  */
 export function declaredDescendantsOutsideNamespace(rootId: string): string[] {
   const prefix = `${rootId}.`;

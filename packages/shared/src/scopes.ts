@@ -415,7 +415,7 @@ export interface ParsedScope {
   subresource?: string;
   /**
    * Present when kind === "profile" and the scope names a single row of the
-   * category (`name`, `email`, `avatar`). Absent for the levelled parent,
+   * category (`name`, `email`, `avatar`). Absent for the leveled parent,
    * `profile:<verb>`, which reaches the whole category including rows added
    * to it later.
    */
@@ -966,7 +966,7 @@ export function scopeCovers(
     // edge grant satisfy an item-type requirement.
     //
     // The exact string comparison this replaced happened to contain that,
-    // because `edge.*` never equalled `edge.foo`. A pattern match does not,
+    // because `edge.*` never equaled `edge.foo`. A pattern match does not,
     // so the guard has to be explicit.
     if (!isTypeScope(parsed)) continue;
 
@@ -1048,7 +1048,7 @@ export function scopesToMetadataPermissions(
  */
 /**
  * Projects Category 2 scopes into a permission map keyed on the row, with the
- * levelled parent keyed on `*`.
+ * leveled parent keyed on `*`.
  *
  * A clone of {@link scopesToMetadataPermissions}, and deliberately so: the
  * parent/row split, `write` implying `read`, and a row added later reaching a
@@ -1079,7 +1079,7 @@ export function scopesToProfilePermissions(
  * including one added to the category later. `write` implies `read`.
  *
  * **`read` is a level here rather than a baseline**, which is the difference
- * from an item-type axis and the whole reason this category is levelled: a
+ * from an item-type axis and the whole reason this category is leveled: a
  * caller holding nothing on it may not read a name or an email address.
  */
 export function profilePermissionCovers(
@@ -1191,11 +1191,11 @@ export function edgePermissionCovers(
  * which revokes the client's live tokens. Both readings are wrong and the
  * second is wrong destructively.
  *
- * The three axes with a verb are answered the way the bearer middleware
+ * The four axes with a verb are answered the way the bearer middleware
  * answers them: project the held scopes into the permission map a credential
  * is stored with, then resolve against that map with the resolver the request
  * path uses — {@link resolveTypePermission}, {@link edgePermissionCovers},
- * {@link metadataPermissionCovers}. So the breadth rule here is the breadth
+ * {@link metadataPermissionCovers} and {@link profilePermissionCovers}. So the breadth rule here is the breadth
  * rule enforced at the point of use, rather than a second one written to
  * match.
  *
@@ -1421,7 +1421,7 @@ export function firstReachBeyondMap(
 
   // The axis's own resolver, so the ceiling is measured by whatever the
   // request path runs rather than by a second reading of the same map. The
-  // three levelled axes carry no `none` in their types; one arriving from a
+  // three leveled axes carry no `none` in their types; one arriving from a
   // hand-made row resolves as covering nothing, which refuses rather than
   // admits.
   const resolverFor =

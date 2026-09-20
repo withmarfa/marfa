@@ -603,8 +603,10 @@ export interface ItemStore {
    * Fetch many items by id.
    *
    * Trashed rows are excluded by default, because every read surface treats a
-   * soft-deleted item as gone. `includeTrashed` is for the one caller that
-   * must see them: purge, whose whole input is trashed rows. Without it the
+   * soft-deleted item as gone. Two callers pass `includeTrashed`, both in
+   * `bulk-actions/runner.ts`: purge, whose whole input is trashed rows, and
+   * the tag chunk, which says at its own call site why it is load-bearing
+   * there rather than defensive. Without it the
    * purge runner's pre-fetch came back empty, so it reported every id as
    * "not found" while the delete underneath it succeeded — a
    * job that removed four thousand rows and said it had removed none.

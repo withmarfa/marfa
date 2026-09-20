@@ -6,7 +6,7 @@
   "fields": {
     "name": {
       "type": "string",
-      "description": "Display name (e.g. \"Aug's MacBook Pro\")"
+      "description": "Display name (e.g. \"Work laptop\")"
     },
     "kind": {
       "type": "enum",

@@ -126,9 +126,10 @@ export async function applyInlineEdges(
  * always arrives behind the item it belongs to — the ordering
  * `POST /items` already states.
  *
- * One function rather than a publish per call site: six doors reach
- * `applyInlineEdges`, and a rule spread across six of them is a rule one
- * of them will be missing.
+ * One function rather than a publish per call site: three doors reach
+ * `applyInlineEdges` — `POST /items`, `PATCH /items/{id}` and
+ * `POST /items/bulk` — and a rule spread across three of them is a rule
+ * one of them will be missing.
  */
 export async function announceInlineEdges(
   changes: InlineEdgeChanges,

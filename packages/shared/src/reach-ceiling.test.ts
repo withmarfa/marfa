@@ -107,7 +107,7 @@ describe("firstReachBeyondMap on the type axis", () => {
   });
 });
 
-describe("firstReachBeyondMap on the levelled axes", () => {
+describe("firstReachBeyondMap on the leveled axes", () => {
   it("refuses a level above the held one", () => {
     expect(firstReachBeyondMap("edge", { "*": "read" }, { "*": "write" })).toBe(
       "*",

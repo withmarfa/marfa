@@ -1234,10 +1234,13 @@ describe("grantCoversScope", () => {
    * and the wrong thing to describe as a test.
    *
    * What they are worth is saying, in one place a person will read, what the
-   * answer has to be. Nothing gates on a capability yet: no route consults
-   * one and no bundle offers one. So a wrong answer today skips a consent
-   * screen for a literal that reaches nothing, and the reason to hold the
-   * line now is that the gates arrive later and will inherit whatever this
+   * answer has to be. The routes do gate on these — `requirePermission`
+   * runs at seventeen call sites across nine route files, covering `items.purge`,
+   * `keys.mint`, `config.manage`, `schema.write`, `webhooks.manage`,
+   * `grants.manage` and `audit.read`. What no bundle does yet is *offer*
+   * one, so a wrong answer today shows a consent screen no default grant
+   * can satisfy rather than opening a door, and the reason to hold the line
+   * now is that the bundles arrive later and will inherit whatever this
    * says.
    */
   describe("capabilities, reachable only by name", () => {

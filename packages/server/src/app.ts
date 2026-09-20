@@ -205,11 +205,10 @@ export function createApp(
   // emits the correct code + status). Mounted after `secureHeaders` and
   // before auth so an oversized unauthenticated body is rejected cheaply.
   //
-  // The blob (`/blobs`) and avatar (`/profile`) upload routes are exempt:
-  // they legitimately accept up to `maxBlobSize` (50 MB default) and
-  // enforce their own cap inside the handler, returning `blob_too_large`.
-  // Applying the small global cap to them would reject valid uploads, so
-  // the middleware is a no-op for those path prefixes.
+  // The blob upload route (`/blobs`) is exempt: it legitimately accepts up
+  // to `maxBlobSize` (50 MB default) and enforces its own cap inside the
+  // handler, returning `blob_too_large`. Applying the small global cap to it
+  // would reject valid uploads, so the middleware is a no-op for that prefix.
   const tooLarge = () => {
     throw new MarfaError(ErrorCode.REQUEST_TOO_LARGE, "Request body too large");
   };
@@ -230,7 +229,7 @@ export function createApp(
     "*",
     createMiddleware<AppEnv>(async (c, next) => {
       const path = c.req.path;
-      if (path.startsWith("/blobs") || path.startsWith("/profile")) {
+      if (path.startsWith("/blobs")) {
         return next();
       }
       if (path.startsWith("/items/bulk") || path.startsWith("/edges/bulk")) {
@@ -490,8 +489,10 @@ export function createApp(
     // RFC 8414 §3.1 forms the metadata URL by inserting the well-known
     // segment between host and issuer path, and OIDC discovery appends its
     // segment to the issuer. The issuer here is `<base>/auth`, so those are
-    // the three URLs a spec-following client asks for, and they are the three
-    // registered. All serve the same augmented document. The issuer-suffixed
+    // the URLs a spec-following client asks for. Four are registered: the
+    // two derivations above, plus the append form of the OAuth document,
+    // which the derivation does not yield but clients ask for anyway. All
+    // serve the same augmented document. The issuer-suffixed
     // OIDC path resolves here because these registrations run before the
     // `/auth/*` catch-all mounts.
     //

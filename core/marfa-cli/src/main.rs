@@ -125,8 +125,8 @@ struct ListArgs {
     /// Exclusive lower bound on the item's own time, RFC 3339.
     ///
     /// Named for the field rather than shortened to `--after`, because the
-    /// binary has two time axes: this one and the modification time
-    /// `catch-up` walks.
+    /// binary sorts on three times — `created_at`, `updated_at` and this
+    /// one — so an unqualified `--after` would not say which.
     #[arg(long = "occurred-after", value_name = "TIME")]
     occurred_after: Option<String>,
     /// Exclusive upper bound on the item's own time, RFC 3339.
@@ -167,8 +167,8 @@ enum ItemState {
     Revoked,
 }
 
-// Every sortable column is a verb plus `_at`, so the shared suffix is the
-// naming rule rather than a redundant prefix the variants could drop.
+// Every sortable column is a verb plus `_at`, so the shared `At` suffix the
+// lint reports is the naming rule rather than noise the variants could drop.
 #[allow(clippy::enum_variant_names)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 enum SortField {

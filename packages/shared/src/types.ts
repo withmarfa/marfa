@@ -257,16 +257,16 @@ export interface ItemEdgesBlock {
 export type EdgePermission = "read" | "write";
 
 /**
- * Per-metadata-sub-resource permission levels. Today the only sub-resource
- * is `types` (gating type registration via `POST /types`); future entries
- * (e.g. instance config) follow the same shape. Default `{}` — no access —
+ * Per-metadata-sub-resource permission levels. Today there are two,
+ * `types` (gating type registration via `POST /types`) and `edge_types`
+ * (gating `POST /edge-types`); future entries follow the same shape. Default `{}` — no access —
  * means the credential cannot mutate the metadata surface, whatever else it
  * holds.
  */
 export type MetadataPermission = "read" | "write";
 
 /**
- * A level on Category 2, Your profile. Levelled in the same sense as
+ * A level on Category 2, Your profile. Leveled in the same sense as
  * metadata: read is a level rather than a free baseline, because the
  * category holds a person's name, email address and avatar.
  */
@@ -330,8 +330,9 @@ export interface ApiKey {
    */
   edge_permissions?: Record<string, EdgePermission>;
   /**
-   * Per-metadata-sub-resource permissions map. Today only `types` is
-   * surfaced, and it gates `POST /types` for every credential. An empty
+   * Per-metadata-sub-resource permissions map. Today `types` and
+   * `edge_types` are surfaced, gating `POST /types` and `POST /edge-types`
+   * for every credential. An empty
    * object means no metadata permissions granted, and nothing bypasses the
    * map. OAuth tokens carry the same map projected from the grant's
    * `metadata.<subresource>:<verb>` scopes.
@@ -339,10 +340,10 @@ export interface ApiKey {
   metadata_permissions?: Record<string, MetadataPermission>;
   /**
    * Category 2, Your profile. Keyed on the row (`name`, `email`, `avatar`)
-   * with the levelled parent keyed on `*`.
+   * with the leveled parent keyed on `*`.
    *
    * Absent means the caller holds nothing on this category, which on a
-   * levelled category means it may not read it either. Every credential is
+   * leveled category means it may not read it either. Every credential is
    * held to this map: there is no rank that reads past it.
    */
   profile_permissions?: Record<string, ProfilePermission>;

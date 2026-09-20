@@ -269,7 +269,7 @@ export interface TypeFilter {
  * subtracts from a grant *less* specific than itself. `{"user.secret":
  * "read", "user.*": "none"}` grants `user.secret`, because the exact key wins,
  * and a compiler that subtracted every exclusion from every grant would get
- * that backwards. Ranking once here is what keeps six SQL compilers and one
+ * that backwards. Ranking once here is what keeps three SQL compilers and one
  * JavaScript predicate from each having their own opinion about it.
  */
 export interface TypeFilterTerm {

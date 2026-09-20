@@ -7,8 +7,8 @@
  * inline projects only — "projects referenced as external files or
  * directories do not inherit from the root config automatically" — and the
  * root declares `projects: ["packages/*"]`, a directory glob. So the root's
- * numbers governed the inline `ci-config` project and nothing else, and seven
- * of eight packages ran on Vitest's stock 10s default.
+ * numbers governed the inline `ci-config` project and nothing else, and three
+ * of the four packages ran on Vitest's stock 10s default.
  *
  * That is not a failure anyone sees as a failure. It surfaces as a timeout on
  * a busy machine, in a package the change under test never touched, and a

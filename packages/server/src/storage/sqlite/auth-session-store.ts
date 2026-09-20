@@ -4,8 +4,7 @@ import { auth_session } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
 
 /**
- * SQLite sweep for expired better-auth session rows. Mirrors
- * `PgAuthSessionStore` — instance-wide.
+ * SQLite sweep for expired better-auth session rows — instance-wide.
  */
 export class SqliteAuthSessionStore implements AuthSessionStore {
   constructor(private db: DrizzleDb) {}

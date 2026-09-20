@@ -203,7 +203,7 @@ export const apiKeys = sqliteTable(
     enforcement_override: text("enforcement_override"),
     /**
      * Category 2 of the permission model, Your profile. Keyed on the row
-     * (`name`, `email`, `avatar`) with the levelled parent keyed on `*`.
+     * (`name`, `email`, `avatar`) with the leveled parent keyed on `*`.
      *
      * A key had nowhere to hold this until now: the field was on the wire type
      * and on the synthetic principal an OAuth grant projects, and a first-party

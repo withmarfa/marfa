@@ -26,7 +26,7 @@ const _coreRegistry = new Map<string, EdgeTypeSchema>(
 const _customRegistry = new Map<string, EdgeTypeSchema>();
 
 /**
- * The core edge-type registry — the eight shipped edge types by identifier.
+ * The core edge-type registry — the nine shipped edge types by identifier.
  * Custom edge types are NOT exposed here; consumers that need the full set
  * call `listEdgeTypes()`. The OAuth scope allow-list reads this for the
  * static core-scope enumeration.
