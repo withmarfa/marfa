@@ -204,6 +204,10 @@ pub enum MarfaError {
     WrongSchema {
         expected: String,
         found: String,
+        /// The store the caller has to discard. Carried rather than left in
+        /// the message, because a Swift caller showing this to a person has
+        /// to be able to name the file without parsing prose out of it.
+        path: String,
         message: String,
     },
     CatchUpTooOld {
@@ -285,9 +289,14 @@ impl From<marfa_core::CoreError> for MarfaError {
             E::NoServer => MarfaError::NoServer { message },
             E::NoCursor => MarfaError::NoCursor { message },
             E::HydrationIncomplete => MarfaError::HydrationIncomplete { message },
-            E::WrongSchema { expected, found } => MarfaError::WrongSchema {
+            E::WrongSchema {
                 expected,
                 found,
+                path,
+            } => MarfaError::WrongSchema {
+                expected,
+                found,
+                path,
                 message,
             },
             E::CatchUpTooOld { min_retained_id } => MarfaError::CatchUpTooOld {

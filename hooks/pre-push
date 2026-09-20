@@ -30,6 +30,13 @@ pnpm build
 pnpm typecheck
 pnpm lint
 pnpm format:check
+# The two guards that live outside the command anyone runs. The Swift FFI
+# crate is its own workspace, so `cargo test` in `core/` never reaches it and
+# a change to a shared error type compiles locally and fails on the pool;
+# `surface-lock:drift` takes a base ref, so it exists only as a CI job. Each
+# has now cost this repository a red run.
+pnpm test:rust
+pnpm test:drift
 
 # `vitest --changed` needs a git base to compare against. `origin/main`
 # matches the typical contributor workflow (branch from main, push to
