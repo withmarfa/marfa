@@ -341,8 +341,11 @@ describe("archives carry type registrations", () => {
     expect(body.error.details?.conflicting_ids).toContain(typeId);
 
     // Refused before anything was written: the item did not land.
-    const items = await destination.storage.items.list({});
-    expect(items.data).toHaveLength(0);
+    const items = await destination.storage.items.list({ all_states: true });
+    expect(
+      items.data,
+      "a refused restore wrote a row anyway, so a rejected archive leaves the database half-changed",
+    ).toHaveLength(0);
   });
 
   it("refuses an archive claiming a reserved namespace", async () => {
@@ -405,8 +408,11 @@ describe("archives carry type registrations", () => {
 
     const res = await restore(destination, tampered);
     expect(res.status).toBe(400);
-    const items = await destination.storage.items.list({});
-    expect(items.data).toHaveLength(0);
+    const items = await destination.storage.items.list({ all_states: true });
+    expect(
+      items.data,
+      "a refused restore wrote a row anyway, so a rejected archive leaves the database half-changed",
+    ).toHaveLength(0);
   });
 
   it("names the archive entry whose chain runs too deep", async () => {

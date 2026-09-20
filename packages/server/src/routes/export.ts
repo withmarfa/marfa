@@ -21,6 +21,22 @@ import {
   UNKNOWN_PARAM_NOTE,
 } from "./_unknown-query-keys.js";
 
+/**
+ * What an export answers when the caller names no state.
+ *
+ * Every listing door defaults to the active state, because a listing
+ * answers what the reader is working with. This door answers a different
+ * question: the archive it writes is what `POST /admin/restore-archive`
+ * reads back, so a default that dropped archived rows would make a backup
+ * and a restore lose the rows a person deliberately kept. The bin is the
+ * one thing a copy leaves behind, and `state=any` takes even that.
+ *
+ * An exclusion rather than a list of the states to keep, so a state added
+ * to the platform later is carried by a backup without anyone remembering
+ * to add it here.
+ */
+export const EXPORT_EXCLUDED_STATES = ["trashed"] as const;
+
 // ---------------------------------------------------------------------------
 // Route definition
 // ---------------------------------------------------------------------------
@@ -47,7 +63,7 @@ const exportRoute = createRoute({
         .string()
         .optional()
         .describe(
-          `Filter by item state. \`${ALL_STATES}\` exports every state including trashed, in one pass — which is what an export meaning "everything stored" needs, since the archive is what a restore reads back. Omitting the parameter keeps the default every item read applies, which excludes trashed rows.`,
+          `Filter by item state. Omitting the parameter exports every state except trashed: an export is a copy of the corpus rather than a listing, and the archive it writes is what a restore reads back, so it does not take the listing grammar's active-state default. \`${ALL_STATES}\` adds the bin, in one pass.`,
         ),
       source: z.string().optional().describe("Filter by source credential"),
       occurred_after: z
@@ -166,9 +182,9 @@ export function exportRoutes(
     const type = query.type;
     assertTypeFilter(type);
 
-    // Same resolution as `GET /items`, sentinel included. Export shares the
-    // storage filter with the listing, so a door that could not name every
-    // state was a route-layer gap rather than a missing permission.
+    // Same resolution as `GET /items`, sentinel included: `any` means the
+    // same thing on every door that reads items. What this door does not
+    // share is the default, which `EXPORT_EXCLUDED_STATES` states.
     const { state, all_states: allStates } = resolveStateFilter(query.state);
 
     // Read here rather than left to the store, because this door answers by
@@ -206,6 +222,7 @@ export function exportRoutes(
                 type,
                 state,
                 all_states: allStates,
+                exclude_states: EXPORT_EXCLUDED_STATES,
                 source,
                 occurred_after: occurredAfter,
                 occurred_before: occurredBefore,
@@ -349,6 +366,7 @@ async function handleArchiveExport(
         type,
         state,
         all_states: allStates,
+        exclude_states: EXPORT_EXCLUDED_STATES,
         source,
         occurred_after: occurredAfter,
         occurred_before: occurredBefore,

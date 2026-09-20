@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
-use marfa_core::{Core, ListFilters, Server, Sort};
+use marfa_core::{Core, ListFilters, SearchFilters, Server, Sort};
 
 use crate::error::CliError;
 
@@ -81,6 +81,12 @@ enum Command {
     Search {
         /// Words to look for; each is a prefix, all must match.
         query: String,
+        /// Exactly one state. Unset answers the active state.
+        #[arg(long)]
+        state: Option<ItemState>,
+        /// Every state, not just the active one.
+        #[arg(long)]
+        all_states: bool,
         /// How many hits at most.
         #[arg(long, default_value_t = 20)]
         limit: usize,
@@ -110,12 +116,12 @@ struct ListArgs {
     /// A type identifier; its subtypes are included.
     #[arg(long = "type", value_name = "TYPE")]
     type_: Option<String>,
-    /// Exactly one state. Unset hides trashed items.
+    /// Exactly one state. Unset answers the active state.
     #[arg(long)]
     state: Option<ItemState>,
-    /// Every state, trashed included.
+    /// Every state, not just the active one.
     #[arg(long)]
-    include_trashed: bool,
+    all_states: bool,
     /// Only items at this tier.
     #[arg(long)]
     tier: Option<Tier>,
@@ -278,7 +284,7 @@ fn run(cli: Cli) -> Result<(), CliError> {
                     let filters = ListFilters {
                         r#type: args.type_,
                         state: args.state.map(Into::into),
-                        include_trashed: args.include_trashed,
+                        all_states: args.all_states,
                         tier: args.tier.map(Into::into),
                         tags: args.tags,
                         occurred_after: args.occurred_after,
@@ -298,8 +304,17 @@ fn run(cli: Cli) -> Result<(), CliError> {
                 },
             }
         }
-        Command::Search { query, limit } => {
-            output::hits(&open(&cli.db, None)?.search(&query, limit)?, json)
+        Command::Search {
+            query,
+            state,
+            all_states,
+            limit,
+        } => {
+            let filters = SearchFilters {
+                state: state.map(Into::into),
+                all_states,
+            };
+            output::hits(&open(&cli.db, None)?.search(&query, &filters, limit)?, json)
         }
         Command::Status => {
             let status = open(&cli.db, None)?.status()?;

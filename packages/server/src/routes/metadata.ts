@@ -28,14 +28,14 @@ const listTagsRoute = createRoute({
   tags: ["Metadata"],
   summary: "List distinct tags in use",
   description:
-    "Returns every distinct tag in use across items the caller can read, each with a usage count, sorted by count descending then tag ascending. Scoped to the caller's type permissions; trashed items are excluded.",
+    "Returns every distinct tag in use across items the caller can read, each with a usage count, sorted by count descending then tag ascending. Scoped to the caller's type permissions and to the active state, which is the selection `GET /items` answers, so every tag listed here opens to rows.",
   security: [{ bearerAuth: [] }],
   request: {},
   responses: {
     200: {
       content: { "application/json": { schema: TagListSchema } },
       description:
-        "Distinct tags with usage counts, sorted by count descending then tag ascending. Type-permission scoped; trashed items excluded.",
+        "Distinct tags with usage counts, sorted by count descending then tag ascending. Type-permission scoped, and counted over the active state, as the listing is.",
     },
     401: {
       content: {

@@ -66,8 +66,18 @@ pub struct Edge {
     pub updated_at: String,
 }
 
-/// Narrowing for a list. Leaving `state` unset excludes trashed rows, as the
-/// server does; `include_trashed` lifts that, and a named state wins.
+/// Narrowing for a search. The state rule a list takes, and only that: the
+/// rest of the listing grammar is answered by a list.
+#[derive(Debug, Clone, Default, uniffi::Record)]
+pub struct SearchFilters {
+    #[uniffi(default = None)]
+    pub state: Option<ItemState>,
+    #[uniffi(default = false)]
+    pub all_states: bool,
+}
+
+/// Narrowing for a list. Leaving `state` unset answers the active state, as
+/// the server does; `all_states` lifts that, and a named state wins.
 #[derive(Debug, Clone, Default, uniffi::Record)]
 pub struct ListFilters {
     #[uniffi(default = None)]
@@ -75,7 +85,7 @@ pub struct ListFilters {
     #[uniffi(default = None)]
     pub state: Option<ItemState>,
     #[uniffi(default = false)]
-    pub include_trashed: bool,
+    pub all_states: bool,
     #[uniffi(default = None)]
     pub tier: Option<Tier>,
     #[uniffi(default = [])]
@@ -365,7 +375,7 @@ impl From<ListFilters> for marfa_core::ListFilters {
         marfa_core::ListFilters {
             r#type: filters.r#type,
             state: filters.state.map(Into::into),
-            include_trashed: filters.include_trashed,
+            all_states: filters.all_states,
             tier: filters.tier.map(Into::into),
             tags: filters.tags,
             occurred_after: filters.occurred_after,
@@ -463,8 +473,20 @@ impl MarfaCore {
             .collect())
     }
 
-    pub fn search(&self, query: String, limit: u32) -> Result<Vec<SearchHit>, MarfaError> {
-        let hits = self.inner.search(&query, limit as usize)?;
+    pub fn search(
+        &self,
+        query: String,
+        filters: SearchFilters,
+        limit: u32,
+    ) -> Result<Vec<SearchHit>, MarfaError> {
+        let hits = self.inner.search(
+            &query,
+            &marfa_core::SearchFilters {
+                state: filters.state.map(Into::into),
+                all_states: filters.all_states,
+            },
+            limit as usize,
+        )?;
         Ok(hits
             .into_iter()
             .map(|hit| SearchHit {

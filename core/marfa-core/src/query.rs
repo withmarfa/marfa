@@ -39,7 +39,7 @@ pub(crate) fn list(
             clauses.push("state = ?".into());
             values.push(Value::String(state.as_str().into()));
         }
-        None if !filters.include_trashed => clauses.push("state != 'trashed'".into()),
+        None if !filters.all_states => clauses.push("state = 'active'".into()),
         None => {}
     }
     if let Some(tier) = filters.tier {
@@ -173,13 +173,10 @@ mod tests {
             r#type: Some("core.note".into()),
             ..Default::default()
         };
-        assert_eq!(
-            ids(&conn, filters, Sort::default()),
-            vec!["f", "c", "b", "a"]
-        );
+        assert_eq!(ids(&conn, filters, Sort::default()), vec!["f", "c", "a"]);
         let filters = ListFilters {
             r#type: Some("core.note.*".into()),
-            include_trashed: true,
+            all_states: true,
             ..Default::default()
         };
         assert_eq!(
@@ -195,23 +192,32 @@ mod tests {
             r#type: Some("*".into()),
             ..Default::default()
         };
-        assert_eq!(ids(&conn, filters, Sort::default()).len(), 5);
+        assert_eq!(ids(&conn, filters, Sort::default()).len(), 4);
     }
 
     #[test]
-    fn state_defaults_to_everything_but_the_bin() {
+    fn state_defaults_to_the_active_state() {
         let conn = seeded();
         assert_eq!(
             ids(&conn, ListFilters::default(), Sort::default()),
-            vec!["f", "d", "c", "b", "a"]
+            vec!["f", "d", "c", "a"]
         );
+        // Both of the states a row can be put away in, each named and each
+        // answered. A default that answered one and hid the other would
+        // give two answers to one question, and a case that named only the
+        // bin would not see it.
+        let named = ListFilters {
+            state: Some(ItemState::Archived),
+            ..Default::default()
+        };
+        assert_eq!(ids(&conn, named, Sort::default()), vec!["b"]);
         let named = ListFilters {
             state: Some(ItemState::Trashed),
             ..Default::default()
         };
         assert_eq!(ids(&conn, named, Sort::default()), vec!["e"]);
         let everything = ListFilters {
-            include_trashed: true,
+            all_states: true,
             ..Default::default()
         };
         assert_eq!(ids(&conn, everything, Sort::default()).len(), 6);
@@ -252,9 +258,9 @@ mod tests {
             offset: Some(1),
             ..Default::default()
         };
-        assert_eq!(ids(&conn, filters, ascending), vec!["b", "c"]);
+        assert_eq!(ids(&conn, filters, ascending), vec!["c", "d"]);
         let filters = ListFilters {
-            offset: Some(4),
+            offset: Some(3),
             ..Default::default()
         };
         assert_eq!(ids(&conn, filters, ascending), vec!["f"]);

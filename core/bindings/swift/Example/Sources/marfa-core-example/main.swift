@@ -29,7 +29,7 @@ do {
         print("  \(note.id)  \(note.occurredAt)  \(try title(of: note))")
     }
 
-    let hits = try core.search(query: query, limit: 5)
+    let hits = try core.search(query: query, filters: SearchFilters(), limit: 5)
     print("search \"\(query)\":")
     for hit in hits {
         print("  \(String(format: "%.3f", hit.score))  \(hit.item.type)  \(try title(of: hit.item))")

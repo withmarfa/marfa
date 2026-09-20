@@ -75,15 +75,24 @@ pub struct Edge {
     pub updated_at: String,
 }
 
-/// Narrowing for a list. Leaving `state` unset excludes trashed rows, as the
-/// server does; `includeTrashed` lifts that, and a named state wins.
+/// Narrowing for a search. The state rule a list takes, and only that: the
+/// rest of the listing grammar is answered by a list.
+#[napi(object)]
+#[derive(Default)]
+pub struct SearchFilters {
+    pub state: Option<ItemState>,
+    pub all_states: Option<bool>,
+}
+
+/// Narrowing for a list. Leaving `state` unset answers the active state, as
+/// the server does; `allStates` lifts that, and a named state wins.
 #[napi(object)]
 #[derive(Default)]
 pub struct ListFilters {
     #[napi(js_name = "type")]
     pub type_: Option<String>,
     pub state: Option<ItemState>,
-    pub include_trashed: Option<bool>,
+    pub all_states: Option<bool>,
     pub tier: Option<Tier>,
     pub tags: Option<Vec<String>>,
     pub occurred_after: Option<String>,
@@ -226,7 +235,7 @@ fn filters(filters: Option<ListFilters>) -> marfa_core::ListFilters {
     marfa_core::ListFilters {
         r#type: filters.type_,
         state: filters.state.map(Into::into),
-        include_trashed: filters.include_trashed.unwrap_or(false),
+        all_states: filters.all_states.unwrap_or(false),
         tier: filters.tier.map(Into::into),
         tags: filters.tags.unwrap_or_default(),
         occurred_after: filters.occurred_after,
@@ -402,10 +411,23 @@ impl MarfaCore {
     }
 
     #[napi]
-    pub fn search(&self, query: String, limit: Option<u32>) -> Result<Vec<SearchHit>> {
+    pub fn search(
+        &self,
+        query: String,
+        filters: Option<SearchFilters>,
+        limit: Option<u32>,
+    ) -> Result<Vec<SearchHit>> {
+        let filters = filters.unwrap_or_default();
         let hits = self
             .inner
-            .search(&query, limit.unwrap_or(20) as usize)
+            .search(
+                &query,
+                &marfa_core::SearchFilters {
+                    state: filters.state.map(Into::into),
+                    all_states: filters.all_states.unwrap_or(false),
+                },
+                limit.unwrap_or(20) as usize,
+            )
             .map_err(failure)?;
         Ok(hits
             .into_iter()

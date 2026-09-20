@@ -6,8 +6,9 @@
  * Neither was answerable. The only time filter read the item's own
  * user-meaningful time rather than when the row changed, so a client that
  * had been away could not narrow at all, and a listing that omits its
- * state silently drops trashed rows, so the one fact a client most needs
- * in order to prune its local copy was the one it could not see.
+ * state answers the active one, so the one fact a client most needs in
+ * order to prune its local copy — that a row has left it — was the one it
+ * could not see.
  *
  * `updated_after` is that filter and `state=any` is that listing.
  *
@@ -241,11 +242,65 @@ describe("what a catch-up can see", () => {
     });
     expect(res.status).toBe(200);
 
+    // `state=any` because the row has just left the active state, and the
+    // transition out of it is the change being caught up on. This is the
+    // pairing the file opens with: the bound says what changed and the
+    // sentinel says which states to look in, and a catch-up that omitted
+    // the sentinel would be told nothing changed by the very write it is
+    // asking about.
+    const ids = await idsFrom(
+      `state=any&updated_after=${encodeURIComponent(BOUND)}&limit=200`,
+    );
+    expect(
+      ids,
+      "a transition and the sentinel together do not find the row, so a client learns of an archive or a delete only by re-reading the corpus",
+    ).toContain(id);
+    expect(
+      ids,
+      "the bound is ignored, so a catch-up re-reads every row it already holds on every reconnect",
+    ).not.toContain(control);
+  });
+
+  it("hides a transitioned row from a catch-up that names no state", async () => {
+    const control = await seedControl("transition-default");
+    const id = await seedNote("transitioned-default");
+    await forceItemUpdatedAt(id, EPOCH);
+
+    const res = await request(ctx.app, "POST", `/items/${id}/transition`, {
+      key: ctx.workingKey,
+      body: { state: "archived" },
+    });
+    expect(
+      res.status,
+      "the transition was refused, so the row never left the active state and the absence below is about nothing",
+    ).toBe(200);
+
+    // The other half of the pairing, and the reason `state=any` is not
+    // decoration. The default answers the active state, so a row that has
+    // just left it is absent from an unnarrowed catch-up however recently
+    // it changed.
     const ids = await idsFrom(
       `updated_after=${encodeURIComponent(BOUND)}&limit=200`,
     );
-    expect(ids).toContain(id);
-    expect(ids).not.toContain(control);
+    expect(
+      ids,
+      "an unnarrowed catch-up answers a row that has left the active state, so the default is not the active state",
+    ).not.toContain(id);
+    expect(
+      ids,
+      "the bound is ignored, so a catch-up re-reads every row it already holds on every reconnect",
+    ).not.toContain(control);
+
+    // Not vacuous: the same bound with the sentinel finds it, so the row is
+    // absent above because of the state mask rather than because the write
+    // never moved the modification time.
+    const widened = await idsFrom(
+      `state=any&updated_after=${encodeURIComponent(BOUND)}&limit=200`,
+    );
+    expect(
+      widened,
+      "the transition never reached the modification time, so the case above passes for the wrong reason",
+    ).toContain(id);
   });
 });
 
@@ -267,7 +322,8 @@ describe("state=any", () => {
     expect(ids).toContain(live);
   });
 
-  it("leaves the default listing excluding trashed rows", async () => {
+  it("widens without relaxing the default it widens from", async () => {
+    const live = await seedNote("default-live");
     const binned = await seedNote("default-binned");
     const res = await request(ctx.app, "POST", `/items/${binned}/transition`, {
       key: ctx.workingKey,
@@ -275,10 +331,18 @@ describe("state=any", () => {
     });
     expect(res.status).toBe(200);
 
-    // The other half of the sentinel, and the one a careless
-    // implementation breaks: widening the `any` case by relaxing the
-    // shared default would make every ordinary listing show the bin.
-    expect(await idsFrom("limit=200")).not.toContain(binned);
+    // The half a careless implementation breaks: making `any` work by
+    // relaxing the shared default would widen every listing that never
+    // asked. The live row is the witness that the query reached rows.
+    const listed = await idsFrom("limit=200");
+    expect(
+      listed,
+      "an unnarrowed listing stopped answering live rows, so the absence below says nothing",
+    ).toContain(live);
+    expect(
+      listed,
+      "the sentinel was made to work by relaxing the default, so every listing that named no state now answers the bin",
+    ).not.toContain(binned);
   });
 
   it("composes with updated_after so one pass sees a trashed change", async () => {

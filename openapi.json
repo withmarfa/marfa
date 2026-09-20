@@ -1065,10 +1065,10 @@
           {
             "schema": {
               "type": "string",
-              "description": "Filter by lifecycle state. `any` returns every state including trashed, which a resuming client needs in order to see a row go to the bin; omitting the parameter keeps the default, which excludes trashed rows."
+              "description": "Filter by lifecycle state. Omitting the parameter answers the active state, which is what a reader is working with. `any` returns every state in one pass, which a resuming client needs in order to see a row leave the active state."
             },
             "required": false,
-            "description": "Filter by lifecycle state. `any` returns every state including trashed, which a resuming client needs in order to see a row go to the bin; omitting the parameter keeps the default, which excludes trashed rows.",
+            "description": "Filter by lifecycle state. Omitting the parameter answers the active state, which is what a reader is working with. `any` returns every state in one pass, which a resuming client needs in order to see a row leave the active state.",
             "name": "state",
             "in": "query"
           },
@@ -7734,7 +7734,7 @@
                               "trashed",
                               "revoked"
                             ],
-                            "description": "Filter by lifecycle state. Omitting it applies the same default as `GET /items`: trashed rows are excluded. There is no `any` sentinel on this door — these four states are the whole structured vocabulary it accepts."
+                            "description": "Filter by lifecycle state. Omitting it applies the same default as `GET /items`: the active state alone, so an unnarrowed action does not reach rows the caller has archived or deleted. There is no `any` sentinel on this door — these four states are the whole structured vocabulary it accepts, and a write across states is one job per state."
                           },
                           "source": {
                             "type": "string"
@@ -7813,7 +7813,7 @@
                               "trashed",
                               "revoked"
                             ],
-                            "description": "Filter by lifecycle state. Omitting it applies the same default as `GET /items`: trashed rows are excluded. There is no `any` sentinel on this door — these four states are the whole structured vocabulary it accepts."
+                            "description": "Filter by lifecycle state. Omitting it applies the same default as `GET /items`: the active state alone, so an unnarrowed action does not reach rows the caller has archived or deleted. There is no `any` sentinel on this door — these four states are the whole structured vocabulary it accepts, and a write across states is one job per state."
                           },
                           "source": {
                             "type": "string"
@@ -7889,7 +7889,7 @@
                               "trashed",
                               "revoked"
                             ],
-                            "description": "Filter by lifecycle state. Omitting it applies the same default as `GET /items`: trashed rows are excluded. There is no `any` sentinel on this door — these four states are the whole structured vocabulary it accepts."
+                            "description": "Filter by lifecycle state. Omitting it applies the same default as `GET /items`: the active state alone, so an unnarrowed action does not reach rows the caller has archived or deleted. There is no `any` sentinel on this door — these four states are the whole structured vocabulary it accepts, and a write across states is one job per state."
                           },
                           "source": {
                             "type": "string"
@@ -7971,7 +7971,7 @@
                               "trashed",
                               "revoked"
                             ],
-                            "description": "Filter by lifecycle state. Omitting it applies the same default as `GET /items`: trashed rows are excluded. There is no `any` sentinel on this door — these four states are the whole structured vocabulary it accepts."
+                            "description": "Filter by lifecycle state. Omitting it applies the same default as `GET /items`: the active state alone, so an unnarrowed action does not reach rows the caller has archived or deleted. There is no `any` sentinel on this door — these four states are the whole structured vocabulary it accepts, and a write across states is one job per state."
                           },
                           "source": {
                             "type": "string"
@@ -8049,7 +8049,7 @@
                               "trashed",
                               "revoked"
                             ],
-                            "description": "Filter by lifecycle state. Omitting it applies the same default as `GET /items`: trashed rows are excluded. There is no `any` sentinel on this door — these four states are the whole structured vocabulary it accepts."
+                            "description": "Filter by lifecycle state. Omitting it applies the same default as `GET /items`: the active state alone, so an unnarrowed action does not reach rows the caller has archived or deleted. There is no `any` sentinel on this door — these four states are the whole structured vocabulary it accepts, and a write across states is one job per state."
                           },
                           "source": {
                             "type": "string"
@@ -8126,7 +8126,7 @@
                               "trashed",
                               "revoked"
                             ],
-                            "description": "Filter by lifecycle state. Omitting it applies the same default as `GET /items`: trashed rows are excluded. There is no `any` sentinel on this door — these four states are the whole structured vocabulary it accepts."
+                            "description": "Filter by lifecycle state. Omitting it applies the same default as `GET /items`: the active state alone, so an unnarrowed action does not reach rows the caller has archived or deleted. There is no `any` sentinel on this door — these four states are the whole structured vocabulary it accepts, and a write across states is one job per state."
                           },
                           "source": {
                             "type": "string"
@@ -16286,7 +16286,7 @@
           "Types"
         ],
         "summary": "Delete a registered type",
-        "description": "Removes a type registration. Requires `schema.write` — platform-shipped types are immutable.\n\nRejected with `409 type_has_subtypes` while another registered type declares this one as its parent, naming them in `details.subtype_ids`. `?force=true` does not cover that case: delete each subtype first, or give it a different parent through `PUT /types/{id}`.\n\nRejected with `409 type_in_use` if any item of the type still exists, unless `?force=true` orphans those rows (they persist, but new writes against the type return `400 unknown_type`).",
+        "description": "Removes a type registration. Requires `schema.write` — platform-shipped types are immutable.\n\nRejected with `409 type_has_subtypes` while another registered type declares this one as its parent, naming them in `details.subtype_ids`. `?force=true` does not cover that case: delete each subtype first, or give it a different parent through `PUT /types/{id}`.\n\nRejected with `409 type_in_use` if any item of the type still exists in any lifecycle state, the bin included, unless `?force=true` orphans those rows (they persist, but new writes against the type return `400 unknown_type`).",
         "security": [
           {
             "bearerAuth": []
@@ -16674,16 +16674,10 @@
           {
             "schema": {
               "type": "string",
-              "enum": [
-                "active",
-                "archived",
-                "trashed",
-                "revoked"
-              ],
-              "description": "Filter by lifecycle state."
+              "description": "Filter by lifecycle state. Omitting the parameter answers the active state, as a listing does, so a search never answers a row a listing hides. `any` widens to every state, the same sentinel the listing takes. A row in the bin is not indexed, so it is not matched under any value."
             },
             "required": false,
-            "description": "Filter by lifecycle state.",
+            "description": "Filter by lifecycle state. Omitting the parameter answers the active state, as a listing does, so a search never answers a row a listing hides. `any` widens to every state, the same sentinel the listing takes. A row in the bin is not indexed, so it is not matched under any value.",
             "name": "state",
             "in": "query"
           },
@@ -17010,7 +17004,7 @@
             }
           },
           "400": {
-            "description": "An invalid type pattern, a time bound that is not an instant, or an unrecognized query parameter.",
+            "description": "An invalid type pattern, a time bound that is not an instant, a `state` that is neither a lifecycle state nor the widening sentinel, or an unrecognized query parameter.",
             "content": {
               "application/json": {
                 "schema": {
@@ -17690,7 +17684,7 @@
           "Metadata"
         ],
         "summary": "List distinct tags in use",
-        "description": "Returns every distinct tag in use across items the caller can read, each with a usage count, sorted by count descending then tag ascending. Scoped to the caller's type permissions; trashed items are excluded.",
+        "description": "Returns every distinct tag in use across items the caller can read, each with a usage count, sorted by count descending then tag ascending. Scoped to the caller's type permissions and to the active state, which is the selection `GET /items` answers, so every tag listed here opens to rows.",
         "security": [
           {
             "bearerAuth": []
@@ -17698,7 +17692,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Distinct tags with usage counts, sorted by count descending then tag ascending. Type-permission scoped; trashed items excluded.",
+            "description": "Distinct tags with usage counts, sorted by count descending then tag ascending. Type-permission scoped, and counted over the active state, as the listing is.",
             "content": {
               "application/json": {
                 "schema": {
@@ -22583,10 +22577,10 @@
           {
             "schema": {
               "type": "string",
-              "description": "Filter by item state. `any` exports every state including trashed, in one pass — which is what an export meaning \"everything stored\" needs, since the archive is what a restore reads back. Omitting the parameter keeps the default every item read applies, which excludes trashed rows."
+              "description": "Filter by item state. Omitting the parameter exports every state except trashed: an export is a copy of the corpus rather than a listing, and the archive it writes is what a restore reads back, so it does not take the listing grammar's active-state default. `any` adds the bin, in one pass."
             },
             "required": false,
-            "description": "Filter by item state. `any` exports every state including trashed, in one pass — which is what an export meaning \"everything stored\" needs, since the archive is what a restore reads back. Omitting the parameter keeps the default every item read applies, which excludes trashed rows.",
+            "description": "Filter by item state. Omitting the parameter exports every state except trashed: an export is a copy of the corpus rather than a listing, and the archive it writes is what a restore reads back, so it does not take the listing grammar's active-state default. `any` adds the bin, in one pass.",
             "name": "state",
             "in": "query"
           },

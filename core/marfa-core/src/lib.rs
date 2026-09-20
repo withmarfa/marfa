@@ -21,8 +21,8 @@ use rusqlite::Connection;
 
 pub use error::CoreError;
 pub use model::{
-    CatchUpReport, Edge, HydrateReport, Hydration, Item, ItemState, ListFilters, SearchHit, Sort,
-    SortDirection, SortField, Status, Tier,
+    CatchUpReport, Edge, HydrateReport, Hydration, Item, ItemState, ListFilters, SearchFilters,
+    SearchHit, Sort, SortDirection, SortField, Status, Tier,
 };
 
 pub type Result<T> = std::result::Result<T, CoreError>;
@@ -113,10 +113,15 @@ impl Core {
     }
 
     /// Full-text search over titles, bodies and tags, best match first.
-    pub fn search(&self, query: &str, limit: usize) -> Result<Vec<SearchHit>> {
+    pub fn search(
+        &self,
+        query: &str,
+        filters: &SearchFilters,
+        limit: usize,
+    ) -> Result<Vec<SearchHit>> {
         let conn = self.conn()?;
         store::refuse_unless_hydrated(&conn)?;
-        search::search(&conn, query, limit)
+        search::search(&conn, query, filters, limit)
     }
 
     pub fn status(&self) -> Result<Status> {
@@ -186,7 +191,10 @@ mod tests {
             core.list(&ListFilters::default(), Sort::default()),
             Err(CoreError::HydrationIncomplete)
         );
-        assert_eq!(core.search("x", 5), Err(CoreError::HydrationIncomplete));
+        assert_eq!(
+            core.search("x", &SearchFilters::default(), 5),
+            Err(CoreError::HydrationIncomplete)
+        );
         assert_eq!(core.status().unwrap().hydration, Hydration::InProgress);
         {
             let conn = core.conn().unwrap();

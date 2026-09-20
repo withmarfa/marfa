@@ -330,7 +330,7 @@ const deleteTypeRoute = createRoute({
   tags: ["Types"],
   summary: "Delete a registered type",
   description:
-    "Removes a type registration. Requires `schema.write` — platform-shipped types are immutable.\n\nRejected with `409 type_has_subtypes` while another registered type declares this one as its parent, naming them in `details.subtype_ids`. `?force=true` does not cover that case: delete each subtype first, or give it a different parent through `PUT /types/{id}`.\n\nRejected with `409 type_in_use` if any item of the type still exists, unless `?force=true` orphans those rows (they persist, but new writes against the type return `400 unknown_type`).",
+    "Removes a type registration. Requires `schema.write` — platform-shipped types are immutable.\n\nRejected with `409 type_has_subtypes` while another registered type declares this one as its parent, naming them in `details.subtype_ids`. `?force=true` does not cover that case: delete each subtype first, or give it a different parent through `PUT /types/{id}`.\n\nRejected with `409 type_in_use` if any item of the type still exists in any lifecycle state, the bin included, unless `?force=true` orphans those rows (they persist, but new writes against the type return `400 unknown_type`).",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({
@@ -651,6 +651,12 @@ export function typeRoutes(storage: Storage) {
     if (force !== "true") {
       const items = await storage.items.list({
         type: id,
+        // Every state, because the question is whether anything is written
+        // against this type, not whether anything is being worked on. A row
+        // in the bin or the archive still names the type it was validated
+        // against, and deleting it out from under one leaves a row whose
+        // shape nothing can check.
+        all_states: true,
         limit: 1,
       });
       if (items.data.length > 0) {

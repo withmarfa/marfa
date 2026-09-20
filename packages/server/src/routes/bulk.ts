@@ -1325,16 +1325,14 @@ export function bulkRoutes(storage: Storage) {
         // read doors it agrees with.
         //
         // It passed nothing, so a filter naming no type matched
-        // platform-internal rows the sibling read hides — `revoked` is
-        // reachable only on a `system.*` type and the default state mask
-        // drops only trashed rows, so nothing else stood in the way. A dry
-        // run then enumerated them and every unbounded action acted on what
-        // it enumerated.
+        // platform-internal rows the sibling read hides, a dry run
+        // enumerated them, and every unbounded action acted on what it
+        // enumerated.
         //
         // One flag closes both ways in, because it narrows the type column
         // rather than the state one: the structured `state` and the
         // free-text grammar, which recognizes `state` with no value
-        // allowlist, reach the same rows.
+        // allowlist, reach the same rows whatever the state mask is.
         //
         // **The opt-in asks who may write the type, not merely who named
         // it.** On a read this rule shapes an unnarrowed query and
