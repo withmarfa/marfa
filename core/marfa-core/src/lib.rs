@@ -555,11 +555,17 @@ impl Core {
             });
         };
         let depends_on = store::unanswered_for_edge(&conn, id)?;
-        // **The type travels with the write**, though the door does not send
-        // it. Reconciling a refused delete means reading the server's edges
-        // for this source, and that read is by type — but the local row is
-        // gone by then, because a delete empties the copy at queue time. The
-        // one moment the type is knowable is this one, before the delete.
+        // **The type travels with the write.** Reconciling a refused delete
+        // means reading the server's edges for this source, and that read is
+        // by type — but the local row is gone by then, because a delete
+        // empties the copy at queue time. The one moment the type is knowable
+        // is this one, before the delete.
+        //
+        // It rides in the payload, which is the body the drain sends, so the
+        // field does go out on a `DELETE /edges/{id}` that declares no body.
+        // The door ignores it. A field the device needs and the door does not
+        // read is the cost of keeping it beside the write rather than in a
+        // column of its own.
         let payload = serde_json::json!({ "edge_type": held.edge_type }).to_string();
         let tx = conn.transaction()?;
         store::delete_edge(&tx, id)?;

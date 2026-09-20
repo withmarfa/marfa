@@ -1016,15 +1016,18 @@ pub struct PullReport {
     /// item, and the item that wanted the path has no file and will not get
     /// one until it wants a different name.
     pub unwritten: usize,
-    /// Pending deletes this pull cancelled by writing the file back.
+    /// Journal rows this pull cleared by writing the file back.
     ///
-    /// A journal row is usually the folder's own bookkeeping, and clearing it
-    /// beside a write is right. But a person who deleted a file inside the
-    /// grace (`folders.md` 15) has a row here too, and a change arriving for
-    /// that item from elsewhere writes the file back and takes the delete
-    /// with it. The item is live on the server, so writing it back is the
-    /// defensible half; doing it without saying so is not, because the person
-    /// is left with a file they deleted and nothing to explain it.
+    /// **A superset of the deletes a person made**, and deliberately so. Most
+    /// rows here are the folder's own bookkeeping — the first half of a
+    /// rename journals the old path — and clearing those beside a write is
+    /// right. But a person who deleted a file inside the grace
+    /// (`folders.md` 15) has a row here too, and a change arriving for that
+    /// item from elsewhere writes the file back and takes the delete with it.
+    /// Separating the two needs the journal to record which kind it is, which
+    /// it does not; counting the superset is what makes the case visible at
+    /// all, and the count is named for what it measures rather than for the
+    /// case that matters.
     pub revived: usize,
     /// Items whose file would have landed outside the folder, because a
     /// directory on the way to it is a symlink. Reported rather than

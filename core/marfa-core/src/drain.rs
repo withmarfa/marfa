@@ -833,14 +833,24 @@ fn reconcile_inner(core: &Core, row: &QueuedWrite) -> Result<()> {
                     break;
                 }
                 match page.cursor {
-                    Some(next) => cursor = Some(next),
+                    // A cursor that does not move is a server saying there is
+                    // more and handing back the same place to look, which
+                    // would spin this drain for ever.
+                    Some(next) if Some(&next) != cursor.as_ref() => cursor = Some(next),
+                    Some(_) => {
+                        return Err(CoreError::Invalid(format!(
+                            "the server kept answering with the same cursor while reporting more \
+                             edges for {source}, so whether it still holds {edge_id} cannot be answered"
+                        )));
+                    }
                     // `has_more` with no cursor to follow it: the server is
                     // saying there is more and not saying where. Stopping
                     // here would read as "no such edge" and delete a live
                     // one, so the read fails instead.
                     None => {
                         return Err(CoreError::Invalid(format!(
-                            "the server reported more edges for {source} but gave no cursor to read them,                              so whether it still holds {edge_id} cannot be answered"
+                            "the server reported more edges for {source} but gave no cursor to \
+                             read them, so whether it still holds {edge_id} cannot be answered"
                         )));
                     }
                 }

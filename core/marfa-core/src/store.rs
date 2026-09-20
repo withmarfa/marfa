@@ -18,7 +18,7 @@ pub const META_SLICE_TIER: &str = "slice_tier";
 pub const META_EVENT_CURSOR: &str = "event_cursor";
 pub const META_HYDRATE_STATE: &str = "hydrate_state";
 pub const HYDRATE_IN_PROGRESS: &str = "in_progress";
-pub const SCHEMA_VERSION: &str = "3";
+pub const SCHEMA_VERSION: &str = "4";
 
 const ITEM_COLUMNS: &str = "id, type, state, tier, version, schema_version, source, source_id, device, occurred_at, created_at, updated_at, properties";
 const EDGE_COLUMNS: &str =
@@ -1015,6 +1015,59 @@ mod tests {
         );
     }
 
+    /// What `forget_answered` may and may not clear.
+    ///
+    /// The predicate had no test at all, and was twice rewritten from a
+    /// reading of which verdicts look final rather than from which rows a
+    /// caller can still act on. Both mistakes end the same way: a write the
+    /// person made, gone with no verdict, no report and no row.
+    #[test]
+    fn forgetting_spares_every_row_a_caller_can_still_release() {
+        let conn = conn();
+        let row = |id: &str, verdict: &str, sent: i64, depends: &str| {
+            conn.execute(
+                "INSERT INTO queue (id, kind, idempotency_key, payload, verdict, sent, depends_on, queued_at)
+                 VALUES (?1, 'update_item', ?1, '{}', ?2, ?3, ?4, '2026-01-01T00:00:00Z')",
+                params![id, verdict, sent, depends],
+            )
+            .unwrap();
+        };
+        // Cleared: answered, sent, and nothing waits on it.
+        row("plain", "accepted", 1, "[]");
+        // Kept: refused without going out, which `release` takes.
+        row("unsent", "refused", 0, "[]");
+        // Kept: refused after going out, but a releasable row names it.
+        row("dependency", "refused", 1, "[]");
+        row("dependant", "blocked", 1, "[\"dependency\"]");
+
+        let cleared = forget_answered(&conn).unwrap();
+        let left: Vec<String> = conn
+            .prepare("SELECT id FROM queue ORDER BY id")
+            .unwrap()
+            .query_map([], |r| r.get::<_, String>(0))
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect();
+        assert_eq!(
+            left,
+            vec![
+                "dependant".to_string(),
+                "dependency".to_string(),
+                "unsent".to_string()
+            ],
+            "a row a caller can still release, or one a releasable row waits on, \
+             was cleared: releasing then produces a write whose dependency cannot \
+             be found, which reads as unanswered and is held for ever"
+        );
+        // The control: something was cleared, so the assertion above is not
+        // satisfied by a function that deletes nothing at all.
+        assert_eq!(
+            cleared, 1,
+            "nothing was cleared, so the queue grows without bound and every \
+             later write reads a longer one"
+        );
+    }
+
     #[test]
     fn a_queued_write_round_trips_through_every_column() {
         let conn = conn();
@@ -1441,10 +1494,10 @@ pub fn release(conn: &Connection, id: &str) -> Result<bool, CoreError> {
     // And the writes this one refused by being refused itself
     // (`queue-and-verdicts.md` 16). They were never sent and were never
     // wrong; they were told the row they name would not exist. Releasing
-    // only the row they wait for would leave them `refused` for ever, and
-    // `refused` is the one verdict this door does not take — so the caller
-    // would have released the create, watched it succeed, and had no way to
-    // send the update that was waiting on it.
+    // only the row they wait for would leave them `refused` for ever: this
+    // door takes such a row on its own, but nobody would know to ask for it,
+    // so the caller would have released the create, watched it succeed, and
+    // had no way to send the update that was waiting on it.
     for dependant in dependants_refused_with(conn, id)? {
         release(conn, &dependant)?;
     }
@@ -1478,21 +1531,28 @@ fn dependants_refused_with(conn: &Connection, id: &str) -> Result<Vec<String>, C
 /// Only the four terminal verdicts. A `blocked` or `dead` row is one a
 /// caller may still release, and clearing it would take that away.
 ///
-/// **A dependency is kept while anything that names it can still be sent**,
-/// which is any dependent that is unanswered *or* releasable. Keeping it only
-/// for unanswered dependents stranded the other case for good: a blocked row
-/// left its create unprotected, the create was cleared, and the release the
-/// caller was told to perform then produced a row whose dependency could not
-/// be found — which `readiness` reads as unanswered and holds, for ever,
-/// against a write that no longer exists.
+/// **Releasable is the test, on both sides of it.** A row is releasable when
+/// it is `blocked`, `dead`, or `refused` without having been sent — the three
+/// `release` takes — and a releasable row is neither cleared itself nor
+/// allowed to lose the dependency it names.
+///
+/// Both halves were wrong in the same way and for the same reason: the set
+/// was written as a list of verdicts when the question is whether a caller
+/// can still act on the row. A refused-unsent row was cleared although
+/// `release` accepts it, and a blocked row left its create unprotected — and
+/// the release the caller was told to perform then produced a row whose
+/// dependency could not be found, which `readiness` reads as unanswered and
+/// holds for ever against a write that no longer exists.
 pub fn forget_answered(conn: &Connection) -> Result<usize, CoreError> {
     Ok(conn.execute(
         "DELETE FROM queue
           WHERE verdict IN ('accepted', 'merged', 'conflicted', 'refused')
+            AND NOT (verdict = 'refused' AND sent = 0)
             AND NOT EXISTS (
               SELECT 1 FROM queue AS waiting
                WHERE (waiting.verdict IS NULL
-                      OR waiting.verdict IN ('blocked', 'dead'))
+                      OR waiting.verdict IN ('blocked', 'dead')
+                      OR (waiting.verdict = 'refused' AND waiting.sent = 0))
                  AND waiting.depends_on LIKE '%' || queue.id || '%'
             )",
         [],
