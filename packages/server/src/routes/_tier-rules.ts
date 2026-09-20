@@ -6,7 +6,7 @@ import { ErrorCode, MarfaError, hasBoundedLifecycle } from "@withmarfa/shared";
  *
  * Create rejected a caller-supplied tier on a `system.*` type; the update
  * doors accepted one. That asymmetry is the same shape as the write-door
- * defects this file's neighbours exist to prevent: one surface enforcing
+ * defects this file's neighbors exist to prevent: one surface enforcing
  * something its siblings do not, with nothing asserting they agree.
  *
  * It lives here rather than inline at each door because fixing it on one

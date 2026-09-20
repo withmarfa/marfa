@@ -451,7 +451,7 @@ describe("a stream that stopped delivering", () => {
   });
 });
 
-describe("the cursor advances on acknowledgement", () => {
+describe("the cursor advances on acknowledgment", () => {
   it("replays the event whose handler rejected", async () => {
     // The property the whole policy is for. The handler fails on id 7, so the
     // reconnect must ask for 6 — the last event actually accounted for — and
@@ -504,7 +504,7 @@ describe("the cursor advances on acknowledgement", () => {
 
   it("advances past a frame carrying an id and no payload", async () => {
     // A guard rather than a regression: this passed before the change too.
-    // It is the case the acknowledgement rule could plausibly break, since
+    // It is the case the acknowledgment rule could plausibly break, since
     // nothing is delivered and there is no handler to wait for, and a cursor
     // that stalls on keep-alive framing replays from the same point forever.
     const { transport } = transportOver([["id: 42\ndata: \n\n"]]);

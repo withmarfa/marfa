@@ -33,7 +33,7 @@ jobs:
       # This gate is why `ci.yml` does not cancel superseded runs on `main`.
       # The two read as correct in isolation and the cost only appears where
       # they meet: a burst of merges used to leave every commit but the last
-      # with a cancelled run, and therefore unpublishable, with nothing
+      # with a canceled run, and therefore unpublishable, with nothing
       # reporting it. Changing either half without the other reopens that.
       - name: Require a green CI run for this commit
         env:

@@ -32,7 +32,7 @@ const ERROR_MESSAGES: Record<string, string> = {
   invalid_scope: "That app asked for something this server doesn't offer.",
   unsupported_response_type:
     "That app started sign-in in a way this server doesn't support.",
-  access_denied: "You cancelled sign-in. Nothing was shared.",
+  access_denied: "You canceled sign-in. Nothing was shared.",
   server_error: "Something failed on our side while signing you in.",
   temporarily_unavailable:
     "Sign-in is briefly unavailable. It usually returns within a minute.",

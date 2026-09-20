@@ -103,8 +103,7 @@ function buildChain(typeId: string, resolve: TypeResolver): TypeSchema[] {
  *   fields (enforced at POST /types), so per-key merge is equivalent to union.
  * - `display_hints` — nearest-ancestor-wins. The first ancestor with a
  *   non-undefined block (starting from the leaf) supplies the whole block.
- * - `version_policy` — merged root→leaf, per-key. Documented as
- *   "merges field-by-field" (see `docs/guides/schema/versions.mdx`); matches
+ * - `version_policy` — merged root→leaf, per-key, which is
  *   `merge_policy`'s inheritance behavior.
  * - `merge_policy` — delegated to `resolveMergePolicy`.
  * - `roles` — union across the chain, delegated to `resolveRoles`. Absent

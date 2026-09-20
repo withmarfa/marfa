@@ -78,7 +78,7 @@ const KeyListItemSchema = z.object({
     .array(z.enum(PERMISSIONS as unknown as [string, ...string[]]))
     .optional()
     .describe(
-      "The permissions this credential holds, as the literals themselves. Omitted on a create request takes the creator's whole set; anything named is honoured and clamped to what the creator holds.",
+      "The permissions this credential holds, as the literals themselves. Omitted on a create request takes the creator's whole set; anything named is honored and clamped to what the creator holds.",
     ),
   oauth_client_id: z
     .string()
@@ -349,7 +349,7 @@ const KeyDetailSchema = z.object({
     .array(z.enum(PERMISSIONS as unknown as [string, ...string[]]))
     .optional()
     .describe(
-      "The permissions this credential holds, as the literals themselves. Omitted on a create request takes the creator's whole set; anything named is honoured and clamped to what the creator holds.",
+      "The permissions this credential holds, as the literals themselves. Omitted on a create request takes the creator's whole set; anything named is honored and clamped to what the creator holds.",
     ),
   oauth_client_id: z
     .string()
@@ -920,7 +920,7 @@ export function keyRoutes(storage: Storage, salt: string) {
 
       // **The creator is the ceiling, and omitting the list takes the whole of
       // it.** A key gets what its creator holds unless the request names less,
-      // and anything it names is honoured whatever the creator holds — which
+      // and anything it names is honored whatever the creator holds — which
       // together mean a key can be narrowed at the moment of minting and can
       // never be widened by one.
       //

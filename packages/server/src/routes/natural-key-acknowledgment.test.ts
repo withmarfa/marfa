@@ -1,12 +1,12 @@
 /**
  * What a caller learns when its natural-key write lands on a trashed row.
  *
- * `POST /items` short-circuits to an acknowledgement when `(source,
+ * `POST /items` short-circuits to an acknowledgment when `(source,
  * source_id)` resolves a row the user has trashed: nothing is written and
  * nothing is published, because reviving the row would overturn a deletion
  * the user chose and refusing forever wedges the connector on one item.
  *
- * **The acknowledgement is right and what it hands back was never decided.**
+ * **The acknowledgment is right and what it hands back was never decided.**
  * It sat above every gate on the resolved row, so the answer to "what may a
  * caller learn here" was whatever the position of a `return` produced. Three
  * axes live under that question and they do not have the same answer:
@@ -25,7 +25,7 @@
  *    `source`, which outlives any narrowing of what that credential may
  *    write, so a credential whose `type_permissions` are cut back still
  *    reaches every row it wrote before the cut. The update branch below
- *    refuses those on the resolved row's type; the acknowledgement above it
+ *    refuses those on the resolved row's type; the acknowledgment above it
  *    did not, so the two branches disagreed about who may address one row.
  *
  * The narrowing is modeled by editing the credential that wrote the row,
@@ -139,7 +139,7 @@ async function trashedRow(cred: SyncKey, sourceId: string): Promise<string> {
   return id;
 }
 
-describe("the trashed-row acknowledgement", () => {
+describe("the trashed-row acknowledgment", () => {
   it("hands back only the extension namespaces the caller may read", async () => {
     const cred = await syncCredential({
       types: { [SYNCED]: "write" },

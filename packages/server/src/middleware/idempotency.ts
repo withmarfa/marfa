@@ -24,11 +24,11 @@ import { withPreparedHeaders } from "../prepared-headers.js";
  * this" from "my own earlier write holds this". Replaying the stored one
  * says which.
  *
- * **Independent of the id-based create acknowledgement.** `POST /items`
+ * **Independent of the id-based create acknowledgment.** `POST /items`
  * and `POST /edges` already answer a repeat that carries a caller-minted
  * id, for a shipped client that retries with its id and no key. Neither
  * mechanism is built on the other and neither consults the other: the
- * acknowledgement is retired once that client adopts keys, and a
+ * acknowledgment is retired once that client adopts keys, and a
  * dependency either way would make retiring it break this.
  */
 
@@ -243,7 +243,7 @@ async function fingerprint(c: Context<AppEnv>, body: string): Promise<string> {
     c.req.method,
     canonicalPath(url.pathname),
     // The query is left as written, and the reason is checkable rather
-    // than a judgement: no door in IDEMPOTENT_WRITE_DOORS carries a query
+    // than a judgment: no door in IDEMPOTENT_WRITE_DOORS carries a query
     // value whose spelling can vary. Nine take no query parameter at all,
     // and the tenth takes `conflict` on PATCH /items/{id}, a closed enum
     // of ASCII words. A door that later accepts a free-text query value

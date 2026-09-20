@@ -192,10 +192,10 @@ export const VersionSchema = z.object({
  *   bites this flag is `true` — the only signal for that case, since the
  *   per-type edge-block `has_more` does not cover a combined-set overflow.
  *   Consumers must page the per-type edge/backref endpoints when it is set.
- * - `neighbors_omitted` — how many of the item's neighbours were left out
+ * - `neighbors_omitted` — how many of the item's neighbors were left out
  *   because the caller may not read them. Distinct from `neighbors_truncated`,
  *   which is about a bound; this is about permission. Omitting silently made
- *   a partial neighbourhood indistinguishable from a complete one, so an app
+ *   a partial neighborhood indistinguishable from a complete one, so an app
  *   missing an edge scope rendered a ticket with none of its relations and
  *   looked correct doing it.
  * - `versions` — the item's version snapshots, newest-first. Opt in with

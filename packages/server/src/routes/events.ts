@@ -673,7 +673,7 @@ export function eventRoutes(
           /**
            * Stop delivering, say so, and close.
            *
-           * The one exit every "this stream can no longer honour what it
+           * The one exit every "this stream can no longer honor what it
            * opened with" path takes, so the four causes cannot drift into
            * four different behaviors — which is how one of them came to
            * end the connection, one to end half of it silently, and one
@@ -1023,7 +1023,7 @@ export function eventRoutes(
           /**
            * The head read, bounded.
            *
-           * The read itself cannot be cancelled — a query already waiting
+           * The read itself cannot be canceled — a query already waiting
            * on the write lock runs when its turn comes whatever this
            * connection has decided — so the budget governs how long the
            * stream waits for it, not how long it takes. That is why the

@@ -13,7 +13,7 @@ on:
 # any more, so canceling is free. `main` is not a branch in that sense: every
 # commit on it is a release candidate, and `publish.yml` refuses to tag a
 # commit unless a *successful* `ci.yml` run exists at that exact SHA. A
-# cancelled run is not a successful one, so a superseded main commit becomes
+# canceled run is not a successful one, so a superseded main commit becomes
 # permanently unpublishable — silently, because nothing errors and the commit
 # looks fine.
 #
@@ -46,8 +46,8 @@ jobs:
     #
     # `queue: max` rather than the default. The default keeps at most one
     # pending entry per group and CANCELS the previous one when a new job
-    # arrives, which would trade a false red for a silently cancelled check —
-    # strictly worse, because a cancelled required check blocks a merge with
+    # arrives, which would trade a false red for a silently canceled check —
+    # strictly worse, because a canceled required check blocks a merge with
     # nothing to read. `max` queues up to a hundred, FIFO.
     concurrency:
       group: marfa-suite-shared-host

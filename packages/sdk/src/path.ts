@@ -22,9 +22,19 @@
  * `encodeURIComponent` is the right encoder because it escapes `/`, which the
  * path-oriented encoders deliberately keep — a path is allowed to hold
  * separators, and a *segment* is not. It leaves `A-Z a-z 0-9 - _ . ! ~ * ' ( )`
- * unescaped, and every character of a UUIDv7 is in that set, so the ids this
- * package actually carries encode to themselves and no stored idempotency key
- * changes shape.
+ * unescaped, and every character of a UUIDv7 is in that set, so an item, edge
+ * or key id encodes to itself and no stored idempotency key changes shape.
+ *
+ * A blob hash does not. `sha256:<hex>` carries a colon, which encodes to
+ * `%3A`, so a blob path on the wire reads `sha256%3A…`. Both spellings reach
+ * the same row — the server decodes the segment before it normalizes — and
+ * the escaped one is what the Swift kit already sends, so the two clients
+ * put the same bytes on the wire for the same identifier.
+ *
+ * What changes is anything matching the path as text: a proxy rule, a CDN
+ * cache key or a log filter written against the literal `sha256:` stops
+ * matching. `path.test.ts` asserts the encoding; this is the only place that
+ * records what it costs.
  *
  * Interpolating a value that is not a single segment — a pre-built path, a
  * query string — is a mistake this cannot catch and should not be done.

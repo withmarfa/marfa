@@ -1471,7 +1471,7 @@ export function itemRoutes(storage: Storage) {
         // silently, and refusing forever is the bug being fixed, so the
         // sync is acknowledged and nothing is written or published.
         //
-        // **What the acknowledgement may disclose, stated rather than left
+        // **What the acknowledgment may disclose, stated rather than left
         // to where this `return` sits.** The natural key bounds some axes
         // and not others, and only the ones it bounds are safe to answer on:
         //
@@ -1496,7 +1496,7 @@ export function itemRoutes(storage: Storage) {
         // Gate before disclosing, so a refusal cannot be read off the body.
         requireTypeAccess(c, existing.type, "write");
         // A write never re-types the row it lands on, and an
-        // acknowledgement is a write's answer. Without this the arm
+        // acknowledgment is a write's answer. Without this the arm
         // accepted a body naming any type at all, which is what made the
         // route's own 409 description untrue of it.
         requireDeclaredTypeMatches(type, existing);
@@ -1557,7 +1557,7 @@ export function itemRoutes(storage: Storage) {
         // in resolving the row, so a body naming one type while the
         // natural key lands on another used to be merged in silently.
         // Shared with the bulk door rather than written twice: the last
-        // time a rule lived at one door and not its neighbours, four of
+        // time a rule lived at one door and not its neighbors, four of
         // six were found disagreeing.
         requireDeclaredTypeMatches(type, existing);
 
@@ -1701,7 +1701,7 @@ export function itemRoutes(storage: Storage) {
     //
     // **Both a pre-check and a catch, and each covers what the other
     // cannot.** The pre-check has to exist because the write path is not
-    // reachable at every moment the acknowledgement is owed: the
+    // reachable at every moment the acknowledgment is owed: the
     // transaction reserves quota before it inserts, so an instance at its
     // item ceiling would answer a repeat with `quota_exceeded` for a row
     // it already holds — the same permanent refusal in another code. The
@@ -2069,7 +2069,7 @@ export function itemRoutes(storage: Storage) {
 
     // `updated_after` implies `(updated_at, id)` ascending — it is the
     // only order a catch-up cursor can advance through. A request that
-    // also names a different sort is contradicting itself, and honouring
+    // also names a different sort is contradicting itself, and honoring
     // one half silently is the same failure as ignoring a renamed
     // parameter: the caller gets a page that looks right and cannot be
     // resumed. Refuse instead of picking a winner.
@@ -2274,23 +2274,23 @@ export function itemRoutes(storage: Storage) {
     ]);
 
     let neighbors: { item: Item; metadata: Metadata }[] | undefined;
-    // True when the 1-hop neighbour set was capped (more neighbours exist than
+    // True when the 1-hop neighbor set was capped (more neighbors exist than
     // were hydrated). Distinct from the per-type edge-block `has_more`: several
     // edge types can each sit below their per-type cap while their COMBINED
-    // neighbour set exceeds the bound, so this is the only signal that catches
-    // that case. Consumers must treat every neighbour-derived view as
+    // neighbor set exceeds the bound, so this is the only signal that catches
+    // that case. Consumers must treat every neighbor-derived view as
     // incomplete when this is set and page the per-type edge/backref endpoints.
     let neighborsTruncated = false;
-    // How many neighbours the caller may not read. Omitting them is right —
-    // a neighbour outside the caller's scope must never leak — but omitting
-    // them *silently* made a partial neighbourhood indistinguishable from a
+    // How many neighbors the caller may not read. Omitting them is right —
+    // a neighbor outside the caller's scope must never leak — but omitting
+    // them *silently* made a partial neighborhood indistinguishable from a
     // complete one. An app missing an edge scope rendered a ticket with none
     // of its relations and looked correct doing it.
     let neighborsOmitted = 0;
     if (includeNeighbors) {
       // The 1-hop neighborhood: the far-end items of the edge blocks present
       // in this response — outbound targets always, inbound sources when
-      // `backrefs` was also requested. Each neighbor is re-authorised through
+      // `backrefs` was also requested. Each neighbor is re-authorized through
       // the same per-type read gate the bulk-get path uses, so a
       // neighbor the caller cannot read is silently omitted, never leaked.
       const neighborIds = new Set<string>();

@@ -26,7 +26,7 @@ import { softDeleteState, type ItemState } from "@withmarfa/shared";
  * when the column landed carries null and always will. A sweep over
  * `revoked` would need its own backfill before it could trust the column.
  * What stamping here buys is that everything revoked from now on is
- * stamped, leaving that backfill a bounded and ageing set rather than the
+ * stamped, leaving that backfill a bounded and aging set rather than the
  * whole table.
  *
  * Returns an empty patch when the write moves between two states that are

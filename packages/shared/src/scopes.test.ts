@@ -470,7 +470,7 @@ describe("permissions", () => {
   it("keeps every capability out of the one that would escalate it", () => {
     // The two boundaries in the set that a reader is most likely to want to
     // collapse, pinned so collapsing one is a test failure rather than a
-    // judgement call made again from scratch. Managing this app's own keys
+    // judgment call made again from scratch. Managing this app's own keys
     // must not carry the power to revoke every other app's access.
     const keys = ["keys.mint"];
     expect(hasPermission(keys, "grants.manage")).toBe(false);

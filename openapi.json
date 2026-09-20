@@ -19310,7 +19310,7 @@
                                 "grants.manage"
                               ]
                             },
-                            "description": "The permissions this credential holds, as the literals themselves. Omitted on a create request takes the creator's whole set; anything named is honoured and clamped to what the creator holds."
+                            "description": "The permissions this credential holds, as the literals themselves. Omitted on a create request takes the creator's whole set; anything named is honored and clamped to what the creator holds."
                           },
                           "oauth_client_id": {
                             "type": "string",
@@ -20148,7 +20148,7 @@
                           "grants.manage"
                         ]
                       },
-                      "description": "The permissions this credential holds, as the literals themselves. Omitted on a create request takes the creator's whole set; anything named is honoured and clamped to what the creator holds."
+                      "description": "The permissions this credential holds, as the literals themselves. Omitted on a create request takes the creator's whole set; anything named is honored and clamped to what the creator holds."
                     },
                     "oauth_client_id": {
                       "type": "string",

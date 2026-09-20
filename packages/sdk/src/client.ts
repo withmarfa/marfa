@@ -270,11 +270,11 @@ export interface ItemDetail {
   backrefs?: HydratedEdges;
   neighbors?: ItemWithMetadata[];
   /**
-   * `true` when the 1-hop neighbour set was capped — more neighbours exist than
+   * `true` when the 1-hop neighbor set was capped — more neighbors exist than
    * were hydrated into `neighbors`. Present only when `neighbors` is requested.
    * Distinct from the per-type edge-block `has_more`: several edge types can
    * each sit below their per-type cap while their COMBINED set overflows, and
-   * only this flag catches that. Treat every neighbour-derived view as
+   * only this flag catches that. Treat every neighbor-derived view as
    * incomplete when it is set and page the per-type edge/backref reads.
    */
   neighbors_truncated?: boolean;

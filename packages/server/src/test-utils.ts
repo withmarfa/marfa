@@ -793,7 +793,7 @@ export async function readSse(
 
   // One read outstanding at a time, and the same promise is awaited again
   // rather than replaced. Issuing a second `read()` while the first is still
-  // pending is what used to lose chunks: a reader fulfils queued reads in
+  // pending is what used to lose chunks: a reader fulfills queued reads in
   // arrival order, so the next chunk went to the abandoned read, whose
   // resolve landed on a promise the loop had already settled and walked away
   // from. On an idle machine the first read wins every race and nothing is

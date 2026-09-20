@@ -111,7 +111,7 @@
  * not a small one; it is stated rather than closed because closing it
  * means hashing declarations this repository does not own and cannot
  * version. Deciding whether such a change needs a version bump is a
- * judgement this guard informs rather than makes.
+ * judgment this guard informs rather than makes.
  *
  * **What a moved surface costs, which this file used to state wrongly.**
  * Breaking an export is a break and ships as at least a minor, with a commit

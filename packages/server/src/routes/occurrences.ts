@@ -988,7 +988,7 @@ export function occurrenceRoutes(
         { from: query.from, to: query.to, max_days: MAX_WINDOW_DAYS },
       );
     }
-    // The same judgement `/items`, `/search` and `/export` make: the global
+    // The same judgment `/items`, `/search` and `/export` make: the global
     // wildcard and a malformed pattern are refused, and a concrete id nobody
     // has registered is `unknown_type` rather than an empty window.
     assertTypeFilter(query.type);

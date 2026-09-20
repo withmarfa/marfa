@@ -137,7 +137,7 @@ describe("the bulk-action door and the read doors agree about system rows", () =
     // universal three states and cannot reach this one. `revoked` is the
     // state a platform-internal row actually sits in, and the predicate
     // below is the one the two gates were described in terms of, so a test
-    // that drove any other comparison would be about a neighbouring claim.
+    // that drove any other comparison would be about a neighboring claim.
     const revoked = await seedActivity(`rev-${marker}`, "revoked");
     expect(revoked.state).toBe("revoked");
     // The tag the filters below select on: `seedActivity` tags with the

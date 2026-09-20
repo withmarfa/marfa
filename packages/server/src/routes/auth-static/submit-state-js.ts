@@ -25,7 +25,7 @@
  *      text to its `data-loading-label`. A re-entrancy guard
  *      (`data-submitting`) drops a second submit so a double-click can't fire
  *      two requests. The button is only re-enabled if the navigation is
- *      cancelled; a real submit navigates away, replacing the page.
+ *      canceled; a real submit navigates away, replacing the page.
  *
  * Pages opt in by linking the script — no per-form markup beyond the optional
  * `data-loading-label` on the submit button and an optional `data-validate-msg`
@@ -165,7 +165,7 @@ export const SUBMIT_STATE_JS = `(function () {
 
     btn.classList.add('is-loading');
     var label = btn.getAttribute('data-loading-label') || FALLBACK;
-    // Stash the original so a cancelled navigation can restore it.
+    // Stash the original so a canceled navigation can restore it.
     if (btn.getAttribute('data-idle-label') === null) {
       btn.setAttribute('data-idle-label', btn.textContent);
     }
