@@ -1372,7 +1372,7 @@ pub fn unblock_self_clearing(conn: &Connection) -> Result<usize, CoreError> {
 /// (`queue-and-verdicts.md` 27).
 ///
 /// The spent key is kept rather than dropped: the server has answered under
-/// it, and a late answer arriving under a key nothing recognises is
+/// it, and a late answer arriving under a key nothing recognizes is
 /// indistinguishable from an answer to the new attempt.
 pub fn release(conn: &Connection, id: &str) -> Result<bool, CoreError> {
     let Some((verdict, key, spent, depends_on)) = conn

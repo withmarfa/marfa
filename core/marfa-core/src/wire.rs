@@ -157,7 +157,7 @@ pub struct WireWriteAnswer {
     pub metadata: Option<WireMetadata>,
     #[serde(default)]
     pub conflict_resolution: Option<WireConflictResolution>,
-    /// The server recognised the write as one it had already taken. It does
+    /// The server recognized the write as one it had already taken. It does
     /// not change the verdict — the row the server returned is the truth
     /// either way (`queue-and-verdicts.md` 9) — and it is read so that a
     /// device is not left comparing rows to find out.

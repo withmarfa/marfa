@@ -215,7 +215,7 @@ CREATE INDEX IF NOT EXISTS queue_item ON queue (item_id);
 --
 -- A device that is not a folder simply has no rows here.
 CREATE TABLE IF NOT EXISTS folder_files (
-  -- The path inside the folder, separators normalised. The natural key a
+  -- The path inside the folder, separators normalized. The natural key a
   -- folder gives a file (`folders.md` 10): nothing about the machine, so the
   -- same file in the same place on two machines is one item.
   path TEXT PRIMARY KEY,

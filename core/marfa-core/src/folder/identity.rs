@@ -143,7 +143,7 @@ pub fn natural_key(folder: &Path, path: &Path) -> Result<String, CoreError> {
             folder.display()
         ))
     })?;
-    // Separators normalised, so the same file is one key on either kind of
+    // Separators normalized, so the same file is one key on either kind of
     // machine rather than two.
     Ok(relative
         .components()

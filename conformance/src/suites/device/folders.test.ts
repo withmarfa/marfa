@@ -1223,7 +1223,7 @@ describe("writing", () => {
     ).toEqual([0, 0]);
     expect(
       scanned.value.unchanged,
-      "the file the folder wrote was not recognised at all, so the absence above is the scan seeing nothing rather than seeing its own work",
+      "the file the folder wrote was not recognized at all, so the absence above is the scan seeing nothing rather than seeing its own work",
     ).toBe(1);
 
     // The control: a change somebody else made is not suppressed.
@@ -1271,7 +1271,7 @@ describe("writing", () => {
     ).toBe(false);
 
     // The other half arrives inside the grace. **A real rename**, so the
-    // identity carries over and the folder can recognise it: an earlier
+    // identity carries over and the folder can recognize it: an earlier
     // version of this case created a new file, which can never match the
     // remembered identity, so the rename path was never reached and the
     // assertion below rode entirely on the grace not having elapsed.

@@ -683,7 +683,7 @@ impl Folder {
     /// folder (`folders.md` 4).
     ///
     /// Every write here is recorded in the mapping before the bytes land, so
-    /// the scan that follows recognises them as the folder's own and does not
+    /// the scan that follows recognizes them as the folder's own and does not
     /// read them back as a change (`folders.md` 14).
     pub fn pull(&self) -> Result<PullReport> {
         let mut report = PullReport::default();
