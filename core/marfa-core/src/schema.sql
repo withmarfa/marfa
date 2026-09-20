@@ -113,7 +113,7 @@ CREATE TABLE IF NOT EXISTS queue (
   -- (`queue-and-verdicts.md` 27). A released row goes out under a fresh key,
   -- because re-sending under the spent one is answered from the record and
   -- is the same refusal that blocked it; the spent key is kept so a late
-  -- answer under it can still be recognised rather than read as an answer
+  -- answer under it can still be recognized rather than read as an answer
   -- to the new attempt.
   spent_keys TEXT,
   -- The body, as the device will send it.
@@ -162,7 +162,7 @@ CREATE TABLE IF NOT EXISTS queue (
   -- not ask has not been refused, so a week offline does not spend the
   -- ceiling.
   --
-  -- The ceiling is five, and the `CHECK` is what fixes it in the one artefact
+  -- The ceiling is five, and the `CHECK` is what fixes it in the one artifact
   -- that outlives the process. The contract says it is a number the contract
   -- fixes rather than configuration, and a constant in the binary alone would
   -- let two builds disagree about a store they both write.
