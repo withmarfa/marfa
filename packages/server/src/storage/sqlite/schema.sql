@@ -252,9 +252,7 @@ CREATE TABLE IF NOT EXISTS `auth_user` (
 	`email_verified` integer DEFAULT false NOT NULL,
 	`image` text,
 	`created_at` integer NOT NULL,
-	`updated_at` integer NOT NULL,
-	`deletion_state` text DEFAULT 'active' NOT NULL,
-	`pending_deletion_at` text
+	`updated_at` integer NOT NULL
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS `auth_user_email_unique` ON `auth_user` (`email`);

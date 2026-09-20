@@ -372,10 +372,9 @@ export function decodeCursorNullable(cursor: string): NullableCursorPayload {
  * page is simply not the next page, and rows are skipped or repeated with
  * no signal anywhere.
  *
- * So the key travels with the cursor and a mismatch is refused. A cursor
- * carrying no key at all is read as the created-at ordering, so a page in
- * flight keeps working, and the same cursor handed to another ordering is
- * refused rather than silently honored.
+ * So the key travels with the cursor and a mismatch is refused, and so is
+ * a cursor carrying no key or a key spelled another way: nothing this
+ * server mints lacks the key, so a cursor without it was not minted here.
  *
  * **The key names the ordering the request actually resolved to**, column
  * and direction, rather than only naming the catch-up ordering against
@@ -417,25 +416,6 @@ export function cursorSortKey(
   return `${column}:${direction}`;
 }
 
-/**
- * How a cursor issued before the key named the resolved ordering is read.
- *
- * Those carry a bare `created_at` or `updated_at`, or no key at all, and
- * each of those spellings meant exactly one ordering when it was written:
- * the default listing, newest-created first, and the catch-up, oldest
- * modification first. Mapping them keeps a page that is in flight across
- * a deploy working, which is the same courtesy the absent key already
- * had. Anything else a legacy cursor was tagged with is refused rather
- * than guessed at, which is the safe direction.
- */
-const LEGACY_CURSOR_KEYS: Readonly<Record<string, CursorSortKey>> = {
-  created_at: "created_at:desc",
-  updated_at: "updated_at:asc",
-};
-
-/** The ordering an unkeyed cursor came from — the only one there was. */
-const UNKEYED_CURSOR_ORDERING: CursorSortKey = "created_at:desc";
-
 export function encodeKeyedCursor(
   sortValue: string | null,
   id: string,
@@ -462,19 +442,8 @@ function assertCursorKey(cursor: string, expected: CursorSortKey): void {
   const carried =
     typeof parsed === "object" && parsed !== null && "k" in parsed
       ? parsed.k
-      : UNKEYED_CURSOR_ORDERING;
-  // `hasOwnProperty` rather than `in`, which walks the prototype chain: a
-  // cursor tagged `"toString"` would otherwise be looked up and answered
-  // with a function. Harmless today, because the result is compared for
-  // equality against a string and a function is not one, but the safety
-  // is in the comparison rather than in the lookup, which is the wrong
-  // place for it to live.
-  const key =
-    typeof carried === "string" &&
-    Object.prototype.hasOwnProperty.call(LEGACY_CURSOR_KEYS, carried)
-      ? LEGACY_CURSOR_KEYS[carried]
-      : carried;
-  if (key !== expected) {
+      : undefined;
+  if (carried !== expected) {
     throw new MarfaError(
       ErrorCode.VALIDATION_ERROR,
       `This cursor was issued for a different ordering and cannot be continued here. Re-read the first page with the same parameters.`,
@@ -700,12 +669,10 @@ export interface ItemStore {
    * each row. Returns the number of rows deleted.
    *
    * The window is measured from `trashed_at`, the time of the transition
-   * into the soft-deleted state, falling back to `updated_at` for a row
-   * carrying no stamp. `updated_at` alone cannot decide it, because it is
-   * the modification time rather than the removal time: any write to a
-   * trashed row moves it, so editing something already in the bin would
-   * restart its retention clock. The fallback covers only rows carrying no
-   * `trashed_at`, where a clock that moves beats a row nothing can purge.
+   * into the soft-deleted state, and from nothing else: `updated_at` is the
+   * modification time rather than the removal time, and any write to a
+   * trashed row moves it, so measuring from it would restart the retention
+   * clock on an edit made in the bin.
    *
    * Unlike `bulkPurge`, this drops the purged items' edges itself (both
    * directions, inside the same transaction). It is the terminal step of
@@ -1389,13 +1356,6 @@ export interface OauthProviderStore {
     clientId: string,
     expectedScopes: readonly string[],
     scopes: readonly string[],
-  ): Promise<boolean>;
-  /** Update the browser-logout configuration for an existing first-party
-   * client. Used by the deployment seed so a pre-existing client gains new
-   * redirect URIs without requiring a destructive reset. */
-  updateClientLogoutConfig(
-    clientId: string,
-    postLogoutRedirectUris: readonly string[],
   ): Promise<boolean>;
   /** Look up the user's most recent prior consent scopes for
    *  (clientId, authUserId). Returns the scope literals from the

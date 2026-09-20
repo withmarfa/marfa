@@ -341,21 +341,6 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
     return updated.length > 0;
   }
 
-  async updateClientLogoutConfig(
-    clientId: string,
-    postLogoutRedirectUris: readonly string[],
-  ): Promise<boolean> {
-    const result = await this.db
-      .update(auth_oauth_client)
-      .set({
-        enableEndSession: true,
-        postLogoutRedirectUris: JSON.stringify(postLogoutRedirectUris),
-        updatedAt: new Date(),
-      })
-      .where(eq(auth_oauth_client.clientId, clientId));
-    return result.rowsAffected > 0;
-  }
-
   async revokeTokensForGrant(
     clientId: string,
     authUserId: string,

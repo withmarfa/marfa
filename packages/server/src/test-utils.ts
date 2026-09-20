@@ -164,7 +164,7 @@ export async function seedOauthBearer(
     opts.authUserId ?? `auth_user_${Math.random().toString(36).slice(2, 10)}`;
   if (!opts.authUserId) {
     await requireSqliteRun(storage)(
-      "INSERT OR IGNORE INTO auth_user (id, name, email, email_verified, created_at, updated_at, deletion_state) VALUES (?, ?, ?, 1, ?, ?, 'active')",
+      "INSERT OR IGNORE INTO auth_user (id, name, email, email_verified, created_at, updated_at) VALUES (?, ?, ?, 1, ?, ?)",
       [
         authUserId,
         "Test User",

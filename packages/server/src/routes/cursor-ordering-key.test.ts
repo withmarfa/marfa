@@ -160,117 +160,81 @@ describe("GET /items — the cursor is bound to the ordering that issued it", ()
     expect(page?.data[0]?.id).toBeDefined();
   });
 
-  it("reads a cursor carrying no ordering at all as the default listing", async () => {
-    // Cursors issued before the key existed carry only `v` and `id`. An
-    // in-flight page across a deploy keeps working on the ordering that was
-    // the only one there was, and is refused anywhere else.
+  it("refuses a cursor carrying no ordering at all", async () => {
+    // Nothing this server mints lacks the key, so a cursor without one
+    // was not minted here and is not guessed at. The page's own cursor is
+    // the witness that the same position is honored with its key.
     const { page } = await listItems(`${TYPE}&limit=1`);
     const last = page!.data[0]!;
-    const unkeyed = Buffer.from(
-      JSON.stringify({ v: last.created_at, id: last.id }),
-    ).toString("base64url");
-
-    const honored = await listItems(`${TYPE}&cursor=${unkeyed}&limit=1`);
+    const honored = await listItems(`${TYPE}&cursor=${page!.cursor!}&limit=1`);
     expect(honored.status).toBe(200);
     expect(honored.page?.data[0]?.id).not.toBe(last.id);
 
-    expectOrderingRefusal(
-      await listItems(`${TYPE}&sort=occurred_at&cursor=${unkeyed}`),
-    );
+    const unkeyed = Buffer.from(
+      JSON.stringify({ v: last.created_at, id: last.id }),
+    ).toString("base64url");
+    expectOrderingRefusal(await listItems(`${TYPE}&cursor=${unkeyed}&limit=1`));
   });
 });
 
 /**
- * The compatibility path, which only matters once — for the few minutes
- * after a deploy, while cursors minted by the previous build are still in
- * flight — and which nothing else in this file reaches.
- *
- * The build now running mints `k: "created_at:desc"`. The one being
- * replaced mints a bare `k: "created_at"`, and that spelling is not the
- * absent key the case above covers: an absent key is read as the default
- * ordering by `UNKEYED_CURSOR_ORDERING`, while a present-but-old one has
- * to be mapped by `LEGACY_CURSOR_KEYS` or it fails the equality check and
- * every page in flight breaks at the moment of deploy.
- *
- * So the cursors here are built by hand. There is no way to obtain one
- * from this server — the code that issued them is the code being replaced
- * — and a test that could only use what this build mints would leave the
- * mapping unexercised while reporting a full green.
+ * A key spelled another way is not a key: a column name with no direction,
+ * a name off `Object.prototype`, a column that is a real ordering but not
+ * the one about to page. Each is refused like a mismatch, because a cursor
+ * carrying it was not minted by this server and nothing is guessed at. The
+ * cursors are built by hand for that reason.
  */
-describe("a cursor minted before the key named the direction", () => {
-  /** A cursor in the shape the previous build wrote: the sort value, the
-   *  id, and a column name with no direction on it. */
-  function legacyCursor(sortValue: string, id: string, k: string): string {
+describe("a cursor whose key is not one this server mints", () => {
+  function cursorTagged(sortValue: string, id: string, k: string): string {
     return Buffer.from(JSON.stringify({ v: sortValue, id, k })).toString(
       "base64url",
     );
   }
 
-  it("honors a bare `created_at` on the default listing", async () => {
+  it("refuses a bare `created_at` on the default listing it names", async () => {
     const { page } = await listItems(`${TYPE}&limit=1`);
     const last = page!.data[0]!;
-    const legacy = legacyCursor(last.created_at, last.id, "created_at");
-
-    const honored = await listItems(`${TYPE}&cursor=${legacy}&limit=1`);
-    expect(honored.status).toBe(200);
-    expect(honored.page?.data).toHaveLength(1);
-    // Advanced rather than merely accepted: a cursor that was honored but
-    // ignored would re-serve the row already delivered.
-    expect(honored.page?.data[0]?.id).not.toBe(last.id);
-
-    // And only there. `created_at` meant the default listing when it was
-    // written, so mapping it must not widen into an ordering it never named.
+    // The witness: the same position, keyed as this server keys it.
+    expect(
+      (await listItems(`${TYPE}&cursor=${page!.cursor!}&limit=1`)).status,
+    ).toBe(200);
     expectOrderingRefusal(
-      await listItems(`${TYPE}&sort=created_at&direction=asc&cursor=${legacy}`),
+      await listItems(
+        `${TYPE}&cursor=${cursorTagged(last.created_at, last.id, "created_at")}&limit=1`,
+      ),
     );
   });
 
-  it("honors a bare `updated_at` under the catch-up filter", async () => {
+  it("refuses a bare `updated_at` under the catch-up filter it names", async () => {
     const catchUp = `${TYPE}&updated_after=1970-01-01T00:00:00.000Z`;
     const { page } = await listItems(`${catchUp}&limit=1`);
     const last = page!.data[0]!;
-    // The catch-up walks `(updated_at, id)` ascending, so the sort value a
-    // cursor carries there is the modification time.
-    const legacy = legacyCursor(last.updated_at, last.id, "updated_at");
-
-    const honored = await listItems(`${catchUp}&cursor=${legacy}&limit=1`);
-    expect(honored.status).toBe(200);
-    expect(honored.page?.data).toHaveLength(1);
-    expect(honored.page?.data[0]?.id).not.toBe(last.id);
-
-    // `updated_at` named the catch-up and nothing else. The same column
-    // sorted the other way is a different ordering and is refused.
+    expect(
+      (await listItems(`${catchUp}&cursor=${page!.cursor!}&limit=1`)).status,
+    ).toBe(200);
     expectOrderingRefusal(
       await listItems(
-        `${TYPE}&sort=updated_at&direction=desc&cursor=${legacy}`,
+        `${catchUp}&cursor=${cursorTagged(last.updated_at, last.id, "updated_at")}&limit=1`,
       ),
     );
   });
 
   it("refuses a cursor tagged with a name off Object.prototype", async () => {
-    // The legacy map is an object literal, so a lookup by `in` reaches
-    // `toString` and answers with a function. Nothing is honored either
-    // way — a function is not the string the comparison expects — but the
-    // refusal has to come from the lookup rather than from the comparison
-    // happening to disagree.
     const { page } = await listItems(`${TYPE}&limit=1`);
     const last = page!.data[0]!;
     expectOrderingRefusal(
       await listItems(
-        `${TYPE}&cursor=${legacyCursor(last.created_at, last.id, "toString")}`,
+        `${TYPE}&cursor=${cursorTagged(last.created_at, last.id, "toString")}`,
       ),
     );
   });
 
-  it("refuses a legacy spelling that named no ordering this server has", async () => {
-    // The safe direction, and the reason the map is a map rather than a
-    // "strip the direction and compare" rule: `occurred_at` was never a
-    // legacy key, so a cursor carrying it is guessed at by nobody.
+  it("refuses a column name that is a real ordering but not this one", async () => {
     const { page } = await listItems(`${TYPE}&limit=1`);
     const last = page!.data[0]!;
     expectOrderingRefusal(
       await listItems(
-        `${TYPE}&sort=occurred_at&cursor=${legacyCursor(last.created_at, last.id, "occurred_at")}`,
+        `${TYPE}&sort=occurred_at&cursor=${cursorTagged(last.created_at, last.id, "occurred_at")}`,
       ),
     );
   });

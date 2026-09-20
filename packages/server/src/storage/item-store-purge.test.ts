@@ -40,9 +40,8 @@ async function ftsRowCount(itemId: string): Promise<number> {
  * can choose timestamps freely (every write path stamps `now`).
  *
  * Both clocks move together, because "make this row look old" is one
- * intent and the sweep reads `trashed_at` in preference to `updated_at`.
- * `trashed_at` is left alone where it is null, so an active row does not
- * acquire a removal time it never had.
+ * intent. `trashed_at` is left alone where it is null, so an active row
+ * does not acquire a removal time it never had.
  */
 async function ageItem(itemId: string, isoDate: string): Promise<void> {
   const s = ctx.storage as unknown as {
@@ -85,19 +84,6 @@ async function readTrashedAt(itemId: string): Promise<string | null> {
     `SELECT trashed_at FROM items WHERE id = '${itemId.replace(/'/g, "''")}'`,
   )) as { trashed_at: string | null }[];
   return rows[0]?.trashed_at ?? null;
-}
-
-/**
- * Blanks the stamp, reproducing a row soft-deleted by a build that predates
- * the column — the only shape the sweep's fallback exists for.
- */
-async function clearTrashedAt(itemId: string): Promise<void> {
-  const s = ctx.storage as unknown as {
-    __sqliteRun: (sql: string, params: unknown[]) => Promise<unknown>;
-  };
-  await s.__sqliteRun("UPDATE items SET trashed_at = NULL WHERE id = ?", [
-    itemId,
-  ]);
 }
 
 /** Reads `updated_at` back, for asserting a write actually moved it. */
@@ -294,13 +280,11 @@ describe("ItemStore.bulkPurge — atomicity", () => {
 });
 
 /**
- * The sweep's window runs from when the row entered the bin.
- *
- * It used to run from `updated_at`, which is the modification time and
- * moves on any write to the row — so editing something already in the bin
- * silently restarted its retention clock, and a tag or extension write did
- * it too. The stamp the sweep now reads is set by the transition into the
- * soft-deleted state and by nothing else.
+ * The sweep's window runs from when the row entered the bin, a stamp set
+ * by the transition into the soft-deleted state and by nothing else.
+ * `updated_at` is the modification time and moves on any write to the row,
+ * a tag or extension write included, so a sweep reading it would restart
+ * the retention clock on an edit made in the bin.
  */
 describe("ItemStore.purgeTrashedOlderThan — the clock it reads", () => {
   const CUTOFF = FIXED_NOW.toISOString();
@@ -320,8 +304,7 @@ describe("ItemStore.purgeTrashedOlderThan — the clock it reads", () => {
     await ageItem(itemId, LONG_AGO);
 
     // The edit. A tag write is the ordinary way this happens and reaches
-    // `updated_at` without touching the row's state at all, which is what
-    // made the old key so easy to reset by accident.
+    // `updated_at` without touching the row's state at all.
     await ctx.storage.metadata.addTags(itemId, ["still-in-the-bin"]);
     const afterEdit = await readUpdatedAt(itemId);
     expect(afterEdit).toBeDefined();
@@ -354,16 +337,12 @@ describe("ItemStore.purgeTrashedOlderThan — the clock it reads", () => {
    * set by a transition that stamps `updated_at` alongside it, so
    * `trashed_at <= updated_at` holds on every row the API can make. The
    * fixture is built by hand for that reason, and what it pins is the
-   * predicate rather than a reachable state: while a stamp exists it
-   * decides alone, and the modification time is a fallback rather than a
-   * second vote.
+   * predicate rather than a reachable state: the stamp decides alone, and
+   * the modification time has no vote.
    *
-   * Worth holding because the two rewrites a later reader is most likely
-   * to reach for — `LEAST(trashed_at, updated_at)`, or asking both
-   * columns and purging when either is old — read as more robust and are
-   * caught by nothing else in this block. `LEAST` is worse than
-   * equivalent: SQLite's `MIN` answers NULL when either argument is NULL,
-   * which would take the fallback away.
+   * Worth holding because the rewrite a later reader is most likely to
+   * reach for, asking both columns and purging when either is old, reads
+   * as more robust and is caught by nothing else in this block.
    */
   it("does not let the modification time vote once a stamp exists", async () => {
     const itemId = id("c15c");
@@ -431,23 +410,5 @@ describe("ItemStore.purgeTrashedOlderThan — the clock it reads", () => {
 
     expect(await ctx.storage.items.purgeTrashedOlderThan(CUTOFF)).toBe(0);
     expect(await ctx.storage.items.getIncludingTrashed(itemId)).not.toBeNull();
-  });
-
-  it("falls back to the modification time for a row with no stamp", async () => {
-    // The rolling-deploy case: a replica running the previous build
-    // soft-deletes a row and writes no stamp. Reproducing the old behavior
-    // is worse than the stamp and far better than a row nothing can purge.
-    const itemId = id("c13c");
-    await ctx.storage.items.create({
-      id: itemId,
-      type: "core.note",
-      properties: { body: "no stamp" },
-      tier: "library",
-    });
-    await ctx.storage.items.delete(itemId);
-    await ageItem(itemId, LONG_AGO);
-    await clearTrashedAt(itemId);
-
-    expect(await ctx.storage.items.purgeTrashedOlderThan(CUTOFF)).toBe(1);
   });
 });

@@ -1092,17 +1092,10 @@ export class SqliteItemStore implements ItemStore {
     const baseConditions = [
       eq(items.state, "trashed"),
       // The window runs from when the row entered the bin, not from when it
-      // was last written. `updated_at` was standing in for that, and it moves
-      // on any write to a trashed row — a tag or an extension write included
-      // — so editing something already in the bin restarted its clock.
-      //
-      // `updated_at` survives as the fallback for a row carrying no stamp,
-      // which after the backfill can only be one soft-deleted by a build
-      // predating the column: a replica still rolling, or a soft delete that
-      // landed while the migration was in flight. Falling back reproduces
-      // exactly the behavior those rows have today, which is worse than the
-      // stamp and far better than a row nothing can ever purge.
-      lt(sql`COALESCE(${items.trashed_at}, ${items.updated_at})`, beforeDate),
+      // was last written: `updated_at` moves on any write to a trashed row,
+      // a tag or an extension write included, so measuring from it would
+      // restart the clock on an edit made in the bin.
+      lt(items.trashed_at, beforeDate),
     ];
     const where = and(...baseConditions);
 
