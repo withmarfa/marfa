@@ -22,7 +22,7 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test:rust": "cd core && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test && cd bindings/swift && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test",
-    "test:drift": "pnpm --filter \"@withmarfa/server\" surface-lock:drift \"$(git rev-parse origin/main)\""
+    "test:drift": "bash scripts/surface-lock-drift.sh"
   },
   "pnpm": {
     "onlyBuiltDependencies": [

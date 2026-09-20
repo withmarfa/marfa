@@ -1,5 +1,14 @@
 #!/usr/bin/env bash
-# Pre-push gate (slim): build + typecheck + lint + format:check + test:changed.
+# Pre-push gate: build + typecheck + lint + format:check + offline lane +
+# rust + surface-lock drift + test:changed.
+#
+# **No longer slim, deliberately.** The rust leg runs clippy and the tests on
+# two cargo workspaces and is the slowest thing here — it is in because the
+# second of those workspaces is reachable from nothing else, and a change to
+# a shared error type compiled clean locally and failed on the pool. The
+# argument below about a slow hook being a bypassed hook still stands, and
+# the answer to it is `--no-verify` for a work-in-progress push rather than a
+# gate that does not cover what CI checks.
 #
 # `build` runs first because cross-package typechecks resolve workspace
 # dependencies through each package's `dist/*.d.ts` — when those are stale
@@ -12,18 +21,21 @@
 # the full suite on every PR push, and `pnpm test:full` is the explicit
 # local full run for the pre-PR moment.
 #
-# Why slim. A pre-push that runs the whole suite is slow enough that
-# contributors and agents bypass it with `--no-verify`. A hook that's
-# bypassed isn't a gate. The slim shape stays useful while keeping the
-# load-bearing coverage in CI.
+# The cost, and why it is paid. A pre-push that runs the whole suite is slow
+# enough that contributors and agents bypass it with `--no-verify`, and a
+# hook that's bypassed isn't a gate. So what is here is not everything CI
+# runs: the live-server Rust tests, the iOS builds, the Swift packaging and
+# the full conformance suite all stay in CI. What is here is the set that has
+# actually failed on the pool after passing locally, which is a different and
+# much shorter list.
 #
 # Skippable: `git push --no-verify`.
 set -euo pipefail
 
 cd "$(git rev-parse --show-toplevel)"
 
-echo "═══ pre-push: build + typecheck + lint + format:check + test:changed ═══"
-echo "(slim gate; full run is \`pnpm test:full\`. skip with --no-verify.)"
+echo "═══ pre-push: build + typecheck + lint + format + offline + rust + drift + test:changed ═══"
+echo "(the rust leg is the slow one; full run is \`pnpm test:full\`. skip with --no-verify.)"
 echo
 
 pnpm build
