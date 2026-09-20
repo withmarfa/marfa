@@ -13,6 +13,7 @@ import { SqliteWebhookStore } from "./webhook-store.js";
 import { SqliteWebhookDeliveryStore } from "./webhook-delivery-store.js";
 import { SqliteAuditStore } from "./audit-store.js";
 import { SqliteAuthSessionStore } from "./auth-session-store.js";
+import { SqliteOwnerStore } from "./owner-store.js";
 import { SqliteEventLogStore } from "./event-log-store.js";
 import { SqliteEdgeStore } from "./edge-store.js";
 import { SqliteEdgeTypeStore } from "./edge-type-store.js";
@@ -73,11 +74,10 @@ export async function createSqliteStorage(sqlitePath: string): Promise<
     if (!isCoreEdgeType(schema.id)) registerEdgeTypeSchema(schema);
   }
 
-  // Awaited, unlike the fire-and-forget this used to be. That was harmless
-  // only while the platform vocabulary was compiled in and resolved before any request
-  // could arrive. It is seeded data now, so returning storage before the
-  // registry is filled opens a window in which `core.note` does not resolve
-  // and ordinary writes fail validation for a type that plainly exists.
+  // Awaited rather than fire-and-forget: the platform vocabulary is seeded
+  // data, so returning storage before the registry is filled opens a window
+  // in which `core.note` does not resolve and ordinary writes fail
+  // validation for a type that plainly exists.
   // The platform vocabulary is data this instance holds, not a fact about the
   // build it happens to be running. Seed the shipped set into rows (an upsert,
   // so a redeploy carrying a changed schema moves the row), then fill the
@@ -143,6 +143,7 @@ export async function createSqliteStorage(sqlitePath: string): Promise<
     audit: auditStore,
     eventLog: eventLogStore,
     authSessions: authSessionStore,
+    owner: new SqliteOwnerStore(db),
     settings: new SqliteSettingsStore(db),
     // `bulk-action-job-store.ts` carries how a job is claimed without two
     // loops taking the same one.
@@ -164,10 +165,8 @@ export async function createSqliteStorage(sqlitePath: string): Promise<
       });
     },
     betterAuthDb: baseDb,
-    /** Raw query escape hatch. Originally added for retention tests;
-     *  now also consumed by `routes/auth-account.ts`
-     *  (auth_verification probes — JSON1 operators not naturally
-     *  expressible in Drizzle). Production callers exist. */
+    /** Raw query escape hatch for the storage tests; nothing outside a
+     *  test calls it. */
     async __sqliteAll(query: string): Promise<unknown[]> {
       const result = await raw.execute(query);
       return result.rows;

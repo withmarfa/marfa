@@ -34,139 +34,28 @@ interface OpenAPIDoc {
 /**
  * `info` block for the generated document.
  *
- * `version` is the API-contract version — the wire shape served under
- * `/openapi.json` — and is not the deployed build's version reported on
+ * `version` is the API-contract version, the wire shape served under
+ * `/openapi.json`, and is not the deployed build's version reported on
  * `GET /`. It moves when the contract moves and not on a deploy.
  *
  * **The literal is guarded; the decision to move it is not.** Editing this
  * number without regenerating `openapi.json` reddens
  * `openapi-committed-spec.test.ts` and the `openapi-freshness` job, which
- * compare the document to what the source produces — so the two cannot drift
+ * compare the document to what the source produces, so the two cannot drift
  * apart. What nothing checks is whether the number moved when the contract
- * did, and a judgment nobody verifies is one that gets skipped: this sat
- * still through several changes that moved paths, operation ids, wire fields
- * and an enum. It moves whenever a caller could have branched on what left.
- * It moved to 5.2.0 for a removed path, and to 5.3.0 for two things in one
- * change. Three `409` responses left, along with the refusal code that went
- * with them, so a client branching on that status at `DELETE /items/{id}`,
- * `POST /items/{id}/restore` or `POST /items/{id}/transition` is reading for
- * something the document no longer offers. And `GET /export`'s `format` was
- * an open string under a description offering a closed pair, and is now the
- * pair: every other value used to answer `200` with the default and now
- * answers `400`, which narrows a generated client's parameter type with it.
- * It moved to 5.4.0 for a blob's size, which is `size_bytes` where it was
- * `size` on three surfaces a caller reads: the upload's `201`, the archive
- * manifest inside `GET /export?format=archive`, and the `blob.upload` row's
- * `details` on `GET /audit`. Only the first is described in this document —
- * the other two are bodies the document carries no schema for, which is
- * exactly why they are named here: for them this note is the only record
- * there will ever be.
+ * did, and a judgment nobody verifies is one that gets skipped, so the rule
+ * is stated here to be applied without judgment. It moves whenever a caller
+ * could have branched on what left: a path, a method, an operation id, a
+ * field, an enum member, a status or a refusal code, including one this
+ * document never declared, because a body the document leaves open is still
+ * a shape a caller reads. An addition does not move it. **One change, one
+ * number**, even where the change carries several breaks: the version
+ * records that the contract moved, and a second increment inside one change
+ * would say it moved twice. Minor rather than major because the API is
+ * pre-release.
  *
- * It moved to 5.5.0 for a webhook delivery's event, which is `event_type`
- * where it was `event`, and for `*` leaving the subscribable vocabulary.
- * Four caller-visible surfaces move, and only two are in this document: the
- * `events` enum on `POST /webhooks` and `PATCH /webhooks/{id}`, where a name
- * both doors used to accept now answers `400` on each, and the delivery row on
- * `GET /webhooks/{id}/deliveries`. The other two are the delivery request
- * itself, which no operation here describes — the JSON body's key, and the
- * `X-Marfa-Event-Type` header that was `X-Marfa-Event`. The header moves
- * with the field it carries rather than being held back for the receivers
- * that route on it: its value is an event type, the same body those
- * receivers parse renames the key in the same request, and this repository
- * ships no alias to bridge either. So there is one break, named here,
- * instead of one break and a header still saying the old word.
- *
- * It moved to 5.6.0 for the one door that spelled its verb in its path:
- * removing a platform type was `POST /admin/platform-types/{id}/remove` and
- * is `DELETE /admin/platform-types/{id}`. Method and path move together on
- * one operation, which is one break; the old path is gone rather than
- * redirected, so a caller still on it gets `404`.
- *
- * It moved to 5.7.0 for a self-loop, which answers `edge_cycle` where it
- * answered `edge_constraint_violation`. The three doors whose responses name
- * the code (`POST /items`, `PATCH /items/{id}` and `POST /edges`) already
- * declare both, so the document's shape does not move and this note is the
- * only record: a caller branching on the old code for `A→A` reads the
- * other one now. Everywhere else it surfaces is a string this document leaves
- * open: a bulk door's per-entry `error.code`, the `details.code` of the
- * rollback those doors answer under `atomic`, and the `edges_skipped_reasons`
- * key on the unpublished archive restore. Nothing there declared the old code
- * either, so this note is their record too. The refusal itself is unchanged,
- * and so is its message.
- *
- * One more answer moves with it, on the inline-edge doors only. They each
- * carried their own copy of the self-loop rule ahead of the shared checks,
- * which meant an edge naming both an unknown type and the item itself was
- * refused `400 edge_cycle` for its endpoints rather than `404
- * edge_type_not_found` for the type that does not exist. The copies are gone
- * and the shared check resolves the type first, so that request now answers
- * the type. It is a correction rather than a break, and it is here because
- * the status moves with the code and neither is declared for that case.
- *
- * It moved to 5.8.0 for the order of the checks. A door that declares a
- * credential refuses a bare request before the router validates it and
- * before the handler reads a row, so one bare request gets one answer where
- * the answer used to depend on what else was wrong with it.
- *
- * Twenty-seven doors answered something other than `401`, by two routes that
- * overlap on four of them. Twenty-three answered `400`, because the route's
- * own schemas refused the body or the query ahead of any handler: the
- * twenty-one that take a JSON body, plus `GET /search` and `GET /occurrences`
- * for their required query parameters. Eight answered `404 item_not_found`,
- * because the handler read the row before it asked for a credential —
- * `GET /items/{id}`, `PATCH /items/{id}`, `GET /items/{id}/versions`, `GET`,
- * `PUT` and `PATCH` on `/items/{id}/metadata`, `POST /items/{id}/tags` and
- * `DELETE /items/{id}/tags/{tag}`. That second set is the one that mattered:
- * it is how a caller holding nothing could tell a live item id from one
- * nothing carries.
- *
- * Every one of the twenty-seven already answered `401` to a bare request
- * whose body and query the schemas accepted, so no door gains a status it
- * could not produce, the document's shape does not move, and this note is
- * the only record. A client branching on the `400` or the `404` it used to
- * get without a credential reads the refusal now.
- *
- * It moved to 5.9.0 for `invalid_type`, which is gone. It meant a malformed
- * type identifier, and a malformed identifier never reached a lookup, so it
- * was never an answer about the catalog at all — it is a bad request, and it
- * answers the generic `validation_error` with `details.errors[].path` naming
- * the field, in the shape the router's own schema failures already use.
- * `unknown_type` keeps the lookup answer and `type_not_permitted` keeps the
- * one about what a credential may reach, which is the meaning the glossary
- * had put on the retired code and no door ever gave it.
- *
- * Six producers moved, five of them on the wire, and exactly one declared
- * the code: `POST /items`, whose `400` list is the only shape in this
- * document that moves. `POST /types` declares no `400` at all and
- * `POST /admin/restore-archive` is excluded from the reference, so for those
- * two this note is the only record. So is it for the bulk pair, both on
- * `POST /items/bulk`, where the code rides a result entry and a rollback's
- * `details` — free-form strings this document does not constrain. That pair
- * is also the one place the field does not come with the code: a result
- * entry is a `code` and a `message`, with nowhere to put a path.
- *
- * The sixth producer never reaches the wire and is not why this number
- * moved. `hydrateTypeRegistry` refuses a malformed id in the consumer's own
- * process, so it travels with `@withmarfa/shared`'s version instead.
- *
- * Four more refusals gained the field without ever having carried the retired
- * code: `PUT /types/{id}`, the `filter.type` check on `POST
- * /items/bulk-actions`, the `type` query filter the read doors share, and the
- * `type` filter on `GET /events`. All four answered `validation_error` with
- * no `details` at all, and a claim that one envelope covers every malformed
- * identifier is worth nothing while four of them answer differently. Adding a
- * key to `details` takes nothing away from a caller, so it is additive and
- * would not have moved this number on its own.
- *
- * **One change, one number**, even where it carries several breaks. The
- * version records that the contract moved and what a caller may have been
- * reading; a second increment inside one change would say the contract moved
- * twice, which is not what happened. The `403` that `PATCH /items/{id}`
- * gained in the 5.3.0 change is additive and would not have moved it at all.
- * Minor rather than major because the API is pre-release.
- *
- * Lives here so the live `/openapi.json` endpoint and the committed spec read
- * one literal instead of keeping two in lockstep by hand.
+ * Lives here so the live `/openapi.json` endpoint and the committed spec
+ * read one literal instead of keeping two in lockstep by hand.
  */
 export const OPENAPI_DOCUMENT_INFO = {
   title: "Marfa API",
@@ -234,8 +123,13 @@ const PUBLIC_TAGS = [
     description: "The server-sent events stream of item and edge changes.",
   },
   {
+    name: "Owner",
+    description:
+      "The one account behind the instance's sign-in surface, and the door that creates it.",
+  },
+  {
     name: "Auth",
-    description: "Sign-in and OAuth dynamic client registration.",
+    description: "OAuth dynamic client registration.",
   },
 ];
 
@@ -428,15 +322,14 @@ const IDEMPOTENT_OPERATIONS = new Set(
  * The response headers the server sets, and what each one means.
  *
  * None of these can be reflected. Every one is set by middleware or by the
- * error handler rather than declared on a `createRoute` response, so the
- * published spec described no response header at all until they were
- * written here — a client could only learn that any of them existed by
+ * error handler rather than declared on a `createRoute` response, so
+ * without this a client could learn that any of them existed only by
  * reading the server. They are the whole set: `Cache-Control` and `Pragma`
  * in `routes/no-store.ts` sit on the plain-Hono auth HTML pages, which are
  * not part of the reflected API surface and are deliberately left out.
  *
  * Held in `components.headers` and referenced from each response, so the
- * meaning is written once rather than restated on 106 operations.
+ * meaning is written once rather than restated on every operation.
  */
 const RESPONSE_HEADER_COMPONENTS: Record<string, unknown> = {
   "X-Request-ID": {
@@ -521,17 +414,13 @@ const RATE_LIMITED_RESPONSE = {
  * error handler, so `X-Error-Code` is never set on them.
  *
  * Empty, and worth keeping empty rather than deleting: it is the seam where
- * a future response that answers 4xx without throwing gets declared honestly
- * instead of silently claiming a header it does not send.
- *
- * It held `patch /items/{id} 409` until the conflict envelope stopped being
- * the one response whose fresh answer and replay differed in a declared
- * header. That route still returns rather than throws — the exclusion's
- * original wording anticipated the other fix — but it now stamps the header
- * itself, on the code the response actually carries, so the declaration is
- * true of it. Three responses return rather than throw and each stamps the
- * header the same way: that one, the edge conflict envelope, and the
- * conflict a conditional natural-key upsert answers on `post /items`.
+ * a response that answers 4xx without throwing gets declared honestly
+ * instead of silently claiming a header it does not send. Three responses
+ * return rather than throw today and each stamps the header itself, on the
+ * code the response actually carries, so the declaration is true of them:
+ * the item conflict envelope on `patch /items/{id}`, the edge conflict
+ * envelope, and the conflict a conditional natural-key upsert answers on
+ * `post /items`.
  */
 const RESPONSES_WITHOUT_ERROR_CODE = new Set<string>([]);
 
@@ -539,9 +428,8 @@ const RESPONSES_WITHOUT_ERROR_CODE = new Set<string>([]);
  * Statuses an idempotency claim releases rather than records.
  *
  * `RELEASED_STATUSES` in the middleware gives the key back on 401 and 403,
- * so neither is ever stored and neither can ever be replayed. Declaring the
- * replay marker on them is the same over-claiming this change exists to
- * remove.
+ * so neither is ever stored and neither can ever be replayed, and the
+ * replay marker is not declared on them.
  */
 const NEVER_REPLAYED_STATUSES = new Set([401, 403]);
 

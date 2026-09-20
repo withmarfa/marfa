@@ -25,10 +25,7 @@ const OPEN_DOORS = new Set(["POST /auth/oauth2/register"]);
  * Nothing about these requests is well formed, which is the point. The
  * credential check runs ahead of the body check and the row lookup, so a
  * bare request gets one answer whatever else is wrong with it: an id nothing
- * carries, a query key no door knows, and a body no parser accepts. This
- * sweep used to send a real row and a well-formed body, because the checks
- * ran the other way round and a `400` or a `404` would have passed a door
- * that never looked for a credential.
+ * carries, a query key no door knows, and a body no parser accepts.
  */
 const UNKNOWN_ID = "019537a0-7b80-7000-8000-000000000000";
 const UNKNOWN_QUERY = "?definitely-not-a-filter=1";

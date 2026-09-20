@@ -36,8 +36,8 @@ import type { SourceFilterSettings } from "./filter-sql.js";
 // Filter types
 // ---------------------------------------------------------------------------
 
-/** The three system columns that have always been sortable. Their ordering is
- *  a direct column comparison — no JSON extraction. */
+/** The three system columns sortable by a direct column comparison, with
+ *  no JSON extraction. */
 export const SYSTEM_SORTS = [
   "created_at",
   "updated_at",
@@ -270,10 +270,10 @@ const ZONELESS_DATETIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?$/;
  * is still refused.
  *
  * A date-time carrying no zone is read as UTC rather than handed to
- * `Date`, which reads it as the server's local time. The comparison it
- * used to reach was against UTC-stamped text, so UTC preserves what the
- * caller already meant; local time would move the bound by whatever
- * offset the deployment happens to run in.
+ * `Date`, which reads it as the server's local time. The stamped text it
+ * is compared against is UTC, so UTC preserves what the caller already
+ * meant; local time would move the bound by whatever offset the deployment
+ * happens to run in.
  *
  * One column is not server-stamped: the item listing's `occurred_*`
  * bounds read `COALESCE(occurred_at, created_at)`, and `occurred_at` is
@@ -373,22 +373,21 @@ export function decodeCursorNullable(cursor: string): NullableCursorPayload {
  * no signal anywhere.
  *
  * So the key travels with the cursor and a mismatch is refused. A cursor
- * carrying no key at all is read as the created-at ordering, which is the
- * only one that existed before this: an in-flight page keeps working, and
- * the same cursor handed to the new ordering is refused rather than
- * silently honored.
+ * carrying no key at all is read as the created-at ordering, so a page in
+ * flight keeps working, and the same cursor handed to another ordering is
+ * refused rather than silently honored.
  *
  * **The key names the ordering the request actually resolved to**, column
  * and direction, rather than only naming the catch-up ordering against
- * everything else. An earlier version drew that narrower split on the
- * argument that `sort` is set explicitly, so dropping it between pages is
- * a visible caller error while dropping a filter is the ordinary one. The
- * argument holds for a hand-written client and not for one assembling a
- * request from parts, which is the case this exists for; and under the
- * narrow key every one of the item listing's orderings was tagged
- * `created_at`, so a cursor taken under `?sort=updated_at` replayed under
- * `?sort=occurred_at` passed the check and bounded the page against the
- * wrong column — the exact failure, reached through the guard against it.
+ * everything else. The narrower split would rest on `sort` being set
+ * explicitly, so that dropping it between pages is a visible caller error
+ * while dropping a filter is the ordinary one; that holds for a
+ * hand-written client and not for one assembling a request from parts,
+ * which is the case this exists for. And under the narrow key every one of
+ * the item listing's orderings would be tagged `created_at`, so a cursor
+ * taken under `?sort=updated_at` replayed under `?sort=occurred_at` would
+ * pass the check and bound the page against the wrong column: the exact
+ * failure, reached through the guard against it.
  *
  * Direction is part of the key for the same reason the column is. The
  * comparison flips with it, so the same cursor replayed under the
@@ -508,15 +507,6 @@ export function decodeKeyedCursorNullable(
 // ---------------------------------------------------------------------------
 
 /**
- * How this write wants a collision handled, carried down to the store because
- * the resolution happens inside the update's transaction.
- *
- * **Server-internal, like `ItemWriterInput`.** `conflict_mode` comes from the
- * request's own query parameter rather than from the caller's body, and
- * `idempotency_key` is read off the header the replay cache already owns —
- * neither is a field a client sets on an update payload.
- */
-/**
  * An item, plus what the server did if this write resolved a collision.
  *
  * The report rides on the returned object rather than widening the store's
@@ -544,9 +534,17 @@ export type ResolvedItem = Item & {
   conflict_sibling?: Item;
 };
 
+/**
+ * How this write wants a collision handled, carried down to the store because
+ * the resolution happens inside the update's transaction.
+ *
+ * **Server-internal.** `conflict_mode` comes from the request's own query
+ * parameter rather than from the caller's body, and `idempotency_key` is
+ * read off the header the replay cache already owns; neither is a field a
+ * client sets on an update payload.
+ */
 export interface ConflictResolutionInput {
-  /** Absent means `manual`: the envelope, which is what every existing
-   *  caller was written against. */
+  /** Absent means `manual`: the envelope. */
   conflict_mode?: ConflictMode;
   /**
    * The caller's `Idempotency-Key`, when it sent one. Only used to derive the
@@ -594,22 +592,16 @@ export interface ItemStore {
   create(input: StoredCreateItemInput): Promise<Item>;
   get(id: string): Promise<Item | null>;
   /**
-   * Batched `get` — returns a map keyed by item id for every id in `ids` that
-   * resolves to a non-trashed item. Missing ids
-   * are simply absent from the map; no errors. Used by the edge-validation
-   * batcher to collapse per-pair item fetches into a single IN query.
-   */
-  /**
-   * Fetch many items by id.
+   * Fetch many items by id, as a map keyed by id; an id that resolves to
+   * nothing is absent from the map rather than an error.
    *
    * Trashed rows are excluded by default, because every read surface treats a
    * soft-deleted item as gone. Two callers pass `includeTrashed`, both in
    * `bulk-actions/runner.ts`: purge, whose whole input is trashed rows, and
    * the tag chunk, which says at its own call site why it is load-bearing
-   * there rather than defensive. Without it the
-   * purge runner's pre-fetch came back empty, so it reported every id as
-   * "not found" while the delete underneath it succeeded — a
-   * job that removed four thousand rows and said it had removed none.
+   * there rather than defensive. Without it the purge runner's pre-fetch
+   * would come back empty, so it would report every id as "not found" while
+   * the delete underneath it succeeded.
    */
   getMany(
     ids: string[],
@@ -709,12 +701,11 @@ export interface ItemStore {
    *
    * The window is measured from `trashed_at`, the time of the transition
    * into the soft-deleted state, falling back to `updated_at` for a row
-   * carrying no stamp. `updated_at` alone used to decide it, and it is
+   * carrying no stamp. `updated_at` alone cannot decide it, because it is
    * the modification time rather than the removal time: any write to a
-   * trashed row moved it, so editing something already in the bin
-   * restarted its retention clock. The fallback covers only rows soft-
-   * deleted by a build predating the column, where reproducing the old
-   * behavior beats a row nothing can purge.
+   * trashed row moves it, so editing something already in the bin would
+   * restart its retention clock. The fallback covers only rows carrying no
+   * `trashed_at`, where a clock that moves beats a row nothing can purge.
    *
    * Unlike `bulkPurge`, this drops the purged items' edges itself (both
    * directions, inside the same transaction). It is the terminal step of
@@ -972,8 +963,8 @@ export interface TypeStore {
    * row was actually deleted.
    *
    * **Scoped to `origin = 'platform'`.** Nothing else writes that origin,
-   * which used to be true by accident and is now a rule the archive restore
-   * enforces by refusing to write a platform origin.
+   * a rule the archive restore enforces by refusing to write a platform
+   * origin.
    *
    * No guard of its own: whether removal is safe is a question about
    * items, which this layer cannot see. The caller decides and this
@@ -995,12 +986,10 @@ export interface TypeProvenance {
    * What kind of type this is: core content, a connector's own shape,
    * or a structural platform record.
    *
-   * **Widened deliberately from "shipped rows only".** It began as a
-   * property of the shipped set, which is why a type traveling with a
-   * connector manifest registered without one. That is a gap rather
-   * than a design: the question "what kind of type is this" is asked of
-   * every type, and answering it from the identifier cannot separate a
-   * vendor's type from a person's under a claimed handle.
+   * **Asked of every type, not of the shipped set alone.** The question
+   * "what kind of type is this" is asked of every type, and answering it
+   * from the identifier cannot separate a vendor's type from a person's
+   * under a claimed handle.
    *
    * Absent for `user` rows, which is not a gap — a type a person
    * registered belongs to no platform family and never did.
@@ -1096,8 +1085,7 @@ export interface KeyStore {
   count(): Promise<number>;
   /**
    * Hard-delete revoked keys whose `revoked_at` is older than `cutoffIso`.
-   * Returns the number deleted. Nothing swept these at all before, which is
-   * how a staging instance reached 3,044 revoked keys older than a week.
+   * Returns the number deleted.
    */
   deleteRevokedKeysOlderThan(cutoffIso: string): Promise<number>;
 }
@@ -1719,12 +1707,6 @@ export interface OauthProviderStore {
   ): Promise<void>;
 }
 
-// `OauthProviderStore.updateGrantScopes` was dropped. The re-consent path
-// now updates the projection via the standard `storage.items.update` route
-// (writes a `versions` snapshot, bumps `updated_at` + `version`, lets the
-// projection participate in `/items?sort=updated_at` correctly).
-// See `projectGrantOnConsent` in `routes/auth-consent.ts`.
-
 // ---------------------------------------------------------------------------
 // Audit store
 // ---------------------------------------------------------------------------
@@ -1767,11 +1749,11 @@ export interface AuditStore {
    * That is the right contract for almost every audit row, and it is a
    * contract, not an accident — the guarantee is what lets a route emit one
    * without a try/catch. What it is not is a guarantee that the row landed,
-   * and awaiting it does not make it one. Sixteen call sites awaited it
-   * inside a try/catch built to fail the operation on an unaudited write;
-   * every one of those was unreachable. Awaiting is still worth doing where
-   * the row has to be issued inside the caller's transaction, but say so at
-   * the call site, because the failure handling reads as live otherwise.
+   * and awaiting it does not make it one: a try/catch around the await,
+   * built to fail the operation on an unaudited write, is unreachable.
+   * Awaiting is still worth doing where the row has to be issued inside the
+   * caller's transaction, but say so at the call site, because the failure
+   * handling reads as live otherwise.
    *
    * Use `logOrThrow` when an unaudited operation must not stand.
    */
@@ -1780,18 +1762,16 @@ export interface AuditStore {
    * Write an audit row and propagate a failure to the caller.
    *
    * For the operations where an unaudited success is worse than a loud
-   * failure: an account hard-delete, and the connection install and
-   * uninstall, which are the two ways a credential's whole authority
-   * changes hands. Untracked deliberately — the caller is awaiting it, so
-   * there is nothing in flight for shutdown to drain.
+   * failure: removing a platform type, creating the owner. Untracked
+   * deliberately, because the caller is awaiting it, so there is nothing
+   * in flight for shutdown to drain.
    *
    * **Propagating is the whole of what this promises.** It is not by
    * itself a transactional write. Which connection the insert lands on is
    * decided by the db handle the store was built with and by whatever
    * request context is installed around the call, neither of which is this
    * method's to choose. A caller that needs the row to commit or roll back
-   * with its own transaction has to put the store on that transaction; the
-   * account cascade is the one that does, and it says how.
+   * with its own transaction has to put the store on that transaction.
    */
   logOrThrow(entry: AuditLogEntry): Promise<void>;
   /**
@@ -1903,10 +1883,6 @@ export interface EventLogStore {
 }
 
 // ---------------------------------------------------------------------------
-// Settings store (instance-wide KV for bootstrap sentinel etc.)
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
 // Idempotency records
 // ---------------------------------------------------------------------------
 
@@ -1943,14 +1919,14 @@ export interface ClaimIdempotencyKeyInput {
  * or the retention sweep landing in that gap — so nobody holds the key and
  * nobody is coming to complete it.
  *
- * **Reported rather than folded into `claimed: true`.** That is what the
- * first version of this did, and it was wrong in the one direction this
- * whole mechanism exists to prevent: the caller went on to run the write
- * believing it owned a record that had never been inserted, `complete()`
- * updated nothing, and the next repeat of the same key found no record and
- * wrote for real. A duplicate write, produced inside the feature whose
- * purpose is to remove duplicate writes. The two cases have to be
- * distinguishable at the seam or the caller cannot act on the difference.
+ * **Reported rather than folded into `claimed: true`.** Folded in, it
+ * would be wrong in the one direction this whole mechanism exists to
+ * prevent: the caller would go on to run the write believing it owned a
+ * record that had never been inserted, `complete()` would update nothing,
+ * and the next repeat of the same key would find no record and write for
+ * real, a duplicate write produced inside the feature whose purpose is to
+ * remove duplicate writes. The two cases have to be distinguishable at the
+ * seam or the caller cannot act on the difference.
  */
 export type IdempotencyClaim =
   | { claimed: true }
@@ -2057,25 +2033,21 @@ export interface SettingsStore {
   /** Upsert — overwrites any existing value for the key. */
   set(key: string, value: string): Promise<void>;
   /** Atomic insert-or-bail: returns true if this caller's INSERT created the
-   *  row, false if a row already existed. Used by the bootstrap path so that
-   *  exactly one of N concurrent `POST /keys` on a fresh DB wins the right
-   *  to mint the seed operator key. */
+   *  row, false if a row already existed. What lets exactly one of N
+   *  concurrent callers win a one-shot act: the bootstrap mint of the first
+   *  key, the instance id, the creation of the owner. */
   claim(key: string, value: string): Promise<boolean>;
   /** Give a claim back. Removes the row if it exists and is a no-op if it
    *  does not.
    *
-   *  Bootstrap is the reason this exists. The claim has to come first, or two
-   *  concurrent callers both mint; but everything after it can fail, and a
-   *  burned claim with no operator key behind it is an instance nobody can
-   *  reach — the middleware admits an unauthenticated mint only while the
-   *  sentinel is absent. Releasing on failure makes the attempt retryable
-   *  instead, which is the property that was missing. */
+   *  The claim has to come first, or two concurrent callers both act; but
+   *  everything after it can fail, and a burned claim with nothing behind
+   *  it is a door nobody can open again: the middleware admits an
+   *  unauthenticated mint only while the bootstrap sentinel is absent, and
+   *  the owner door creates only while its claim is free. Releasing on
+   *  failure makes the attempt retryable instead. */
   release(key: string): Promise<void>;
 }
-
-// ---------------------------------------------------------------------------
-// Aggregate storage interface
-// ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
 // Edge store
@@ -2142,13 +2114,11 @@ export interface EdgeStore {
    * than by a comparison before it.
    *
    * **Properties merge shallowly over what the edge holds**, as the item
-   * doors do. They used to replace, so an update naming one property
-   * dropped every property it did not name. The response carried the
-   * truncated edge, so the loss was reported — but only to a reader that
-   * replaces its copy with it, and a client merging the answer into what it
-   * already holds sees no removal at all. The merge is computed from a
-   * read, so this takes a transaction; a replacing write had none and
-   * needed none.
+   * doors do. A replacing write would drop every property an update did
+   * not name, and the response carrying the truncated edge would report
+   * that loss only to a reader that replaces its copy with it; a client
+   * merging the answer into what it already holds would see no removal at
+   * all. The merge is computed from a read, so this takes a transaction.
    *
    * **There is no way to remove a single property from an edge**, and the
    * two things that look like one are not. These doors carry no
@@ -2305,18 +2275,39 @@ export interface AuthSessionStore {
   deleteExpired(now: Date): Promise<number>;
 }
 
+/** The person an instance belongs to, as the sign-in surface holds them. */
+export interface OwnerRecord {
+  id: string;
+  email: string;
+  name: string;
+  createdAt: Date;
+}
+
 /**
- * The rate-limit and per-email throttle counters.
+ * The owner: the one account on the instance's sign-in surface.
+ *
+ * Sign-up is disabled on every instance and `POST /owner` refuses once an
+ * account exists, so the account created first is the owner and there is
+ * no second. Read from `auth_user` rather than kept as a separate marker,
+ * because a marker could outlive the row and close the door with nobody
+ * behind it.
+ */
+export interface OwnerStore {
+  /** The owner, or `null` on an instance that has none yet. */
+  find(): Promise<OwnerRecord | null>;
+}
+
+/**
+ * The rate-limit and throttle counters.
  *
  * Backing table `rate_limit_windows` keyed on (family, window_key). Two
- * production consumers ride the same store:
+ * consumers ride the same store:
  *
- *   - `rate-limit middleware` (family = "rate") — per-credential request
- *     windows. Window keys take the shape
- *     "<credential-id-or-ip>:<path-prefix>";
- *     window size from `AppConfig.rateLimitWindowMs` (default 60s).
- *   - `forgot-password per-email throttle` (family = "throttle") —
- *     window key "forgot-password:<lowercased-email>"; window size 1h.
+ *   - the rate-limit middleware (family = "rate"): per-credential request
+ *     windows, keyed "<credential-id-or-ip>:<path-prefix>", sized by
+ *     `AppConfig.rateLimitWindowMs`.
+ *   - the device verification page's failed-attempt throttle per user code
+ *     (`routes/auth-pages.ts`, family = "device-user-code").
  *
  * The single primitive — atomic increment-counter-bounded-by-window —
  * services both. The counters are rows, so every process pointed at the
@@ -2370,10 +2361,9 @@ export interface RateLimitStore {
 }
 
 /**
- * Typed handle that storage implementations expose for the better-auth
- * connector (§3.13). The public Storage contract carries the Drizzle
- * handle as `unknown` so the consumer (auth/instance.ts) is the single
- * site that narrows.
+ * The handle storage implementations expose for better-auth. The public
+ * Storage contract carries the Drizzle handle as `unknown` so the consumer
+ * (auth/instance.ts) is the single site that narrows.
  *
  * Optional on `Storage` because not every test fixture needs to wire
  * better-auth — leaving it unset disables the adapter mount in `app.ts`.
@@ -2575,6 +2565,9 @@ export interface Storage extends Partial<BetterAuthStorageAdapter> {
    *  test contexts that don't wire better-auth (the cleanup job in
    *  `index.ts` is gated on this being present). */
   authSessions?: AuthSessionStore;
+  /** The owner behind the sign-in surface. Absent, like `authSessions`, on
+   *  a storage that wires no better-auth tables. */
+  owner?: OwnerStore;
   settings: SettingsStore;
   /** The job table behind `POST /items/bulk-actions`. The worker module
    *  reads and writes through this store; the route handler creates jobs
@@ -2586,10 +2579,9 @@ export interface Storage extends Partial<BetterAuthStorageAdapter> {
   idempotency: IdempotencyStore;
 
   /**
-   * Rate-limit and per-email throttle counters, shared by every process
-   * pointed at the file. The middleware and the forgot-password route
-   * consult it. Required (not optional) because the rate-limit middleware
-   * can't degrade gracefully without it — a missing store would silently
+   * Rate-limit and throttle counters, shared by every process pointed at
+   * the file. The middleware and the device verification page consult it.
+   * Required rather than optional because a missing store would silently
    * degrade to "no rate limit", which is the wrong default.
    */
   rateLimits: RateLimitStore;
