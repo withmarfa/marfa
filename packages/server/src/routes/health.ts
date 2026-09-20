@@ -59,8 +59,8 @@ function readPlacement(): Placement | null {
  *
  * A liveness answer that waits is not a liveness answer. Both probes below
  * are unbounded by nature — the database probe waits on a held database,
- * and the blob probe is a network round trip. When the hosted database was
- * fully held, `/health` did not report a busy server: it never answered,
+ * and the blob probe is a network round trip. When the database was fully
+ * held, `/health` did not report a busy server: it never answered,
  * for fifty-two seconds and then a 500, while ordinary requests were still
  * being served. The one endpoint whose job is to say how things are was
  * the only one that could not say anything.
@@ -75,7 +75,7 @@ const TIMED_OUT = Symbol("probe-timed-out");
 
 /**
  * Race a probe against the budget. A probe that loses keeps running — it
- * holds a pool slot or a socket we cannot reclaim — so its eventual
+ * holds a handle or a socket we cannot reclaim — so its eventual
  * rejection is swallowed deliberately: it belongs to an answer nobody is
  * waiting for any more, and an unhandled rejection would take the process
  * down over a health check.
@@ -202,8 +202,7 @@ export function healthRoutes(
     // sit behind the admin read.
     //
     // Not a component: it carries no status and never degrades the
-    // response, which is the shape the connection figures below take.
-    // Neither kind of drift is a fault. A retired type that still holds
+    // response. Neither kind of drift is a fault. A retired type that still holds
     // items is the designed outcome, because the row is what makes those
     // items resolve, and the removal route refuses to drop it. A retired
     // type holding nothing is untidy rather than unhealthy: it resolves,

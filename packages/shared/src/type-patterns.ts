@@ -89,8 +89,9 @@ export function typeMatchesAnyPattern(
 /**
  * Splits a pattern into the two clauses a SQL predicate needs: an exact
  * identifier to compare, and an escaped LIKE pattern for descendants.
- * Keeping the decomposition here is what stops each dialect's query builder from
- * re-deriving (and re-getting-wrong) the parent-inclusion rule.
+ * Keeping the decomposition here is what stops every query builder that
+ * needs it from re-deriving, and re-getting-wrong, the parent-inclusion
+ * rule.
  *
  * **Permission patterns resolve by name only, deliberately.** Only the read
  * filter below consults declared parentage. Expanding a grant through the

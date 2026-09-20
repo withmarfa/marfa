@@ -792,18 +792,10 @@ export function eventRoutes(
                 }
               }
 
-              // The cursor above paginates `getAfter` and advances
-              // past every row this loop walks, rows a filter
-              // withheld included. That makes it the wrong thing to
-              // dedupe the live buffer against. Postgres assigns
-              // `event_log.id` from an identity column before
-              // commit, so a transaction holding a lower id can
-              // commit after one holding a higher id; comparing a
-              // buffered live event against a high-water mark then
-              // discards an event this client has never seen, with
-              // its cursor already past it, so it never asks again.
-              // What is safe to discard is an id this replay
-              // actually sent, so that is what is recorded — into a set
+              // What is safe to discard is an id this replay actually
+              // sent, so that is what is recorded rather than the
+              // cursor, which advances past every row this loop walks,
+              // rows a filter withheld included. Recorded into a set
               // that belongs to the stream rather than to this function,
               // because the drain it feeds runs whether or not there was
               // a replay to feed it.
@@ -1031,8 +1023,8 @@ export function eventRoutes(
           /**
            * The head read, bounded.
            *
-           * The read itself cannot be cancelled — a query already queued
-           * behind a saturated pool runs when its turn comes whatever this
+           * The read itself cannot be cancelled — a query already waiting
+           * on the write lock runs when its turn comes whatever this
            * connection has decided — so the budget governs how long the
            * stream waits for it, not how long it takes. That is why the
            * settled read gets a terminal handler of its own here: once the
@@ -1096,9 +1088,9 @@ export function eventRoutes(
               // The opposite decision from the failure above, and for a
               // reason worth stating: a read that has not come back says
               // nothing about whether the log is readable, only that the
-              // pool is busy. Closing here would turn a saturated pool
+              // database is busy. Closing here would turn a slow database
               // into a disconnect for every connecting client at once,
-              // and each would reconnect into the same pool. So the
+              // and each would reconnect onto the same database. So the
               // stream stays open with no announcement, which is the
               // state every client was in before this frame existed, and
               // the caller releases the hold on its way past.

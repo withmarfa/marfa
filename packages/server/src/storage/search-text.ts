@@ -4,8 +4,7 @@ import {
 } from "@withmarfa/shared";
 
 /**
- * The four core search fields. Both dialects index these as named columns
- * (SQLite FTS5) or named contributors to the materialized tsvector (PG).
+ * The four core search fields, indexed as named columns in the FTS5 table.
  * Any of them can be opted out via `searchable: false` on the type's field
  * definition.
  */
@@ -34,11 +33,9 @@ export interface SearchableText {
 }
 
 /**
- * Dialect-agnostic FTS text extractor. Both `SqliteSearchStore` and
- * `PgSearchStore` consult this so the indexed surface is identical across
- * dialects — same fields, same `searchable: false` opt-outs, same long-tail
- * ordering. The extractor is the single source of truth for "what text
- * contributes to FTS for this item."
+ * The FTS text extractor, and the single source of truth for what text
+ * contributes to the index for an item. `SqliteSearchStore` consults it on
+ * write, so the indexed surface is whatever this returns.
  *
  * - Core fields (title, body, description, name) are always candidates, but
  *   a type may opt any of them out via `searchable: false` on its field
@@ -46,8 +43,8 @@ export interface SearchableText {
  *   flag are unchanged.
  * - The `extra` slot collects every string field that isn't a core field and
  *   isn't `searchable: false`. Field ordering follows the
- *   `getSearchableStringFields` registry traversal so PG and SQLite indices
- *   stay byte-identical for the same input.
+ *   `getSearchableStringFields` registry traversal, so the same input
+ *   always indexes to the same text.
  * - Non-string property values are silently ignored (the store layer handles
  *   validation; FTS is opportunistic).
  */

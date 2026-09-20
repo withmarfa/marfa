@@ -687,8 +687,8 @@ export function adminArchiveRoutes(storage: Storage, blobBackend: BlobBackend) {
     // work a restore is the least likely write to want. The flag governs
     // only the outbound side effects: the log row and the stream frame
     // land either way, which is the whole point of announcing these at
-    // all. It rides the persisted row too, so a drainer elected in
-    // another process reaches the same answer.
+    // all. It rides the persisted row too, so a catch-up that rebuilds
+    // these events reaches the same answer.
     for (const { item, metadata } of restoredItems) {
       await publish({
         type: "created",

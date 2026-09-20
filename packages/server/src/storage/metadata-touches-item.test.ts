@@ -31,7 +31,7 @@ afterAll(async () => {
 });
 
 /**
- * Forces an item's `updated_at` via the dialect-specific escape hatch.
+ * Forces an item's `updated_at` via the store's escape hatch.
  * Every write path stamps `now`, so a contrived past value is the only
  * way to make "did this move" a question with a stable answer.
  */

@@ -18,9 +18,8 @@
  * checked only the status would pass against a server that ignored the
  * parameter entirely.
  *
- * Runs on whichever dialect the suite is pointed at. The predicate and
- * the ordering are written once per dialect and the two have disagreed
- * before.
+ * Runs against the real store, because the predicate and the ordering are
+ * the store's and a fake would assert its own.
  */
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import { createTestContext, request } from "../test-utils.js";

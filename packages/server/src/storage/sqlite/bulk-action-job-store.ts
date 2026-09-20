@@ -12,11 +12,13 @@ import type { DrizzleDb } from "./connection.js";
 /**
  * SQLite implementation of the bulk_action job substrate.
  *
- * SQLite is single-process; there's no `FOR UPDATE SKIP LOCKED`. The
- * worker loop runs in-process inside one Node process, so a plain
- * subquery-bounded UPDATE on the oldest queued row is sufficient to
- * avoid double-claiming. The lone failure mode (process crashes
- * mid-execution) is covered by `recoverStale` on boot — same as PG.
+ * A bounded UPDATE on the oldest queued row is what stops two worker loops
+ * claiming the same job. The subquery is uncorrelated, so it runs once per
+ * statement rather than per row, and SQLite takes one writer at a time:
+ * the second loop's statement therefore begins after the first one's claim
+ * committed, and its subquery picks the next queued row. The lone failure
+ * mode — a process that crashes mid-execution — is covered by
+ * `recoverStale` on boot.
  */
 export class SqliteBulkActionJobStore implements BulkActionJobStore {
   constructor(private db: DrizzleDb) {}
@@ -83,9 +85,8 @@ export class SqliteBulkActionJobStore implements BulkActionJobStore {
     workerId: string,
     now: string,
   ): Promise<BulkActionJobRow | null> {
-    // Single-process: claim the oldest queued row. One UPDATE ... RETURNING
-    // under SQLite's single writer, so two workers cannot claim the same
-    // row.
+    // Claim the oldest queued row. One UPDATE ... RETURNING under SQLite's
+    // single writer, so two workers cannot claim the same row.
     const rows = await this.db
       .update(bulkActionJobs)
       .set({

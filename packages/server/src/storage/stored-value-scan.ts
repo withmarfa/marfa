@@ -103,9 +103,9 @@ export const SCANNED_COLUMNS: readonly ScannedColumn[] = [
     allowed: ITEM_STATES,
   },
   // Scanned rather than excused, and it is the entry a roster keyed off
-  // casts could never have found: both dialects narrowed this column with
-  // `row.tier === "library" || row.tier === "feed"` — a comparison, not a
-  // cast — and dropped anything else to `undefined` with no log, no count
+  // casts could never have found: the item projection narrowed this column
+  // with `row.tier === "library" || row.tier === "feed"` — a comparison,
+  // not a cast — and dropped anything else to `undefined` with no log, no count
   // and no projection. That is `api_keys.default_tier`'s union restated as
   // two literals one directory away, which is the defect
   // `SCANNED_COLUMNS`'s own `allowed` field exists to prevent. Those
@@ -217,11 +217,10 @@ export interface StoredValueCount {
 }
 
 /**
- * The dialect seam.
+ * How the scan asks the database for its counts.
  *
- * The SQL lives with the caller so neither dialect's query has to be
- * expressible in the other's, and so this stays a pure function of what
- * the database said.
+ * The SQL lives with the caller, so this stays a pure function of what the
+ * database said and can be driven from a test with no database at all.
  */
 export type ColumnValueCounts = (
   table: string,
@@ -287,9 +286,9 @@ export interface StoredValueScan {
  * forever. Boot is the one place where waiting is expensive, because a
  * deploy's health check is waiting on it.
  *
- * A losing query keeps running and holds its pool slot, exactly as
+ * A losing query keeps running and holds its handle, exactly as
  * `/health`'s probe budget accepts for the same reason. That is cheaper at
- * boot than at request time: the pool is fresh and nothing else is on it.
+ * boot than at request time: nothing else is on the database yet.
  */
 const COLUMN_BUDGET_MS = 5_000;
 
@@ -414,8 +413,8 @@ export async function scanStoredValues(
 let lastScan: StoredValueScan = { scanned: false, values: [] };
 
 /**
- * Record what this boot concluded. Called once, at each dialect's boot, on
- * the same pass that records platform drift.
+ * Record what this boot concluded. Called once at boot, on the same pass
+ * that records platform drift.
  */
 export function setStoredValueScan(scan: StoredValueScan): void {
   lastScan = { scanned: scan.scanned, values: [...scan.values] };

@@ -1177,8 +1177,8 @@ describe("POST /auth/authorize/decision (consent decision proxy)", () => {
     await (op.execute?.() ?? op.run?.() ?? Promise.resolve());
 
     // The token has to be live before the widening, or `not.toBeNull()`
-    // after it proves nothing: a dialect branch that silently failed to
-    // insert would leave this test green either way.
+    // after it proves nothing: a write that silently failed to insert
+    // would leave this test green either way.
     const before =
       await ctx.storage.oauthProvider?.validateAccessToken(tokenHash);
     expect(before).not.toBeNull();

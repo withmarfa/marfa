@@ -44,10 +44,9 @@ const DEFAULT_AGGREGATE_MULTIPLIER = 4;
  * increments, so a cap of N admits exactly N requests per window and
  * the whole budget refreshes when the window lapses.
  *
- * The counter table sits in the same database every other table lives in.
- * Two server instances pointed at the same DB share
- * counters cluster-wide; SQLite is single-process by file lock so the
- * same code path stays correct on a self-hosted instance.
+ * The counter table sits in the same database every other table lives in,
+ * so every process pointed at it increments the same rows and the cap
+ * holds across all of them rather than per process.
  *
  * Hot path: one upsert round-trip per gated request. The shared
  * `rate_limit_windows` rows have their own retention sweep

@@ -4,8 +4,8 @@
  * Every connection now withholds live delivery from its first moment, so
  * that the cursor can be the stream's first frame, and the frames it
  * withholds accumulate in memory with no ceiling of their own. The read
- * that ends the hold takes the ordinary app pool, so a saturated pool is
- * enough to leave it outstanding — and a viewer that never drains is
+ * that ends the hold goes to the database like any other, so a database
+ * slow enough is enough to leave it outstanding — and a viewer that never drains is
  * still counted against the viewer cap and still holds its two emitter
  * listeners. On `main` the only hold was the replay's, and the
  * reservation in front of it was already bounded, so nothing else in this
@@ -19,8 +19,8 @@
  * So the budget expiring announces nothing and releases the hold rather
  * than closing the stream, which is what a genuine read *failure* does.
  *
- * Dialect-independent: with `rlsEnforce: false` the head read is a plain
- * call into the event-log store, which is what this stalls.
+ * With `rlsEnforce: false` the head read is a plain call into the
+ * event-log store, which is what this stalls.
  */
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import { Hono } from "hono";

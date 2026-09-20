@@ -35,7 +35,6 @@ url="http://127.0.0.1:${port}"
 state="$(mktemp -d "${TMPDIR:-/tmp}/marfa-core-server.XXXXXX")"
 log="${state}/server.log"
 
-export DB_DIALECT=sqlite
 export SQLITE_PATH="${state}/marfa.db"
 export BLOB_PATH="${state}/blobs"
 export PORT="${port}"

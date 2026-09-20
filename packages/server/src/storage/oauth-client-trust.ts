@@ -1,6 +1,6 @@
 /**
- * Shared trust classification for OAuth clients, dialect-agnostic so the
- * pg and sqlite `OauthProviderStore.getClient` paths agree on what counts
+ * Trust classification for OAuth clients, held outside the store so the
+ * rule can be read and tested without one. It decides what counts
  * as a "public" (unverified) client.
  *
  * A public client is one with no confidential credential behind it: PKCE

@@ -5,7 +5,7 @@
  *   1. `findGrantItemId` resolves the projected system.connection by
  *      (clientId, authUserId).
  *   2. `findRefreshTokenGrantKey` returns `revoked: true` only when the
- *      refresh row's `revoked` timestamp is non-null; the dialect-level
+ *      refresh row's `revoked` timestamp is non-null; the store's
  *      timestamp-vs-boolean coercion must not silently flip.
  *   3. Re-running `seedOauthBearer` against the same
  *      (clientId, authUserId) creates a NEW projection row

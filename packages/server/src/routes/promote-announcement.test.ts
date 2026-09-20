@@ -14,8 +14,6 @@
  * are in one ordered sequence, and the order is the substance here — an
  * edge behind the item it belongs to, which is what makes the edge
  * resolvable.
- *
- * Runs against whichever dialect the suite is running.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { createTestContext, request } from "../test-utils.js";

@@ -2,9 +2,9 @@
  * Per-email throttle for password-reset (and similar email-keyed)
  * requests.
  *
- * The counter lives in `storage.rateLimits` (shared via Postgres in
- * multi-instance deployments; correct in-process on SQLite
- * single-process self-hosts) so the throttle is cluster-wide.
+ * The counter lives in `storage.rateLimits`, so every process pointed at
+ * the database throttles an address together rather than each holding its
+ * own count.
  *
  * Sits on top of the per-IP rate limit (`middleware/rate-limit.ts`).
  * Per-IP bounds noisy clients; per-email bounds the address itself —

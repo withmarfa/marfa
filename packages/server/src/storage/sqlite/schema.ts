@@ -423,11 +423,10 @@ export const eventLog = sqliteTable(
     edge_id: text("edge_id"),
     payload: text("payload").notNull(),
     // Whether this event drives outbound side effects: webhook delivery and
-    // the connector reactions the reactive bridge enqueues. Persisted
-    // rather than carried only on the emitted event, because the bridge's
-    // drainer is elected across the cluster and may be a different process
-    // from the writer — it rebuilds the event from this row, so the
-    // instruction has to survive the round trip. Defaults true: that is what
+    // Persisted rather than carried only on the emitted event, because a
+    // catch-up rebuilds the event from this row: without the column a
+    // replayed event would read as fanning out when its writer said
+    // otherwise. Defaults true: that is what
     // every row written before the column did.
     enable_fanout: integer("enable_fanout", { mode: "boolean" })
       .notNull()
@@ -444,7 +443,7 @@ export const eventLog = sqliteTable(
 // Better Auth tables (auth_* prefix, isolated from marfa's own users table)
 //
 // Owned and managed by better-auth; mirrors `npx @better-auth/cli generate`,
-// hand-translated to Drizzle for both dialects. Column names use the camelCase
+// hand-translated to Drizzle. Column names use the camelCase
 // keys better-auth expects.
 //
 // Timestamp columns use `integer({ mode: "timestamp" })` (Unix seconds) so
@@ -499,8 +498,8 @@ export const auth_account = sqliteTable(
     id: text("id").primaryKey(),
     accountId: text("account_id").notNull(),
     providerId: text("provider_id").notNull(),
-    // 1.7 keys account lookups on (issuer, account_id) — see the pg
-    // sibling for the reasoning. Nullable for the deploy window.
+    // 1.7 keys account lookups on (issuer, account_id). Nullable for the
+    // deploy window.
     issuer: text("issuer"),
     userId: text("user_id")
       .notNull()
@@ -551,10 +550,9 @@ export const auth_verification = sqliteTable(
 // Four tables: client registrations, consent grants, opaque access tokens,
 // opaque refresh tokens. Model→table mapping wired in `auth/instance.ts`.
 //
-// FKs on `clientId` (the business key, not the PK) are application-enforced —
-// SQLite supports FKs to unique columns but leaving them out keeps parity with
-// PG cleaner. Cascade behavior on auth_user / auth_session is preserved where
-// those reference the PK.
+// FKs on `clientId` (the business key, not the PK) are application-enforced.
+// Cascade behavior on auth_user / auth_session is preserved where those
+// reference the PK.
 //
 // Token columns store the OUTPUT of `storeTokens.hash` (wired to
 // `hashApiKey(token, salt)`) so bearer middleware can compute the same value.
@@ -576,7 +574,7 @@ export const auth_oauth_client = sqliteTable(
     // every client it creates, empty for the ones this server registers.
     clientCredentialsScopes: text("client_credentials_scopes"),
     // 1.7 additions, nullable so a 1.6 build serves this schema without
-    // noticing. Arrays store as text on this dialect.
+    // noticing. Arrays store as text.
     applicationType: text("application_type"),
     backchannelLogoutSessionRequired: integer(
       "backchannel_logout_session_required",
@@ -647,7 +645,7 @@ export const auth_oauth_refresh_token = sqliteTable(
     authTime: integer("auth_time", { mode: "timestamp" }),
     scopes: text("scopes").notNull(),
     // 1.7 additions, all nullable so a 1.6 build serves this schema
-    // without noticing. Arrays and json store as text on this dialect.
+    // without noticing. Arrays and json store as text.
     authorizationCodeId: text("authorization_code_id"),
     confirmation: text("confirmation"),
     requestedUserInfoClaims: text("requested_user_info_claims"),
@@ -701,7 +699,7 @@ export const auth_oauth_access_token = sqliteTable(
     createdAt: integer("created_at", { mode: "timestamp" }),
     scopes: text("scopes").notNull(),
     // 1.7 additions, all nullable so a 1.6 build serves this schema
-    // without noticing. Arrays and json store as text on this dialect.
+    // without noticing. Arrays and json store as text.
     authorizationCodeId: text("authorization_code_id"),
     confirmation: text("confirmation"),
     requestedUserInfoClaims: text("requested_user_info_claims"),
@@ -735,7 +733,7 @@ export const auth_oauth_consent = sqliteTable(
     scopes: text("scopes").notNull(),
     createdAt: integer("created_at", { mode: "timestamp" }),
     updatedAt: integer("updated_at", { mode: "timestamp" }),
-    // 1.7 additions, nullable; arrays store as text on this dialect.
+    // 1.7 additions, nullable; arrays store as text.
     requestedUserInfoClaims: text("requested_user_info_claims"),
     resources: text("resources"),
   },
@@ -792,7 +790,6 @@ export const auth_jwks = sqliteTable("auth_jwks", {
   privateKey: text("private_key").notNull(),
   createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
   expiresAt: integer("expires_at", { mode: "timestamp" }),
-  // 1.7 key-algorithm columns — see the pg sibling for the reasoning.
   alg: text("alg"),
   crv: text("crv"),
 });

@@ -3,7 +3,7 @@
  *
  * Drift is derived at boot, so these tests set it directly rather than
  * booting an instance against a doctored database. What that leaves
- * uncovered is one line at each dialect's warmup; the derivation itself is
+ * uncovered is one line at warmup; the derivation itself is
  * tested against real storage in `storage/platform-drift.test.ts`.
  */
 import { afterEach, describe, expect, it } from "vitest";

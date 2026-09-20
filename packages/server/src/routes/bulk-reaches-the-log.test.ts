@@ -241,7 +241,7 @@ describe("POST /items/bulk-actions reaches the event log", () => {
   });
 
   it("logs the edges a purge cascaded", async () => {
-    const tag = `pg-${uniq()}`;
+    const tag = `purge-${uniq()}`;
     const doomed = await note("doomed", [tag]);
     const other = await note("survivor");
     const edge = await request(ctx.app, "POST", "/edges", {

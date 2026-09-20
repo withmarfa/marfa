@@ -1,5 +1,6 @@
 /**
- * Scope-set comparison shared by the two `OauthProviderStore` dialects.
+ * Scope-set comparison, held outside `OauthProviderStore` so the rule can
+ * be read and tested without one.
  *
  * Consent scopes are an unordered set stored as an ordered list, and the
  * order a row comes back in depends on the order the writer happened to

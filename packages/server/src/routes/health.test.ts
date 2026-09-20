@@ -33,7 +33,8 @@ const ANSWERS_WITHIN_MS = PROBE_TIMEOUT_MS * 3;
  */
 
 const never = new Promise<never>(() => {
-  // Deliberately never settles: this is the pool-exhaustion shape.
+  // Deliberately never settles: this is the shape of a probe that never
+  // comes back.
 });
 
 function buildStorage(count: () => Promise<number>): Storage {
@@ -71,20 +72,6 @@ describe("GET /health", () => {
     expect(body.status).toBe("ok");
     expect(body.components.database?.status).toBe("ok");
     expect(body.components.blob_storage?.status).toBe("ok");
-  });
-
-  // The reading comes from `pg_stat_activity`, so there is nothing to read
-  // on a dialect that has neither a pool nor that view. Absent is the honest
-  // answer; a zeroed block would read as a deployment holding no
-  // connections, which is a different and wrong claim.
-  it("omits the connection reading on a storage with no pool", async () => {
-    const app = healthRoutes(
-      buildStorage(() => Promise.resolve(3)),
-      buildBlobs(() => Promise.resolve(false)),
-    );
-
-    const body = (await (await app.request("/")).json()) as HealthBody;
-    expect(body).not.toHaveProperty("database_connections");
   });
 
   it("answers degraded instead of hanging when the database probe never returns", async () => {
@@ -135,7 +122,8 @@ describe("GET /health", () => {
     const body = (await res.json()) as HealthBody;
     // `down` means the database answered with a refusal; `degraded` means
     // no answer arrived. Collapsing them would lose the distinction that
-    // tells an operator whether to look at the database or at the pool.
+    // tells an operator whether the database is reachable and unhappy or
+    // not answering at all.
     expect(body.components.database?.status).toBe("down");
     expect(body.components.database?.error).toContain("connection refused");
   });

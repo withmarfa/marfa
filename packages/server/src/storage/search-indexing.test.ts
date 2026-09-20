@@ -34,7 +34,7 @@ async function search(query: string): Promise<SearchHit[]> {
   return body.results;
 }
 
-describe("FTS dialect parity", () => {
+describe("what reaches the full-text index", () => {
   it("indexes the four core fields end-to-end", async () => {
     const { item: a } = (await (
       await request(ctx.app, "POST", "/items", {
@@ -159,7 +159,7 @@ describe("FTS dialect parity", () => {
     expect(bodyHits.map((h) => h.item.id)).toContain(created.id);
   });
 
-  it("re-indexes on update — the search_vector / FTS row reflects the latest state", async () => {
+  it("re-indexes on update — the FTS row reflects the latest state", async () => {
     const { item } = (await (
       await request(ctx.app, "POST", "/items", {
         key: ctx.workingKey,

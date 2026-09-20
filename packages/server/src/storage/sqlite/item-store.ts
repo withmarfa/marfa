@@ -1133,8 +1133,8 @@ export class SqliteItemStore implements ItemStore {
   }
 
   async purgeActivityOlderThan(beforeDate: string): Promise<number> {
-    // The PG copy carries the reasoning: activity rows are `active` and
-    // never trashed, so the trash sweep's predicate cannot serve.
+    // Activity rows are `active` and never trashed, so the trash sweep's
+    // predicate cannot serve.
     const baseConditions = [
       eq(items.type, "system.activity"),
       lt(items.created_at, beforeDate),
@@ -1150,8 +1150,8 @@ export class SqliteItemStore implements ItemStore {
       if (idRows.length === 0) return 0;
 
       const ids = idRows.map((row) => row.id);
-      // items_fts is a separate virtual table here, so unlike PG it needs
-      // cleaning by hand.
+      // items_fts is a separate virtual table, so it needs cleaning by
+      // hand.
       for (const id of ids) {
         await this.searchStore.remove(id);
       }
@@ -1163,8 +1163,8 @@ export class SqliteItemStore implements ItemStore {
   }
 
   async purgeRevokedAppGrantsOlderThan(beforeDate: string): Promise<number> {
-    // The PG copy carries the reasoning: a grant revoked through the
-    // user-facing path keeps `state: "active"`, so this asks `properties`
+    // A grant revoked through the user-facing path keeps
+    // `state: "active"`, so this asks `properties`
     // rather than the lifecycle, and `kind = 'app'` keeps a connector
     // uninstall's routine `revoked` row out of a tombstone sweep.
     const where = and(

@@ -2553,7 +2553,7 @@ export function itemRoutes(storage: Storage) {
     // exists, each target item exists + type-constraint-compatible, and
     // (after-delete) cardinality stays within bounds. Fast-fails on bad
     // input before the delete-and-create pass; the inner transaction
-    // rolls back lower-level surprises on either dialect.
+    // rolls back lower-level surprises.
     if (hasEdges && body.edges) {
       for (const [edgeType, targets] of Object.entries(body.edges)) {
         const schema = getEdgeTypeSchema(edgeType);

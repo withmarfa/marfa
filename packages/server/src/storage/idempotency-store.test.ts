@@ -372,8 +372,6 @@ describe("a displaced writer cannot touch the claim that replaced it", () => {
  * store actually does.
  */
 describe("every writer of a claim row is fenced", () => {
-  const STORE_SOURCES = ["sqlite"] as const;
-
   /**
    * Every method that touches the table, and what it does there.
    *
@@ -402,12 +400,13 @@ describe("every writer of a claim row is fenced", () => {
       "so it cannot delete a live claim.",
   };
 
-  /** Source with comments stripped, so prose cannot be read as code. */
-  function sourceOf(dialect: string): string {
+  /** The store's source with comments stripped, so prose cannot be read
+   *  as code. */
+  function storeSource(): string {
     return readFileSync(
       resolve(
         dirname(fileURLToPath(import.meta.url)),
-        `${dialect}/idempotency-store.ts`,
+        "sqlite/idempotency-store.ts",
       ),
       "utf-8",
     )
@@ -495,9 +494,9 @@ describe("every writer of a claim row is fenced", () => {
     return hoisted?.[1] ?? arg;
   }
 
-  it.each(STORE_SOURCES)("%s: touches the table in known ways only", (d) => {
+  it("touches the table in known ways only", () => {
     const found = new Map<string, string>();
-    for (const [name, body] of methodsOf(sourceOf(d))) {
+    for (const [name, body] of methodsOf(storeSource())) {
       const op = operationOf(body);
       if (op !== null) found.set(name, op);
     }
@@ -509,14 +508,14 @@ describe("every writer of a claim row is fenced", () => {
     );
   });
 
-  it.each(STORE_SOURCES)("%s: every mutating method fences its where", (d) => {
-    const methods = methodsOf(sourceOf(d));
+  it("fences the where of every mutating method", () => {
+    const methods = methodsOf(storeSource());
     const unfenced: string[] = [];
     for (const [name, body] of methods) {
       if (operationOf(body) !== "mutates") continue;
       if (name in UNFENCED) continue;
       if (!whereOf(body).includes("eq(idempotencyRecords.created_at")) {
-        unfenced.push(`${d}.${name}`);
+        unfenced.push(name);
       }
     }
     expect(
@@ -533,17 +532,15 @@ describe("every writer of a claim row is fenced", () => {
     // that silently exempts something it was never written for. That is
     // exactly what the mislabelled version of this guard did.
     for (const method of Object.keys(UNFENCED)) {
-      for (const d of STORE_SOURCES) {
-        const body = methodsOf(sourceOf(d)).get(method);
-        expect(
-          body,
-          `UNFENCED names ${method}, absent from ${d}`,
-        ).toBeDefined();
-        expect(
-          operationOf(body ?? ""),
-          `UNFENCED names ${d}.${method}, which does not mutate`,
-        ).toBe("mutates");
-      }
+      const body = methodsOf(storeSource()).get(method);
+      expect(
+        body,
+        `UNFENCED names ${method}, absent from the store`,
+      ).toBeDefined();
+      expect(
+        operationOf(body ?? ""),
+        `UNFENCED names ${method}, which does not mutate`,
+      ).toBe("mutates");
     }
   });
 

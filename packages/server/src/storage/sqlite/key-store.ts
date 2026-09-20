@@ -24,8 +24,7 @@ import type { DrizzleDb } from "./connection.js";
 
 /**
  * Window within which repeated `last_used_at` writes for the same key
- * collapse to a single DB write. Mirrors the PG store so the two backends
- * stay behaviorally identical.
+ * collapse to a single DB write.
  */
 const LAST_USED_DEBOUNCE_MS = 3_600_000;
 
@@ -266,8 +265,7 @@ export class SqliteKeyStore implements KeyStore {
       .where(and(eq(apiKeys.id, id), isNull(apiKeys.revoked_at)))
       .run();
     if (result.rowsAffected > 0) return "revoked";
-    // See the pg key-store: read only on the miss, and only to say which
-    // miss it was.
+    // Read only on the miss, and only to say which miss it was.
     const row = await this.db
       .select({ id: apiKeys.id })
       .from(apiKeys)
@@ -277,10 +275,9 @@ export class SqliteKeyStore implements KeyStore {
   }
 
   /**
-   * DB-side debounce. See the pg key-store docstring — the conditional
-   * WHERE makes this safe to call unconditionally from the auth
-   * middleware across any number of instances without generating a write
-   * storm.
+   * Debounced in the database rather than in the caller: the conditional
+   * WHERE is what makes this safe to call unconditionally from the auth
+   * middleware, from any number of processes, without a write storm.
    */
   async updateLastUsed(id: string): Promise<void> {
     const now = new Date();

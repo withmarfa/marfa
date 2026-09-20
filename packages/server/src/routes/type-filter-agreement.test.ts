@@ -24,7 +24,7 @@ import type { TestContext } from "../test-utils.js";
 
 let ctx: TestContext;
 
-/** Unique per run so parallel dialect runs cannot collide on type ids. */
+/** Unique per run so parallel runs cannot collide on type ids. */
 const NS = `probe${Math.random().toString(36).slice(2, 8)}`;
 const PARENT = `${NS}.parent`;
 const NAMED_CHILD = `${NS}.parent.child`;

@@ -5,7 +5,7 @@
  *
  * Every schema goes through the same `validateTypeSchema` the runtime
  * `POST /types` endpoint uses, so a schema that builds here is one a client
- * could have submitted over the wire — there is no build-time dialect.
+ * could have submitted over the wire.
  *
  * Usage: pnpm generate
  */

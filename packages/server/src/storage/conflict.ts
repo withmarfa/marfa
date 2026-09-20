@@ -283,9 +283,7 @@ export function conflictedSiblingId(input: {
 // ---------------------------------------------------------------------------
 // Refusal envelopes
 //
-// Built here rather than at each store so the two dialects cannot answer one
-// situation differently. A rule enforced at one door and not its sibling is
-// the defect this file exists to make impossible.
+// The envelopes a refusal is built from, beside the rules that decide it.
 // ---------------------------------------------------------------------------
 
 /** The enriched 409 for a stale write the caller has to resolve itself. */

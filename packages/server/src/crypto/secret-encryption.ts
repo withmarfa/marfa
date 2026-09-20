@@ -37,8 +37,8 @@ class SecretCryptoError extends Error {
  * sidecar columns to keep in sync.
  *
  * Exported as a named module rather than wired through the storage
- * interface because the helper is dialect-agnostic: it operates on
- * strings going in and out of the DB layer.
+ * interface because it knows nothing about storage: it operates on the
+ * strings going in and out of that layer.
  */
 
 const SALT = Buffer.from("marfa-secret-encryption", "utf8");

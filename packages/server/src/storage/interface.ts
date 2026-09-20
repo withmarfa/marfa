@@ -622,7 +622,7 @@ export interface ItemStore {
    * method via `restore` either; use the normal `restore()` to
    * un-trash.
    *
-   * **`trashed` is the whole of the difference, in both dialects.** `get`
+   * **`trashed` is the whole of the difference.** `get`
    * rejects on `state === "trashed"` and tests nothing else, so archived
    * and revoked rows come back from it already; this method drops that one
    * test and adds no other state. The pairing of names suggests a wider
@@ -1216,7 +1216,7 @@ export interface WebhookDeliveryStore {
  *
  * Direct Drizzle reads against the plugin's tables; the plugin itself
  * is the authoritative writer. Kept as a separate store so the consent
- * route doesn't have to peek into dialect-specific Drizzle internals.
+ * route doesn't have to peek into the plugin's Drizzle internals.
  */
 export interface OauthAccessTokenRow {
   id: string;
@@ -1453,8 +1453,8 @@ export interface OauthProviderStore {
   /**
    * Write the plugin's consent row for `(clientId, authUserId)`: create it,
    * or replace its scopes if one exists.
-   * One statement, arbitrated by the unique index both dialects carry on
-   * the pair, so two writers cannot leave two rows or a constraint error.
+   * One statement, arbitrated by the unique index on the pair, so two
+   * writers cannot leave two rows or a constraint error.
    *
    * The row is what both consent checks read: the plugin's own, inside its
    * authorize endpoint, which skips its screen when the row holds every
@@ -1852,12 +1852,11 @@ export interface PersistedEvent {
   edge_id: string | null;
   payload: string;
   /**
-   * Whether this event drives outbound side effects — webhook delivery and
-   * the connector reactions the bridge enqueues. Persisted so the
-   * instruction survives replication: the bridge's drainer is elected across
-   * the cluster and rebuilds the event from this row, so a process other
-   * than the writer has to be able to read it. True on every row written
-   * before the column existed.
+   * Whether this event drives outbound side effects — webhook delivery.
+   * Persisted because a catch-up rebuilds the event from this row, and a
+   * rebuilt event that read as fanning out when its writer said otherwise
+   * would be a different event from the one that was emitted. True on every
+   * row written before the column existed.
    */
   enable_fanout: boolean;
   created_at: string;
@@ -1962,7 +1961,7 @@ export type IdempotencyClaim =
  * The store is deliberately dumb about what a repeat means: it takes a
  * key or reports who holds it, and records an outcome against a key it
  * gave out. Deciding whether an arrival is a retry, a client defect or a
- * race is the middleware's, in one place, so both dialects cannot
+ * race is the middleware's, in one place, so no two callers can
  * disagree about it.
  */
 export interface IdempotencyStore {
@@ -2303,7 +2302,7 @@ export interface AuthSessionStore {
 }
 
 /**
- * Cluster-shared rate-limit + per-email throttle counters.
+ * The rate-limit and per-email throttle counters.
  *
  * Backing table `rate_limit_windows` keyed on (family, window_key). Two
  * production consumers ride the same store:
@@ -2316,15 +2315,12 @@ export interface AuthSessionStore {
  *     window key "forgot-password:<lowercased-email>"; window size 1h.
  *
  * The single primitive — atomic increment-counter-bounded-by-window —
- * services both. Production storage (PG + SQLite) implements via
- * `INSERT ... ON CONFLICT DO UPDATE` so two server instances pointed at
- * the same DB share counters cluster-wide. SQLite is single-process by
- * file lock so "shared" collapses to "still correct in-process" — same
- * code path, same semantics.
+ * services both. The counters are rows, so every process pointed at the
+ * database increments the same one; `INSERT ... ON CONFLICT DO UPDATE`
+ * under SQLite's single writer is what stops an increment being lost.
  *
- * Hot path: one DB round-trip per gated request. Acceptable at target
- * scale (low-thousands of req/s peak); PG handles tens of thousands of
- * single-row upserts per second on commodity hardware.
+ * Hot path: one round-trip per gated request, which is affordable at the
+ * traffic this is built for — low thousands of requests a second at peak.
  */
 export interface RateLimitStore {
   /**
@@ -2375,17 +2371,14 @@ export interface RateLimitStore {
  * handle as `unknown` so the consumer (auth/instance.ts) is the single
  * site that narrows.
  *
- * Both fields are optional on `Storage` because not every test fixture
- * needs to wire better-auth — leaving them unset disables the adapter
- * mount in `app.ts`.
+ * Optional on `Storage` because not every test fixture needs to wire
+ * better-auth — leaving it unset disables the adapter mount in `app.ts`.
  */
 export interface BetterAuthStorageAdapter {
   /** Drizzle DB handle. Typed `unknown` here so the Storage interface
    *  stays portable; `auth/instance.ts` casts via `Parameters<typeof
    *  drizzleAdapter>[0]` so the surface is still typed at the consumer. */
   betterAuthDb: unknown;
-  /** Dialect discriminator, kept so `auth/instance.ts` names the schema
-   *  bundle it mounts. */
 }
 
 // ---------------------------------------------------------------------------
@@ -2458,8 +2451,10 @@ export interface BulkActionJobStore {
   getById(id: string): Promise<BulkActionJobRow | null>;
   /**
    * Atomically claim the next queued job: a plain
-   * `UPDATE WHERE status='queued' RETURNING …` with `LIMIT 1`, which is
-   * enough for the one process that runs it. Sets `status='in_progress'`,
+   * `UPDATE WHERE status='queued' RETURNING …` with `LIMIT 1`. Two worker
+   * loops cannot claim one job, because each statement is atomic and the
+   * second one's bounded UPDATE sees the first one's claim. Sets
+   * `status='in_progress'`,
    * `started_at`, `worker_id`, `worker_heartbeat_at`. Returns the
    * claimed row, or `null` if the queue is empty.
    */
@@ -2581,21 +2576,21 @@ export interface Storage extends Partial<BetterAuthStorageAdapter> {
    *  reads and writes through this store; the route handler creates jobs
    *  and serves GET and DELETE. */
   bulkActionJobs: BulkActionJobStore;
-  /** What a write returned, keyed on the caller's `Idempotency-Key`.
-   *  Always wired on both dialects; the idempotency middleware and the
-   *  event-log retention sweep are its only readers. */
+  /** What a write returned, keyed on the caller's `Idempotency-Key`. The
+   *  idempotency middleware and the event-log retention sweep are its only
+   *  readers. */
   idempotency: IdempotencyStore;
 
   /**
-   * Cluster-shared rate-limit + per-email throttle counters. Always wired
-   * by both dialect factories; the middleware + the forgot-password route
+   * Rate-limit and per-email throttle counters, shared by every process
+   * pointed at the file. The middleware and the forgot-password route
    * consult it. Required (not optional) because the rate-limit middleware
    * can't degrade gracefully without it — a missing store would silently
    * degrade to "no rate limit", which is the wrong default.
    */
   rateLimits: RateLimitStore;
-  /** Deterministic text-enrichment bookkeeping. Always wired by both
-   *  dialect factories; the sweeper is the only consumer. */
+  /** Deterministic text-enrichment bookkeeping. The sweeper is the only
+   *  consumer. */
   enrichment: EnrichmentStore;
   runInTransaction<T>(fn: () => T | Promise<T>): Promise<T>;
   close(): Promise<void>;

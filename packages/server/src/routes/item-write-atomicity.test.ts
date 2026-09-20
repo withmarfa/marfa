@@ -13,8 +13,8 @@
  * failure at the first write proves nothing — there is nothing yet to undo.
  *
  * Every assertion reads storage back rather than trusting the response.
- * Runs against whichever dialect the suite is running, so both are held to
- * one contract rather than one of them being covered.
+ * Runs against the real store, so what is held is the contract a request
+ * meets rather than one a fake reproduces.
  *
  * Separate from `rollback-event-doors.test.ts`, which holds the neighboring
  * property — that a write which is undone tells the stream nothing. That

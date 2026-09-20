@@ -128,8 +128,8 @@ export class SqliteWebhookDeliveryStore implements WebhookDeliveryStore {
     }));
   }
 
-  /** SQLite is single-process, so the CAS serializes trivially at the
-   *  statement level. */
+  /** SQLite takes one writer at a time, so the compare-and-set is
+   *  serialized by the statement itself. */
   async claimById(
     id: string,
     claimExpiry: string,

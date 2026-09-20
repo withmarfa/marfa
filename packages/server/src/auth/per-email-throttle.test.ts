@@ -132,10 +132,11 @@ describe("PerEmailThrottle", () => {
   });
 
   it("two throttle instances over the same storage share state", async () => {
-    // The cluster-shared invariant: two server instances pointed at
-    // the same DB share counters. Modeled here by two PerEmailThrottle
-    // wrappers backed by the same Storage handle — identical to two
-    // server processes talking to the same Postgres.
+    // The shared-counter invariant: the count is one budget for an
+    // address, however many throttles reach it. Two wrappers over one
+    // `Storage` handle rather than two processes, because the row is what
+    // the property is about and a subprocess would prove the same thing at
+    // a higher price.
     const storage = await makeStorage();
     const left = new PerEmailThrottle(storage, { limit: 2, windowMs: 60_000 });
     const right = new PerEmailThrottle(storage, { limit: 2, windowMs: 60_000 });

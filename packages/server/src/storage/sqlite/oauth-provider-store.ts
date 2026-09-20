@@ -693,7 +693,7 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
    *
    * `createdAt` is stored as Unix seconds (`integer mode:timestamp`); the
    * Drizzle `lt(column, Date)` operator handles the Date → epoch-seconds
-   * coercion so the cutoff comparison stays dialect-correct.
+   * coercion so the cutoff comparison stays correct.
    */
   async deleteGrantlessClientsOlderThan(cutoffIso: string): Promise<number> {
     const cutoff = new Date(cutoffIso);

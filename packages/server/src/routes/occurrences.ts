@@ -711,11 +711,11 @@ async function groupExceptionsBySeries(
     //
     // Determinism is real here and comes from somewhere else: the scan
     // hands these ids over in the store's keyset order, which is a total
-    // order and identical in both dialects. Iterating the returned map
-    // instead would preserve that too, since it is keyed by the same
-    // ids. An earlier version of this comment credited the slice walk
-    // with fixing a dialect-dependent resolution that never existed,
-    // which points the next reader at the wrong fragile part.
+    // order. Iterating the returned map instead would preserve that too,
+    // since it is keyed by the same ids. An earlier version of this
+    // comment credited the slice walk with fixing a resolution order that
+    // was never in doubt, which points the next reader at the wrong
+    // fragile part.
     for (const exceptionId of slice) {
       const seriesId = chunk
         .get(exceptionId)
