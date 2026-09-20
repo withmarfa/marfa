@@ -218,7 +218,7 @@ describe("Instance config — round trips", () => {
   it("PUT persists the activity retention override rather than discarding it", async () => {
     // The purger already reads this field, so a value the route accepts and
     // drops is worse than one it refuses: PUT is a full replacement, so
-    // following the documentation un-sets the neighbours.
+    // following the documentation un-sets the neighbors.
     const res = await request(configCtx.app, "PUT", "/config", {
       key: configCtx.workingKey,
       body: { activity_retention_days: 30, trash_retention_days: 7 },

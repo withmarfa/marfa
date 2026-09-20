@@ -529,7 +529,7 @@ const EDGE_SCOPE_RE =
 // neither a dot nor an asterisk, so `metadata.*.*:write` is refused here and
 // falls through to no other matcher that would take it.
 //
-// It has a neighbouring one worth naming, because it is not this regex's to
+// It has a neighboring one worth naming, because it is not this regex's to
 // fix. `metadata.*:read` falls past this matcher to `SCOPE_RE`, clears
 // `isValidTypePattern` because the root `metadata` satisfies
 // `TYPE_ID_PREFIX`, and parses as `kind: "type"` — an item-type grant over a
@@ -919,7 +919,7 @@ export function scopesToTypePermissions(
  * across several, which makes it safe for "does any grant here mention this
  * type at this verb" and unsafe for "may this credential do this". Ask
  * {@link grantCoversScope} for the second. That function delegated here at
- * first, on the strength of this being the neighbouring helper with the right
+ * first, on the strength of this being the neighboring helper with the right
  * shape and a careful docblock, and was fail-open for exactly the grant above
  * until a review caught it.
  *
@@ -975,7 +975,7 @@ export function scopeCovers(
     // inequality reported every wildcard grant as covering nothing: failing
     // closed, but wrongly, and silently.
     //
-    // Note the neighbour: `matchesTypePattern` takes a list of patterns and
+    // Note the neighbor: `matchesTypePattern` takes a list of patterns and
     // `typeMatchesPattern` takes one. Type first, pattern second.
     if (!typeMatchesPattern(requiredType, parsed.typePattern)) continue;
     if (parsed.operation === "write") return true;

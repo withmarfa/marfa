@@ -460,7 +460,7 @@ export function edgeRoutes(storage: Storage) {
     // One comparison serves both.
     //
     // Gated above rather than here: the gates ran on the body's source
-    // type and edge type, and an acknowledgement is only ever returned
+    // type and edge type, and an acknowledgment is only ever returned
     // when the row's triple equals the body's — so gating on the body is
     // gating on the row.
     const repeatedEdge = async (): Promise<Edge | null> => {

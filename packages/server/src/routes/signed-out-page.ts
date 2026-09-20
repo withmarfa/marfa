@@ -4,7 +4,7 @@
  * The OAuth Provider plugin's RP-initiated logout ends the session and then
  * redirects, but only when the app's `post_logout_redirect_uri` exactly
  * matches one it registered. On any other outcome it falls off the end of its
- * handler and returns undefined, which serialises as an empty 200: the
+ * handler and returns undefined, which serializes as an empty 200: the
  * session really is gone, and the person is looking at a blank document with
  * no indication that anything worked or any way onward.
  *

@@ -811,7 +811,7 @@ describe("POST /items/bulk — announcing writes", () => {
 
 describe("POST /items/bulk — a repeated id in create_only", () => {
   /**
-   * The bulk contract answers per entry, so the acknowledgement takes the
+   * The bulk contract answers per entry, so the acknowledgment takes the
    * shape this door already has: `skipped` with `duplicate_id`. What was
    * wrong is the lookup behind it, which hid trashed rows — so a repeat
    * landing on a row the user had since deleted fell through to `create`,

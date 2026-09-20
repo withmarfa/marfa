@@ -469,7 +469,7 @@ describe("inline edges: a self-loop is refused edge_cycle on every door", () => 
   //
   // Per door rather than once. The refusal is one shared check, but what a
   // caller reads is the door's envelope, and a door that wraps or reorders
-  // the throw is invisible to a test that only drives its neighbour.
+  // the throw is invisible to a test that only drives its neighbor.
 
   async function note(sourceId?: string): Promise<string> {
     const res = await request(ctx.app, "POST", "/items", {

@@ -13,7 +13,7 @@ pnpm test
 
 ## Running the server locally
 
-The simplest way to run the server is with SQLite (the default):
+The server runs on SQLite, which is the only database it has:
 
 ```bash
 cd packages/server
@@ -52,14 +52,25 @@ Types: `feat`, `fix`, `chore`, `docs`, `refactor`, `test`
 ## Testing
 
 ```bash
-pnpm test           # run all tests
+pnpm test           # every package, plus the checks over `ci/`
 pnpm test:watch     # watch mode
 pnpm typecheck      # type-check all packages
 pnpm lint           # lint
 pnpm format:check   # check formatting
 ```
 
-The server tests run against SQLite, locally and in CI.
+`pnpm test` does **not** run the conformance suite's offline lane, which
+checks the specification's citations, the coverage table and the generators
+against the tree. Run it from `conformance/`:
+
+```bash
+cd conformance
+pnpm test:generators
+```
+
+It needs no server, and CI runs it as a step of the conformance job before
+booting anything — so a change to a spec chapter, a fixture title or a
+numbered statement can be green locally and red in CI without it.
 
 ## Conformance suite
 
@@ -74,3 +85,7 @@ pnpm marfa:down
 ```
 
 See [`conformance/README.md`](./conformance/README.md) for the individual lanes and the load profiles.
+
+A change to what the server does and the change to the contract that admits
+it belong in the same pull request. Where a document and the server
+disagree, the server is right.

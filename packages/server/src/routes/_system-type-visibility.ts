@@ -15,7 +15,7 @@
  * continued.
  *
  * **The name test is right here for a reason worth knowing, because the
- * neighbouring file says it is usually wrong.** `_tier-rules.ts` imports
+ * neighboring file says it is usually wrong.** `_tier-rules.ts` imports
  * `hasBoundedLifecycle` rather than asking whether an id starts with
  * `system.`, and that helper's own docblock warns that the two are
  * equivalent only while every reserved type happens to ship under that

@@ -84,7 +84,7 @@ pnpm test:compliance    # spec adherence: auth, types, permissions, error codes
 pnpm test:sync          # the server's half of the write contract, over the event stream
 pnpm test:device        # the device's half: the binary against a scripted server
 pnpm test:conformance   # the four above; what the gate runs
-pnpm test:generators    # offline: generators, harness and boot-helper unit tests
+pnpm test:generators    # offline: spec citations, coverage table, generators, harness
 pnpm test:performance   # read/write latency benchmarks, off the gate
 pnpm test:load          # sustained load and concurrency benchmarks, off the gate
 ```

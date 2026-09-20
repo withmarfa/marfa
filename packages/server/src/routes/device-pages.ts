@@ -147,7 +147,7 @@ function describeScope(
         // — and it is a trade, not a free win: the rows beside these come
         // from the type registry's descriptions, which are sentences
         // ("Text content you created."), so a noun phrase sits slightly
-        // apart from its neighbours here. Two screens disagreeing about
+        // apart from its neighbors here. Two screens disagreeing about
         // what one grant means is the worse of the two.
         (oidcLabel(s.oidcScope ?? s.typePattern) ?? literal)
       : s.kind === "permission"

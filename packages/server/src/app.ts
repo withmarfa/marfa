@@ -316,7 +316,8 @@ export function createApp(
   // Rate limiting (defaults: 1000 req/min, configurable via RATE_LIMIT_REQUESTS
   // and RATE_LIMIT_WINDOW_MS). Protects all endpoints. Configuration flows
   // through AppConfig — the rate-limit middleware reads its settings from
-  // there, not process.env, so there is a single env-read site (loadConfig).
+  // there rather than from `process.env`, so a deployment's limits are
+  // whatever `loadConfig` resolved at boot.
   if (config.rateLimitEnabled) {
     app.use(
       "*",

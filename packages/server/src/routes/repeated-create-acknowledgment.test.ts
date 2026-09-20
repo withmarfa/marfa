@@ -16,7 +16,7 @@
  * success and returns the row instead.
  *
  * The negative half is the load-bearing one and is asserted separately:
- * an acknowledgement must write nothing and emit nothing, or it is an
+ * an acknowledgment must write nothing and emit nothing, or it is an
  * idempotent-looking write that still bumps a version and wakes every
  * other device.
  */
@@ -91,7 +91,7 @@ describe("a repeated item create", () => {
     await settle();
 
     // A repeat carrying different properties. Nothing about it may land:
-    // an acknowledgement that quietly merged would be an update wearing
+    // an acknowledgment that quietly merged would be an update wearing
     // a create's name.
     const repeat = await createNote(id, {
       properties: { body: "second" },
@@ -187,7 +187,7 @@ describe("a repeated edge create", () => {
   });
 });
 
-describe("the gates an acknowledgement still runs", () => {
+describe("the gates an acknowledgment still runs", () => {
   it("acknowledges a trashed row, in the state it holds", async () => {
     // The retry is not asking to revive it. Hiding the row instead would
     // send the create down the insert path and refuse it forever, which
@@ -212,7 +212,7 @@ describe("the gates an acknowledgement still runs", () => {
   });
 
   it("writes no audit row", async () => {
-    // An acknowledgement writes nothing, and audit rows record writes.
+    // An acknowledgment writes nothing, and audit rows record writes.
     // Matching the trashed natural-key branch it sits beside.
     //
     // Scoped to this item's own id rather than counting the whole table.

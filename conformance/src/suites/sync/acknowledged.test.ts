@@ -95,7 +95,7 @@ describe("a repeated create is acknowledged", () => {
       // The queue resending a create whose response it never saw. The body
       // differs deliberately: a server that answered the repeat by performing
       // the write again would return this one and step the version, which no
-      // assertion about the id alone could tell from a correct acknowledgement.
+      // assertion about the id alone could tell from a correct acknowledgment.
       const repeat = await client.createItem({
         id,
         type: "core.note",
@@ -134,7 +134,7 @@ describe("a repeated create is acknowledged", () => {
     ).toBe(200);
     expect(
       outcome.repeat.data.acknowledged,
-      "the repeat did not report itself as an acknowledgement, so a client cannot tell a collapsed retry from a create that happened twice",
+      "the repeat did not report itself as an acknowledgment, so a client cannot tell a collapsed retry from a create that happened twice",
     ).toBe(true);
 
     expect(
@@ -278,7 +278,7 @@ describe("a repeated create is acknowledged", () => {
     ).toBe(200);
     expect(
       outcome.repeat.data.acknowledged,
-      "the edge repeat did not report itself as an acknowledgement",
+      "the edge repeat did not report itself as an acknowledgment",
     ).toBe(true);
     expect(outcome.repeat.data.edge.id).toBe(id);
 

@@ -9,10 +9,9 @@ pnpm add @withmarfa/sdk
 ```ts
 import { MarfaClient } from "@withmarfa/sdk";
 
-const client = new MarfaClient({
-  url: "https://staging.marfa.so",
-  apiKey: process.env.MARFA_API_KEY,
-});
+// Reads MARFA_API_URL and MARFA_API_KEY; null if either is unset.
+const client = MarfaClient.fromEnvironment();
+if (!client) throw new Error("MARFA_API_URL and MARFA_API_KEY must be set");
 
 const note = await client.items.create({
   type: "core.note",

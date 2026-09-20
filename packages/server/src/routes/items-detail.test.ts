@@ -200,7 +200,7 @@ describe("GET /items/:id?include=neighbors", () => {
     const d = await detail(adminA, parent, "backrefs,neighbors");
     const ids = (d.neighbors ?? []).map((n) => n.item.id).sort();
     expect(ids).toEqual([child, comment].sort());
-    // A small, fully-hydrated neighbourhood is not truncated.
+    // A small, fully-hydrated neighborhood is not truncated.
     expect(d.neighbors_truncated).toBe(false);
   });
 
@@ -227,7 +227,7 @@ describe("GET /items/:id?include=neighbors — not an access-control bypass", ()
     expect(ids).not.toContain(secret);
     expect(ids).toEqual([]);
     // Omitting is right; omitting silently is not. Without a count, a
-    // neighbourhood the caller may not fully read is indistinguishable from
+    // neighborhood the caller may not fully read is indistinguishable from
     // one that is genuinely empty, so an app missing a scope renders a
     // ticket with none of its relations and looks correct doing it.
     expect(d.neighbors_omitted).toBe(1);
@@ -313,14 +313,14 @@ describe("GET /items/:id?include=backrefs — per-type pagination", () => {
 
 describe("GET /items/:id?include=neighbors — combined-set truncation signal", () => {
   it("flags neighbors_truncated when the combined set overflows even though every per-type block is below its cap", async () => {
-    // Three edge types, 40 each = 120 neighbours. Each block (40) is under the
+    // Three edge types, 40 each = 120 neighbors. Each block (40) is under the
     // 50 per-type cap, so no block reports has_more — but the combined set
-    // exceeds the 100-neighbour bound. This is the case the per-type has_more
+    // exceeds the 100-neighbor bound. This is the case the per-type has_more
     // cannot signal; only neighbors_truncated catches it.
     const per = 40;
     const parent = await create(adminA, "core.note", { body: "busy hub" });
 
-    // 120 neighbour items in one bulk call: [0,40) children, [40,80) comments,
+    // 120 neighbor items in one bulk call: [0,40) children, [40,80) comments,
     // [80,120) attachments.
     const bulkItems = await request(ctx.app, "POST", "/items/bulk", {
       key: adminA,
@@ -371,7 +371,7 @@ describe("GET /items/:id?include=neighbors — combined-set truncation signal", 
     expect(d.item.edges?.["parent-of"]?.has_more).toBe(false);
     expect(d.backrefs?.["in-thread"]?.has_more).toBe(false);
     expect(d.backrefs?.["attached-to"]?.has_more).toBe(false);
-    // ...but the combined neighbour set is, and only this flag says so.
+    // ...but the combined neighbor set is, and only this flag says so.
     expect(d.neighbors_truncated).toBe(true);
     expect((d.neighbors ?? []).length).toBeLessThanOrEqual(100);
   });

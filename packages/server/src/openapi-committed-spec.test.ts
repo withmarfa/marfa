@@ -3,8 +3,8 @@
  *
  * **Nothing checked this, and the drift it allows is silent in both
  * directions.** The spec is generated from the route definitions and committed
- * at the repository root, where the docs site and every external consumer read
- * it. A route description edited without regenerating leaves the published file
+ * at the repository root, which is what an external consumer reads. A route
+ * description edited without regenerating leaves the published file
  * describing a door that no longer behaves that way; a regeneration that does
  * not land leaves the same gap with the edit apparently done.
  *

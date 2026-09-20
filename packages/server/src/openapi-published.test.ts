@@ -76,31 +76,34 @@ describe("published OpenAPI spec", () => {
     expect(anonymous).toEqual([]);
   });
 
-  it("links only into documentation sections that exist", () => {
-    // Route descriptions carry markdown links into the docs site, and the docs
-    // build prerenders by crawling them, so a link to a section that does not
-    // exist fails that build rather than degrading quietly. These are the
-    // top-level sections the site actually publishes; a link outside them is a
-    // typo or a section that was renamed without updating the routes.
-    const sections = [
-      "/guides/",
-      "/api-reference/",
-      "/sdks/",
-      "/self-hosting/",
-      "/introduction",
-    ];
-
+  it("does not send a reader to a documentation site to learn what a door does", () => {
+    // `AGENTS.md`: the server's behavior is the specification and the docs
+    // site is not a source of truth. A description that sends the reader
+    // somewhere else to find out what a door does is therefore a
+    // description that does not say, and the somewhere else is a page
+    // nothing in this repository can hold to the code.
+    //
+    // This replaces a check that the links pointed at sections that exist.
+    // Every such link has since gone, so that check was asserting a
+    // property of an empty set — green whatever the descriptions said.
+    //
+    // A floor rather than a proof. It catches the shapes that leave the
+    // document — root-relative, protocol-relative, and anything carrying a
+    // scheme — and lets a relative target or a bare anchor through, because
+    // those resolve wherever the description is rendered.
     const offenders: string[] = [];
     for (const [key, operation] of published.entries()) {
       const text = JSON.stringify(operation);
-      for (const match of text.matchAll(/\]\((\/[a-z0-9\-/#]*)\)/g)) {
-        const href = match[1];
-        if (href && !sections.some((section) => href.startsWith(section))) {
-          offenders.push(`${key} -> ${href}`);
-        }
+      for (const match of text.matchAll(
+        /\]\((\/\/?[^)]*|[A-Za-z][A-Za-z0-9+.-]*:[^)]*)\)/g,
+      )) {
+        offenders.push(`${key} -> ${match[1] ?? ""}`);
       }
     }
-
+    // The positive control. Both this and the walk above read `published`,
+    // so an empty document would satisfy the assertion having examined
+    // nothing.
+    expect(published.size).toBeGreaterThan(50);
     expect(offenders.sort()).toEqual([]);
   });
 

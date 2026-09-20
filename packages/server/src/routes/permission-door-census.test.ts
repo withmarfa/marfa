@@ -208,7 +208,7 @@ describe("every administrative door consults a permission", () => {
     // all**, in a file that already has gated siblings. Nothing in the source
     // distinguishes it from the open reads those files legitimately carry —
     // `GET /types` and `GET /edge-types` are open on purpose — so it is a
-    // judgement at review rather than a property a scan can hold. Said plainly
+    // judgment at review rather than a property a scan can hold. Said plainly
     // here rather than left as an absence, because an absence reads as
     // coverage.
     const expected: Record<string, Record<string, number>> = {

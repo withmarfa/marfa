@@ -9,7 +9,7 @@
  * Reporting that at `error` spends the level a fleet alert counts on an
  * event nobody can act on, and a category that is mostly routine deploys is
  * a category whoever reads it learns to discount. The two cases are
- * separable without guessing, because only a cancelled tick is both
+ * separable without guessing, because only a canceled tick is both
  * client-closed-shaped and preceded by the job's own `stop()`. Anything
  * else, including a closed client while the job is still running, keeps
  * `error`.

@@ -53,7 +53,7 @@ afterEach(async () => {
  * different names for one instance.
  *
  * It has to be forced. `Promise.all` over one store does not produce it —
- * the driver serialises the statements, so both writes land before either
+ * the driver serializes the statements, so both writes land before either
  * read-back and the two callers agree on the last writer's value whichever
  * spelling is used. That is why the obvious concurrency test passes against
  * the very mutation it looks like it is for.

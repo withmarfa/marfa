@@ -376,7 +376,7 @@ export function decodeCursorNullable(cursor: string): NullableCursorPayload {
  * carrying no key at all is read as the created-at ordering, which is the
  * only one that existed before this: an in-flight page keeps working, and
  * the same cursor handed to the new ordering is refused rather than
- * silently honoured.
+ * silently honored.
  *
  * **The key names the ordering the request actually resolved to**, column
  * and direction, rather than only naming the catch-up ordering against
@@ -562,7 +562,7 @@ export interface ConflictResolutionInput {
  * The version a row is being recreated at, for a restore.
  *
  * **Server-internal, and set on exactly one path.** A create otherwise starts
- * at 1; only a restore has a prior version to honour, and it is honoured
+ * at 1; only a restore has a prior version to honor, and it is honored
  * because the row keeps its id. A row that came back at 1 under an id that had
  * reached 12 lets a client's stale precondition pass, later, against content
  * it never read — the one thing a version exists to prevent. Never

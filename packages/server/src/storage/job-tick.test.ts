@@ -61,7 +61,7 @@ describe("isConnectionLostError", () => {
 });
 
 describe("logJobTickFailure", () => {
-  it("stands a cancelled tick down at info", () => {
+  it("stands a canceled tick down at info", () => {
     const captured = captureLog();
     logJobTickFailure("Revoked key reap", dbError("CLIENT_CLOSED"), true);
     captured.restore();

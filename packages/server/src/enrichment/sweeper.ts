@@ -423,7 +423,7 @@ export class TextEnrichmentSweeper {
 
   /**
    * Races extraction against a per-item budget. A tesseract recognition
-   * cannot be cancelled from the outside, so an overrun terminates the
+   * cannot be canceled from the outside, so an overrun terminates the
    * worker: the engine recreates it on the next call, and the alternative
    * is a wedged sweep that never reaches the rest of the batch.
    */

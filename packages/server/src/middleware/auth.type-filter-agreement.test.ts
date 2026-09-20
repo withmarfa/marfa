@@ -2,7 +2,7 @@
  * The list filter and the point check answer the same question, and this file
  * asks them both about the same concrete ids.
  *
- * `checkTypeAccess` honours a `"none"` entry exactly. The filter for a list
+ * `checkTypeAccess` honors a `"none"` entry exactly. The filter for a list
  * read could not express one, so it approximated, and every approximation
  * available leaked in one direction or the other. The three shapes below are
  * the three ways that happened; they are one root cause rather than three

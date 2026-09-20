@@ -192,7 +192,7 @@ export class SqliteEdgeStore implements EdgeStore {
 
     if (filters?.cursor) {
       // Keyed, so a cursor issued under the other ordering is refused
-      // rather than honoured against the wrong column. Both columns hold
+      // rather than honored against the wrong column. Both columns hold
       // ISO timestamps, so the wrong one compares perfectly well and
       // returns a page that is simply not the next page.
       const { v, id } = decodeKeyedCursor(filters.cursor, key);

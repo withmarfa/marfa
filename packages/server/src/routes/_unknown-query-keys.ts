@@ -1,6 +1,6 @@
 /**
  * Refusing a query parameter, a filter field or a request field the door
- * does not declare, and the judgement in doing it at all.
+ * does not declare, and the judgment in doing it at all.
  *
  * The request validator strips keys it does not declare rather than
  * rejecting them, so a caller who misspells a filter gets a successful

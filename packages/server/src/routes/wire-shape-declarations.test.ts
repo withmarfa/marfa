@@ -26,7 +26,7 @@
  *     comparison never sees.
  *
  * What neither catches is a partial overlap -- a shape that shares most of
- * a centralized one but not all of it. That is a judgement about whether
+ * a centralized one but not all of it. That is a judgment about whether
  * two things are the same shape, and a test cannot make it.
  *
  * **And neither compares one route file against another**, which is the
