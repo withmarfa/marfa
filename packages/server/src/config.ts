@@ -40,8 +40,8 @@ export interface AppConfig {
   maxBlobSize: number;
   /** Maximum request body size in bytes for the JSON write surface. Bodies
    *  exceeding this are rejected with HTTP 413 `request_too_large` by the
-   *  global `bodyLimit` middleware. The blob + avatar upload routes are
-   *  exempt — they enforce their own (much larger) `maxBlobSize` cap.
+   *  global `bodyLimit` middleware. The blob upload route is exempt — it
+   *  enforces its own (much larger) `maxBlobSize` cap.
    *  Read from `MARFA_MAX_REQUEST_BYTES`; default 1MB. */
   maxRequestBytes: number;
   /** Maximum request body size in bytes for the bulk write endpoints

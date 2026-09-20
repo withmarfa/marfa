@@ -362,7 +362,7 @@ describe("isValidHandle", () => {
   });
 
   it("accepts hyphenated handles where the hyphens are interior", () => {
-    expect(isValidHandle("august-cayzer")).toBe(true);
+    expect(isValidHandle("alice-smith")).toBe(true);
     expect(isValidHandle("a-b-c")).toBe(true);
   });
 
@@ -422,8 +422,8 @@ describe("isValidHandle", () => {
 describe("deriveHandleFromEmail", () => {
   it("derives a valid handle from a clean local part", () => {
     expect(deriveHandleFromEmail("alice@example.com")).toBe("alice");
-    expect(deriveHandleFromEmail("august-cayzer@example.com")).toBe(
-      "august-cayzer",
+    expect(deriveHandleFromEmail("alice-smith@example.com")).toBe(
+      "alice-smith",
     );
   });
 
@@ -492,7 +492,7 @@ describe("isReservedHandle", () => {
     // The roots are the whole list: a handle collides with the type
     // grammar or it does not, and no other word is refused.
     expect(isReservedHandle("alice")).toBe(false);
-    expect(isReservedHandle("august-cayzer")).toBe(false);
+    expect(isReservedHandle("alice-smith")).toBe(false);
     expect(isReservedHandle("a1b2c3")).toBe(false);
     expect(isReservedHandle("admin")).toBe(false);
     expect(isReservedHandle("google")).toBe(false);

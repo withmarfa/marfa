@@ -17,7 +17,7 @@
  *   - The endpoint answers 302 on every outcome, so status separates nothing.
  *
  * These tests assert on what the logger was actually called with, because
- * that is the artefact an operator or an alert consumes. Asserting that a
+ * that is the artifact an operator or an alert consumes. Asserting that a
  * function ran would not have caught any of the three failures above.
  */
 import { describe, it, expect, afterEach, vi } from "vitest";

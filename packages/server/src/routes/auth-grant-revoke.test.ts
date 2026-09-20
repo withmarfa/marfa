@@ -490,7 +490,7 @@ async function seedConsent(
 describe("revocation reaches outstanding authorization codes", () => {
   it("REGRESSION: revoking a grant deletes its outstanding codes", async () => {
     ctx = await createTestContext({});
-    const email = `codes-${Math.random().toString(36).slice(2, 8)}@cyzr.me`;
+    const email = `codes-${Math.random().toString(36).slice(2, 8)}@example.com`;
     await signInUser(ctx, email);
     const authUserId = await authUserIdFor(ctx, email);
     const clientId = await seedClient(ctx);
@@ -514,7 +514,7 @@ describe("revocation reaches outstanding authorization codes", () => {
 
   it("REGRESSION: a code whose grant is revoked cannot be redeemed", async () => {
     ctx = await createTestContext({});
-    const email = `exch-${Math.random().toString(36).slice(2, 8)}@cyzr.me`;
+    const email = `exch-${Math.random().toString(36).slice(2, 8)}@example.com`;
     await signInUser(ctx, email);
     const authUserId = await authUserIdFor(ctx, email);
     const clientId = await seedClient(ctx);
@@ -554,7 +554,7 @@ describe("revocation reaches outstanding authorization codes", () => {
     // So this one drives the endpoint. The seeded identifier is the hashed
     // code, because that is what the guard looks up.
     ctx = await createTestContext({});
-    const email = `guard-${Math.random().toString(36).slice(2, 8)}@cyzr.me`;
+    const email = `guard-${Math.random().toString(36).slice(2, 8)}@example.com`;
     await signInUser(ctx, email);
     const authUserId = await authUserIdFor(ctx, email);
     const clientId = await seedClient(ctx);

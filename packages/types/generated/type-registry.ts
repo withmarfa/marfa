@@ -1048,7 +1048,7 @@ const systemDevice: TypeSchema = {
   description: "A connected device — phone, laptop, watch, sync agent. Surfaces a Devices list in the console; carries a name, kind, and last-active timestamp; revocable. Lifecycle is bounded to active/revoked. Has no tier — the curated/feed dimension does not apply.",
   version: 1,
   fields: {
-    name: { type: "string", description: "Display name (e.g. \"Aug's MacBook Pro\")", required: true },
+    name: { type: "string", description: "Display name (e.g. \"Work laptop\")", required: true },
     kind: { type: "enum", description: "Device class", required: true, enum_values: ["phone", "tablet", "laptop", "desktop", "watch", "sync-agent", "other"] },
     last_active_at: { type: "datetime", description: "Most recent activity timestamp" },
   },

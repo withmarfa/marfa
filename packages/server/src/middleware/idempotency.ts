@@ -39,14 +39,20 @@ import { withPreparedHeaders } from "../prepared-headers.js";
  * property is about a write, and several callers reach `items.create`,
  * `items.update`, `items.delete`, `edges.createRaw`,
  * `edges.updateProperties` and `edges.delete` with no HTTP request at all
- * — the sign-up provisioner, the connection lifecycle pipelines, the
- * connector supervisor, the enrichment sweeper, the bulk-action worker.
- * A route walk sees none of those, and cannot show that they are excluded
- * deliberately rather than missed. Every storage-layer write call site was
- * read; the ones with a request behind them are here, and the ones without
- * are in `WRITES_WITHOUT_A_DOOR` in the sibling coverage test, each with
- * the reason it carries no key. `routes/idempotent-write-doors.test.ts`
- * holds both halves against the app's own route table.
+ * — the enrichment sweeper, the bulk-action worker, and the grant
+ * inactivity retirer, which reaches `items.update` through
+ * `revokeProjectedGrant`. A route walk sees none of them, and cannot show
+ * that they are excluded deliberately rather than missed: all three write on
+ * their own schedule, with no caller to hand them a key.
+ *
+ * That list is a snapshot and the query is the thing to keep: grep the six
+ * methods across `packages/server/src` outside `storage/`, and trace each
+ * hit back to whether a request drives it. The last version of this comment
+ * named three writers that did not exist, and the version that replaced them
+ * named two when there were three — the retirer is interval-driven from
+ * `index.ts` and easy to miss because its write is two calls away.
+ * `routes/idempotent-write-doors.test.ts` holds the doors that do carry a
+ * key against the app's own route table.
  *
  * **A door over a free-text PATH segment is safe here; the query is not
  * covered.** Every entry below carries a UUIDv7, which percent-encodes to

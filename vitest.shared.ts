@@ -12,7 +12,7 @@
  * nobody had picked. It failed as a timeout, which is indistinguishable at a
  * glance from a defect.
  *
- * Imported rather than copied into each package. Seven copies of a number
+ * Imported rather than copied into each package. Four copies of a number
  * drift, and the failure drift produces here is a timeout — the one failure
  * shape that gets investigated as real before anyone thinks to check the
  * clock.

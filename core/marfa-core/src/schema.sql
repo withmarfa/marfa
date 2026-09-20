@@ -1,6 +1,7 @@
 -- PROVISIONAL. Written before the contract (the specification and its
--- fixtures) exists, so it mirrors what GET /items, GET /items/{id}/edges and
--- GET /events carry today and nothing more: no queue, no versions, no blobs.
+-- fixtures) exists, so it mirrors what GET /types, GET /items,
+-- GET /items/{id}/edges and GET /events carry today and nothing more:
+-- no queue, no versions, no blobs.
 -- When the contract lands this file is rewritten to it; nothing here is
 -- migrated.
 

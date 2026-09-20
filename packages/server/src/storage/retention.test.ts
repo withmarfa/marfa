@@ -286,13 +286,11 @@ describe("runSweepAtRetention — audit and event-log retention", () => {
 
     const calls: { retention: number }[] = [];
     const total = await runSweepAtRetention({
-      jobName: "test-audit-cleanup",
       override: {
         settings: ctx.storage.settings,
         configField: "audit_retention_days",
       },
       instanceDefault: 30,
-      unitMs: MS_PER_DAY,
       sweep: (retention) => {
         calls.push({ retention });
         return Promise.resolve(1); // pretend the sweep deleted one row
@@ -311,13 +309,11 @@ describe("runSweepAtRetention — audit and event-log retention", () => {
 
     const calls: { retention: number }[] = [];
     const total = await runSweepAtRetention({
-      jobName: "test-eventlog-cleanup",
       override: {
         settings: ctx.storage.settings,
         configField: "event_log_retention_hours",
       },
       instanceDefault: 168,
-      unitMs: 3_600_000,
       sweep: (retention) => {
         calls.push({ retention });
         return Promise.resolve(0);
@@ -331,10 +327,8 @@ describe("runSweepAtRetention — audit and event-log retention", () => {
   it("falls back to the instance default when no override is provided", async () => {
     const calls: { retention: number }[] = [];
     const total = await runSweepAtRetention({
-      jobName: "test-no-override",
       override: undefined,
       instanceDefault: 90,
-      unitMs: MS_PER_DAY,
       sweep: (retention) => {
         calls.push({ retention });
         return Promise.resolve(5);

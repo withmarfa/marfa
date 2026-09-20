@@ -317,7 +317,7 @@ describe("in-collection media membership", () => {
 
   it("lets a crossover special sit in two series", async () => {
     const one = await createMedia("core.media.series", "Signal Hill");
-    const two = await createMedia("core.media.series", "Harbour Lights");
+    const two = await createMedia("core.media.series", "Harbor Lights");
     const special = await createMedia("core.media.episode", "The Crossing");
     expect((await joinCollection(special, one)).status).toBe(201);
     expect((await joinCollection(special, two)).status).toBe(201);

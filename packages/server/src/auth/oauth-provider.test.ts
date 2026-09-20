@@ -177,7 +177,7 @@ describe("permission bundles bind to the type registry", () => {
   // Asserting the bundles against `buildAllowedScopes` cannot fail: the
   // builder unions the bundle scopes into the set it returns, so the
   // obvious guard is true by construction. It was true on the day a bundle
-  // naming a deleted type took hosted sign-in down for every client. This
+  // naming a deleted type took sign-in down for every client. This
   // resolves each bundle scope against the registries themselves instead.
   const NON_TYPE_LITERALS = new Set([
     "openid",

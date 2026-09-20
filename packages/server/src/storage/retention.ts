@@ -107,7 +107,6 @@ export class TrashPurger {
   async runOnce(): Promise<number> {
     return this.configOverride
       ? runSweepToCutoff({
-          jobName: "trash-purge",
           override: this.configOverride,
           nowFn: this.nowFn,
           instanceDefault: this.retentionDays,
@@ -423,7 +422,6 @@ export class ActivityPurger {
   async runOnce(): Promise<number> {
     return this.configOverride
       ? runSweepToCutoff({
-          jobName: "activity-purge",
           override: this.configOverride,
           nowFn: this.nowFn,
           instanceDefault: this.retentionDays,
@@ -839,7 +837,6 @@ async function effectiveRetention(
 
 /** One sweep at the effective retention. */
 async function runSweepToCutoff(opts: {
-  jobName: string;
   override: RetentionOverride;
   nowFn: () => Date;
   instanceDefault: number;
@@ -863,15 +860,14 @@ async function runSweepToCutoff(opts: {
  * callsites that don't have their own Purger class. Returns the number of
  * rows deleted this tick.
  *
- * `unitMs` is `MS_PER_DAY` for the audit job (retention is in days) and
- * `3_600_000` for the event-log job (retention is in hours); passed in by
- * the caller so the helper stays unit-agnostic.
+ * The retention reaches `sweep` in whatever unit the job keeps it in — days
+ * for the audit job, hours for the event log — because nothing here converts
+ * it and the store on the other side takes the same unit it was configured
+ * with.
  */
 export async function runSweepAtRetention(opts: {
-  jobName: string;
   override: RetentionOverride | undefined;
   instanceDefault: number;
-  unitMs: number;
   sweep: (retention: number) => Promise<number>;
 }): Promise<number> {
   const effective = opts.override

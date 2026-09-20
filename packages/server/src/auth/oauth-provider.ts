@@ -191,7 +191,7 @@ export function buildAllowedScopes(
     // Metadata top-level
     "metadata:read",
     "metadata:write",
-    // Category 2, Your profile. The levelled parent and one literal per row.
+    // Category 2, Your profile. The leveled parent and one literal per row.
     // Published rather than withheld because the consent screen has shipped a
     // "Your profile" bundle since before any of this was enforced, and a
     // bundle offering a category no client can request is a screen making a
@@ -479,12 +479,11 @@ export function buildOauthProviderPlugin(
     customIdTokenClaims: ({ user, scopes }) => {
       const claims: Record<string, unknown> = {};
       // **The union with Category 2, and it is the half that makes the gate
-      // real.** `/oauth/userinfo` and the direct `/profile/*` routes are two
-      // doors onto one resource rather than two resources, so a caller reads
-      // if it holds the OIDC literal OR the corresponding profile scope.
+      // real.** A caller reads if it holds the OIDC literal OR the
+      // corresponding profile scope, because the two name one resource.
       // Treating them as disjoint would leave this an ungated read path for
-      // exactly the data the direct routes now protect, which is the same
-      // defect in a second location rather than a fix.
+      // exactly the data `profile_permissions` exists to protect, which is
+      // the same defect in a second location rather than a fix.
       const profilePerms = scopesToProfilePermissions(scopes);
       const readsName =
         scopes.includes("profile") ||
@@ -512,12 +511,11 @@ export function buildOauthProviderPlugin(
     customUserInfoClaims: ({ user, scopes }) => {
       const claims: Record<string, unknown> = {};
       // **The union with Category 2, and it is the half that makes the gate
-      // real.** `/oauth/userinfo` and the direct `/profile/*` routes are two
-      // doors onto one resource rather than two resources, so a caller reads
-      // if it holds the OIDC literal OR the corresponding profile scope.
+      // real.** A caller reads if it holds the OIDC literal OR the
+      // corresponding profile scope, because the two name one resource.
       // Treating them as disjoint would leave this an ungated read path for
-      // exactly the data the direct routes now protect, which is the same
-      // defect in a second location rather than a fix.
+      // exactly the data `profile_permissions` exists to protect, which is
+      // the same defect in a second location rather than a fix.
       const profilePerms = scopesToProfilePermissions(scopes);
       const readsName =
         scopes.includes("profile") ||

@@ -13,7 +13,7 @@
  * The consequence is not a narrowed grant, it is no grant at all: one
  * unrecognized literal redirects the browser to the client's own callback
  * with `error=invalid_scope`, and there is nothing on that page to recover
- * with. A media-type restructure took hosted sign-in down this way, for
+ * with. A media-type restructure took sign-in down this way, for
  * every client and every user, signed in or not.
  *
  * The before-hook intersects the request with what the server can grant and

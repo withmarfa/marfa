@@ -20,7 +20,7 @@
  * **Both assertions are needed, and which one catches a regression depends
  * on the door.** The `emitter.emit` inside `publish()` is unconditional and
  * synchronous, so a same-process subscriber (SSE viewers, outbound webhook
- * delivery, the reactive bridges) always receives the phantom. The
+ * delivery) always receives the phantom. The
  * `event_log` row does not always survive to show it, because the log is
  * written through the same transaction-aware db the door writes through:
  *

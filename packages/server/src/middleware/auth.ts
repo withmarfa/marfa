@@ -12,7 +12,6 @@ import {
   scopesToProfilePermissions,
   edgePermissionCovers,
   metadataPermissionCovers,
-  profilePermissionCovers,
   hasPermission,
 } from "@withmarfa/shared";
 import type { ApiKey, Permission, TypeFilter } from "@withmarfa/shared";
@@ -36,8 +35,9 @@ export interface AppEnv extends Record<string, unknown> {
      * and for bootstrap.
      *
      * **The scopes are here because they reach no permission map.** The
-     * three projections beside them translate a token's scopes into
-     * `type_permissions`, `edge_permissions` and `metadata_permissions`
+     * four projections beside them translate a token's scopes into
+     * `type_permissions`, `edge_permissions`, `metadata_permissions` and
+     * `profile_permissions`
      * and drop every literal they do not recognize — deliberately, since a
      * permission names authority over an administrative surface rather
      * than over a resource, and admitting one into a projection would put
@@ -601,8 +601,10 @@ export function checkTypeAccess(
  * open, which is the defect above reintroduced one layer up, and it would do
  * so silently — every suite that does not mint an exclusion-carrying key
  * would still pass. Returning one object makes it unrepresentable: a call
- * site cannot forget a field it has to destructure. (Eight consumers today,
- * seven through `getTypeFilter` and one direct, on the change stream.)
+ * site cannot forget a field it has to destructure. (Ten consumers today,
+ * eight through `getTypeFilter` and two direct: the change stream, and
+ * `refuseNarrowCredential` in `routes/webhooks.ts`, which reads both
+ * `allowed` and `excluded` — the pair this reasoning is about.)
  *
  * `allowed: undefined` keeps meaning "no restriction" and `allowed: []` keeps
  * meaning "nothing visible", so the contract at every call site survives.
@@ -918,34 +920,6 @@ export function requirePermission(
     ErrorCode.FORBIDDEN,
     `This credential does not hold ${permission}`,
     { required_scope: permission },
-  );
-}
-
-/**
- * Category 2 of the permission model, Your profile.
- *
- * Deliberately the same shape as {@link requireMetadataPermission}, because
- * the distinction that matters is not which endpoint a caller chose but what
- * it holds. A key carries `profile_permissions` on its row and a sign-in
- * carries `profile:<verb>` or `profile.<row>:<verb>` on its grant; both are
- * read through one map, and neither has anything to bypass it with.
- *
- * **The category is levelled, so `read` is a level rather than a baseline.** A
- * token holding nothing here may not read a name or an email address, which is
- * the difference between this and an item-type axis and the reason the design
- * calls it Category 2 rather than a field on Category 1.
- */
-export function requireProfilePermission(
-  c: Context<AppEnv>,
-  row: string,
-  level: "read" | "write",
-): void {
-  const apiKey = checkAuth(c.get("apiKey"));
-  if (profilePermissionCovers(apiKey.profile_permissions, row, level)) return;
-  throw new MarfaError(
-    ErrorCode.FORBIDDEN,
-    `Missing profile.${row}:${level} permission`,
-    { profile_row: row, required: level },
   );
 }
 

@@ -7,9 +7,10 @@
  * a new published package is locked the day it appears instead of the day
  * somebody remembers to add it here.
  *
- * Every entry point counts, not just the root. `@withmarfa/sdk` exposes
- * four, and a consumer importing `@withmarfa/sdk/auth` is holding a
- * contract as real as the root's. An entry point that names no type
+ * Every entry point counts, not just the root. Both published packages
+ * declare exactly one today, so the rule costs nothing now; it is here so
+ * that adding a subpath export does not quietly widen the surface without
+ * widening the lock. An entry point that names no type
  * declarations is an error rather than a skip: dropping one silently
  * leaves a smaller surface that still hashes consistently and passes
  * forever, which is the failure this whole file is built against.

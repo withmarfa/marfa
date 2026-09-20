@@ -138,8 +138,8 @@ pub struct ListFilters {
     pub offset: Option<u32>,
 }
 
-// Every sortable column is a verb plus `_at`, so the shared suffix is the
-// naming rule rather than a redundant prefix the variants could drop.
+// Every sortable column is a verb plus `_at`, so the shared `At` suffix the
+// lint reports is the naming rule rather than noise the variants could drop.
 #[allow(clippy::enum_variant_names)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

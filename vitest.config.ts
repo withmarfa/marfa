@@ -11,8 +11,8 @@ export default defineConfig({
     // its own budget, and every package now sets one from
     // `vitest.shared.ts`. This comment used to claim the opposite, and name
     // three packages as having no config of their own when `shared` had one;
-    // the numbers below reached none of them, which is how seven packages
-    // came to run on Vitest's stock 10s default.
+    // the numbers below reached none of them, which is how three of the
+    // four packages came to run on Vitest's stock 10s default.
     projects: [
       "packages/*",
       {
