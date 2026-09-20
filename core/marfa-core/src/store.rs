@@ -1039,6 +1039,13 @@ mod tests {
         // Kept: refused after going out, but a releasable row names it.
         row("dependency", "refused", 1, "[]");
         row("dependant", "blocked", 1, "[\"dependency\"]");
+        // And the same again where the waiter is the *third* releasable kind
+        // — refused without going out. Without this pair the protection
+        // clause added for that kind is unwitnessed: the `blocked` waiter
+        // above is matched by the clause that was already there, so the new
+        // one could be deleted and this test would still pass.
+        row("kept-for-unsent", "accepted", 1, "[]");
+        row("unsent-waiter", "refused", 0, "[\"kept-for-unsent\"]");
 
         let cleared = forget_answered(&conn).unwrap();
         let left: Vec<String> = conn
@@ -1053,7 +1060,9 @@ mod tests {
             vec![
                 "dependant".to_string(),
                 "dependency".to_string(),
-                "unsent".to_string()
+                "kept-for-unsent".to_string(),
+                "unsent".to_string(),
+                "unsent-waiter".to_string()
             ],
             "a row a caller can still release, or one a releasable row waits on, \
              was cleared: releasing then produces a write whose dependency cannot \
