@@ -58,10 +58,17 @@ function read(harness: FolderHarness, name: string): string {
 function scriptFolderWrites(
   harness: FolderHarness,
   rows: Array<Record<string, unknown>> = [],
-): void {
+): Map<
+  string,
+  { properties: Record<string, unknown>; source_id: string | null }
+> {
   let next = 0;
   // What the scripted server holds for each item, so an update that carries
   // only a natural key does not answer with the properties cleared.
+  //
+  // Returned, so a fixture can ask what each item ended up holding. Asserting
+  // on the natural keys alone cannot tell a swap that moved two names from one
+  // that moved two names and crossed the bodies over.
   const held = new Map<
     string,
     { properties: Record<string, unknown>; source_id: string | null }
@@ -76,6 +83,31 @@ function scriptFolderWrites(
         };
         const canned = rows[next];
         next += 1;
+        // **A create onto a natural key something already holds is an upsert
+        // onto that row**, not a second item (`items.md` 5). Scripted here
+        // because the real server does it, and a door that always minted a
+        // fresh row could not show what a create aimed at a live key costs:
+        // the folder would look correct while overwriting somebody's note.
+        const incumbent =
+          sent.source_id === undefined
+            ? undefined
+            : [...held].find(([, row]) => row.source_id === sent.source_id);
+        if (incumbent) {
+          const [id] = incumbent;
+          held.set(id, {
+            properties: sent.properties,
+            source_id: sent.source_id ?? null,
+          });
+          return answers.created(
+            wireItem({
+              id,
+              version: 2,
+              properties: sent.properties,
+              source_id: sent.source_id ?? null,
+              ...(canned ?? {}),
+            }),
+          );
+        }
         held.set(sent.id, {
           properties: sent.properties,
           source_id: sent.source_id ?? null,
@@ -134,6 +166,7 @@ function scriptFolderWrites(
     status: 204,
     body: {},
   });
+  return held;
 }
 
 /** What the folder sent to the items door, parsed. */
@@ -1238,6 +1271,49 @@ describe("identity", () => {
       [keys.get(one), keys.get(two)],
       "the two items did not end up under each other's names, so the swap did not reach the server",
     ).toEqual(["two.md", "one.md"]);
+  });
+
+  it("does not write a new file's body onto the item whose name it took", async () => {
+    harness = await folderHarness("folder-name-handover");
+    const held = scriptFolderWrites(harness);
+    put(harness, "a-note.md", "---\ntitle: A\n---\nthe real note\n");
+    expect((await harness.folder.push()).ok).toBe(true);
+
+    const first = sentCreates(harness);
+    expect(
+      first.length,
+      "the file never became an item, so there is no name for a second file to take",
+    ).toBe(1);
+    const incumbent = String(first[0]?.id ?? "");
+    expect(
+      incumbent,
+      "the create carried no id, so there is nothing to follow the note by",
+    ).not.toBe("");
+
+    // The moved file frees `a-note.md`; a brand new file takes it in the same
+    // scan. The walk is sorted, so the newcomer is reached first and the
+    // incumbent still holds the name at that moment.
+    renameSync(join(harness.dir, "a-note.md"), join(harness.dir, "z-note.md"));
+    put(harness, "a-note.md", "---\ntitle: A\n---\nbrand new\n");
+    expect((await harness.folder.push()).ok).toBe(true);
+
+    const survivor = held.get(incumbent);
+    expect(
+      survivor?.properties?.body,
+      "the note the person moved was overwritten by an unrelated new file that took the name it was leaving, and the only trace is a version bump",
+    ).toBe("the real note\n");
+    expect(
+      survivor?.source_id,
+      "the moved note did not end up under its new name, so the rename never reached the server",
+    ).toBe("z-note.md");
+
+    const newcomer = [...held].find(
+      ([id, row]) => id !== incumbent && row.source_id === "a-note.md",
+    );
+    expect(
+      newcomer?.[1]?.properties?.body,
+      "the new file never became an item of its own, so its contents live nowhere on the server",
+    ).toBe("brand new\n");
   });
 
   it("keeps a binding for every file after a swap that also edits both", async () => {

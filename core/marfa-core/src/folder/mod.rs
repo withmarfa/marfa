@@ -416,6 +416,30 @@ impl Folder {
                 // No identity the mapping knows and no row at this path: a
                 // new item, never a guess (`folders.md` 8).
                 None => {
+                    // **A name an item still holds is parked before a create
+                    // takes it**, exactly as a move parks one.
+                    //
+                    // Without this the create resolves against the incumbent:
+                    // the server takes a create on a live natural key as an
+                    // upsert, and the version the create carries is read off
+                    // the incumbent's own row, so it matches and the write
+                    // lands. One file moves away, an unrelated file takes the
+                    // name it left, and the moved file's item is overwritten
+                    // with the new file's body before its own move is sent.
+                    //
+                    // The move arm could rely on `bound.item_id` to know the
+                    // name was contested. A create has no bound row, so the
+                    // question has to be asked of `holder` directly.
+                    if let Some(other) = holder.get(key.as_str()) {
+                        let other = other.clone();
+                        if self.keyed_at(&other, key.as_str())? {
+                            let parked = parked_key(&other);
+                            self.queue_rekey(&other, &parked)?;
+                            holder.insert(parked, other);
+                            report.parked += 1;
+                        }
+                        holder.remove(key.as_str());
+                    }
                     self.queue_create(&seen, &mut unresolved)?;
                     report.created += 1;
                 }
