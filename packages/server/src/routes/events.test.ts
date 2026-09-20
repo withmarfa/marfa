@@ -1,8 +1,10 @@
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
+import { eq } from "drizzle-orm";
 import { createTestContext, readSse, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { initEventLog } from "../pubsub.js";
 import { parseEventLogRetentionHours } from "../config.js";
+import { eventLog } from "../storage/sqlite/schema.js";
 
 // Enable event_log persistence for the whole suite. The default test
 // bootstrap leaves it unwired; we need `publish()` to append so the
@@ -67,43 +69,107 @@ function findEvent(
   return null;
 }
 
+/**
+ * Retires one event the way the retention sweep does, by removing its row.
+ *
+ * The sweep is the only thing that moves the log's oldest id, and it runs on
+ * the server's clock, so a stale cursor is arranged here rather than provoked:
+ * a request can ask for nothing that retires an event.
+ */
+async function retireEvent(id: bigint): Promise<void> {
+  const db = ctx.storage.betterAuthDb as {
+    delete: (table: unknown) => {
+      where: (predicate: unknown) => Promise<unknown>;
+    };
+  };
+  await db.delete(eventLog).where(eq(eventLog.id, Number(id)));
+  const oldest = await ctx.storage.eventLog.getMinRetainedId();
+  expect(oldest).not.toBeNull();
+  expect(oldest! > id).toBe(true);
+}
+
 describe("GET /events — catchup_too_old", () => {
-  it("emits terminal catchup_too_old when Last-Event-ID predates retention", async () => {
-    const eventId = await createNote("stale-cursor-1");
-    expect(eventId > 0n).toBe(true);
+  it("emits terminal catchup_too_old when the event after the cursor is no longer retained", async () => {
+    const retired = await createNote("stale-cursor-1");
+    const gone = await createNote("stale-cursor-2");
+    const survivor = await createNote("stale-cursor-3");
+    expect(gone > retired && survivor > gone).toBe(true);
+    // The cursor names `retired` as the last event applied, so the client
+    // needs everything after it, and the first of those is `gone`. Retiring
+    // `retired` alone leaves that need answerable, which is the boundary the
+    // in-step case below pins; retiring `gone` too is what makes the cursor
+    // stale, because the event after it is no longer held.
+    await retireEvent(retired);
+    await retireEvent(gone);
+    const oldest = (await ctx.storage.eventLog.getMinRetainedId())!;
+    expect(oldest).toBe(survivor);
+    // A cursor two or more behind the oldest retained id has lost an event.
+    expect(oldest > retired + 1n).toBe(true);
 
     const res = await request(ctx.app, "GET", "/events", {
       key: ctx.workingKey,
-      headers: { "Last-Event-ID": "0" },
+      headers: { "Last-Event-ID": String(retired) },
     });
     expect(res.status).toBe(200);
     expect(res.headers.get("Content-Type")).toBe("text/event-stream");
 
     // Waits for the close rather than for the frame. Terminal is a claim
     // about what the server does *after* emitting, and a read that stopped at
-    // the frame never observed it: the old assertion allowed "closed, or no
-    // item. frames followed", and the second half held of a stream nobody had
-    // read to the end.
+    // the frame never observed it.
     const { text, closed } = await readSse(res, { untilClosed: true });
     const frame = findEvent(text, "catchup_too_old");
     expect(frame).not.toBeNull();
-    expect(frame!.id).toBe(String(eventId));
-    // Payload now serializes bigint ids as strings (JSON-safe round-trip).
+    expect(frame!.id).toBe(String(oldest));
     const payload = JSON.parse(frame!.data) as {
       type: string;
       min_retained_id: string;
       requested: string;
     };
     expect(payload.type).toBe("catchup_too_old");
-    expect(BigInt(payload.min_retained_id) >= 1n).toBe(true);
-    expect(payload.requested).toBe("0");
+    expect(payload.min_retained_id).toBe(String(oldest));
+    expect(payload.requested).toBe(String(retired));
 
-    // Terminal means the server closes the stream after emitting. The old
-    // form allowed either that or "no item. frames followed", and the second
-    // half is trivially true of a stream that delivered nothing, so a read
-    // returning early satisfied it without observing anything.
+    // Terminal means the server closes the stream after emitting, and a
+    // stream that delivered nothing would satisfy "no item frames" on its
+    // own, so the close is what is asserted.
     expect(closed).toBe(true);
     expect(text).not.toContain("item.");
+  });
+
+  it("replays from a cursor one below the oldest retained id, which is a client exactly in step", async () => {
+    // A cursor of `0` against a log whose first event is `1` is a device
+    // that hydrated an empty instance and has missed nothing, and a
+    // comparison without the plus one refuses it. The log here is not empty
+    // and not fresh, so the boundary is arranged the way the sweep arranges
+    // it: retire everything before one event, then resume from the cursor
+    // just below it.
+    // One event written just to be retired, so the boundary is arranged by
+    // this case rather than inherited from whatever ran before it.
+    await createNote("boundary-before");
+    const first = await createNote("boundary-first");
+    const rows = await ctx.storage.eventLog.getAfter(0n, 10_000);
+    let retired = 0;
+    for (const row of rows) {
+      if (row.id < first) {
+        await retireEvent(row.id);
+        retired += 1;
+      }
+    }
+    expect(retired).toBeGreaterThan(0);
+    const oldest = (await ctx.storage.eventLog.getMinRetainedId())!;
+    expect(oldest).toBe(first);
+    const cursor = oldest - 1n;
+
+    const res = await request(ctx.app, "GET", "/events", {
+      key: ctx.workingKey,
+      headers: { "Last-Event-ID": String(cursor) },
+    });
+    expect(res.status).toBe(200);
+    const { text } = await readSse(res, {
+      until: (t) => t.includes(`id: ${String(first)}\n`),
+    });
+    expect(findEvent(text, "catchup_too_old")).toBeNull();
+    expect(text).toContain(`id: ${String(first)}\n`);
   });
 
   it("replays normally when Last-Event-ID is within retention", async () => {

@@ -136,9 +136,8 @@ describe("GET /events?type= on the live stream", () => {
 
 describe("GET /events?type= on the Last-Event-ID replay", () => {
   it("delivers a subtype of the filtered type, and nothing outside it", async () => {
-    // A row the cursor can point at. `Last-Event-ID: 0` against an empty
-    // log is older than anything retained, so the stream would answer a
-    // terminal `catchup_too_old` and replay nothing at all.
+    // A row for the cursor to name, so the replay begins after it rather
+    // than at the log's beginning and the frames read are this case's alone.
     await createItem("core.note", { body: "seed" });
     const cursor = await latestEventId();
 

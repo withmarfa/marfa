@@ -281,11 +281,11 @@ function filterReplayPayload(
  * instead of a silent, permanent one.
  *
  * **Each entry is held to the grammar `/items`, `/search` and `/export`
- * hold this parameter to, and refused on the same terms.** The stream
- * used to accept any string and then match nothing with it, which is the
+ * hold this parameter to, and refused on the same terms.** A stream that
+ * accepted any string and then matched nothing with it would give the
  * worst answer a filter can give: a 200 and an empty stream, which a
  * client cannot tell from a quiet instance. A spelling the list surfaces
- * reject now reaches the caller as the rejection they already get there
+ * reject reaches the caller as the rejection they already get there
  * rather than as silence.
  *
  * The global wildcard is refused for the reason it is refused on those
@@ -707,15 +707,15 @@ export function eventRoutes(
            * eventually stop obeying.
            *
            * **A frame that will not be delivered is not held, and this is
-           * the load-bearing half.** The cap used to count frames the
-           * release path was guaranteed to discard, so traffic a
-           * subscriber had explicitly excluded could still exhaust its
-           * buffer and terminate its stream: `?edges=none` could be
-           * killed by edge events, and a credential scoped to one type by
-           * events of another. Narrowing the subscription made it worse
-           * rather than better, which is the opposite of what a filter is
-           * for, and a subscriber that wants items only asks for exactly
-           * that configuration. Both questions are the ones the release path
+           * the load-bearing half.** A cap that counted frames the
+           * release path is guaranteed to discard would let traffic a
+           * subscriber had explicitly excluded exhaust its buffer and
+           * terminate its stream: `?edges=none` killed by edge events,
+           * and a credential scoped to one type by events of another.
+           * Narrowing the subscription would then make it worse rather
+           * than better, which is the opposite of what a filter is for,
+           * and a subscriber that wants items only asks for exactly that
+           * configuration. Both questions are the ones the release path
            * asks, asked here through the same two predicates so they
            * cannot drift, and both are stable for the life of the
            * connection so asking early cannot answer differently.
@@ -768,16 +768,24 @@ export function eventRoutes(
             // that stopped is only actionable if it says where.
             let lastReplayedId: bigint = afterIdResolved;
             try {
-              // Detect stale cursors — clients whose `Last-Event-ID`
-              // predates the retention window can't be faithfully caught
-              // up from the event log. Emit a terminal `catchup_too_old`
-              // control event and close the stream; the client is
-              // expected to re-sync state and reconnect without a
-              // Last-Event-ID. A fresh instance with no events never
-              // trips the check.
+              // A cursor is too old when the log no longer holds the event
+              // after it: the oldest retained id is greater than the cursor
+              // plus one. Then the copy behind that cursor cannot be caught
+              // up from the log, so the stream answers a terminal
+              // `catchup_too_old` and closes, and the client hydrates again.
+              //
+              // Plus one, because a cursor names the last event a client
+              // applied, not the first one it wants. Without it a cursor of
+              // `0` on a log whose first event is `1` is refused, and that
+              // is a client that has missed nothing: it is every device
+              // that hydrated an instance with an empty log. A log with no
+              // events never trips the check.
               {
                 const minRetained = await storage.eventLog.getMinRetainedId();
-                if (minRetained !== null && afterIdResolved < minRetained) {
+                if (
+                  minRetained !== null &&
+                  afterIdResolved + 1n < minRetained
+                ) {
                   const payload = JSON.stringify({
                     type: "catchup_too_old",
                     min_retained_id: String(minRetained),
@@ -962,14 +970,15 @@ export function eventRoutes(
               return true;
             } catch (err) {
               // A catch-up that failed leaves the client short of events
-              // it will never ask for again, and it used to fail by
-              // clearing the buffers and carrying on: the connection
-              // stayed open, the announcement said nothing, and the
-              // client had no way to tell a truncated backlog from a
-              // complete one. `isSubtypeOf` throwing on an unresolvable
-              // chain is a reachable way in now that this path resolves
-              // subtypes, and on the live path the same failure already
-              // ends the stream where the client can see it.
+              // it will never ask for again. Ending the stream is what
+              // makes that visible: a connection that cleared its
+              // buffers and carried on would stay open with the
+              // announcement saying nothing, and the client could not
+              // tell a truncated backlog from a complete one.
+              // `isSubtypeOf` throwing on an unresolvable chain is a
+              // reachable way in, because this path resolves subtypes,
+              // and on the live path the same failure already ends the
+              // stream where the client can see it.
               //
               // The cursor is named in the log because it is the only
               // thing that identifies which catch-up stopped and where,

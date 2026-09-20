@@ -7,7 +7,6 @@ import {
   trackKey,
   cleanup,
 } from "../../utils/setup.js";
-import { openEventStream, parseSse } from "../../utils/sse.js";
 import { collectUntil, withStream } from "../../utils/stream.js";
 import {
   answers,
@@ -582,40 +581,5 @@ describe("the scripted answers match the server's", () => {
       answers.keyReused(),
       { same: ["error.code"], shape: ["error.message"] },
     );
-  });
-
-  it("matches the terminal frame an aged-out cursor gets", async () => {
-    const seeded = await note({ title: "aged out", body: "aged out" });
-    expect(seeded.id).toBeTruthy();
-
-    const stream = await openEventStream(apiUrl, apiKey, { lastEventId: "0" });
-    expect(stream.response.status).toBe(200);
-    const raw = await stream.response.text();
-    await stream.close();
-
-    const terminal = parseSse(raw).find(
-      (frame) => frame.event === "catchup_too_old",
-    );
-    expect(
-      terminal,
-      "the server did not answer an aged-out cursor with its terminal frame, so the re-hydration the device chapter demands was never produced here",
-    ).toBeDefined();
-    const payload = terminal!.data as Record<string, unknown>;
-    expect(
-      payload.type,
-      "the terminal frame named some other kind, so the scripted frame is modeled on something the server does not send",
-    ).toBe("catchup_too_old");
-    expect(
-      typeof payload.min_retained_id,
-      "the frame did not carry the oldest id the log still holds as a string, which is the field the scripted frame carries",
-    ).toBe("string");
-    expect(
-      typeof payload.requested,
-      "the frame did not echo the cursor that aged out as a string, which is the field the scripted frame carries",
-    ).toBe("string");
-    expect(
-      terminal!.id,
-      "the terminal frame did not carry the oldest retained id as its own id, so a device that stores the last id it saw comes back with a cursor the log still cannot serve",
-    ).toBe(payload.min_retained_id);
   });
 });
