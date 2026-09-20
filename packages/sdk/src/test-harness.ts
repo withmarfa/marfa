@@ -98,7 +98,7 @@ export interface BootstrappedFixture {
    *  in-process app. */
   fetch: typeof globalThis.fetch;
   /** Underlying storage handle — surfaced for tests that need to seed
-   *  rows directly (e.g. quota overrides). */
+   *  rows directly. */
   storage: Storage;
   /** Tear down the storage handle. Call from `afterAll` / `afterEach`. */
   cleanup: () => void;

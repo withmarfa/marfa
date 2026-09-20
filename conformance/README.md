@@ -67,13 +67,12 @@ and revocation, one of each per file. Nothing in the fixtures asserts either.
 
 ## Configuration
 
-| Variable             | Description                                                             |
-| -------------------- | ----------------------------------------------------------------------- |
-| `MARFA_API_URL`      | Required. The booted server.                                            |
-| `MARFA_API_KEY`      | Required. The key the bootstrap mint returns.                           |
-| `MARFA_OPERATOR_KEY` | The same key, for the operator-only maintenance routes.                 |
-| `MARFA_BLOB_PATH`    | The booted server's disk store, for a fixture that tampers with a copy. |
-| `MARFA_DEVICE_BIN`   | The built `marfa` binary the device fixtures drive.                     |
+| Variable             | Description                                             |
+| -------------------- | ------------------------------------------------------- |
+| `MARFA_API_URL`      | Required. The booted server.                            |
+| `MARFA_API_KEY`      | Required. The key the bootstrap mint returns.           |
+| `MARFA_OPERATOR_KEY` | The same key, for the operator-only maintenance routes. |
+| `MARFA_DEVICE_BIN`   | The built `marfa` binary the device fixtures drive.     |
 
 The bootstrap mint returns one key, and both variables hold it.
 

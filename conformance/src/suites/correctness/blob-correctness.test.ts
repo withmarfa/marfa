@@ -34,6 +34,20 @@ async function fetchLink(url: string, headers: Record<string, string> = {}) {
   };
 }
 
+/**
+ * A refused link: a status outside 2xx, and none of the blob's bytes. The
+ * status itself is the signer's own, and the instance and an object store
+ * answer a dead link with different ones; a client holding a link must not
+ * care which of them signed it.
+ */
+function expectRefused(
+  fetched: Awaited<ReturnType<typeof fetchLink>>,
+  content: Uint8Array,
+) {
+  expect(Math.floor(fetched.status / 100)).not.toBe(2);
+  expect(fetched.bytes).not.toEqual(content);
+}
+
 describe("blob correctness", () => {
   it("upload returns the sha256 hash, the mime type sent and the byte length", async () => {
     const content = new TextEncoder().encode("hello blob world");
@@ -48,8 +62,8 @@ describe("blob correctness", () => {
 
   it("stores a body far larger than the JSON cap, whole", async () => {
     // Sixty-four mebibytes and three bytes: well past the cap the JSON
-    // write surface refuses at, and past the cap uploads once had. The
-    // hash proves every byte arrived, the download that they can be read.
+    // write surface refuses at. The hash proves every byte arrived, the
+    // download that they can be read.
     const content = new Uint8Array(64 * 1_048_576 + 3);
     for (let i = 0; i < content.length; i += 4093) content[i] = i & 0xff;
 
@@ -219,9 +233,11 @@ describe("blob correctness", () => {
     const link = await client.getBlobUrl(upload.data.hash, 1);
     expect(link.status).toBe(200);
     // The witness: the same link fetches while it lives.
-    expect((await fetchLink(link.data.url)).status).toBe(200);
+    const live = await fetchLink(link.data.url);
+    expect(live.status).toBe(200);
+    expect(live.bytes).toEqual(content);
     await new Promise((resolve) => setTimeout(resolve, 1500));
-    expect((await fetchLink(link.data.url)).status).not.toBe(200);
+    expectRefused(await fetchLink(link.data.url), content);
 
     const fresh = await client.getBlobUrl(upload.data.hash, 60);
     const altered = new URL(fresh.data.url);
@@ -236,10 +252,14 @@ describe("blob correctness", () => {
       name,
       (signature.startsWith("0") ? "1" : "0") + signature.slice(1),
     );
-    expect((await fetchLink(altered.toString())).status).not.toBe(200);
+    expectRefused(await fetchLink(altered.toString()), content);
   });
 
   it("answers 404 for a link to an unknown hash and 400 for a malformed one", async () => {
+    const content = new TextEncoder().encode("a hash the instance knows");
+    const upload = await client.uploadBlob(content, "text/plain");
+    expect(upload.ok).toBe(true);
+    expect((await client.getBlobUrl(upload.data.hash)).status).toBe(200);
     const unknown = await client.getBlobUrl(`sha256:${"0".repeat(64)}`);
     expect(unknown.status).toBe(404);
     expect(unknown.error?.error.code).toBe("blob_not_found");
@@ -249,6 +269,9 @@ describe("blob correctness", () => {
   });
 
   it("refuses a malformed hash and an empty upload", async () => {
+    const one = await client.uploadBlob(new Uint8Array([1]), "text/plain");
+    expect(one.status).toBe(201);
+    expect((await client.downloadBlob(one.data.hash)).status).toBe(200);
     const malformed = await client.downloadBlob("not-a-hash");
     expect(malformed.status).toBe(400);
     expect(malformed.error?.error.code).toBe("validation_error");

@@ -222,6 +222,8 @@ async function up(args: Args): Promise<void> {
       process.env.MARFA_AUTH_SECRET ?? randomBytes(32).toString("hex"),
     SQLITE_PATH: p.db,
     BLOB_PATH: p.blobs,
+    // The origin the server is reached at, which a link it mints carries.
+    MARFA_AUTH_BASE_URL: url,
     // Enrichment rewrites file items in the background, which would make
     // exact-property assertions on blobs depend on timing.
     MARFA_ENRICHMENT_ENABLED: "false",
@@ -270,14 +272,10 @@ async function up(args: Args): Promise<void> {
     const previous = parseEnvFile(readFileSync(p.env, "utf8"));
     writeFileSync(
       p.env,
-      renderEnvFile(
-        url,
-        {
-          apiKey: previous.MARFA_API_KEY ?? "",
-          operatorKey: previous.MARFA_OPERATOR_KEY ?? "",
-        },
-        p.blobs,
-      ),
+      renderEnvFile(url, {
+        apiKey: previous.MARFA_API_KEY ?? "",
+        operatorKey: previous.MARFA_OPERATOR_KEY ?? "",
+      }),
     );
     console.log(`[marfa-server] already bootstrapped; env file at ${p.env}`);
     return;
@@ -285,7 +283,7 @@ async function up(args: Args): Promise<void> {
 
   const response = await mint(url, secret);
   const credentials = chooseCredentials(response);
-  writeFileSync(p.env, renderEnvFile(url, credentials, p.blobs));
+  writeFileSync(p.env, renderEnvFile(url, credentials));
   console.log(`[marfa-server] minted the first key; env file at ${p.env}`);
 }
 

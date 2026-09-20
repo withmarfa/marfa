@@ -33,7 +33,7 @@ async function buildCtx(): Promise<Ctx> {
   const tmpDir = mkdtempSync(join(tmpdir(), "marfa-ratelimit-"));
   const storage = await createSqliteStorage(join(tmpDir, "test.db"));
   const instanceId = await ensureInstanceId(storage.settings);
-  const blobBackend = await createBlobLayer(storage, {
+  const blobs = await createBlobLayer(storage, {
     blobPath: join(tmpDir, "blobs"),
     s3Bucket: "",
     s3Region: "us-east-1",
@@ -43,7 +43,7 @@ async function buildCtx(): Promise<Ctx> {
   });
   const app = createApp(
     storage,
-    blobBackend,
+    blobs,
     {
       port: 0,
       sqlitePath: "",
@@ -251,7 +251,7 @@ async function buildAggCtx(): Promise<Ctx> {
   const tmpDir = mkdtempSync(join(tmpdir(), "marfa-ratelimit-agg-"));
   const storage = await createSqliteStorage(join(tmpDir, "test.db"));
   const instanceId = await ensureInstanceId(storage.settings);
-  const blobBackend = await createBlobLayer(storage, {
+  const blobs = await createBlobLayer(storage, {
     blobPath: join(tmpDir, "blobs"),
     s3Bucket: "",
     s3Region: "us-east-1",
@@ -261,7 +261,7 @@ async function buildAggCtx(): Promise<Ctx> {
   });
   const app = createApp(
     storage,
-    blobBackend,
+    blobs,
     {
       port: 0,
       sqlitePath: "",

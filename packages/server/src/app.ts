@@ -126,8 +126,8 @@ export function createApp(
   });
 
   // Expose the resolved AppConfig on the request context so handlers and
-  // middleware (e.g. quota enforcement) read env-derived values from the
-  // single config source rather than re-reading `process.env`.
+  // middleware read env-derived values from the single config source
+  // rather than re-reading `process.env`.
   app.use("*", async (c, next) => {
     c.set("config", config);
     await next();
@@ -526,7 +526,7 @@ export function createApp(
   app.route("/search", searchRoutes(storage));
   app.route("/occurrences", occurrenceRoutes(storage));
   app.route("/metadata", metadataRoutes(storage));
-  app.route("/blobs", blobRoutes(storage, blobs));
+  app.route("/blobs", blobRoutes(storage, blobs, config));
   app.route("/keys", keyRoutes(storage, config.apiKeySalt));
   app.route("/config", configRoutes(storage, instanceId));
   app.route("/admin", adminArchiveRoutes(storage, blobs));

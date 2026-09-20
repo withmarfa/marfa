@@ -209,9 +209,10 @@ async function main() {
   );
   trashPurger.start();
 
-  // Activity rows are ordinary items and had no retention at all, which
-  // is how production reached 6,015 of them against 805 of everything
-  // else. Same fan-out shape as trash; `0` on the interval disables.
+  // Activity rows are ordinary items, one per connector run, so they are
+  // the fastest-growing type on an instance with connections and the one
+  // that needs a bound of its own. Same fan-out shape as trash; `0` on the
+  // interval disables.
   const activityPurgeIntervalMs = config.activityPurgeIntervalMs ?? 3_600_000;
   const activityPurger =
     activityPurgeIntervalMs > 0

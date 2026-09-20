@@ -26,7 +26,7 @@ interface Ctx {
 async function buildCtx(isProduction: boolean): Promise<Ctx> {
   const tmpDir = mkdtempSync(join(tmpdir(), "marfa-cors-"));
   const storage: Storage = await createSqliteStorage(join(tmpDir, "test.db"));
-  const blobBackend = await createBlobLayer(storage, {
+  const blobs = await createBlobLayer(storage, {
     blobPath: join(tmpDir, "blobs"),
     s3Bucket: "",
     s3Region: "us-east-1",
@@ -37,7 +37,7 @@ async function buildCtx(isProduction: boolean): Promise<Ctx> {
   const instanceId = await ensureInstanceId(storage.settings);
   const app = createApp(
     storage,
-    blobBackend,
+    blobs,
     {
       isProduction,
       port: 0,

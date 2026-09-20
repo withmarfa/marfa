@@ -475,7 +475,7 @@ describe("bootstrap sentinel", () => {
     const storage = await createSqliteStorage(join(tmpDir, "test.db"));
     const instanceId = await ensureInstanceId(storage.settings);
     const blobPath = join(tmpDir, "blobs");
-    const blobBackend = await createBlobLayer(storage, {
+    const blobs = await createBlobLayer(storage, {
       blobPath: blobPath,
       s3Bucket: "",
       s3Region: "us-east-1",
@@ -485,7 +485,7 @@ describe("bootstrap sentinel", () => {
     });
     const app = createApp(
       storage,
-      blobBackend,
+      blobs,
       {
         port: 0,
         sqlitePath: "",

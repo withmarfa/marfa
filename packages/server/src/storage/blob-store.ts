@@ -22,9 +22,9 @@ import type { BlobStoreKind } from "./interface.js";
  * link where the store can mint one itself.
  *
  * A store never lists what it holds. The location log says which stores
- * hold which blob, the integrity check asks `has` for every row the log
- * names, and nothing here needs an enumeration that an object store would
- * page and a disk would walk.
+ * hold which blob, so a question about a store's contents is a question
+ * to the log answered by `has`, and nothing here needs an enumeration that
+ * an object store would page and a disk would walk.
  */
 export interface BlobStore {
   /** From the store's own marker, not the configuration: a fresh folder
@@ -36,9 +36,11 @@ export interface BlobStore {
   /** Read the marker, or write one on first use. Called once at boot. */
   attach(): Promise<void>;
   /**
-   * Store bytes under their hash. A stream source is hashed on the way in
-   * and refused if it does not hash to `hash`; a path source is a file the
-   * caller has just hashed itself, which the disk store moves into place.
+   * Store bytes under their hash. A stream source is hashed before it is
+   * kept and refused if it does not hash to `hash`; a path source is a file
+   * the caller has just hashed itself, which the disk store moves into
+   * place and the object store uploads as it is. Idempotent: bytes already
+   * under this name are left alone.
    */
   put(hash: string, source: BlobSource): Promise<void>;
   /** The bytes, or a range of them, as a stream. `null` when absent. */
@@ -135,6 +137,29 @@ export class HashingTransform extends Transform {
   }
 }
 
+/**
+ * Write a stream source to `path` while hashing it, and refuse it if it
+ * does not hash to its name. The file is removed on refusal, so a caller
+ * that gets past this call holds a file it may name `hash`.
+ */
+export async function spoolVerified(
+  path: string,
+  hash: string,
+  source: { stream: Readable; size_bytes: number },
+): Promise<void> {
+  const hashing = new HashingTransform();
+  try {
+    await pipeline(source.stream, hashing, createWriteStream(path));
+    const actual = hashing.digest();
+    if (actual !== hash || hashing.bytes !== source.size_bytes) {
+      throw new BlobHashMismatch(hash, actual);
+    }
+  } catch (err) {
+    await rm(path, { force: true });
+    throw err;
+  }
+}
+
 const MARKER = ".marfa-store";
 const SPOOL_DIR = "tmp";
 
@@ -212,17 +237,7 @@ export class DiskBlobStore implements BlobStore {
       return;
     }
     const spool = this.spoolPath();
-    const hashing = new HashingTransform();
-    try {
-      await pipeline(source.stream, hashing, createWriteStream(spool));
-      const actual = hashing.digest();
-      if (actual !== hash || hashing.bytes !== source.size_bytes) {
-        throw new BlobHashMismatch(hash, actual);
-      }
-    } catch (err) {
-      await rm(spool, { force: true });
-      throw err;
-    }
+    await spoolVerified(spool, hash, source);
     await moveIntoPlace(spool, final);
   }
 

@@ -19026,7 +19026,7 @@
           "Blobs"
         ],
         "summary": "List the stores holding a blob",
-        "description": "The location log for one blob: every store recorded as holding its bytes, with when the copy was recorded and when the integrity check last verified it. A store the configuration no longer names is shown `detached` and does not count as a copy.",
+        "description": "The location log for one blob: every store recorded as holding its bytes, with when the copy was recorded and when a check last found it present and intact (`verified_at`, `null` until one has). A store the configuration no longer names is shown `detached` and does not count as a copy.",
         "security": [
           {
             "bearerAuth": []

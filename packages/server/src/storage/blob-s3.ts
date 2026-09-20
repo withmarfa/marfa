@@ -1,5 +1,8 @@
 import { createReadStream } from "node:fs";
-import { pipeline, Readable } from "node:stream";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import type { Readable } from "node:stream";
 import {
   S3Client,
   PutObjectCommand,
@@ -12,8 +15,7 @@ import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { generateId } from "@withmarfa/shared";
 import {
   bareHex,
-  BlobHashMismatch,
-  HashingTransform,
+  spoolVerified,
   type BlobRead,
   type BlobSource,
   type BlobStore,
@@ -123,30 +125,39 @@ export class S3BlobStore implements BlobStore {
   }
 
   async put(hash: string, source: BlobSource): Promise<void> {
-    const body =
-      "path" in source ? createReadStream(source.path) : source.stream;
-    // Hashed on the way up whichever shape the source took: an object store
-    // cannot rename, so a mismatch is found after the bytes landed and the
-    // object is taken down again.
-    const hashing = new HashingTransform();
-    // `pipeline`, not `pipe`: a source that fails must destroy the transform
-    // the upload is reading, or the upload waits for bytes that never come.
-    pipeline(body, hashing, () => undefined);
+    // Content addressing: an object already under this name holds these
+    // bytes, and uploading over it could only replace them with themselves.
+    const present = await this.has(hash);
+    if (present !== null && present.size_bytes === source.size_bytes) return;
+    // An object store cannot rename, so nothing is uploaded under a name it
+    // might not deserve: a stream is spooled and verified before a byte
+    // leaves the process, and a path is a file its caller has just hashed,
+    // as it is on disk.
+    if ("path" in source) {
+      await this.upload(hash, source.path);
+      return;
+    }
+    const spool = await mkdtemp(join(tmpdir(), "marfa-blob-"));
+    try {
+      const path = join(spool, "spool");
+      await spoolVerified(path, hash, source);
+      await this.upload(hash, path);
+    } finally {
+      await rm(spool, { recursive: true, force: true });
+    }
+  }
+
+  private async upload(hash: string, path: string): Promise<void> {
     const upload = new Upload({
       client: this.client,
       params: {
         Bucket: this.bucket,
         Key: this.key(hash),
-        Body: hashing,
+        Body: createReadStream(path),
         CacheControl: "public, max-age=31536000, immutable",
       },
     });
     await upload.done();
-    const actual = hashing.digest();
-    if (actual !== hash || hashing.bytes !== source.size_bytes) {
-      await this.delete(hash);
-      throw new BlobHashMismatch(hash, actual);
-    }
   }
 
   async get(hash: string, range?: ByteRange): Promise<BlobRead | null> {

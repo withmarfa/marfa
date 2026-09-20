@@ -1,4 +1,7 @@
 import { createHash } from "node:crypto";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Readable } from "node:stream";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
@@ -102,6 +105,7 @@ describe("S3BlobStore", () => {
 
   describe("constructor", () => {
     it("refuses a missing bucket or region", () => {
+      expect(() => new S3BlobStore(defaultConfig)).not.toThrow();
       expect(
         () => new S3BlobStore({ bucket: "", region: "us-east-1" }),
       ).toThrow("S3_BUCKET is required");
@@ -159,16 +163,22 @@ describe("S3BlobStore", () => {
       expect(JSON.parse(String(put.Body))).toEqual({ id: store.id });
     });
 
-    it("refuses to answer an id before attach", () => {
+    it("refuses to answer an id before attach", async () => {
       const store = new S3BlobStore(defaultConfig);
       expect(() => store.id).toThrow(/attach/);
+      mockSend.mockResolvedValueOnce({
+        Body: { transformToString: () => Promise.resolve('{"id":"store-1"}') },
+      });
+      await store.attach();
+      expect(store.id).toBe("store-1");
     });
   });
 
   describe("put", () => {
-    it("uploads a stream under the prefixed key and verifies its hash", async () => {
+    it("uploads a verified stream under the prefixed key", async () => {
       const store = await attached();
       const bytes = Buffer.from("hello object store");
+      mockSend.mockRejectedValueOnce(notFound("NotFound"));
       await store.put(hashOf(bytes), {
         stream: Readable.from(bytes),
         size_bytes: bytes.length,
@@ -179,28 +189,77 @@ describe("S3BlobStore", () => {
         `blobs/${hashOf(bytes).slice("sha256:".length)}`,
       );
       expect(uploads[0]?.body.equals(bytes)).toBe(true);
-      expect(mockSend).toHaveBeenCalledTimes(1);
+      // The attach and the presence check; nothing else was sent.
+      expect(mockSend).toHaveBeenCalledTimes(2);
+      const [head] = mockSend.mock.calls[1] as [Record<string, unknown>];
+      expect(head.commandName).toBe("HeadObject");
     });
 
-    it("takes a mismatched upload down again and refuses", async () => {
+    it("refuses a mismatched stream before a byte is uploaded", async () => {
       const store = await attached();
       const bytes = Buffer.from("these bytes");
       const wrongName = hashOf(Buffer.from("other bytes"));
-      mockSend.mockResolvedValueOnce({});
+      mockSend.mockRejectedValueOnce(notFound("NotFound"));
       await expect(
         store.put(wrongName, {
           stream: Readable.from(bytes),
           size_bytes: bytes.length,
         }),
       ).rejects.toBeInstanceOf(BlobHashMismatch);
-      const [del] = mockSend.mock.calls[1] as [Record<string, unknown>];
-      expect(del.commandName).toBe("DeleteObject");
-      expect(del.Key).toBe(`blobs/${wrongName.slice("sha256:".length)}`);
+      expect(uploads).toHaveLength(0);
+      // No object was written, so there is nothing to take down: the
+      // presence check is the last request the store sent.
+      expect(mockSend).toHaveBeenCalledTimes(2);
+
+      // The witness: the same bytes under their own name go up.
+      mockSend.mockRejectedValueOnce(notFound("NotFound"));
+      await store.put(hashOf(bytes), {
+        stream: Readable.from(bytes),
+        size_bytes: bytes.length,
+      });
+      expect(uploads).toHaveLength(1);
+    });
+
+    it("uploads a path source as it is", async () => {
+      const store = await attached();
+      const bytes = Buffer.from("bytes the caller hashed");
+      const dir = await mkdtemp(join(tmpdir(), "blob-s3-test-"));
+      const path = join(dir, "spool");
+      await writeFile(path, bytes);
+      mockSend.mockRejectedValueOnce(notFound("NotFound"));
+      await store.put(hashOf(bytes), { path, size_bytes: bytes.length });
+      expect(uploads).toHaveLength(1);
+      expect(uploads[0]?.body.equals(bytes)).toBe(true);
+      await rm(dir, { recursive: true, force: true });
+    });
+
+    it("leaves an object the bucket already holds alone", async () => {
+      const store = await attached();
+      const bytes = Buffer.from("already there");
+      mockSend.mockResolvedValueOnce({ ContentLength: bytes.length });
+      await store.put(hashOf(bytes), {
+        stream: Readable.from(bytes),
+        size_bytes: bytes.length,
+      });
+      expect(uploads).toHaveLength(0);
+    });
+
+    it("replaces an object of the wrong size", async () => {
+      const store = await attached();
+      const bytes = Buffer.from("the right bytes");
+      mockSend.mockResolvedValueOnce({ ContentLength: bytes.length + 7 });
+      await store.put(hashOf(bytes), {
+        stream: Readable.from(bytes),
+        size_bytes: bytes.length,
+      });
+      expect(uploads).toHaveLength(1);
+      expect(uploads[0]?.body.equals(bytes)).toBe(true);
     });
 
     it("honors a custom prefix", async () => {
       const store = await attached({ ...defaultConfig, prefix: "drill/one" });
       const bytes = Buffer.from("prefixed");
+      mockSend.mockRejectedValueOnce(notFound("NotFound"));
       await store.put(hashOf(bytes), {
         stream: Readable.from(bytes),
         size_bytes: bytes.length,
@@ -223,6 +282,8 @@ describe("S3BlobStore", () => {
 
     it("answers null for an absent object under either name the store uses", async () => {
       const store = await attached();
+      mockSend.mockResolvedValueOnce({ ContentLength: 42 });
+      expect(await store.has("sha256:abc")).not.toBeNull();
       mockSend.mockRejectedValueOnce(notFound("NotFound"));
       expect(await store.has("sha256:abc")).toBeNull();
       mockSend.mockRejectedValueOnce(notFound("NoSuchKey"));
@@ -267,6 +328,11 @@ describe("S3BlobStore", () => {
 
     it("answers null for an absent object", async () => {
       const store = await attached();
+      mockSend.mockResolvedValueOnce({
+        Body: Readable.from(Buffer.from("payload")),
+        ContentLength: 7,
+      });
+      expect(await store.get("sha256:abc")).not.toBeNull();
       mockSend.mockRejectedValueOnce(notFound("NoSuchKey"));
       expect(await store.get("sha256:abc")).toBeNull();
     });

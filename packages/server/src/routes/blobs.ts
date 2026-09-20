@@ -6,6 +6,7 @@ import { createRoute, z } from "@hono/zod-openapi";
 import { MarfaError, ErrorCode, isValidBlobHash } from "@withmarfa/shared";
 import type { Context } from "hono";
 import type { AppEnv } from "../middleware/auth.js";
+import type { AppConfig } from "../config.js";
 import { withPreparedHeaders } from "../prepared-headers.js";
 import { requireAuth, requireOperatorKey } from "../middleware/auth.js";
 import { log } from "../middleware/logger.js";
@@ -353,7 +354,7 @@ const listBlobLocationsRoute = createRoute({
   tags: ["Blobs"],
   summary: "List the stores holding a blob",
   description:
-    "The location log for one blob: every store recorded as holding its bytes, with when the copy was recorded and when the integrity check last verified it. A store the configuration no longer names is shown `detached` and does not count as a copy.",
+    "The location log for one blob: every store recorded as holding its bytes, with when the copy was recorded and when a check last found it present and intact (`verified_at`, `null` until one has). A store the configuration no longer names is shown `detached` and does not count as a copy.",
   security: [{ bearerAuth: [] }],
   request: {
     params: HashParam,
@@ -407,13 +408,18 @@ function normalizeHash(raw: string): string {
   return hash;
 }
 
-/** The scheme and host the caller reached the instance at. */
-function requestOrigin(c: Context<AppEnv>): string {
-  return new URL(c.req.url).origin;
-}
-
-export function blobRoutes(storage: Storage, blobs: BlobLayer) {
+export function blobRoutes(
+  storage: Storage,
+  blobs: BlobLayer,
+  config: Pick<AppConfig, "authBaseUrl">,
+) {
   const router = createOpenAPIRouter<AppEnv>();
+  // The origin a link the instance serves is minted under. The base URL
+  // rather than the request's own origin, because the request's scheme is
+  // the socket's: behind an edge that terminates TLS every request arrives
+  // as `http`, and a link saying so would be one a browser refuses to
+  // follow from an `https` page.
+  const linkOrigin = new URL(config.authBaseUrl).origin;
 
   /**
    * The bytes of a registered blob, from the first attached store that has
@@ -628,7 +634,7 @@ export function blobRoutes(storage: Storage, blobs: BlobLayer) {
     }
 
     const expiresAt = Math.floor(Date.now() / 1000) + ttl;
-    const url = mintBlobLink(requestOrigin(c), hash, expiresAt);
+    const url = mintBlobLink(linkOrigin, hash, expiresAt);
     return c.json({ url, expires_in: ttl }, 200);
   });
 

@@ -663,7 +663,7 @@ export class DcrClientCleaner {
  * longer than `graceMs` ago and lets the rest wait for the next tick.
  *
  * Instance-wide, like the other sweeps with no configurable override: a
- * hash is deleted from the backend once, so the question "does anything
+ * hash is deleted from every store once, so the question "does anything
  * reference this" has to be asked of every item at once.
  *
  * `graceMs <= 0` disables the job. A zero window would sweep a blob the

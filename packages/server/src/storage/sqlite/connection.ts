@@ -101,10 +101,9 @@ const RENAMED_COLUMNS: readonly (readonly [string, string, string])[] = [
  * A column this build no longer declares passes `CREATE TABLE IF NOT EXISTS`
  * exactly as a missing one does, and where the retired column was `NOT NULL`
  * the boot then succeeds and the first insert fails with a constraint error
- * naming a column no source file mentions. `blobs.storage_path` is that
- * column: every row it ever held was the hash, and the store the bytes live
- * in is the location log's to say now. Same triple as above: the table, the
- * column that must be absent, and a witness that says the table is ours.
+ * naming a column the schema does not declare. Same triple as above: the
+ * table, the column that must be absent, and a witness that says the table
+ * is ours.
  */
 const RETIRED_COLUMNS: readonly (readonly [string, string, string])[] = [
   ["blobs", "storage_path", "mime_type"],

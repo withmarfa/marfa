@@ -99,10 +99,13 @@ describe("POST /blobs", () => {
     expect(await readdir(ctx.blobs.disk.spoolDir)).toEqual([]);
   });
 
-  it("rejects an empty body", async () => {
+  it("rejects an empty body, where one byte is enough", async () => {
     const { status, body } = await upload(new Uint8Array(0));
     expect(status).toBe(400);
     expect((body.error as { code: string }).code).toBe("validation_error");
+    const one = await upload(new Uint8Array([7]));
+    expect(one.status).toBe(201);
+    expect(one.body.size_bytes).toBe(1);
   });
 
   it("refuses a multipart body, which the raw form does not", async () => {
@@ -179,6 +182,15 @@ describe("GET /blobs/:hash", () => {
   it("answers 416 with the size for a range outside the blob", async () => {
     const original = new TextEncoder().encode("0123456789");
     await upload(original, "text/plain");
+    // The witness: the last byte alone is a range the blob can satisfy.
+    const inside = await ctx.app.request(`/blobs/${hashOf(original)}`, {
+      headers: {
+        Authorization: `Bearer ${ctx.workingKey}`,
+        Range: "bytes=9-12",
+      },
+    });
+    expect(inside.status).toBe(206);
+    expect(await inside.text()).toBe("9");
     const res = await ctx.app.request(`/blobs/${hashOf(original)}`, {
       headers: {
         Authorization: `Bearer ${ctx.workingKey}`,
@@ -215,7 +227,11 @@ describe("GET /blobs/:hash", () => {
 
   it("returns 404 when the registry names a blob no store holds", async () => {
     const data = new TextEncoder().encode("bytes that will vanish");
-    await upload(data);
+    expect((await upload(data)).status).toBe(201);
+    const before = await request(ctx.app, "GET", `/blobs/${hashOf(data)}`, {
+      key: ctx.workingKey,
+    });
+    expect(before.status).toBe(200);
     await ctx.blobs.disk.delete(hashOf(data));
     const res = await request(ctx.app, "GET", `/blobs/${hashOf(data)}`, {
       key: ctx.workingKey,
@@ -304,15 +320,18 @@ describe("GET /blobs/:hash/url", () => {
     expect(new Uint8Array(await fetched.arrayBuffer())).toEqual(data);
   });
 
-  it("names the host the caller reached", async () => {
+  it("names the instance's base URL, not the origin the request arrived on", async () => {
     const data = new TextEncoder().encode("host of the link");
     await upload(data, "text/plain");
+    // The request's own origin is the socket's, which behind an edge that
+    // terminates TLS is `http` on some internal name; the link carries the
+    // origin the instance is reached at.
     const res = await ctx.app.request(
-      `http://marfa.example:8600/blobs/${hashOf(data)}/url`,
+      `http://internal.example:8600/blobs/${hashOf(data)}/url`,
       { headers: { Authorization: `Bearer ${ctx.workingKey}` } },
     );
     const body = (await res.json()) as { url: string };
-    expect(new URL(body.url).host).toBe("marfa.example:8600");
+    expect(new URL(body.url).origin).toBe("http://localhost:0");
   });
 
   it("honors ttl and caps it at seven days", async () => {
@@ -339,6 +358,12 @@ describe("GET /blobs/:hash/url", () => {
   });
 
   it("refuses an unknown or malformed hash", async () => {
+    const data = new TextEncoder().encode("a hash the instance knows");
+    await upload(data, "text/plain");
+    const known = await request(ctx.app, "GET", `/blobs/${hashOf(data)}/url`, {
+      key: ctx.workingKey,
+    });
+    expect(known.status).toBe(200);
     const unknown = await request(
       ctx.app,
       "GET",
@@ -354,12 +379,18 @@ describe("GET /blobs/:hash/url", () => {
 });
 
 describe("GET /blobs/:hash/fetch", () => {
+  /** A live link to freshly uploaded bytes, fetched once as it is: the
+   *  witness every refusal below alters something to earn. */
   async function link(data: Uint8Array): Promise<URL> {
     await upload(data, "text/plain");
     const res = await request(ctx.app, "GET", `/blobs/${hashOf(data)}/url`, {
       key: ctx.workingKey,
     });
-    return new URL(((await res.json()) as { url: string }).url);
+    const url = new URL(((await res.json()) as { url: string }).url);
+    const live = await ctx.app.request(url.pathname + url.search);
+    expect(live.status).toBe(200);
+    expect(new Uint8Array(await live.arrayBuffer())).toEqual(data);
+    return url;
   }
 
   it("refuses a link whose signature was altered", async () => {
@@ -405,6 +436,8 @@ describe("GET /blobs/:hash/fetch", () => {
       { key: ctx.workingKey },
     );
     const url = new URL(((await res.json()) as { url: string }).url);
+    const live = await ctx.app.request(url.pathname + url.search);
+    expect(live.status).toBe(200);
     await new Promise((resolve) => setTimeout(resolve, 1100));
     const fetched = await ctx.app.request(url.pathname + url.search);
     expect(fetched.status).toBe(401);
@@ -453,11 +486,17 @@ describe("GET /blobs/stores", () => {
     expect(files).toContain(".marfa-store");
   });
 
-  it("refuses a working key", async () => {
+  it("refuses a working key where the operator key is answered", async () => {
+    const operator = await request(ctx.app, "GET", "/blobs/stores", {
+      key: ctx.operatorKey,
+    });
+    expect(operator.status).toBe(200);
     const res = await request(ctx.app, "GET", "/blobs/stores", {
       key: ctx.workingKey,
     });
     expect(res.status).toBe(403);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("forbidden");
   });
 });
 

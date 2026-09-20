@@ -38,7 +38,7 @@ async function createConfigContext(): Promise<ConfigContext> {
   const storage = await createSqliteStorage(dbPath);
   const instanceId = await ensureInstanceId(storage.settings);
 
-  const blobBackend = await createBlobLayer(storage, {
+  const blobs = await createBlobLayer(storage, {
     blobPath: blobPath,
     s3Bucket: "",
     s3Region: "us-east-1",
@@ -48,7 +48,7 @@ async function createConfigContext(): Promise<ConfigContext> {
   });
   const app = createApp(
     storage,
-    blobBackend,
+    blobs,
     {
       port: 0,
       sqlitePath: "",

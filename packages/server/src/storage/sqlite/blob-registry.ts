@@ -128,35 +128,16 @@ export class SqliteBlobRegistry implements BlobRegistry {
     }));
   }
 
-  async recordLocation(
-    hash: string,
-    storeId: string,
-    verifiedAt?: string,
-  ): Promise<void> {
-    const insert = this.db.insert(blobLocations).values({
-      hash,
-      store_id: storeId,
-      recorded_at: new Date().toISOString(),
-      verified_at: verifiedAt ?? null,
-    });
-    if (verifiedAt === undefined) {
-      await insert.onConflictDoNothing().run();
-      return;
-    }
-    await insert
-      .onConflictDoUpdate({
-        target: [blobLocations.hash, blobLocations.store_id],
-        set: { verified_at: verifiedAt },
-      })
-      .run();
-  }
-
-  async removeLocation(hash: string, storeId: string): Promise<void> {
+  async recordLocation(hash: string, storeId: string): Promise<void> {
     await this.db
-      .delete(blobLocations)
-      .where(
-        and(eq(blobLocations.hash, hash), eq(blobLocations.store_id, storeId)),
-      )
+      .insert(blobLocations)
+      .values({
+        hash,
+        store_id: storeId,
+        recorded_at: new Date().toISOString(),
+        verified_at: null,
+      })
+      .onConflictDoNothing()
       .run();
   }
 
@@ -183,15 +164,5 @@ export class SqliteBlobRegistry implements BlobRegistry {
       recorded_at: row.recorded_at,
       verified_at: row.verified_at,
     }));
-  }
-
-  async countLiveCopies(hash: string): Promise<number> {
-    const row = await this.db
-      .select({ count: sql<number>`count(*)` })
-      .from(blobLocations)
-      .innerJoin(blobStores, eq(blobLocations.store_id, blobStores.id))
-      .where(and(eq(blobLocations.hash, hash), isNull(blobStores.detached_at)))
-      .get();
-    return row?.count ?? 0;
   }
 }

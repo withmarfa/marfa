@@ -46,7 +46,7 @@ describe("bootstrap mode", () => {
     const freshTmpDir = mkdtempSync(join(tmpdir(), "marfa-boot-"));
     const storage = await createSqliteStorage(join(freshTmpDir, "boot.db"));
     const instanceId = await ensureInstanceId(storage.settings);
-    const blobBackend = await createBlobLayer(storage, {
+    const blobs = await createBlobLayer(storage, {
       blobPath: join(freshTmpDir, "blobs"),
       s3Bucket: "",
       s3Region: "us-east-1",
@@ -56,7 +56,7 @@ describe("bootstrap mode", () => {
     });
     const app = createApp(
       storage,
-      blobBackend,
+      blobs,
       {
         port: 0,
         sqlitePath: "",

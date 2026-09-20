@@ -1172,17 +1172,10 @@ export interface BlobRegistry {
 
   /**
    * Write a location row: the store holds the bytes and they hashed to
-   * their name. Idempotent; `verified_at` moves when given.
+   * their name. Idempotent.
    */
-  recordLocation(
-    hash: string,
-    storeId: string,
-    verifiedAt?: string,
-  ): Promise<void>;
-  removeLocation(hash: string, storeId: string): Promise<void>;
+  recordLocation(hash: string, storeId: string): Promise<void>;
   listLocations(hash: string): Promise<BlobLocation[]>;
-  /** Location rows on attached stores. What a copy count counts. */
-  countLiveCopies(hash: string): Promise<number>;
 }
 
 export interface WebhookStore {

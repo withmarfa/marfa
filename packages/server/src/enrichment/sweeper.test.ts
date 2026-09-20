@@ -59,7 +59,7 @@ function sweeper(
   });
 }
 
-/** Puts bytes in the backend and registers them, the way an upload would. */
+/** Puts bytes in the disk store and registers them, the way an upload would. */
 async function seedBlob(bytes: Buffer, mimeType: string): Promise<string> {
   const ref = `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
   await ctx.blobs.disk.put(ref, {
@@ -397,7 +397,7 @@ describe("skips", () => {
   });
 
   it("records an unsupported type without touching the blob", async () => {
-    // The bytes are gone from the backend, so reaching for them would
+    // The bytes are gone from the store, so reaching for them would
     // surface as a missing-bytes failure. The MIME gate runs first: the
     // recorded reason is the type, not the absent read it never made.
     const ref = await seedBlob(Buffer.from("not readable"), "video/mp4");
@@ -798,7 +798,7 @@ describe("failures", () => {
 
   it("retries an item whose bytes were not there yet", async () => {
     // A missing read is transient — a blob write that had not landed, a
-    // flaky backend — and must not be parked the way an unreadable MIME
+    // flaky store — and must not be parked the way an unreadable MIME
     // is. It fails, retries, and succeeds once the bytes appear.
     const bytes = Buffer.from("late-arriving bytes quokkalate");
     const ref = await seedBlob(bytes, "text/plain");

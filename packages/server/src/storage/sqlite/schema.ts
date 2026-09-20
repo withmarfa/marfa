@@ -297,9 +297,9 @@ export const blobStores = sqliteTable("blob_stores", {
 // blob_locations — the location log: which stores hold which blob.
 //
 // A row is written only once the store has the bytes and they hashed to
-// their name; `verified_at` is the last time the integrity check saw them
-// still there. A row is struck when a check finds the copy missing or
-// wrong, and a copy count counts rows on stores that are still attached.
+// their name; `verified_at` is the last time a check found the copy present
+// and intact, null until one has. A copy counts only while its store is
+// still attached.
 // ---------------------------------------------------------------------------
 export const blobLocations = sqliteTable(
   "blob_locations",
@@ -313,15 +313,7 @@ export const blobLocations = sqliteTable(
     recorded_at: text("recorded_at").notNull(),
     verified_at: text("verified_at"),
   },
-  (table) => [
-    primaryKey({ columns: [table.hash, table.store_id] }),
-    // The integrity check walks a store's rows least-recently-verified
-    // first; the replication job asks which blobs a store lacks.
-    index("idx_blob_locations_store_verified").on(
-      table.store_id,
-      table.verified_at,
-    ),
-  ],
+  (table) => [primaryKey({ columns: [table.hash, table.store_id] })],
 );
 
 // The instance's type registrations, the shipped set included.

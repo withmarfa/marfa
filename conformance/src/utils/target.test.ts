@@ -47,22 +47,17 @@ describe("chooseCredentials", () => {
 
 describe("env file", () => {
   it("round-trips through the shell-sourceable format", () => {
-    const text = renderEnvFile(
-      "http://127.0.0.1:8600",
-      {
-        apiKey: "marfa_k1_working",
-        operatorKey: "marfa_k1_operator",
-      },
-      "/state/blobs",
-    );
+    const text = renderEnvFile("http://127.0.0.1:8600", {
+      apiKey: "marfa_k1_working",
+      operatorKey: "marfa_k1_operator",
+    });
     expect(text).toBe(
-      "MARFA_API_URL=http://127.0.0.1:8600\nMARFA_API_KEY=marfa_k1_working\nMARFA_OPERATOR_KEY=marfa_k1_operator\nMARFA_BLOB_PATH=/state/blobs\n",
+      "MARFA_API_URL=http://127.0.0.1:8600\nMARFA_API_KEY=marfa_k1_working\nMARFA_OPERATOR_KEY=marfa_k1_operator\n",
     );
     expect(parseEnvFile(text)).toEqual({
       MARFA_API_URL: "http://127.0.0.1:8600",
       MARFA_API_KEY: "marfa_k1_working",
       MARFA_OPERATOR_KEY: "marfa_k1_operator",
-      MARFA_BLOB_PATH: "/state/blobs",
     });
   });
 });

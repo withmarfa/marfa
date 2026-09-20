@@ -48,6 +48,7 @@ describe("the stores an instance keeps bytes in", () => {
   });
 
   it("refuses the listing to a working key", async () => {
+    expect((await getOperatorClient().listBlobStores()).status).toBe(200);
     const stores = await client.listBlobStores();
     expect(stores.status).toBe(403);
     expect(stores.error?.error.code).toBe("forbidden");
@@ -80,6 +81,10 @@ describe("the stores an instance keeps bytes in", () => {
   });
 
   it("answers 404 for the locations of an unknown hash and 400 for a malformed one", async () => {
+    const content = new TextEncoder().encode("a hash with locations");
+    const upload = await client.uploadBlob(content, "text/plain");
+    expect(upload.ok).toBe(true);
+    expect((await client.listBlobLocations(upload.data.hash)).status).toBe(200);
     const unknown = await client.listBlobLocations(`sha256:${"0".repeat(64)}`);
     expect(unknown.status).toBe(404);
     expect(unknown.error?.error.code).toBe("blob_not_found");

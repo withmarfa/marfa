@@ -213,7 +213,7 @@ export class TextEnrichmentSweeper {
     // when the blob, the extractor, or the configuration changes.
     const recordSkip = (error: string) => record("skipped", error);
     // Transient: the world was not in the shape the candidate row claimed
-    // (a blob write not yet landed, a flaky backend read). Recorded as
+    // (a blob write not yet landed, a flaky store read). Recorded as
     // `failed` so the retry budget re-offers it, unlike a skip — a
     // permanent parking is the wrong answer to a temporary miss.
     const recordTransient = async (error: string) => {
