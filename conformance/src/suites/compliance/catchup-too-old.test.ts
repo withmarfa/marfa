@@ -22,34 +22,61 @@ afterAll(async () => {
 });
 
 /**
- * Drain an SSE response to completion. The server is expected to close the
- * stream after emitting the terminal event, so this resolves on that close;
- * a server that never closes it is caught by the suite's own test timeout
- * rather than by a bound in this helper.
+ * Read an SSE response until `done` holds of what has arrived, or the
+ * stream closes. Bounded, because a stream that replays and then goes live
+ * never closes on its own, and a read waiting for a close would spend the
+ * whole test budget saying nothing about why.
  */
-async function drainSse(response: Response): Promise<string> {
+async function readUntil(
+  response: Response,
+  done: (text: string) => boolean,
+  budgetMs = 30_000,
+): Promise<{ text: string; closed: boolean }> {
   const reader = response.body!.getReader();
   const decoder = new TextDecoder();
-  const collected: string[] = [];
+  const outOfTime = Symbol("out of time");
+  let text = "";
+  const deadline = Date.now() + budgetMs;
   for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    if (value) collected.push(decoder.decode(value, { stream: true }));
+    if (done(text)) return { text, closed: false };
+    const remaining = deadline - Date.now();
+    const next = await Promise.race([
+      reader.read(),
+      new Promise<typeof outOfTime>((resolve) =>
+        setTimeout(() => resolve(outOfTime), Math.max(remaining, 0)),
+      ),
+    ]);
+    if (next === outOfTime) {
+      throw new Error(
+        `the stream delivered nothing that satisfied the read within ${String(budgetMs)}ms; it had sent:\n${text.slice(-2000)}`,
+      );
+    }
+    if (next.done) return { text, closed: true };
+    text += decoder.decode(next.value, { stream: true });
   }
-  return collected.join("");
 }
 
-describe("catchup_too_old terminal event", () => {
-  it("emits catchup_too_old when Last-Event-ID predates min retained id", async () => {
-    // Ensure the event log has at least one entry. `Last-Event-ID: 0`
-    // is strictly less than any server-assigned id (which are monotonically
-    // positive, >= 1), so once any event exists the afterId < minRetained
-    // predicate fires deterministically.
+describe("the cursor a catch-up resumes from", () => {
+  it("replays from a cursor of zero when the log begins at one", async () => {
+    // `Last-Event-ID: 0` is what a device holds after hydrating an instance
+    // whose log was empty: the head cursor it took was `0`. The first write
+    // after that is event `1`, and a device resuming from `0` has missed
+    // nothing, so the answer is the replay and not the refusal. A server
+    // comparing the cursor itself against its oldest id refuses exactly
+    // this, which is why the boundary is the case worth pinning.
+    //
+    // The premise is that this run's server still holds event `1`. It does:
+    // the server is booted for the run and retains events for hours, and a
+    // run lasts minutes. The stale case itself cannot be arranged over the
+    // wire: an event is retired by the retention sweep on the server's
+    // clock, and a request can shorten the retention but cannot run the
+    // sweep; `events.md` 3 says where it is asserted.
     const seed = await client.createItem(
       createNote({ source: ctx.source, properties: { body: "catchup-seed" } }),
     );
     expect(seed.ok).toBe(true);
     trackItem(ctx, seed.data.item.id);
+    const seededId = seed.data.item.id;
 
     // Subscriptions always go through openEventStream so the suite has one
     // way of opening a stream, and so no future edit that adds a write
@@ -57,29 +84,37 @@ describe("catchup_too_old terminal event", () => {
     const stream = await openEventStream(apiUrl, apiKey, { lastEventId: "0" });
     expect(stream.response.status).toBe(200);
 
-    const raw = await drainSse(stream.response);
-    await stream.close();
+    // The replay covers the whole log from `1`, so the read stops at the
+    // seeded item's own event, or at the refusal that would end the stream
+    // before it. Closed whatever the read did, so a read that ran out of
+    // time does not leave the subscription open into the next file.
+    let text: string;
+    try {
+      ({ text } = await readUntil(
+        stream.response,
+        (t) => t.includes(seededId) || t.includes("event: catchup_too_old"),
+      ));
+    } finally {
+      await stream.close();
+    }
 
-    const events = parseSse(raw);
-    const terminal = events.find((e) => e.event === "catchup_too_old");
-    expect(terminal).toBeDefined();
-
-    // The server emits ids as strings on the wire (event ids are bigints
-    // server-side; JSON has no native bigint, so they serialize as strings).
-    // Conformance asserts the wire shape, not the in-memory type.
-    const payload = terminal!.data as {
-      type: string;
-      min_retained_id: string;
-      requested: string;
-    };
-    expect(payload.type).toBe("catchup_too_old");
-    expect(typeof payload.min_retained_id).toBe("string");
-    expect(Number(payload.min_retained_id)).toBeGreaterThanOrEqual(1);
-    expect(payload.requested).toBe("0");
-
-    // The server is specified to close the stream immediately after emitting
-    // the terminal event — no trailing events should follow in the same stream.
-    const terminalIdx = events.indexOf(terminal!);
-    expect(events.slice(terminalIdx + 1)).toHaveLength(0);
+    const events = parseSse(text);
+    expect(events.find((e) => e.event === "catchup_too_old")).toBeUndefined();
+    // The replay began at the log's first event. This is what makes the
+    // cursor the boundary rather than merely a cursor within retention: a
+    // resume from `0` that started anywhere later would pass the two
+    // assertions around it while asserting nothing about `0`, and it also
+    // probes the premise above instead of reading it, because a log that
+    // had lost event `1` could not replay it.
+    expect(
+      events.some((e) => e.id === "1"),
+      "the replay from cursor 0 did not deliver event 1, so either the log no longer begins at 1 or the resume started later than the cursor",
+    ).toBe(true);
+    const replayed = events.find(
+      (e) =>
+        e.event === "item.created" &&
+        (e.data as { item?: { id?: string } }).item?.id === seededId,
+    );
+    expect(replayed).toBeDefined();
   });
 });
