@@ -203,7 +203,7 @@ CREATE INDEX IF NOT EXISTS queue_verdict_seq ON queue (verdict, seq);
 CREATE INDEX IF NOT EXISTS queue_item ON queue (item_id);
 -- No index on `depends_on`. It holds a JSON array, and releasing a held write
 -- means finding every row whose array *contains* an answered id — which an
--- index on the serialised text cannot answer: `EXPLAIN QUERY PLAN` on a
+-- index on the serialized text cannot answer: `EXPLAIN QUERY PLAN` on a
 -- containment query reports a scan, and the only shape that could ever search
 -- is equality on the whole string, which misses every row waiting on two
 -- creates. An index here would say the lookup was cheap without making it so.
