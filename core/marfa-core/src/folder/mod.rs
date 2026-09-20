@@ -479,17 +479,18 @@ impl Folder {
                 continue;
             };
             if item.source_id.as_deref().is_some_and(is_parked) {
-                // **The name has to be free**, and the mapping's path is not
-                // proof of that: the row this pass wants to recover may have
-                // had its path taken while it was parked, and asking for it
-                // is a name another item still holds — which the server
-                // refuses, leaving this pass to ask again on every scan and
-                // the item parked for good.
-                let taken = {
-                    let conn = self.core.conn()?;
-                    state::bound_at(&conn, &row.path)?
-                };
-                if taken.is_some_and(|other| other.item_id != row.item_id) {
+                // **The name has to be free as a natural key**, which is a
+                // question about what an item is keyed at and not about what
+                // the mapping binds. Asking the mapping cannot answer it:
+                // `row` came out of `folder_files` and `path` is its primary
+                // key, so a lookup by that path returns `row` itself and any
+                // comparison against its own id is always false.
+                //
+                // A name another item holds is one the server refuses, and
+                // this pass would ask again on every scan while the item
+                // stayed parked.
+                let taken = self.held_under_key(&row.path)?;
+                if taken.is_some_and(|other| other.id != row.item_id) {
                     continue;
                 }
                 self.queue_rekey(&row.item_id, &row.path)?;
