@@ -8,7 +8,7 @@ import {
   hydrateTypeRegistry as hydrateFromPackageRoot,
   validateProperties as validateFromPackageRoot,
 } from "./index.js";
-import { createKeysModeFixture } from "./test-harness.js";
+import { createBootstrappedFixture } from "./test-harness.js";
 import type { MarfaClient } from "./client.js";
 
 // The claim under test is agreement with the server, so the types are
@@ -54,7 +54,7 @@ let workingKey: string;
 let cleanup: () => void;
 
 beforeAll(async () => {
-  const fixture = await createKeysModeFixture();
+  const fixture = await createBootstrappedFixture();
   client = fixture.client;
   fetchFn = fixture.fetch;
   workingKey = fixture.workingKey;

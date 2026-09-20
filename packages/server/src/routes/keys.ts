@@ -903,7 +903,7 @@ export function keyRoutes(storage: Storage, salt: string) {
       // **The operator key seeds working keys and mints its own kind.** It
       // holds nothing itself, so nothing about it can be a ceiling: a working
       // key it mints holds what the body names, or the whole set when the
-      // body names nothing, because a self-hoster's first credential having
+      // body names nothing, because an operator's first credential having
       // to be narrowed upward is the wrong default. A body naming
       // `is_operator: true` produces a second operator key, which holds
       // nothing, so naming any reach on one is refused below.

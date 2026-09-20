@@ -13,7 +13,7 @@ export default defineConfig({
     // form, silently.
     globalSetup: ["./src/test-global-setup.ts"],
     // Higher than the shared budget, and this is the package that made the
-    // missing budget visible. `createKeysModeFixture` runs in `beforeEach`
+    // missing budget visible. `createBootstrappedFixture` runs in `beforeEach`
     // rather than `beforeAll`, and each call makes a temp directory, opens a
     // SQLite database, builds the whole app and completes a real bootstrap.
     // That is a per-test cost, not a per-file one, and on a machine also

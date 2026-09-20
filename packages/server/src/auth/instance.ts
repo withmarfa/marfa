@@ -58,7 +58,7 @@ export interface MarfaAuthOptions {
    *  client-IP and rate-limit middleware already take, so one setting
    *  answers for the whole server. Left unset, Better Auth's
    *  `x-forwarded-for` default stands, which is what an ordinary reverse
-   *  proxy sends, so a self-hoster configures nothing. */
+   *  proxy sends, so an operator configures nothing. */
   trustedProxyHeader?: string | null;
   /** Storage handle threaded into the OAuth Provider plugin's
    *  `customAccessTokenClaims` and `hooks.after` matchers. Needed for the

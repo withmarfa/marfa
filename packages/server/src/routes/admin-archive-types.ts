@@ -175,10 +175,10 @@ function provenanceFor(
   if (claimed.origin === "user") {
     // `user` earns a read AND write wildcard over the whole namespace
     // root, which makes it the one claim in this file worth more than the
-    // two refused above. It is honored as claimed: there are no user
-    // accounts and so no handle system to check a publisher-tier id
-    // against, and the only party a refusal could stop is the
-    // deployment's own operator, who holds the restore door.
+    // two refused above. It is honored as claimed: user accounts carry no
+    // handle, so there is nothing to check a publisher-tier id against, and
+    // the only party a refusal could stop is the deployment's own operator,
+    // who holds the restore door.
     return { origin: "user" };
   }
 

@@ -6,7 +6,7 @@
  * has never held a credential accepts a single `POST /keys` and mints the
  * operator key from it. Until now that door was open to anyone who could
  * reach the port during the window between the process starting and the
- * operator's first call — and on a self-host that window is however long it
+ * operator's first call — and that window is however long it
  * takes somebody to read the quickstart.
  *
  * So the first mint has to present a secret the server generated and printed.

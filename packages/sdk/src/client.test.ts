@@ -96,7 +96,7 @@ beforeAll(async () => {
 
   // **The first mint produces the operator key**, which holds no permission:
   // running the instance sits outside the model. It is not a working key, so
-  // the fixture uses it to mint one, which is the setup keys mode is meant to
+  // the fixture uses it to mint one, which is the setup bootstrap is meant to
   // follow.
   //
   // It presents the one-time secret the server prints to its boot log, because
@@ -135,7 +135,7 @@ beforeAll(async () => {
   });
   if (workingRes.status !== 201) {
     throw new Error(
-      `keys-mode working key mint answered ${String(workingRes.status)}: ${await workingRes.text()}`,
+      `working key mint answered ${String(workingRes.status)}: ${await workingRes.text()}`,
     );
   }
   const key = ((await workingRes.json()) as { key: string }).key;

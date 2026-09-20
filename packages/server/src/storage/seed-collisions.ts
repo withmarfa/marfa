@@ -3,7 +3,7 @@ import { log } from "../middleware/logger.js";
 /**
  * Report shipped type identifiers the seed declined to overwrite.
  *
- * **A collision means a self-hoster registered a type this build has since
+ * **A collision means an operator registered a type this build has since
  * started shipping.** Both registrations live in the same table, so before
  * the seed's guard the shipped schema simply overwrote theirs on the next
  * boot.

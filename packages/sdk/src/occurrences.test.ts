@@ -1,5 +1,8 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { createKeysModeFixture, type KeysModeFixture } from "./test-harness.js";
+import {
+  createBootstrappedFixture,
+  type BootstrappedFixture,
+} from "./test-harness.js";
 import { MarfaClient } from "./client.js";
 import { UnauthorizedError, ValidationError } from "./errors.js";
 
@@ -16,10 +19,10 @@ import { UnauthorizedError, ValidationError } from "./errors.js";
  * rules that flood one window would be re-expanded on every later read.
  */
 
-let fx: KeysModeFixture;
+let fx: BootstrappedFixture;
 
 beforeAll(async () => {
-  fx = await createKeysModeFixture();
+  fx = await createBootstrappedFixture();
 });
 
 afterAll(() => {
@@ -385,10 +388,10 @@ describe("occurrences.list occurrence ceiling", () => {
   //
   // Its own fixture: the series pass is unwindowed, so rules dense enough
   // to flood one window would be re-expanded on every read in the suite.
-  let ceilingFx: KeysModeFixture;
+  let ceilingFx: BootstrappedFixture;
 
   beforeAll(async () => {
-    ceilingFx = await createKeysModeFixture();
+    ceilingFx = await createBootstrappedFixture();
     // Three hourly rules over a seventy-day window: 1680 occurrences each,
     // under the per-series cap that would report them individually, and
     // 5040 together — past the ceiling on the assembled result.

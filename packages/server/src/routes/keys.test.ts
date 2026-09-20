@@ -456,9 +456,7 @@ describe("bootstrap sentinel", () => {
   // `bootstrapped` sentinel isn't set and the bootstrap path can fire
   // cleanly. Cannot use `createTestContext` because that
   // pre-creates the bootstrap credential and stamps the bootstrapped sentinel.
-  async function freshApp(overrides?: {
-    authMode?: "keys" | "hosted";
-  }): Promise<{
+  async function freshApp(): Promise<{
     app: ReturnType<typeof createApp>;
     storage: Storage;
     /**
@@ -514,7 +512,6 @@ describe("bootstrap sentinel", () => {
         authSecret: "test-auth-secret",
         rateLimitDefaultLimit: 1000,
         rateLimitWindowMs: 60_000,
-        ...overrides,
       },
       instanceId,
     );
@@ -571,7 +568,7 @@ describe("bootstrap sentinel", () => {
   });
 
   it("returns the operator key only, and the operator mints the key that works", async () => {
-    // **The operator key is not a working key**, so a self-host handed only
+    // **The operator key is not a working key**, so an operator handed only
     // that has a credential it cannot use: no permissions, because running
     // the instance sits outside the permission model. The setup story is
     // mint the operator key, then mint a working key with it — and a body
@@ -639,7 +636,7 @@ describe("bootstrap sentinel", () => {
     // unauthenticated with no creator to clamp against, so `*: write` here
     // is read and write over everything, in the one row shape the constraint
     // exists to make unwritable.
-    const { app, storage, bootstrapSecret, tmpDir } = await freshApp({});
+    const { app, storage, bootstrapSecret, tmpDir } = await freshApp();
     try {
       const res = await request(app, "POST", "/keys", {
         key: bootstrapSecret,
@@ -698,7 +695,7 @@ describe("bootstrap sentinel", () => {
     // so this reaches the release the only way left, by making the audit
     // write throw synchronously. The point is not that path; it is that a
     // future step added after the insert cannot reopen the window by failing.
-    const { app, storage, bootstrapSecret, tmpDir } = await freshApp({});
+    const { app, storage, bootstrapSecret, tmpDir } = await freshApp();
     try {
       storage.audit.log = () => {
         throw new Error("storage is having a moment");
@@ -1011,21 +1008,21 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
   // still hold, through two things that can fail independently — the
   // permission gate and the breadth clamp — so each gets its own case
   // rather than one test standing for both.
-  let hostedCtx: TestContext;
+  let oauthCtx: TestContext;
 
   const KEYS = "keys.mint";
   const grantScopes = (...extra: string[]) => ["openid", KEYS, ...extra];
 
   beforeAll(async () => {
-    hostedCtx = await createTestContext({});
+    oauthCtx = await createTestContext({});
   });
 
   afterAll(async () => {
-    await hostedCtx.cleanup();
+    await oauthCtx.cleanup();
   });
 
   it("refuses every keys door to a session that was not granted the permission", async () => {
-    const { token } = await seedOauthBearer(hostedCtx.storage, ["openid"], {});
+    const { token } = await seedOauthBearer(oauthCtx.storage, ["openid"], {});
     const doors: [string, string, unknown?][] = [
       ["GET", "/keys"],
       ["POST", "/keys", { label: "x", source: "x" }],
@@ -1033,7 +1030,7 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
       ["PATCH", "/keys/key_whatever", { label: "renamed" }],
     ];
     for (const [method, path, body] of doors) {
-      const res = await request(hostedCtx.app, method, path, {
+      const res = await request(oauthCtx.app, method, path, {
         key: token,
         ...(body === undefined ? {} : { body }),
       });
@@ -1050,11 +1047,11 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
 
   it("lets a granted session mint, and the key matches the session's own reach", async () => {
     const { token } = await seedOauthBearer(
-      hostedCtx.storage,
+      oauthCtx.storage,
       grantScopes("core.note:read"),
       {},
     );
-    const res = await request(hostedCtx.app, "POST", "/keys", {
+    const res = await request(oauthCtx.app, "POST", "/keys", {
       key: token,
       body: { label: "like me", source: "like-me" },
     });
@@ -1067,17 +1064,17 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
     // is `{}`, which reads nothing at all.
     expect(created.type_permissions["core.note"]).toBe("read");
 
-    const stored = await hostedCtx.storage.keys.get(created.id);
+    const stored = await oauthCtx.storage.keys.get(created.id);
     expect(stored?.is_operator).toBe(false);
   });
 
   it("refuses reach the grant does not cover, and names the literal", async () => {
     const { token } = await seedOauthBearer(
-      hostedCtx.storage,
+      oauthCtx.storage,
       grantScopes("core.note:read"),
       {},
     );
-    const res = await request(hostedCtx.app, "POST", "/keys", {
+    const res = await request(oauthCtx.app, "POST", "/keys", {
       key: token,
       body: {
         label: "wider",
@@ -1099,11 +1096,11 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
     // the case that would pass a naive membership test is the one worth
     // pinning.
     const { token } = await seedOauthBearer(
-      hostedCtx.storage,
+      oauthCtx.storage,
       grantScopes("core.*:write"),
       {},
     );
-    const res = await request(hostedCtx.app, "POST", "/keys", {
+    const res = await request(oauthCtx.app, "POST", "/keys", {
       key: token,
       body: {
         label: "under a wildcard",
@@ -1116,11 +1113,11 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
 
   it("never mints an operator key from a session, whatever the body asks", async () => {
     const { token } = await seedOauthBearer(
-      hostedCtx.storage,
+      oauthCtx.storage,
       grantScopes(),
       {},
     );
-    const res = await request(hostedCtx.app, "POST", "/keys", {
+    const res = await request(oauthCtx.app, "POST", "/keys", {
       key: token,
       body: {
         label: "platform",
@@ -1136,17 +1133,17 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
     const err = (await res.json()) as { error: { code: string } };
     expect(err.error.code).toBe("forbidden");
     expect(
-      (await hostedCtx.storage.keys.list()).some((k) => k.label === "platform"),
+      (await oauthCtx.storage.keys.list()).some((k) => k.label === "platform"),
     ).toBe(false);
   });
 
   it("records the grant on the audit row, so a revoked app leads to its keys", async () => {
     const { token, clientId } = await seedOauthBearer(
-      hostedCtx.storage,
+      oauthCtx.storage,
       grantScopes("core.note:read"),
       {},
     );
-    const res = await request(hostedCtx.app, "POST", "/keys", {
+    const res = await request(oauthCtx.app, "POST", "/keys", {
       key: token,
       body: { label: "audited", source: "audited" },
     });
@@ -1154,7 +1151,7 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
     const created = (await res.json()) as { id: string };
 
     const audits = await waitForAudit(
-      () => hostedCtx.storage.audit.list({ action: "key.create" }),
+      () => oauthCtx.storage.audit.list({ action: "key.create" }),
       (r) => r.data.some((row) => row.resource_id === created.id),
     );
     const row = audits.data.find((r) => r.resource_id === created.id);
@@ -1170,12 +1167,12 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
 
   it("lets a granted session read, revoke and rename", async () => {
     const { token } = await seedOauthBearer(
-      hostedCtx.storage,
+      oauthCtx.storage,
       grantScopes(),
       {},
     );
     const raw = "marfa_k1_sess_" + Math.random().toString(36).slice(2);
-    const target = await hostedCtx.storage.keys.create(
+    const target = await oauthCtx.storage.keys.create(
       {
         label: "target",
         source: "target-" + Math.random().toString(36).slice(2),
@@ -1186,19 +1183,17 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
       hashApiKey(raw, TEST_API_KEY_SALT),
     );
 
-    const list = await request(hostedCtx.app, "GET", "/keys", { key: token });
+    const list = await request(oauthCtx.app, "GET", "/keys", { key: token });
     expect(list.status).toBe(200);
 
-    const renamed = await request(
-      hostedCtx.app,
-      "PATCH",
-      `/keys/${target.id}`,
-      { key: token, body: { label: "renamed" } },
-    );
+    const renamed = await request(oauthCtx.app, "PATCH", `/keys/${target.id}`, {
+      key: token,
+      body: { label: "renamed" },
+    });
     expect(renamed.status).toBe(200);
 
     const revoked = await request(
-      hostedCtx.app,
+      oauthCtx.app,
       "DELETE",
       `/keys/${target.id}`,
       { key: token },
@@ -1212,23 +1207,23 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
     // produces has to carry the session's own bounds — otherwise the refusals
     // above last exactly until the app mints its way past them.
     const { token } = await seedOauthBearer(
-      hostedCtx.storage,
+      oauthCtx.storage,
       grantScopes("core.note:read"),
       {},
     );
-    const minted = await request(hostedCtx.app, "POST", "/keys", {
+    const minted = await request(oauthCtx.app, "POST", "/keys", {
       key: token,
       body: { label: "step one", source: "step-one" },
     });
     expect(minted.status).toBe(201);
     const first = (await minted.json()) as { id: string; key: string };
-    const stored = await hostedCtx.storage.keys.get(first.id);
+    const stored = await oauthCtx.storage.keys.get(first.id);
     // The grant carried `keys.mint`, so the key carries it and no more: the
     // other ten are absent even though the account holder holds them all.
     expect(stored?.permissions).toEqual(["keys.mint"]);
 
     // And the second hop cannot widen what the first was clamped to.
-    const stepTwo = await request(hostedCtx.app, "POST", "/keys", {
+    const stepTwo = await request(oauthCtx.app, "POST", "/keys", {
       key: first.key,
       body: {
         label: "step two",
@@ -1247,7 +1242,7 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
     // A clamp at the mint alone is not a clamp: the maps are writable a moment
     // later, and this door addresses every key.
     const raw = "marfa_k1_victim_" + Math.random().toString(36).slice(2);
-    const victim = await hostedCtx.storage.keys.create(
+    const victim = await oauthCtx.storage.keys.create(
       {
         label: "someone else's key",
         source: "victim-" + Math.random().toString(36).slice(2),
@@ -1259,18 +1254,18 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
     );
 
     const { token } = await seedOauthBearer(
-      hostedCtx.storage,
+      oauthCtx.storage,
       grantScopes("core.note:read"),
       {},
     );
-    const widen = await request(hostedCtx.app, "PATCH", `/keys/${victim.id}`, {
+    const widen = await request(oauthCtx.app, "PATCH", `/keys/${victim.id}`, {
       key: token,
       body: { type_permissions: { "*": "write" } },
     });
     expect(widen.status).toBe(403);
 
     // At the ceiling, the same door still works.
-    const within = await request(hostedCtx.app, "PATCH", `/keys/${victim.id}`, {
+    const within = await request(oauthCtx.app, "PATCH", `/keys/${victim.id}`, {
       key: token,
       body: { type_permissions: { "core.note": "read" } },
     });
@@ -1283,11 +1278,11 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
     // reach — the extension read door consults this map alone, with no
     // type-permission check beside it.
     const { token } = await seedOauthBearer(
-      hostedCtx.storage,
+      oauthCtx.storage,
       grantScopes("core.note:read"),
       {},
     );
-    const minted = await request(hostedCtx.app, "POST", "/keys", {
+    const minted = await request(oauthCtx.app, "POST", "/keys", {
       key: token,
       body: {
         label: "ext",
@@ -1299,7 +1294,7 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
     expect(minted.status).toBe(403);
 
     const raw = "marfa_k1_extt_" + Math.random().toString(36).slice(2);
-    const target = await hostedCtx.storage.keys.create(
+    const target = await oauthCtx.storage.keys.create(
       {
         label: "ext target",
         source: "ext-target-" + Math.random().toString(36).slice(2),
@@ -1309,15 +1304,10 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
       },
       hashApiKey(raw, TEST_API_KEY_SALT),
     );
-    const patched = await request(
-      hostedCtx.app,
-      "PATCH",
-      `/keys/${target.id}`,
-      {
-        key: token,
-        body: { extension_permissions: { "*": "write" } },
-      },
-    );
+    const patched = await request(oauthCtx.app, "PATCH", `/keys/${target.id}`, {
+      key: token,
+      body: { extension_permissions: { "*": "write" } },
+    });
     expect(patched.status).toBe(403);
   });
 
@@ -1328,24 +1318,24 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
     // whether or not the condition were right, which is what the first
     // version of it did.
     const { token } = await seedOauthBearer(
-      hostedCtx.storage,
+      oauthCtx.storage,
       grantScopes("core.note:read", "edge.about:read"),
       {},
     );
 
     // The derive path does hand the edge map over when nothing is named.
-    const derived = await request(hostedCtx.app, "POST", "/keys", {
+    const derived = await request(oauthCtx.app, "POST", "/keys", {
       key: token,
       body: { label: "derived", source: "derived-edges" },
     });
     expect(derived.status).toBe(201);
-    const derivedKey = await hostedCtx.storage.keys.get(
+    const derivedKey = await oauthCtx.storage.keys.get(
       ((await derived.json()) as { id: string }).id,
     );
     expect(derivedKey?.edge_permissions?.about).toBe("read");
 
     // Naming one family takes the derive path off for all of them.
-    const partial = await request(hostedCtx.app, "POST", "/keys", {
+    const partial = await request(oauthCtx.app, "POST", "/keys", {
       key: token,
       body: {
         label: "partial",
@@ -1354,7 +1344,7 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
       },
     });
     expect(partial.status).toBe(201);
-    const partialKey = await hostedCtx.storage.keys.get(
+    const partialKey = await oauthCtx.storage.keys.get(
       ((await partial.json()) as { id: string }).id,
     );
     expect(partialKey?.type_permissions["core.note"]).toBe("read");
@@ -1369,11 +1359,11 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
     // stop the type map deriving too, or a caller asking for a narrow key
     // silently receives the session's own reach instead.
     const { token } = await seedOauthBearer(
-      hostedCtx.storage,
+      oauthCtx.storage,
       grantScopes("core.note:read", "edge.about:read"),
       {},
     );
-    const res = await request(hostedCtx.app, "POST", "/keys", {
+    const res = await request(oauthCtx.app, "POST", "/keys", {
       key: token,
       body: {
         label: "edges only",
@@ -1382,7 +1372,7 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
       },
     });
     expect(res.status).toBe(201);
-    const stored = await hostedCtx.storage.keys.get(
+    const stored = await oauthCtx.storage.keys.get(
       ((await res.json()) as { id: string }).id,
     );
     expect(stored?.type_permissions ?? {}).toEqual({});
@@ -1396,11 +1386,11 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
     // another vendor's namespace and read it on every item stored,
     // durably and after the app was revoked.
     const { token } = await seedOauthBearer(
-      hostedCtx.storage,
+      oauthCtx.storage,
       grantScopes("core.note:read"),
       {},
     );
-    const minted = await request(hostedCtx.app, "POST", "/keys", {
+    const minted = await request(oauthCtx.app, "POST", "/keys", {
       key: token,
       body: {
         label: "com.othervendor.sync",
@@ -1409,7 +1399,7 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
       },
     });
     expect(minted.status).toBe(201);
-    const key = await hostedCtx.storage.keys.get(
+    const key = await oauthCtx.storage.keys.get(
       ((await minted.json()) as { id: string }).id,
     );
     // The stored map is empty, and the label must not stand in for one.
@@ -1425,11 +1415,11 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
     // used — and `"*"` is the ordinary key, since it is what a bare
     // `metadata:<verb>` grant projects to.
     const contentOnly = await seedOauthBearer(
-      hostedCtx.storage,
+      oauthCtx.storage,
       grantScopes("content:write"),
       {},
     );
-    const refused = await request(hostedCtx.app, "POST", "/keys", {
+    const refused = await request(oauthCtx.app, "POST", "/keys", {
       key: contentOnly.token,
       body: {
         label: "meta up",
@@ -1446,11 +1436,11 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
     // And the honest holder is not refused, which the broken literal also got
     // wrong — in the other direction.
     const metaHolder = await seedOauthBearer(
-      hostedCtx.storage,
+      oauthCtx.storage,
       grantScopes("metadata:write"),
       {},
     );
-    const allowed = await request(hostedCtx.app, "POST", "/keys", {
+    const allowed = await request(oauthCtx.app, "POST", "/keys", {
       key: metaHolder.token,
       body: {
         label: "meta ok",
@@ -1462,11 +1452,11 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
   });
 
   it("lets an API key holding `keys.mint` mint, with no grant anywhere", async () => {
-    // The gate reads the key's own list when the caller is not a session, so
-    // a keys-mode or API-key deployment reaches this door with no OAuth
-    // principal involved at all. This is the case that says so.
+    // The gate reads the key's own list when the caller is not a session,
+    // so an API key reaches this door with no OAuth principal involved at
+    // all. This is the case that says so.
     const raw = "marfa_k1_ta_" + Math.random().toString(36).slice(2);
-    await hostedCtx.storage.keys.create(
+    await oauthCtx.storage.keys.create(
       {
         label: "ta-key",
         source: "ta-key",
@@ -1477,13 +1467,13 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
       },
       hashApiKey(raw, TEST_API_KEY_SALT),
     );
-    const res = await request(hostedCtx.app, "POST", "/keys", {
+    const res = await request(oauthCtx.app, "POST", "/keys", {
       key: raw,
       body: { label: "minted", source: "minted" },
     });
     expect(res.status).toBe(201);
     const created = (await res.json()) as { id: string };
-    const stored = await hostedCtx.storage.keys.get(created.id);
+    const stored = await oauthCtx.storage.keys.get(created.id);
     // An API-key mint that names no maps keeps `{}` rather than deriving from
     // a grant, because there is no grant to derive from.
     expect(stored?.type_permissions).toEqual({});
@@ -1495,20 +1485,20 @@ describe("POST /keys — what an operator key mints", () => {
   // working key it mints holds what the body names, or the whole set when
   // the body names nothing. A body naming `is_operator: true` produces a
   // second operator key, which holds nothing.
-  let hostedCtx: TestContext;
+  let oauthCtx: TestContext;
 
   beforeAll(async () => {
-    hostedCtx = await createTestContext({});
+    oauthCtx = await createTestContext({});
   });
 
   afterAll(async () => {
-    await hostedCtx.cleanup();
+    await oauthCtx.cleanup();
   });
 
   it("mints a working key holding everything when the body names nothing", async () => {
     const suffix = Math.random().toString(36).slice(2, 10);
-    const res = await request(hostedCtx.app, "POST", "/keys", {
-      key: hostedCtx.operatorKey,
+    const res = await request(oauthCtx.app, "POST", "/keys", {
+      key: oauthCtx.operatorKey,
       body: {
         label: `seeded-${suffix}`,
         source: `seeded-${suffix}`,
@@ -1517,7 +1507,7 @@ describe("POST /keys — what an operator key mints", () => {
     });
     expect(res.status).toBe(201);
     const minted = (await res.json()) as { id: string };
-    const stored = await hostedCtx.storage.keys.get(minted.id);
+    const stored = await oauthCtx.storage.keys.get(minted.id);
     expect(stored?.is_operator).toBe(false);
     expect(stored?.type_permissions).toEqual({ "*": "write" });
     expect(stored?.edge_permissions).toEqual({ "*": "write" });
@@ -1529,8 +1519,8 @@ describe("POST /keys — what an operator key mints", () => {
 
   it("mints a working key holding only what the body names", async () => {
     const suffix = Math.random().toString(36).slice(2, 10);
-    const res = await request(hostedCtx.app, "POST", "/keys", {
-      key: hostedCtx.operatorKey,
+    const res = await request(oauthCtx.app, "POST", "/keys", {
+      key: oauthCtx.operatorKey,
       body: {
         label: `narrow-${suffix}`,
         source: `narrow-${suffix}`,
@@ -1540,7 +1530,7 @@ describe("POST /keys — what an operator key mints", () => {
     });
     expect(res.status).toBe(201);
     const minted = (await res.json()) as { id: string };
-    const stored = await hostedCtx.storage.keys.get(minted.id);
+    const stored = await oauthCtx.storage.keys.get(minted.id);
     expect(stored?.is_operator).toBe(false);
     expect(stored?.type_permissions).toEqual({ "core.note": "read" });
     expect(stored?.edge_permissions).toEqual({});
@@ -1553,8 +1543,8 @@ describe("POST /keys — what an operator key mints", () => {
     // operator key is exempt from it by having nothing to be measured
     // against.
     const suffix = Math.random().toString(36).slice(2, 10);
-    const res = await request(hostedCtx.app, "POST", "/keys", {
-      key: hostedCtx.operatorKey,
+    const res = await request(oauthCtx.app, "POST", "/keys", {
+      key: oauthCtx.operatorKey,
       body: {
         label: `operator-narrow-${suffix}`,
         source: `operator-narrow-${suffix}`,
@@ -1573,8 +1563,8 @@ describe("POST /keys — what an operator key mints", () => {
     // The one thing this door still does for an operator caller: a second
     // key at the same tier, carrying the same nothing.
     const suffix = Math.random().toString(36).slice(2, 10);
-    const res = await request(hostedCtx.app, "POST", "/keys", {
-      key: hostedCtx.operatorKey,
+    const res = await request(oauthCtx.app, "POST", "/keys", {
+      key: oauthCtx.operatorKey,
       body: {
         label: `operator-spare-${suffix}`,
         source: `operator-spare-${suffix}`,
@@ -1583,13 +1573,13 @@ describe("POST /keys — what an operator key mints", () => {
     });
     expect(res.status).toBe(201);
     const minted = (await res.json()) as { id: string };
-    const stored = await hostedCtx.storage.keys.get(minted.id);
+    const stored = await oauthCtx.storage.keys.get(minted.id);
     expect(stored?.is_operator).toBe(true);
     expect(stored?.type_permissions).toEqual({});
     expect(stored?.permissions).toEqual([]);
 
     const audits = await waitForAudit(
-      () => hostedCtx.storage.audit.list({ action: "key.create" }),
+      () => oauthCtx.storage.audit.list({ action: "key.create" }),
       (r) => r.data.some((row) => row.resource_id === minted.id),
     );
     const row = audits.data.find((r) => r.resource_id === minted.id);
@@ -1609,8 +1599,8 @@ describe("POST /keys — what an operator key mints", () => {
     // The sibling above covers the empty body, where the forcing has nothing
     // to do; this is the case where it does the work.
     const suffix = Math.random().toString(36).slice(2, 10);
-    const res = await request(hostedCtx.app, "POST", "/keys", {
-      key: hostedCtx.operatorKey,
+    const res = await request(oauthCtx.app, "POST", "/keys", {
+      key: oauthCtx.operatorKey,
       body: {
         label: `operator-denials-${suffix}`,
         source: `operator-denials-${suffix}`,
@@ -1620,7 +1610,7 @@ describe("POST /keys — what an operator key mints", () => {
     });
     expect(res.status).toBe(201);
     const minted = (await res.json()) as { id: string };
-    const stored = await hostedCtx.storage.keys.get(minted.id);
+    const stored = await oauthCtx.storage.keys.get(minted.id);
     expect(stored?.is_operator).toBe(true);
     // Empty, not the denial that was sent. `{"core.note": "none"}` grants
     // nothing either, so the difference is not what a door would read off it:
@@ -1643,7 +1633,7 @@ describe("POST /keys — what an operator key mints", () => {
     const suffix = Math.random().toString(36).slice(2, 10);
     const rawWide = `marfa_k1_wide_operator_${suffix}`;
     await expect(
-      hostedCtx.storage.keys.create(
+      oauthCtx.storage.keys.create(
         {
           label: `wide-operator-${suffix}`,
           source: `wide-operator-${suffix}`,
@@ -1666,15 +1656,15 @@ describe("POST /keys — what an operator key mints", () => {
     // `api_keys_operator_holds_nothing`, declared in `schema.ts` and pinned
     // by `schema-sql.test.ts` against a database it builds fresh.
     expect(
-      (await hostedCtx.storage.keys.list()).some(
+      (await oauthCtx.storage.keys.list()).some(
         (k) => k.label === `wide-operator-${suffix}`,
       ),
     ).toBe(false);
 
     // And the operator key the instance really holds mints a credential that
     // inherits nothing, which is what the forcing is for.
-    const res = await request(hostedCtx.app, "POST", "/keys", {
-      key: hostedCtx.operatorKey,
+    const res = await request(oauthCtx.app, "POST", "/keys", {
+      key: oauthCtx.operatorKey,
       body: {
         label: `inherits-nothing-${suffix}`,
         source: `inherits-nothing-${suffix}`,
@@ -1683,7 +1673,7 @@ describe("POST /keys — what an operator key mints", () => {
     });
     expect(res.status).toBe(201);
     const minted = (await res.json()) as { id: string };
-    const stored = await hostedCtx.storage.keys.get(minted.id);
+    const stored = await oauthCtx.storage.keys.get(minted.id);
     expect(stored?.type_permissions).toEqual({});
     expect(stored?.edge_permissions).toEqual({});
     expect(stored?.metadata_permissions).toEqual({});
@@ -1698,13 +1688,13 @@ describe("POST /keys — what an operator key mints", () => {
     // itself. Pinned here because that suite runs against a deployed server,
     // so a regression would only surface after release.
     const suffix = Math.random().toString(36).slice(2, 10);
-    const harnessKey = await mintWorkingKey(hostedCtx, {
+    const harnessKey = await mintWorkingKey(oauthCtx, {
       label: `harness-${suffix}`,
       source: `harness-${suffix}`,
       type_permissions: { "*": "write" },
     });
 
-    const secondHop = await request(hostedCtx.app, "POST", "/keys", {
+    const secondHop = await request(oauthCtx.app, "POST", "/keys", {
       key: harnessKey,
       body: {
         label: `scoped-${suffix}`,
@@ -1714,7 +1704,7 @@ describe("POST /keys — what an operator key mints", () => {
     });
     expect(secondHop.status).toBe(201);
     const scoped = (await secondHop.json()) as { id: string };
-    const stored = await hostedCtx.storage.keys.get(scoped.id);
+    const stored = await oauthCtx.storage.keys.get(scoped.id);
     expect(stored?.is_operator).toBe(false);
     expect(stored?.type_permissions).toEqual({ "core.note": "read" });
   });
@@ -1722,7 +1712,7 @@ describe("POST /keys — what an operator key mints", () => {
   it("still lets a working key holding `keys.mint` mint", async () => {
     const suffix = Math.random().toString(36).slice(2, 10);
     const raw = `marfa_k1_bound_admin_${suffix}`;
-    await hostedCtx.storage.keys.create(
+    await oauthCtx.storage.keys.create(
       {
         label: `bound-admin-${suffix}`,
         source: `bound-admin-${suffix}`,
@@ -1734,13 +1724,13 @@ describe("POST /keys — what an operator key mints", () => {
       hashApiKey(raw, TEST_API_KEY_SALT),
     );
 
-    const res = await request(hostedCtx.app, "POST", "/keys", {
+    const res = await request(oauthCtx.app, "POST", "/keys", {
       key: raw,
       body: { label: `child-${suffix}`, source: `child-${suffix}` },
     });
     expect(res.status).toBe(201);
     const minted = (await res.json()) as { id: string };
-    const stored = await hostedCtx.storage.keys.get(minted.id);
+    const stored = await oauthCtx.storage.keys.get(minted.id);
     expect(stored?.is_operator).toBe(false);
   });
 });

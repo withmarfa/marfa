@@ -698,7 +698,7 @@ describe("an archive carries where a type came from", () => {
   });
 
   it("refuses an archive claiming a type is platform-shipped", async () => {
-    // The delayed fuse. A restore on a self-host writes into the same
+    // The delayed fuse. A restore writes into the same
     // rows the platform seed writes, and the boot warmup skips
     // `platform` rows on the way to projecting them globally, so a
     // replayed claim would seed an attacker-chosen type into the global
@@ -770,7 +770,7 @@ describe("an archive carries where a type came from", () => {
   });
 });
 
-describe("a claimed `user` origin is checked against the handle", () => {
+describe("a claimed `user` origin is honored as claimed", () => {
   const baseType = {
     version: 1,
     fields: { name: { type: "string", required: true } },

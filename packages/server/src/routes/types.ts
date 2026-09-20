@@ -252,7 +252,7 @@ const registerTypeRoute = createRoute({
         },
       },
       description:
-        "Missing metadata.types:write permission, a reserved namespace, or a publisher namespace whose handle the caller's user has not claimed",
+        "Missing metadata.types:write permission, or a reserved namespace: `core.*`, `system.*` and `marfa.*` are refused to every credential",
     },
     409: {
       content: {

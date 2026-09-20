@@ -120,7 +120,7 @@ async function createConfigContext(): Promise<ConfigContext> {
   };
 }
 
-// ----- Keys-mode context (default): validates fallback behavior ---------
+// ----- The shared context: the door's defaults when nothing is set -----
 let ctx: TestContext;
 
 beforeAll(async () => {

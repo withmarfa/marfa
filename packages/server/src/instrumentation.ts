@@ -18,8 +18,9 @@
  * Full no-op when `MARFA_OTEL_ENABLED !== "true"`: the heavy SDK modules are
  * dynamically imported only inside the enabled branch, so a disabled boot
  * never loads them. Traces and logs are independently gated on their
- * endpoint being set — hosted test mode sets only the logs endpoint
- * (PostHog has no general-trace store), so traces are built but unexported.
+ * endpoint being set — a deployment exporting to PostHog sets only the
+ * logs endpoint, because there is no general-trace store to point at, so
+ * traces are built but unexported.
  */
 import { parseOtelHeaders, parseOtelSampleRatio } from "./config.js";
 
@@ -27,8 +28,8 @@ declare global {
   /**
    * Flush + shut down the OpenTelemetry pipelines. Set here when OTel is
    * enabled so `index.ts`'s graceful-shutdown handler can await a final
-   * flush before `process.exit` — critical on the ephemeral hosted
-   * container, where scale-to-zero SIGTERMs the process and the last batch
+   * flush before `process.exit` — critical on an ephemeral container,
+   * where scale-to-zero SIGTERMs the process and the last batch
    * of error logs/traces would otherwise be lost. Undefined when OTel is
    * off; the caller no-ops.
    */

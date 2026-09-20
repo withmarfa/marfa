@@ -19,7 +19,7 @@ const TEST_API_KEY_SALT = "test-salt";
 /**
  * Shared test fixtures for the SDK package.
  *
- * - `createKeysModeFixture()` — the simple bring-up. One unauthenticated
+ * - `createBootstrappedFixture()` — the simple bring-up. One unauthenticated
  *   `POST /keys`, which mints the operator key, then one more with it, which
  *   mints the working key the client bears. Use for any SDK surface that doesn't depend on
  *   `auth_user` resolution. Mirrors the inline pattern in
@@ -85,7 +85,7 @@ function baseConfig(overrides?: Partial<AppConfig>): AppConfig {
   };
 }
 
-export interface KeysModeFixture {
+export interface BootstrappedFixture {
   /** SDK client wired to call the in-process server via the working key. */
   client: MarfaClient;
   /** The working key (`marfa_k1_*`) the client bears. Holds every
@@ -139,11 +139,11 @@ export interface FixtureOptions {
   eventLog?: boolean;
 }
 
-export async function createKeysModeFixture(
+export async function createBootstrappedFixture(
   configOverrides?: Partial<AppConfig>,
   options?: FixtureOptions,
-): Promise<KeysModeFixture> {
-  const tmpDir = mkdtempSync(join(tmpdir(), "marfa-sdk-keys-"));
+): Promise<BootstrappedFixture> {
+  const tmpDir = mkdtempSync(join(tmpdir(), "marfa-sdk-fixture-"));
   const storage = await createSqliteStorage(join(tmpDir, "test.db"));
   // Before the app, so nothing this fixture serves can be written without
   // reaching the log.
@@ -157,7 +157,7 @@ export async function createKeysModeFixture(
   );
   const fetch = createTestFetch(app);
 
-  // **Two calls, because that is the whole of keys-mode setup.** The first
+  // **Two calls, because that is the whole of the bring-up.** The first
   // unauthenticated mint produces the operator key — which is not a working
   // key: running the instance sits outside the permission model, so the row
   // carries no permission of any kind — and the second, made with it, mints
@@ -197,7 +197,7 @@ export async function createKeysModeFixture(
   });
   if (workingRes.status !== 201) {
     throw new Error(
-      `keys-mode working key mint answered ${String(workingRes.status)}: ${await workingRes.text()}`,
+      `working key mint answered ${String(workingRes.status)}: ${await workingRes.text()}`,
     );
   }
   const key = ((await workingRes.json()) as { key: string }).key;
