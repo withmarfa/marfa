@@ -18,18 +18,21 @@ import { MarfaError, ErrorCode } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { requireOperatorKey } from "../middleware/auth.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
-import type { MarfaAuth } from "../auth/instance.js";
+import type { CreateEmailAccountResult, MarfaAuth } from "../auth/instance.js";
 import { log } from "../middleware/logger.js";
-import type { OwnerRecord, Storage } from "../storage/interface.js";
+import type {
+  OwnerRecord,
+  OwnerStore,
+  SettingsStore,
+  Storage,
+} from "../storage/interface.js";
 
-const OwnerSchema = z
-  .object({
-    id: z.string(),
-    email: z.string(),
-    name: z.string(),
-    created_at: z.string().describe("ISO 8601 instant"),
-  })
-  .openapi("Owner");
+const OwnerSchema = z.object({
+  id: z.string(),
+  email: z.string(),
+  name: z.string(),
+  created_at: z.string().describe("ISO 8601 instant"),
+});
 
 const CreateOwnerBodySchema = z.object({
   email: z.email().max(254),
@@ -154,8 +157,48 @@ function ownerExists(): MarfaError {
   );
 }
 
-/** The settings row that says an owner is being, or has been, created. */
+/** The settings row held while an owner is being created. */
 const OWNER_CLAIM = "owner";
+
+/**
+ * How long a claim is honored before it is taken over. The work under it is
+ * one password hash and two rows, so a claim this old belongs to a process
+ * that died holding it, and nothing else could ever give it back.
+ */
+const CLAIM_LEASE_MS = 60_000;
+
+/**
+ * Takes the claim that serializes creation across processes on one file.
+ *
+ * The existence check and the account write are two steps with a password
+ * hash between them, so two asks arriving together would both pass the
+ * check; the claim is one atomic INSERT, so exactly one of them creates.
+ * It is held for the check and the write only and given back on every
+ * outcome (`give`), never kept as a marker of the owner: the row is the
+ * record, and a marker outliving the row would close the door with nobody
+ * behind it.
+ */
+async function take(settings: SettingsStore, owner: OwnerStore): Promise<void> {
+  const now = Date.now();
+  if (await settings.claim(OWNER_CLAIM, String(now))) return;
+  const held = Number(await settings.get(OWNER_CLAIM));
+  const stale = !Number.isFinite(held) || now - held > CLAIM_LEASE_MS;
+  if (!stale || (await owner.find())) throw ownerExists();
+  await settings.release(OWNER_CLAIM);
+  if (!(await settings.claim(OWNER_CLAIM, String(now)))) throw ownerExists();
+}
+
+/** Gives the claim back. A failure here is logged rather than thrown,
+ *  because the lease repairs it and the request's own answer matters more. */
+async function give(settings: SettingsStore): Promise<void> {
+  try {
+    await settings.release(OWNER_CLAIM);
+  } catch (error) {
+    log("error", "the owner claim could not be released", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
 
 export function ownerRoutes(storage: Storage, auth: MarfaAuth) {
   const owner = storage.owner;
@@ -165,19 +208,6 @@ export function ownerRoutes(storage: Storage, auth: MarfaAuth) {
     );
   }
   const router = createOpenAPIRouter<AppEnv>();
-
-  // The claim is given back only when the failure left no account behind:
-  // a claim held with nobody behind it would close the door for good, and
-  // one released while an account exists would let a second in.
-  const releaseUnlessCreated = async () => {
-    try {
-      if (!(await owner.find())) await storage.settings.release(OWNER_CLAIM);
-    } catch (error) {
-      log("error", "the owner claim could not be released", {
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-  };
 
   router.openapi(getOwnerRoute, async (c) => {
     requireOperatorKey(c);
@@ -195,27 +225,21 @@ export function ownerRoutes(storage: Storage, auth: MarfaAuth) {
     const operator = requireOperatorKey(c);
     const body = c.req.valid("json");
     if (await owner.find()) throw ownerExists();
-    // The existence check and the account write are two steps with a
-    // password hash between them, so two asks arriving together, in one
-    // process or in two on the same file, would both pass the check. The
-    // claim is one atomic INSERT, so exactly one of them creates; the
-    // address's unique index catches the same address twice besides.
-    if (!(await storage.settings.claim(OWNER_CLAIM, "claimed"))) {
-      throw ownerExists();
-    }
-    let result;
+    await take(storage.settings, owner);
+    let result: CreateEmailAccountResult;
     try {
+      // Asked again under the claim: the account may have landed between
+      // the check above and the claim.
+      if (await owner.find()) throw ownerExists();
       result = await auth.createEmailAccount({
         email: body.email,
         password: body.password,
         name: body.name,
       });
-    } catch (error) {
-      await releaseUnlessCreated();
-      throw error;
+    } finally {
+      await give(storage.settings);
     }
     if (!result.ok) {
-      await releaseUnlessCreated();
       switch (result.reason) {
         case "password_too_short":
           throw refusedPassword(

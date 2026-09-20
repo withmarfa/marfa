@@ -3,7 +3,16 @@
  * creates the one account, and the account is real: it signs in at the
  * sign-in surface the door exists to put a person behind.
  */
+import { join } from "node:path";
+import { eq } from "drizzle-orm";
 import { afterEach, describe, expect, it } from "vitest";
+import { createApp } from "../app.js";
+import { OidcSigner } from "../auth/oidc-signing.js";
+import { ensureInstanceId } from "../storage/instance-id.js";
+import { FilesystemBlobBackend } from "../storage/blob-backend.js";
+import { createSqliteStorage } from "../storage/sqlite/index.js";
+import { auth_account, auth_user } from "../storage/sqlite/schema.js";
+import type { DrizzleDb } from "../storage/sqlite/connection.js";
 import {
   createTestAccount,
   createTestContext,
@@ -111,6 +120,20 @@ describe("GET /owner", () => {
     });
     expect(again.status).toBe(409);
     expect(((await again.json()) as Envelope).error.code).toBe("owner_exists");
+  });
+
+  it("answers the account created first when the harness has written two", async () => {
+    const ctx = await newContext();
+    const first = await createTestAccount(ctx, "first@example.com", PASSWORD);
+    // A second later, so the two do not share a creation second and the
+    // order is the stamp's rather than the id's.
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+    await createTestAccount(ctx, "second@example.com", PASSWORD);
+    const res = await request(ctx.app, "GET", "/owner", {
+      key: ctx.operatorKey,
+    });
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as Owner).id).toBe(first.authUserId);
   });
 });
 
@@ -299,5 +322,132 @@ describe("POST /owner", () => {
     expect(await read.json()).toEqual(owner);
     const rows = await ctx.storage.audit.list({ action: "owner.created" });
     expect(rows.data).toHaveLength(1);
+  });
+
+  it("creates exactly one owner across two processes on one file", async () => {
+    // A second server over the same database, which is what two processes
+    // are to SQLite; it holds the same keys, because the keys are rows.
+    const ctx = await newContext();
+    const storage = await createSqliteStorage(join(ctx.tmpDir, "test.db"));
+    try {
+      const other = createApp(
+        storage,
+        new FilesystemBlobBackend(join(ctx.tmpDir, "blobs")),
+        ctx.config,
+        await ensureInstanceId(storage.settings),
+        await OidcSigner.init(storage),
+      );
+      const [a, b] = await Promise.all([
+        create(ctx, { email: "first@example.com", password: PASSWORD }),
+        request(other, "POST", "/owner", {
+          key: ctx.operatorKey,
+          body: { email: "second@example.com", password: PASSWORD },
+        }),
+      ]);
+      expect([a.status, b.status].sort()).toEqual([201, 409]);
+      const rows = await ctx.storage.audit.list({ action: "owner.created" });
+      expect(rows.data).toHaveLength(1);
+    } finally {
+      await storage.close();
+    }
+  });
+
+  it("opens again once the account is gone, because the row is the record", async () => {
+    const ctx = await newContext();
+    const created = await create(ctx, {
+      email: "owner@example.com",
+      password: PASSWORD,
+    });
+    expect(created.status).toBe(201);
+    const { id } = (await created.json()) as Owner;
+    const db = ctx.storage.betterAuthDb as DrizzleDb;
+    await db.delete(auth_account).where(eq(auth_account.userId, id));
+    await db.delete(auth_user).where(eq(auth_user.id, id));
+
+    const none = await request(ctx.app, "GET", "/owner", {
+      key: ctx.operatorKey,
+    });
+    expect(none.status).toBe(404);
+    const again = await create(ctx, {
+      email: "owner@example.com",
+      password: PASSWORD,
+    });
+    expect(again.status).toBe(201);
+  });
+
+  it("gives the claim back when the write throws, so the next ask creates", async () => {
+    const ctx = await newContext();
+    const real = ctx.auth.createEmailAccount;
+    ctx.auth.createEmailAccount = () => {
+      ctx.auth.createEmailAccount = real;
+      return Promise.reject(new Error("the database went away"));
+    };
+    const failed = await create(ctx, {
+      email: "owner@example.com",
+      password: PASSWORD,
+    });
+    expect(failed.status).toBe(500);
+    const created = await create(ctx, {
+      email: "owner@example.com",
+      password: PASSWORD,
+    });
+    expect(created.status).toBe(201);
+  });
+
+  it("honors a live claim and takes over one a dead process left", async () => {
+    const ctx = await newContext();
+    expect(await ctx.storage.settings.claim("owner", String(Date.now()))).toBe(
+      true,
+    );
+    const held = await create(ctx, {
+      email: "owner@example.com",
+      password: PASSWORD,
+    });
+    expect(held.status).toBe(409);
+    expect(((await held.json()) as Envelope).error.code).toBe("owner_exists");
+    await ctx.storage.settings.release("owner");
+
+    expect(
+      await ctx.storage.settings.claim(
+        "owner",
+        String(Date.now() - 10 * 60_000),
+      ),
+    ).toBe(true);
+    const created = await create(ctx, {
+      email: "owner@example.com",
+      password: PASSWORD,
+    });
+    expect(created.status).toBe(201);
+    // And given back, like every claim this door takes.
+    expect(await ctx.storage.settings.get("owner")).toBeNull();
+  });
+
+  it("answers owner_exists when an account with the address lands around the door", async () => {
+    const ctx = await newContext();
+    const real = ctx.auth.createEmailAccount;
+    ctx.auth.createEmailAccount = () => {
+      ctx.auth.createEmailAccount = real;
+      return Promise.resolve({ ok: false, reason: "email_exists" });
+    };
+    const res = await create(ctx, {
+      email: "owner@example.com",
+      password: PASSWORD,
+    });
+    expect(res.status).toBe(409);
+    expect(((await res.json()) as Envelope).error.code).toBe("owner_exists");
+  });
+
+  it("fails the request when the audit row cannot be written", async () => {
+    const ctx = await newContext();
+    const real = ctx.storage.audit.logOrThrow.bind(ctx.storage.audit);
+    ctx.storage.audit.logOrThrow = () => {
+      ctx.storage.audit.logOrThrow = real;
+      return Promise.reject(new Error("the audit table is gone"));
+    };
+    const res = await create(ctx, {
+      email: "owner@example.com",
+      password: PASSWORD,
+    });
+    expect(res.status).toBe(500);
   });
 });

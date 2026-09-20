@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { MarfaClient } from "../../client/api.js";
+import type { ErrorResponse } from "../../client/types.js";
 import { bootFreshServer, type FreshServer } from "../../utils/fresh-server.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
 
@@ -9,10 +10,9 @@ import { expectMatchesSchema } from "../../utils/openapi.js";
  * sees, and a re-run against the run's server sees the last run. So this
  * file boots a server of its own and tells the story from the beginning.
  */
-let server: FreshServer;
+let server: FreshServer | undefined;
 let operator: MarfaClient;
 let working: MarfaClient;
-let anonymous: MarfaClient;
 
 const OWNER = { email: "owner@example.com", password: "correct horse battery" };
 
@@ -26,12 +26,20 @@ beforeAll(async () => {
     baseUrl: server.apiUrl,
     apiKey: server.workingKey,
   });
-  anonymous = new MarfaClient({ baseUrl: server.apiUrl, apiKey: "" });
 });
 
 afterAll(() => {
-  server.stop();
+  server?.stop();
 });
+
+/** A request carrying no credential at all, which the client cannot send. */
+async function bare(method: "GET" | "POST"): Promise<Response> {
+  return fetch(`${server!.apiUrl}/owner`, {
+    method,
+    headers: { "Content-Type": "application/json" },
+    body: method === "POST" ? JSON.stringify(OWNER) : undefined,
+  });
+}
 
 /**
  * The sign-in surface takes a browser's request, so it refuses one carrying
@@ -40,7 +48,7 @@ afterAll(() => {
  */
 async function signInOrigin(): Promise<string> {
   const response = await fetch(
-    `${server.apiUrl}/.well-known/oauth-authorization-server/auth`,
+    `${server!.apiUrl}/.well-known/oauth-authorization-server/auth`,
   );
   expect(response.status).toBe(200);
   const { issuer } = (await response.json()) as { issuer: string };
@@ -52,7 +60,7 @@ async function signIn(
   password: string,
   origin: string,
 ): Promise<Response> {
-  return fetch(`${server.apiUrl}/auth/sign-in/email`, {
+  return fetch(`${server!.apiUrl}/auth/sign-in/email`, {
     method: "POST",
     headers: { "Content-Type": "application/json", origin },
     body: JSON.stringify({ email, password }),
@@ -74,12 +82,16 @@ describe("the owner", () => {
   });
 
   it("is the operator key's to read and to create", async () => {
-    const bareRead = await anonymous.getOwner();
+    const bareRead = await bare("GET");
     expect(bareRead.status).toBe(401);
-    expect(bareRead.error?.error.code).toBe("unauthorized");
-    const bareCreate = await anonymous.createOwner(OWNER);
+    expect(((await bareRead.json()) as ErrorResponse).error.code).toBe(
+      "unauthorized",
+    );
+    const bareCreate = await bare("POST");
     expect(bareCreate.status).toBe(401);
-    expect(bareCreate.error?.error.code).toBe("unauthorized");
+    expect(((await bareCreate.json()) as ErrorResponse).error.code).toBe(
+      "unauthorized",
+    );
     const read = await working.getOwner();
     expect(read.status).toBe(403);
     expect(read.error?.error.code).toBe("forbidden");
@@ -134,6 +146,13 @@ describe("the owner", () => {
     expect(read.status).toBe(200);
     await expectMatchesSchema("GET", "/owner", 200, read.data);
     expect(read.data).toEqual(created.data);
+
+    // The creation is on the audit log, against the owner it made.
+    const audited = await working.listAudit({ action: "owner.created" });
+    expect(audited.status).toBe(200);
+    expect(
+      audited.data.data.map((row) => [row.resource_type, row.resource_id]),
+    ).toEqual([["owner", created.data.id]]);
 
     // The account is real: it passes the sign-in surface, and only with
     // its password.

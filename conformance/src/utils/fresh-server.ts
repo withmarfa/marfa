@@ -81,9 +81,10 @@ export async function bootFreshServer(label: string): Promise<FreshServer> {
 
   const up = run("up");
   if (up.status !== 0) {
-    // The script spawns the server detached before anything that can
-    // fail, so a failed boot may have left one running; `down` finds it
-    // through the pid file, which is why the directory goes only after.
+    // The script spawns the server detached before the health wait and
+    // the mint, either of which can fail, so a failed boot may have left
+    // one running; `down` finds it through the pid file, which is why the
+    // directory goes only after.
     run("down");
     rmSync(state, { recursive: true, force: true });
     throw new Error(

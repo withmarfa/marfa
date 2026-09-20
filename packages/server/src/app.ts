@@ -258,6 +258,7 @@ export function createApp(
     "bulk",
     "export",
     "oauth",
+    "owner",
     "extensions",
     "events",
     "webhooks",

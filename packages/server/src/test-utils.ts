@@ -61,6 +61,9 @@ export interface TestContext {
   app: TestApp;
   storage: Storage;
   blobBackend: BlobBackend;
+  /** What the app was built with, so a test can build a second app over
+   *  the same database. */
+  config: AppConfig;
   /**
    * The instance tier, and nothing else: no permissions, exactly what the
    * one unauthenticated mint hands back. It opens the instance routes and
@@ -504,7 +507,7 @@ async function buildTestContext(
   tmpDir: string,
   overrides?: Partial<AppConfig>,
 ): Promise<TestContext> {
-  const { app, storage, blobBackend, cleanup, auth } =
+  const { app, storage, blobBackend, config, cleanup, auth } =
     await buildUnbootstrappedApp(tmpDir, overrides);
 
   const suffix = Math.random().toString(36).slice(2, 14);
@@ -564,6 +567,7 @@ async function buildTestContext(
     app,
     storage,
     blobBackend,
+    config,
     operatorKey: rawKey,
     workingKey: workingRawKey,
     tmpDir,

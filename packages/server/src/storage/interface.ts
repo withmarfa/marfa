@@ -2033,19 +2033,19 @@ export interface SettingsStore {
   /** Upsert — overwrites any existing value for the key. */
   set(key: string, value: string): Promise<void>;
   /** Atomic insert-or-bail: returns true if this caller's INSERT created the
-   *  row, false if a row already existed. Used by the bootstrap path so that
-   *  exactly one of N concurrent `POST /keys` on a fresh DB wins the right
-   *  to mint the seed operator key. */
+   *  row, false if a row already existed. What lets exactly one of N
+   *  concurrent callers win a one-shot act: the bootstrap mint of the first
+   *  key, the instance id, the creation of the owner. */
   claim(key: string, value: string): Promise<boolean>;
   /** Give a claim back. Removes the row if it exists and is a no-op if it
    *  does not.
    *
-   *  Bootstrap is the reason this exists. The claim has to come first, or two
-   *  concurrent callers both mint; but everything after it can fail, and a
-   *  burned claim with no operator key behind it is an instance nobody can
-   *  reach — the middleware admits an unauthenticated mint only while the
-   *  sentinel is absent. Releasing on failure makes the attempt retryable
-   *  instead, which is the property that was missing. */
+   *  The claim has to come first, or two concurrent callers both act; but
+   *  everything after it can fail, and a burned claim with nothing behind
+   *  it is a door nobody can open again: the middleware admits an
+   *  unauthenticated mint only while the bootstrap sentinel is absent, and
+   *  the owner door creates only while its claim is free. Releasing on
+   *  failure makes the attempt retryable instead. */
   release(key: string): Promise<void>;
 }
 
@@ -2289,7 +2289,8 @@ export interface OwnerRecord {
  * Sign-up is disabled on every instance and `POST /owner` refuses once an
  * account exists, so the account created first is the owner and there is
  * no second. Read from `auth_user` rather than kept as a separate marker,
- * because a marker could name a row the sign-in surface no longer holds.
+ * because a marker could outlive the row and close the door with nobody
+ * behind it.
  */
 export interface OwnerStore {
   /** The owner, or `null` on an instance that has none yet. */

@@ -62,6 +62,7 @@ describe("the instance", () => {
         "keys",
         "metrics",
         "oauth",
+        "owner",
         "search",
         "type_crud",
         "types",
