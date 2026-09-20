@@ -438,20 +438,13 @@ export function blobRoutes(
 
     const range = resolveRange(c.req.header("Range"), record.size_bytes);
     if (range === null) {
-      // Returned rather than thrown, because the refusal carries a header
-      // the error handler does not know about: `Content-Range` naming the
-      // size is what lets the caller ask again within bounds.
-      c.header("X-Error-Code", "range_not_satisfiable");
+      // The size, so the caller can ask again within it. A header set
+      // before the throw rides the error response like `Retry-After` does.
       c.header("Content-Range", `bytes */${String(record.size_bytes)}`);
-      return c.json(
-        {
-          error: {
-            code: "range_not_satisfiable" as const,
-            message: "The range asked for lies outside the blob",
-            details: { size_bytes: record.size_bytes },
-          },
-        },
-        416,
+      throw new MarfaError(
+        ErrorCode.RANGE_NOT_SATISFIABLE,
+        "The range asked for lies outside the blob",
+        { size_bytes: record.size_bytes },
       );
     }
 

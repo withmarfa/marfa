@@ -124,6 +124,47 @@ describe("POST /blobs", () => {
     expect(accepted.status).toBe(201);
   });
 
+  it("takes its own bytes back when the registration is refused", async () => {
+    const data = new TextEncoder().encode("bytes nothing will name");
+    const registry = ctx.storage.blobs;
+    const original = registry.recordLocation.bind(registry);
+    registry.recordLocation = () =>
+      Promise.reject(new Error("the row could not be written"));
+    try {
+      const refused = await upload(data);
+      expect(refused.status).toBe(500);
+    } finally {
+      registry.recordLocation = original;
+    }
+    // The file this request wrote is gone: a file no row names would be
+    // unreachable and nothing would sweep it.
+    expect(await ctx.blobs.disk.has(hashOf(data))).toBeNull();
+    expect(await registry.get(hashOf(data))).toBeNull();
+    // The witness: the same bytes land once the registry answers.
+    const accepted = await upload(data);
+    expect(accepted.status).toBe(201);
+    expect(await ctx.blobs.disk.has(hashOf(data))).not.toBeNull();
+  });
+
+  it("leaves bytes another upload placed when its own registration is refused", async () => {
+    const data = new TextEncoder().encode("bytes an earlier upload placed");
+    expect((await upload(data)).status).toBe(201);
+    const storage = ctx.storage;
+    const original = storage.runInTransaction.bind(storage);
+    storage.runInTransaction = () =>
+      Promise.reject(new Error("the row could not be written"));
+    try {
+      const refused = await upload(data);
+      expect(refused.status).toBe(500);
+    } finally {
+      storage.runInTransaction = original;
+    }
+    // Not this request's bytes to take back: the first upload's copy stays.
+    expect(await ctx.blobs.disk.has(hashOf(data))).toEqual({
+      size_bytes: data.length,
+    });
+  });
+
   it("requires authentication", async () => {
     const res = await ctx.app.request("/blobs", {
       method: "POST",

@@ -11,6 +11,19 @@ import { expectMatchesSchema } from "../../utils/openapi.js";
 let client: MarfaClient;
 let ctx: TestContext;
 
+/** One of the `S3_*` values the run booted the object store with. A run
+ *  without them is a run booted without `pnpm garage:up`, which is a
+ *  failure here rather than a skip. */
+function objectStoreEnv(name: "S3_BUCKET"): string {
+  const value = process.env[name];
+  if (!value) {
+    throw new Error(
+      `${name} is required for the object-store fixtures: source the env file \`pnpm garage:up\` writes.`,
+    );
+  }
+  return value;
+}
+
 beforeAll(async () => {
   ({ ctx, client } = await createTestContext("compliance", "blob-stores"));
 });
@@ -41,10 +54,12 @@ describe("the stores an instance keeps bytes in", () => {
       expect(store.detached_at).toBeNull();
       expect(store.locator.length).toBeGreaterThan(0);
     }
+    // The locator is the bucket and the prefix the referee booted the store
+    // with, and nothing else: an exact match is what leaves no room for a
+    // credential in it. The run's own `S3_*` values name them.
     const s3 = stores.data.data.find((store) => store.kind === "s3");
-    expect(s3?.locator).toMatch(/^s3:\/\/[^/]+\/.+$/);
-    // Never a credential: the locator names the bucket and the prefix.
-    expect(s3?.locator).not.toMatch(/AKIA|GK[0-9a-f]{20,}/);
+    const prefix = process.env.S3_PREFIX ?? "blobs";
+    expect(s3?.locator).toBe(`s3://${objectStoreEnv("S3_BUCKET")}/${prefix}`);
   });
 
   it("refuses the listing to a working key", async () => {

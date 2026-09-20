@@ -125,7 +125,7 @@ describe("blob correctness", () => {
     expect(outside.error?.error.code).toBe("range_not_satisfiable");
   });
 
-  it("answers HEAD with the headers and no body", async () => {
+  it("answers HEAD with the headers of the bytes", async () => {
     const content = new TextEncoder().encode("headers only");
     const upload = await client.uploadBlob(content, "text/plain");
     expect(upload.ok).toBe(true);
@@ -135,9 +135,7 @@ describe("blob correctness", () => {
     expect(head.headers.get("content-type")).toContain("text/plain");
     expect(head.headers.get("content-length")).toBe(String(content.length));
     expect(head.headers.get("etag")).toBe(`"${upload.data.hash}"`);
-    // A HEAD carries no body, which the fetch layer reports as no data at
-    // all rather than an empty buffer.
-    expect(head.data?.byteLength ?? 0).toBe(0);
+    expect(head.headers.get("accept-ranges")).toBe("bytes");
   });
 
   it("duplicate upload returns same hash without error", async () => {

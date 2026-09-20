@@ -23,8 +23,8 @@ function signature(hash: string, expiresAt: number): Buffer {
 }
 
 /**
- * The link's URL. `origin` is the scheme and host the caller reached the
- * instance at; `expiresAt` is Unix seconds.
+ * The link's URL. `origin` is the scheme and host the instance is reached
+ * at; `expiresAt` is Unix seconds.
  */
 export function mintBlobLink(
   origin: string,
