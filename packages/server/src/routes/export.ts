@@ -1,5 +1,6 @@
 import { createGzip } from "node:zlib";
 import { Readable, PassThrough } from "node:stream";
+import { pipeline } from "node:stream/promises";
 import { createRoute, z } from "@hono/zod-openapi";
 import type { Context } from "hono";
 import { resolveEnforcement } from "@withmarfa/shared";
@@ -12,7 +13,8 @@ import type { Storage } from "../storage/interface.js";
 import { normalizeTimeBound } from "../storage/interface.js";
 import { readInstanceConfig } from "../storage/instance-config.js";
 import type { SourceFilterSettings } from "../storage/filter-sql.js";
-import type { BlobBackend } from "../storage/blob-backend.js";
+import type { BlobLayer } from "../storage/blob-layer.js";
+import type { BlobRead } from "../storage/blob-store.js";
 import { collectBlobHashes } from "../storage/blob-utils.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import { ALL_STATES, resolveStateFilter } from "./_schemas.js";
@@ -126,7 +128,7 @@ const exportRoute = createRoute({
 
 export function exportRoutes(
   storage: Storage,
-  blobBackend: BlobBackend,
+  blobs: BlobLayer,
   instanceId: string,
 ) {
   const router = createOpenAPIRouter<AppEnv>();
@@ -167,13 +169,7 @@ export function exportRoutes(
     ).source_filter;
 
     if (query.format === "archive") {
-      return handleArchiveExport(
-        c,
-        storage,
-        blobBackend,
-        sourceFilter,
-        instanceId,
-      );
+      return handleArchiveExport(c, storage, blobs, sourceFilter, instanceId);
     }
 
     // Pattern grammar, matching `GET /items` and `/search`: the parameter
@@ -325,10 +321,22 @@ interface ArchiveManifest {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type HonoContext = Context<any, any, any>;
 
+/** The bytes from the first attached store that holds them. */
+async function readFromAnyStore(
+  blobs: BlobLayer,
+  hash: string,
+): Promise<BlobRead | null> {
+  for (const store of blobs.stores) {
+    const read = await store.get(hash);
+    if (read) return read;
+  }
+  return null;
+}
+
 async function handleArchiveExport(
   c: HonoContext,
   storage: Storage,
-  blobBackend: BlobBackend,
+  blobs: BlobLayer,
   /** The instance's `source_filter` lever, resolved by the route handler. */
   sourceFilter: SourceFilterSettings | undefined,
   /** The instance writing the archive, for the manifest. */
@@ -499,10 +507,10 @@ async function handleArchiveExport(
     pack.entry({ name: "types.ndjson", size: typesBuf.length }, typesBuf);
 
     for (const hash of Object.keys(blobMeta)) {
-      const data = await blobBackend.get(hash);
-      if (data) {
-        pack.entry({ name: `blobs/${hash}`, size: data.length }, data);
-      }
+      const read = await readFromAnyStore(blobs, hash);
+      if (!read) continue;
+      const entry = pack.entry({ name: `blobs/${hash}`, size: read.length });
+      await pipeline(read.stream, entry);
     }
 
     pack.finalize();

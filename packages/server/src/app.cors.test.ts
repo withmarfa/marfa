@@ -2,7 +2,7 @@ import { describe, expect, it, afterEach } from "vitest";
 import { createApp } from "./app.js";
 import { ensureInstanceId } from "./storage/instance-id.js";
 import { createSqliteStorage } from "./storage/sqlite/index.js";
-import { FilesystemBlobBackend } from "./storage/blob-backend.js";
+import { createBlobLayer } from "./storage/blob-layer.js";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -26,7 +26,14 @@ interface Ctx {
 async function buildCtx(isProduction: boolean): Promise<Ctx> {
   const tmpDir = mkdtempSync(join(tmpdir(), "marfa-cors-"));
   const storage: Storage = await createSqliteStorage(join(tmpDir, "test.db"));
-  const blobBackend = new FilesystemBlobBackend(join(tmpDir, "blobs"));
+  const blobBackend = await createBlobLayer(storage, {
+    blobPath: join(tmpDir, "blobs"),
+    s3Bucket: "",
+    s3Region: "us-east-1",
+    s3Endpoint: "",
+    s3AccessKeyId: "",
+    s3SecretAccessKey: "",
+  });
   const instanceId = await ensureInstanceId(storage.settings);
   const app = createApp(
     storage,
@@ -36,8 +43,6 @@ async function buildCtx(isProduction: boolean): Promise<Ctx> {
       port: 0,
       sqlitePath: "",
       blobPath: join(tmpDir, "blobs"),
-      blobBackend: "fs",
-      maxBlobSize: 50 * 1024 * 1024,
       maxRequestBytes: 1_048_576,
       s3Bucket: "",
       s3Region: "us-east-1",
@@ -46,7 +51,6 @@ async function buildCtx(isProduction: boolean): Promise<Ctx> {
       s3SecretAccessKey: "",
       apiKeySalt: SALT,
       corsOrigins: [ALLOWED_ORIGIN],
-      cdnBaseUrl: "",
       rateLimitEnabled: false,
       enableHsts: false,
       auditRetentionDays: 90,

@@ -1,5 +1,5 @@
 import type { Storage } from "./interface.js";
-import type { BlobBackend } from "./blob-backend.js";
+import type { BlobLayer } from "./blob-layer.js";
 import { collectBlobHashes } from "./blob-utils.js";
 
 /**
@@ -27,7 +27,7 @@ export interface BlobSweepResult {
 
 export interface BlobSweepOptions {
   storage: Storage;
-  blobBackend: BlobBackend;
+  blobs: BlobLayer;
   /** Report without deleting. */
   dryRun: boolean;
   /** ISO 8601. Only consider hashes whose every row was registered
@@ -44,7 +44,7 @@ const SCAN_PAGE = 200;
 export async function sweepUnreferencedBlobs(
   options: BlobSweepOptions,
 ): Promise<BlobSweepResult> {
-  const { storage, blobBackend, dryRun, registeredBefore } = options;
+  const { storage, blobs, dryRun, registeredBefore } = options;
 
   const candidates =
     registeredBefore === undefined
@@ -100,7 +100,12 @@ export async function sweepUnreferencedBlobs(
 
   if (!dryRun) {
     for (const hash of orphaned) {
-      await blobBackend.delete(hash);
+      // Every attached store, whether or not the log names it: an
+      // unreferenced blob is leaving the instance, and a copy the log did not
+      // know about would otherwise outlive its row.
+      for (const store of blobs.stores) {
+        await store.delete(hash);
+      }
       await storage.blobs.remove(hash);
     }
   }

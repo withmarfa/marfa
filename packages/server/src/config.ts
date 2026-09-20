@@ -33,15 +33,12 @@ export interface AppConfig {
   isProduction?: boolean;
   port: number;
   sqlitePath: string;
+  /** The disk store: where every upload lands. Always present. */
   blobPath: string;
-  blobBackend: "fs" | "s3";
-  /** Maximum blob upload size in bytes. Uploads exceeding this are rejected
-   *  with HTTP 413 `blob_too_large`. Default: 50MB. */
-  maxBlobSize: number;
   /** Maximum request body size in bytes for the JSON write surface. Bodies
    *  exceeding this are rejected with HTTP 413 `request_too_large` by the
-   *  global `bodyLimit` middleware. The blob upload route is exempt — it
-   *  enforces its own (much larger) `maxBlobSize` cap.
+   *  global `bodyLimit` middleware. The blob upload route is exempt and has
+   *  no cap: its body streams to disk.
    *  Read from `MARFA_MAX_REQUEST_BYTES`; default 1MB. */
   maxRequestBytes: number;
   /** Maximum request body size in bytes for the bulk write endpoints
@@ -50,6 +47,8 @@ export interface AppConfig {
    *  from `MARFA_MAX_BULK_REQUEST_BYTES`; default 16MB. Optional — falls back
    *  to the 16MB default when unset. */
   maxBulkRequestBytes?: number;
+  /** The object store, attached when this is set: a second place the bytes
+   *  live, and the one that signs its own fetch links. */
   s3Bucket: string;
   s3Region: string;
   s3Endpoint: string;
@@ -60,6 +59,11 @@ export interface AppConfig {
    *  `AppConfig` literals don't have to supply it; `loadConfig` always
    *  populates it. */
   s3ForcePathStyle?: boolean;
+  /** Key prefix the object store keeps its objects under (`S3_PREFIX`,
+   *  default `blobs`), so one bucket can carry the database's replica
+   *  beside the bytes, or several instances' drills. Optional on the type
+   *  for the same reason as `s3ForcePathStyle`. */
+  s3Prefix?: string;
   apiKeySalt: string;
   corsOrigins: string[];
   /** Named consent-screen permission bundles (see `DEFAULT_PERMISSION_BUNDLES`).
@@ -67,7 +71,6 @@ export interface AppConfig {
    *  contexts that construct AppConfig literals compile; `loadConfig` always
    *  populates it, and readers fall back to `getPermissionBundles()`. */
   permissionBundles?: PermissionBundle[];
-  cdnBaseUrl: string;
   rateLimitEnabled: boolean;
   enableHsts: boolean;
   auditRetentionDays: number;
@@ -579,8 +582,6 @@ export function loadConfig(): AppConfig {
     port,
     sqlitePath: process.env.SQLITE_PATH ?? "./data/marfa.db",
     blobPath: process.env.BLOB_PATH ?? "./data/blobs",
-    blobBackend: process.env.BLOB_BACKEND === "s3" ? "s3" : "fs",
-    maxBlobSize: envNumber(process.env.MAX_BLOB_SIZE, 50 * 1024 * 1024),
     maxRequestBytes: envNumber(process.env.MARFA_MAX_REQUEST_BYTES, 1_048_576),
     maxBulkRequestBytes: envNumber(
       process.env.MARFA_MAX_BULK_REQUEST_BYTES,
@@ -592,10 +593,10 @@ export function loadConfig(): AppConfig {
     s3AccessKeyId: process.env.S3_ACCESS_KEY_ID ?? "",
     s3SecretAccessKey: process.env.S3_SECRET_ACCESS_KEY ?? "",
     s3ForcePathStyle: process.env.S3_FORCE_PATH_STYLE !== "false",
+    s3Prefix: process.env.S3_PREFIX?.trim() ? process.env.S3_PREFIX : "blobs",
     apiKeySalt,
     corsOrigins: corsRaw ? corsRaw.split(",").map((s) => s.trim()) : [],
     permissionBundles: getPermissionBundles(),
-    cdnBaseUrl: process.env.CDN_BASE_URL ?? "",
     rateLimitEnabled: process.env.RATE_LIMIT_ENABLED !== "false",
     enableHsts: process.env.ENABLE_HSTS === "true",
     auditRetentionDays: envNumber(process.env.AUDIT_RETENTION_DAYS, 90),

@@ -3,7 +3,7 @@ import { PERMISSIONS } from "@withmarfa/shared";
 import { createApp } from "../app.js";
 import { ensureInstanceId } from "../storage/instance-id.js";
 import { createSqliteStorage } from "../storage/sqlite/index.js";
-import { FilesystemBlobBackend } from "../storage/blob-backend.js";
+import { createBlobLayer } from "../storage/blob-layer.js";
 import { hashApiKey } from "./auth.js";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
@@ -33,7 +33,14 @@ async function buildCtx(): Promise<Ctx> {
   const tmpDir = mkdtempSync(join(tmpdir(), "marfa-ratelimit-"));
   const storage = await createSqliteStorage(join(tmpDir, "test.db"));
   const instanceId = await ensureInstanceId(storage.settings);
-  const blobBackend = new FilesystemBlobBackend(join(tmpDir, "blobs"));
+  const blobBackend = await createBlobLayer(storage, {
+    blobPath: join(tmpDir, "blobs"),
+    s3Bucket: "",
+    s3Region: "us-east-1",
+    s3Endpoint: "",
+    s3AccessKeyId: "",
+    s3SecretAccessKey: "",
+  });
   const app = createApp(
     storage,
     blobBackend,
@@ -41,8 +48,6 @@ async function buildCtx(): Promise<Ctx> {
       port: 0,
       sqlitePath: "",
       blobPath: join(tmpDir, "blobs"),
-      blobBackend: "fs",
-      maxBlobSize: 50 * 1024 * 1024,
       maxRequestBytes: 1_048_576,
       s3Bucket: "",
       s3Region: "us-east-1",
@@ -51,7 +56,6 @@ async function buildCtx(): Promise<Ctx> {
       s3SecretAccessKey: "",
       apiKeySalt: SALT,
       corsOrigins: [],
-      cdnBaseUrl: "",
       rateLimitEnabled: true,
       enableHsts: false,
       auditRetentionDays: 90,
@@ -247,7 +251,14 @@ async function buildAggCtx(): Promise<Ctx> {
   const tmpDir = mkdtempSync(join(tmpdir(), "marfa-ratelimit-agg-"));
   const storage = await createSqliteStorage(join(tmpDir, "test.db"));
   const instanceId = await ensureInstanceId(storage.settings);
-  const blobBackend = new FilesystemBlobBackend(join(tmpDir, "blobs"));
+  const blobBackend = await createBlobLayer(storage, {
+    blobPath: join(tmpDir, "blobs"),
+    s3Bucket: "",
+    s3Region: "us-east-1",
+    s3Endpoint: "",
+    s3AccessKeyId: "",
+    s3SecretAccessKey: "",
+  });
   const app = createApp(
     storage,
     blobBackend,
@@ -255,8 +266,6 @@ async function buildAggCtx(): Promise<Ctx> {
       port: 0,
       sqlitePath: "",
       blobPath: join(tmpDir, "blobs"),
-      blobBackend: "fs",
-      maxBlobSize: 50 * 1024 * 1024,
       maxRequestBytes: 1_048_576,
       s3Bucket: "",
       s3Region: "us-east-1",
@@ -265,7 +274,6 @@ async function buildAggCtx(): Promise<Ctx> {
       s3SecretAccessKey: "",
       apiKeySalt: SALT,
       corsOrigins: [],
-      cdnBaseUrl: "",
       rateLimitEnabled: true,
       enableHsts: false,
       auditRetentionDays: 90,

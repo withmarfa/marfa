@@ -55,11 +55,15 @@ export function chooseCredentials(response: MintedKey): TargetCredentials {
 export function renderEnvFile(
   apiUrl: string,
   credentials: TargetCredentials,
+  /** The disk store the booted server uploads to. A fixture that corrupts
+   *  a copy on purpose reaches the bytes through it. */
+  blobPath?: string,
 ): string {
   return [
     `MARFA_API_URL=${apiUrl}`,
     `MARFA_API_KEY=${credentials.apiKey}`,
     `MARFA_OPERATOR_KEY=${credentials.operatorKey}`,
+    ...(blobPath === undefined ? [] : [`MARFA_BLOB_PATH=${blobPath}`]),
     "",
   ].join("\n");
 }

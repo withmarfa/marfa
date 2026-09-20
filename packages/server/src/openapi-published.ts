@@ -7,8 +7,11 @@
  * path rather than two copies of the assembly.
  */
 
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { createSqliteStorage } from "./storage/sqlite/index.js";
-import { FilesystemBlobBackend } from "./storage/blob-backend.js";
+import { createBlobLayer } from "./storage/blob-layer.js";
 import { createApp } from "./app.js";
 import {
   finalizeOpenAPISpec,
@@ -16,15 +19,11 @@ import {
 } from "./openapi-finalize.js";
 import type { AppConfig } from "./config.js";
 
-const BLOB_PATH = "/tmp/marfa-openapi-blobs";
-
-function specGenerationConfig(): AppConfig {
+function specGenerationConfig(blobPath: string): AppConfig {
   return {
     port: 8600,
     sqlitePath: ":memory:",
-    blobPath: BLOB_PATH,
-    blobBackend: "fs",
-    maxBlobSize: 50 * 1024 * 1024,
+    blobPath,
     maxRequestBytes: 1_048_576,
     s3Bucket: "",
     s3Region: "us-east-1",
@@ -34,7 +33,6 @@ function specGenerationConfig(): AppConfig {
     s3ForcePathStyle: true,
     apiKeySalt: "openapi-generation-salt-not-for-production",
     corsOrigins: [],
-    cdnBaseUrl: "",
     rateLimitEnabled: false,
     enableHsts: false,
     auditRetentionDays: 90,
@@ -70,11 +68,15 @@ export async function buildPublishedOpenAPISpec(): Promise<
   Record<string, unknown>
 > {
   const storage = await createSqliteStorage(":memory:");
+  // A disk store has to live somewhere to be attached; a scratch directory
+  // that goes with the run keeps the generator's marker out of the tree.
+  const blobPath = await mkdtemp(join(tmpdir(), "marfa-openapi-"));
   try {
+    const config = specGenerationConfig(blobPath);
     const app = createApp(
       storage,
-      new FilesystemBlobBackend(BLOB_PATH),
-      specGenerationConfig(),
+      await createBlobLayer(storage, config),
+      config,
       // A literal, not a mint. The document describes the shape of a
       // response, not this run's value, and an id in it would change the
       // generated file on every regeneration — which is exactly what the
@@ -89,5 +91,6 @@ export async function buildPublishedOpenAPISpec(): Promise<
     ) as unknown as Record<string, unknown>;
   } finally {
     await storage.close();
+    await rm(blobPath, { recursive: true, force: true });
   }
 }

@@ -31,7 +31,7 @@ import type { ItemState, Tier } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { requireOperatorKey } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
-import type { BlobBackend } from "../storage/blob-backend.js";
+import type { BlobLayer } from "../storage/blob-layer.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import { constantTimeEqual } from "../utils/crypto.js";
 import { registerArchiveTypes } from "./admin-archive-types.js";
@@ -199,7 +199,7 @@ interface BlobRestore {
  */
 async function restoreArchiveBlobs(
   storage: Storage,
-  blobBackend: BlobBackend,
+  blobs: BlobLayer,
   pending: readonly PendingBlob[],
 ): Promise<BlobRestore> {
   const wroteBytes: string[] = [];
@@ -210,8 +210,11 @@ async function restoreArchiveBlobs(
   // transaction and this request takes back what it wrote on refusal.
   for (const blob of pending) {
     await withBlobUploadLock(blob.hash, async () => {
-      if (!(await blobBackend.exists(blob.hash))) {
-        await blobBackend.put(blob.hash, blob.data, blob.mimeType);
+      if ((await blobs.disk.has(blob.hash)) === null) {
+        await blobs.disk.put(blob.hash, {
+          stream: Readable.from(blob.data),
+          size_bytes: blob.data.length,
+        });
         wroteBytes.push(blob.hash);
       }
     });
@@ -222,7 +225,7 @@ async function restoreArchiveBlobs(
       await withBlobUploadLock(hash, async () => {
         try {
           if ((await storage.blobs.get(hash)) !== null) return;
-          await blobBackend.delete(hash);
+          await blobs.disk.delete(hash);
         } catch (err) {
           log("error", "blob.orphaned_after_refused_restore", {
             hash,
@@ -249,8 +252,8 @@ async function restoreArchiveBlobs(
           blob.hash,
           blob.mimeType,
           blob.data.length,
-          blob.hash,
         );
+        await storage.blobs.recordLocation(blob.hash, blobs.disk.id);
         wroteRows.push(blob.hash);
       }
     });
@@ -283,7 +286,7 @@ async function restoreArchiveBlobs(
   };
 }
 
-export function adminArchiveRoutes(storage: Storage, blobBackend: BlobBackend) {
+export function adminArchiveRoutes(storage: Storage, blobs: BlobLayer) {
   const router = createOpenAPIRouter<AppEnv>();
 
   router.openapi(restoreArchiveRoute, async (c) => {
@@ -468,14 +471,15 @@ export function adminArchiveRoutes(storage: Storage, blobBackend: BlobBackend) {
     // holding types the database no longer has. See registerArchiveTypes.
     const typeResult = await registerArchiveTypes(storage, typeEntries);
 
-    // Blobs land only once every refusal above has passed. They used to be
-    // written as the tar was read, which put bytes AND `blobs` rows into the
-    // store ahead of the count caps and the type-conflict refusal — so an
-    // archive this route went on to reject had already mutated the blob store
-    // and the quota those rows count toward. They are still outside the transaction, because a
-    // rollback cannot reach a filesystem or an object store; what changes is
-    // that this request now takes back exactly what it wrote.
-    const blobs = await restoreArchiveBlobs(storage, blobBackend, pendingBlobs);
+    // Blobs land only once every refusal above has passed, so an archive
+    // this route goes on to reject has not touched the store. They are still
+    // outside the transaction, because a rollback cannot reach a filesystem
+    // or an object store, and this request takes back exactly what it wrote.
+    const restoredBlobs = await restoreArchiveBlobs(
+      storage,
+      blobs,
+      pendingBlobs,
+    );
 
     // Filled inside the transaction, announced after it commits.
     const restoredItems: { item: Item; metadata: Metadata }[] = [];
@@ -665,7 +669,7 @@ export function adminArchiveRoutes(storage: Storage, blobBackend: BlobBackend) {
       // did. Nothing sweeps a blob whose restore was refused, so the undo is
       // the only thing that keeps a failed restore from leaving the blob
       // store permanently larger.
-      await blobs.undo();
+      await restoredBlobs.undo();
       throw err;
     }
 

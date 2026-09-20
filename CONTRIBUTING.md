@@ -36,7 +36,7 @@ This starts the server on `http://localhost:8600` with a local SQLite database.
 We use [Conventional Commits](https://www.conventionalcommits.org/) with package scope:
 
 ```
-feat(server): add blob reconciliation endpoint
+feat(server): serve a blob by a signed link
 fix(sdk): handle timeout on large exports
 chore(shared): bump zod dependency
 ```

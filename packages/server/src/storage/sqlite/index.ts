@@ -7,7 +7,7 @@ import { SqliteVersionStore } from "./version-store.js";
 import { SqliteTypeStore } from "./type-store.js";
 import { SqliteSearchStore } from "./search-store.js";
 import { SqliteKeyStore } from "./key-store.js";
-import { SqliteBlobStore } from "./blob-store.js";
+import { SqliteBlobRegistry } from "./blob-registry.js";
 import { SqliteOauthProviderStore } from "./oauth-provider-store.js";
 import { SqliteWebhookStore } from "./webhook-store.js";
 import { SqliteWebhookDeliveryStore } from "./webhook-delivery-store.js";
@@ -56,7 +56,7 @@ export async function createSqliteStorage(sqlitePath: string): Promise<
   const metadataStore = new SqliteMetadataStore(db, searchStore);
   const typeStore = new SqliteTypeStore(db);
   const keyStore = new SqliteKeyStore(db);
-  const blobStore = new SqliteBlobStore(db);
+  const blobRegistry = new SqliteBlobRegistry(db);
   const webhookStore = new SqliteWebhookStore(db);
   const deliveryStore = new SqliteWebhookDeliveryStore(db);
   const auditStore = new SqliteAuditStore(db);
@@ -131,7 +131,7 @@ export async function createSqliteStorage(sqlitePath: string): Promise<
     types: typeStore,
     search: searchStore,
     keys: keyStore,
-    blobs: blobStore,
+    blobs: blobRegistry,
     edges: edgeStore,
     edgeTypes: edgeTypeStore,
     enrichment: enrichmentStore,

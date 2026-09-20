@@ -41,15 +41,13 @@
  *
  * Wrapped, because they are the API surface a client calls: the SSE stream
  * (`routes/events.ts`), both export shapes (`routes/export.ts`), the blob
- * download (`routes/blobs.ts`), and a replayed answer served from the
- * idempotency store (`middleware/idempotency.ts`). The last is the one a
- * reader is most likely to miss, because it is served from the middleware
- * rather than from a route: a replay is still an answer to an API request,
- * and a caller correlating it with a log line needs the same id as on any
- * other.
- *
- * A `HEAD /blobs/:hash` is answered by the `GET` route, so it carries these
- * headers through the merge above without a wrapper of its own.
+ * bytes on both of their doors and on `HEAD` (`routes/blobs.ts`, one
+ * function serving the bearer door and the link door), and a replayed answer
+ * served from the idempotency store (`middleware/idempotency.ts`). The last
+ * is the one a reader is most likely to miss, because it is served from the
+ * middleware rather than from a route: a replay is still an answer to an API
+ * request, and a caller correlating it with a log line needs the same id as
+ * on any other.
  *
  * Deliberately not wrapped: the browser and protocol surfaces. The auth HTML
  * pages and their redirects (`routes/auth-pages.ts`, `routes/auth-consent.ts`),

@@ -91,8 +91,23 @@ const RENAMED_COLUMNS: readonly (readonly [string, string, string])[] = [
   ["audit_log", "created_at", "resource_type"],
   ["api_keys", "permissions", "is_operator"],
   ["types", "owner_connector", "origin"],
-  ["blobs", "size_bytes", "storage_path"],
+  ["blobs", "size_bytes", "mime_type"],
   ["outbound_webhook_deliveries", "event_type", "webhook_secret"],
+];
+
+/**
+ * The opposite shape of the list above, and it exists for the same reason.
+ *
+ * A column this build no longer declares passes `CREATE TABLE IF NOT EXISTS`
+ * exactly as a missing one does, and where the retired column was `NOT NULL`
+ * the boot then succeeds and the first insert fails with a constraint error
+ * naming a column no source file mentions. `blobs.storage_path` is that
+ * column: every row it ever held was the hash, and the store the bytes live
+ * in is the location log's to say now. Same triple as above: the table, the
+ * column that must be absent, and a witness that says the table is ours.
+ */
+const RETIRED_COLUMNS: readonly (readonly [string, string, string])[] = [
+  ["blobs", "storage_path", "mime_type"],
 ];
 
 export type DrizzleDb = ReturnType<typeof drizzle<typeof schema>>;
@@ -193,6 +208,23 @@ export async function createConnection(sqlitePath: string): Promise<{
     client.close();
     throw new Error(
       `The ${table} table in ${sqlitePath} has no ${column} column, so it predates this build's schema. ` +
+        REFUSED_DATABASE_REMEDY,
+    );
+  }
+
+  for (const [table, column, witness] of RETIRED_COLUMNS) {
+    const info = await client.execute(`PRAGMA table_info(${table})`);
+    if (info.rows.length === 0) continue;
+    const names = new Set(
+      info.rows
+        .map((row) => row.name)
+        .filter((name): name is string => typeof name === "string"),
+    );
+    if (!names.has(witness)) continue;
+    if (!names.has(column)) continue;
+    client.close();
+    throw new Error(
+      `The ${table} table in ${sqlitePath} still has a ${column} column, which this build does not write. ` +
         REFUSED_DATABASE_REMEDY,
     );
   }

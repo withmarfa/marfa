@@ -270,10 +270,14 @@ async function up(args: Args): Promise<void> {
     const previous = parseEnvFile(readFileSync(p.env, "utf8"));
     writeFileSync(
       p.env,
-      renderEnvFile(url, {
-        apiKey: previous.MARFA_API_KEY ?? "",
-        operatorKey: previous.MARFA_OPERATOR_KEY ?? "",
-      }),
+      renderEnvFile(
+        url,
+        {
+          apiKey: previous.MARFA_API_KEY ?? "",
+          operatorKey: previous.MARFA_OPERATOR_KEY ?? "",
+        },
+        p.blobs,
+      ),
     );
     console.log(`[marfa-server] already bootstrapped; env file at ${p.env}`);
     return;
@@ -281,7 +285,7 @@ async function up(args: Args): Promise<void> {
 
   const response = await mint(url, secret);
   const credentials = chooseCredentials(response);
-  writeFileSync(p.env, renderEnvFile(url, credentials));
+  writeFileSync(p.env, renderEnvFile(url, credentials, p.blobs));
   console.log(`[marfa-server] minted the first key; env file at ${p.env}`);
 }
 

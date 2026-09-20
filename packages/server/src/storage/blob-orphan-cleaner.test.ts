@@ -54,7 +54,7 @@ describe("BlobOrphanCleaner.runOnce", () => {
     const now = new Date();
     const insideWindow = new BlobOrphanCleaner(
       ctx.storage,
-      ctx.blobBackend,
+      ctx.blobs,
       GRACE_MS,
       INTERVAL_MS,
       () => now,
@@ -64,7 +64,7 @@ describe("BlobOrphanCleaner.runOnce", () => {
 
     const pastWindow = new BlobOrphanCleaner(
       ctx.storage,
-      ctx.blobBackend,
+      ctx.blobs,
       GRACE_MS,
       INTERVAL_MS,
       () => new Date(now.getTime() + GRACE_MS * 2),
@@ -73,10 +73,10 @@ describe("BlobOrphanCleaner.runOnce", () => {
 
     // The bytes and the charge both go.
     expect(await ctx.storage.blobs.get(orphan)).toBeNull();
-    expect(await ctx.blobBackend.exists(orphan)).toBe(false);
+    expect(await ctx.blobs.disk.has(orphan)).toBeNull();
     // Age is not what condemns a blob; being unreferenced is.
     expect(await ctx.storage.blobs.get(referenced)).not.toBeNull();
-    expect(await ctx.blobBackend.exists(referenced)).toBe(true);
+    expect(await ctx.blobs.disk.has(referenced)).not.toBeNull();
     // And the sweep is idempotent.
     expect(await pastWindow.runOnce()).toBe(0);
   });
@@ -87,7 +87,7 @@ describe("BlobOrphanCleaner.runOnce", () => {
 
     const cleaner = new BlobOrphanCleaner(
       ctx.storage,
-      ctx.blobBackend,
+      ctx.blobs,
       0,
       INTERVAL_MS,
       () => new Date(Date.now() + GRACE_MS * 24),

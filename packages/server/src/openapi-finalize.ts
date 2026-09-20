@@ -8,7 +8,7 @@
  *
  *   1. Sets an ordered, described top-level `tags` list (resources first).
  *   2. Strips platform-internal operations (archive restore, server
- *      metrics, blob maintenance). They still
+ *      metrics, the blob link target). They still
  *      serve — they are simply not part of the public reference.
  *   3. Injects the two consumer routes defined as plain Hono handlers
  *      (the SSE stream and OAuth dynamic client registration), which the
@@ -59,7 +59,7 @@ interface OpenAPIDoc {
  */
 export const OPENAPI_DOCUMENT_INFO = {
   title: "Marfa API",
-  version: "5.9.0",
+  version: "5.10.0",
   description: "Typed data layer for structured personal data",
 } as const;
 
@@ -143,9 +143,9 @@ const INTERNAL_OPERATION_IDS = new Set<string>([
   "adminRestoreArchive",
   // metrics.ts — server metrics
   "getServerMetrics",
-  // blobs.ts — operator maintenance
-  "cleanupBlobs",
-  "reconcileBlobs",
+  // blobs.ts — the target of an instance-served link, which
+  // `GET /blobs/{hash}/url` hands out; nothing calls it by name
+  "fetchBlob",
 ]);
 
 /**
@@ -324,9 +324,12 @@ const IDEMPOTENT_OPERATIONS = new Set(
  * None of these can be reflected. Every one is set by middleware or by the
  * error handler rather than declared on a `createRoute` response, so
  * without this a client could learn that any of them existed only by
- * reading the server. They are the whole set: `Cache-Control` and `Pragma`
- * in `routes/no-store.ts` sit on the plain-Hono auth HTML pages, which are
- * not part of the reflected API surface and are deliberately left out.
+ * reading the server. They are the set the chain sets on every operation;
+ * a header one door sets itself (`Accept-Ranges`, `ETag`, `Content-Range`
+ * on the blob doors) is declared inline on that door's responses. The
+ * `Cache-Control` and `Pragma` in `routes/no-store.ts` sit on the plain-Hono
+ * auth HTML pages, which are not part of the reflected API surface and are
+ * deliberately left out.
  *
  * Held in `components.headers` and referenced from each response, so the
  * meaning is written once rather than restated on every operation.

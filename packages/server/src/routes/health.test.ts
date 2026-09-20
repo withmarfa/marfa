@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { healthRoutes, PROBE_TIMEOUT_MS } from "./health.js";
 import { setStoredValueScan } from "../storage/stored-value-scan.js";
 import type { Storage } from "../storage/interface.js";
-import type { BlobBackend } from "../storage/blob-backend.js";
+import type { BlobLayer } from "../storage/blob-layer.js";
 
 /**
  * What "answered rather than hung" is allowed to cost.
@@ -41,8 +41,10 @@ function buildStorage(count: () => Promise<number>): Storage {
   return { keys: { count } } as unknown as Storage;
 }
 
-function buildBlobs(exists: () => Promise<boolean>): BlobBackend {
-  return { exists } as unknown as BlobBackend;
+function buildBlobs(
+  has: () => Promise<{ size_bytes: number } | null>,
+): BlobLayer {
+  return { disk: { has } } as unknown as BlobLayer;
 }
 
 interface HealthBody {
@@ -62,7 +64,7 @@ describe("GET /health", () => {
   it("reports ok when both probes answer", async () => {
     const app = healthRoutes(
       buildStorage(() => Promise.resolve(3)),
-      buildBlobs(() => Promise.resolve(false)),
+      buildBlobs(() => Promise.resolve(null)),
     );
 
     const res = await app.request("/");
@@ -77,7 +79,7 @@ describe("GET /health", () => {
   it("answers degraded instead of hanging when the database probe never returns", async () => {
     const app = healthRoutes(
       buildStorage(() => never),
-      buildBlobs(() => Promise.resolve(false)),
+      buildBlobs(() => Promise.resolve(null)),
     );
 
     const started = Date.now();
@@ -115,7 +117,7 @@ describe("GET /health", () => {
   it("separates a refusal from a timeout", async () => {
     const app = healthRoutes(
       buildStorage(() => Promise.reject(new Error("connection refused"))),
-      buildBlobs(() => Promise.resolve(false)),
+      buildBlobs(() => Promise.resolve(null)),
     );
 
     const res = await app.request("/");
@@ -153,7 +155,7 @@ describe("GET /health placement", () => {
   const build = () =>
     healthRoutes(
       buildStorage(() => Promise.resolve(1)),
-      buildBlobs(() => Promise.resolve(false)),
+      buildBlobs(() => Promise.resolve(null)),
     );
 
   it("reports what the deployment states about itself", async () => {
@@ -217,7 +219,7 @@ describe("GET /health unrecognized stored values", () => {
   function build(): ReturnType<typeof healthRoutes> {
     return healthRoutes(
       buildStorage(() => Promise.resolve(3)),
-      buildBlobs(() => Promise.resolve(false)),
+      buildBlobs(() => Promise.resolve(null)),
     );
   }
 

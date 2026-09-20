@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { DEFAULT_MAX_STRING_LENGTH } from "@withmarfa/shared";
 import { createHash } from "node:crypto";
+import { Readable } from "node:stream";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { createTestContext, request } from "../test-utils.js";
@@ -47,7 +48,7 @@ function sweeper(
 ): TextEnrichmentSweeper {
   return new TextEnrichmentSweeper({
     storage: ctx.storage,
-    blobs: ctx.blobBackend,
+    blobs: ctx.blobs,
     ocr: overrides.ocr ?? null,
     intervalMs: 30_000,
     batchSize: overrides.batchSize ?? 8,
@@ -61,8 +62,12 @@ function sweeper(
 /** Puts bytes in the backend and registers them, the way an upload would. */
 async function seedBlob(bytes: Buffer, mimeType: string): Promise<string> {
   const ref = `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
-  await ctx.blobBackend.put(ref, bytes, mimeType);
-  await ctx.storage.blobs.register(ref, mimeType, bytes.length, ref);
+  await ctx.blobs.disk.put(ref, {
+    stream: Readable.from(bytes),
+    size_bytes: bytes.length,
+  });
+  await ctx.storage.blobs.register(ref, mimeType, bytes.length);
+  await ctx.storage.blobs.recordLocation(ref, ctx.blobs.disk.id);
   return ref;
 }
 
@@ -397,7 +402,7 @@ describe("skips", () => {
     // recorded reason is the type, not the absent read it never made.
     const ref = await seedBlob(Buffer.from("not readable"), "video/mp4");
     const id = await createFileItem(ref, "video/mp4");
-    await ctx.blobBackend.delete(ref);
+    await ctx.blobs.disk.delete(ref);
     const s = sweeper();
 
     expect(await s.runOnce()).toEqual({ extracted: 0, skipped: 1, failed: 0 });
@@ -798,7 +803,7 @@ describe("failures", () => {
     const bytes = Buffer.from("late-arriving bytes quokkalate");
     const ref = await seedBlob(bytes, "text/plain");
     const id = await createFileItem(ref, "text/plain");
-    await ctx.blobBackend.delete(ref);
+    await ctx.blobs.disk.delete(ref);
     const s = sweeper();
 
     expect(await s.runOnce()).toEqual({ extracted: 0, skipped: 0, failed: 1 });
@@ -806,7 +811,10 @@ describe("failures", () => {
     expect(row?.status).toBe("failed");
     expect(row?.error).toContain("bytes missing");
 
-    await ctx.blobBackend.put(ref, bytes, "text/plain");
+    await ctx.blobs.disk.put(ref, {
+      stream: Readable.from(bytes),
+      size_bytes: bytes.length,
+    });
     expect(await s.runOnce()).toEqual({ extracted: 1, skipped: 0, failed: 0 });
     expect(String((await readItem(id)).extracted_text)).toContain("quokkalate");
   });

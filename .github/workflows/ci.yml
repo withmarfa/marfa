@@ -150,6 +150,17 @@ jobs:
         working-directory: conformance
         run: pnpm test:generators
 
+      # The object store the server attaches beside its disk, so the
+      # object-store half of the blob chapters is asserted rather than
+      # skipped. Garage is a Homebrew formula the runner host keeps once
+      # installed; `garage:up` writes the `S3_*` values to `GITHUB_ENV`, and
+      # `marfa:up` forwards its environment to the server it boots.
+      - name: Put an object store beside the server
+        working-directory: conformance
+        run: |
+          command -v garage || brew install garage
+          pnpm garage:up --state "$RUNNER_TEMP/garage"
+
       - name: Boot the server from this checkout
         working-directory: conformance
         run: |
@@ -167,6 +178,11 @@ jobs:
         if: always()
         working-directory: conformance
         run: pnpm marfa:down --state "$RUNNER_TEMP/marfa"
+
+      - name: Stop the object store
+        if: always()
+        working-directory: conformance
+        run: pnpm garage:down --state "$RUNNER_TEMP/garage"
 
       - name: Keep the server log
         if: failure()

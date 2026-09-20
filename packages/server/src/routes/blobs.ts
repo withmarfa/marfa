@@ -1,15 +1,30 @@
-import { createHash } from "node:crypto";
+import { createWriteStream } from "node:fs";
+import { rm } from "node:fs/promises";
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
 import { createRoute, z } from "@hono/zod-openapi";
 import { MarfaError, ErrorCode, isValidBlobHash } from "@withmarfa/shared";
+import type { Context } from "hono";
 import type { AppEnv } from "../middleware/auth.js";
 import { withPreparedHeaders } from "../prepared-headers.js";
 import { requireAuth, requireOperatorKey } from "../middleware/auth.js";
 import { log } from "../middleware/logger.js";
 import type { Storage } from "../storage/interface.js";
-import type { BlobBackend } from "../storage/blob-backend.js";
-import { sweepUnreferencedBlobs } from "../storage/blob-orphans.js";
+import type { BlobLayer } from "../storage/blob-layer.js";
+import {
+  HashingTransform,
+  resolveRange,
+  type BlobRead,
+  type BlobStore,
+} from "../storage/blob-store.js";
+import {
+  MAX_BLOB_LINK_TTL_SECONDS,
+  mintBlobLink,
+  verifyBlobLink,
+} from "../storage/blob-link.js";
 import { withBlobUploadLock } from "../storage/blob-upload-lock.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
+import { refuseUnknownQueryParams } from "./_unknown-query-keys.js";
 
 // ---------------------------------------------------------------------------
 // Schemas
@@ -26,25 +41,86 @@ const BlobUrlResponseSchema = z.object({
   expires_in: z.number(),
 });
 
-const BlobCleanupResponseSchema = z.object({
-  total_blobs: z.number(),
-  referenced: z.number(),
-  orphaned: z.number(),
-  removed: z.number(),
-  dry_run: z.boolean(),
+const BlobStoreSchema = z.object({
+  id: z.string(),
+  kind: z.enum(["disk", "s3"]),
+  locator: z.string(),
+  policy: z.string(),
+  attached_at: z.string(),
+  detached_at: z.string().nullable(),
 });
 
-const BlobReconcileResponseSchema = z.object({
-  s3_total: z.number(),
-  db_total: z.number(),
-  healthy: z.number(),
-  orphaned_s3: z.number(),
-  missing_s3: z.number(),
-  orphaned_s3_sample: z.array(z.string()),
-  missing_s3_sample: z.array(z.string()),
-  deleted: z.number(),
-  dry_run: z.boolean(),
+const BlobLocationSchema = z.object({
+  store_id: z.string(),
+  kind: z.enum(["disk", "s3"]),
+  policy: z.string(),
+  detached: z.boolean(),
+  recorded_at: z.string(),
+  verified_at: z.string().nullable(),
 });
+
+const HashParam = z.object({
+  hash: z.string().describe("Content-addressed `sha256:<hex>` blob hash."),
+});
+
+/** The headers a served blob carries, declared once for both doors. */
+const BYTES_HEADERS = {
+  "Accept-Ranges": {
+    description: "Always `bytes`: one range of a blob can be asked for.",
+    schema: { type: "string" as const },
+  },
+  ETag: {
+    description:
+      "The blob's content hash, so a cached copy is validated by the name it was fetched under.",
+    schema: { type: "string" as const },
+  },
+};
+
+const RANGE_HEADERS = {
+  ...BYTES_HEADERS,
+  "Content-Range": {
+    description: "`bytes <first>-<last>/<size>` for the range served.",
+    schema: { type: "string" as const },
+  },
+};
+
+const UNSATISFIABLE_HEADERS = {
+  "Content-Range": {
+    description:
+      "`bytes */<size>`: the blob's size, so the caller can ask again within it.",
+    schema: { type: "string" as const },
+  },
+};
+
+const bytesResponses = {
+  200: {
+    content: { "application/octet-stream": { schema: z.any() } },
+    headers: BYTES_HEADERS,
+    description: "The bytes, with the content type they were uploaded under.",
+  },
+  206: {
+    content: { "application/octet-stream": { schema: z.any() } },
+    headers: RANGE_HEADERS,
+    description: "The one range asked for.",
+  },
+  404: {
+    content: {
+      "application/json": {
+        schema: makeErrorResponseSchema(["blob_not_found"]),
+      },
+    },
+    description: "No blob with this hash, or no store holding its bytes.",
+  },
+  416: {
+    content: {
+      "application/json": {
+        schema: makeErrorResponseSchema(["range_not_satisfiable"]),
+      },
+    },
+    headers: UNSATISFIABLE_HEADERS,
+    description: "The range asked for lies outside the blob.",
+  },
+};
 
 // ---------------------------------------------------------------------------
 // Route definitions
@@ -57,14 +133,11 @@ const uploadBlobRoute = createRoute({
   tags: ["Blobs"],
   summary: "Upload a blob",
   description:
-    "Uploads binary content and returns its `sha256:<hex>` content-addressed hash, accepting `multipart/form-data` or `application/octet-stream`. Uploads are idempotent — identical bytes return the existing hash without re-storing — and are capped at `MAX_BLOB_SIZE` (default 50 MB), over which they return `413 blob_too_large`.",
+    "Takes the raw bytes as the body, with `Content-Type` naming their MIME type, and answers `201` with the `sha256:<hex>` content-addressed hash. The body streams to disk as it arrives and has no size cap. Uploading bytes already held answers the existing hash. `multipart/form-data` is refused: send the bytes themselves.",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
       content: {
-        "multipart/form-data": {
-          schema: z.any(),
-        },
         "application/octet-stream": {
           schema: z.any(),
         },
@@ -78,18 +151,15 @@ const uploadBlobRoute = createRoute({
           schema: BlobUploadResponseSchema,
         },
       },
-      description: "Blob uploaded",
+      description: "Blob stored",
     },
     400: {
       content: {
         "application/json": {
-          schema: makeErrorResponseSchema([
-            "validation_error",
-            "missing_required_field",
-          ]),
+          schema: makeErrorResponseSchema(["validation_error"]),
         },
       },
-      description: "Validation error",
+      description: "An empty body, or a multipart one",
     },
     401: {
       content: {
@@ -102,6 +172,43 @@ const uploadBlobRoute = createRoute({
   },
 });
 
+const listBlobStoresRoute = createRoute({
+  operationId: "listBlobStores",
+  method: "get",
+  path: "/stores",
+  tags: ["Blobs"],
+  summary: "List the stores this instance keeps bytes in",
+  description:
+    "Every store the instance has attached: the disk it uploads to and, when one is configured, the object store. A store the configuration no longer names stays listed with `detached_at` set, because the location log still describes it. Operator key only.",
+  security: [{ bearerAuth: [] }],
+  responses: {
+    200: {
+      content: {
+        "application/json": {
+          schema: z.object({ data: z.array(BlobStoreSchema) }),
+        },
+      },
+      description: "The stores",
+    },
+    401: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["unauthorized"]),
+        },
+      },
+      description: "Unauthorized",
+    },
+    403: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["forbidden"]),
+        },
+      },
+      description: "Operator key required",
+    },
+  },
+});
+
 const getBlobRoute = createRoute({
   operationId: "downloadBlob",
   method: "get",
@@ -109,21 +216,156 @@ const getBlobRoute = createRoute({
   tags: ["Blobs"],
   summary: "Download blob binary",
   description:
-    "Streams the raw bytes for a previously-uploaded blob as `application/octet-stream`. A hash this instance does not hold answers 404.",
+    "Streams the bytes of a blob as `application/octet-stream` from whichever store holds them, honoring one `Range`. `HEAD` answers the same headers with no body. A hash this instance does not hold answers `404`.",
   security: [{ bearerAuth: [] }],
   request: {
-    params: z.object({
-      hash: z.string().describe("Content-addressed `sha256:<hex>` blob hash."),
+    params: HashParam,
+  },
+  responses: {
+    ...bytesResponses,
+    400: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["validation_error"]),
+        },
+      },
+      description: "Invalid blob hash",
+    },
+    401: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["unauthorized"]),
+        },
+      },
+      description: "Unauthorized",
+    },
+  },
+});
+
+const getBlobUrlRoute = createRoute({
+  operationId: "getBlobUrl",
+  method: "get",
+  path: "/{hash}/url",
+  tags: ["Blobs"],
+  summary: "Get a time-limited link to a blob's bytes",
+  description:
+    "Answers a URL a client fetches the bytes from without a credential, and `expires_in`, the seconds until it stops working. When an object store holds the blob the link is the store's own signed link, so the bytes never pass through the instance; otherwise the instance serves it. `ttl` is capped at seven days.",
+  security: [{ bearerAuth: [] }],
+  request: {
+    params: HashParam,
+    query: z.object({
+      ttl: z.coerce
+        .number()
+        .int()
+        .min(1)
+        .optional()
+        .default(3600)
+        .describe(
+          "Link lifetime in seconds, capped at 604800 (seven days), which the answer's `expires_in` reports.",
+        ),
     }),
   },
   responses: {
     200: {
       content: {
-        "application/octet-stream": {
-          schema: z.any(),
+        "application/json": {
+          schema: BlobUrlResponseSchema,
         },
       },
-      description: "Blob binary data",
+      description: "A link and its lifetime",
+    },
+    400: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["validation_error"]),
+        },
+      },
+      description: "Invalid blob hash or `ttl`",
+    },
+    401: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["unauthorized"]),
+        },
+      },
+      description: "Unauthorized",
+    },
+    404: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["blob_not_found"]),
+        },
+      },
+      description: "Blob not found",
+    },
+  },
+});
+
+/**
+ * The target of an instance-served link. Not a door a client calls by name:
+ * `GET /blobs/{hash}/url` hands the URL out, and the signature in the query
+ * is the credential, so the route declares no bearer and stays out of the
+ * published reference.
+ */
+const fetchBlobRoute = createRoute({
+  operationId: "fetchBlob",
+  method: "get",
+  path: "/{hash}/fetch",
+  tags: ["Blobs"],
+  summary: "Fetch a blob's bytes through an instance-served link",
+  description:
+    "Serves the bytes to whoever holds a link minted by `GET /blobs/{hash}/url`. The `expires` and `signature` query values are the credential; a link past its expiry, or altered, answers `401`.",
+  security: [],
+  request: {
+    params: HashParam,
+    query: z.object({
+      expires: z.string().describe("Unix seconds the link stops working at."),
+      signature: z
+        .string()
+        .describe("The instance's signature over the hash and the expiry."),
+    }),
+  },
+  responses: {
+    ...bytesResponses,
+    400: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["validation_error"]),
+        },
+      },
+      description: "Invalid blob hash",
+    },
+    401: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["unauthorized"]),
+        },
+      },
+      description: "The link has expired or was not minted here for this blob",
+    },
+  },
+});
+
+const listBlobLocationsRoute = createRoute({
+  operationId: "listBlobLocations",
+  method: "get",
+  path: "/{hash}/locations",
+  tags: ["Blobs"],
+  summary: "List the stores holding a blob",
+  description:
+    "The location log for one blob: every store recorded as holding its bytes, with when the copy was recorded and when the integrity check last verified it. A store the configuration no longer names is shown `detached` and does not count as a copy.",
+  security: [{ bearerAuth: [] }],
+  request: {
+    params: HashParam,
+  },
+  responses: {
+    200: {
+      content: {
+        "application/json": {
+          schema: z.object({ data: z.array(BlobLocationSchema) }),
+        },
+      },
+      description: "The locations",
     },
     400: {
       content: {
@@ -152,252 +394,180 @@ const getBlobRoute = createRoute({
   },
 });
 
-const getBlobUrlRoute = createRoute({
-  operationId: "getBlobUrl",
-  method: "get",
-  path: "/{hash}/url",
-  tags: ["Blobs"],
-  summary: "Get a presigned download URL for a blob",
-  description:
-    "Returns a time-limited presigned URL pointing directly at the S3-compatible object store, so clients fetch the blob without proxying through the API. Available only when `BLOB_BACKEND=s3`; filesystem-backed deployments return `400` and must stream via `GET /blobs/{hash}`.",
-  security: [{ bearerAuth: [] }],
-  request: {
-    params: z.object({
-      hash: z.string().describe("Content-addressed `sha256:<hex>` blob hash."),
-    }),
-    query: z.object({
-      ttl: z.coerce
-        .number()
-        .int()
-        .min(1)
-        .optional()
-        .default(3600)
-        .describe("URL lifetime in seconds."),
-    }),
-  },
-  responses: {
-    200: {
-      content: {
-        "application/json": {
-          schema: BlobUrlResponseSchema,
-        },
-      },
-      description: "Presigned URL",
-    },
-    400: {
-      content: {
-        "application/json": {
-          schema: makeErrorResponseSchema(["validation_error"]),
-        },
-      },
-      description: "Invalid blob hash or presigned URLs not available",
-    },
-    401: {
-      content: {
-        "application/json": {
-          schema: makeErrorResponseSchema(["unauthorized"]),
-        },
-      },
-      description: "Unauthorized",
-    },
-    404: {
-      content: {
-        "application/json": {
-          schema: makeErrorResponseSchema(["blob_not_found"]),
-        },
-      },
-      description: "Blob not found",
-    },
-  },
-});
-
-const cleanupBlobsRoute = createRoute({
-  operationId: "cleanupBlobs",
-  method: "post",
-  path: "/cleanup",
-  tags: ["Blobs"],
-  summary: "Remove unreferenced blobs",
-  description:
-    "Removes blobs that nothing references. Live items, trashed items, metadata extensions, and version history all count as references. Operator key only; defaults to `dry_run=true`, so deletion requires an explicit `dry_run=false`.",
-  security: [{ bearerAuth: [] }],
-  request: {
-    query: z.object({
-      dry_run: z
-        .enum(["true", "false"])
-        .optional()
-        .default("true")
-        .describe(
-          "Preview removals without deleting when `true` (the default); pass `false` to delete.",
-        ),
-    }),
-  },
-  responses: {
-    200: {
-      content: {
-        "application/json": {
-          schema: BlobCleanupResponseSchema,
-        },
-      },
-      description: "Cleanup result",
-    },
-    401: {
-      content: {
-        "application/json": {
-          schema: makeErrorResponseSchema(["unauthorized"]),
-        },
-      },
-      description: "Unauthorized",
-    },
-  },
-});
-
-const reconcileBlobsRoute = createRoute({
-  operationId: "reconcileBlobs",
-  method: "post",
-  path: "/reconcile",
-  tags: ["Blobs"],
-  summary: "Reconcile blob storage",
-  description:
-    "Compares the blob storage backend against the database to find orphaned files (in storage, not the DB) and missing files (in the DB, not storage). Operator key only; defaults to `dry_run=true` for safety.",
-  security: [{ bearerAuth: [] }],
-  request: {
-    query: z.object({
-      dry_run: z
-        .enum(["true", "false"])
-        .optional()
-        .default("true")
-        .describe("Report only without deleting orphans when `true`."),
-    }),
-  },
-  responses: {
-    200: {
-      content: {
-        "application/json": {
-          schema: BlobReconcileResponseSchema,
-        },
-      },
-      description: "Reconciliation result",
-    },
-    400: {
-      content: {
-        "application/json": {
-          schema: makeErrorResponseSchema(["validation_error"]),
-        },
-      },
-      description: "Backend does not support listing",
-    },
-    401: {
-      content: {
-        "application/json": {
-          schema: makeErrorResponseSchema(["unauthorized"]),
-        },
-      },
-      description: "Unauthorized",
-    },
-  },
-});
-
 // ---------------------------------------------------------------------------
 // Router
 // ---------------------------------------------------------------------------
 
-export function blobRoutes(
-  storage: Storage,
-  blobBackend: BlobBackend,
-  maxBlobSize: number,
-) {
+/** `sha256:` restored where a caller sent the bare hex, then validated. */
+function normalizeHash(raw: string): string {
+  const hash = raw.startsWith("sha256:") ? raw : `sha256:${raw}`;
+  if (!isValidBlobHash(hash)) {
+    throw new MarfaError(ErrorCode.VALIDATION_ERROR, "Invalid blob hash");
+  }
+  return hash;
+}
+
+/** The scheme and host the caller reached the instance at. */
+function requestOrigin(c: Context<AppEnv>): string {
+  return new URL(c.req.url).origin;
+}
+
+export function blobRoutes(storage: Storage, blobs: BlobLayer) {
   const router = createOpenAPIRouter<AppEnv>();
 
-  // POST /blobs — upload blob
+  /**
+   * The bytes of a registered blob, from the first attached store that has
+   * them, as a response. Shared by the bearer door and the link door, which
+   * differ only in the credential they took.
+   */
+  async function serveBytes(
+    c: Context<AppEnv>,
+    hash: string,
+    headOnly: boolean,
+  ): Promise<Response> {
+    const record = await storage.blobs.get(hash);
+    if (!record) {
+      throw new MarfaError(ErrorCode.BLOB_NOT_FOUND, "Blob not found");
+    }
+
+    const range = resolveRange(c.req.header("Range"), record.size_bytes);
+    if (range === null) {
+      // Returned rather than thrown, because the refusal carries a header
+      // the error handler does not know about: `Content-Range` naming the
+      // size is what lets the caller ask again within bounds.
+      c.header("X-Error-Code", "range_not_satisfiable");
+      c.header("Content-Range", `bytes */${String(record.size_bytes)}`);
+      return c.json(
+        {
+          error: {
+            code: "range_not_satisfiable" as const,
+            message: "The range asked for lies outside the blob",
+            details: { size_bytes: record.size_bytes },
+          },
+        },
+        416,
+      );
+    }
+
+    const headers: Record<string, string> = {
+      "Content-Type": record.mime_type,
+      "Accept-Ranges": "bytes",
+      ETag: `"${hash}"`,
+    };
+
+    // The registry is the truth for the headers, so a HEAD answers without
+    // touching a store. Hono answers HEAD by running this handler and
+    // dropping the body; a stream opened for a body nobody reads would hold
+    // its file open, so the stream is never opened.
+    if (headOnly) {
+      const length = range ? range.end - range.start + 1 : record.size_bytes;
+      headers["Content-Length"] = String(length);
+      if (range) {
+        headers["Content-Range"] =
+          `bytes ${String(range.start)}-${String(range.end)}/${String(record.size_bytes)}`;
+      }
+      return withPreparedHeaders(
+        c,
+        new Response(null, { status: range ? 206 : 200, headers }),
+      );
+    }
+
+    let read: BlobRead | null = null;
+    for (const store of blobs.stores) {
+      read = await store.get(hash, range ?? undefined);
+      if (read) break;
+    }
+    if (!read) {
+      throw new MarfaError(
+        ErrorCode.BLOB_NOT_FOUND,
+        "No store holds the bytes of this blob",
+      );
+    }
+
+    headers["Content-Length"] = String(read.length);
+    if (range) {
+      headers["Content-Range"] =
+        `bytes ${String(read.offset)}-${String(read.offset + read.length - 1)}/${String(read.size_bytes)}`;
+    }
+    return withPreparedHeaders(
+      c,
+      new Response(Readable.toWeb(read.stream) as ReadableStream, {
+        status: range ? 206 : 200,
+        headers,
+      }),
+    );
+  }
+
+  // POST /blobs — stream the body to the disk store, then register it
   router.openapi(uploadBlobRoute, async (c) => {
     requireAuth(c);
 
-    // Cheap pre-read check: reject based on declared Content-Length before
-    // buffering the body. Closes the "advertise huge body, force allocation"
-    // case. Absent/invalid header falls through to the post-buffer check.
-    const declaredLength = Number(c.req.header("Content-Length"));
-    if (Number.isFinite(declaredLength) && declaredLength > maxBlobSize) {
-      throw new MarfaError(
-        ErrorCode.BLOB_TOO_LARGE,
-        `Blob exceeds maximum size of ${String(maxBlobSize)} bytes`,
-      );
-    }
-
     const contentType =
       c.req.header("Content-Type") ?? "application/octet-stream";
-    let data: Buffer;
-    let mimeType: string;
-
-    if (contentType.startsWith("multipart/form-data")) {
-      const formData = await c.req.formData();
-      const file = formData.get("file");
-      if (!(file instanceof File)) {
-        throw new MarfaError(
-          ErrorCode.VALIDATION_ERROR,
-          "Missing 'file' in multipart upload",
-        );
-      }
-      data = Buffer.from(await file.arrayBuffer());
-      mimeType = file.type || "application/octet-stream";
-    } else {
-      data = Buffer.from(await c.req.arrayBuffer());
-      mimeType = (contentType.split(";")[0] ?? contentType).trim();
-    }
-
-    if (data.length === 0) {
-      throw new MarfaError(ErrorCode.VALIDATION_ERROR, "Empty blob");
-    }
-
-    if (data.length > maxBlobSize) {
+    const mimeType = (contentType.split(";")[0] ?? contentType).trim();
+    if (mimeType.toLowerCase() === "multipart/form-data") {
       throw new MarfaError(
-        ErrorCode.BLOB_TOO_LARGE,
-        `Blob exceeds maximum size of ${String(maxBlobSize)} bytes`,
+        ErrorCode.VALIDATION_ERROR,
+        "Send the bytes as the body with their Content-Type; multipart/form-data is not accepted",
       );
     }
 
-    // Compute content-addressed hash
-    const hex = createHash("sha256").update(data).digest("hex");
-    const hash = `sha256:${hex}`;
+    // Spooled onto the disk store's own filesystem while the hash is
+    // computed, because the name is not known until the last byte has
+    // arrived and the move into place must then be a rename.
+    const disk = blobs.disk;
+    const spool = disk.spoolPath();
+    const hashing = new HashingTransform();
+    try {
+      const body = c.req.raw.body;
+      if (body) {
+        await pipeline(
+          Readable.fromWeb(body),
+          hashing,
+          createWriteStream(spool),
+        );
+      }
+    } catch (err) {
+      await rm(spool, { force: true });
+      throw err;
+    }
+    if (hashing.bytes === 0) {
+      await rm(spool, { force: true });
+      throw new MarfaError(ErrorCode.VALIDATION_ERROR, "Empty blob");
+    }
+    const hash = hashing.digest();
+    const sizeBytes = hashing.bytes;
 
-    // Both ceilings are reserved around the registration, not checked
-    // before it. `storage_bytes` is the one that matters most here: it is
-    // unbounded disk, so an overshoot costs real bytes rather than a row.
-    //
-    // The physical write happens inside the reservation too. Putting bytes
-    // on disk that the registration then refuses would leak them, since
-    // nothing sweeps an unregistered blob — and content addressing means a
-    // later legitimate upload of the same bytes finds them already there.
-    //
-    // Content addressing makes `existed` decide two things at once: whether
-    // these bytes need writing, and whether a later refusal has anything to
-    // undo. The second answer is only true while no other request can be
-    // writing the same bytes, which is what the per-hash lock buys: taken
-    // across the check, the write and the registration, `existed === false`
-    // means this request wrote them and is the only one that may take them
-    // back. Without it two requests uploading identical bytes both read false,
-    // and the one that is refused deletes the other's committed blob.
+    // Content addressing makes `present` decide two things at once: whether
+    // these bytes need moving into place, and whether a refused registration
+    // has anything to undo. The per-hash lock is what makes the answer
+    // authoritative: taken across the check, the move and the registration,
+    // a request that saw the bytes absent is the one that put them there and
+    // the only one that may take them back.
     await withBlobUploadLock(hash, async () => {
-      const existed = await blobBackend.exists(hash);
-      if (!existed) {
-        await blobBackend.put(hash, data, mimeType);
+      const present = (await disk.has(hash)) !== null;
+      if (present) {
+        await rm(spool, { force: true });
+      } else {
+        await disk.put(hash, { path: spool, size_bytes: sizeBytes });
       }
       try {
         await storage.runInTransaction(async () => {
-          await storage.blobs.register(hash, mimeType, data.length, hash);
+          await storage.blobs.register(hash, mimeType, sizeBytes);
+          await storage.blobs.recordLocation(hash, disk.id);
         });
       } catch (err) {
-        // Refused, or the registration failed. An unregistered blob is
-        // unreachable and nothing sweeps it, so undo this request's own put —
-        // and only its own. A failure to undo leaves bytes behind rather than
-        // failing the request a second time, so it is logged, not thrown: the
-        // caller's error is the one worth surfacing.
-        if (!existed) {
+        // A file no row names is unreachable and nothing sweeps it. A failure
+        // to undo leaves bytes behind rather than failing the request a
+        // second time, so it is logged: the caller's error is the one worth
+        // surfacing.
+        if (!present) {
           try {
-            await blobBackend.delete(hash);
+            await disk.delete(hash);
           } catch (cleanupErr) {
             log("error", "blob.orphaned_after_refused_upload", {
               hash,
-              size_bytes: data.length,
+              size_bytes: sizeBytes,
               error:
                 cleanupErr instanceof Error
                   ? cleanupErr.message
@@ -415,182 +585,90 @@ export function blobRoutes(
       action: "blob.upload",
       resource_type: "blob",
       resource_id: hash,
-      details: { mime_type: mimeType, size_bytes: data.length },
+      details: { mime_type: mimeType, size_bytes: sizeBytes },
     });
 
-    return c.json({ hash, mime_type: mimeType, size_bytes: data.length }, 201);
+    return c.json({ hash, mime_type: mimeType, size_bytes: sizeBytes }, 201);
   });
 
-  // HEAD /blobs/:hash — check blob existence without downloading.
-  // GET /blobs/:hash — download blob binary
+  // GET /blobs/stores — the attached stores (operator key only). Registered
+  // ahead of `/{hash}` so the literal segment is never read as a hash.
+  router.openapi(listBlobStoresRoute, async (c) => {
+    requireOperatorKey(c);
+    const data = await storage.blobs.listStores();
+    return c.json({ data }, 200);
+  });
+
+  // GET /blobs/:hash — the bytes; HEAD — the headers
   router.openapi(getBlobRoute, async (c) => {
     requireAuth(c);
-
-    let hash = c.req.valid("param").hash;
-    if (!hash.startsWith("sha256:")) {
-      hash = `sha256:${hash}`;
-    }
-    if (!isValidBlobHash(hash)) {
-      throw new MarfaError(ErrorCode.VALIDATION_ERROR, "Invalid blob hash");
-    }
-
-    const record = await storage.blobs.get(hash);
-    if (!record) {
-      throw new MarfaError(ErrorCode.BLOB_NOT_FOUND, "Blob not found");
-    }
-
-    const data = await blobBackend.get(hash);
-    if (!data) {
-      throw new MarfaError(ErrorCode.BLOB_NOT_FOUND, "Blob data not found");
-    }
-
-    return withPreparedHeaders(
-      c,
-      new Response(new Uint8Array(data), {
-        status: 200,
-        headers: {
-          "Content-Type": record.mime_type,
-          "Content-Length": String(data.length),
-        },
-      }),
-    );
+    const hash = normalizeHash(c.req.valid("param").hash);
+    return serveBytes(c, hash, c.req.method === "HEAD");
   });
 
-  // GET /blobs/:hash/url — presigned download URL
+  // GET /blobs/:hash/url — a link the bytes can be fetched from
   router.openapi(getBlobUrlRoute, async (c) => {
     requireAuth(c);
-
-    if (!blobBackend.getPresignedUrl) {
-      throw new MarfaError(
-        ErrorCode.VALIDATION_ERROR,
-        "Presigned URLs are not available with the current blob backend",
-      );
-    }
-
-    let hash = c.req.valid("param").hash;
-    if (!hash.startsWith("sha256:")) {
-      hash = `sha256:${hash}`;
-    }
-    if (!isValidBlobHash(hash)) {
-      throw new MarfaError(ErrorCode.VALIDATION_ERROR, "Invalid blob hash");
-    }
+    refuseUnknownQueryParams(c.req.raw.url, getBlobUrlRoute.request.query);
+    const hash = normalizeHash(c.req.valid("param").hash);
 
     const record = await storage.blobs.get(hash);
     if (!record) {
       throw new MarfaError(ErrorCode.BLOB_NOT_FOUND, "Blob not found");
     }
 
-    const { ttl } = c.req.valid("query");
-    const url = await blobBackend.getPresignedUrl(hash, ttl);
+    const ttl = Math.min(c.req.valid("query").ttl, MAX_BLOB_LINK_TTL_SECONDS);
+
+    // A store that signs its own links is preferred the moment it holds a
+    // copy, because its link keeps the bytes off the instance entirely.
+    const signing = await signingStoreHolding(hash);
+    if (signing?.link) {
+      const url = await signing.link(hash, ttl);
+      return c.json({ url, expires_in: ttl }, 200);
+    }
+
+    const expiresAt = Math.floor(Date.now() / 1000) + ttl;
+    const url = mintBlobLink(requestOrigin(c), hash, expiresAt);
     return c.json({ url, expires_in: ttl }, 200);
   });
 
-  // POST /blobs/cleanup — remove unreferenced blobs (operator key only)
-  router.openapi(cleanupBlobsRoute, async (c) => {
-    requireOperatorKey(c);
+  async function signingStoreHolding(
+    hash: string,
+  ): Promise<BlobStore | undefined> {
+    const locations = await storage.blobs.listLocations(hash);
+    for (const location of locations) {
+      if (location.detached) continue;
+      const store = blobs.byId(location.store_id);
+      if (store?.link) return store;
+    }
+    return undefined;
+  }
 
-    const dryRun = c.req.valid("query").dry_run === "true";
-    // No cutoff: an operator asking directly has decided for themselves,
-    // and the dry-run default is what protects an in-flight upload here.
-    // The scheduled sweep, which nobody is watching, passes one.
-    const result = await sweepUnreferencedBlobs({
-      storage,
-      blobBackend,
-      dryRun,
-    });
-
-    return c.json(
-      {
-        total_blobs: result.totalBlobs,
-        referenced: result.referenced,
-        orphaned: result.orphaned,
-        removed: result.removed,
-        dry_run: dryRun,
-      },
-      200,
-    );
-  });
-
-  // POST /blobs/reconcile — compare storage backend against database
-  // (operator key only)
-  router.openapi(reconcileBlobsRoute, async (c) => {
-    requireOperatorKey(c);
-
-    if (!blobBackend.list) {
+  // GET /blobs/:hash/fetch — the bytes, to whoever holds a link
+  router.openapi(fetchBlobRoute, async (c) => {
+    const hash = normalizeHash(c.req.valid("param").hash);
+    const { expires, signature } = c.req.valid("query");
+    if (
+      !verifyBlobLink(hash, expires, signature, Math.floor(Date.now() / 1000))
+    ) {
       throw new MarfaError(
-        ErrorCode.VALIDATION_ERROR,
-        "Reconciliation requires a blob backend that supports listing",
+        ErrorCode.UNAUTHORIZED,
+        "The link has expired or was not minted for this blob",
       );
     }
+    return serveBytes(c, hash, c.req.method === "HEAD");
+  });
 
-    const dryRun = c.req.valid("query").dry_run !== "false";
-
-    // Collect all keys from the storage backend
-    const storageHashes = new Set<string>();
-    for await (const hash of blobBackend.list()) {
-      storageHashes.add(hash);
+  // GET /blobs/:hash/locations — the location log for one blob
+  router.openapi(listBlobLocationsRoute, async (c) => {
+    requireAuth(c);
+    const hash = normalizeHash(c.req.valid("param").hash);
+    const record = await storage.blobs.get(hash);
+    if (!record) {
+      throw new MarfaError(ErrorCode.BLOB_NOT_FOUND, "Blob not found");
     }
-
-    // Get all database records
-    const dbHashes = new Set(await storage.blobs.listAll());
-
-    // Compare both directions
-    const orphanedStorage: string[] = [];
-    const missingStorage: string[] = [];
-    let healthy = 0;
-
-    for (const hash of storageHashes) {
-      if (dbHashes.has(hash)) {
-        healthy++;
-      } else {
-        orphanedStorage.push(hash);
-      }
-    }
-
-    for (const hash of dbHashes) {
-      if (!storageHashes.has(hash)) {
-        missingStorage.push(hash);
-      }
-    }
-
-    // In execute mode, delete storage orphans
-    let deleted = 0;
-    if (!dryRun) {
-      for (const hash of orphanedStorage) {
-        await blobBackend.delete(hash);
-        deleted++;
-      }
-    }
-
-    await storage.audit.log({
-      client_ip: c.get("clientIp") ?? null,
-      key_id: c.get("apiKey")?.id,
-      action: "blob.reconcile",
-      resource_type: "blob",
-      details: {
-        s3_total: storageHashes.size,
-        db_total: dbHashes.size,
-        orphaned_s3: orphanedStorage.length,
-        missing_s3: missingStorage.length,
-        deleted,
-        dry_run: dryRun,
-      },
-    });
-
-    return c.json(
-      {
-        s3_total: storageHashes.size,
-        db_total: dbHashes.size,
-        healthy,
-        orphaned_s3: orphanedStorage.length,
-        missing_s3: missingStorage.length,
-        orphaned_s3_sample: orphanedStorage.slice(0, 20),
-        missing_s3_sample: missingStorage.slice(0, 20),
-        deleted,
-        dry_run: dryRun,
-      },
-      200,
-    );
+    const data = await storage.blobs.listLocations(hash);
+    return c.json({ data }, 200);
   });
 
   return router;

@@ -193,7 +193,7 @@ describe("a retired registry table is refused on open", () => {
     const path = scratch();
     const seed = createClient({ url: `file:${path}` });
     await seed.execute(
-      "CREATE TABLE blobs (hash TEXT PRIMARY KEY, storage_path TEXT, size INTEGER NOT NULL)",
+      "CREATE TABLE blobs (hash TEXT PRIMARY KEY, mime_type TEXT NOT NULL, size INTEGER NOT NULL)",
     );
     seed.close();
     const before = createHash("sha256")
@@ -201,6 +201,30 @@ describe("a retired registry table is refused on open", () => {
       .digest("hex");
 
     await expect(createConnection(path)).rejects.toThrow(/no size_bytes/);
+    await expect(createConnection(path)).rejects.toThrow(path);
+    expect(createHash("sha256").update(readFileSync(path)).digest("hex")).toBe(
+      before,
+    );
+  });
+
+  it("refuses a blobs table that still carries storage_path", async () => {
+    // The retired column was NOT NULL, so the DDL passes against a file
+    // still carrying it and the boot says nothing; the first upload then
+    // dies on a constraint naming a column no source file mentions. Same
+    // witness as the rename above, so a stranger's `blobs` is still opened.
+    const path = scratch();
+    const seed = createClient({ url: `file:${path}` });
+    await seed.execute(
+      "CREATE TABLE blobs (hash TEXT PRIMARY KEY, mime_type TEXT NOT NULL, size_bytes INTEGER NOT NULL, storage_path TEXT NOT NULL, created_at TEXT NOT NULL)",
+    );
+    seed.close();
+    const before = createHash("sha256")
+      .update(readFileSync(path))
+      .digest("hex");
+
+    await expect(createConnection(path)).rejects.toThrow(
+      /still has a storage_path/,
+    );
     await expect(createConnection(path)).rejects.toThrow(path);
     expect(createHash("sha256").update(readFileSync(path)).digest("hex")).toBe(
       before,

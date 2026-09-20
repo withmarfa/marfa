@@ -10,7 +10,8 @@ The specification has two halves.
 - `types.md`: the type registry, its grammar, inheritance and enforcement levers.
 - `edges.md`: edges, edge types, hydration and traversal.
 - `versions.md`: versions, snapshots, the two 409 envelopes and server-side merge.
-- `blobs.md`: uploads, downloads and the presigned-URL door.
+- `blobs.md`: uploads, downloads, ranges and the link door.
+- `stores.md`: where a blob's bytes live, the location log, and the rules that keep them.
 - `events.md`: the event stream, its frames and filters, and outbound webhooks.
 - `search-and-filters.md`: search, export, occurrences and the query grammar every listing shares.
 - `keys-and-oauth.md`: keys, permissions, the operator key and the OAuth provider.

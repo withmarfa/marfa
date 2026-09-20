@@ -14,8 +14,8 @@
  * Content addressing makes the difference matter: deduplicating identical
  * bytes is the design, so two requests uploading the same
  * attachment is ordinary rather than exotic. Both read false, both write, and
- * if either is then refused — a quota ceiling is the designed failure on this
- * path — it deletes a blob the other has already committed a row against.
+ * if either one's registration is then refused, it deletes a blob the other
+ * has already committed a row against.
  *
  * Holding this lock across all three steps is what makes the `exists()` answer
  * authoritative: within a hash, no second uploader can interleave, so a

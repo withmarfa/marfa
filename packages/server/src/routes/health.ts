@@ -5,7 +5,7 @@ import { platformDrift } from "../storage/platform-drift.js";
 import { storedValueScan } from "../storage/stored-value-scan.js";
 import type { AppEnv } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
-import type { BlobBackend } from "../storage/blob-backend.js";
+import type { BlobLayer } from "../storage/blob-layer.js";
 
 interface ComponentStatus {
   status: "ok" | "degraded" | "down";
@@ -99,10 +99,7 @@ async function withBudget<T>(work: Promise<T>): Promise<T | typeof TIMED_OUT> {
   }
 }
 
-export function healthRoutes(
-  storage: Storage,
-  blobBackend: BlobBackend,
-): Hono<AppEnv> {
+export function healthRoutes(storage: Storage, blobs: BlobLayer): Hono<AppEnv> {
   const router = new Hono<AppEnv>();
 
   // Read once rather than per request. The file cannot change under a
@@ -163,13 +160,11 @@ export function healthRoutes(
     }
     if (components.database.status !== "ok") overall = "degraded";
 
-    // Blob storage. Same budget, and the same reason for one: against an
-    // S3 backend this is a network call to object storage.
+    // Blob storage. The disk store, which every upload lands on, under the
+    // same budget: a held disk is a fault this door exists to report.
     const blobStart = performance.now();
     try {
-      const outcome = await withBudget(
-        blobBackend.exists("sha256:healthcheck"),
-      );
+      const outcome = await withBudget(blobs.disk.has("sha256:healthcheck"));
       // Latency on every branch, for the reason the database probe gives
       // above: this is the other bounded probe, and a blob store that
       // refused after most of its budget is a different fault from one that

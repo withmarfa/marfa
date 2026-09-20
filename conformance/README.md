@@ -24,6 +24,10 @@ From this directory, in a checkout where `pnpm install` has been run at the
 root:
 
 ```bash
+# Boot the object store the server attaches beside its disk (brew install garage)
+pnpm garage:up
+set -a; . .marfa-state/garage/garage.env; set +a
+
 # Boot the server in this checkout on SQLite, mint its first key, write an env file
 pnpm marfa:up
 
@@ -37,13 +41,22 @@ set -a; . .marfa-state/env; set +a
 pnpm test:conformance
 
 pnpm marfa:down
+pnpm garage:down
 ```
+
+`pnpm garage:up` starts a single-node [Garage](https://garagehq.deuxfleurs.fr)
+under `.marfa-state/garage/`, creates a bucket and a key, and writes the
+`S3_*` values that name them to `.marfa-state/garage/garage.env` (and to
+`GITHUB_ENV` in a workflow). Source that file before `pnpm marfa:up`: the
+server attaches an object store when `S3_BUCKET` is set, and the fixtures in
+`spec/stores.md` assert both stores rather than skipping when one is missing.
+`pnpm garage:down` stops the node and removes its state.
 
 `pnpm marfa:up` builds the workspace packages if they are not built, starts
 the server with `tsx` (never watch mode), waits for `/health`, reads the
 one-time bootstrap secret from the server's own log, mints the first key with
 it, and writes `.marfa-state/env`. The state directory holds the
-SQLite file, the blob folder, the server log, the pid and the env file; pass
+SQLite file, the disk store, the server log, the pid and the env file; pass
 `--state <dir>` to put it elsewhere and `--port <n>` to choose the port.
 
 The server runs with enrichment, OCR and rate limiting switched off.
@@ -54,12 +67,13 @@ and revocation, one of each per file. Nothing in the fixtures asserts either.
 
 ## Configuration
 
-| Variable             | Description                                             |
-| -------------------- | ------------------------------------------------------- |
-| `MARFA_API_URL`      | Required. The booted server.                            |
-| `MARFA_API_KEY`      | Required. The key the bootstrap mint returns.           |
-| `MARFA_OPERATOR_KEY` | The same key, for the operator-only maintenance routes. |
-| `MARFA_DEVICE_BIN`   | The built `marfa` binary the device fixtures drive.     |
+| Variable             | Description                                                             |
+| -------------------- | ----------------------------------------------------------------------- |
+| `MARFA_API_URL`      | Required. The booted server.                                            |
+| `MARFA_API_KEY`      | Required. The key the bootstrap mint returns.                           |
+| `MARFA_OPERATOR_KEY` | The same key, for the operator-only maintenance routes.                 |
+| `MARFA_BLOB_PATH`    | The booted server's disk store, for a fixture that tampers with a copy. |
+| `MARFA_DEVICE_BIN`   | The built `marfa` binary the device fixtures drive.                     |
 
 The bootstrap mint returns one key, and both variables hold it.
 

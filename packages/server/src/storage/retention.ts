@@ -6,7 +6,7 @@ import type {
 } from "./interface.js";
 import type { InstanceConfig } from "@withmarfa/shared";
 import { readInstanceConfig } from "./instance-config.js";
-import type { BlobBackend } from "./blob-backend.js";
+import type { BlobLayer } from "./blob-layer.js";
 import { log } from "../middleware/logger.js";
 import { logJobTickFailure } from "./job-tick.js";
 import { sweepUnreferencedBlobs } from "./blob-orphans.js";
@@ -146,29 +146,13 @@ export class TrashPurger {
 }
 
 /**
- * Ages out `system.activity` items.
+ * Ages out `system.activity` items, the one item type written per run
+ * rather than per record, and so the one that grows without a bound of its
+ * own. Same shape as `TrashPurger` above: honors the
+ * `activity_retention_days` override when the instance configuration is
+ * wired, and sweeps at the instance default otherwise.
  *
- * A connector reports what a run did, and a run that did nothing is
- * supposed to say nothing. That convention arrived after this job did, and
- * before it one connector's reactive path wrote a row per upstream write,
- * which alone made this the fastest-growing item type by a wide margin.
- *
- * Retention existed for trash, audit rows, the event log, versions and
- * sessions; activity is an ordinary item and had no
- * job at all, so the table only ever grew. Production reached 6,015
- * activity items against 805 of everything else before this landed, and was
- * still above six thousand five days later.
- *
- * Same shape as `TrashPurger` above: honors the `activity_retention_days`
- * override when the instance configuration is wired, and sweeps at the
- * instance default otherwise.
- *
- * **This job bounds the rows; it does not decide whether a run deserves
- * one.** That is the connector's call, and the authoring guide carries
- * the rule. Retention on its own was never going to be enough:
- * it caps how many rows exist at once, not how many get written, and each
- * one costs a transaction, a quota reservation, an index update and a
- * published event whether it is purged an hour later or a fortnight.
+ * This job bounds the rows; it does not decide whether a run deserves one.
  */
 /**
  * Hard-deletes revoked application-grant tombstones once they are older than
@@ -669,11 +653,9 @@ export class DcrClientCleaner {
  * Reclaims blobs nothing references.
  *
  * `POST /blobs` and `POST /items` are separate calls, and the bytes are
- * stored and charged against the instance quotas by the first one. An item
- * write refused for any reason leaves the blob registered with nothing
- * pointing at it, still counted, and nothing reconciles the two. The
- * operator route that finds these has existed for as long as the leak has;
- * what was missing is anything that runs it.
+ * stored by the first one. An item write refused for any reason leaves the
+ * blob registered with nothing pointing at it, and nothing else reconciles
+ * the two.
  *
  * The grace window is what makes running it unattended safe. Unreferenced
  * is also the ordinary state of a blob between its upload and the item
@@ -695,7 +677,7 @@ export class BlobOrphanCleaner {
 
   constructor(
     private storage: Storage,
-    private blobBackend: BlobBackend,
+    private blobs: BlobLayer,
     private graceMs: number,
     private intervalMs: number,
     private nowFn: () => Date = () => new Date(),
@@ -724,7 +706,7 @@ export class BlobOrphanCleaner {
     if (this.graceMs <= 0) return 0;
     const result = await sweepUnreferencedBlobs({
       storage: this.storage,
-      blobBackend: this.blobBackend,
+      blobs: this.blobs,
       dryRun: false,
       registeredBefore: new Date(
         this.nowFn().getTime() - this.graceMs,
@@ -752,11 +734,8 @@ export class BlobOrphanCleaner {
 
 /**
  * Hard-deletes revoked ordinary API keys once their revocation is old
- * enough to stop being interesting.
- *
- * Nothing swept these at all before. Staging reached 3,044 revoked
- * ordinary keys older than a week, against six on production — the
- * difference being that staging is where every suite and probe mints one.
+ * enough to stop being interesting. An instance a test suite mints against
+ * revokes thousands of them a week, and nothing else bounds the table.
  *
  * Instance-wide and not configurable: revocation age is a property of the
  * row.

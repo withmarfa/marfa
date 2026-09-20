@@ -6,7 +6,7 @@ import {
   ensureBootstrapSecret,
   createSqliteStorage,
   ensureInstanceId,
-  FilesystemBlobBackend,
+  createBlobLayer,
   initEventLog,
   __resetEventLogForTests,
   type AppConfig,
@@ -51,8 +51,6 @@ function baseConfig(overrides?: Partial<AppConfig>): AppConfig {
     port: 0,
     sqlitePath: "",
     blobPath: "",
-    blobBackend: "fs",
-    maxBlobSize: 50 * 1024 * 1024,
     maxRequestBytes: 1_048_576,
     s3Bucket: "",
     s3Region: "us-east-1",
@@ -61,7 +59,6 @@ function baseConfig(overrides?: Partial<AppConfig>): AppConfig {
     s3SecretAccessKey: "",
     apiKeySalt: TEST_API_KEY_SALT,
     corsOrigins: [],
-    cdnBaseUrl: "",
     rateLimitEnabled: false,
     enableHsts: false,
     auditRetentionDays: 90,
@@ -148,11 +145,14 @@ export async function createBootstrappedFixture(
   // Before the app, so nothing this fixture serves can be written without
   // reaching the log.
   if (options?.eventLog) initEventLog(storage.eventLog);
-  const blobBackend = new FilesystemBlobBackend(join(tmpDir, "blobs"));
+  const config = baseConfig({
+    blobPath: join(tmpDir, "blobs"),
+    ...configOverrides,
+  });
   const app = createApp(
     storage,
-    blobBackend,
-    baseConfig({ ...configOverrides }),
+    await createBlobLayer(storage, config),
+    config,
     await ensureInstanceId(storage.settings),
   );
   const fetch = createTestFetch(app);

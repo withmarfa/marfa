@@ -67,7 +67,13 @@ function getMasterSecret(): Buffer {
 }
 let devFallbackSecret: Buffer | null = null;
 
-function deriveKey(info: string): Buffer {
+/**
+ * A key for one purpose, derived from the master secret under a domain
+ * string from `SECRET_INFO`. Exported for the blob link's signature, which
+ * is a MAC rather than a cipher and so takes the key without the
+ * encrypt/decrypt pair below.
+ */
+export function deriveKey(info: string): Buffer {
   const ikm = getMasterSecret();
   const derived = hkdfSync(
     "sha256",
@@ -152,4 +158,6 @@ export function decryptSecret(ciphertextHex: string, info: string): string {
  */
 export const SECRET_INFO = {
   connectionOauthToken: "connection-oauth-tokens",
+  /** The MAC over an instance-served blob link's hash and expiry. */
+  blobLink: "blob-link",
 } as const;

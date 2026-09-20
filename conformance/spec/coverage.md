@@ -85,11 +85,14 @@ Fixture paths are under `src/suites/`.
 
 ## Blobs
 
-| Operation               | Status        | Fixture                                | Notes                                                                         |
-| ----------------------- | ------------- | -------------------------------------- | ----------------------------------------------------------------------------- |
-| `POST /blobs`           | covered       | `correctness/blob-correctness.test.ts` | Hash, dedupe, empty body refused.                                             |
-| `GET /blobs/{hash}`     | covered       | `correctness/blob-correctness.test.ts` | Byte for byte, content type, 404, malformed hash.                             |
-| `GET /blobs/{hash}/url` | refusals only | `correctness/blob-correctness.test.ts` | The filesystem backend mints no presigned URL and answers 400 for every hash. |
+| Operation                     | Status      | Fixture                                | Notes                                                                                    |
+| ----------------------------- | ----------- | -------------------------------------- | ---------------------------------------------------------------------------------------- |
+| `POST /blobs`                 | covered     | `correctness/blob-correctness.test.ts` | Hash, dedupe, no cap, empty and multipart bodies refused.                                |
+| `GET /blobs/stores`           | covered     | `compliance/blob-stores.test.ts`       | Operator key only; the disk store and the object store the referee attaches.             |
+| `GET /blobs/{hash}`           | covered     | `correctness/blob-correctness.test.ts` | Byte for byte, content type, one range, HEAD, 404, 416, malformed hash.                  |
+| `GET /blobs/{hash}/url`       | covered     | `correctness/blob-correctness.test.ts` | A link that fetches without a credential; the cap on its lifetime; expiry and tampering. |
+| `GET /blobs/{hash}/locations` | covered     | `compliance/blob-stores.test.ts`       | The location log for one blob.                                                           |
+| `GET /blobs/{hash}/fetch`     | unpublished | `correctness/blob-correctness.test.ts` | The instance-served link's target; the signature in its query is the credential.         |
 
 ## Keys and OAuth
 

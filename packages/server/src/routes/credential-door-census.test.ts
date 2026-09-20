@@ -104,6 +104,8 @@ function documentedDoors(): Set<string> {
 const OPEN_OPERATIONS: Record<string, string> = {
   "POST /auth/oauth2/register":
     "dynamic client registration, which is how a client comes to hold anything",
+  "GET /blobs/:hash/fetch":
+    "the target of an instance-served blob link: the signature in the query is the credential, minted by GET /blobs/{hash}/url to whoever held a bearer, so a browser or a media player can be handed the URL as it is",
 };
 
 function declaredDoors(): Set<string> {
@@ -175,6 +177,8 @@ const OPEN_DOORS: Record<string, string> = {
   "GET /auth/*":
     "the Better Auth catch-all — sign-in, session and the OAuth protocol endpoints, each gating itself",
   "POST /auth/*": "the same catch-all",
+  "GET /blobs/:hash/fetch":
+    "the target of an instance-served blob link, gated by the signature in its query rather than a bearer",
 };
 
 /**

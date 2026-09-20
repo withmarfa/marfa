@@ -199,6 +199,24 @@ export interface BlobUploadResponse {
   size_bytes: number;
 }
 
+export interface BlobStoreRow {
+  id: string;
+  kind: "disk" | "s3";
+  locator: string;
+  policy: string;
+  attached_at: string;
+  detached_at: string | null;
+}
+
+export interface BlobLocationRow {
+  store_id: string;
+  kind: "disk" | "s3";
+  policy: string;
+  detached: boolean;
+  recorded_at: string;
+  verified_at: string | null;
+}
+
 export interface ErrorResponse {
   error: {
     code: string;
