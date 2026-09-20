@@ -138,6 +138,15 @@ CREATE TABLE IF NOT EXISTS queue (
   spent_keys TEXT,
   -- The body, as the device will send it.
   payload TEXT NOT NULL,
+  -- Whether this row has ever gone out on the wire.
+  --
+  -- A release has to tell two refusals apart: one the server gave, which is
+  -- terminal (`queue-and-verdicts.md` 12), and one the drain gave because
+  -- something this row waits for was refused, which is a row that was never
+  -- sent and so can be released without writing twice. `depends_on` cannot
+  -- answer that — a server-refused row may carry one too — and the reason
+  -- text is prose. This is the fact itself.
+  sent INTEGER NOT NULL DEFAULT 0,
   -- The queue rows this one waits for (`queue-and-verdicts.md` 4), as a JSON
   -- array of queue ids. A write naming a row whose create has not been
   -- answered is held rather than sent, because the server has no such row and

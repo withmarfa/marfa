@@ -845,6 +845,15 @@ fn describe_pull(report: &marfa_core::PullReport) -> String {
         line.push_str("; not written: ");
         line.push_str(&held.join(", "));
     }
+    // Named only when it happened. A file the person deleted and the folder
+    // wrote back is the one outcome of a pull they did not ask for, and a
+    // count they never see is the same as no count at all.
+    if report.revived > 0 {
+        line.push_str(&format!(
+            "; {} written back over a pending delete",
+            report.revived
+        ));
+    }
     line
 }
 

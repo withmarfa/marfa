@@ -1119,7 +1119,7 @@ describe("identity", () => {
 });
 
 describe("writing", () => {
-  it("refuses a create that carries no version", async () => {
+  it("always carries a version on a create, zero where it holds no row", async () => {
     harness = await folderHarness("folder-create-version");
     scriptFolderWrites(harness);
     put(harness, "note.md", "---\ntitle: Conditional\n---\nbody\n");

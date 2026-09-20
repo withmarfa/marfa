@@ -599,15 +599,15 @@ describe("a write that is not about an item's fields", () => {
   /**
    * Every kind whose door answers with something other than an item.
    *
-   * Ten of the fourteen sendable kinds are in here, and every one of them
-   * was being read against the item shape: a tag, an edge, a metadata
-   * write, an extension and a delete all came back as an answer the device
-   * could not read. The server had done the work; the device counted a
-   * refusal, sent it again, and killed it on the fifth pass — silently,
-   * until the row went `dead`.
+   * Ten of the fourteen sendable kinds are in here. Read against the item
+   * shape instead, a tag, an edge, a metadata write, an extension and a
+   * delete all come back as an answer the device cannot read: the server
+   * does the work, the device counts a refusal, sends it again, and kills
+   * it on the fifth pass, silently, until the row goes `dead`.
    *
-   * The fixtures did not catch it because they scripted those doors with
-   * item-shaped bodies, which is a shape no server returns.
+   * So each door is scripted with the body its own door returns. Scripting
+   * them all item-shaped is a shape no server gives, and it makes every one
+   * of these pass against a device that can read none of them.
    */
   it("reads the answer its own door gives, not an item's", async () => {
     harness = await hydratedHarness("queue-shapes", { rows: held() });

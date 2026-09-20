@@ -454,6 +454,13 @@ pub fn drain(core: &Core, http: &Http) -> Result<DrainReport> {
         // call that waits on a network, and holding the store shut for the
         // length of a queue's worth of requests would make `queue` — the
         // door a caller reads while a drain is running — wait on it.
+        {
+            // Before the answer, not after: a send whose answer never arrives
+            // has still reached the server, and a release that treated it as
+            // unsent would write it twice.
+            let conn = core.conn()?;
+            store::mark_sent(&conn, &row.id)?;
+        }
         let answer = http.send(&outgoing);
         report.sent += 1;
         if let Ok(answer) = &answer
@@ -791,11 +798,53 @@ fn reconcile_inner(core: &Core, row: &QueuedWrite) -> Result<()> {
             let conn = core.conn()?;
             store::edge_by_id(&conn, edge_id)?
         };
-        let edge_type = held.as_ref().map(|edge| edge.edge_type.clone());
+        // A refused `delete_edge` is the case this whole branch exists for,
+        // and it is the one where the copy cannot answer: the delete emptied
+        // it at queue time, so there is no row to read a type from and the
+        // read below would be skipped entirely — leaving the edge gone
+        // locally, present on the server, and no event coming to say so.
+        let edge_type = match held.as_ref() {
+            Some(edge) => Some(edge.edge_type.clone()),
+            None => {
+                let conn = core.conn()?;
+                let payload = store::payload_of(&conn, &row.id)?;
+                serde_json::from_str::<serde_json::Value>(&payload)
+                    .ok()
+                    .and_then(|body| {
+                        body.get("edge_type")
+                            .and_then(|found| found.as_str().map(str::to_string))
+                    })
+            }
+        };
+        // **Every page, not the first.** Below the page limit the two are the
+        // same; above it, "not on page one" was being read as "the server
+        // holds no such edge", and the arm below then deleted a live edge
+        // from the copy with no event coming to put it back.
         let mut found = None;
         if let Some(edge_type) = &edge_type {
-            let page = http.item_edges_page(source, edge_type, None)?;
-            found = page.data.into_iter().find(|edge| edge.id == edge_id);
+            let mut cursor: Option<String> = None;
+            loop {
+                let page = http.item_edges_page(source, edge_type, cursor.as_deref())?;
+                found = page.data.into_iter().find(|edge| edge.id == edge_id);
+                if found.is_some() {
+                    break;
+                }
+                if !page.has_more {
+                    break;
+                }
+                match page.cursor {
+                    Some(next) => cursor = Some(next),
+                    // `has_more` with no cursor to follow it: the server is
+                    // saying there is more and not saying where. Stopping
+                    // here would read as "no such edge" and delete a live
+                    // one, so the read fails instead.
+                    None => {
+                        return Err(CoreError::Invalid(format!(
+                            "the server reported more edges for {source} but gave no cursor to read them,                              so whether it still holds {edge_id} cannot be answered"
+                        )));
+                    }
+                }
+            }
         }
         let conn = core.conn()?;
         match found {
@@ -845,10 +894,9 @@ mod tests {
     ///
     /// The compiler cannot say this: `shape_of` matches a name, so it needs
     /// a default arm, and a kind added to `WRITE_KINDS` and not named there
-    /// falls into it in silence. That is the shape of the worst defect this
-    /// module has had — ten of the fourteen sendable kinds could not read
-    /// their own success, the server did the work, and the drain counted a
-    /// refusal and killed the write on the fifth pass.
+    /// falls into it in silence. What that costs is a door whose success the
+    /// device cannot read: the server does the work, the drain counts a
+    /// refusal, and the write dies on the fifth pass with nothing said.
     #[test]
     fn the_shape_of_every_write_kind_is_decided() {
         let undecided: Vec<&str> = crate::store::WRITE_KINDS

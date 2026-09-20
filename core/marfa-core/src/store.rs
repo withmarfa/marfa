@@ -1000,9 +1000,11 @@ mod tests {
             .map(|column| column.trim().to_string())
             .collect();
         // `seq` is the rowid the queue is ordered by and is deliberately not
-        // read back; `payload` and `spent_keys` are read by the drain through
-        // their own queries rather than this list.
-        table.retain(|name| !matches!(name.as_str(), "seq" | "payload" | "spent_keys"));
+        // read back. `payload`, `spent_keys` and `sent` are read through their
+        // own queries rather than this list, because each is wanted on its own
+        // at a different moment: the payload when a row is sent, the other two
+        // when one is released.
+        table.retain(|name| !matches!(name.as_str(), "seq" | "payload" | "spent_keys" | "sent"));
         table.sort();
         named.sort();
         assert_eq!(
@@ -1221,10 +1223,12 @@ pub const VERDICTS: &[&str] = &[
 ///
 /// Written in three places, and deliberately: this constant is what the drain
 /// counts against, `schema.sql`'s `CHECK` is what outlives the process, and
-/// the CLI prints it as the denominator. A test holds the three together,
-/// because the safety the duplication buys is only one-sided on its own — a
-/// ceiling raised above the schema's is refused by SQLite, and one lowered
-/// below it saturates quietly and the `CHECK` never fires.
+/// the CLI prints it as the denominator. The safety the duplication buys is
+/// one-sided — a ceiling raised above the schema's is refused by SQLite, and
+/// one lowered below it saturates quietly and the `CHECK` never fires. The
+/// lowered case is caught by `device/classification.test.ts › reaches the
+/// ceiling on the fifth refusal`, which counts the attempts rather than
+/// trusting either number.
 pub const CEILING: i64 = 5;
 
 /// The five reasons a row can be blocked (`queue-and-verdicts.md` 26).
@@ -1272,6 +1276,12 @@ pub struct Answered<'a> {
 /// here, because `reason` also carries the server's own refusal codes under
 /// `refused` and the schema cannot hold a copy of the server's error
 /// vocabulary without going stale.
+/// Records that a write has gone out on the wire.
+pub fn mark_sent(conn: &Connection, id: &str) -> Result<(), CoreError> {
+    conn.execute("UPDATE queue SET sent = 1 WHERE id = ?1", [id])?;
+    Ok(())
+}
+
 pub fn record_verdict(
     conn: &Connection,
     id: &str,
@@ -1375,16 +1385,16 @@ pub fn unblock_self_clearing(conn: &Connection) -> Result<usize, CoreError> {
 /// it, and a late answer arriving under a key nothing recognizes is
 /// indistinguishable from an answer to the new attempt.
 pub fn release(conn: &Connection, id: &str) -> Result<bool, CoreError> {
-    let Some((verdict, key, spent, depends_on)) = conn
+    let Some((verdict, key, spent, sent)) = conn
         .query_row(
-            "SELECT verdict, idempotency_key, spent_keys, depends_on FROM queue WHERE id = ?1",
+            "SELECT verdict, idempotency_key, spent_keys, sent FROM queue WHERE id = ?1",
             [id],
             |row| {
                 Ok((
                     row.get::<_, Option<String>>(0)?,
                     row.get::<_, String>(1)?,
                     row.get::<_, Option<String>>(2)?,
-                    row.get::<_, Option<String>>(3)?.unwrap_or_default(),
+                    row.get::<_, i64>(3)? != 0,
                 ))
             },
         )
@@ -1396,11 +1406,18 @@ pub fn release(conn: &Connection, id: &str) -> Result<bool, CoreError> {
         });
     };
     // The two terminal-until-released verdicts, and the third case: a row
-    // the drain refused because something it waits for was refused. That
-    // row was never sent, so releasing it cannot write twice — which is
-    // what this guard is for. An `accepted`, `merged` or `conflicted` row
-    // has been written and is never released.
-    let refused_by_dependency = verdict.as_deref() == Some("refused") && !depends_on.is_empty();
+    // the drain refused because something it waits for was refused. That row
+    // was never sent, so releasing it cannot write twice — which is what this
+    // guard is for. An `accepted`, `merged` or `conflicted` row has been
+    // written and is never released.
+    //
+    // **`sent` is the test, not `depends_on`.** A row the *server* refused
+    // can carry a dependency too — queue a create, edit before the drain
+    // runs, and the update names the create — so releasing on a dependency
+    // alone cleared a terminal refusal and sent the write again. A refusal
+    // that later stops applying would then land content the caller had
+    // watched disappear from their copy.
+    let refused_by_dependency = verdict.as_deref() == Some("refused") && !sent;
     if !matches!(verdict.as_deref(), Some("blocked") | Some("dead")) && !refused_by_dependency {
         return Ok(false);
     }
@@ -1452,21 +1469,30 @@ fn dependants_refused_with(conn: &Connection, id: &str) -> Result<Vec<String>, C
 
 /// Clears the rows the server has answered.
 ///
-/// The queue grew without bound and nothing emptied it: `schema.sql` argues
-/// at length about what a foreign key would do to "a caller clearing their
-/// own answered rows", and there was no such caller. Every write door reads
-/// the whole queue to find what a new write depends on, so a queue nobody
-/// clears makes every write slower for ever.
+/// Without it the queue grows without bound: every write door reads the
+/// whole queue to find what a new write depends on, so a queue nobody clears
+/// makes every write slower for ever. This is the caller `schema.sql` has in
+/// mind when it argues about what a foreign key would do to one clearing
+/// their own answered rows.
 ///
 /// Only the four terminal verdicts. A `blocked` or `dead` row is one a
 /// caller may still release, and clearing it would take that away.
+///
+/// **A dependency is kept while anything that names it can still be sent**,
+/// which is any dependent that is unanswered *or* releasable. Keeping it only
+/// for unanswered dependents stranded the other case for good: a blocked row
+/// left its create unprotected, the create was cleared, and the release the
+/// caller was told to perform then produced a row whose dependency could not
+/// be found — which `readiness` reads as unanswered and holds, for ever,
+/// against a write that no longer exists.
 pub fn forget_answered(conn: &Connection) -> Result<usize, CoreError> {
     Ok(conn.execute(
         "DELETE FROM queue
           WHERE verdict IN ('accepted', 'merged', 'conflicted', 'refused')
             AND NOT EXISTS (
               SELECT 1 FROM queue AS waiting
-               WHERE waiting.verdict IS NULL
+               WHERE (waiting.verdict IS NULL
+                      OR waiting.verdict IN ('blocked', 'dead'))
                  AND waiting.depends_on LIKE '%' || queue.id || '%'
             )",
         [],

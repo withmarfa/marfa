@@ -490,6 +490,76 @@ describe("the ceiling, and releasing what it stopped", () => {
     ).toBe(2);
   });
 
+  it("will not release a write the server itself refused, dependency or not", async () => {
+    harness = await hydratedHarness("class-release-server-refusal", {
+      rows: held(),
+    });
+    const created = await harness.device.create({
+      type: "core.note",
+      properties: { title: "parent", body: "parent" },
+    });
+    expect(
+      created.ok,
+      `the create was refused, so there is no dependency for the update to carry: ${JSON.stringify(created)}`,
+    ).toBe(true);
+    if (!created.ok) return;
+    const id = created.value.item_id ?? "a";
+    // The update names the create, so it carries a dependency — and is then
+    // refused by the server on its own merits. The two facts together are
+    // the case: a release that read the dependency alone would clear a
+    // terminal refusal and send the write a second time.
+    const edit = await harness.device.update(id, {
+      properties: { title: "child" },
+      version: 0,
+    });
+    expect(
+      edit.ok,
+      `the update was not queued, so nothing below is about a refused dependant: ${JSON.stringify(edit)}`,
+    ).toBe(true);
+    if (!edit.ok) return;
+
+    scriptWrites(harness.server, {
+      create: [answers.created(wireItem({ id, version: 1 }))],
+      update: [refusal(400, "invalid_properties", "not a title")],
+      // The refusal is reconciled, which reads the server's row back.
+      read: [
+        answers.updated(
+          wireItem({
+            id,
+            version: 1,
+            properties: { title: "parent", body: "parent" },
+          }),
+        ),
+      ],
+    });
+    expect((await harness.device.drain()).ok).toBe(true);
+
+    const row = (await queueOf(harness)).find((it) => it.id === edit.value.id);
+    expect(
+      row?.verdict,
+      "the update was not refused by the server at all, so the release below is about the wrong row",
+    ).toBe("refused");
+    expect(
+      row?.depends_on ?? [],
+      "the refused update carries no dependency, so releasing it could not have been confused for the never-sent case this guards",
+    ).not.toEqual([]);
+
+    const released = await harness.device.release({ id: edit.value.id });
+    expect(
+      released.ok,
+      `the release door errored rather than declining: ${JSON.stringify(released)}`,
+    ).toBe(true);
+    if (!released.ok) return;
+    expect(
+      released.value,
+      "a write the server refused was released because it happened to carry a dependency, so a terminal refusal is sent again and content the caller watched disappear comes back",
+    ).toBe(0);
+    expect(
+      (await queueOf(harness)).find((it) => it.id === edit.value.id)?.verdict,
+      "the refused verdict was cleared, so the next drain sends a write the server already refused",
+    ).toBe("refused");
+  });
+
   it("sends a released row again under a fresh key", async () => {
     harness = await hydratedHarness("class-release-key", { rows: held() });
     const [first] = await drainAgainst(harness, {

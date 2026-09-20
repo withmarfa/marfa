@@ -176,8 +176,8 @@ impl Core {
     pub fn drain(&self) -> Result<DrainReport> {
         // The handle before the server. A second opener with no server
         // configured is still a second opener, and refusing it for the
-        // missing server tells it the wrong thing about why it may not
-        // write — which is what the argument order used to do.
+        // missing server would tell it the wrong thing about why it may
+        // not write.
         self.lock.refuse_unless_writer()?;
         drain::drain(self, self.http()?)
     }
@@ -555,6 +555,12 @@ impl Core {
             });
         };
         let depends_on = store::unanswered_for_edge(&conn, id)?;
+        // **The type travels with the write**, though the door does not send
+        // it. Reconciling a refused delete means reading the server's edges
+        // for this source, and that read is by type — but the local row is
+        // gone by then, because a delete empties the copy at queue time. The
+        // one moment the type is knowable is this one, before the delete.
+        let payload = serde_json::json!({ "edge_type": held.edge_type }).to_string();
         let tx = conn.transaction()?;
         store::delete_edge(&tx, id)?;
         let queued = store::enqueue(
@@ -567,7 +573,7 @@ impl Core {
                 namespace: None,
                 tag: None,
                 base_version: None,
-                payload: "{}",
+                payload: &payload,
                 depends_on: &depends_on,
             },
         )?;

@@ -220,10 +220,10 @@ impl Folder {
 
         for path in &paths {
             let key = identity::natural_key(&self.root, path)?;
-            // Seen before it is judged. A file the walk found is a file that
-            // is there, whatever its extension, and leaving an unheld one out
-            // of `seen` journals it missing and then deletes the item it is
-            // bound to — which is what happened to a file a pull had written
+            // Seen before it is judged. A file the walk found is a file
+            // that is there, whatever its extension, and leaving an unheld
+            // one out of `seen` journals it missing and then deletes the
+            // item it is bound to — which reaches any file the folder wrote
             // under a name `holds` rejects.
             seen.insert(key.clone());
             if !self.holds(path) {
@@ -235,7 +235,7 @@ impl Folder {
             // the delete clock on a file sitting on the disk — which two
             // scans later deletes the item, because `journal_missing` pins
             // the moment to the first failure. A dataless placeholder in
-            // iCloud or Dropbox fails to materialise routinely.
+            // iCloud or Dropbox fails to materialize routinely.
             let Ok(bytes) = std::fs::read(path) else {
                 // Unreadable now. The next scan reads it, and until then
                 // the folder holds what it last agreed with.
@@ -343,12 +343,12 @@ impl Folder {
         };
         for row in bound {
             if seen.contains(&row.path) {
-                // **The file came back.** The grace exists because it might
-                // (`folders.md` 15), and nothing was taking a row out of the
-                // journal when it came back under its own name: only a rename
-                // cleared one, so a file deleted and restored inside five
-                // seconds was deleted on the server anyway, and came back as
-                // a new item with none of its edges.
+                // **The file came back.** The grace exists because it
+                // might (`folders.md` 15). Clearing the journal here and not
+                // only on a rename is what makes the grace mean anything: a
+                // file deleted and restored inside it is one the server
+                // never hears about, rather than one deleted and re-created
+                // as a new item with none of its edges.
                 if journaled.contains(&row.path) {
                     let conn = self.core.conn()?;
                     state::journal_clear(&conn, &row.path)?;
@@ -439,10 +439,10 @@ impl Folder {
         // carrying the row's real version lands, which is what a second
         // edit from this folder needs.
         //
-        // An earlier version carried zero always, so every create onto an
-        // existing row was refused for ever and the file was permanently
-        // unpushable. The zero-means-absent convention is this device's and
-        // not yet the contract's; it is in the open questions.
+        // Zero always, rather than the row's version, would refuse every
+        // create onto an existing row for ever and leave the file
+        // permanently unpushable. The zero-means-absent convention is this
+        // device's and not yet the contract's; it is in the open questions.
         let version = self
             .held_under_key(key)?
             .map(|item| item.version)
@@ -560,7 +560,12 @@ impl Folder {
         if item_id.is_empty() {
             return Ok(Vec::new());
         }
-        let edges = self.core.edges_from(item_id).unwrap_or_default();
+        // Not `unwrap_or_default`. An error read as "this item has no edges"
+        // makes every link in the body a fresh `create_edge` for an edge that
+        // already exists, and leaves the removal loop below iterating nothing
+        // — a silent wrong answer in the one function whose job is deciding
+        // what to destroy.
+        let edges = self.core.edges_from(item_id)?;
         let held: Vec<&str> = edges.iter().map(|edge| edge.target_id.as_str()).collect();
         let mut named: Vec<String> = Vec::new();
         let mut every_link_resolved = true;
@@ -847,6 +852,16 @@ impl Folder {
                 // deletes the item this pull is in the middle of writing back
                 // — which is the danger the move above is careful about, at
                 // the path it does not cover.
+                //
+                // Counted when there was a row to clear, because one of the
+                // rows this clears is a person's own delete still inside its
+                // grace, and that is the one nobody would otherwise see go.
+                if state::journaled(&conn)?
+                    .iter()
+                    .any(|(path, _, _)| path == &want)
+                {
+                    report.revived += 1;
+                }
                 state::journal_clear(&conn, &want)?;
             }
             if let Err(error) = std::fs::write(&path, &bytes) {
@@ -943,7 +958,10 @@ impl Folder {
         // edge's target was named, so what is missing is a target with no
         // edge, which that question never reaches.
         let mut wrote = Vec::new();
-        for edge in self.core.edges_from(&item.id).unwrap_or_default() {
+        // Also not swallowed: a file rendered with none of its links reads
+        // as a person having removed them, and the next scan takes the edges
+        // away to match.
+        for edge in self.core.edges_from(&item.id)? {
             let target = {
                 let conn = self.core.conn()?;
                 state::bound_to_item(&conn, &edge.target_id)?
@@ -998,6 +1016,16 @@ pub struct PullReport {
     /// item, and the item that wanted the path has no file and will not get
     /// one until it wants a different name.
     pub unwritten: usize,
+    /// Pending deletes this pull cancelled by writing the file back.
+    ///
+    /// A journal row is usually the folder's own bookkeeping, and clearing it
+    /// beside a write is right. But a person who deleted a file inside the
+    /// grace (`folders.md` 15) has a row here too, and a change arriving for
+    /// that item from elsewhere writes the file back and takes the delete
+    /// with it. The item is live on the server, so writing it back is the
+    /// defensible half; doing it without saying so is not, because the person
+    /// is left with a file they deleted and nothing to explain it.
+    pub revived: usize,
     /// Items whose file would have landed outside the folder, because a
     /// directory on the way to it is a symlink. Reported rather than
     /// written: the folder cannot see what it writes out there, so the
