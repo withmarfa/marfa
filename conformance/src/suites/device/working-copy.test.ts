@@ -442,7 +442,10 @@ describe("a local read answers the active state unless asked otherwise", () => {
     const device = harness!.device;
 
     const listed = await device.list();
-    expect(listed.ok).toBe(true);
+    expect(
+      listed.ok,
+      `a plain local list was refused, so the ids below are an empty array and every assertion on them holds vacuously: ${JSON.stringify(listed)}`,
+    ).toBe(true);
     const ids = listed.ok ? listed.value.map((item) => item.id).sort() : [];
     expect(
       ids,
@@ -465,7 +468,10 @@ describe("a local read answers the active state unless asked otherwise", () => {
     ).toEqual(["binned", "filed", "live"]);
 
     const filed = await device.list({ state: "archived" });
-    expect(filed.ok).toBe(true);
+    expect(
+      filed.ok,
+      `naming a state on the local list door was refused outright, so the door has no setting at all: ${JSON.stringify(filed)}`,
+    ).toBe(true);
     expect(
       filed.ok ? filed.value.map((item) => item.id) : [],
       "naming a state no longer reaches it, so a caller cannot ask for the rows the default hides",
@@ -485,7 +491,10 @@ describe("a local read answers the active state unless asked otherwise", () => {
     ).toEqual(["binned", "filed", "live"]);
 
     const hits = await device.search("zqlocal");
-    expect(hits.ok).toBe(true);
+    expect(
+      hits.ok,
+      `a plain local search was refused, so the ids below are an empty array and every assertion on them holds vacuously: ${JSON.stringify(hits)}`,
+    ).toBe(true);
     const ids = hits.ok ? hits.value.map((hit) => hit.item.id).sort() : [];
     expect(
       ids,
@@ -532,6 +541,16 @@ describe("a local read answers the active state unless asked otherwise", () => {
       live.ok,
       "an ordinary read by id was refused, so the absence below is about a broken door rather than the bin",
     ).toBe(true);
+
+    // The witness for the absence below, which the two cases above carry and
+    // this one did not. Hydrating proves the request asked for every state;
+    // it does not prove the row landed. Without this, a device that dropped
+    // trashed rows on ingest would pass this case while having lost the row
+    // from `--all-states` reads and from what a catch-up prunes against.
+    expect(
+      await heldIds(),
+      "the copy does not hold the binned row at all, so the absence below is a row that never arrived rather than one the read refuses",
+    ).toEqual(["binned", "filed", "live"]);
 
     const binned = await device.get("binned");
     expect(

@@ -378,7 +378,19 @@ export class SqliteItemStore implements ItemStore {
         })
         .run();
 
-      await this.searchStore.index(id, properties, input.type);
+      // **A row born in the bin is not indexed**, the same rule `transition`
+      // applies on the way in (`search-and-filters.md` 12): a trashed row
+      // leaves the index rather than being narrowed out of the query, so it
+      // is unmatched under `state=any` and under `state=trashed` alike.
+      //
+      // A create can name its own state, and a restore from an archive passes
+      // the archived row's state straight through, so both doors can put a
+      // trashed row here. Indexing it made `state=any` answer a row the rule
+      // says no search reaches — and the device half was written against the
+      // rule rather than against this, so the two disagreed.
+      if (state !== "trashed") {
+        await this.searchStore.index(id, properties, input.type);
+      }
 
       return {
         id,

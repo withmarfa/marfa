@@ -20,6 +20,8 @@
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import { createTestContext, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
+import { ITEM_STATES } from "@withmarfa/shared";
+import { EXPORT_EXCLUDED_STATES } from "./export.js";
 
 let ctx: TestContext;
 let activeId = "";
@@ -171,6 +173,58 @@ describe("GET /search with no state named", () => {
       await searchedIds(`q=${MARKER}&state=archived&limit=100`),
       "naming a state no longer reaches it, so the rows a listing hides are unreachable by any read",
     ).toEqual([archivedId]);
+  });
+
+  it("does not reach a row born in the bin, under any state value", async () => {
+    // `trashedId` was created with its state named rather than transitioned
+    // into, which is the door that used to index it: only `transition` took a
+    // row back out of the index, so a row that was never transitioned stayed
+    // in and answered a search the rule says reaches nothing.
+    const widened = await searchedIds(`q=${MARKER}&state=any&limit=100`);
+    expect(
+      widened,
+      "the sentinel answers a row in the bin, so a deleted note is still findable by search and the index disagrees with every other door",
+    ).not.toContain(trashedId);
+    // The control: the sentinel is doing its job on the same query, so the
+    // absence above is the bin being unreachable rather than the search
+    // matching nothing at all.
+    expect(
+      widened.sort(),
+      "the sentinel stopped widening a search, so this case would pass against a query that answers nothing",
+    ).toEqual([activeId, archivedId].sort());
+    expect(
+      await searchedIds(`q=${MARKER}&state=trashed&limit=100`),
+      "naming the bin reaches it through a search, which no other door allows and the index is not supposed to hold",
+    ).toEqual([]);
+  });
+});
+
+describe("the export default is an exclusion", () => {
+  it("names only the bin, so a state added later is carried without being listed", () => {
+    // The constant's comment claims this shape rather than an inclusion list,
+    // and the behavioral cases below cannot tell the two apart: both answer
+    // active and archived today. Rewritten as `["active","archived"]` an
+    // inclusion list would pass every one of them while silently dropping a
+    // `revoked` row — a state no fixture seeds — from every backup.
+    expect(
+      [...EXPORT_EXCLUDED_STATES],
+      "the export default stopped being an exclusion, so every state added to the platform from now on is left out of backups until somebody remembers this list",
+    ).toEqual(["trashed"]);
+    // Against the platform's own list rather than a copy of it. Hard-coding
+    // the answer would turn the next state anyone adds into a red test named
+    // for the behaviour that actually happened — carried without being
+    // listed — which is the opposite of what this case is for.
+    const carried = ITEM_STATES.filter(
+      (state) => !(EXPORT_EXCLUDED_STATES as readonly string[]).includes(state),
+    );
+    expect(
+      carried.sort(),
+      "a state the platform knows is not carried by an export, so a backup is not a copy of what the instance holds",
+    ).toEqual(
+      ITEM_STATES.filter((state) => state !== "trashed")
+        .slice()
+        .sort(),
+    );
   });
 });
 

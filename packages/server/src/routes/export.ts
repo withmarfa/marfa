@@ -35,7 +35,7 @@ import {
  * to the platform later is carried by a backup without anyone remembering
  * to add it here.
  */
-const EXPORT_EXCLUDED_STATES = ["trashed"] as const;
+export const EXPORT_EXCLUDED_STATES = ["trashed"] as const;
 
 // ---------------------------------------------------------------------------
 // Route definition

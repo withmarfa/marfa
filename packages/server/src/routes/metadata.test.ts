@@ -67,7 +67,10 @@ describe("GET /metadata/tags", () => {
       const res = await request(ctx.app, "GET", "/metadata/tags", {
         key: ctx.workingKey,
       });
-      expect(res.status).toBe(200);
+      expect(
+        res.status,
+        "the facet door stopped answering, so every reading below is taken from an error body and means nothing",
+      ).toBe(200);
       const data = (await res.json()) as { tags: { tag: string }[] };
       return data.tags.some((t) => t.tag === tag);
     };
@@ -79,7 +82,10 @@ describe("GET /metadata/tags", () => {
       await listed("only-on-trashed-item"),
       "a tag on a live row is not counted, so the absences below say nothing about what a delete or an archive does",
     ).toBe(true);
-    expect(await listed("only-on-archived-item")).toBe(true);
+    expect(
+      await listed("only-on-archived-item"),
+      "a tag on a live row is not counted, so the archive absence below says nothing about what an archive does",
+    ).toBe(true);
 
     await request(ctx.app, "DELETE", `/items/${binned}`, {
       key: ctx.workingKey,

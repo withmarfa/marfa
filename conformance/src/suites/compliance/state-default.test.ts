@@ -221,6 +221,47 @@ describe("the state a door answers when none is named", () => {
     ).toEqual([]);
   });
 
+  it("a search does not reach a row born in the bin either", async () => {
+    // The case above puts its row in the bin with a delete, which is the one
+    // door that took a row back out of the index. A row created with its
+    // state named never passes through that door, so it stayed indexed and
+    // the sentinel answered it — the index holding what the grammar says no
+    // search can reach.
+    const born = await client.createItem(
+      createNote({
+        source: ctx.source,
+        source_id: "state-default-born-binned",
+        properties: {
+          title: "state-default born binned",
+          body: "zqstatedefault born",
+        },
+        state: "trashed",
+      }),
+    );
+    expect(
+      born.ok && born.data.item.state === "trashed",
+      "the fixture cannot create a row already in the bin, so this case says nothing about the door it exists for",
+    ).toBe(true);
+    if (!born.ok) return;
+    trackItem(ctx, born.data.item.id);
+    // Every read here narrows to `mine`, so a row absent from it cannot
+    // appear in a result whatever the server does — and the assertion below
+    // would hold against a server that indexed the bin and answered it.
+    mine.add(born.data.item.id);
+
+    const widened = await searched({ state: "any" });
+    // The control: the same read reaches an ordinary row, so the absence
+    // below is the bin rather than a search that matches nothing.
+    expect(
+      widened,
+      "the sentinel matches nothing at all on this text, so the absence below would hold against a broken search",
+    ).toContain(active.id);
+    expect(
+      widened,
+      "a row created straight into the bin is matched by a search, so whether a deleted row is findable depends on which door put it there",
+    ).not.toContain(born.data.item.id);
+  });
+
   it("refuses a state that is not a state, on every door that reads items", async () => {
     // The three doors resolve `state` through one rule, so the refusal has
     // to be the same on all three. Driven per door rather than once,
