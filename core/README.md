@@ -12,9 +12,11 @@ What it does is written down in `conformance/spec/device.md`, `queue-and-verdict
 
 ## The binary
 
-`marfa` is the reference client of one instance: every operation `openapi.json` publishes is a command, and `marfa operations` prints the table that maps them (the crate's own test holds it against the document). One root per area of the API, each leaf one operation: `items`, `edges`, `edge-types`, `types`, `search`, `metadata`, `extensions`, `blobs`, `keys`, `config`, `export`, `webhooks`, `audit`, `events`, `housekeeping`, `connectors`, and `status` and `whoami` for the instance and the credential. A command builds the request from its arguments, sends it, and prints the server's answer as it came: nothing mirrors the document's schemas in the binary.
+`marfa` is the reference client of one instance: every operation `openapi.json` publishes is a command, and `marfa operations` prints the table that maps them (the crate's own test holds it against the document). One root per area of the API, each leaf one operation: `items`, `edges`, `edge-types`, `types`, `search`, `metadata`, `extensions`, `blobs`, `keys`, `config`, `export`, `webhooks`, `audit`, `events`, `housekeeping`, `connectors`, `owner`, and `status` and `whoami` for the instance and the credential. A command builds the request from its arguments, sends it, and prints the server's answer as it came: nothing mirrors the document's schemas in the binary.
 
-The server is `--url` on any command, then `MARFA_API_URL`, then the server a kept key made current; the credential is `--key`, then `MARFA_API_KEY`, then the operating system's keychain, where `marfa keys keep` puts a key and `marfa keys forget` takes it out. Never a file. A system with no keychain is told so and pointed at the flag or the environment.
+The server is `--url` on any command, then `MARFA_API_URL`, then the server a kept credential made current; the credential is `--key`, then `MARFA_API_KEY`, then the operating system's keychain, where `marfa keys keep` puts a key, `marfa login` puts a token set, and `marfa keys forget` and `marfa logout` take them out. Never a file. A system with no keychain is told so and pointed at the flag, the environment, or `login --print-token`.
+
+`marfa owner create --email ADDRESS` makes the one account behind the sign-in surface, on the operator key, asking for the password on the terminal or reading it from stdin with `--password-stdin`; `marfa owner show` says who. `marfa login` signs in as that owner with a device code: the binary registers itself as a public client once per server, prints the code and the page to approve it on (and opens the page unless `--no-browser`), and polls until the owner approves or the code expires. The token set is kept in the keychain and refreshed under a lock before it expires, because two processes refreshing one token in the same second would replay a rotated refresh token and sign each other out; a refresh the server refuses ends the sign-in, and the next command says so with exit 5. `marfa logout` revokes the token and forgets it.
 
 `marfa device --db PATH <command>` is the working copy: `hydrate`, `catch-up`, `status`, `items`, `search`, `edges`, `tags`, `metadata`, `extensions`, `queue`, `drain`, `forget` and `release`, on the store `--db` (or `MARFA_DB`) names. There is no default store. `marfa folders <command>` is a folder, which carries its own store. Both take the server and the credential the same way the direct commands do.
 
@@ -27,7 +29,7 @@ The server is `--url` on any command, then `MARFA_API_URL`, then the server a ke
 | 2    | The command line was wrong, or named no store or server. clap's own refusals print its usage text.        |
 | 3    | The environment failed: unreachable, timed out, a 5xx, a 429. Try again; `retry_after_seconds` says when. |
 | 4    | The working copy or the queue refused under the device rules, or this system has no keychain.             |
-| 5    | No credential, or the credential was refused.                                                             |
+| 5    | No credential, the credential was refused, or the sign-in ended and `marfa login` is needed again.       |
 
 The device fixtures drive the binary through `conformance/src/device/cli-adapter.ts`, which reads the envelope.
 

@@ -1,3 +1,4 @@
+mod auth;
 mod commands;
 mod credentials;
 mod device;
@@ -16,7 +17,8 @@ use clap::{Parser, Subcommand};
 
 use crate::commands::{
     audit, blobs, config, connectors, edge_types, edges, events, export, extensions, housekeeping,
-    items, keys, metadata, operations, search, status, types, webhooks, whoami,
+    items, keys, login, logout, metadata, operations, owner, search, status, types, webhooks,
+    whoami,
 };
 use crate::device::DeviceArgs;
 use crate::error::{CliError, EXIT_CODES_HELP};
@@ -54,6 +56,15 @@ enum Command {
     Status,
     /// Which server, instance and credential a bare command would use.
     Whoami,
+    /// Sign in to a server as the owner: a code, approved in the browser.
+    Login(login::LoginArgs),
+    /// Sign out of a server: the token is revoked and forgotten.
+    Logout,
+    /// The owner: the one account behind the sign-in surface.
+    Owner {
+        #[command(subcommand)]
+        command: owner::OwnerCommand,
+    },
     /// Items: create, read, change, tag, link, attach, and the bulk doors.
     Items {
         #[command(subcommand)]
@@ -160,11 +171,15 @@ fn run(cli: Cli) -> Result<(), CliError> {
         key: cli.key,
     };
     // Resolved by the commands that talk to a server: the working copy and
-    // the folders resolve it only where a command sends, and the table
-    // needs no server at all.
+    // the folders resolve it only where a command sends, the table needs no
+    // server at all, and signing in and out take the server without a
+    // credential, one having none yet and the other giving its up.
     let remote = || Remote::resolve(&named);
     match cli.command {
         Command::Operations => operations::run(&out),
+        Command::Login(args) => login::run(args, &named, &out),
+        Command::Logout => logout::run(&named, &out),
+        Command::Owner { command } => owner::run(command, &remote()?, &out),
         Command::Device(args) => device::run(args, &named, cli.json),
         Command::Folders { command } => folders::run(command, &named, cli.json),
         Command::Status => status::run(&remote()?, &out),

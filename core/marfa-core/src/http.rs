@@ -14,9 +14,9 @@ pub const PAGE_LIMIT: u32 = 200;
 pub struct Http {
     agent: Agent,
     base: Url,
-    /// Absent for a transport that carries no credential: the root document
-    /// and the health door answer without one, and a device's transport
-    /// always holds one.
+    /// Absent for a transport that carries no credential: the root document,
+    /// the health door and the sign-in doors answer without one, and a
+    /// device's transport always holds one.
     authorization: Option<String>,
 }
 
@@ -90,13 +90,15 @@ impl Answer {
 
 /// What a call from the direct surface sends.
 ///
-/// A body is JSON text or a reader the request streams from, because a blob
-/// upload must not buffer the file: the cap on a blob is the server's to set
-/// and a binary that read the whole file first would have a cap of its own
-/// that nothing documents.
+/// A body is JSON text, sized text under a type the headers name (a form),
+/// or a reader the request streams from, because a blob upload must not
+/// buffer the file: the cap on a blob is the server's to set and a binary
+/// that read the whole file first would have a cap of its own that nothing
+/// documents.
 pub enum CallBody<'a> {
     None,
     Json(&'a str),
+    Text(&'a str),
     Reader(Box<dyn Read + Send + 'static>),
 }
 
@@ -364,7 +366,7 @@ impl Http {
                 let request = builder.body(()).map_err(cannot_send)?;
                 self.run_call(request, call.stream)
             }
-            CallBody::Json(text) => {
+            CallBody::Json(text) | CallBody::Text(text) => {
                 let request = builder.body(text).map_err(cannot_send)?;
                 self.run_call(request, call.stream)
             }

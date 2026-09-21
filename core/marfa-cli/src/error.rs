@@ -46,6 +46,9 @@ pub enum CliError {
     NoCredential { origin: String },
     #[error("no keychain on this system: {0}")]
     NoKeychain(String),
+    /// The kept token could not be refreshed, so the sign-in is over.
+    #[error("signed out of {origin}: run `marfa login`")]
+    SignedOut { origin: String },
     /// An argument the binary judged wrong before anything was sent.
     #[error("{0}")]
     Invalid(String),
@@ -114,6 +117,7 @@ impl CliError {
             CliError::NoServerNamed => "no_server",
             CliError::NoCredential { .. } => "no_credential",
             CliError::NoKeychain(_) => "no_keychain",
+            CliError::SignedOut { .. } => "signed_out",
             CliError::Invalid(_) => "invalid",
         }
     }
@@ -151,7 +155,7 @@ impl CliError {
                 _ => Exit::Refused,
             },
             CliError::NoStoreNamed | CliError::NoServerNamed => Exit::Usage,
-            CliError::NoCredential { .. } => Exit::Credential,
+            CliError::NoCredential { .. } | CliError::SignedOut { .. } => Exit::Credential,
             CliError::NoKeychain(_) => Exit::Local,
         }
     }
@@ -253,8 +257,8 @@ With --json a refusal is one JSON object on stderr:
   {\"error\":{\"code\":...,\"message\":...,\"server\":{\"status\":...,\"code\":...,\"details\":...}|null,\"retry_after_seconds\":...},\"exit\":N}
 where error.code is one of: invalid, not_found, unauthorized, forbidden, validation, conflict,
 too_large, unknown_type, rate_limited, server, network, decoding, io, watch, store, no_store,
-no_server, no_credential, no_keychain, no_cursor, hydration_incomplete, reading_handle,
-wrong_schema, catch_up_too_old, stream_incomplete, wrong_server, not_held.";
+no_server, no_credential, no_keychain, signed_out, no_cursor, hydration_incomplete,
+reading_handle, wrong_schema, catch_up_too_old, stream_incomplete, wrong_server, not_held.";
 
 #[cfg(test)]
 mod tests {
@@ -334,6 +338,10 @@ mod tests {
             }
             .code(),
             CliError::NoKeychain(String::new()).code(),
+            CliError::SignedOut {
+                origin: String::new(),
+            }
+            .code(),
             CliError::Core(CoreError::NoCursor).code(),
             CliError::Core(CoreError::HydrationIncomplete).code(),
             CliError::Core(CoreError::ReadingHandle).code(),
@@ -443,6 +451,13 @@ mod tests {
             Exit::Credential
         );
         assert_eq!(CliError::NoKeychain(String::new()).exit(), Exit::Local);
+        assert_eq!(
+            CliError::SignedOut {
+                origin: String::new()
+            }
+            .exit(),
+            Exit::Credential
+        );
         assert_eq!(CliError::NotHeld("x".into()).exit(), Exit::Refused);
         assert_eq!(CliError::Invalid("x".into()).exit(), Exit::Refused);
         assert_eq!(

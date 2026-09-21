@@ -3,44 +3,23 @@
 //! One table, read by two things: `marfa operations`, which prints it for
 //! any reader of the binary; and the crate's own test, which holds it
 //! against `openapi.json` so a published operation without a command is
-//! red before anything is pushed.
-//!
-//! An operation may be pending instead of mapped, with the reason and the
-//! pull request that closes it. Pending is a state the test checks both
-//! ways: an entry that is no longer published, or that has gained a command,
-//! is red, so the list cannot go stale.
+//! red before anything is pushed, and a command for one the document no
+//! longer publishes is red too.
 
 use serde_json::json;
 
 use crate::error::CliError;
 use crate::output::Printer;
 
-/// How an operation is reached: by a command line, or not yet.
-pub enum Reach {
-    /// The command line that reaches it, without the arguments a call needs.
-    Command(&'static str),
-    /// Not reachable yet, and why: the pull request or the question it waits on.
-    Pending(&'static str),
-}
-
-/// An operation id from `openapi.json` and how the binary reaches it.
+/// An operation id from `openapi.json` and the command line that reaches
+/// it, without the arguments a call needs.
 pub struct Operation {
     pub id: &'static str,
-    pub reach: Reach,
+    pub command: &'static str,
 }
 
 const fn reached(id: &'static str, command: &'static str) -> Operation {
-    Operation {
-        id,
-        reach: Reach::Command(command),
-    }
-}
-
-const fn pending(id: &'static str, reason: &'static str) -> Operation {
-    Operation {
-        id,
-        reach: Reach::Pending(reason),
-    }
+    Operation { id, command }
 }
 
 pub const OPERATIONS: &[Operation] = &[
@@ -122,36 +101,20 @@ pub const OPERATIONS: &[Operation] = &[
     reached("heartbeatConnector", "connectors heartbeat"),
     reached("reportConnectorRun", "connectors report"),
     reached("listConnectorRuns", "connectors runs"),
-    pending(
-        "registerOAuthClient",
-        "the sign-in pull request: `marfa login`",
-    ),
-    pending("getOwner", "the sign-in pull request: `marfa owner show`"),
-    pending(
-        "createOwner",
-        "the sign-in pull request: `marfa owner create`",
-    ),
+    reached("registerOAuthClient", "login"),
+    reached("getOwner", "owner show"),
+    reached("createOwner", "owner create"),
 ];
 
 pub fn run(out: &Printer) -> Result<(), CliError> {
     let rows: Vec<serde_json::Value> = OPERATIONS
         .iter()
-        .map(|operation| match operation.reach {
-            Reach::Command(command) => {
-                json!({ "operation_id": operation.id, "command": command, "pending": null })
-            }
-            Reach::Pending(reason) => {
-                json!({ "operation_id": operation.id, "command": null, "pending": reason })
-            }
-        })
+        .map(|operation| json!({ "operation_id": operation.id, "command": operation.command }))
         .collect();
     out.report(&json!(rows), || {
         OPERATIONS
             .iter()
-            .map(|operation| match operation.reach {
-                Reach::Command(command) => format!("{:32} marfa {}", operation.id, command),
-                Reach::Pending(reason) => format!("{:32} pending: {}", operation.id, reason),
-            })
+            .map(|operation| format!("{:32} marfa {}", operation.id, operation.command))
             .collect::<Vec<_>>()
             .join("\n")
     })

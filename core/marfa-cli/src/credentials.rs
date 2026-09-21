@@ -1,10 +1,11 @@
 //! Where a kept credential lives: the operating system's keychain, and
 //! nowhere else.
 //!
-//! One entry per server origin, holding a key as JSON, and one entry naming
-//! the origin a bare command talks to. Never a file: a file is readable by
-//! anything on the machine; a process with no keychain is told so and
-//! pointed at `--key` or the environment.
+//! One entry per server origin, holding a key or a token set as JSON, and
+//! one entry naming the origin a bare command talks to. Never a file: a file
+//! is readable by anything on the machine, and two processes refreshing one
+//! token from a file race each other into a revoked chain; a process with no
+//! keychain is told so and pointed at `--key` or the environment.
 
 use keyring::{Entry, Error};
 use serde::{Deserialize, Serialize};
@@ -17,13 +18,35 @@ const SERVICE: &str = "marfa";
 /// The account that names the origin a command with no `--url` talks to.
 const CURRENT: &str = "current";
 
-/// What is kept for one origin. Tagged by kind, so an entry of another
-/// kind can join without changing what an entry already kept reads as.
+/// What is kept for one origin, tagged by kind.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Kept {
     /// A key, as minted.
     Key { key: String },
+    /// A token set from a sign-in, with the client it was issued to and the
+    /// doors a refresh and a sign-out go through, so neither needs the
+    /// discovery document again.
+    Token {
+        access_token: String,
+        refresh_token: Option<String>,
+        /// Seconds since the epoch, when the access token stops working.
+        expires_at: Option<u64>,
+        client_id: String,
+        scope: Option<String>,
+        token_endpoint: String,
+        revocation_endpoint: Option<String>,
+    },
+}
+
+impl Kept {
+    /// The bearer value a call sends.
+    pub fn bearer(&self) -> &str {
+        match self {
+            Kept::Key { key } => key,
+            Kept::Token { access_token, .. } => access_token,
+        }
+    }
 }
 
 fn entry(account: &str) -> Result<Entry, CliError> {
@@ -79,6 +102,17 @@ pub fn current() -> Result<Option<String>, CliError> {
     }
 }
 
+/// Holds the keychain for one test: every test that keeps a credential
+/// writes the one `current` entry, so two running at once read each
+/// other's origin back.
+#[cfg(test)]
+pub(crate) fn hold() -> std::sync::MutexGuard<'static, ()> {
+    static KEYCHAIN: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    KEYCHAIN
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -92,6 +126,7 @@ mod tests {
     /// scenario suite covers the same path wherever a keychain answers.
     #[test]
     fn keeps_reads_and_forgets_a_credential_for_one_origin() {
+        let _keychain = hold();
         let origin = format!("https://test.invalid:{}", std::process::id());
         let kept = Kept::Key {
             key: "marfa_k1_test".into(),

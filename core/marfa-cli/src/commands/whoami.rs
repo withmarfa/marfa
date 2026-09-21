@@ -8,23 +8,40 @@ use crate::remote::{CredentialSource, Remote};
 /// Which server, which instance, and which credential a bare command would
 /// use, and where that credential came from.
 ///
-/// A key has no door that says whose it is, so this reports the key's kind
-/// and its source.
+/// A key has no door that says whose it is, so for a key this reports the
+/// key's kind and its source; a token reports the person it was issued to.
 pub fn run(remote: &Remote, out: &Printer) -> Result<(), CliError> {
     let instance = remote.json(&Request::get(&[]).public())?;
     let credential = match remote.credential() {
         None => json!(null),
         Some(source) => {
-            // A key as the server mints them, or something else handed
-            // over as one: the kind is read off the bearer, and only a key
-            // is a shape this build keeps.
             let bearer = remote.bearer().unwrap_or_default();
-            let kind = if bearer.starts_with("marfa_k1_") {
+            let kind = if bearer.starts_with("marfa_at_") {
+                "token"
+            } else if bearer.starts_with("marfa_k1_") {
                 "key"
             } else {
                 "unknown"
             };
-            json!({ "kind": kind, "from": source.as_str() })
+            let mut record = json!({ "kind": kind, "from": source.as_str() });
+            if let Some(crate::credentials::Kept::Token {
+                scope, expires_at, ..
+            }) = remote.kept()
+            {
+                record["scope"] = json!(scope);
+                record["expires_at"] = json!(expires_at);
+            }
+            if kind == "token" {
+                // The person the token was issued to, where the token's
+                // scope reaches the identity claims; a token without them
+                // is refused there and reported without a person.
+                match remote.json(&Request::get(&["auth", "oauth2", "userinfo"])) {
+                    Ok(person) => record["person"] = person,
+                    Err(CliError::Refused { .. }) => {}
+                    Err(error) => return Err(error),
+                }
+            }
+            record
         }
     };
     let report = json!({
@@ -53,12 +70,24 @@ pub fn run(remote: &Remote, out: &Printer) -> Result<(), CliError> {
             None => lines.push("no credential".into()),
             Some(source) => {
                 let kind = field(&credential, "kind");
+                let who = credential
+                    .get("person")
+                    .map(|person| {
+                        let email = field(person, "email");
+                        let name = if email.is_empty() {
+                            field(person, "sub")
+                        } else {
+                            email
+                        };
+                        format!(" as {name}")
+                    })
+                    .unwrap_or_default();
                 let from = match source {
                     CredentialSource::Flag => "--key",
                     CredentialSource::Environment => "MARFA_API_KEY",
                     CredentialSource::Keychain => "the keychain",
                 };
-                lines.push(format!("a {kind} from {from}"));
+                lines.push(format!("a {kind} from {from}{who}"));
             }
         }
         lines.join("\n")
