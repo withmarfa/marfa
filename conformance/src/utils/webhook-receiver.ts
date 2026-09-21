@@ -14,10 +14,21 @@ export interface Receiver {
   /** A URL of its own per subscription, so deliveries are attributable. */
   hookUrl: (label: string) => string;
   received: Received[];
-  /** Resolve once a delivery satisfying `matches` has arrived. */
+  /**
+   * Resolve once a delivery satisfying `matches` has arrived, or throw
+   * naming what did arrive once the wait has run out. A wait with no end
+   * fails as the file's own timeout, pointing at the case and saying
+   * nothing about which delivery never came.
+   */
   waitFor: (matches: (r: Received) => boolean) => Promise<Received>;
   close: () => Promise<void>;
 }
+
+/**
+ * Half the file timeout the suites run under, so a delivery that never
+ * comes is reported by this wait and not by vitest cutting the case off.
+ */
+const WAIT_MS = 60_000;
 
 export async function startReceiver(): Promise<Receiver> {
   const received: Received[] = [];
@@ -43,11 +54,19 @@ export async function startReceiver(): Promise<Receiver> {
     hookUrl: (label) => `${url}/${label}`,
     received,
     waitFor: async (matches) => {
-      for (;;) {
+      const deadline = Date.now() + WAIT_MS;
+      while (Date.now() < deadline) {
         const hit = received.find(matches);
         if (hit) return hit;
         await new Promise((r) => setTimeout(r, 50));
       }
+      const arrived = received
+        .map((r) => `${r.path} ${r.body.slice(0, 120)}`)
+        .join("\n  ");
+      throw new Error(
+        `no delivery matched within ${String(WAIT_MS / 1000)}s; ${String(received.length)} arrived` +
+          (arrived ? `:\n  ${arrived}` : ""),
+      );
     },
     close: () => new Promise<void>((resolve) => server.close(() => resolve())),
   };

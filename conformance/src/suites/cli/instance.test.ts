@@ -1,14 +1,22 @@
-import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import {
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { gunzipSync } from "node:zlib";
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import {
   cleanup,
   trackItem,
   trackKey,
   trackWebhook,
 } from "../../utils/setup.js";
+import { startReceiver } from "../../utils/webhook-receiver.js";
+import type { Receiver } from "../../utils/webhook-receiver.js";
 import { cliContext, releaseHeld, unique } from "./harness.js";
 import type { CliContext, ItemEnvelope } from "./harness.js";
 
@@ -20,17 +28,65 @@ import type { CliContext, ItemEnvelope } from "./harness.js";
 
 let c: CliContext;
 let dir: string;
+let receiver: Receiver;
 
 beforeAll(async () => {
   c = await cliContext("instance");
   dir = mkdtempSync(join(tmpdir(), "marfa-cli-instance-"));
+  receiver = await startReceiver();
 });
 
 afterAll(async () => {
   releaseHeld();
+  await receiver.close();
   rmSync(dir, { recursive: true, force: true });
   await cleanup(c.ctx);
 });
+
+/** Bytes uploaded from the terminal, answered by their hash. */
+async function upload(text: string): Promise<string> {
+  const path = join(dir, `${unique("blob")}.txt`);
+  writeFileSync(path, text);
+  const stored = await c.cli.json<{ hash: string }>(["blobs", "upload", path]);
+  return stored.hash;
+}
+
+/**
+ * Runs a housekeeping job by name and answers what the run reported.
+ *
+ * The server this file shares runs the same housekeeping jobs on its own
+ * clock, and a name the scheduler is already running answers `409`: the run
+ * in flight is the same work, so the ask is repeated rather than failed.
+ */
+async function runHousekeepingJob(
+  name: string,
+): Promise<{ name: string; outcome: string }> {
+  for (let attempt = 0; attempt < 50; attempt++) {
+    const outcome = await c.operator.run([
+      "--json",
+      "housekeeping",
+      "run",
+      name,
+    ]);
+    if (outcome.code === 0) {
+      return JSON.parse(outcome.stdout) as { name: string; outcome: string };
+    }
+    // A refusal the binary makes is one JSON object on stderr. Anything
+    // else there is the binary failing outside the envelope, and that text
+    // is the finding rather than a parse error over it.
+    let envelope: { error: { server: { status: number | null } | null } };
+    try {
+      envelope = JSON.parse(outcome.stderr.trim()) as typeof envelope;
+    } catch {
+      throw new Error(`marfa housekeeping run ${name}: ${outcome.stderr}`);
+    }
+    if (envelope.error.server?.status !== 409) {
+      throw new Error(`marfa housekeeping run ${name}: ${outcome.stderr}`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error(`${name} was held by a run for five seconds`);
+}
 
 interface Status {
   server: string;
@@ -237,10 +293,15 @@ describe("the instance from the terminal", () => {
     const drift = await c.operator.json<{
       types: Array<{ id: string; item_count: number; removable: boolean }>;
     }>(["types", "drift"]);
-    // The server was booted for this run and nothing registers a platform
-    // type outside the registry, so the report is empty; `types prune`
-    // needs a drifted one and is reached only by its help in this suite.
-    expect(drift.types).toEqual([]);
+    // **What this asserts is that the door answers and who it answers to**,
+    // and nothing about how many rows it holds. Drift is a platform row an
+    // older build seeded and this one no longer ships, computed once at
+    // boot: no door on a running server can make one, so a report read here
+    // is empty on every server this suite could be pointed at and an
+    // assertion that it is empty would pass against a handler that reports
+    // nothing. The server's own suite is where the populated report is
+    // proved, because seeding a drifted row is in-process work.
+    expect(Array.isArray(drift.types)).toBe(true);
     const refused = await c.cli.refused(["types", "drift"]);
     expect(refused.code).toBe(1);
     expect(refused.envelope.error.server?.status).toBe(403);
@@ -255,27 +316,86 @@ describe("the instance from the terminal", () => {
     expect(stores.data.length).toBeGreaterThan(0);
     expect(stores.data[0]?.kind).toBe("disk");
     expect(stores.min_copies).toBeGreaterThan(0);
-    // No sweep has found a blob nothing references on a server booted for
-    // this run, so the report is the empty one rather than a shape that
-    // happens to parse.
-    const orphans = await c.operator.json<{ data: unknown[] }>([
-      "blobs",
-      "orphans",
+    // Two blobs of this scenario's own, one referenced and one not, so the
+    // report is read for the hashes this scenario uploaded rather than for
+    // the whole instance: it is one table the whole instance writes into,
+    // and a run that has already swept somebody else's blob is the common
+    // case rather than the odd one.
+    const referenced = await upload("an item names me");
+    const owner = await c.cli.json<ItemEnvelope>([
+      "items",
+      "create",
+      "--type",
+      "core.file",
+      "--properties",
+      JSON.stringify({
+        title: unique("cli-orphans"),
+        blob_ref: referenced,
+        mime_type: "text/plain",
+      }),
     ]);
-    expect(orphans.data).toEqual([]);
+    trackItem(c.ctx, owner.item.id);
+    // Driven until one run answers for a hash of this scenario's own. The
+    // grace is zero on the server the suite boots, so the sweep's own run
+    // on its own clock purges what the run below reported the moment it
+    // lands between the run and the read — which is a race rather than the
+    // contract failing, and a fresh upload is what takes it out of the way.
+    // Only the positive witness is retried. The negative is held against
+    // the report the loop settled on, because a retry after a report that
+    // named the referenced blob would purge that blob and the evidence with
+    // it, and pass the second time round against nothing.
+    let orphaned = "";
+    let reported: string[] = [];
+    await vi.waitFor(
+      async () => {
+        orphaned = await upload(`nothing names me ${unique("orphan")}`);
+        await runHousekeepingJob("blob-orphans");
+        reported = (
+          await c.operator.json<{ data: { hash: string }[] }>([
+            "blobs",
+            "orphans",
+          ])
+        ).data.map((row) => row.hash);
+        // The witness: the door does report, and it reported the hash this
+        // scenario uploaded with nothing pointing at it.
+        expect(
+          reported,
+          "the sweep found nothing this scenario uploaded, so the absence below is about a report nothing reaches",
+        ).toContain(orphaned);
+      },
+      { timeout: 30_000, interval: 250 },
+    );
+    expect(
+      reported,
+      "a blob an item names was reported unreferenced",
+    ).not.toContain(referenced);
     const refusedOrphans = await c.cli.refused(["blobs", "orphans"]);
     expect(refusedOrphans.envelope.error.server?.status).toBe(403);
+    // Reported on one run and purged on the next. This run also re-reports
+    // whatever else on the instance is unreferenced, as any run does; what
+    // it must never do is touch the blob an item names, which is why those
+    // bytes are read back after it rather than trusted to a report.
+    await runHousekeepingJob("blob-orphans");
+    const swept = (
+      await c.operator.json<{ data: { hash: string }[] }>(["blobs", "orphans"])
+    ).data.map((row) => row.hash);
+    expect(
+      swept,
+      "the blob reported on the previous run was not purged on this one",
+    ).not.toContain(orphaned);
+    const kept = await c.cli.run(["blobs", "download", referenced]);
+    expect(
+      kept.code,
+      `the blob an item names did not survive the sweeps: ${kept.stderr}`,
+    ).toBe(0);
+    expect(kept.stdout).toBe("an item names me");
     const jobs = await c.operator.json<{ data: { name: string }[] }>([
       "housekeeping",
       "list",
     ]);
     const names = jobs.data.map((job) => job.name);
     expect(names).toContain("trash-purge");
-    const ran = await c.operator.json<{ name: string; outcome: string }>([
-      "housekeeping",
-      "run",
-      "trash-purge",
-    ]);
+    const ran = await runHousekeepingJob("trash-purge");
     expect(ran.name).toBe("trash-purge");
     expect(ran.outcome).toBe("ok");
     const unknown = await c.operator.refused([
@@ -327,13 +447,55 @@ describe("the instance from the terminal", () => {
       "--inactive",
     ]);
     expect(paused.active).toBe(false);
-    const deliveries = await c.cli.json<{ deliveries: unknown[] }>([
+
+    // A second subscription on the same event, live and pointed at a
+    // receiver this file is running. It is what bounds the absence below:
+    // one write, two subscriptions, and the delivery that reaches this one
+    // is what says the write was dispatched at all. Asserting the paused
+    // subscription's log is empty on its own would pass against a server
+    // that had stopped delivering, and against a door that reports nothing.
+    const live = await c.cli.json<{ id: string }>([
+      "webhooks",
+      "create",
+      "--to",
+      receiver.hookUrl("cli"),
+      "--event",
+      "item.created",
+    ]);
+    trackWebhook(c.ctx, live.id);
+    const written = await c.cli.json<ItemEnvelope>([
+      "items",
+      "create",
+      "--type",
+      "core.note",
+      "--properties",
+      JSON.stringify({ title: unique("cli-hooked"), body: "b" }),
+    ]);
+    trackItem(c.ctx, written.item.id);
+    await receiver.waitFor(
+      (hit) => hit.path === "/hook/cli" && hit.body.includes(written.item.id),
+    );
+    const delivered = await vi.waitFor(
+      async () => {
+        const rows = await c.cli.json<{
+          deliveries: Array<{ event_type: string; succeeded: boolean }>;
+        }>(["webhooks", "deliveries", live.id]);
+        expect(rows.deliveries.length).toBeGreaterThan(0);
+        return rows.deliveries;
+      },
+      { timeout: 20_000, interval: 250 },
+    );
+    expect(delivered[0]?.event_type).toBe("item.created");
+    expect(delivered[0]?.succeeded).toBe(true);
+
+    // The same write, and the paused subscription has nothing: a pause
+    // stops delivery rather than only stopping the log.
+    const quiet = await c.cli.json<{ deliveries: unknown[] }>([
       "webhooks",
       "deliveries",
       created.id,
     ]);
-    // Nothing has fired at a paused hook with no matching write yet.
-    expect(deliveries.deliveries).toEqual([]);
+    expect(quiet.deliveries).toEqual([]);
     await c.cli.json(["webhooks", "delete", created.id]);
     const gone = await c.cli.refused(["webhooks", "get", created.id]);
     expect(gone.envelope.error.code).toBe("not_found");

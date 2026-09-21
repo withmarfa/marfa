@@ -1894,6 +1894,76 @@ describe("writing", () => {
     );
   });
 
+  it("takes the old path out of the journal when the file comes back under a new name", async () => {
+    harness = await folderHarness("folder-rename-after-journal");
+    scriptFolderWrites(harness);
+    put(harness, "going.md", "---\ntitle: Going\n---\nbody\n");
+    expect((await harness.folder.push()).ok).toBe(true);
+
+    // The case above reaches the rename arm with an empty journal, because
+    // the file is back at its own name for one scan first and the
+    // came-back clear has already run. This is the other order, and the
+    // only one in which the clear inside the rename arm is the thing under
+    // test: the file leaves the folder, the scan journals the path it left,
+    // and the file then arrives under a different name with that journal
+    // row still standing.
+    //
+    // It moves into a dot-led directory rather than being deleted and
+    // rewritten, because the device, inode and birth time have to survive
+    // for the arrival to be a rename rather than a new file
+    // (`folders.md` 8), and the walk does not enter a dot-led directory.
+    const graceStarted = Date.now();
+    mkdirSync(join(harness.dir, ".stash"), { recursive: true });
+    renameSync(
+      join(harness.dir, "going.md"),
+      join(harness.dir, ".stash", "going.md"),
+    );
+    const missing = await harness.folder.scan();
+    expect(missing.ok).toBe(true);
+    if (!missing.ok) return;
+    expect(
+      missing.value.missing,
+      "the path the file left was not journaled, so there is no journal row for the rename to clear and the rest of this is about nothing",
+    ).toBe(1);
+
+    renameSync(
+      join(harness.dir, ".stash", "going.md"),
+      join(harness.dir, "arrived.md"),
+    );
+    const renamed = await harness.folder.scan();
+    expect(renamed.ok).toBe(true);
+    if (!renamed.ok) return;
+    expect(
+      renamed.value.renamed,
+      "the arrival was not followed as a rename, so nothing reached the arm that clears the old path's journal",
+    ).toBe(1);
+
+    // Past the grace, which is the only thing that tells a journal row that
+    // was cleared from one that is still waiting.
+    await vi.waitFor(
+      async () => {
+        const swept = await harness?.folder.scan();
+        expect(swept?.ok).toBe(true);
+        expect(
+          (Date.now() - graceStarted) / 1000,
+          "the grace has not run out yet, so a journal row the rename failed to clear would not have become a delete",
+        ).toBeGreaterThan(6);
+        const queue = await harness?.folder.device().queue();
+        expect(queue?.ok).toBe(true);
+        expect(
+          queue?.ok === true &&
+            queue.value.some((row) => row.kind === "delete_item"),
+          "the rename left the old path in the journal, so the grace turned a move into a delete of the item that had just moved",
+        ).toBe(false);
+      },
+      { timeout: 25_000, interval: 1_000 },
+    );
+    expect(
+      existsSync(join(harness.dir, "arrived.md")),
+      "the file is not in the folder, so the assertion above is about a delete that was right",
+    ).toBe(true);
+  });
+
   it("takes a file out of the journal when it comes back under its own name", async () => {
     harness = await folderHarness("folder-journal-return");
     scriptFolderWrites(harness);

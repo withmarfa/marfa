@@ -13,7 +13,13 @@
  *
  * The state directory holds the SQLite file, the blob folder, the server log,
  * the pid and the env file. It defaults to `.marfa-state` in the working
- * directory and is never removed by this script.
+ * directory. `down` stops the server and then removes those five, so the
+ * next `up` is a fresh instance: a database that outlives the bucket it was
+ * pointed at registers a second object store on the next boot. The directory
+ * itself stays, because `garage/` sits inside it and is the garage script's.
+ *
+ * `stopServer` stops and nothing more, because the restore drill reads the
+ * database of a server it has just stopped.
  *
  * The server starts through `tsx` directly rather than the package's `dev`
  * script, which is watch mode and belongs to a person at a keyboard.
@@ -238,8 +244,10 @@ export async function bootServer(args: BootOptions): Promise<void> {
     // The orphan sweep purges what an earlier run reported once this much
     // time has passed: zero, so a fixture can drive the report and the
     // purge as two runs through the housekeeping door. The sweep's own
-    // cadence stays a day, so the runs are the fixture's; replication's
-    // cadence is an hour for the same reason, so between an upload's own
+    // cadence stays a day, but its first run is thirty seconds after boot
+    // and a run is a run — so a fixture that reads the report has to expect
+    // one of its own rows to have been purged by the scheduler and ask
+    // again. Replication's cadence is an hour, so between an upload's own
     // wake and the fixture's runs nothing copies on a clock of its own.
     MARFA_BLOB_CLEANUP_GRACE_MS: "0",
     MARFA_BLOB_REPLICATE_INTERVAL_MS: "3600000",
@@ -319,7 +327,13 @@ export async function stopServer(args: BootOptions): Promise<void> {
     return;
   }
   // The server was spawned detached, so its pid is also its process group.
-  process.kill(-pid, "SIGTERM");
+  // A group that is gone between the liveness check and the signal is the
+  // outcome wanted, not a failure to stop.
+  try {
+    process.kill(-pid, "SIGTERM");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+  }
   const deadline = Date.now() + SHUTDOWN_BUDGET_MS;
   while (alive(pid) && Date.now() < deadline) {
     await new Promise((r) => setTimeout(r, 200));
@@ -328,10 +342,79 @@ export async function stopServer(args: BootOptions): Promise<void> {
     console.log(
       `[marfa-server] pid ${String(pid)} ignored SIGTERM; sending SIGKILL`,
     );
-    process.kill(-pid, "SIGKILL");
+    try {
+      process.kill(-pid, "SIGKILL");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+    }
   }
   rmSync(p.pid, { force: true });
   console.log(`[marfa-server] stopped pid ${String(pid)}`);
+}
+
+/**
+ * Removes what one instance left behind: the database, the disk store, the
+ * env file and the log.
+ *
+ * **A stopped server's database outliving its bucket is a second store.**
+ * A store's id comes from a marker the store itself holds rather than from
+ * the configuration that named it (the prose after `spec/stores.md`'s first
+ * four statements says so, and why it is not a statement), so the bucket
+ * `garage:up` makes after a `garage:down` carries
+ * no marker and the boot against a database that still holds the old
+ * store's row mints a second id beside it. The old row is detached rather
+ * than removed and its location rows stay, so a deterministic blob
+ * re-uploaded into the new bucket reads as three copies where the chapter
+ * says two.
+ *
+ * Scoped to the four paths this script writes rather than to the directory,
+ * because `garage/` sits inside it and belongs to a node that may still be
+ * running. SQLite's sidecars go with the database: a `-wal` left beside a
+ * removed file is replayed into the next one.
+ */
+function clearState(state: string): void {
+  const p = paths(state);
+  for (const path of [
+    p.db,
+    `${p.db}-wal`,
+    `${p.db}-shm`,
+    p.env,
+    p.log,
+    p.blobs,
+  ]) {
+    rmSync(path, { recursive: true, force: true });
+  }
+  console.log(`[marfa-server] cleared the state under ${state}`);
+}
+
+/**
+ * `stopServer` stops the process the pid file names and stops there: with
+ * no pid file, or a pid that is not running, it has nothing to signal. A
+ * server can still be answering on the URL the env file recorded (its pid
+ * file removed by hand, or the state directory shared with a boot this
+ * script did not make), and unlinking the database and the disk store
+ * under a live server is the one thing `down` must never do. So the URL is
+ * asked before anything is removed.
+ */
+async function refuseToClearUnderALiveServer(state: string): Promise<void> {
+  const p = paths(state);
+  if (!existsSync(p.env)) return;
+  const url = parseEnvFile(readFileSync(p.env, "utf8")).MARFA_API_URL;
+  if (!url) return;
+  let answered = false;
+  try {
+    const response = await fetch(`${url}/health`, {
+      signal: AbortSignal.timeout(1_000),
+    });
+    answered = response.ok;
+  } catch {
+    answered = false;
+  }
+  if (answered) {
+    throw new Error(
+      `${url} still answers /health and ${p.pid} does not name it, so the state under ${state} is not cleared. Stop that server first.`,
+    );
+  }
 }
 
 function status(args: Args): void {
@@ -356,6 +439,9 @@ if (
 ) {
   const args = parseArgs(process.argv.slice(2));
   if (args.command === "up") await bootServer(args);
-  else if (args.command === "down") await stopServer(args);
-  else status(args);
+  else if (args.command === "down") {
+    await stopServer(args);
+    await refuseToClearUnderALiveServer(args.state);
+    clearState(args.state);
+  } else status(args);
 }

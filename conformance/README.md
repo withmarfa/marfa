@@ -84,6 +84,12 @@ it, and writes `.marfa-state/env`. The state directory holds the
 SQLite file, the disk store, the server log, the pid and the env file; pass
 `--state <dir>` to put it elsewhere and `--port <n>` to choose the port.
 
+`pnpm marfa:down` stops the server and removes those five, so every `up` is
+a fresh instance. A database that outlives the bucket it was pointed at
+registers a second object store beside the first, and `scripts/marfa-server.ts`
+says why. `garage/` sits inside the same directory and is `garage:down`'s to
+remove.
+
 The server runs with enrichment, OCR and rate limiting switched off.
 Enrichment rewrites file items in the background, which would make
 exact-property assertions on blobs depend on timing. Rate limiting is off so

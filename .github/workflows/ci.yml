@@ -171,6 +171,18 @@ jobs:
         working-directory: conformance
         run: pnpm test:conformance
 
+      # Before the stop, because `marfa:down` clears the state directory and
+      # the log is in it. The server is still running here, which costs
+      # nothing: the log is appended to and what a failure needs is already
+      # written.
+      - name: Keep the server log
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: marfa-server-log
+          path: ${{ runner.temp }}/marfa/server.log
+          if-no-files-found: ignore
+
       # Always, including when the selection failed: the server was spawned
       # detached, so nothing else reaps it and the next run on this runner
       # would find the state directory held by a live process.
@@ -183,14 +195,6 @@ jobs:
         if: always()
         working-directory: conformance
         run: pnpm garage:down --state "$RUNNER_TEMP/garage"
-
-      - name: Keep the server log
-        if: failure()
-        uses: actions/upload-artifact@v7
-        with:
-          name: marfa-server-log
-          path: ${{ runner.temp }}/marfa/server.log
-          if-no-files-found: ignore
 
   # The scenario suite: the `marfa` binary driven as the reference client
   # against a server booted from this same checkout, end to end. A gate
@@ -249,13 +253,8 @@ jobs:
         working-directory: conformance
         run: pnpm test:cli
 
-      # Always, including when a scenario failed: the server was spawned
-      # detached, so nothing else reaps it.
-      - name: Stop the server
-        if: always()
-        working-directory: conformance
-        run: pnpm marfa:down --state "$RUNNER_TEMP/marfa-cli"
-
+      # Before the stop, because `marfa:down` clears the state directory and
+      # the log is in it.
       - name: Keep the server log
         if: failure()
         uses: actions/upload-artifact@v7
@@ -263,6 +262,13 @@ jobs:
           name: marfa-cli-server-log
           path: ${{ runner.temp }}/marfa-cli/server.log
           if-no-files-found: ignore
+
+      # Always, including when a scenario failed: the server was spawned
+      # detached, so nothing else reaps it.
+      - name: Stop the server
+        if: always()
+        working-directory: conformance
+        run: pnpm marfa:down --state "$RUNNER_TEMP/marfa-cli"
 
   # The restore drill: a fresh instance rebuilt from the bucket alone, to
   # the byte, against the same local object store the conformance job
