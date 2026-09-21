@@ -1,10 +1,6 @@
 /**
- * Thin read helpers over the @better-auth/oauth-provider plugin's tables.
- * See `interface.ts` (`OauthProviderStore`) for the contract.
- *
- * The plugin owns writes to `auth_oauth_client` and `auth_oauth_consent`;
- * we only read here for the consent-page render and the projection
- * after-hooks.
+ * The store over the @better-auth/oauth-provider plugin's tables. See
+ * `interface.ts` (`OauthProviderStore`) for the contract.
  */
 
 import { eq, and, desc, lt, isNotNull, sql } from "drizzle-orm";
@@ -39,7 +35,7 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
    * bearer middleware fires the stamp after the response and nothing
    * awaits it, so without tracking a stamp still in flight when the
    * connection closes surfaces as an unhandled rejection. Same shape as
-   * the audit store's drain, which fixed the same class.
+   * the audit store's drain.
    */
   private readonly stamps = new WriteTracker("oauth-grant-stamp");
 
@@ -193,9 +189,8 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
     if (!row) return null;
     // A revoked token is dead whatever its expiry says. The plugin stamps
     // this column when the session it was issued under ends, so signing out
-    // is what usually sets it — and until this check existed, an app kept
-    // working on its stored bearer after the person using it had signed
-    // out, because the only thing consulted here was the clock.
+    // is what usually sets it; consulting the clock alone would keep an app
+    // working on its stored bearer after the person had signed out.
     if (row.revoked !== null) return null;
     // Expired tokens return null — fail closed.
     const expMs = row.expiresAt ? row.expiresAt.getTime() : null;
@@ -339,21 +334,6 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
       )
       .returning({ id: auth_oauth_client.id });
     return updated.length > 0;
-  }
-
-  async updateClientLogoutConfig(
-    clientId: string,
-    postLogoutRedirectUris: readonly string[],
-  ): Promise<boolean> {
-    const result = await this.db
-      .update(auth_oauth_client)
-      .set({
-        enableEndSession: true,
-        postLogoutRedirectUris: JSON.stringify(postLogoutRedirectUris),
-        updatedAt: new Date(),
-      })
-      .where(eq(auth_oauth_client.clientId, clientId));
-    return result.rowsAffected > 0;
   }
 
   async revokeTokensForGrant(
@@ -648,15 +628,14 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
    * is active AND its `properties.status` is active, so a row failing
    * either axis is beyond every revoke interface the product has.
    *
-   * Without this predicate the lookup handed such a row back and the
-   * re-consent branch flipped `properties.status` to active while leaving
-   * `state` alone, which is how a grant reached `state: revoked` beside
+   * Without this predicate the lookup would hand such a row back and the
+   * re-consent branch would flip `properties.status` to active while
+   * leaving `state` alone, so a grant could sit at `state: revoked` beside
    * `status: active`: listed by neither surface, and still good enough for
    * the device token step to mint against. `DELETE /items/{id}` produces
    * that shape on its own, because `softDeleteState` resolves `revoked`
    * rather than `trashed` for a `system.*` type and a soft delete does not
-   * touch properties. `items.get` hides only `trashed`, so nothing else
-   * downstream was going to notice.
+   * touch properties, and `items.get` hides only `trashed`.
    *
    * Refusing the row here rather than in the route is what makes the two
    * re-consent paths agree: the device flow and the code flow both resolve
@@ -711,11 +690,6 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
       .returning({ id: auth_oauth_client.id });
     return deleted.length;
   }
-
-  // `updateGrantScopes` was dropped. The re-consent path routes through
-  // `storage.items.update` so the projection participates in version
-  // snapshots and publish events like every other item.
-  // See `projectGrantOnConsent` in `routes/auth-consent.ts`.
 
   async getPriorConsent(
     clientId: string,

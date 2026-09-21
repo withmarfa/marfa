@@ -200,7 +200,7 @@ describe("GET /audit", () => {
     // Issue an authenticated POST that emits an audit row, with a
     // synthetic peer IP. No TRUSTED_PROXY_CIDRS — peer is the only
     // trusted source. The audit row must carry that peer.
-    const uniqueTitle = `t027-peer-${Math.random().toString(36).slice(2, 8)}`;
+    const uniqueTitle = `audit-peer-${Math.random().toString(36).slice(2, 8)}`;
     const res = await request(ctx.app, "POST", "/items", {
       key: ctx.workingKey,
       peer: "203.0.113.42",
@@ -228,9 +228,9 @@ describe("GET /audit", () => {
     );
     expect(body.data).toHaveLength(1);
     expect(body.data[0]?.client_ip).toBe("203.0.113.42");
-    // client_ip is also folded into the details JSON — the persistence
-    // channel — and lifted back to the typed field on read.
-    expect(body.data[0]?.details.client_ip).toBe("203.0.113.42");
+    // Its own field, not a key smuggled through `details`: the details
+    // are the writer's alone.
+    expect(body.data[0]?.details).not.toHaveProperty("client_ip");
   });
 
   it("respects limit and paginates via cursor across two pages", async () => {
@@ -284,7 +284,7 @@ describe("GET /audit", () => {
       trustedProxyCidrs: parseTrustedProxyCidrs("10.0.0.0/8"),
     });
     try {
-      const uniqueTitle = `t027-proxy-${Math.random().toString(36).slice(2, 8)}`;
+      const uniqueTitle = `audit-proxy-${Math.random().toString(36).slice(2, 8)}`;
       const res = await request(trustedCtx.app, "POST", "/items", {
         key: trustedCtx.workingKey,
         peer: "10.0.0.5",

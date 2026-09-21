@@ -2865,6 +2865,7 @@ describe("POST /items — inline-edge hydration parity past the cap", () => {
       `/items/${created.item.id}/edges?edge_type=references&cursor=${encodeURIComponent(block.next_cursor ?? "")}`,
       { key: ctx.workingKey },
     );
+    expect(rest.status).toBe(200);
     const restBody = (await rest.json()) as { data: { id: string }[] };
     const firstPageIds = new Set(block.edges.map((e) => e.id));
     expect(restBody.data).toHaveLength(1);

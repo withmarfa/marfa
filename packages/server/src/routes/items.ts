@@ -56,6 +56,7 @@ import type {
   ItemSortField,
   ResolvedItem,
 } from "../storage/interface.js";
+import { ITEM_EDGES_CURSOR_KEY } from "../storage/interface.js";
 import { readInstanceConfig } from "../storage/instance-config.js";
 import { planCascadeDelete } from "../storage/edge-cascade.js";
 import { assertEdgesCanBeCreated } from "../storage/edge-constraints.js";
@@ -708,9 +709,8 @@ const updateItemRoute = createRoute({
              *  Present in the schema at all because callers send it
              *  constantly. The fleet builds one input object and hands it
              *  to either the create or the update call, so a type rides on
-             *  nearly every reactive update. It used to be stripped here
-             *  in silence, which is how a re-type could be attempted,
-             *  answered with a 200, and do nothing. */
+             *  nearly every reactive update. Stripped in silence, a re-type
+             *  could be attempted, answered with a 200, and do nothing. */
             type: z.string().optional(),
             /** Whether `properties` lays over the item's or becomes them.
              *  Defaults to `merge`, which is what every caller before this
@@ -1549,20 +1549,18 @@ export function itemRoutes(storage: Storage) {
         // And the same refusal on the type. `type` is required by this
         // route because the create branch needs it, but it plays no part
         // in resolving the row, so a body naming one type while the
-        // natural key lands on another used to be merged in silently.
-        // Shared with the bulk door rather than written twice: the last
-        // time a rule lived at one door and not its neighbors, four of
-        // six were found disagreeing.
+        // natural key lands on another would otherwise be merged in
+        // silently. Shared with the bulk door rather than written twice,
+        // so the two doors cannot drift apart on it.
         requireDeclaredTypeMatches(type, existing);
 
-        // This branch used to be the one write path that skipped property
-        // validation, and it is also the one where a null removes a value
-        // rather than setting it. A re-sync sending a null title therefore
-        // deleted a field `core.event` declares required, leaving a row that
-        // could not have been created in the state it now sat in, with a 200
-        // and no signal. Judged on the merged result rather than the body,
-        // mirroring the merge the storage layer performs: a body naming no
-        // required field at all can still be what removes one.
+        // This branch is the one where a null removes a value rather than
+        // setting it, so without validation a re-sync sending a null title
+        // would delete a field `core.event` declares required, leaving a
+        // row that could not have been created in the state it sat in,
+        // with a 200 and no signal. Judged on the merged result rather than
+        // the body, mirroring the merge the storage layer performs: a body
+        // naming no required field at all can still be what removes one.
         if (
           body.properties !== undefined &&
           getTypeSchema(existing.type) !== undefined
@@ -1840,17 +1838,22 @@ export function itemRoutes(storage: Storage) {
     }
     const { item, metadata, createdEdges } = writeResult;
 
-    // Sorted to the store's exact read order (created_at DESC, id DESC)
-    // before grouping: groupAndCap's cap and cursor logic assume it, and
-    // body order fed in raw returned the OLDEST fifty of a large batch
-    // with a cursor that re-fetched them and never reached the newest.
+    // Sorted to the listing's read order (created_at DESC, id DESC) before
+    // grouping, because the block is cut at the cap and its cursor is read
+    // by that listing: body order fed in raw would carry the oldest fifty
+    // of a large batch with a cursor that re-fetches them and never
+    // reaches the newest.
     const orderedEdges = [...createdEdges].sort(
       (a, b) =>
         b.created_at.localeCompare(a.created_at) || b.id.localeCompare(a.id),
     );
     const itemWithEdges = {
       ...item,
-      edges: groupAndCap(orderedEdges, HYDRATE_PER_TYPE_CAP),
+      edges: groupAndCap(
+        orderedEdges,
+        HYDRATE_PER_TYPE_CAP,
+        ITEM_EDGES_CURSOR_KEY,
+      ),
     };
 
     await publish({
@@ -1937,13 +1940,12 @@ export function itemRoutes(storage: Storage) {
     // arrives behind the item it belongs to, so a subscriber resolving an
     // edge's endpoints has already been told the new one exists.
     //
-    // This door used to announce the edge alone, on the reasoning that an
-    // item event here would be a new contract. It is the other way round —
-    // a subscriber was handed an `edge_created` naming a `source_id` it had
-    // never heard of and could not resolve, and a durable client persisting
-    // the stream never learned the row existed at all, short of a full
-    // re-import. The promoted copy is a new row written by an ordinary
-    // write door, and every other such door announces one.
+    // Announcing the edge alone would hand a subscriber an `edge_created`
+    // naming a `source_id` it had never heard of and could not resolve,
+    // and a durable client persisting the stream would never learn the
+    // row existed at all, short of a full re-import. The promoted copy is
+    // a new row written by an ordinary write door, and every other such
+    // door announces one.
     //
     // `metadata` is the literal the create door builds for the same reason:
     // a fresh row's metadata layer is exactly what the write put there, and
@@ -2096,10 +2098,10 @@ export function itemRoutes(storage: Storage) {
     const shorthandRe = EDGE_SHORTHAND_KEY;
     for (const [key, val] of rawQuery.entries()) {
       if (!shorthandRe.test(key)) continue;
-      // A shorthand with nothing after the `=` used to be skipped here,
-      // which returned an unfiltered page at 200 — the failure the
-      // unknown-parameter refusal exists to remove, reached through the
-      // exemption that keeps the shorthand working. The exemption matches
+      // A shorthand with nothing after the `=`, skipped, would return an
+      // unfiltered page at 200: the failure the unknown-parameter refusal
+      // exists to remove, reached through the exemption that keeps the
+      // shorthand working. The exemption matches
       // on the key alone, because the type is part of the key; the value
       // has to be checked where it is read. `updated_after` carries
       // `.min(1)` for the same reason on this same door.
@@ -2906,14 +2908,13 @@ export function itemRoutes(storage: Storage) {
       );
     }
 
-    // No projection here. This door used to read the metadata row, union the
-    // incoming tags into it and refuse over the bound, which was the right
-    // shape while the store enforced nothing — but it read in one
-    // transaction and wrote in another, so it never bounded anything under
-    // concurrency, and it cost an unconditional read on every successful
-    // request to duplicate a refusal the store now makes correctly. Both
-    // layers produced the same status, the same code and the same message,
-    // so nothing on the wire could tell them apart either.
+    // No projection here. Reading the metadata row, unioning the incoming
+    // tags into it and refusing over the bound would read in one
+    // transaction and write in another, so it would bound nothing under
+    // concurrency, and it would cost an unconditional read on every
+    // successful request to duplicate a refusal the store makes inside
+    // the transaction that computes the set, with the same status, code
+    // and message, so nothing on the wire could tell the two apart.
     //
     // What is still checked above is what a caller may *send*, which is a
     // different question and one the store cannot answer: a body of a
@@ -2952,8 +2953,8 @@ export function itemRoutes(storage: Storage) {
     const tags = body.tags;
 
     // The resulting set is bounded by the store, inside the transaction that
-    // computes it. See the sibling door above for why the projection that
-    // used to sit here is gone.
+    // computes it. See the sibling door above for why there is no
+    // projection here.
     const metadata = await storage.metadata.addTags(id, tags);
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
@@ -2982,8 +2983,8 @@ export function itemRoutes(storage: Storage) {
 
     requireAuth(c);
     requirePermission(c, "items.purge");
-    // Read before removing. This door used to purge without ever looking at
-    // the row, so it could not have known a connection from a note.
+    // Read before removing: a purge that never looks at the row cannot
+    // tell a connection from a note.
     //
     // **Including trashed, and that is the whole of what this door normally
     // sees.** A plain `get` answers `null` for a `trashed` row, so on the
@@ -3088,10 +3089,10 @@ export function itemRoutes(storage: Storage) {
   router.openapi(removeTagRoute, async (c) => {
     // The tag is used as the router hands it over. Hono decodes a path
     // parameter exactly once, so decoding it again is not defensive: it
-    // corrupts a value that was already correct. This handler used to,
-    // and a tag holding a literal percent threw on the second decode and
-    // answered 500, while one whose text happened to look like an escape
-    // decoded into a different tag and removed nothing, silently.
+    // corrupts a value that was already correct. Decoded twice, a tag
+    // holding a literal percent would throw on the second decode and
+    // answer 500, while one whose text happened to look like an escape
+    // would decode into a different tag and remove nothing, silently.
     const { id, tag } = c.req.valid("param");
     if (!isValidId(id)) {
       throw new MarfaError(ErrorCode.INVALID_ID, "Invalid item ID");
