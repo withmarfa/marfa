@@ -241,10 +241,12 @@ pub const WRITE_KINDS: &[&str] = &[
 
 /// Queues a write and returns the row as the queue will report it.
 ///
-/// The idempotency key is minted here and nowhere else, because
-/// `queue-and-verdicts.md` 3 turns on it being minted once: a key minted at
-/// send time would be a fresh key on every retry, and a write whose answer
-/// the device never saw would be written a second time.
+/// The idempotency key is minted at enqueue, not at send, because
+/// `queue-and-verdicts.md` 3 turns on it: a key minted at send time would be
+/// a fresh key on every retry, and a write whose answer the device never saw
+/// would be written a second time. `release` is the one other minter, and it
+/// mints deliberately — a released row is a new attempt under a fresh key
+/// (`queue-and-verdicts.md` 27), with the spent one kept beside it.
 pub fn enqueue(conn: &Connection, write: &NewWrite<'_>) -> Result<QueuedWrite, CoreError> {
     if !WRITE_KINDS.contains(&write.kind) {
         return Err(CoreError::Invalid(format!(

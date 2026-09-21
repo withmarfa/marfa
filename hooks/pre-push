@@ -2,10 +2,10 @@
 # Pre-push gate: build + typecheck + lint + format:check + offline lane +
 # rust + surface-lock drift + test:changed.
 #
-# **No longer slim, deliberately.** The rust leg runs clippy and the tests on
-# two cargo workspaces and is the slowest thing here — it is in because the
-# second of those workspaces is reachable from nothing else, and a change to
-# a shared error type compiled clean locally and failed on the pool. The
+# **Not slim, deliberately.** The rust leg runs clippy and the tests on two
+# cargo workspaces and is the slowest thing here — it is in because the
+# second of those workspaces is reachable from nothing else, so a change to a
+# shared error type can compile clean locally and fail on the pool. The
 # argument below about a slow hook being a bypassed hook still stands, and
 # the answer to it is `--no-verify` for a work-in-progress push rather than a
 # gate that does not cover what CI checks.
@@ -26,8 +26,8 @@
 # that checks the specification against itself — that each chapter's
 # statements run 1..n with no gap, and that every citation names something
 # that exists. A rebase can join two statements onto one line and leave
-# every other suite green, which is how a chapter lost one and reached a
-# push.
+# every other suite green, so a chapter can lose one and reach a push with
+# nothing else red.
 #
 # The cost, and why it is paid. A pre-push that runs the whole suite is slow
 # enough that contributors and agents bypass it with `--no-verify`, and a
