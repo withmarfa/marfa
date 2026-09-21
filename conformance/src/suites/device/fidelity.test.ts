@@ -12,6 +12,7 @@ import {
   answers,
   itemEvent,
   itemsPage,
+  replay,
   scriptedType,
   wireItem,
   wireType,
@@ -795,5 +796,66 @@ describe("the scripted answers match the server's", () => {
       answers.keyReused(),
       { same: ["error.code"], shape: ["error.message"] },
     );
+  });
+
+  it("matches the replay a cursor of zero gets against a log that begins at one", async (context) => {
+    // Every device that hydrated an empty instance holds `0` (`device.md`
+    // 35), so the scripted `replay` a cursor of zero is answered with has
+    // to be the real server's answer: the head, then the events, and no
+    // terminal frame. The run's server has written since its first event,
+    // so the replay is read until a row this case wrote arrives.
+    const marker = `fidelity-zero-${ctx.runId}`;
+    const seeded = await note({ title: marker, body: marker });
+    const frames = await withStream(
+      apiUrl,
+      apiKey,
+      { lastEventId: "0" },
+      async (stream) =>
+        (
+          await collectUntil(
+            stream,
+            (events) =>
+              events.some(
+                (event) =>
+                  (event.data as { item?: { id?: string } }).item?.id ===
+                  seeded.id,
+              ),
+            `the replay from zero to reach ${seeded.id}`,
+            context.signal,
+          )
+        ).events,
+    );
+    expect(frames.length).toBeGreaterThan(1);
+    expect(
+      frames.some((event) => event.event === "catchup_too_old"),
+      "a cursor of zero was refused as too old, which is the refusal every device that hydrated an empty instance would meet on its first catch-up",
+    ).toBe(false);
+
+    const scripted = replay("1", [
+      itemEvent("1", "item.created", wireItem({ id: seeded.id })),
+    ]);
+    const scriptedFrames = scripted.kind === "sse" ? scripted.frames : [];
+    const head = frames[0]!;
+    const scriptedHead = scriptedFrames.find(
+      (frame) => frame.event === "stream_cursor",
+    )!;
+    expect(head.event).toBe("stream_cursor");
+    expect(head.id, "the head frame carries no id").toBeUndefined();
+    expectFidelity(
+      "the head of a replay",
+      { status: 200, body: head.data },
+      { kind: "json", status: 200, body: scriptedHead.data },
+      { same: ["type"], shape: ["cursor"] },
+    );
+    const first = frames[1]!;
+    expect(
+      typeof first.id,
+      "the first replayed frame carried no id, so a device applying it has nothing to move its cursor to",
+    ).toBe("string");
+    expect(
+      first.event.startsWith("item.") ||
+        first.event.startsWith("edge.") ||
+        first.event === "metadata.changed",
+    ).toBe(true);
   });
 });

@@ -452,13 +452,19 @@ impl Folder {
         // again: the next scan finds both files unchanged and skips them
         // (`folders.md` 25).
         for pending in unresolved {
-            let (named, _) = self.queue_links(&pending.item_id, &pending.links, &pending.had)?;
+            let (named, declined, _) = self.queue_links(
+                &pending.item_id,
+                &pending.links,
+                &pending.had,
+                &pending.declined,
+            )?;
             let conn = self.core.conn()?;
             if let Some(bound) = state::bound_at(&conn, &pending.path)? {
                 state::bind(
                     &conn,
                     &state::Bound {
                         links: named,
+                        declined,
                         ..bound
                     },
                 )?;
@@ -550,7 +556,7 @@ impl Folder {
             }
             // The row may already be gone — a delete answered, or one a
             // catch-up evicted — and a folder that refused on that would
-            // stop sweeping its journal for ever. That is the only excuse:
+            // stop sweeping its journal forever. That is the only excuse:
             // testing `is_ok` instead swallows an unhydrated store and a
             // reading handle, and then clears the journal and the binding,
             // so a real deletion never reaches the server and nothing says
@@ -619,7 +625,7 @@ impl Folder {
         // edit from this folder needs.
         //
         // Zero always, rather than the row's version, would refuse every
-        // create onto an existing row for ever and leave the file
+        // create onto an existing row forever and leave the file
         // permanently unpushable. `folders.md` 13 carries the convention
         // itself: the version is the one the copy holds under that natural
         // key, and zero where it holds none, which the server reads as a
@@ -645,7 +651,7 @@ impl Folder {
             // (`folders.md` 13), and the version is *read*, never invented:
             // a number the device chose would be a version it minted, which
             // `device.md` 20 forbids and which can never match, so the
-            // create would be refused for ever and the file would be
+            // create would be refused forever and the file would be
             // permanently unpushable.
             //
             // The natural key is what the server resolves a create against,
@@ -657,16 +663,23 @@ impl Folder {
             ..Default::default()
         };
         let queued = self.core.create_item(&draft)?;
-        let item_id = queued.item_id.unwrap_or_default();
+        let Some(item_id) = queued.item_id else {
+            // A create names the item it made; one that does not is a row
+            // no binding could ever be matched to.
+            return Err(CoreError::Invalid(format!(
+                "the create queued for {key} names no item"
+            )));
+        };
         // No bytes this folder agreed with before, so no link it can say has
         // gone: a create only ever adds.
-        let (named, resolved) = self.queue_links(&item_id, &document.links, &[])?;
+        let (named, declined, resolved) = self.queue_links(&item_id, &document.links, &[], &[])?;
         if !resolved {
             unresolved.push(Unresolved {
                 path: key.to_string(),
                 item_id: item_id.clone(),
                 links: document.links.clone(),
                 had: Vec::new(),
+                declined: Vec::new(),
             });
         }
         let conn = self.core.conn()?;
@@ -677,7 +690,9 @@ impl Folder {
                 item_id,
                 identity: mark.map(str::to_string),
                 content_hash: hash.to_string(),
+                written_hash: None,
                 links: named,
+                declined,
             },
         )?;
         Ok(())
@@ -733,13 +748,15 @@ impl Folder {
             source_id: (bound.path != key).then(|| key.to_string()),
         };
         self.core.update_item(item_id, &edit)?;
-        let (named, resolved) = self.queue_links(item_id, &document.links, had)?;
+        let (named, declined, resolved) =
+            self.queue_links(item_id, &document.links, had, &bound.declined)?;
         if !resolved {
             unresolved.push(Unresolved {
                 path: key.to_string(),
                 item_id: item_id.to_string(),
                 links: document.links.clone(),
                 had: had.to_vec(),
+                declined: bound.declined.clone(),
             });
         }
         let conn = self.core.conn()?;
@@ -750,7 +767,9 @@ impl Folder {
                 item_id: item_id.to_string(),
                 identity: mark.map(str::to_string),
                 content_hash: hash.to_string(),
+                written_hash: None,
                 links: named,
+                declined,
             },
         )?;
         Ok(())
@@ -811,18 +830,21 @@ impl Folder {
     /// outside the slice is text in the body and stays there, rather than
     /// becoming an edge to a row the server may not have.
     ///
-    /// Answers what the mapping should record: the targets the body named,
-    /// and — where a link could not be resolved and the removal stood down —
-    /// the ones it recorded before, because forgetting those would take the
+    /// Answers what the mapping should record: the targets the body named;
+    /// the targets whose link the person took out for an edge the folder
+    /// keeps, so the next pull does not write it back (`folders.md` 27); and
+    /// — where a link could not be resolved and the removal stood down — the
+    /// ones it recorded before, because forgetting those would take the
     /// removal rule with them.
     fn queue_links(
         &self,
         item_id: &str,
         links: &[String],
         had: &[String],
-    ) -> Result<(Vec<String>, bool)> {
+        declined: &[String],
+    ) -> Result<(Vec<String>, Vec<String>, bool)> {
         if item_id.is_empty() {
-            return Ok((Vec::new(), true));
+            return Ok((Vec::new(), Vec::new(), true));
         }
         // Not `unwrap_or_default`. An error read as "this item has no edges"
         // makes every link in the body a fresh `create_edge` for an edge that
@@ -859,14 +881,38 @@ impl Folder {
             // resolved would drop the unresolvable link's target out of the
             // mapping for good, and statement 21's removal would then never
             // fire for it again — so the guard against destroying an edge
-            // would destroy the rule it guards.
+            // would destroy the rule it guards. The declined list stands
+            // as it was for the same reason.
             let mut kept = named;
             for target in had {
                 if !kept.contains(target) {
                     kept.push(target.clone());
                 }
             }
-            return Ok((kept, false));
+            return Ok((kept, declined.to_vec(), false));
+        }
+        // **A link the person took out, for an edge the folder keeps.** The
+        // edge is of a kind the folder could not have made, so 21 leaves it,
+        // and the pull would render it again: the person removes the line,
+        // the folder writes it back, forever. Recorded here, and lifted
+        // the moment the body names the target again (`folders.md` 27).
+        let foreign: HashSet<&str> = edges
+            .iter()
+            .filter(|edge| edge.edge_type != LINK_EDGE)
+            .map(|edge| edge.target_id.as_str())
+            .collect();
+        let mut still_declined: Vec<String> = declined
+            .iter()
+            .filter(|target| !named.contains(target))
+            .cloned()
+            .collect();
+        for target in had {
+            if foreign.contains(target.as_str())
+                && !named.contains(target)
+                && !still_declined.contains(target)
+            {
+                still_declined.push(target.clone());
+            }
         }
         // **The file used to carry it and now does not.** That is the test,
         // and it is why the mapping holds the links: an edge the copy
@@ -888,7 +934,7 @@ impl Folder {
             }
             self.core.delete_edge(&edge.id)?;
         }
-        Ok((named, true))
+        Ok((named, still_declined, true))
     }
 
     /// The item a link names: an id the copy holds, or a file in this folder.
@@ -973,6 +1019,9 @@ impl Folder {
         // steal the first's file and its binding, leaving the first with no
         // file at all and the report counting a normal write.
         let mut taken: HashSet<String> = HashSet::new();
+        // Every item this pass considered, whatever it decided: the rest of
+        // the mapping is files of items that have left the slice.
+        let mut visited: HashSet<String> = HashSet::new();
         for item in &items {
             // The catalog's rule, which is the one the hydration and the
             // catch-up use: a type is held with its subtree (`device.md` 1).
@@ -988,6 +1037,7 @@ impl Folder {
                 // An item outside the slice does not become a file
                 // (`folders.md` 19).
                 report.skipped += 1;
+                visited.insert(item.id.clone());
                 continue;
             }
             let bound = {
@@ -1002,13 +1052,19 @@ impl Folder {
             // usually the bound one with somebody's edits waiting.
             if !plainly_inside(&self.root, &want) {
                 report.outside += 1;
+                visited.insert(item.id.clone());
                 continue;
             }
             let path = self.root.join(&want);
-            let (text, wrote) = self.render(item)?;
+            let declined: Vec<String> = bound
+                .as_ref()
+                .map(|bound| bound.declined.clone())
+                .unwrap_or_default();
+            let (text, wrote) = self.render(item, &declined)?;
             let bytes = text.as_bytes().to_vec();
             let hash = state::hash(&bytes);
             let ours = bound.as_ref().is_some_and(|bound| bound.path == want);
+            visited.insert(item.id.clone());
 
             if ours
                 && bound
@@ -1053,8 +1109,10 @@ impl Folder {
                             path: want.clone(),
                             item_id: item.id.clone(),
                             identity: None,
-                            content_hash: hash,
+                            content_hash: hash.clone(),
+                            written_hash: Some(hash),
                             links: wrote,
+                            declined,
                         },
                     )?;
                     state::journal_clear(&conn, &want)?;
@@ -1107,8 +1165,10 @@ impl Folder {
                         path: want.clone(),
                         item_id: item.id.clone(),
                         identity: None,
-                        content_hash: hash,
+                        content_hash: hash.clone(),
+                        written_hash: Some(hash.clone()),
                         links: wrote.clone(),
+                        declined: declined.clone(),
                     },
                 )?;
                 // A file is about to be here, so a journal row saying it is
@@ -1134,7 +1194,7 @@ impl Folder {
                 // there it says bytes are on the disk that are not, and the
                 // next scan then pushes the old file's contents back as if
                 // they were an edit — or, after a rename, reports the item
-                // unchanged for ever with no file anywhere.
+                // unchanged forever with no file anywhere.
                 let conn = self.core.conn()?;
                 state::unbind(&conn, &want)?;
                 return Err(CoreError::Store(format!(
@@ -1154,8 +1214,10 @@ impl Folder {
                         path: want,
                         item_id: item.id.clone(),
                         identity: Some(found.key()),
-                        content_hash: state::hash(&bytes),
+                        content_hash: hash.clone(),
+                        written_hash: Some(hash),
                         links: wrote,
+                        declined,
                     },
                 )?;
             }
@@ -1165,7 +1227,61 @@ impl Folder {
                 report.rewritten += 1;
             }
         }
+        self.remove_departed(&visited, &mut report)?;
         Ok(report)
+    }
+
+    /// Takes away the file of an item the pull no longer writes
+    /// (`folders.md` 26): one trashed, archived, evicted by a catch-up or
+    /// purged since the folder wrote it. Left there, it is bound and
+    /// unmaintained, and the next scan pushes it back as an edit to an item
+    /// the person cannot see.
+    ///
+    /// Only where the bytes are what the folder itself last wrote. A file
+    /// the person has changed since stays, and so does one the folder never
+    /// wrote at all, a file the scan bound whose create the server refused
+    /// and the drain then forgot, inside the very `push` this pull ends:
+    /// its bytes match the mapping, because the scan recorded them, and they
+    /// are the person's. Both stay with their binding and are reported: the
+    /// folder does not decide between an edit and a departure, so the edit
+    /// stays on the disk for the next scan to meet.
+    ///
+    /// The journal is not touched and nothing is queued, because the folder
+    /// is not being told the item was deleted; it is being told the folder no
+    /// longer holds it.
+    fn remove_departed(&self, visited: &HashSet<String>, report: &mut PullReport) -> Result<()> {
+        let bound = {
+            let conn = self.core.conn()?;
+            state::every_bound(&conn)?
+        };
+        for row in bound {
+            if visited.contains(&row.item_id) {
+                continue;
+            }
+            let path = self.root.join(&row.path);
+            match std::fs::read(&path) {
+                Ok(found) if row.written_hash.as_deref() != Some(state::hash(&found).as_str()) => {
+                    report.kept += 1;
+                    continue;
+                }
+                Ok(_) => {
+                    if plainly_inside(&self.root, &row.path) {
+                        std::fs::remove_file(&path).map_err(|error| {
+                            CoreError::Store(format!("cannot remove {}: {error}", path.display()))
+                        })?;
+                    }
+                }
+                // Already gone from the disk: only the binding is left to
+                // take away, and a journal row for it would become a delete
+                // of an item the copy no longer answers for.
+                Err(_) => {}
+            }
+            let conn = self.core.conn()?;
+            state::unbind(&conn, &row.path)?;
+            state::journal_clear(&conn, &row.path)?;
+            report.removed += 1;
+        }
+        Ok(())
     }
 
     /// Where an item's file goes.
@@ -1195,8 +1311,9 @@ impl Folder {
 
     /// An item as the bytes of a file, with its id written in as the
     /// folder's own identity record (`folders.md` 11), and the targets of
-    /// the links it put in the body.
-    fn render(&self, item: &Item) -> Result<(String, Vec<String>)> {
+    /// the links it put in the body. A link the person took out for an edge
+    /// the folder keeps is not put back (`folders.md` 27).
+    fn render(&self, item: &Item, declined: &[String]) -> Result<(String, Vec<String>)> {
         let mut properties = item.properties.clone();
         // The folder's record, not the natural key. A file that has lost it
         // is still the same item when the key matches, and one carrying an
@@ -1245,6 +1362,9 @@ impl Folder {
             if self.core.get(&edge.target_id)?.is_none() {
                 continue;
             }
+            if edge.edge_type != LINK_EDGE && declined.contains(&edge.target_id) {
+                continue;
+            }
             wrote.push(edge.target_id.clone());
             if !body.ends_with('\n') && !body.is_empty() {
                 body.push('\n');
@@ -1283,6 +1403,7 @@ struct Unresolved {
     item_id: String,
     links: Vec<String>,
     had: Vec<String>,
+    declined: Vec<String>,
 }
 
 /// The kind of edge a link becomes, and the only kind a folder removes.
@@ -1330,6 +1451,12 @@ pub struct PullReport {
     /// Reported rather than written, because writing would destroy the
     /// file of whichever item got there first.
     pub collided: usize,
+    /// Files of items the pull no longer writes, taken away with their
+    /// binding because the bytes were the folder's own (`folders.md` 26).
+    pub removed: usize,
+    /// Files of items the pull no longer writes, left where they are because
+    /// the person changed them since the folder wrote them.
+    pub kept: usize,
 }
 
 /// A file's frontmatter as the properties of a write, without the folder's

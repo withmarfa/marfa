@@ -20,7 +20,7 @@ import {
  * Catch-up is the only thing between a copy and the truth once the snapshot
  * is taken, and every failure here is silent. A cursor that moves too far
  * skips rows nothing will fetch again; a cursor that does not move replays
- * for ever; an aged-out cursor answered by reconnecting leaves a copy missing
+ * forever; an aged-out cursor answered by reconnecting leaves a copy missing
  * exactly the writes that aged out.
  */
 
@@ -105,6 +105,45 @@ describe("catch-up replays from the cursor", () => {
     ).toEqual(["(none)", "10", "11"]);
   });
 
+  it("resumes from zero after hydrating an empty instance, and applies the first event", async () => {
+    // An instance nothing has written to yet: the log's head is 0, and the
+    // first event it ever writes is 1 (`device.md` 35).
+    harness = await startHarness("catch-up-from-zero");
+    const { server, device } = harness;
+    scriptHydration(server, { head: "0" });
+    server.answer(
+      "GET",
+      "/events",
+      replay("1", [
+        itemEvent(
+          "1",
+          "item.created",
+          wireItem({ id: "first", properties: { title: "first", body: "" } }),
+        ),
+      ]),
+    );
+
+    const hydrated = await device.hydrate(["core.note"], "library");
+    expect(hydrated.ok, JSON.stringify(hydrated)).toBe(true);
+    expect(hydrated.ok ? hydrated.value.cursor : null).toBe("0");
+
+    const caught = await device.catchUp();
+    expect(
+      caught.ok,
+      `a cursor of zero was refused, so every device that hydrated an empty instance is refused its first catch-up: ${JSON.stringify(caught)}`,
+    ).toBe(true);
+    if (!caught.ok) return;
+    expect(caught.value.applied).toBe(1);
+    expect(caught.value.cursor).toBe("1");
+    expect(lastEventIds(harness)).toEqual(["(none)", "0"]);
+    const status = await device.status();
+    expect(status.ok ? status.value.hydration : null).toBe("complete");
+    const held = await device.get("first");
+    expect(held.ok, "the first event was applied and the row is not held").toBe(
+      true,
+    );
+  });
+
   it("skips an event older than the row it holds and still advances the cursor", async () => {
     harness = await startHarness("stale-event");
     const { server, device } = harness;
@@ -166,7 +205,7 @@ describe("catch-up replays from the cursor", () => {
 
     // Skipping is a success, not a failure: the cursor moves past the event
     // so the next catch-up resumes after it. A cursor left behind would
-    // fetch the same stale event for ever.
+    // fetch the same stale event forever.
     expect(
       caught.value.cursor,
       "the cursor stopped at the stale event, so every later catch-up replays it and never reaches the head",
