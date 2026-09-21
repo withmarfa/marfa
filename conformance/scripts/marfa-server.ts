@@ -13,7 +13,13 @@
  *
  * The state directory holds the SQLite file, the blob folder, the server log,
  * the pid and the env file. It defaults to `.marfa-state` in the working
- * directory and is never removed by this script.
+ * directory. `down` stops the server and then removes those five, so the
+ * next `up` is a fresh instance: a database that outlives the bucket it was
+ * pointed at registers a second object store on the next boot. The directory
+ * itself stays, because `garage/` sits inside it and is the garage script's.
+ *
+ * `stopServer` stops and nothing more, because the restore drill reads the
+ * database of a server it has just stopped.
  *
  * The server starts through `tsx` directly rather than the package's `dev`
  * script, which is watch mode and belongs to a person at a keyboard.
@@ -334,6 +340,37 @@ export async function stopServer(args: BootOptions): Promise<void> {
   console.log(`[marfa-server] stopped pid ${String(pid)}`);
 }
 
+/**
+ * Removes what one instance left behind: the database, the disk store, the
+ * env file and the log.
+ *
+ * **A stopped server's database outliving its bucket is a second store.**
+ * `garage:down` destroys the bucket and `garage:up` makes a new one with a
+ * new name, so a boot against a database that still carries the old store's
+ * row attaches beside it and the copy rules then see three copies where the
+ * chapter says two. That is what a second run of the suite hit, and it looks
+ * like a flaky fixture rather than a stale file.
+ *
+ * Scoped to the four paths this script writes rather than to the directory,
+ * because `garage/` sits inside it and belongs to a node that may still be
+ * running. SQLite's sidecars go with the database: a `-wal` left beside a
+ * removed file is replayed into the next one.
+ */
+function clearState(state: string): void {
+  const p = paths(state);
+  for (const path of [
+    p.db,
+    `${p.db}-wal`,
+    `${p.db}-shm`,
+    p.env,
+    p.log,
+    p.blobs,
+  ]) {
+    rmSync(path, { recursive: true, force: true });
+  }
+  console.log(`[marfa-server] cleared the state under ${state}`);
+}
+
 function status(args: Args): void {
   const p = paths(args.state);
   const pid = readPid(p.pid);
@@ -356,6 +393,8 @@ if (
 ) {
   const args = parseArgs(process.argv.slice(2));
   if (args.command === "up") await bootServer(args);
-  else if (args.command === "down") await stopServer(args);
-  else status(args);
+  else if (args.command === "down") {
+    await stopServer(args);
+    clearState(args.state);
+  } else status(args);
 }
