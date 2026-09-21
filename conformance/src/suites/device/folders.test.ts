@@ -15,6 +15,7 @@ import { describe, it, expect, afterEach, vi } from "vitest";
 import {
   answers,
   itemEvent,
+  refusal,
   replay,
   wireItem,
 } from "../../device/marfa-answers.js";
@@ -54,7 +55,7 @@ function read(harness: FolderHarness, name: string): string {
   return readFileSync(join(harness.dir, name), "utf8");
 }
 
-/** Answers for every door a folder's drain can reach. */
+/** Answers forevery door a folder's drain can reach. */
 function scriptFolderWrites(
   harness: FolderHarness,
   rows: Array<Record<string, unknown>> = [],
@@ -134,7 +135,7 @@ function scriptFolderWrites(
         // The natural key is echoed when the write carries one, because a
         // rename is a write to it and the copy has to learn the new one —
         // a scripted door that dropped it would leave the folder computing
-        // the old path for ever, which is the defect statement 23 is for.
+        // the old path forever, which is the defect statement 23 is for.
         held.set(id, {
           properties: sent.properties ?? held.get(id)?.properties ?? {},
           source_id: sent.source_id ?? held.get(id)?.source_id ?? null,
@@ -521,7 +522,7 @@ describe("files and items", () => {
     if (!queued.ok) return;
     expect(
       queued.value.filter((row) => row.kind === "delete_edge").length,
-      "the edge outlived the link, so the next pull writes the line back and the person deletes it again for ever",
+      "the edge outlived the link, so the next pull writes the line back and the person deletes it again forever",
     ).toBe(1);
 
     expect((await harness.folder.push()).ok).toBe(true);
@@ -680,7 +681,7 @@ describe("files and items", () => {
     if (!queued.ok) return;
     expect(
       queued.value.filter((row) => row.kind === "delete_edge").length,
-      "the stand-down dropped the link out of the folder's memory for good, so removing it later does nothing and the next pull writes it back for ever",
+      "the stand-down dropped the link out of the folder's memory for good, so removing it later does nothing and the next pull writes it back forever",
     ).toBe(1);
   });
 
@@ -1413,7 +1414,7 @@ describe("identity", () => {
     ).toBe("brand new\n");
   });
 
-  it("keeps a binding for every file after a swap that also edits both", async () => {
+  it("keeps a binding forevery file after a swap that also edits both", async () => {
     harness = await folderHarness("folder-swap-and-edit");
     scriptFolderWrites(harness);
     put(harness, "one.md", "---\ntitle: One\n---\nfirst\n");
@@ -1876,7 +1877,7 @@ describe("writing", () => {
     if (!scanned.ok) return;
     expect(
       scanned.value.missing,
-      "a tracked file absent at startup was not journaled, so a delete made while the folder was off is never sent and the item stays for ever",
+      "a tracked file absent at startup was not journaled, so a delete made while the folder was off is never sent and the item stays forever",
     ).toBe(1);
 
     // And it becomes a delete once the grace has run. Waited for rather
@@ -2296,6 +2297,42 @@ describe("what a pull does with a file whose item left the slice", () => {
     expect(queued.value.filter((row) => row.kind === "delete_item")).toEqual(
       [],
     );
+  });
+
+  it("keeps a file the folder never wrote whose create was refused, inside one push", async () => {
+    // The scan binds the person's own bytes and queues the create; the
+    // server refuses it; the drain reads the row back, finds nothing and
+    // forgets it; the pull that ends the same push then meets a bound file
+    // whose item the copy no longer holds. Its bytes match the mapping,
+    // because the scan recorded them, and they are the person's.
+    harness = await folderHarness("folder-refused-create");
+    scriptWrites(harness.server, {
+      create: [refusal(400, "invalid_properties", "the body is not allowed")],
+      read: [refusal(404, "item_not_found", "no such item")],
+    });
+    put(harness, "mine.md", "---\ntitle: Mine\n---\nthe person's own words\n");
+    const pushed = await harness.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    if (!pushed.ok) return;
+    expect(pushed.value.drain.verdicts[0]?.verdict).toBe("refused");
+    expect(
+      pushed.value.pull.removed,
+      "the pull took away a file the folder never wrote, and the person's words with it",
+    ).toBe(0);
+    expect(pushed.value.pull.kept).toBe(1);
+    expect(read(harness, "mine.md")).toContain("the person's own words");
+
+    // Still bound, so the next scan neither makes a second item of it nor
+    // queues the refused create again; the push's own report is what said
+    // the create was refused, and an edit to the file meets the loud
+    // refusal of a binding the copy no longer answers for.
+    const before = sentCreates(harness).length;
+    const scanned = await harness.folder.scan();
+    expect(scanned.ok).toBe(true);
+    if (!scanned.ok) return;
+    expect([scanned.value.created, scanned.value.unchanged]).toEqual([0, 1]);
+    expect((await harness.folder.push()).ok).toBe(true);
+    expect(sentCreates(harness).length).toBe(before);
   });
 
   it("keeps a file the person changed after its item left, and says so", async () => {

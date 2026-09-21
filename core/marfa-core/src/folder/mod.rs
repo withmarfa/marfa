@@ -29,7 +29,7 @@ pub const STATE_DIR: &str = ".marfa";
 ///
 /// The first half of a rename looks exactly like a delete — the old path
 /// stops existing — and this is the window in which the other half can
-/// arrive. A grace of zero sends a delete for every rename.
+/// arrive. A grace of zero sends a delete forevery rename.
 pub const RENAME_GRACE: Duration = Duration::from_secs(5);
 
 /// What a folder is a view on, and what a new file becomes (`folders.md` 1).
@@ -556,7 +556,7 @@ impl Folder {
             }
             // The row may already be gone — a delete answered, or one a
             // catch-up evicted — and a folder that refused on that would
-            // stop sweeping its journal for ever. That is the only excuse:
+            // stop sweeping its journal forever. That is the only excuse:
             // testing `is_ok` instead swallows an unhydrated store and a
             // reading handle, and then clears the journal and the binding,
             // so a real deletion never reaches the server and nothing says
@@ -625,7 +625,7 @@ impl Folder {
         // edit from this folder needs.
         //
         // Zero always, rather than the row's version, would refuse every
-        // create onto an existing row for ever and leave the file
+        // create onto an existing row forever and leave the file
         // permanently unpushable. `folders.md` 13 carries the convention
         // itself: the version is the one the copy holds under that natural
         // key, and zero where it holds none, which the server reads as a
@@ -651,7 +651,7 @@ impl Folder {
             // (`folders.md` 13), and the version is *read*, never invented:
             // a number the device chose would be a version it minted, which
             // `device.md` 20 forbids and which can never match, so the
-            // create would be refused for ever and the file would be
+            // create would be refused forever and the file would be
             // permanently unpushable.
             //
             // The natural key is what the server resolves a create against,
@@ -663,7 +663,13 @@ impl Folder {
             ..Default::default()
         };
         let queued = self.core.create_item(&draft)?;
-        let item_id = queued.item_id.unwrap_or_default();
+        let Some(item_id) = queued.item_id else {
+            // A create names the item it made; one that does not is a row
+            // no binding could ever be matched to.
+            return Err(CoreError::Invalid(format!(
+                "the create queued for {key} names no item"
+            )));
+        };
         // No bytes this folder agreed with before, so no link it can say has
         // gone: a create only ever adds.
         let (named, declined, resolved) = self.queue_links(&item_id, &document.links, &[], &[])?;
@@ -684,6 +690,7 @@ impl Folder {
                 item_id,
                 identity: mark.map(str::to_string),
                 content_hash: hash.to_string(),
+                written_hash: None,
                 links: named,
                 declined,
             },
@@ -760,6 +767,7 @@ impl Folder {
                 item_id: item_id.to_string(),
                 identity: mark.map(str::to_string),
                 content_hash: hash.to_string(),
+                written_hash: None,
                 links: named,
                 declined,
             },
@@ -886,7 +894,7 @@ impl Folder {
         // **A link the person took out, for an edge the folder keeps.** The
         // edge is of a kind the folder could not have made, so 21 leaves it,
         // and the pull would render it again: the person removes the line,
-        // the folder writes it back, for ever. Recorded here, and lifted
+        // the folder writes it back, forever. Recorded here, and lifted
         // the moment the body names the target again (`folders.md` 27).
         let foreign: HashSet<&str> = edges
             .iter()
@@ -1101,7 +1109,8 @@ impl Folder {
                             path: want.clone(),
                             item_id: item.id.clone(),
                             identity: None,
-                            content_hash: hash,
+                            content_hash: hash.clone(),
+                            written_hash: Some(hash),
                             links: wrote,
                             declined,
                         },
@@ -1156,7 +1165,8 @@ impl Folder {
                         path: want.clone(),
                         item_id: item.id.clone(),
                         identity: None,
-                        content_hash: hash,
+                        content_hash: hash.clone(),
+                        written_hash: Some(hash.clone()),
                         links: wrote.clone(),
                         declined: declined.clone(),
                     },
@@ -1184,7 +1194,7 @@ impl Folder {
                 // there it says bytes are on the disk that are not, and the
                 // next scan then pushes the old file's contents back as if
                 // they were an edit — or, after a rename, reports the item
-                // unchanged for ever with no file anywhere.
+                // unchanged forever with no file anywhere.
                 let conn = self.core.conn()?;
                 state::unbind(&conn, &want)?;
                 return Err(CoreError::Store(format!(
@@ -1204,7 +1214,8 @@ impl Folder {
                         path: want,
                         item_id: item.id.clone(),
                         identity: Some(found.key()),
-                        content_hash: state::hash(&bytes),
+                        content_hash: hash.clone(),
+                        written_hash: Some(hash),
                         links: wrote,
                         declined,
                     },
@@ -1226,10 +1237,14 @@ impl Folder {
     /// unmaintained, and the next scan pushes it back as an edit to an item
     /// the person cannot see.
     ///
-    /// Only where the bytes are what the folder last wrote. A file the person
-    /// has changed since stays, with its binding, and is reported: the folder
-    /// does not decide between an edit and a departure, so the edit stays on
-    /// the disk for the next scan to meet.
+    /// Only where the bytes are what the folder itself last wrote. A file
+    /// the person has changed since stays, and so does one the folder never
+    /// wrote at all, a file the scan bound whose create the server refused
+    /// and the drain then forgot, inside the very `push` this pull ends:
+    /// its bytes match the mapping, because the scan recorded them, and they
+    /// are the person's. Both stay with their binding and are reported: the
+    /// folder does not decide between an edit and a departure, so the edit
+    /// stays on the disk for the next scan to meet.
     ///
     /// The journal is not touched and nothing is queued, because the folder
     /// is not being told the item was deleted; it is being told the folder no
@@ -1245,7 +1260,7 @@ impl Folder {
             }
             let path = self.root.join(&row.path);
             match std::fs::read(&path) {
-                Ok(found) if state::hash(&found) != row.content_hash => {
+                Ok(found) if row.written_hash.as_deref() != Some(state::hash(&found).as_str()) => {
                     report.kept += 1;
                     continue;
                 }

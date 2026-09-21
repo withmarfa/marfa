@@ -238,6 +238,12 @@ CREATE TABLE IF NOT EXISTS folder_files (
   -- suppression have no gap (`folders.md` 14): a change whose content the
   -- folder already holds is a change the folder made.
   content_hash TEXT NOT NULL,
+  -- The bytes the folder itself last wrote at this path, hashed; null where
+  -- the last agreement was a scan's read of the person's bytes. A pull takes
+  -- away the file of an item that left the slice only when the file still
+  -- holds these bytes (`folders.md` 26): a file the folder never wrote, or
+  -- the person changed since, is theirs and stays.
+  written_hash TEXT,
   -- The item ids the links in those bytes named, as a JSON array. What tells
   -- a link the person removed from an edge that has not been rendered yet
   -- (`folders.md` 21): both are an edge the copy holds that the body does not
@@ -246,7 +252,7 @@ CREATE TABLE IF NOT EXISTS folder_files (
   -- The targets whose rendered link the person took out, for edges of a kind
   -- the folder could not have made, as a JSON array. The edge stays (21), so
   -- without this the next pull writes the link back and the person removes
-  -- it again, for ever (`folders.md` 27). Naming the link again lifts it.
+  -- it again, forever (`folders.md` 27). Naming the link again lifts it.
   declined_links TEXT NOT NULL,
   seen_at TEXT NOT NULL
 ) WITHOUT ROWID;
