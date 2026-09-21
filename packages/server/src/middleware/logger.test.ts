@@ -73,7 +73,8 @@ describe("resolveRequestId", () => {
  * The shape Node raises when every address a hostname resolves to refuses
  * the connection: an AggregateError with an empty own message, all the
  * detail hanging off `errors`. An outbound webhook to a host that is not
- * listening is the path here that reaches it.
+ * listening reaches it through the `cause` of a `fetch` failure, which is
+ * why the summary has to walk both a cause and an `errors` array.
  */
 function connectionRefused(): AggregateError {
   const mk = (address: string): Error =>
@@ -102,6 +103,7 @@ function databaseLocked(): Error {
     extendedCode: "SQLITE_BUSY",
     rawCode: 5,
     cause: Object.assign(new Error("database is locked"), {
+      name: "SqliteError",
       code: "SQLITE_BUSY",
       rawCode: 5,
     }),
@@ -112,6 +114,12 @@ function databaseLocked(): Error {
  * A constraint failure, which is the case `extendedCode` exists for: every
  * one of them answers `SQLITE_CONSTRAINT` on `code`, and only the extended
  * code says which constraint.
+ *
+ * The wrapped `SqliteError` is the half that matters to the summary. libsql
+ * prefixes the wrapper's own message with the code, so a summary that never
+ * appended a code would still read `SQLITE_CONSTRAINT` off the message; the
+ * `cause` carries the bare message and the extended code apart, which is the
+ * only place the appending is visible.
  */
 function uniqueViolation(): Error {
   return Object.assign(
@@ -121,6 +129,11 @@ function uniqueViolation(): Error {
       code: "SQLITE_CONSTRAINT",
       extendedCode: "SQLITE_CONSTRAINT_PRIMARYKEY",
       rawCode: 1555,
+      cause: Object.assign(new Error("UNIQUE constraint failed: items.id"), {
+        name: "SqliteError",
+        code: "SQLITE_CONSTRAINT_PRIMARYKEY",
+        rawCode: 1555,
+      }),
     },
   );
 }
@@ -143,6 +156,21 @@ describe("formatErrorSummary", () => {
     const summary = formatErrorSummary(databaseLocked());
     expect(summary).toContain("database is locked");
     expect(summary).toContain("SQLITE_BUSY");
+  });
+
+  // The witness for the appending itself. Every assertion above would pass
+  // on the message alone, because libsql writes the code into the wrapper's
+  // message; the wrapped `SqliteError` does not, so the extended code only
+  // reaches the summary if the code is read off the value and appended.
+  it("appends a code the message does not already carry", () => {
+    const summary = formatErrorSummary(uniqueViolation());
+    expect(summary).toContain("UNIQUE constraint failed: items.id");
+    expect(summary).toContain("SQLITE_CONSTRAINT_PRIMARYKEY");
+    // And it is not there through the wrapper, whose message names only the
+    // unextended code.
+    expect(uniqueViolation().message).not.toContain(
+      "SQLITE_CONSTRAINT_PRIMARYKEY",
+    );
   });
 
   it("walks the cause chain", () => {
@@ -230,14 +258,6 @@ describe("serializeError", () => {
 // log() payload serialization
 // ---------------------------------------------------------------------------
 
-/**
- * `JSON.stringify` renders an `Error` as `{}` — its message, its name and
- * the driver's code all live on non-enumerable properties. The Better Auth
- * logger bridge hands `log()` a payload shaped `{ args: [Error] }`, so a
- * failed query reaches the log line as `{"args":[{}]}`, and an absence in
- * the logs then reads as evidence that nothing is failing. Anything
- * Error-shaped in a logged payload has to survive the trip.
- */
 describe("the OpenTelemetry mirror", () => {
   // **The one line whose message is a credential must not be exported.** The
   // redaction processor rewrites attributes and deliberately leaves the body
@@ -281,6 +301,16 @@ describe("the OpenTelemetry mirror", () => {
   });
 });
 
+/**
+ * `JSON.stringify` renders a plain `Error` as `{}`: its message, stack and
+ * cause are all non-enumerable. The Better Auth logger bridge hands `log()`
+ * a payload shaped `{ args: [Error] }`, so without the rendering below a
+ * failed query reaches the log line as `{"args":[{}]}` and the absence reads
+ * as evidence that nothing is failing. A `LibsqlError` keeps its enumerable
+ * `code` and loses the message that says what the code was raised over,
+ * which is the same defect wearing a complete-looking record. Anything
+ * Error-shaped in a logged payload has to survive the trip.
+ */
 describe("log payload serialization", () => {
   function captureLog(
     level: "info" | "warn" | "error",

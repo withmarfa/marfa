@@ -1444,6 +1444,7 @@ export function itemRoutes(storage: Storage) {
         stampedSource,
         body.source_id,
       );
+<<<<<<< HEAD
       // The declared-type match is checked on BOTH arms below rather than
       // once here, and the difference is disclosure. The row's type is a
       // gate rather than a filter: gate before disclosing, so a refusal
@@ -1451,6 +1452,16 @@ export function itemRoutes(storage: Storage) {
       // `item_id`, `declared_type` and `actual_type`. Answering it ahead
       // of `requireTypeAccess` would disclose the row's real type to a
       // caller the type gate is about to refuse and tell nothing.
+=======
+      // The provenance refusal is checked on BOTH arms below rather than
+      // once here, and the difference is disclosure. This branch reasons
+      // carefully that the row's type is a gate rather than a filter — gate
+      // before disclosing, so a refusal cannot be read off the body — and
+      // the provenance refusal names `item_id`, `source` and the owning
+      // connection's id.
+      // Answering it ahead of `requireTypeAccess` would disclose all three
+      // to a caller the type gate is about to refuse and tell nothing.
+>>>>>>> e072dddd (refactor(server,core): the read-only reviewer's findings)
       //
       // So each arm runs it last among its own gates. That is two call
       // sites for one rule, which is the shape this codebase treats as a
