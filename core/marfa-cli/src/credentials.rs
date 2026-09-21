@@ -12,8 +12,18 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::CliError;
 
-/// The keychain service every entry is filed under.
-const SERVICE: &str = "marfa";
+/// The keychain service every entry is filed under. A test run files
+/// under a service of its own: the keychain guards an item by the code
+/// signature of the binary that wrote it, so every rebuilt test binary
+/// would otherwise ask, on the person's screen, before touching an item an
+/// earlier build left behind.
+fn service() -> String {
+    if cfg!(test) {
+        format!("marfa-test-{}", std::process::id())
+    } else {
+        "marfa".to_string()
+    }
+}
 
 /// The account that names the origin a command with no `--url` talks to.
 const CURRENT: &str = "current";
@@ -55,7 +65,7 @@ impl Kept {
 }
 
 fn entry(account: &str) -> Result<Entry, CliError> {
-    Entry::new(SERVICE, account).map_err(no_keychain)
+    Entry::new(&service(), account).map_err(no_keychain)
 }
 
 fn no_keychain(error: Error) -> CliError {
