@@ -75,6 +75,12 @@ describe("attaching a file", () => {
     expect(inbound.data.map((row) => row.source_id)).toContain(
       attached.item.id,
     );
+    const otherType = await c.cli.json<{
+      data: Array<{ source_id: string }>;
+    }>(["items", "backrefs", created.item.id, "--type", "references"]);
+    expect(otherType.data.map((row) => row.source_id)).not.toContain(
+      attached.item.id,
+    );
 
     const out = join(dir, "diagram.out");
     await c.cli.json([

@@ -85,6 +85,19 @@ describe("types and edge types", () => {
       id,
     ]);
     expect(reread.description).toBe("Changed from the terminal.");
+    // With an item of the type still standing, the delete is refused with
+    // the server's own code, and `--force` is what carries it through.
+    const standing = await c.cli.json<ItemEnvelope>([
+      "items",
+      "create",
+      "--type",
+      id,
+      "--properties",
+      JSON.stringify({ title: unique("cli-typed") }),
+    ]);
+    trackItem(c.ctx, standing.item.id);
+    const inUse = await c.cli.refused(["types", "delete", id]);
+    expect(inUse.envelope.error.server?.code).toBe("type_in_use");
     await c.cli.json(["types", "delete", id, "--force"]);
     const gone = await c.cli.refused(["types", "get", id]);
     expect(gone.envelope.error.code).toBe("not_found");
@@ -328,6 +341,20 @@ describe("the event stream", () => {
       "stream_cursor",
     );
     const id = await note(unique("cli-event"));
+    // A write of another type, made while the stream is open, is what the
+    // type filter has to keep out.
+    const other = await c.cli.json<ItemEnvelope>([
+      "items",
+      "create",
+      "--type",
+      "core.bookmark",
+      "--properties",
+      JSON.stringify({
+        title: unique("cli-event-other"),
+        url: "https://example.com/",
+      }),
+    ]);
+    trackItem(c.ctx, other.item.id);
     const code = await once(stream, "close");
     expect(code, stderr).toBe(0);
     const frames = stdout
@@ -347,5 +374,9 @@ describe("the event stream", () => {
       created,
       `the write was not delivered; frames: ${stdout.slice(0, 500)}`,
     ).toBeDefined();
+    expect(
+      frames.find((frame) => frame.data.item?.id === other.item.id),
+      "a write of another type came through the type filter",
+    ).toBeUndefined();
   });
 });

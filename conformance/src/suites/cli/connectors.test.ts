@@ -113,18 +113,39 @@ describe("connectors from the terminal", () => {
       "the mailbox refused",
     ]);
     expect(run.outcome).toBe("failed");
+    const second = await connector.json<{ id: string; outcome: string }>([
+      "connectors",
+      "report",
+      registered.id,
+      "--outcome",
+      "succeeded",
+      "--started-at",
+      "2026-09-21T11:00:00Z",
+      "--finished-at",
+      "2026-09-21T11:01:00Z",
+      "--summary",
+      "read the mailbox",
+    ]);
     const runs = await c.cli.json<{
       data: Array<{ id: string; outcome: string; error: string | null }>;
     }>(["connectors", "runs", registered.id, "--limit", "5"]);
-    expect(runs.data.map((row) => row.id)).toContain(run.id);
-    expect(runs.data[0]?.error).toBe("the mailbox refused");
+    expect(runs.data.map((row) => row.id)).toEqual([second.id, run.id]);
+    expect(runs.data[1]?.error).toBe("the mailbox refused");
+    const one = await c.cli.json<{ data: Array<{ id: string }> }>([
+      "connectors",
+      "runs",
+      registered.id,
+      "--limit",
+      "1",
+    ]);
+    expect(one.data.map((row) => row.id)).toEqual([second.id]);
     const after = await c.cli.json<Connector>([
       "connectors",
       "get",
       registered.id,
     ]);
     expect(after.last_heartbeat_at).toBe(beat.last_heartbeat_at);
-    expect(after.last_run?.outcome).toBe("failed");
+    expect(after.last_run?.outcome).toBe("succeeded");
 
     await c.operator.json(["connectors", "delete", registered.id]);
     const gone = await c.cli.refused(["connectors", "get", registered.id]);

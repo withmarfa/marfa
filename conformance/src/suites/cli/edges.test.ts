@@ -89,6 +89,10 @@ describe("edges from the terminal", () => {
       await c.cli.json(["edges", "list", "--type", "references"]),
     );
     expect(listed.map((row) => row.id)).toContain(edge.id);
+    const otherType = rows(
+      await c.cli.json(["edges", "list", "--type", "attached-to"]),
+    );
+    expect(otherType.map((row) => row.id)).not.toContain(edge.id);
 
     await c.cli.json(["edges", "delete", edge.id]);
     const after = rows(await c.cli.json(["items", "edges", a]));

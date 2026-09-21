@@ -1,6 +1,7 @@
 import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { gunzipSync } from "node:zlib";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import {
   cleanup,
@@ -124,23 +125,32 @@ describe("the instance from the terminal", () => {
     }>(["config", "get"]);
     expect(config.instance_id).toBe(root.instance_id);
     // A change goes through the door and comes back from the next read,
-    // then the configuration is put back as it was: the door replaces
-    // whole, so sending the first read back restores it.
+    // then the configuration is put back as it was whatever the assertions
+    // said, since every file after this one runs against the same server:
+    // the door replaces whole, so sending the first read back restores it.
     const days = (config.trash_retention_days ?? 30) + 1;
-    const replaced = await c.cli.json<{ trash_retention_days: number }>(
-      ["config", "replace", "--file", "-"],
-      { stdin: JSON.stringify({ ...config, trash_retention_days: days }) },
-    );
-    expect(replaced.trash_retention_days).toBe(days);
-    const read = await c.cli.json<{ trash_retention_days: number }>([
+    let replaced: { trash_retention_days: number } | undefined;
+    let read: { trash_retention_days: number } | undefined;
+    try {
+      replaced = await c.cli.json<{ trash_retention_days: number }>(
+        ["config", "replace", "--file", "-"],
+        { stdin: JSON.stringify({ ...config, trash_retention_days: days }) },
+      );
+      read = await c.cli.json<{ trash_retention_days: number }>([
+        "config",
+        "get",
+      ]);
+    } finally {
+      await c.cli.json(["config", "replace", "--file", "-"], {
+        stdin: JSON.stringify(config),
+      });
+    }
+    expect(replaced?.trash_retention_days).toBe(days);
+    expect(read?.trash_retention_days).toBe(days);
+    const restored = await c.cli.json<{ trash_retention_days?: number }>([
       "config",
       "get",
     ]);
-    expect(read.trash_retention_days).toBe(days);
-    const restored = await c.cli.json<{ trash_retention_days?: number }>(
-      ["config", "replace", "--file", "-"],
-      { stdin: JSON.stringify(config) },
-    );
     expect(restored.trash_retention_days).toBe(config.trash_retention_days);
   });
 
@@ -189,15 +199,21 @@ describe("the instance from the terminal", () => {
       .filter((line) => line.trim() !== "");
     expect(lines.length).toBeGreaterThan(0);
     // The source filter reached the wire: every item line is this file's,
-    // and the edge lines that follow join only those.
+    // and the edge lines that follow join only those items.
+    const exported = new Set<string>();
     for (const line of lines) {
       const record = JSON.parse(line) as {
-        item?: { source: string };
-        edge?: unknown;
+        item?: { id: string; source: string };
+        edge?: { source_id: string; target_id: string };
       };
-      if (record.item !== undefined)
+      if (record.item !== undefined) {
         expect(record.item.source).toBe(c.ctx.source);
-      else expect(record.edge).toBeDefined();
+        exported.add(record.item.id);
+      } else {
+        expect(record.edge).toBeDefined();
+        expect(exported.has(record.edge!.source_id)).toBe(true);
+        expect(exported.has(record.edge!.target_id)).toBe(true);
+      }
     }
     expect(ndjson.stdout).toContain(title);
 
@@ -211,19 +227,20 @@ describe("the instance from the terminal", () => {
     ]);
     expect(report.size_bytes).toBeGreaterThan(0);
     expect(statSync(archive).size).toBe(report.size_bytes);
-    // A gzip stream begins with its magic bytes.
-    const head = readFileSync(archive).subarray(0, 2);
-    expect([head[0], head[1]]).toEqual([0x1f, 0x8b]);
+    // The archive is a whole gzip stream, and the tar inside carries the
+    // note by its title: the body is witnessed, not only its length.
+    const tar = gunzipSync(readFileSync(archive));
+    expect(tar.toString("latin1")).toContain(title);
   });
 
   it("reaches the operator doors under the operator key and is refused them under a working key", async () => {
     const drift = await c.operator.json<{
       types: Array<{ id: string; item_count: number; removable: boolean }>;
     }>(["types", "drift"]);
-    // A fresh server has no drifted type, and the report says so in the
-    // door's own shape; `types prune` needs one and is reached only by its
-    // help in this suite.
-    expect(Array.isArray(drift.types)).toBe(true);
+    // The server was booted for this run and nothing registers a platform
+    // type outside the registry, so the report is empty; `types prune`
+    // needs a drifted one and is reached only by its help in this suite.
+    expect(drift.types).toEqual([]);
     const refused = await c.cli.refused(["types", "drift"]);
     expect(refused.code).toBe(1);
     expect(refused.envelope.error.server?.status).toBe(403);
@@ -238,13 +255,14 @@ describe("the instance from the terminal", () => {
     expect(stores.data.length).toBeGreaterThan(0);
     expect(stores.data[0]?.kind).toBe("disk");
     expect(stores.min_copies).toBeGreaterThan(0);
+    // No sweep has found a blob nothing references on a server booted for
+    // this run, so the report is the empty one rather than a shape that
+    // happens to parse.
     const orphans = await c.operator.json<{ data: unknown[] }>([
       "blobs",
       "orphans",
     ]);
-    expect(Array.isArray(orphans.data)).toBe(true);
-    // Nothing has swept yet, so the report is the empty one rather than
-    // a shape that happens to parse.
+    expect(orphans.data).toEqual([]);
     const refusedOrphans = await c.cli.refused(["blobs", "orphans"]);
     expect(refusedOrphans.envelope.error.server?.status).toBe(403);
     const jobs = await c.operator.json<{ data: { name: string }[] }>([

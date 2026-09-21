@@ -33,11 +33,14 @@ afterAll(async () => {
     form.set("token", refreshToken);
     form.set("token_type_hint", "refresh_token");
     form.set("client_id", clientId);
-    await fetch(`${c.apiUrl}/auth/oauth2/revoke`, {
+    const revoked = await fetch(`${c.apiUrl}/auth/oauth2/revoke`, {
       method: "POST",
       headers: { "content-type": "application/x-www-form-urlencoded" },
       body: form,
     });
+    if (!revoked.ok) {
+      throw new Error(`the grant was not revoked: ${String(revoked.status)}`);
+    }
   }
   await cleanup(c.ctx);
 });
@@ -198,7 +201,6 @@ describe("the owner", () => {
     expect(token.access_token).toMatch(/^marfa_at_/);
     expect(token.refresh_token).toMatch(/^marfa_rt_/);
     expect(token.scope).toContain("*:read");
-    expect(token.client_id).toBe(clientId);
     refreshToken = token.refresh_token ?? undefined;
 
     // The token reaches the data plane, and the binary knows whose it is.

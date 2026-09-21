@@ -120,8 +120,10 @@ export class Cli {
    * Runs with `--json` and answers the parsed stdout. A non-zero exit throws
    * with the envelope, because a scenario that meant to be refused asks
    * through `refused` instead, and one that did not should stop here. An
-   * empty stdout throws too: every door answers something, and a binary
-   * that printed nothing is not proven by its exit code alone.
+   * empty stdout throws too: a binary that printed nothing is not proven
+   * by its exit code alone. A door that answers `204` is printed as
+   * `null`, which is an answer, so a scenario that reads one follows it
+   * with the read that shows what the door did.
    */
   async json<T = unknown>(
     args: string[],
@@ -248,10 +250,19 @@ export interface ItemEnvelope {
   acknowledged?: boolean;
 }
 
+/**
+ * The child's exit code once it has closed. A child that closed before
+ * this was asked answers at once, because the event it fired is not
+ * fired again and a scenario waiting for it would time out with nothing
+ * to say.
+ */
 export async function once(
   process: ChildProcess,
   event: "close" | "exit",
 ): Promise<number | null> {
+  if (process.exitCode !== null || process.signalCode !== null) {
+    return process.exitCode;
+  }
   return new Promise((resolve) => {
     process.once(event, (code) => resolve(code));
   });

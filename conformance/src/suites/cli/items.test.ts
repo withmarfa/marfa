@@ -128,11 +128,23 @@ describe("items from the terminal", () => {
     expect(versions.versions.map((row) => row.version)).toEqual([1]);
     expect(versions.versions[0]!.properties.status).toBeUndefined();
 
-    const stats = await c.cli.json<{
-      by_type?: Record<string, number>;
-      total?: number;
-    }>(["items", "stats", "--by", "type"]);
-    expect(JSON.stringify(stats)).toContain("core.note");
+    // Grouped by type, the answer is a count per type id; grouped by
+    // state it would be per state, so the key is what proves the flag.
+    const stats = await c.cli.json<Record<string, number>>([
+      "items",
+      "stats",
+      "--by",
+      "type",
+    ]);
+    expect(stats["core.note"]).toBeGreaterThanOrEqual(1);
+    const byState = await c.cli.json<Record<string, number>>([
+      "items",
+      "stats",
+      "--by",
+      "state",
+    ]);
+    expect(byState.active).toBeGreaterThanOrEqual(1);
+    expect(byState["core.note"]).toBeUndefined();
   });
 
   it("takes a note through archive, the bin, restore, and the purge", async () => {

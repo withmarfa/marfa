@@ -102,6 +102,15 @@ describe("a folder round trip", () => {
       landed,
       "the dropped note did not land under its natural key",
     ).toBeDefined();
+    const elsewhere = await c.cli.json<{ data: Array<{ id: string }> }>([
+      "items",
+      "list",
+      "--type",
+      "core.note",
+      "--source",
+      unique("cli-nobody"),
+    ]);
+    expect(elsewhere.data).toEqual([]);
     trackItem(c.ctx, landed!.id);
     expect(landed!.properties.title).toBe(title);
     expect(landed!.properties.status).toBe("dropped in a folder");
