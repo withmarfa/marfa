@@ -13,7 +13,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { LibsqlError } from "@libsql/client";
+import { createClient, LibsqlError } from "@libsql/client";
 import { createConnection, untilNotBusy } from "./connection.js";
 
 const dirs: string[] = [];
@@ -72,6 +72,68 @@ describe("a write that meets the write lock", () => {
     expect(
       ticks.filter((t) => t > started && t < finished).length,
     ).toBeGreaterThanOrEqual(5);
+    await close();
+  });
+
+  it("lands a write the lock refused once where every connection can see it, and stays sound after", async () => {
+    // The holder is another client on the file, as a sidecar's checkpoint
+    // or another process is: the refusal is immediate and the connection
+    // it happened on is the shared one. A connection left as the refusal
+    // leaves it would take the retried write into a transaction nothing
+    // can see or end, answer success, and hold the lock against everyone.
+    const path = scratch();
+    const { raw, close } = await createConnection(path);
+    await raw.execute("CREATE TABLE probe (n INTEGER NOT NULL)");
+    const other = createClient({ url: `file:${path}` });
+    const holder = await other.transaction("write");
+    await holder.execute("INSERT INTO probe (n) VALUES (1)");
+    setTimeout(() => {
+      void holder.commit();
+    }, 100);
+    await raw.execute("INSERT INTO probe (n) VALUES (2)");
+    // Visible from a connection that took no part: the write committed.
+    const witness = createClient({ url: `file:${path}` });
+    const seen = (await witness.execute("SELECT n FROM probe ORDER BY n")).rows;
+    expect(seen.map((row) => row.n)).toEqual([1, 2]);
+    // The lock is free for others, and the wrapper's own connection opens
+    // a transaction with a savepoint, which the refusal had broken.
+    const theirs = await other.transaction("write");
+    await theirs.execute("INSERT INTO probe (n) VALUES (3)");
+    await theirs.commit();
+    const ours = await raw.transaction("write");
+    await ours.execute("SAVEPOINT sp0");
+    await ours.execute("INSERT INTO probe (n) VALUES (4)");
+    await ours.execute("RELEASE sp0");
+    await ours.commit();
+    const all = (await witness.execute("SELECT n FROM probe ORDER BY n")).rows;
+    expect(all.map((row) => row.n)).toEqual([1, 2, 3, 4]);
+    witness.close();
+    other.close();
+    await close();
+  });
+
+  it("lands every one of several writes that met the lock together", async () => {
+    // Writes issued in one tick, so their retries interleave: none may run
+    // on the connection another's refusal has just spoiled.
+    const path = scratch();
+    const { raw, close } = await createConnection(path);
+    await raw.execute("CREATE TABLE probe (n INTEGER NOT NULL)");
+    const other = createClient({ url: `file:${path}` });
+    const holder = await other.transaction("write");
+    await holder.execute("INSERT INTO probe (n) VALUES (0)");
+    setTimeout(() => {
+      void holder.commit();
+    }, 60);
+    await Promise.all(
+      [1, 2, 3, 4, 5].map((n) =>
+        raw.execute({ sql: "INSERT INTO probe (n) VALUES (?)", args: [n] }),
+      ),
+    );
+    const witness = createClient({ url: `file:${path}` });
+    const seen = (await witness.execute("SELECT n FROM probe ORDER BY n")).rows;
+    expect(seen.map((row) => row.n)).toEqual([0, 1, 2, 3, 4, 5]);
+    witness.close();
+    other.close();
     await close();
   });
 

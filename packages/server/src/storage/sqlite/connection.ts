@@ -176,8 +176,29 @@ export async function untilNotBusy<T>(
  * transaction opens with, and a script. A statement issued inside an open
  * transaction already holds the lock and goes through the transaction
  * object as it is.
+ *
+ * Two more things the wrapper does, because of what a refused statement
+ * leaves behind. A connection whose statement was refused with
+ * `SQLITE_BUSY` is not sound afterwards: it holds a transaction nothing
+ * can see or end, so a later write on it lands nowhere while answering
+ * success, a later `BEGIN` on it fails, and every other connection is
+ * refused the lock until it is closed. So a refusal drops the connection
+ * (`reconnect()`) before anything else runs on it, and to make "before
+ * anything else" true the client's calls are serialized: each waits for
+ * the one before it to settle, which costs a microtask per statement and
+ * no concurrency, since every statement here is synchronous inside the
+ * native call anyway.
  */
 function waitingForTheLock(client: Client): Client {
+  let tail: Promise<unknown> = Promise.resolve();
+  const one = <T>(attempt: () => Promise<T>): Promise<T> => {
+    const turn = tail.then(
+      () => discardingWhenBusy(client, attempt),
+      () => discardingWhenBusy(client, attempt),
+    );
+    tail = turn.catch(() => undefined);
+    return turn;
+  };
   return {
     get closed() {
       return client.closed;
@@ -187,17 +208,23 @@ function waitingForTheLock(client: Client): Client {
     },
     execute: (stmtOrSql: InStatement | string, args?: InArgs) =>
       untilNotBusy(() =>
-        typeof stmtOrSql === "string"
-          ? client.execute(stmtOrSql, args)
-          : client.execute(stmtOrSql),
+        one(() =>
+          typeof stmtOrSql === "string"
+            ? client.execute(stmtOrSql, args)
+            : client.execute(stmtOrSql),
+        ),
       ),
-    batch: (stmts, mode) => untilNotBusy(() => client.batch(stmts, mode)),
-    migrate: (stmts) => untilNotBusy(() => client.migrate(stmts)),
+    batch: (stmts, mode) =>
+      untilNotBusy(() => one(() => client.batch(stmts, mode))),
+    migrate: (stmts) => untilNotBusy(() => one(() => client.migrate(stmts))),
     transaction: (mode?: TransactionMode) =>
       untilNotBusy(() =>
-        mode === undefined ? client.transaction() : client.transaction(mode),
+        one(() =>
+          mode === undefined ? client.transaction() : client.transaction(mode),
+        ),
       ),
-    executeMultiple: (sql) => untilNotBusy(() => client.executeMultiple(sql)),
+    executeMultiple: (sql) =>
+      untilNotBusy(() => one(() => client.executeMultiple(sql))),
     sync: () => client.sync(),
     close: () => {
       client.close();
@@ -206,6 +233,20 @@ function waitingForTheLock(client: Client): Client {
       client.reconnect();
     },
   };
+}
+
+/** One call on the client, with the connection dropped if the lock refused
+ *  it, inside the same turn so nothing else can run on it first. */
+async function discardingWhenBusy<T>(
+  client: Client,
+  attempt: () => Promise<T>,
+): Promise<T> {
+  try {
+    return await attempt();
+  } catch (err) {
+    if (isBusy(err)) client.reconnect();
+    throw err;
+  }
 }
 
 export type DrizzleDb = ReturnType<typeof drizzle<typeof schema>>;
