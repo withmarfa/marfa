@@ -123,16 +123,23 @@ describe("an edge carries a version", () => {
     expect(loser.status).toBe(409);
     const refusal = (await loser.json()) as {
       error: { code: string; status: number };
-      edge: WireEdge;
+      current: WireEdge;
+      edge?: WireEdge;
     };
     expect(refusal.error.code).toBe("version_conflict");
-    // The current edge, whole, rather than a version number. `GET
-    // /edges/{id}` would answer the same question, so what this pins is
-    // that a refused client does not have to ask it: the refusal already
-    // holds what the retry needs.
-    expect(refusal.edge.id).toBe(created.id);
-    expect(refusal.edge.version).toBe(2);
-    expect(refusal.edge.properties).toEqual({ note: "winner" });
+    // `error.status`, because a `version_conflict` carries it on every door
+    // and `errors.md` 1 exempts exactly those envelopes from the rule that
+    // the error object holds no status.
+    expect(refusal.error.status).toBe(409);
+    // Under `current`, the key every `version_conflict` uses. A client
+    // reading `body.current.version` off the item door reads it here too.
+    expect(refusal.current.id).toBe(created.id);
+    expect(refusal.current.version).toBe(2);
+    expect(refusal.current.properties).toEqual({ note: "winner" });
+    // And under nothing else. `edge` is the 200's key, and a refusal
+    // answering both would leave a client free to read either — which is
+    // how the two doors drift apart again.
+    expect(refusal.edge).toBeUndefined();
 
     const after = await request(
       ctx.app,
