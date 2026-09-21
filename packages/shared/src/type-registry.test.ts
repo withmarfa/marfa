@@ -516,6 +516,10 @@ describe("core.message — light cross-platform message", () => {
 
   it("has no thread_id field — threading is edge-based", () => {
     const schema = getTypeSchema("core.message");
+    // The witness: the schema and its fields are there, so the absence
+    // below is about a field and not about a lookup that answered nothing.
+    expect(schema).toBeDefined();
+    expect(schema?.fields).toHaveProperty("body");
     expect(schema?.fields).not.toHaveProperty("thread_id");
   });
 

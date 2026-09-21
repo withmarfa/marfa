@@ -4,18 +4,18 @@
  * The filter names a type and covers that type's declared-parent
  * subtree: a type whose `parent` chain reaches the named one answers for
  * it. Live delivery goes through `eventMatchesTypeFilter`, which walks
- * that chain. The `Last-Event-ID` replay compared the stored type string
- * with `!==`, so a subscriber narrowing to a parent type received a
- * subtype's event while connected and lost the same event on every
- * reconnect.
+ * that chain, and the `Last-Event-ID` replay has to walk the same one: a
+ * replay that compared the stored type string alone would hand a
+ * subscriber narrowing to a parent type a subtype's event while connected
+ * and lose the same event on every reconnect.
  *
  * The same parameter as the list surfaces take, resolved by the same rule:
  * the global wildcard, the named type and everything under its name, and
- * the types that declare their way there. The stream used to resolve the
- * declared clause alone, so `*` and `core.*` matched nothing at all while
- * the same spellings on `/items` matched everything and a subtree — a 200
- * carrying no events, which is the one filter failure a client cannot tell
- * from a quiet instance. Agreement with the list surface is pinned below by
+ * the types that declare their way there. A stream resolving the declared
+ * clause alone would match nothing for `*` and `core.*` while the same
+ * spellings on `/items` matched everything and a subtree — a 200 carrying
+ * no events, which is the one filter failure a client cannot tell from a
+ * quiet instance. Agreement with the list surface is pinned below by
  * asking both and comparing, rather than by restating what either should
  * return.
  *
@@ -197,6 +197,12 @@ describe("GET /events?type= on the Last-Event-ID replay", () => {
       event_type: "item.created",
       payload: JSON.stringify({ type: "item.created", note: "ZZtypelessZZ" }),
     });
+    // The witness: the row is in the log after the cursor, so a replay
+    // from that cursor walks over it and the absence below is a decision
+    // rather than a row that was never there to withhold.
+    expect(
+      (await ctx.storage.eventLog.getAfter(cursor, 100)).map((e) => e.payload),
+    ).toContainEqual(expect.stringContaining("ZZtypelessZZ"));
     // Written after, so reaching it means the row above was already decided.
     const anchorId = await createItem("core.media", { title: "ZZanchorZZ" });
 
@@ -244,8 +250,8 @@ describe("GET /events?type= on the Last-Event-ID replay", () => {
  * the answer. `/items` rejects the global wildcard deliberately —
  * "everything" is the request with no `type` at all, and a filter
  * matching every type would slip past the per-type levers keyed off this
- * parameter — and rejects anything outside the pattern grammar. The
- * stream used to accept both and then match nothing, which is a 200
+ * parameter — and rejects anything outside the pattern grammar. A stream
+ * that accepted either and then matched nothing would answer a 200
  * carrying no events: the one filter failure a client cannot tell from a
  * quiet instance.
  */
@@ -393,6 +399,12 @@ describe("the replay's two checks on a row that names no item type", () => {
         note: "ZZunclassifiableZZ",
       }),
     });
+    // The witness: the row is in the log after the cursor, so the replay
+    // below walks over it and decides, and the absence is not a row that
+    // was never appended.
+    expect(
+      (await ctx.storage.eventLog.getAfter(cursor, 100)).map((e) => e.payload),
+    ).toContainEqual(expect.stringContaining("ZZunclassifiableZZ"));
     // Written after, so reaching it proves the row above was already
     // decided rather than merely not yet replayed.
     const anchorId = await createItem("core.note", {
