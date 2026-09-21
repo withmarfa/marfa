@@ -37,21 +37,6 @@ use serde_json::{Map, Value};
 
 use crate::error::CliError;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-pub enum Tier {
-    Library,
-    Feed,
-}
-
-impl Tier {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Tier::Library => "library",
-            Tier::Feed => "feed",
-        }
-    }
-}
-
 /// A tier filter on a listing, which admits `all` where a write does not.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum TierFilter {
@@ -66,25 +51,6 @@ impl TierFilter {
             TierFilter::Library => "library",
             TierFilter::Feed => "feed",
             TierFilter::All => "all",
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-pub enum ItemState {
-    Active,
-    Archived,
-    Trashed,
-    Revoked,
-}
-
-impl ItemState {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            ItemState::Active => "active",
-            ItemState::Archived => "archived",
-            ItemState::Trashed => "trashed",
-            ItemState::Revoked => "revoked",
         }
     }
 }
@@ -108,41 +74,6 @@ impl StateFilter {
             StateFilter::Trashed => "trashed",
             StateFilter::Revoked => "revoked",
             StateFilter::Any => "any",
-        }
-    }
-}
-
-// Every sortable column is a verb plus `_at`, so the shared suffix is the
-// naming rule rather than a redundant prefix the variants could drop.
-#[allow(clippy::enum_variant_names)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-pub enum SortField {
-    CreatedAt,
-    UpdatedAt,
-    OccurredAt,
-}
-
-impl SortField {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            SortField::CreatedAt => "created_at",
-            SortField::UpdatedAt => "updated_at",
-            SortField::OccurredAt => "occurred_at",
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-pub enum Direction {
-    Asc,
-    Desc,
-}
-
-impl Direction {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Direction::Asc => "asc",
-            Direction::Desc => "desc",
         }
     }
 }

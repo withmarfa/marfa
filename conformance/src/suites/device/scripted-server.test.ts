@@ -155,7 +155,7 @@ describe("the answers a device has to classify", () => {
     ]);
   });
 
-  it("drops a connection, which is the failure a device retries for ever", async () => {
+  it("drops a connection, which is the failure a device retries forever", async () => {
     server = await ScriptedServer.start();
     server.answer(
       "POST",

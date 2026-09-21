@@ -202,7 +202,7 @@ describe("the class that is neither retries and is counted", () => {
     );
     expect(
       reports.map((report) => report.verdicts[0]?.refusals),
-      "a success the device could not read was not counted, so `dead` is a verdict nothing reaches and the device retries for ever",
+      "a success the device could not read was not counted, so `dead` is a verdict nothing reaches and the device retries forever",
     ).toEqual([1, 2]);
     expect(
       reports[0]?.verdicts[0]?.verdict,
@@ -225,7 +225,7 @@ describe("the class that is neither retries and is counted", () => {
     );
     expect(
       reports.slice(0, 2).map((report) => report.verdicts[0]?.refusals),
-      "a key the server has not finished answering was not counted, so a write that will never settle retries for ever",
+      "a key the server has not finished answering was not counted, so a write that will never settle retries forever",
     ).toEqual([1, 2]);
     // A 409 that is neither of the two blocking ones: the status alone does
     // not decide, and this is the case that says so.

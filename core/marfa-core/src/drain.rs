@@ -101,7 +101,7 @@ fn classify(answer: &std::result::Result<Answer, CoreError>) -> Classified {
         Err(CoreError::Network(_)) => return Classified::Environmental,
         // Anything else `send` can return is about the request rather than
         // the environment — a header the transport would not build, say —
-        // and retrying it for ever uncounted is the failure statement 17's
+        // and retrying it forever uncounted is the failure statement 17's
         // reasoning describes with the classes swapped. It retries and it
         // is counted, so it reaches the ceiling (19).
         Err(_) => return Classified::Counted,
@@ -761,7 +761,7 @@ fn finish_counted(
 ///
 /// A read rather than a wait for catch-up, because a write the server
 /// refused changed nothing and so produced no event: without this the copy
-/// would hold the edit the server declined, for ever, and every later read
+/// would hold the edit the server declined, forever, and every later read
 /// of that row would answer it.
 ///
 /// **Best effort, and it says so by returning nothing.** The verdict is
@@ -835,7 +835,7 @@ fn reconcile_inner(core: &Core, row: &QueuedWrite) -> Result<()> {
                 match page.cursor {
                     // A cursor that does not move is a server saying there is
                     // more and handing back the same place to look, which
-                    // would spin this drain for ever.
+                    // would spin this drain forever.
                     Some(next) if Some(&next) != cursor.as_ref() => cursor = Some(next),
                     Some(_) => {
                         return Err(CoreError::Invalid(format!(

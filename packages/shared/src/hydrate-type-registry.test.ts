@@ -144,7 +144,7 @@ describe("hydrateTypeRegistry", () => {
     // The payload is JSON produced elsewhere, and `parent: null` is what a
     // permissive serializer emits for an absent optional. It resolves as a
     // root everywhere else in this package, so naming it here would send a
-    // caller to refetch for ever over a break that does not exist — and
+    // caller to refetch forever over a break that does not exist — and
     // `unresolvedParents` is the entry the report tells callers to act on.
     const result = hydrate([
       {

@@ -151,7 +151,7 @@ describe("replay", () => {
     // whether the write is recorded. A server that read it as "do not publish"
     // would drop these rows from the log, and the only client that notices is
     // one catching up after an import: the rows are all there on a full read,
-    // and absent from every replay for ever.
+    // and absent from every replay forever.
     const bulk = await client.bulkItems({
       enable_fanout: false,
       items: [

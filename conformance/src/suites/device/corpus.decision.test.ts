@@ -314,7 +314,7 @@ describe("the pending list and the fixtures agree", () => {
   it("requires a written pending fixture to be the kind that polices itself", () => {
     // A pending fixture whose body is written has to run and fail, so the day
     // the device satisfies it the run goes red asking for the entry to be
-    // removed. One that skips instead would sit on the list for ever, cited by
+    // removed. One that skips instead would sit on the list forever, cited by
     // a statement nothing asserts, with every other check here passing.
     const bodiless = new Set(
       fixtureFiles.flatMap((file) =>
@@ -343,7 +343,7 @@ describe("the pending list and the fixtures agree", () => {
     }
     expect(
       wrong,
-      "a pending fixture with a written body is not the self-policing kind, so a statement the device already satisfies can stay skipped for ever",
+      "a pending fixture with a written body is not the self-policing kind, so a statement the device already satisfies can stay skipped forever",
     ).toEqual([]);
   });
 });

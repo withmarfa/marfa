@@ -160,7 +160,7 @@ export class ScriptedServer {
 
   /**
    * Stop accepting connections, keeping the port. A device now meets a
-   * refused connection, which is the failure class that retries for ever.
+   * refused connection, which is the failure class that retries forever.
    */
   async offline(): Promise<void> {
     await new Promise<void>((resolve) => {

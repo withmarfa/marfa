@@ -116,7 +116,7 @@ mod tests {
 
         // And the claim goes with the value, so the next opener is the
         // writer. Without this the lock would be a one-way door and a
-        // process that had merely finished would lock the store for ever.
+        // process that had merely finished would lock the store forever.
         drop(first);
         drop(second);
         let third = WriterLock::claim(Some(&store)).unwrap();

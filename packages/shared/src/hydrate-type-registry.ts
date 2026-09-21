@@ -43,7 +43,7 @@ export interface TypeRegistryHydration {
    *
    * A deleted type stops appearing in the listing rather than arriving as a
    * tombstone, so nothing but absence says it is gone. Hydration that only
-   * ever added kept it valid locally for ever, and the client went on
+   * ever added kept it valid locally forever, and the client went on
    * accepting writes against a type the server had forgotten — refused on
    * arrival, and a refusal for an unknown type reads as permanent rather
    * than retryable.
@@ -122,7 +122,7 @@ export interface TypeRegistryHydration {
  * **A hydration converges on the payload rather than accumulating.** The
  * listing is the whole of what the instance holds, so a type missing from it
  * has been deleted, and the client's copy is only useful while it says the
- * same thing. Adding alone left a deleted type valid locally for ever, which
+ * same thing. Adding alone left a deleted type valid locally forever, which
  * is the expensive direction: local validation accepted a write the server
  * then refused, and an unknown-type refusal reads as permanent rather than
  * retryable, so a queue built on this helper dead-letters it.
@@ -326,7 +326,7 @@ export function hydrateTypeRegistry(
     // parent test in this package. A payload is JSON somebody else produced,
     // and a `parent: null` in one resolves as a root everywhere else while an
     // `undefined` test would name it here — sending a caller to refetch
-    // for ever over a break that does not exist. This field is the one the
+    // forever over a break that does not exist. This field is the one the
     // report tells callers to act on, so a false entry in it is expensive.
     if (!schema.parent) continue;
     if (getTypeSchema(schema.parent) === undefined) {

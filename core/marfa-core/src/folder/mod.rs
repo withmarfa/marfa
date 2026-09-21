@@ -1513,7 +1513,8 @@ fn plainly_inside(root: &Path, relative: &str) -> bool {
 /// fall back to the mapping, so a pull that runs while a row is parked
 /// writes the file where it already is rather than somewhere under this.
 /// That fallback needs the row to still be bound, which is why the unbind
-/// in the move arm is conditional — a swap used to destroy one of the two.
+/// in the move arm is conditional: unbinding both rows of a swap leaves one
+/// with no binding for the fallback to find.
 fn parked_key(item_id: &str) -> String {
     format!("{PARKED}{item_id}")
 }

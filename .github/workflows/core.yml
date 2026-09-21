@@ -135,8 +135,8 @@ jobs:
           eval "${server_env}"
           cargo test -p marfa-core -- --include-ignored
 
-      # Compiled, not packaged: the XCFramework carries arm64 macOS only this
-      # round, so these two prove the FFI crate still builds for the phone.
+      # Compiled, not packaged: the XCFramework carries arm64 macOS only, so
+      # these two prove the FFI crate still builds for the phone.
       - name: Compile the FFI crate for iOS
         working-directory: core/bindings/swift
         run: |
