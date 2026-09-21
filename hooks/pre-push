@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Pre-push gate: build + typecheck + lint + format:check + offline lane +
-# rust + surface-lock drift + test:changed.
+# rust + test:changed.
 #
 # **Not slim, deliberately.** The rust leg runs clippy and the tests on two
 # cargo workspaces and is the slowest thing here — it is in because the
@@ -42,7 +42,7 @@ set -euo pipefail
 
 cd "$(git rev-parse --show-toplevel)"
 
-echo "═══ pre-push: build + typecheck + lint + format + offline + rust + drift + test:changed ═══"
+echo "═══ pre-push: build + typecheck + lint + format + offline + rust + test:changed ═══"
 echo "(the rust leg is the slow one; full run is \`pnpm test:full\`. skip with --no-verify.)"
 echo
 
@@ -51,14 +51,12 @@ pnpm typecheck
 pnpm lint
 pnpm format:check
 pnpm test:offline-lane
-# The two guards that live outside the command anyone runs. The Swift FFI
-# crate is its own workspace, so `cargo test` in `core/` never reaches it and
-# a change to a shared error type compiles locally and fails on the pool;
-# `surface-lock:drift` takes a base ref, so it exists only as a CI job.
-# Neither is reached by `pnpm test`, which is the command a change is
-# usually checked with.
+# The guard that lives outside the command anyone runs. The Swift FFI crate
+# is its own workspace, so `cargo test` in `core/` never reaches it and a
+# change to a shared error type compiles locally and fails on the pool; it
+# is not reached by `pnpm test`, which is the command a change is usually
+# checked with.
 pnpm test:rust
-pnpm test:drift
 
 # `vitest --changed` needs a git base to compare against. `origin/main`
 # matches the typical contributor workflow (branch from main, push to

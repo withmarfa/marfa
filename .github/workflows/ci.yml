@@ -11,8 +11,8 @@ on:
 #
 # On a branch a second push means the first answer describes a tree nobody has
 # any more, so canceling is free. `main` is not a branch in that sense: every
-# commit on it is a release candidate, and `publish.yml` refuses to tag a
-# commit unless a *successful* `ci.yml` run exists at that exact SHA. A
+# commit on it is a release candidate, and the release workflow refuses a
+# tag unless a *successful* `ci.yml` run exists at that exact SHA. A
 # canceled run is not a successful one, so a superseded main commit becomes
 # permanently unpublishable — silently, because nothing errors and the commit
 # looks fine.
@@ -86,9 +86,9 @@ jobs:
   # answering about neither tree. Here the tree under test is the tree the
   # suite runs against.
   #
-  # A job in this workflow rather than one of its own, because `publish.yml`
-  # names `ci.yml` as the gate a commit must be green on before it can be
-  # tagged. A published package should not be able to come from a commit the
+  # A job in this workflow rather than one of its own, because the release
+  # workflow names `ci.yml` as the gate a commit must be green on before it
+  # can be released. A published package should not be able to come from a commit the
   # contract failed.
   conformance:
     name: Conformance
@@ -127,7 +127,7 @@ jobs:
       # device under test, so this job builds it. It stays in this job rather
       # than moving to core.yml because core.yml is path-gated on `core/**`
       # and would not run for a change to the fixtures alone, and because
-      # `publish.yml` names ci.yml as the gate a commit must be green on.
+      # the release workflow names ci.yml as the gate a commit must be green on.
       # The two jobs share `marfa-suite-shared-host` above, so a cargo build
       # here never runs beside core.yml's on one machine.
       #
@@ -409,20 +409,12 @@ jobs:
             exit 1
           fi
 
-  surface-lock-drift:
-    name: Published surface holds its version
+  version-fields:
+    name: No file holds a version
     timeout-minutes: 10
     runs-on: self-hosted
-    # Only where there is something to refuse. On a push to `main` the merge
-    # has happened and the comparison has nothing left to say.
-    if: github.event_name == 'pull_request'
     steps:
       - uses: actions/checkout@v7
-        with:
-          # The base commit is the whole comparison. A shallow clone leaves
-          # the check unable to read its baseline, which it reports as a
-          # failure rather than as agreement.
-          fetch-depth: 0
       - uses: pnpm/action-setup@v6
         with:
           dest: ${{ runner.temp }}/setup-pnpm
@@ -434,18 +426,9 @@ jobs:
           NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > .npmrc
       - run: pnpm install --frozen-lockfile
-      # No build step: the comparison reads two committed JSON files and the
-      # module it imports depends on nothing but `node:crypto`.
-      # The base comes from the checkout rather than from the event payload,
-      # and the two are not always the same commit. `actions/checkout` builds
-      # `refs/pull/N/merge` against the base branch as it stands now, while
-      # the payload replays the `base.sha` recorded when the run was created.
-      # On a re-run of an older run those diverge, and every disagreement
-      # between them lands on the version-moved branch, which is a silent
-      # skip. `HEAD^1` is the base parent of the merge commit, which is the
-      # commit the lock on disk was actually merged against.
-      - name: Compare the lock against the base it merges into
-        run: |
-          base="$(git rev-parse HEAD^1)"
-          echo "comparing against base $base"
-          pnpm --filter @withmarfa/server run surface-lock:drift "$base"
+      # No build step: the check reads manifests off the tree. A version
+      # exists only when a tag is cut, and the release workflow is the one
+      # writer; a pull request that moves a manifest off the placeholder is
+      # refused here, whatever else it does.
+      - name: Every manifest carries the placeholder
+        run: pnpm vitest run ci/version-fields.test.ts

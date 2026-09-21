@@ -14,7 +14,7 @@ A typed data layer for structured personal data: items under custom type schemas
 | [`conformance/`](./conformance)          | The contract: black-box fixtures and the written specification under `conformance/spec/`                                 |
 | [`deploy/`](./deploy)                    | The container recipe: the server with Litestream streaming its database to the bucket its blobs are replicated to        |
 
-`@withmarfa/shared` and `@withmarfa/sdk` publish to npm; the rest stay private.
+No manifest here carries a version: every `package.json` and `Cargo.toml` holds the placeholder `0.0.0`, a release is a git tag, and the release workflow stamps the tag into every manifest in its own checkout when it builds. `ci/version-fields.test.ts` refuses a pull request that moves a manifest off the placeholder.
 
 ## Quick start
 

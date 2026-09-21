@@ -1,9 +1,8 @@
 /**
  * Regenerate `published-surface-lock.json` from the built tree.
  *
- * Run after a deliberate surface change, with the version already moved.
- * Running it to make a failing test pass without moving a version is the
- * one thing it must not be used for, and the test's message says so.
+ * Run after a deliberate surface change, so the move is recorded in the
+ * same pull request as the change that made it.
  */
 import { writeFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";

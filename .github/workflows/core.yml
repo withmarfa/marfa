@@ -21,8 +21,9 @@ on:
 
 # A superseded run on a branch describes a tree nobody has any more, so
 # canceling it costs nothing. On `main` every commit keeps its own answer.
-# Nothing reads a run of this workflow at a specific commit — publish.yml
-# names ci.yml — so if that ever changes, this is the line to change with it.
+# Nothing reads a run of this workflow at a specific commit, the release
+# workflow names ci.yml, so if that ever changes, this is the line to change
+# with it.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
