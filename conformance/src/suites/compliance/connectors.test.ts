@@ -19,9 +19,9 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  // A registration goes with its key's revocation only when removed here:
-  // every test that registers removes what it registered, so the referee's
-  // server does not accumulate rows across runs.
+  // Revoking the keys leaves their registrations standing (statement 5), so
+  // every test removes what it registered, or the referee's server
+  // accumulates rows across runs.
   await cleanup(ctx);
 });
 
@@ -52,26 +52,42 @@ describe("registration", () => {
     expect(created.data.last_heartbeat_at).toBeNull();
     expect(created.data.last_run).toBeNull();
 
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    const theirs = await register(other, `${ctx.runId} calendar reader`);
     const listed = await other.listConnectors();
     expect(listed.status).toBe(200);
     await expectMatchesSchema("GET", "/connectors", 200, listed.data);
-    expect(listed.data.data.map((row) => row.id)).toContain(created.data.id);
+    const ids = listed.data.data.map((row) => row.id);
+    expect(ids).toContain(created.data.id);
+    // Newest first: the later registration is listed ahead of the earlier.
+    expect(ids.indexOf(theirs.data.id)).toBeLessThan(
+      ids.indexOf(created.data.id),
+    );
     const one = await other.getConnector(created.data.id);
     expect(one.status).toBe(200);
     await expectMatchesSchema("GET", "/connectors/{id}", 200, one.data);
     expect(one.data).toEqual(created.data);
 
     expect((await client.deleteConnector(created.data.id)).status).toBe(200);
+    expect((await other.deleteConnector(theirs.data.id)).status).toBe(200);
   });
 
-  it("refuses a name outside the bounds", async () => {
-    const fine = await register(client, `${ctx.runId} bounded`);
+  it("refuses a name or a description outside the bounds", async () => {
+    const fine = await client.registerConnector({
+      name: "n".repeat(200),
+      description: "d".repeat(2000),
+    });
+    expect(fine.status).toBe(201);
     expect((await client.deleteConnector(fine.data.id)).status).toBe(200);
-    const empty = await client.registerConnector({ name: "" });
-    expect(empty.status).toBe(400);
-    expect(empty.error?.error.code).toBe("validation_error");
-    const long = await client.registerConnector({ name: "n".repeat(201) });
-    expect(long.status).toBe(400);
+    for (const body of [
+      { name: "" },
+      { name: "n".repeat(201) },
+      { name: `${ctx.runId} fine`, description: "d".repeat(2001) },
+    ]) {
+      const refused = await client.registerConnector(body);
+      expect(refused.status, JSON.stringify(body).slice(0, 40)).toBe(400);
+      expect(refused.error?.error.code).toBe("validation_error");
+    }
     const listed = await client.listConnectors();
     expect(listed.data.data.map((row) => row.key_id)).not.toContain(
       ctx.trackedKeys[0],
@@ -128,6 +144,33 @@ describe("registration", () => {
     await expectMatchesSchema("DELETE", "/connectors/{id}", 200, own.data);
     expect(own.data).toEqual({ ok: true });
     expect((await client.getConnector(again.data.id)).status).toBe(404);
+  });
+
+  it("keeps a registration whose key was revoked, until the operator removes it", async () => {
+    const shortLived = await createSecondClient(ctx, "short-lived");
+    const mine = await shortLived.registerConnector({
+      name: `${ctx.runId} short-lived reader`,
+    });
+    expect(mine.status).toBe(201);
+    expect((await shortLived.heartbeatConnector(mine.data.id)).status).toBe(
+      200,
+    );
+
+    const operator = getOperatorClient();
+    expect((await operator.revokeKey(mine.data.key_id)).status).toBe(200);
+    const refused = await shortLived.heartbeatConnector(mine.data.id);
+    expect(refused.status).toBe(401);
+    const standing = await client.getConnector(mine.data.id);
+    expect(standing.status).toBe(200);
+    expect(standing.data.key_id).toBe(mine.data.key_id);
+    expect(standing.data.source).toBe(mine.data.source);
+    expect(standing.data.last_heartbeat_at).toMatch(ISO);
+    expect(
+      (await client.listConnectors()).data.data.map((row) => row.id),
+    ).toContain(mine.data.id);
+
+    expect((await operator.deleteConnector(mine.data.id)).status).toBe(200);
+    expect((await client.getConnector(mine.data.id)).status).toBe(404);
   });
 });
 
@@ -260,24 +303,44 @@ describe("heartbeats and runs", () => {
     expect(summaries).toContain("run 101");
     expect(summaries).toContain("run 2");
     expect(summaries).not.toContain("run 1");
+    // The listing's bounds: 50 unless given, and nothing past 200.
+    const unlimited = await client.listConnectorRuns(mine.data.id);
+    expect(unlimited.status).toBe(200);
+    expect(unlimited.data.data).toHaveLength(50);
+    expect(unlimited.data.data[0]?.summary).toBe("run 101");
+    const past = await client.listConnectorRuns(mine.data.id, 201);
+    expect(past.status).toBe(400);
+    expect(past.error?.error.code).toBe("validation_error");
+    expect((await client.listConnectorRuns(mine.data.id, 0)).status).toBe(400);
     expect((await client.deleteConnector(mine.data.id)).status).toBe(200);
   });
 
-  it("audits a registration and a removal, not a heartbeat or a run", async () => {
+  it("audits every registration and a removal, not a heartbeat or a run", async () => {
     const mine = await register(client, `${ctx.runId} audited`);
-    await client.heartbeatConnector(mine.data.id);
+    expect(mine.status).toBe(201);
+    const again = await register(client, `${ctx.runId} audited, renamed`);
+    expect(again.status).toBe(200);
+    expect((await client.heartbeatConnector(mine.data.id)).status).toBe(200);
     const at = new Date().toISOString();
-    await client.reportConnectorRun(mine.data.id, {
+    const run = await client.reportConnectorRun(mine.data.id, {
       outcome: "succeeded",
       started_at: at,
       finished_at: at,
     });
+    expect(run.status).toBe(201);
     expect((await client.deleteConnector(mine.data.id)).status).toBe(200);
     const rows = await client.listAudit({ resource_id: mine.data.id });
     expect(rows.status).toBe(200);
-    expect(rows.data.data.map((row) => row.action).sort()).toEqual([
-      "connector.delete",
-      "connector.register",
+    const written = rows.data.data.map((row) => [
+      row.action,
+      row.details.name,
+      row.details.created,
+    ]);
+    written.sort((a, b) => (JSON.stringify(a) < JSON.stringify(b) ? -1 : 1));
+    expect(written).toEqual([
+      ["connector.delete", `${ctx.runId} audited, renamed`, undefined],
+      ["connector.register", `${ctx.runId} audited`, true],
+      ["connector.register", `${ctx.runId} audited, renamed`, false],
     ]);
   });
 });

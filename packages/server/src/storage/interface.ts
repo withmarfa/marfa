@@ -2709,7 +2709,9 @@ export interface Connector {
 }
 
 export interface ConnectorStore {
-  /** Register the key, or update its registration: one per key. */
+  /** Register the key, or update its registration: one per key, decided
+   *  by one statement so two first registrations at once answer as a first
+   *  and a repeat. */
   register(
     key: { id: string; source: string },
     name: string,

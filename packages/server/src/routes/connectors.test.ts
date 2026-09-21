@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
-import { createTestContext, request } from "../test-utils.js";
+import { createTestContext, request, seedOauthBearer } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import type { Connector, ConnectorRun } from "../storage/interface.js";
 import { RUNS_KEPT_PER_CONNECTOR } from "../storage/sqlite/connector-store.js";
@@ -88,6 +88,41 @@ describe("POST /connectors", () => {
     expect(await remove(otherKey, theirs.connector.id)).toBe(200);
   });
 
+  it("answers one 201 and one 200 with one id when a key registers twice at once", async () => {
+    const [a, b] = await Promise.all([
+      register(ctx.workingKey, "raced"),
+      register(ctx.workingKey, "raced"),
+    ]);
+    expect([a.status, b.status].sort()).toEqual([200, 201]);
+    expect(b.connector.id).toBe(a.connector.id);
+    const listed = await json<{ data: Connector[] }>(
+      await request(ctx.app, "GET", "/connectors", { key: otherKey }),
+    );
+    expect(listed.data.filter((row) => row.id === a.connector.id)).toHaveLength(
+      1,
+    );
+    expect(await remove(ctx.workingKey, a.connector.id)).toBe(200);
+  });
+
+  it("refuses an app's session token, which lists but is not a key", async () => {
+    const { token } = await seedOauthBearer(ctx.storage, ["openid"]);
+    const listed = await request(ctx.app, "GET", "/connectors", { key: token });
+    expect(listed.status).toBe(200);
+    const refused = await request(ctx.app, "POST", "/connectors", {
+      key: token,
+      body: { name: "an app" },
+    });
+    expect(refused.status).toBe(403);
+    expect(await json<{ error: { code: string } }>(refused)).toMatchObject({
+      error: { code: "forbidden" },
+    });
+    expect(
+      (await ctx.storage.connectors.list()).filter(
+        (row) => row.name === "an app",
+      ),
+    ).toEqual([]);
+  });
+
   it("refuses a name outside the bounds and a description over its cap", async () => {
     for (const body of [
       { name: "" },
@@ -157,21 +192,13 @@ describe("GET /connectors/{id} and DELETE /connectors/{id}", () => {
     expect(await remove(ctx.workingKey, again.connector.id)).toBe(404);
   });
 
-  it("writes audit rows for a registration and a removal, and none for a heartbeat or a run", async () => {
-    const mine = await register(ctx.workingKey, "audited");
-    await request(
-      ctx.app,
-      "POST",
-      `/connectors/${mine.connector.id}/heartbeat`,
-      {
-        key: ctx.workingKey,
-      },
-    );
-    await request(ctx.app, "POST", `/connectors/${mine.connector.id}/runs`, {
-      key: ctx.workingKey,
-      body: { outcome: "succeeded", started_at: at(1000), finished_at: at(0) },
-    });
-    expect(await remove(ctx.workingKey, mine.connector.id)).toBe(200);
+  it("answers one 200 and one 404 when a registration is removed twice at once, auditing once", async () => {
+    const mine = await register(ctx.workingKey, "removed twice");
+    const statuses = await Promise.all([
+      remove(ctx.workingKey, mine.connector.id),
+      remove(ctx.operatorKey, mine.connector.id),
+    ]);
+    expect(statuses.sort()).toEqual([200, 404]);
     const rows = await ctx.storage.audit.list({
       resource_id: mine.connector.id,
       limit: 10,
@@ -179,6 +206,84 @@ describe("GET /connectors/{id} and DELETE /connectors/{id}", () => {
     expect(rows.data.map((row) => row.action).sort()).toEqual([
       "connector.delete",
       "connector.register",
+    ]);
+  });
+
+  it("keeps a registration whose key was revoked, until the operator removes it", async () => {
+    const minted = await request(ctx.app, "POST", "/keys", {
+      key: ctx.workingKey,
+      body: { label: "short-lived", source: "short-lived" },
+    });
+    expect(minted.status).toBe(201);
+    const { id: keyId, key } = await json<{ id: string; key: string }>(minted);
+    const mine = await register(key, "short-lived reader");
+    expect(mine.status).toBe(201);
+    expect(mine.connector.key_id).toBe(keyId);
+    const heartbeat = () =>
+      request(ctx.app, "POST", `/connectors/${mine.connector.id}/heartbeat`, {
+        key,
+      });
+    expect((await heartbeat()).status).toBe(200);
+
+    const revoked = await request(ctx.app, "DELETE", `/keys/${keyId}`, {
+      key: ctx.operatorKey,
+    });
+    expect(revoked.status).toBe(200);
+    expect((await heartbeat()).status).toBe(401);
+    const read = await request(
+      ctx.app,
+      "GET",
+      `/connectors/${mine.connector.id}`,
+      { key: otherKey },
+    );
+    expect(read.status).toBe(200);
+    expect(await json<Connector>(read)).toMatchObject({
+      key_id: keyId,
+      source: "short-lived",
+      last_heartbeat_at: expect.any(String) as string,
+    });
+    expect(await remove(ctx.operatorKey, mine.connector.id)).toBe(200);
+  });
+
+  it("writes audit rows for every registration and a removal, and none for a heartbeat or a run", async () => {
+    const mine = await register(ctx.workingKey, "audited");
+    expect(mine.status).toBe(201);
+    const again = await register(ctx.workingKey, "audited, renamed");
+    expect(again.status).toBe(200);
+    const beat = await request(
+      ctx.app,
+      "POST",
+      `/connectors/${mine.connector.id}/heartbeat`,
+      {
+        key: ctx.workingKey,
+      },
+    );
+    expect(beat.status).toBe(200);
+    const run = await request(
+      ctx.app,
+      "POST",
+      `/connectors/${mine.connector.id}/runs`,
+      {
+        key: ctx.workingKey,
+        body: {
+          outcome: "succeeded",
+          started_at: at(1000),
+          finished_at: at(0),
+        },
+      },
+    );
+    expect(run.status).toBe(201);
+    expect(await remove(ctx.workingKey, mine.connector.id)).toBe(200);
+    const rows = await ctx.storage.audit.list({
+      resource_id: mine.connector.id,
+      limit: 10,
+    });
+    const written = rows.data.map((row) => [row.action, row.details]);
+    written.sort((a, b) => (JSON.stringify(a) < JSON.stringify(b) ? -1 : 1));
+    expect(written).toEqual([
+      ["connector.delete", { name: "audited, renamed" }],
+      ["connector.register", { name: "audited", created: true }],
+      ["connector.register", { name: "audited, renamed", created: false }],
     ]);
   });
 });

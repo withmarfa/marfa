@@ -102,7 +102,7 @@ const registerConnectorRoute = createRoute({
   tags: ["Connectors"],
   summary: "Register the caller's key as a connector",
   description:
-    "Registers the key this request carries as a connector, with a name and a description, and answers `201`. The key is the identity, one registration per key: the same key registering again updates the name and the description and answers `200` with the same `id`. Nothing runs here; a registration is a name for a process outside the server that heartbeats and reports its runs.",
+    "Registers the key this request carries as a connector, with a name and a description, and answers `201`. The key is the identity, one registration per key: the same key registering again updates the name and the description and answers `200` with the same `id`. A session token an app holds is not a key and is refused `403 forbidden`: it is renewed on every refresh, and a registration keyed to one would be orphaned by the next. Nothing runs here; a registration is a name for a process outside the server that heartbeats and reports its runs.",
   security: [{ bearerAuth: [] }],
   request: {
     body: { content: { "application/json": { schema: RegisterSchema } } },
@@ -125,6 +125,12 @@ const registerConnectorRoute = createRoute({
       description: "Invalid registration",
     },
     ...anyKeyResponses,
+    403: {
+      content: {
+        "application/json": { schema: makeErrorResponseSchema(["forbidden"]) },
+      },
+      description: "A session token, which is not a key",
+    },
   },
 });
 
@@ -258,7 +264,10 @@ const listRunsRoute = createRoute({
         .int()
         .min(1)
         .max(MAX_PAGE_LIMIT)
-        .default(DEFAULT_PAGE_LIMIT),
+        .default(DEFAULT_PAGE_LIMIT)
+        .describe(
+          `How many runs, newest first: at most ${String(MAX_PAGE_LIMIT)}, ${String(DEFAULT_PAGE_LIMIT)} unless given.`,
+        ),
     }),
   },
   responses: {
@@ -269,6 +278,14 @@ const listRunsRoute = createRoute({
         },
       },
       description: "The runs",
+    },
+    400: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["validation_error"]),
+        },
+      },
+      description: "A `limit` outside its bounds",
     },
     ...anyKeyResponses,
     ...notFoundResponse,
@@ -295,22 +312,28 @@ export function connectorRoutes(storage: Storage) {
 
   router.openapi(registerConnectorRoute, async (c) => {
     const key = requireAuth(c);
+    // A session token's synthetic key is the token row, renewed on every
+    // refresh: a registration keyed to it would be orphaned by the next.
+    if (c.get("authType") === "oauth") {
+      throw new MarfaError(
+        ErrorCode.FORBIDDEN,
+        "A connector registers under a key, not under an app's session token",
+      );
+    }
     const body = c.req.valid("json");
     const { connector, created } = await storage.connectors.register(
       { id: key.id, source: key.source },
       body.name,
       body.description ?? null,
     );
-    if (created) {
-      await storage.audit.log({
-        client_ip: c.get("clientIp") ?? null,
-        key_id: key.id,
-        action: "connector.register",
-        resource_type: "connector",
-        resource_id: connector.id,
-        details: { name: connector.name },
-      });
-    }
+    await storage.audit.log({
+      client_ip: c.get("clientIp") ?? null,
+      key_id: key.id,
+      action: "connector.register",
+      resource_type: "connector",
+      resource_id: connector.id,
+      details: { name: connector.name, created },
+    });
     return c.json(connector, created ? 201 : 200);
   });
 
@@ -333,7 +356,14 @@ export function connectorRoutes(storage: Storage) {
         "Only the connector's own key or the operator key removes a registration",
       );
     }
-    await storage.connectors.remove(connector.id);
+    // Two removals at once: the one whose statement deleted nothing answers
+    // as if it had arrived after the other, and audits nothing.
+    if (!(await storage.connectors.remove(connector.id))) {
+      throw new MarfaError(
+        ErrorCode.CONNECTOR_NOT_FOUND,
+        "Connector not found",
+      );
+    }
     await storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
       key_id: key.id,

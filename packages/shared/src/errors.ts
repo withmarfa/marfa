@@ -189,11 +189,11 @@ export enum ErrorCode {
   /** `POST /housekeeping/:name/run` named a housekeeping job this instance
    *  does not run: unregistered, or switched off by configuration. */
   HOUSEKEEPING_JOB_NOT_FOUND = "housekeeping_job_not_found",
-  /** `GET /connectors/{id}` and the doors under it: no such registration. */
-  CONNECTOR_NOT_FOUND = "connector_not_found",
   /** The housekeeping job is in the middle of a run, and a housekeeping job
    *  never overlaps itself. */
   HOUSEKEEPING_JOB_RUNNING = "housekeeping_job_running",
+  /** `GET /connectors/{id}` and the doors under it: no such registration. */
+  CONNECTOR_NOT_FOUND = "connector_not_found",
   /**
    * Every streaming connection slot is in use and none freed within the
    * reservation window. Retryable by definition: streams end and slots
@@ -314,8 +314,8 @@ const STATUS_MAP: Record<ErrorCode, number> = {
   [ErrorCode.BLOB_LOCATION_NOT_FOUND]: 404,
   [ErrorCode.COPIES_BELOW_MINIMUM]: 409,
   [ErrorCode.HOUSEKEEPING_JOB_NOT_FOUND]: 404,
-  [ErrorCode.CONNECTOR_NOT_FOUND]: 404,
   [ErrorCode.HOUSEKEEPING_JOB_RUNNING]: 409,
+  [ErrorCode.CONNECTOR_NOT_FOUND]: 404,
   [ErrorCode.STREAM_CAPACITY_EXHAUSTED]: 503,
   [ErrorCode.SOURCE_ID_CONFLICT]: 409,
   [ErrorCode.TYPE_MISMATCH]: 409,

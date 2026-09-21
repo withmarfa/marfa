@@ -58,39 +58,37 @@ export class SqliteConnectorStore implements ConnectorStore {
     description: string | null,
   ): Promise<{ connector: Connector; created: boolean }> {
     const now = new Date().toISOString();
-    const existing = await this.db
-      .select()
-      .from(connectors)
-      .where(eq(connectors.key_id, key.id))
-      .get();
-    if (existing) {
-      await this.db
-        .update(connectors)
-        .set({ name, description, updated_at: now })
-        .where(eq(connectors.id, existing.id))
-        .run();
-      const row = await this.db
-        .select()
-        .from(connectors)
-        .where(eq(connectors.id, existing.id))
-        .get();
-      return {
-        connector: await this.withLastRun(row ?? existing),
-        created: false,
-      };
+    // One statement decides who registers first: two first registrations by
+    // one key race on the UNIQUE, and the loser takes the update path below
+    // rather than surfacing the constraint as an error nothing names.
+    const inserted = await this.db
+      .insert(connectors)
+      .values({
+        id: generateId(),
+        key_id: key.id,
+        source: key.source,
+        name,
+        description,
+        registered_at: now,
+        updated_at: now,
+        last_heartbeat_at: null,
+      })
+      .onConflictDoNothing({ target: connectors.key_id })
+      .returning()
+      .all();
+    if (inserted[0]) {
+      return { connector: await this.withLastRun(inserted[0]), created: true };
     }
-    const row: ConnectorRow = {
-      id: generateId(),
-      key_id: key.id,
-      source: key.source,
-      name,
-      description,
-      registered_at: now,
-      updated_at: now,
-      last_heartbeat_at: null,
-    };
-    await this.db.insert(connectors).values(row).run();
-    return { connector: await this.withLastRun(row), created: true };
+    const updated = await this.db
+      .update(connectors)
+      .set({ name, description, updated_at: now })
+      .where(eq(connectors.key_id, key.id))
+      .returning()
+      .all();
+    // The row went between the two statements, a removal landing in the
+    // gap: this call registers afresh.
+    if (!updated[0]) return this.register(key, name, description);
+    return { connector: await this.withLastRun(updated[0]), created: false };
   }
 
   async list(): Promise<Connector[]> {
