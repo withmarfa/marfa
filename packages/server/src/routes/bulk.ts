@@ -291,7 +291,7 @@ const bulkActionRoute = createRoute({
     202: {
       content: { "application/json": { schema: BulkActionJobSchema } },
       description:
-        "Job queued. Poll GET /items/bulk-actions/jobs/{id} until status is terminal (completed / failed / cancelled). SDKs do this transparently for callers; the envelope is exposed for explicit-control use cases.",
+        "Job queued. Poll GET /items/bulk-actions/jobs/{id} until status is terminal (completed / failed / canceled). SDKs do this transparently for callers; the envelope is exposed for explicit-control use cases.",
     },
     400: {
       content: {
@@ -377,7 +377,7 @@ const bulkActionStatusRoute = createRoute({
 
 // Request cancellation. Idempotent — already-terminal rows return
 // their final state without mutation. The worker observes the
-// `cancelled` flag between chunks and stops; the response from this
+// `canceled` flag between chunks and stops; the response from this
 // endpoint surfaces the row as-of-now, which may still show
 // `in_progress` if the worker hasn't yet observed the flag.
 const bulkActionCancelRoute = createRoute({
@@ -387,7 +387,7 @@ const bulkActionCancelRoute = createRoute({
   tags: ["Items"],
   summary: "Cancel a bulk-action job",
   description:
-    "Signals cancellation of a bulk-action job. Queued jobs flip to `cancelled` immediately and in-progress jobs flip when the worker next checks between chunks; already-terminal jobs return their final state unchanged.",
+    "Signals cancellation of a bulk-action job. Queued jobs flip to `canceled` immediately and in-progress jobs flip when the worker next checks between chunks; already-terminal jobs return their final state unchanged.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({
@@ -1465,7 +1465,7 @@ export function bulkRoutes(storage: Storage) {
     assertJobAuth(c, existing);
     await storage.bulkActionJobs.cancel(id, new Date().toISOString());
     const after = await storage.bulkActionJobs.getById(id);
-    // After cancel() either flipped to cancelled or the job had already
+    // After cancel() either flipped to canceled or the job had already
     // reached a terminal state — either way, surface the row as-of-now.
     return c.json(jobRowToEnvelope(after ?? existing), 200);
   });

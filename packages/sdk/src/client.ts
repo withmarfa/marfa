@@ -29,7 +29,7 @@ import type {
 import { generateId } from "@withmarfa/shared";
 import { HttpTransport, type TokenProviderLike } from "./transport.js";
 import {
-  BulkJobCancelledError,
+  BulkJobCanceledError,
   BulkJobFailedError,
   EdgeConflictError,
   MarfaError,
@@ -589,10 +589,10 @@ export interface BulkActionResult {
 }
 
 /** Terminal vs non-terminal lifecycle states for a `bulk_action` job.
- *  Terminal values (`completed`, `failed`, `cancelled`) freeze the row;
+ *  Terminal values (`completed`, `failed`, `canceled`) freeze the row;
  *  the worker only mutates `queued` → `in_progress` → terminal. */
 export type BulkActionJobStatus =
-  "queued" | "in_progress" | "completed" | "failed" | "cancelled";
+  "queued" | "in_progress" | "completed" | "failed" | "canceled";
 
 /**
  * Whether a failed bulk-action status poll describes the question failing
@@ -681,7 +681,7 @@ export interface BulkActionJob {
   /** Failure reason. Populated on `status === 'failed'`. */
   error?: string;
   /** Final result envelope. Populated on `status === 'completed'`;
-   *  absent on `cancelled` (whole-or-nothing — partial counts live on
+   *  absent on `canceled` (whole-or-nothing — partial counts live on
    *  the envelope's `processed`/`succeeded`/`errored` fields). */
   result?: BulkActionResult;
 }
@@ -1486,7 +1486,7 @@ export class MarfaClient {
         isTerminal: (job) =>
           job.status === "completed" ||
           job.status === "failed" ||
-          job.status === "cancelled",
+          job.status === "canceled",
         // Asking about the job is not the job. A status response that
         // times out, fails at the network, or comes back 5xx or 429
         // says nothing about the write, which is still running on the
@@ -1501,8 +1501,8 @@ export class MarfaClient {
         maxPollIntervalMs: options?.maxPollIntervalMs,
         maxWaitMs: options?.maxWaitMs,
       });
-      if (final.status === "cancelled") {
-        throw new BulkJobCancelledError({
+      if (final.status === "canceled") {
+        throw new BulkJobCanceledError({
           jobId: final.id,
           processed: final.processed,
           succeeded: final.succeeded,

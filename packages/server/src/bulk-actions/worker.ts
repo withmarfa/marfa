@@ -256,10 +256,10 @@ export class BulkActionWorker {
       // and only adds at most chunkSize / matchedCount latency to a
       // cancel request observing.
       const current = await this.jobs.getById(job.id);
-      if (!current || current.status === "cancelled") {
-        // Cancelled mid-run. Don't overwrite the row's status — the
+      if (!current || current.status === "canceled") {
+        // Canceled mid-run. Don't overwrite the row's status — the
         // cancel route already set it. Just return.
-        log("info", "bulk_action_worker.cancelled_mid_run", {
+        log("info", "bulk_action_worker.canceled_mid_run", {
           jobId: job.id,
           processed,
           matched: matchedIds.length,

@@ -22,6 +22,8 @@ export type {
   BulkActionFilter,
   BulkActionResult,
   BulkActionErrorEntry,
+  BulkActionJob,
+  BulkActionJobStatus,
   BulkEdgeInput,
   BulkEdgeInputItem,
   BulkEdgeResult,
@@ -43,6 +45,11 @@ export { paginate, collect, PageLimitExceededError } from "./pagination.js";
 export type { PageFetcher, CollectOptions } from "./pagination.js";
 
 // Errors
+//
+// Every class the client throws, because a class a caller cannot import is
+// a class a caller cannot catch: the two bulk-job errors exist so a caller
+// can branch on which terminal state a job reached, and without them here
+// the only handle is a string comparison on `code`.
 export {
   MarfaError,
   NotFoundError,
@@ -52,6 +59,8 @@ export {
   EdgeConflictError,
   UnauthorizedError,
   ForbiddenError,
+  BulkJobCanceledError,
+  BulkJobFailedError,
 } from "./errors.js";
 
 // Conflict types

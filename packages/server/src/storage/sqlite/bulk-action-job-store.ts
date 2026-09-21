@@ -163,7 +163,7 @@ export class SqliteBulkActionJobStore implements BulkActionJobStore {
     const result = await this.db
       .update(bulkActionJobs)
       .set({
-        status: "cancelled",
+        status: "canceled",
         finished_at: finishedAt,
         worker_heartbeat_at: null,
       })
@@ -208,7 +208,7 @@ export class SqliteBulkActionJobStore implements BulkActionJobStore {
           inArray(bulkActionJobs.status, [
             "completed",
             "failed",
-            "cancelled",
+            "canceled",
           ] as BulkActionJobStatus[]),
           isNotNull(bulkActionJobs.finished_at),
           lt(bulkActionJobs.finished_at, expireBeforeIso),

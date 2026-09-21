@@ -470,7 +470,7 @@ export interface BulkActionResponse {
 // terminal, `result` carries the BulkActionResponse shape that callers
 // ultimately want.
 export type BulkActionJobStatus =
-  "queued" | "in_progress" | "completed" | "failed" | "cancelled";
+  "queued" | "in_progress" | "completed" | "failed" | "canceled";
 
 export interface BulkActionJob {
   id: string;

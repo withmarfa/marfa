@@ -269,7 +269,7 @@ describe("validateProperties", () => {
   });
 
   it("closes the status value set on series", () => {
-    for (const status of ["ongoing", "ended", "cancelled"]) {
+    for (const status of ["ongoing", "ended", "canceled"]) {
       expect(
         validateProperties("core.media.series", { title: "A show", status })
           .success,
