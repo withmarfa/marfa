@@ -17,6 +17,7 @@ import {
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { GrantInactivityRetirer } from "./retention.js";
+import type { Storage } from "./interface.js";
 
 vi.setConfig({ testTimeout: 45_000 });
 
@@ -201,7 +202,7 @@ describe("GrantInactivityRetirer.runOnce", () => {
     });
 
     // Recent: nothing to retire.
-    const retirer = new GrantInactivityRetirer(ctx.storage, 365, DAY_MS);
+    const retirer = new GrantInactivityRetirer(ctx.storage, 365);
     expect(await retirer.runOnce()).toBe(0);
     expect((await grantOf(ctx, clientId)).properties.status).toBe("active");
 
@@ -263,12 +264,59 @@ describe("GrantInactivityRetirer.runOnce", () => {
       null_clears: true,
     });
 
-    const disabled = new GrantInactivityRetirer(ctx.storage, 0, DAY_MS);
+    const disabled = new GrantInactivityRetirer(ctx.storage, 0);
     expect(await disabled.runOnce()).toBe(0);
     expect((await onlyGrant(ctx)).properties.status).toBe("active");
 
-    const retirer = new GrantInactivityRetirer(ctx.storage, 365, DAY_MS);
+    const retirer = new GrantInactivityRetirer(ctx.storage, 365);
     expect(await retirer.runOnce()).toBe(1);
     expect((await onlyGrant(ctx)).properties.status).toBe("revoked");
+  });
+
+  it("passes over a grant that cannot be revoked, but ends the sweep when the client is gone", async () => {
+    // Two dormant grants with no plugin rows behind them, so the cascade is
+    // one update each; the first update fails, and what the sweep does
+    // next depends on how.
+    const inactive = [
+      { id: "grant-a", properties: {}, clientId: null, authUserId: null },
+      { id: "grant-b", properties: {}, clientId: null, authUserId: null },
+    ];
+    const storageFailingWith = (code: string) => {
+      const updated: string[] = [];
+      const storage = {
+        items: {
+          listInactiveAppGrants: () => Promise.resolve(inactive),
+          update: (id: string) => {
+            updated.push(id);
+            return id === "grant-a"
+              ? Promise.reject(Object.assign(new Error(code), { code }))
+              : Promise.resolve(null);
+          },
+        },
+        audit: { log: () => Promise.resolve() },
+      } as unknown as Storage;
+      return { storage, updated };
+    };
+    const stdout = vi
+      .spyOn(process.stdout, "write")
+      .mockImplementation(() => true);
+    try {
+      // An ordinary fault on one grant is logged and the next is retired.
+      const faulty = storageFailingWith("SQLITE_CONSTRAINT");
+      expect(
+        await new GrantInactivityRetirer(faulty.storage, 365).runOnce(),
+      ).toBe(1);
+      expect(faulty.updated).toEqual(["grant-a", "grant-b"]);
+
+      // A lost client ends the sweep at the grant it met, for the scheduler
+      // to classify.
+      const lost = storageFailingWith("CLIENT_CLOSED");
+      await expect(
+        new GrantInactivityRetirer(lost.storage, 365).runOnce(),
+      ).rejects.toMatchObject({ code: "CLIENT_CLOSED" });
+      expect(lost.updated).toEqual(["grant-a"]);
+    } finally {
+      stdout.mockRestore();
+    }
   });
 });

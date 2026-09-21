@@ -22,6 +22,7 @@ import { SqliteSettingsStore } from "./settings-store.js";
 import { SqliteRateLimitStore } from "./rate-limit-store.js";
 import { SqliteBulkActionJobStore } from "./bulk-action-job-store.js";
 import { SqliteIdempotencyStore } from "./idempotency-store.js";
+import { SqliteHousekeepingStore } from "./housekeeping-store.js";
 import { reportSeedCollisions } from "../seed-collisions.js";
 import { projectPlatformRows } from "../platform-family.js";
 import { reportReservedRootRows } from "../reserved-root-rows.js";
@@ -152,6 +153,7 @@ export async function createSqliteStorage(sqlitePath: string): Promise<
     // does, and `db` is the only instance there is.
     idempotency: new SqliteIdempotencyStore(db),
     rateLimits: new SqliteRateLimitStore(db),
+    housekeeping: new SqliteHousekeepingStore(db),
     /**
      * Genuinely transactional under libsql + ALS routing. Opens a libsql
      * `BEGIN IMMEDIATE` via Drizzle's `db.transaction(async tx => …)`,

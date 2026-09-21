@@ -9,6 +9,8 @@ export { DiskBlobStore } from "./storage/blob-store.js";
 export { S3BlobStore } from "./storage/blob-s3.js";
 export type { BlobStore } from "./storage/blob-store.js";
 export type { S3BlobConfig } from "./storage/blob-s3.js";
+export { Housekeeping } from "./housekeeping/scheduler.js";
+export type { HousekeepingJob } from "./housekeeping/scheduler.js";
 // Exposed so test harnesses (and downstream consumers that want
 // explicit worker control) can drive the bulk_action job loop on
 // demand without rebuilding it.

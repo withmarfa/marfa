@@ -9,6 +9,7 @@ import {
   ensureInstanceId,
   createBlobLayer,
   BulkActionWorker,
+  Housekeeping,
 } from "@withmarfa/server";
 import { MarfaClient } from "./client.js";
 import { collect } from "./pagination.js";
@@ -62,6 +63,7 @@ beforeAll(async () => {
   const app = createApp(
     storage,
     blobs,
+    new Housekeeping(storage.housekeeping, { pollIntervalMs: 1_000 }),
     {
       port: 0,
       sqlitePath: "",

@@ -7,6 +7,7 @@ import {
   createSqliteStorage,
   ensureInstanceId,
   createBlobLayer,
+  Housekeeping,
   initEventLog,
   __resetEventLogForTests,
   type AppConfig,
@@ -152,6 +153,7 @@ export async function createBootstrappedFixture(
   const app = createApp(
     storage,
     await createBlobLayer(storage, config),
+    new Housekeeping(storage.housekeeping, { pollIntervalMs: 1_000 }),
     config,
     await ensureInstanceId(storage.settings),
   );

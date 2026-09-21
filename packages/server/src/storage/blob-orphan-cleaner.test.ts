@@ -20,7 +20,6 @@ afterEach(async () => {
 });
 
 const GRACE_MS = 3_600_000;
-const INTERVAL_MS = 86_400_000;
 
 /** Register through the real upload door, so the row carries whatever
  *  stamp the store actually writes rather than one the test chose. */
@@ -56,7 +55,6 @@ describe("BlobOrphanCleaner.runOnce", () => {
       ctx.storage,
       ctx.blobs,
       GRACE_MS,
-      INTERVAL_MS,
       () => now,
     );
     expect(await insideWindow.runOnce()).toBe(0);
@@ -66,7 +64,6 @@ describe("BlobOrphanCleaner.runOnce", () => {
       ctx.storage,
       ctx.blobs,
       GRACE_MS,
-      INTERVAL_MS,
       () => new Date(now.getTime() + GRACE_MS * 2),
     );
     expect(await pastWindow.runOnce()).toBe(1);
@@ -89,7 +86,6 @@ describe("BlobOrphanCleaner.runOnce", () => {
       ctx.storage,
       ctx.blobs,
       0,
-      INTERVAL_MS,
       () => new Date(Date.now() + GRACE_MS * 24),
     );
     expect(await cleaner.runOnce()).toBe(0);

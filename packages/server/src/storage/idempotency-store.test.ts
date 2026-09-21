@@ -3,10 +3,11 @@
  * it that no request can show: that its rows go away.
  *
  * Anything that grows on every write needs an owner in code. This one has
- * no sweeper of its own — it rides the event-log retention sweep, which
- * already resolves the effective window and already holds a cluster lock. The behavioral half is below; the structural half reads
- * `index.ts`, because "there is no second sweeper" is a claim about what
- * is absent and a running server cannot be asked it.
+ * no sweeper of its own: it rides the event-log retention sweep, which
+ * already resolves the effective window. The behavioral half is below; the
+ * structural half reads `housekeeping/registrations.ts`, where every
+ * housekeeping job registers, because "there is no second sweeper" is a
+ * claim about what is absent and a running server cannot be asked it.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { readFileSync } from "node:fs";
@@ -565,30 +566,37 @@ describe("every writer of a claim row is fenced", () => {
 });
 
 describe("retention has one owner", () => {
-  const indexTs = readFileSync(
-    resolve(dirname(fileURLToPath(import.meta.url)), "../index.ts"),
+  const registrations = readFileSync(
+    resolve(
+      dirname(fileURLToPath(import.meta.url)),
+      "../housekeeping/registrations.ts",
+    ),
     "utf-8",
   );
 
-  it("sweeps from inside the event-log cleanup job", () => {
-    // Read from the source because the property is about which job the
-    // call sits in, and both jobs delete rows on the same cadence — a
-    // behavioral test cannot tell one from the other.
-    const job = indexTs.slice(
-      indexTs.indexOf("const runEventLogCleanup"),
-      indexTs.indexOf("let eventLogCleanupDelay"),
-    );
-    expect(job).toContain("storage.idempotency.cleanup(retention)");
+  it("sweeps from inside the event-log cleanup", () => {
+    // Read from the source because the property is about which
+    // housekeeping job the call sits in, and both delete rows on the same
+    // cadence: a behavioral test cannot tell one from the other.
+    const start = registrations.indexOf('name: "event-log-cleanup"');
+    const end = registrations.indexOf('name: "audit-cleanup"');
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+    const cleanup = registrations.slice(start, end);
+    expect(cleanup).toContain("storage.idempotency.cleanup(retention)");
   });
 
   it("is swept from nowhere else", () => {
     // A second sweeper would work, keep its own window, and drift from
     // this one silently. The count is the assertion.
-    const calls = indexTs.match(/storage\.idempotency\.cleanup/g) ?? [];
+    const calls = registrations.match(/storage\.idempotency\.cleanup/g) ?? [];
     expect(calls).toHaveLength(1);
   });
 
-  it("registers no scheduled job of its own", () => {
-    expect(indexTs).not.toContain("idempotency-cleanup");
+  it("registers no housekeeping job of its own", () => {
+    // The witness that this is where a registration would be: the sweep
+    // it rides is registered here.
+    expect(registrations).toContain('name: "event-log-cleanup"');
+    expect(registrations).not.toContain("idempotency-cleanup");
   });
 });

@@ -64,7 +64,7 @@ const POLLER_TIMEOUT_MS = 10_000;
 /** HTTP timeout for the best-effort direct-dispatch fast path. Kept
  *  short so a slow receiver cannot stall the event handler's task; if
  *  this deadline is missed, the row stays claimed only until the claim
- *  TTL expires, and the 30-second poller catches it on its next tick. */
+ *  TTL expires, and the 30-second poller catches it on its next run. */
 const DIRECT_DISPATCH_TIMEOUT_MS = 5_000;
 
 /**
@@ -420,7 +420,7 @@ export class WebhookConsumer {
    * attempt runs with a shorter timeout than the poller; outcomes go
    * through the same `markSuccess` / `markFailed` / `markDeadLetter`
    * state transitions, so on a network error / 5xx the poller picks the
-   * row up on its next tick exactly as it would today.
+   * row up on its next run exactly as it would today.
    *
    * Fire-and-forget from the caller's perspective; all errors are logged
    * by `deliverWebhookAttempt`.
@@ -453,57 +453,28 @@ export class WebhookConsumer {
 
 // ---------------------------------------------------------------------------
 // WebhookPoller — picks up pending deliveries from the database and attempts
-// HTTP delivery with durable retry. Survives server restarts.
+// HTTP delivery with durable retry. Survives server restarts: the
+// housekeeping scheduler runs it on the cadence below.
 // ---------------------------------------------------------------------------
 
 export const WEBHOOK_POLL_INTERVAL_MS = 30_000;
 
 export class WebhookPoller {
-  private interval: ReturnType<typeof setInterval> | null = null;
-
   constructor(private deliveryStore: WebhookDeliveryStore) {}
 
-  start(): void {
-    this.interval = setInterval(
-      () => void this.poll(),
-      WEBHOOK_POLL_INTERVAL_MS,
+  /** One poll: every pending delivery that is due is attempted. Reports
+   *  how many were. A failure to read the queue is the scheduler's to
+   *  classify. */
+  async runOnce(): Promise<{ attempted: number }> {
+    const pending = await this.deliveryStore.getPending(
+      new Date().toISOString(),
+      50,
     );
-    // Also poll immediately on start to pick up any pending from before restart
-    void this.poll();
-  }
-
-  stop(): void {
-    if (this.interval) {
-      clearInterval(this.interval);
-      this.interval = null;
-    }
-  }
-
-  /** One poll on demand, so a caller need not wait out the interval. */
-  runOnce(): Promise<void> {
-    return this.poll();
-  }
-
-  private async poll(): Promise<void> {
-    try {
-      const pending = await this.deliveryStore.getPending(
-        new Date().toISOString(),
-        50,
-      );
-      await Promise.allSettled(
-        pending.map((d) =>
-          deliverWebhookAttempt(
-            this.deliveryStore,
-            d,
-            POLLER_TIMEOUT_MS,
-            false,
-          ),
-        ),
-      );
-    } catch (err) {
-      log("error", "Webhook poller error", {
-        error: err instanceof Error ? err.message : String(err),
-      });
-    }
+    await Promise.allSettled(
+      pending.map((d) =>
+        deliverWebhookAttempt(this.deliveryStore, d, POLLER_TIMEOUT_MS, false),
+      ),
+    );
+    return { attempted: pending.length };
   }
 }

@@ -1,18 +1,18 @@
 /**
- * How a periodic background job reports a tick that did not finish.
+ * How the housekeeping scheduler reports a run that did not finish.
  *
- * A tick cut short because the process is going away has not failed. Every
- * background job is stopped before the storage client closes, so a query
- * still in flight loses its client and rejects. Nothing is lost and nothing
- * is actionable: the next start runs the sweep again.
+ * A run cut short because the process is going away has not failed. The
+ * scheduler is stopped before the storage client closes, so a query still
+ * in flight loses its client and rejects. Nothing is lost and nothing is
+ * actionable: the job is due again whenever its row says.
  *
  * Reporting that at `error` spends the level a fleet alert counts on an
  * event nobody can act on, and a category that is mostly routine deploys is
  * a category whoever reads it learns to discount. The two cases are
- * separable without guessing, because only a canceled tick is both
- * client-closed-shaped and preceded by the job's own `stop()`. Anything
- * else, including a closed client while the job is still running, keeps
- * `error`.
+ * separable without guessing, because only a canceled run is both
+ * client-closed-shaped and preceded by the scheduler's own `stop()`.
+ * Anything else, including a closed client while the scheduler is still
+ * running, keeps `error`.
  */
 
 import { log } from "../middleware/logger.js";
@@ -43,10 +43,10 @@ export function isConnectionLostError(err: unknown): boolean {
 }
 
 /**
- * Report a failed tick at the level it deserves. `job` names the job in
- * sentence case, as it appears in its success line, so the two read as one
- * family: `Revoked key reap` becomes `Revoked key reap error` or
- * `Revoked key reap stood down`.
+ * Report a failed run at the level it deserves. `job` names what failed,
+ * and the line is that name plus its fate: `Housekeeping trash-purge`
+ * becomes `Housekeeping trash-purge error` or `Housekeeping trash-purge
+ * stood down`.
  */
 export function logJobTickFailure(
   job: string,

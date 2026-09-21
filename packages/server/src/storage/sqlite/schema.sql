@@ -347,7 +347,7 @@ CREATE TABLE IF NOT EXISTS `enrichment_state` (
 	`status` text NOT NULL,
 	`attempts` integer DEFAULT 0 NOT NULL,
 	`error` text,
-	`config_signature` text,
+	`config_signature` text NOT NULL,
 	`updated_at` text NOT NULL,
 	FOREIGN KEY (`item_id`) REFERENCES `items`(`id`) ON UPDATE no action ON DELETE cascade
 );
@@ -364,6 +364,18 @@ CREATE TABLE IF NOT EXISTS `event_log` (
 
 CREATE INDEX IF NOT EXISTS `idx_event_log_created_at` ON `event_log` (`created_at`);
 CREATE INDEX IF NOT EXISTS `idx_event_log_edge_id` ON `event_log` (`edge_id`);
+CREATE TABLE IF NOT EXISTS `housekeeping` (
+	`name` text PRIMARY KEY NOT NULL,
+	`interval_ms` integer NOT NULL,
+	`next_run_at` text NOT NULL,
+	`running_since` text,
+	`last_started_at` text,
+	`last_finished_at` text,
+	`last_outcome` text,
+	`last_error` text,
+	`last_result` text
+);
+
 CREATE TABLE IF NOT EXISTS `idempotency_records` (
 	`id` text PRIMARY KEY NOT NULL,
 	`idempotency_key` text NOT NULL,

@@ -16,6 +16,8 @@ import type {
   BlobUploadResponse,
   BlobStoreRow,
   BlobLocationRow,
+  HousekeepingJobRow,
+  HousekeepingRun,
   BulkInput,
   BulkItemInput,
   BulkResponse,
@@ -672,6 +674,20 @@ export class MarfaClient {
     return this.request<{ data: BlobLocationRow[] }>(
       `/blobs/${hash}/locations`,
     );
+  }
+
+  /** `GET /housekeeping`: the jobs the server runs on itself. */
+  async listHousekeeping(): Promise<
+    ApiResponse<{ data: HousekeepingJobRow[] }>
+  > {
+    return this.request<{ data: HousekeepingJobRow[] }>("/housekeeping");
+  }
+
+  /** `POST /housekeeping/{name}/run`: one job, now. */
+  async runHousekeeping(name: string): Promise<ApiResponse<HousekeepingRun>> {
+    return this.request<HousekeepingRun>(`/housekeeping/${name}/run`, {
+      method: "POST",
+    });
   }
 
   async createKey(

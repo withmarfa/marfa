@@ -1,6 +1,12 @@
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
-import { createClient, type Client } from "@libsql/client";
+import {
+  createClient,
+  type Client,
+  type InArgs,
+  type InStatement,
+  type TransactionMode,
+} from "@libsql/client";
 import { drizzle } from "drizzle-orm/libsql";
 import { sql } from "drizzle-orm";
 import * as schema from "./schema.js";
@@ -109,6 +115,140 @@ const RETIRED_COLUMNS: readonly (readonly [string, string, string])[] = [
   ["blobs", "storage_path", "mime_type"],
 ];
 
+/**
+ * How long a statement refused with `SQLITE_BUSY` is retried before the
+ * refusal stands: longer than any write transaction the server opens or
+ * any checkpoint a sidecar takes on the file, short enough that a lock a
+ * stuck process holds surfaces as an error rather than a hang.
+ */
+const BUSY_BUDGET_MS = 5_000;
+/** The first wait between tries, doubled up to the cap: a lock held for a
+ *  millisecond costs a millisecond, and one held for seconds is not asked
+ *  about a thousand times. */
+const BUSY_RETRY_MIN_MS = 1;
+const BUSY_RETRY_MAX_MS = 50;
+
+function isBusy(err: unknown): boolean {
+  if (err === null || typeof err !== "object") return false;
+  const code = (err as { code?: unknown }).code;
+  return typeof code === "string" && code.startsWith("SQLITE_BUSY");
+}
+
+/**
+ * Run `attempt` until it is not refused with `SQLITE_BUSY` or the budget
+ * is spent, sleeping on the event loop between tries.
+ *
+ * The sleep is the point, and it is why libsql's own `timeout` option is
+ * not used. That option waits inside the native call, which holds the
+ * whole process: nothing else runs, the lock's holder included, when the
+ * holder is a transaction of this same process sitting between two of its
+ * statements. That is the ordinary shape of contention here, because the
+ * housekeeping scheduler starts runs beside the request path and a run's
+ * transaction interleaves with the next claim. With the native wait such
+ * a writer stops the server for the whole timeout and then fails anyway;
+ * with a sleep the holder reaches its commit and the retry succeeds. A
+ * lock another process holds, a sidecar's checkpoint, frees on its own
+ * either way. Exported for its test.
+ */
+export async function untilNotBusy<T>(
+  attempt: () => Promise<T>,
+  budgetMs = BUSY_BUDGET_MS,
+): Promise<T> {
+  const deadline = Date.now() + budgetMs;
+  let wait = BUSY_RETRY_MIN_MS;
+  for (;;) {
+    try {
+      return await attempt();
+    } catch (err) {
+      const remaining = deadline - Date.now();
+      if (!isBusy(err) || remaining <= 0) throw err;
+      await new Promise((resolve) => {
+        setTimeout(resolve, Math.min(wait, remaining));
+      });
+      wait = Math.min(wait * 2, BUSY_RETRY_MAX_MS);
+    }
+  }
+}
+
+/**
+ * The client with every entry point that can meet the write lock retried
+ * under `untilNotBusy`: a statement, a batch, the `BEGIN IMMEDIATE` a
+ * transaction opens with, and a script. A statement issued inside an open
+ * transaction already holds the lock and goes through the transaction
+ * object as it is.
+ *
+ * Two more things the wrapper does, because of what a refused statement
+ * leaves behind. A connection whose statement was refused with
+ * `SQLITE_BUSY` is not sound afterwards: it holds a transaction nothing
+ * can see or end, so a later write on it lands nowhere while answering
+ * success, a later `BEGIN` on it fails, and every other connection is
+ * refused the lock until it is closed. So a refusal drops the connection
+ * (`reconnect()`) before anything else runs on it, and to make "before
+ * anything else" true the client's calls are serialized: each waits for
+ * the one before it to settle, which costs a microtask per statement and
+ * no concurrency, since every statement here is synchronous inside the
+ * native call anyway.
+ */
+function waitingForTheLock(client: Client): Client {
+  let tail: Promise<unknown> = Promise.resolve();
+  const one = <T>(attempt: () => Promise<T>): Promise<T> => {
+    const turn = tail.then(
+      () => discardingWhenBusy(client, attempt),
+      () => discardingWhenBusy(client, attempt),
+    );
+    tail = turn.catch(() => undefined);
+    return turn;
+  };
+  return {
+    get closed() {
+      return client.closed;
+    },
+    get protocol() {
+      return client.protocol;
+    },
+    execute: (stmtOrSql: InStatement | string, args?: InArgs) =>
+      untilNotBusy(() =>
+        one(() =>
+          typeof stmtOrSql === "string"
+            ? client.execute(stmtOrSql, args)
+            : client.execute(stmtOrSql),
+        ),
+      ),
+    batch: (stmts, mode) =>
+      untilNotBusy(() => one(() => client.batch(stmts, mode))),
+    migrate: (stmts) => untilNotBusy(() => one(() => client.migrate(stmts))),
+    transaction: (mode?: TransactionMode) =>
+      untilNotBusy(() =>
+        one(() =>
+          mode === undefined ? client.transaction() : client.transaction(mode),
+        ),
+      ),
+    executeMultiple: (sql) =>
+      untilNotBusy(() => one(() => client.executeMultiple(sql))),
+    sync: () => client.sync(),
+    close: () => {
+      client.close();
+    },
+    reconnect: () => {
+      client.reconnect();
+    },
+  };
+}
+
+/** One call on the client, with the connection dropped if the lock refused
+ *  it, inside the same turn so nothing else can run on it first. */
+async function discardingWhenBusy<T>(
+  client: Client,
+  attempt: () => Promise<T>,
+): Promise<T> {
+  try {
+    return await attempt();
+  } catch (err) {
+    if (isBusy(err)) client.reconnect();
+    throw err;
+  }
+}
+
 export type DrizzleDb = ReturnType<typeof drizzle<typeof schema>>;
 export type RawDb = Client;
 
@@ -149,7 +289,14 @@ export async function createConnection(sqlitePath: string): Promise<{
     }
   }
 
-  const client = createClient({ url: toLibsqlUrl(sqlitePath) });
+  // No `timeout`: a statement that meets the write lock fails at once with
+  // `SQLITE_BUSY`, and the wrapper retries it with the event loop free.
+  // The wrapper rather than a `PRAGMA busy_timeout` for the same reason
+  // the native option is not used, and because a pragma reaches one
+  // connection while the transaction path opens its own.
+  const client = waitingForTheLock(
+    createClient({ url: toLibsqlUrl(sqlitePath) }),
+  );
 
   // A database still carrying the retired registry tables is refused, not
   // migrated.
