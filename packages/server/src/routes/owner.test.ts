@@ -9,7 +9,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createApp } from "../app.js";
 import { OidcSigner } from "../auth/oidc-signing.js";
 import { ensureInstanceId } from "../storage/instance-id.js";
-import { FilesystemBlobBackend } from "../storage/blob-backend.js";
+import { createBlobLayer } from "../storage/blob-layer.js";
 import { createSqliteStorage } from "../storage/sqlite/index.js";
 import { auth_account, auth_user } from "../storage/sqlite/schema.js";
 import type { DrizzleDb } from "../storage/sqlite/connection.js";
@@ -332,7 +332,7 @@ describe("POST /owner", () => {
     try {
       const other = createApp(
         storage,
-        new FilesystemBlobBackend(join(ctx.tmpDir, "blobs")),
+        await createBlobLayer(storage, ctx.config),
         ctx.config,
         await ensureInstanceId(storage.settings),
         await OidcSigner.init(storage),
