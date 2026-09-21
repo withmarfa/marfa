@@ -86,7 +86,8 @@ enum Classified {
     Contract,
     /// Retries and is counted. The only class the ceiling exists for (19).
     Counted,
-    /// This write stops, under one of the five reasons (21, 22, 23).
+    /// This write stops, under one of the three reasons it carries
+    /// (21, 22, 23).
     Block(&'static str),
     /// Every write stops and the drain ends (20).
     BlockQueue(&'static str),

@@ -177,9 +177,9 @@ describe("GET /search with no state named", () => {
 
   it("does not reach a row born in the bin, under any state value", async () => {
     // `trashedId` was created with its state named rather than transitioned
-    // into, which is the door that used to index it: only `transition` took a
-    // row back out of the index, so a row that was never transitioned stayed
-    // in and answered a search the rule says reaches nothing.
+    // into, which is the harder half. An index maintained only by
+    // `transition` would never see this row leave, so it would stay in and
+    // answer a search the rule says reaches nothing.
     const widened = await searchedIds(`q=${MARKER}&state=any&limit=100`);
     expect(
       widened,
@@ -212,7 +212,7 @@ describe("the export default is an exclusion", () => {
     ).toEqual(["trashed"]);
     // Against the platform's own list rather than a copy of it. Hard-coding
     // the answer would turn the next state anyone adds into a red test named
-    // for the behaviour that actually happened — carried without being
+    // for the behavior that actually happened — carried without being
     // listed — which is the opposite of what this case is for.
     const carried = ITEM_STATES.filter(
       (state) => !(EXPORT_EXCLUDED_STATES as readonly string[]).includes(state),

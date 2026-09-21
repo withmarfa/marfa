@@ -261,8 +261,8 @@ export const answers = {
     status: 201,
     // Through `withMetadata` rather than a metadata block written here, so
     // the block a write answers with is the one every other door answers
-    // with. Two hand-written copies is how one of them came to hold only
-    // tags while the server answered three fields.
+    // with. A second hand-written copy drifts silently: it holds whichever
+    // fields it was written with while the server answers the current set.
     body: withMetadata(item, tags),
   }),
   updated: (item: Record<string, unknown>, tags: string[] = []): Answer => ({

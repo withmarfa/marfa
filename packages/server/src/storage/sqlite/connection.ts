@@ -57,10 +57,11 @@ const REFUSED_DATABASE_REMEDY =
  * so a fresh database — which has none of these tables yet — is not refused.
  *
  * **A refusal here must not be reachable through the API**, and that is the
- * rule rather than a property these checks happen to have. Nothing a caller
- * can send creates a `custom_types` table, a `space_config` settings row or
- * a missing column, so each of these refuses a database an older build wrote
- * and nothing else. A refusal keyed on row *content* is a different animal:
+ * rule rather than a property any one of these checks happens to have.
+ * Nothing a caller can send creates a `custom_types` table, a `space_config`
+ * settings row, a missing column, a retired one or a full-text index of the
+ * older shape, so each of them meets a database an older build wrote and
+ * nothing else. A refusal keyed on row *content* is a different animal:
  * a caller can mint a credential carrying the retired `integration:` source
  * prefix, so a check keyed on it would let a single request leave an
  * instance that never opened again, with the refusal telling its operator

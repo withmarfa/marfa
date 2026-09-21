@@ -224,18 +224,19 @@ export function buildAllowedScopes(
     // which now guards the stored client ceiling rather than this list.
     ...PERMISSIONS,
     // The content category, the parent grant over everything a person
-    // saves. Withheld until this build for one reason: both literals share
-    // the type pattern `content`, which is the key both consent surfaces
-    // resolve copy on, so the authorize screen rendered one identical toggle
-    // for read and for write — and the device screen, which dedupes on the
-    // resolved string, printed ONE row where two grants had been approved.
-    // Writing a sentence would have taken the write level off that screen
-    // rather than merely leaving it undescribed.
+    // saves. It is requestable only because two things below hold, and it
+    // is worth naming them: both literals share the type pattern `content`,
+    // which is the key both consent surfaces resolve copy on, so without
+    // them the authorize screen renders one identical toggle for read and
+    // for write and the device screen, which dedupes on the resolved
+    // string, prints ONE row where two grants were approved. A sentence
+    // written for the pattern alone would take the write level off that
+    // screen rather than merely leave it undescribed.
     //
-    // Both halves are closed. A row label carries its operation, so the two
-    // literals resolve different strings and neither screen folds one away;
-    // and the pattern now has curated copy on both maps rather than falling
-    // through to a title-cased fragment of itself.
+    // What holds: a row label carries its operation, so the two literals
+    // resolve different strings and neither screen folds one away; and the
+    // pattern has curated copy on both maps rather than falling through to
+    // a title-cased fragment of itself.
     //
     // Requestable, and in no default bundle. An app opts into the category
     // the way it opts into `*:read` — deliberately, by name. The default
@@ -474,8 +475,9 @@ export function buildOauthProviderPlugin(
       return claims;
     },
 
-    // id_token claims (OIDC). Reproduces the profile + email gate from
-    // the (now-deleted) homegrown /auth/userinfo handler.
+    // id_token claims (OIDC). The same profile + email gate as
+    // `customUserInfoClaims` below, because a client reading both doors
+    // must not be told more on one of them than on the other.
     customIdTokenClaims: ({ user, scopes }) => {
       const claims: Record<string, unknown> = {};
       // **The union with Category 2, and it is the half that makes the gate
@@ -1400,8 +1402,9 @@ async function narrowAuthorizeScopes(
   //
   // The gates below reproduce four of the plugin's own refusals, in its
   // order, and stop there. **They do not establish that the plugin will
-  // accept the request**, and an earlier version of this comment claimed
-  // they did. The plugin runs a whole query schema between them — a
+  // accept the request**, however much a list of four refusals in the
+  // plugin's own order reads like it. The plugin runs a whole query
+  // schema between them — a
   // malformed `max_age` is `invalid_request` and nothing here notices —
   // so what this can honestly say is narrower: it declines to write on the
   // request shapes it can recognize cheaply and unambiguously as refused,

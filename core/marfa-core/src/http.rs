@@ -228,10 +228,11 @@ impl Http {
     /// `Answer`, including the refusals, because the classification
     /// (`queue-and-verdicts.md` 17 to 23) turns on the status and the code
     /// together: a 409 is `ancestor_unavailable`, `version_conflict` or
-    /// `idempotency_key_in_flight`, and those three take three different
-    /// verdicts. `refusal()` below is the read path's convenience and is
-    /// lossy about exactly that — it maps a status to a variant and drops
-    /// the status — so the drain does not go through it.
+    /// `idempotency_key_in_flight`, and the three are classified apart —
+    /// the first two block the write under different reasons, the third is
+    /// counted against the ceiling. `refusal()` below is the read path's
+    /// convenience and is lossy about exactly that — it maps a status to a
+    /// variant and drops the status — so the drain does not go through it.
     pub fn send(&self, outgoing: &Outgoing<'_>) -> Result<Answer, CoreError> {
         let segments: Vec<&str> = outgoing.segments.iter().map(String::as_str).collect();
         let params: Vec<(&str, &str)> = outgoing

@@ -13,10 +13,10 @@
 # MARFA_SERVER_REPO points at the monorepo checkout to boot; the default is
 # the checkout this script lives in.
 #
-# PORT defaults to one the kernel says is free. **It used to be 8600**, and
-# the runner pool runs on a developer's own Mac: a local boot and a CI job
-# took the same port, and whichever arrived second failed to bind against a
-# process belonging to the other. A fixed default cannot be right for both.
+# PORT defaults to one the kernel says is free, because a fixed default
+# cannot be right for both callers: the runner pool runs on a developer's own
+# Mac, so a local boot and a CI job would take the same port and whichever
+# arrived second would fail to bind against a process belonging to the other.
 set -euo pipefail
 
 repo="${MARFA_SERVER_REPO:-$(cd "$(dirname "$0")/../.." && pwd)}"

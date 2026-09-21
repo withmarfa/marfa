@@ -172,12 +172,14 @@ export function log(
  * Render a log payload so `JSON.stringify` cannot silently discard the most
  * important thing in it.
  *
- * An `Error` holds its `message`, `name`, and `stack` on non-enumerable
- * properties, so `JSON.stringify(err)` is `{}`. Better Auth's logger bridge
- * hands this function `{ args: [Error] }`, which means a database failure
- * reached the log line as `{"args":[{}]}` — SQLSTATE, message and all,
- * deleted at the log layer. That absence was then read as evidence that no
- * such failure was happening.
+ * An `Error` holds its `message`, `stack` and `cause` on non-enumerable
+ * properties, so `JSON.stringify(err)` on a plain one is `{}`. Better Auth's
+ * logger bridge hands this function `{ args: [Error] }`, so without this a
+ * failure reaches the log line as `{"args":[{}]}` and the absence reads as
+ * evidence that nothing is failing. A `LibsqlError` is worse rather than
+ * better: its `code`, `extendedCode` and `rawCode` are enumerable and
+ * survive, so the line carries a code with no message beside it and looks
+ * like a complete record of a failure it does not describe.
  *
  * Errors are replaced with `serializeError`'s structured form wherever they
  * appear: passed directly, nested in an object, or inside an array. The first
@@ -342,10 +344,16 @@ function viaToJson(value: object): { handled: boolean; value?: unknown } {
 
 /**
  * Fields worth lifting off a thrown value so a failure is diagnosable from
- * the log line alone. Node socket errors carry `code` / `errno` / `syscall` /
- * `address` / `port`; a database driver carries its own `code` plus
- * `detail` / `routine` / `severity` — the difference between "the database
- * refused the connection" and "a lock is held" lives in exactly these.
+ * the log line alone, read off the two things that throw here rather than
+ * off a driver in general.
+ *
+ * Node's socket and DNS errors carry `code` / `errno` / `syscall` plus
+ * `address` and `port`, or `hostname` when the name did not resolve. libsql
+ * raises a `LibsqlError` carrying `code`, `extendedCode` and `rawCode`, and
+ * the extended one is the field that earns its place: `code` is
+ * `SQLITE_CONSTRAINT` for every constraint failure there is, and only
+ * `extendedCode` says whether a unique key was reused or a required column
+ * was left null.
  */
 const ERROR_DETAIL_KEYS = [
   "code",
@@ -353,12 +361,9 @@ const ERROR_DETAIL_KEYS = [
   "syscall",
   "address",
   "port",
-  "severity",
-  "detail",
-  "hint",
-  "routine",
-  "table",
-  "constraint",
+  "hostname",
+  "extendedCode",
+  "rawCode",
 ] as const;
 
 /** Guards against a self-referential or pathologically deep cause chain. */

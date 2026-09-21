@@ -2,12 +2,9 @@
  * Walking a cursor-paginated endpoint, written once.
  *
  * Every paginated endpoint answers with the same three fields, so the loop
- * that drains one is the same loop every time. It had been hand-written in
- * five places across the consumer apps and once inside this package, in code
- * since removed, each copy differing only in what it accumulated into. They agreed
- * on the terminal condition, which is the good case: the copy that did not
- * agree stopped at a fixed page count and returned a truncated set that read
- * exactly like a complete one.
+ * that drains one is the same loop every time. Written once because a copy
+ * fails silently: a loop that stops at a fixed page count returns a
+ * truncated set that reads exactly like a complete one.
  *
  * Two entry points, split by where the cost lands rather than by taste:
  *

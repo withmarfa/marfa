@@ -910,10 +910,10 @@ mod tests {
             base_version: Some(1),
             ..Default::default()
         };
-        // **Every door, not the two that were easy to reach.** The comment
+        // **Every door, not the two that are easy to reach.** The comment
         // above claims the guard is consulted by all of them, and a test
-        // covering two of seventeen proves that for two: delete the call
-        // from any of the other fifteen and nothing was red.
+        // covering two of seventeen proves it for two: the call could go
+        // missing from any of the other fifteen with nothing red.
         let refusals: Vec<(&str, CoreError)> = vec![
             ("create_item", reader.create_item(&draft).unwrap_err()),
             ("update_item", reader.update_item("x", &edit).unwrap_err()),
@@ -972,20 +972,23 @@ mod tests {
                  queue into one file and neither sees the other's rows"
             );
         }
-        // A plain count, deliberately. There is no expression in Rust that
-        // enumerates the methods calling a guard, so this is a tripwire
-        // rather than a derivation: a door added to `Core` and not listed
-        // above is a door nothing here covers, and this is what says so.
+        // A plain count, deliberately, and it is worth being exact about
+        // what it catches. There is no expression in Rust that enumerates
+        // the methods calling a guard, so this is a tripwire rather than a
+        // derivation, and it fires in one direction only: an entry removed
+        // from the list above reddens it, a door added to `Core` and never
+        // listed does not. The list is the coverage; this only keeps the
+        // list from quietly shrinking.
         assert_eq!(
             refusals.len(),
             17,
-            "the write surface has changed. Every method on `Core` that calls \
-             `refuse_unless_writer` belongs in the list above, and this count \
-             is what notices when one does not."
+            "an entry has gone from the list above. Every method on `Core` \
+             that calls `refuse_unless_writer` belongs in it, and a door \
+             dropped from it is a door nothing here covers."
         );
 
-        // The control: the writer is not refused, so the two above are the
-        // handle rather than a store that refuses everybody.
+        // The control: the writer is not refused, so the refusals above are
+        // the handle rather than a store that refuses everybody.
         let queued = writer.create_item(&draft).unwrap();
         assert_eq!(queued.kind, "create_item");
 

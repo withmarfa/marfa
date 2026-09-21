@@ -150,11 +150,12 @@ pub fn hydration_complete(conn: &Connection) -> Result<bool, CoreError> {
 /// whose cursor has gone cannot be kept current, so it refuses reads until
 /// it is hydrated again (`device.md` 4).
 ///
-/// **One predicate, read by the guard and by the status report alike.** They
-/// were written separately and disagreed: an empty type list satisfied one
-/// and not the other, and the tier satisfied neither while catch-up required
-/// it, so a store could report that it had never hydrated and answer a
-/// listing in the same breath.
+/// **One predicate, read by the guard and by the status report alike**, and
+/// one rather than two because a second implementation would have to agree
+/// with this on parts that are easy to read differently: whether an empty
+/// type list counts as hydrated, and whether the tier counts at all when
+/// catch-up requires it. A pair that disagreed would let a store report
+/// that it had never hydrated and answer a listing in the same breath.
 pub fn hydrated(conn: &Connection) -> Result<bool, CoreError> {
     if !hydration_complete(conn)? {
         return Ok(false);
@@ -241,10 +242,12 @@ pub const WRITE_KINDS: &[&str] = &[
 
 /// Queues a write and returns the row as the queue will report it.
 ///
-/// The idempotency key is minted here and nowhere else, because
-/// `queue-and-verdicts.md` 3 turns on it being minted once: a key minted at
-/// send time would be a fresh key on every retry, and a write whose answer
-/// the device never saw would be written a second time.
+/// The idempotency key is minted at enqueue, not at send, because
+/// `queue-and-verdicts.md` 3 turns on it: a key minted at send time would be
+/// a fresh key on every retry, and a write whose answer the device never saw
+/// would be written a second time. `release` is the one other minter, and it
+/// mints deliberately — a released row is a new attempt under a fresh key
+/// (`queue-and-verdicts.md` 27), with the spent one kept beside it.
 pub fn enqueue(conn: &Connection, write: &NewWrite<'_>) -> Result<QueuedWrite, CoreError> {
     if !WRITE_KINDS.contains(&write.kind) {
         return Err(CoreError::Invalid(format!(
