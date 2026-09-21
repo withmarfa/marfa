@@ -102,6 +102,48 @@ describe("pagination correctness", () => {
     expect(lastPage!.data.has_more).toBe(false);
   });
 
+  it("refuses a cursor issued by another listing or ordering", async () => {
+    // The one thing an opaque cursor still says is where it came from.
+    // Every ordering compares an ISO timestamp, so a cursor honored under
+    // another one would answer a page that is simply not the next page,
+    // with nothing to say so.
+    const byUpdate = await client.listItems({
+      limit: 5,
+      source: ctx.source,
+      sort: "updated_at",
+    });
+    expect(byUpdate.ok).toBe(true);
+    const cursor = byUpdate.data.cursor!;
+    expect(typeof cursor).toBe("string");
+
+    // The witness: the ordering that minted it continues on it.
+    const next = await client.listItems({
+      limit: 5,
+      source: ctx.source,
+      sort: "updated_at",
+      cursor,
+    });
+    expect(next.ok).toBe(true);
+    expect(next.data.data.length).toBe(5);
+    const shown = new Set(byUpdate.data.data.map((item) => item.id));
+    for (const item of next.data.data) expect(shown.has(item.id)).toBe(false);
+
+    const otherOrdering = await client.listItems({
+      limit: 5,
+      source: ctx.source,
+      sort: "created_at",
+      cursor,
+    });
+    expect(otherOrdering.ok).toBe(false);
+    expect(otherOrdering.status).toBe(400);
+    expect(otherOrdering.error?.error.code).toBe("validation_error");
+
+    const otherListing = await client.listEdges({ limit: 5, cursor });
+    expect(otherListing.ok).toBe(false);
+    expect(otherListing.status).toBe(400);
+    expect(otherListing.error?.error.code).toBe("validation_error");
+  });
+
   it("a nonexistent type is refused rather than answered with an empty page", async () => {
     // An empty page is the one answer a client cannot tell from an empty
     // dataset, so a concrete type the server does not know is a 400.

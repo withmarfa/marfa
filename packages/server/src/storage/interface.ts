@@ -315,81 +315,31 @@ export function normalizeTimeBound(
 // Cursor utilities (keyset pagination)
 // ---------------------------------------------------------------------------
 
-interface CursorPayload {
-  v: string;
-  id: string;
-}
-
-/** Like {@link CursorPayload} but the sort value may be `null` — only the
- *  item-list `properties.<field>` sort produces a null `v` (an absent field in
- *  the NULLS-LAST tail). System-column sorts are NOT NULL, so the strict
- *  {@link decodeCursor} contract still holds for every other consumer. */
-interface NullableCursorPayload {
-  v: string | null;
-  id: string;
-}
-
-export function encodeCursor(sortValue: string | null, id: string): string {
-  return Buffer.from(JSON.stringify({ v: sortValue, id })).toString(
-    "base64url",
-  );
-}
-
-export function decodeCursor(cursor: string): CursorPayload {
-  const parsed = decodeCursorNullable(cursor);
-  if (typeof parsed.v !== "string") {
-    throw new MarfaError(
-      ErrorCode.VALIDATION_ERROR,
-      "Invalid pagination cursor",
-    );
-  }
-  return { v: parsed.v, id: parsed.id };
-}
-
-/** Decode a cursor whose sort value may be `null`. Used by the item-list query,
- *  which can keyset over a nullable property expression. */
-export function decodeCursorNullable(cursor: string): NullableCursorPayload {
-  try {
-    const parsed: unknown = JSON.parse(
-      Buffer.from(cursor, "base64url").toString("utf-8"),
-    );
-    if (
-      typeof parsed !== "object" ||
-      parsed === null ||
-      !("v" in parsed) ||
-      !("id" in parsed) ||
-      (typeof parsed.v !== "string" && parsed.v !== null) ||
-      typeof parsed.id !== "string"
-    ) {
-      throw new Error("Invalid cursor shape");
-    }
-    return { v: parsed.v, id: parsed.id };
-  } catch {
-    throw new MarfaError(
-      ErrorCode.VALIDATION_ERROR,
-      "Invalid pagination cursor",
-    );
-  }
-}
-
 /**
- * A cursor that records which ordering issued it.
+ * A cursor names the listing and the ordering that issued it, and one
+ * issued anywhere else is refused.
  *
- * The plain cursor above carries the last row's sort value and its id and
- * says nothing about which column the value came from. That is survivable
- * while a listing has exactly one ordering. Both listings that take
- * `updated_after` now have two — the door's own default, and
- * `(updated_at, id)` ascending under the filter — and every column
- * involved holds an ISO timestamp, so a cursor issued under one ordering
- * and replayed under the other decodes cleanly, compares successfully,
- * and returns a page bounded by the wrong column. Nothing errors; the
- * page is simply not the next page, and rows are skipped or repeated with
- * no signal anywhere.
+ * The payload is the last row's sort value and its id. Every ordering a
+ * listing pages under compares an ISO timestamp or a JSON-extracted value,
+ * so a cursor replayed under another ordering decodes cleanly, compares
+ * successfully and returns a page bounded by the wrong column. Nothing
+ * errors; the page is simply not the next page, and rows are skipped or
+ * repeated with no signal anywhere. The item listing offers several
+ * orderings, and both listings that take `updated_after` page under
+ * `(updated_at, id)` ascending with the filter and under their own default
+ * without it.
  *
- * So the key travels with the cursor and a mismatch is refused. A cursor
- * carrying no key at all is read as the created-at ordering, so a page in
- * flight keeps working, and the same cursor handed to another ordering is
- * refused rather than silently honored.
+ * So the key travels with the cursor and a mismatch is refused, and so is
+ * a cursor carrying no key or a key spelled another way: nothing this
+ * server mints lacks the key, so a cursor without it was not minted here
+ * and is not guessed at.
+ *
+ * **The key names the listing** as well as the column, because two
+ * listings can page under the same column. A cursor from the item listing
+ * compares perfectly well against the audit log's `created_at` and answers
+ * a page of audit rows older than an item, which is a page nobody asked
+ * for; a cursor continues the page it came from and nothing else. An
+ * item's outbound and inbound edges are two listings for the same reason.
  *
  * **The key names the ordering the request actually resolved to**, column
  * and direction, rather than only naming the catch-up ordering against
@@ -411,16 +361,24 @@ export function decodeCursorNullable(cursor: string): NullableCursorPayload {
  * The key is computed from the *resolved* ordering, never from the raw
  * parameters, so a caller who omits `sort` on one page and spells out the
  * default on the next is not refused: both resolve to the same ordering
- * and therefore to the same key.
+ * and therefore to the same key. A filter is not part of the key: it
+ * narrows the rows, not the position the cursor names.
  */
 export type CursorSortKey = string;
 
+/** The listings that page by cursor, each named in the cursors it mints.
+ *  An item's hydrated edge blocks mint under the listing their cursor
+ *  continues at, `/items/{id}/edges` or `/items/{id}/backrefs`. */
+export type CursorListing =
+  "items" | "edges" | "item-edges" | "item-backrefs" | "audit";
+
 /**
- * The ordering identity a cursor carries. Every construction goes through
- * here so the spelling cannot drift between the encode side and the
- * expectation the decode side checks against.
+ * The identity a cursor carries. Every construction goes through here so
+ * the spelling cannot drift between the encode side and the expectation
+ * the decode side checks against.
  */
 export function cursorSortKey(
+  listing: CursorListing,
   sort:
     | { kind: "system"; column: SystemSortField }
     | { kind: "property"; field: string },
@@ -428,27 +386,38 @@ export function cursorSortKey(
 ): CursorSortKey {
   const column =
     sort.kind === "system" ? sort.column : `properties.${sort.field}`;
-  return `${column}:${direction}`;
+  return `${listing}:${column}:${direction}`;
 }
 
-/**
- * How a cursor issued before the key named the resolved ordering is read.
- *
- * Those carry a bare `created_at` or `updated_at`, or no key at all, and
- * each of those spellings meant exactly one ordering when it was written:
- * the default listing, newest-created first, and the catch-up, oldest
- * modification first. Mapping them keeps a page that is in flight across
- * a deploy working, which is the same courtesy the absent key already
- * had. Anything else a legacy cursor was tagged with is refused rather
- * than guessed at, which is the safe direction.
- */
-const LEGACY_CURSOR_KEYS: Readonly<Record<string, CursorSortKey>> = {
-  created_at: "created_at:desc",
-  updated_at: "updated_at:asc",
-};
+const NEWEST_FIRST = { kind: "system", column: "created_at" } as const;
 
-/** The ordering an unkeyed cursor came from — the only one there was. */
-const UNKEYED_CURSOR_ORDERING: CursorSortKey = "created_at:desc";
+/** The one ordering each of these listings pages under, held here so the
+ *  store that reads the listing's cursor and the route that mints one on
+ *  its behalf (an item's hydrated edge blocks) spell the same key. */
+export const ITEM_EDGES_CURSOR_KEY = cursorSortKey(
+  "item-edges",
+  NEWEST_FIRST,
+  "desc",
+);
+export const ITEM_BACKREFS_CURSOR_KEY = cursorSortKey(
+  "item-backrefs",
+  NEWEST_FIRST,
+  "desc",
+);
+export const AUDIT_CURSOR_KEY = cursorSortKey("audit", NEWEST_FIRST, "desc");
+
+interface CursorPayload {
+  v: string;
+  id: string;
+}
+
+/** Like {@link CursorPayload} but the sort value may be `null`: only the
+ *  item listing's `properties.<field>` sort produces one, for an absent
+ *  field in the NULLS-LAST tail. Every system column is NOT NULL. */
+interface NullableCursorPayload {
+  v: string | null;
+  id: string;
+}
 
 export function encodeKeyedCursor(
   sortValue: string | null,
@@ -460,60 +429,69 @@ export function encodeKeyedCursor(
   );
 }
 
-/** Refuse a cursor whose recorded ordering is not the one about to page.
- *  Called after the payload decode, so a malformed cursor still reports
- *  as malformed rather than as the wrong ordering. */
-function assertCursorKey(cursor: string, expected: CursorSortKey): void {
+function malformedCursor(): MarfaError {
+  return new MarfaError(
+    ErrorCode.VALIDATION_ERROR,
+    "Invalid pagination cursor",
+  );
+}
+
+/** The payload as carried, its shape checked and its key not yet. */
+function parseCursor(cursor: string): NullableCursorPayload & { k: unknown } {
   let parsed: unknown;
   try {
     parsed = JSON.parse(Buffer.from(cursor, "base64url").toString("utf-8"));
   } catch {
-    throw new MarfaError(
-      ErrorCode.VALIDATION_ERROR,
-      "Invalid pagination cursor",
-    );
+    throw malformedCursor();
   }
-  const carried =
-    typeof parsed === "object" && parsed !== null && "k" in parsed
-      ? parsed.k
-      : UNKEYED_CURSOR_ORDERING;
-  // `hasOwnProperty` rather than `in`, which walks the prototype chain: a
-  // cursor tagged `"toString"` would otherwise be looked up and answered
-  // with a function. Harmless today, because the result is compared for
-  // equality against a string and a function is not one, but the safety
-  // is in the comparison rather than in the lookup, which is the wrong
-  // place for it to live.
-  const key =
-    typeof carried === "string" &&
-    Object.prototype.hasOwnProperty.call(LEGACY_CURSOR_KEYS, carried)
-      ? LEGACY_CURSOR_KEYS[carried]
-      : carried;
-  if (key !== expected) {
+  if (
+    typeof parsed !== "object" ||
+    parsed === null ||
+    !("v" in parsed) ||
+    !("id" in parsed) ||
+    (typeof parsed.v !== "string" && parsed.v !== null) ||
+    typeof parsed.id !== "string"
+  ) {
+    throw malformedCursor();
+  }
+  return {
+    v: parsed.v,
+    id: parsed.id,
+    k: "k" in parsed ? parsed.k : undefined,
+  };
+}
+
+/** The whole shape is checked before the key, in both decodes, so a
+ *  malformed cursor reports as malformed rather than as one issued
+ *  elsewhere. */
+function assertCursorKey(carried: unknown, expected: CursorSortKey): void {
+  if (carried !== expected) {
     throw new MarfaError(
       ErrorCode.VALIDATION_ERROR,
-      `This cursor was issued for a different ordering and cannot be continued here. Re-read the first page with the same parameters.`,
+      "This cursor was issued by a different listing or ordering and cannot be continued here. Re-read the first page with the same parameters.",
     );
   }
 }
 
-export function decodeKeyedCursor(
-  cursor: string,
-  expected: CursorSortKey,
-): CursorPayload {
-  const payload = decodeCursor(cursor);
-  assertCursorKey(cursor, expected);
-  return payload;
-}
-
-/** The keyed decode for a listing whose sort value may be `null` — the
- *  item list's `properties.<field>` sort, in its NULLS-LAST tail. */
+/** The decode for the one listing whose sort value may be `null`. */
 export function decodeKeyedCursorNullable(
   cursor: string,
   expected: CursorSortKey,
 ): NullableCursorPayload {
-  const payload = decodeCursorNullable(cursor);
-  assertCursorKey(cursor, expected);
-  return payload;
+  const { v, id, k } = parseCursor(cursor);
+  assertCursorKey(k, expected);
+  return { v, id };
+}
+
+/** The decode for every listing whose sort column is NOT NULL. */
+export function decodeKeyedCursor(
+  cursor: string,
+  expected: CursorSortKey,
+): CursorPayload {
+  const { v, id, k } = parseCursor(cursor);
+  if (typeof v !== "string") throw malformedCursor();
+  assertCursorKey(k, expected);
+  return { v, id };
 }
 
 // ---------------------------------------------------------------------------
@@ -714,12 +692,11 @@ export interface ItemStore {
    * each row. Returns the number of rows deleted.
    *
    * The window is measured from `trashed_at`, the time of the transition
-   * into the soft-deleted state, falling back to `updated_at` for a row
-   * carrying no stamp. `updated_at` alone cannot decide it, because it is
-   * the modification time rather than the removal time: any write to a
-   * trashed row moves it, so editing something already in the bin would
-   * restart its retention clock. The fallback covers only rows carrying no
-   * `trashed_at`, where a clock that moves beats a row nothing can purge.
+   * into the soft-deleted state: `updated_at` is the modification time
+   * rather than the removal time, and any write to a trashed row moves it,
+   * so measuring from it would restart the retention clock on an edit made
+   * in the bin. A trashed row with no stamp, which only the archive restore
+   * writes, is measured from `updated_at`, the one clock it has.
    *
    * Unlike `bulkPurge`, this drops the purged items' edges itself (both
    * directions, inside the same transaction). It is the terminal step of
@@ -1506,13 +1483,6 @@ export interface OauthProviderStore {
     expectedScopes: readonly string[],
     scopes: readonly string[],
   ): Promise<boolean>;
-  /** Update the browser-logout configuration for an existing first-party
-   * client. Used by the deployment seed so a pre-existing client gains new
-   * redirect URIs without requiring a destructive reset. */
-  updateClientLogoutConfig(
-    clientId: string,
-    postLogoutRedirectUris: readonly string[],
-  ): Promise<boolean>;
   /** Look up the user's most recent prior consent scopes for
    *  (clientId, authUserId). Returns the scope literals from the
    *  `auth_oauth_consent` row, or `undefined` if no prior grant. */
@@ -1834,12 +1804,9 @@ export interface AuditEntry {
   action: string;
   resource_type: string;
   resource_id: string | null;
-  /**
-   * Resolved client IP. Persisted into `details.client_ip` so no schema
-   * migration is needed; surfaced as a typed top-level field on the read
-   * path. Null for system-initiated audits (install pipeline, cycle-budget
-   * overflow) where no Hono context exists.
-   */
+  /** The peer the request came from, or null for a write the server
+   *  made on its own (a retention sweep, a ceiling catch-up), which has
+   *  no request to read one from. */
   client_ip: string | null;
   details: Record<string, unknown>;
 }
@@ -1917,21 +1884,6 @@ export interface AuditStore {
    * Returns the number of rows actually deleted.
    */
   cleanup(retentionDays: number): Promise<number>;
-  /**
-   * Redact rows that identify a specific `auth_user.id` ahead of a
-   * hard-delete of the account. Rewrites `audit_log.details` to
-   * `{ redacted: true, user_id_sha256: <hex> }` for every row whose
-   * `resource_id === authUserId` OR whose `details` JSON object contains
-   * any field whose value equals `authUserId` (exact-equality match —
-   * substring matches are ignored to avoid false positives).
-   *
-   * The row's `action`, `resource_type`, `created_at`, and `id` are
-   * preserved — the audit chain remains intact; only personally identifying
-   * payload is scrubbed.
-   *
-   * Returns the number of rows rewritten.
-   */
-  redactForUser(authUserId: string): Promise<number>;
 }
 
 // ---------------------------------------------------------------------------

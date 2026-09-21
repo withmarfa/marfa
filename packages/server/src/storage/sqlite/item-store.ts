@@ -289,12 +289,10 @@ export class SqliteItemStore implements ItemStore {
       // The specific code, not the generic one. A durable client's failure
       // classification is closed and keys on it: a schema refusal is
       // permanent, and a code the client does not recognize falls through
-      // to transient and retries forever. This refusal used to be the only
-      // properties-versus-type mismatch answering `validation_error` --
-      // creating an item, upserting onto a new natural key and bulk-writing
-      // all reach it -- while the update, retype and strict-mode paths
-      // raised `invalid_properties` from the route layer for the identical
-      // failure. One failure cannot have two names and still be classified.
+      // to transient and retries forever. The update, retype and
+      // strict-mode paths answer `invalid_properties` for the identical
+      // failure, and one failure cannot have two names and still be
+      // classified.
       throw new MarfaError(ErrorCode.INVALID_PROPERTIES, "Invalid properties", {
         errors: validation.errors,
       });
@@ -335,10 +333,8 @@ export class SqliteItemStore implements ItemStore {
             state,
             // A create can name its own state, and an archive restore names
             // `trashed` for a row that was in the bin when the archive was
-            // taken. Stamping here rather than leaving it null means such a
-            // row's retention window starts where every other trashed row's
-            // does, instead of falling back to a modification time a later
-            // edit would move.
+            // taken. Stamped here so such a row's retention window starts
+            // where every other trashed row's does.
             ...softDeleteClock(input.type, SYSTEM_DEFAULT_STATE, state, now),
             tier: input.tier ?? "library",
             properties: sql`jsonb(${JSON.stringify(properties)})`,
@@ -518,9 +514,9 @@ export class SqliteItemStore implements ItemStore {
     );
 
     // One test of the field decides both the ordering and the bound. Two
-    // tests is what let an empty value order by `(updated_at, id)`
-    // ascending and bound nothing, so a request that asked for a narrow
-    // catch-up walked the whole corpus instead.
+    // tests would let an empty value order by `(updated_at, id)` ascending
+    // and bound nothing, so a request that asked for a narrow catch-up
+    // would walk the whole corpus instead.
     const catchUp = updatedAfter !== undefined;
     const sort = catchUp
       ? ({ kind: "system", column: "updated_at" } as const)
@@ -531,7 +527,7 @@ export class SqliteItemStore implements ItemStore {
     // the raw parameters. Every ordering this listing offers compares
     // ISO timestamps or a JSON-extracted value, so the wrong one compares
     // cleanly and returns a page that is simply not the next page.
-    const cursorKey: CursorSortKey = cursorSortKey(sort, dir);
+    const cursorKey: CursorSortKey = cursorSortKey("items", sort, dir);
     const limit = Math.max(
       MIN_PAGE_LIMIT,
       Math.min(filters.limit ?? DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT),
@@ -882,10 +878,10 @@ export class SqliteItemStore implements ItemStore {
           ...(input.source_id !== undefined && {
             source_id: input.source_id,
           }),
-          // Carried onto the response as well as into the row. Built from
-          // the pre-update snapshot, this reported the type the item had
-          // stopped being — a write that landed and answered with the old
-          // value, which reads as the re-type having silently done nothing.
+          // Carried onto the response as well as into the row: built from
+          // the pre-update snapshot alone, the response would report the
+          // type the item had stopped being, and a re-type would read as
+          // having silently done nothing.
           ...(input.type !== undefined && { type: input.type }),
         });
       }
@@ -1115,17 +1111,10 @@ export class SqliteItemStore implements ItemStore {
     const baseConditions = [
       eq(items.state, "trashed"),
       // The window runs from when the row entered the bin, not from when it
-      // was last written. `updated_at` was standing in for that, and it moves
-      // on any write to a trashed row — a tag or an extension write included
-      // — so editing something already in the bin restarted its clock.
-      //
-      // `updated_at` survives as the fallback for a row carrying no stamp,
-      // which after the backfill can only be one soft-deleted by a build
-      // predating the column: a replica still rolling, or a soft delete that
-      // landed while the migration was in flight. Falling back reproduces
-      // exactly the behavior those rows have today, which is worse than the
-      // stamp and far better than a row nothing can ever purge.
-      lt(sql`COALESCE(${items.trashed_at}, ${items.updated_at})`, beforeDate),
+      // was last written: `updated_at` moves on any write to a trashed row,
+      // a tag or an extension write included, so measuring from it would
+      // restart the clock on an edit made in the bin.
+      lt(items.trashed_at, beforeDate),
     ];
     const where = and(...baseConditions);
 
@@ -1272,19 +1261,18 @@ export class SqliteItemStore implements ItemStore {
     }
 
     // A restore is a transition, so it goes through the same gate `delete()`
-    // above and `transition()` below already use. Writing `active`
-    // unconditionally made this the one of four write paths that skipped the
-    // graph, and a gate three paths apply and the fourth does not survives
-    // review indefinitely because each path reads correctly on its own.
+    // above and `transition()` below use; a gate three paths apply and the
+    // fourth does not would survive review indefinitely, because each path
+    // reads correctly on its own.
     //
     // What it stops is specific: `trashed` is not in the `system.*`
     // lifecycle, so a `system.connection` that somehow holds it must not be
     // able to walk out into `active` having passed no transition the graph
     // admits. The check lives here rather than in the route because keeping
-    // the three siblings side by side is what stops them drifting again.
-    // Its companion — refusing to create such a row in the first place —
-    // deliberately sits at the route layer instead; see `POST /items` in
-    // `routes/items.ts` for why `create` must stay permissive.
+    // the three siblings side by side is what stops them drifting. Its
+    // companion, refusing to create such a row in the first place, sits at
+    // the route layer instead; see `POST /items` in `routes/items.ts` for
+    // why `create` stays permissive.
     const error = validateTransition(row.type, row.state, "active");
     if (error) {
       throw new MarfaError(ErrorCode.INVALID_TRANSITION, error);

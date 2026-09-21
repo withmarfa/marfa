@@ -18,21 +18,15 @@ export const items = sqliteTable(
     type: text("type").notNull(),
     state: text("state").notNull().default("active"),
     tier: text("tier").notNull().default("library"),
-    // When the item entered its soft-deleted state, and the honest key for
-    // the retention sweep. `updated_at` used to stand in for it and is a
-    // proxy for something else: any write to a trashed row moves it, so
-    // editing something already in the bin restarted its retention clock
-    // with nobody intending to. Tag and extension writes move it too, which
-    // widens that to writes nobody thinks of as edits.
+    // When the item entered its soft-deleted state, and the retention
+    // sweep's key. `updated_at` cannot be that key: any write to a trashed
+    // row moves it, tag and extension writes included, so an edit made in
+    // the bin would restart the retention clock.
     //
     // Stamped when a row moves into the state `softDeleteState` resolves
     // for its type, cleared when it moves back out, so a restore followed
     // by a second delete starts a fresh window rather than inheriting the
-    // first one. Nullable because an active row has no such time. The sweep
-    // reads it only for rows it has already filtered to the soft-deleted
-    // state, and the migration backfills those that predate the column from
-    // `updated_at` — the value the sweep was reading anyway, so no row's
-    // window moves on the day this lands.
+    // first one. Nullable because an active row has no such time.
     trashed_at: text("trashed_at"),
     // SQLite's binary JSONB encoding. Write through jsonb(...) and update
     // through jsonb_set (json_set returns text and would silently revert the
@@ -419,6 +413,7 @@ export const auditLog = sqliteTable(
     action: text("action").notNull(),
     resource_type: text("resource_type").notNull(),
     resource_id: text("resource_id"),
+    client_ip: text("client_ip"),
     details: text("details").notNull().default("{}"),
   },
   (table) => [
@@ -511,7 +506,7 @@ export const eventLog = sqliteTable(
 );
 
 // ---------------------------------------------------------------------------
-// Better Auth tables (auth_* prefix, isolated from marfa's own users table)
+// Better Auth tables (auth_* prefix)
 //
 // Owned and managed by better-auth; mirrors `npx @better-auth/cli generate`,
 // hand-translated to Drizzle. Column names use the camelCase
@@ -534,11 +529,6 @@ export const auth_user = sqliteTable(
     image: text("image"),
     createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
     updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
-    // Account-lifecycle state. `pending_deletion_at` stays TEXT/ISO to
-    // match the rest of the time convention; the purger compares
-    // strings without round-tripping through Date.
-    deletion_state: text("deletion_state").notNull().default("active"),
-    pending_deletion_at: text("pending_deletion_at"),
   },
   (table) => [uniqueIndex("idx_auth_user_email").on(table.email)],
 );
@@ -569,9 +559,8 @@ export const auth_account = sqliteTable(
     id: text("id").primaryKey(),
     accountId: text("account_id").notNull(),
     providerId: text("provider_id").notNull(),
-    // 1.7 keys account lookups on (issuer, account_id). Nullable for the
-    // deploy window.
-    issuer: text("issuer"),
+    // Better Auth keys account lookups on (issuer, account_id).
+    issuer: text("issuer").notNull(),
     userId: text("user_id")
       .notNull()
       .references(() => auth_user.id, { onDelete: "cascade" }),

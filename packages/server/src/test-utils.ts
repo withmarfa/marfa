@@ -170,7 +170,7 @@ export async function seedOauthBearer(
     opts.authUserId ?? `auth_user_${Math.random().toString(36).slice(2, 10)}`;
   if (!opts.authUserId) {
     await requireSqliteRun(storage)(
-      "INSERT OR IGNORE INTO auth_user (id, name, email, email_verified, created_at, updated_at, deletion_state) VALUES (?, ?, ?, 1, ?, ?, 'active')",
+      "INSERT OR IGNORE INTO auth_user (id, name, email, email_verified, created_at, updated_at) VALUES (?, ?, ?, 1, ?, ?)",
       [
         authUserId,
         "Test User",
@@ -807,12 +807,12 @@ export async function readSse(
   const deadline = Date.now() + timeoutMs;
 
   // One read outstanding at a time, and the same promise is awaited again
-  // rather than replaced. Issuing a second `read()` while the first is still
-  // pending is what used to lose chunks: a reader fulfills queued reads in
-  // arrival order, so the next chunk went to the abandoned read, whose
-  // resolve landed on a promise the loop had already settled and walked away
-  // from. On an idle machine the first read wins every race and nothing is
-  // ever abandoned, which is why this only ever failed under CI load.
+  // rather than replaced. A second `read()` issued while the first is still
+  // pending loses chunks: a reader fulfills queued reads in arrival order,
+  // so the next chunk goes to the abandoned read, whose resolve lands on a
+  // promise the loop has already settled and walked away from. On an idle
+  // machine the first read wins every race, so the loss shows only under
+  // load.
   let pending: Promise<StreamChunk> | undefined;
 
   for (;;) {

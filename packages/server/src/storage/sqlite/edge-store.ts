@@ -19,8 +19,8 @@ import type {
   StoredCreateEdgeInput,
 } from "../interface.js";
 import {
-  encodeCursor,
-  decodeCursor,
+  ITEM_BACKREFS_CURSOR_KEY,
+  ITEM_EDGES_CURSOR_KEY,
   encodeKeyedCursor,
   cursorSortKey,
   decodeKeyedCursor,
@@ -104,6 +104,7 @@ export class SqliteEdgeStore implements EdgeStore {
   private async listByKey(
     keyColumn: typeof edges.source_id | typeof edges.target_id,
     value: string,
+    cursorKey: CursorSortKey,
     filters?: EdgeListFilters,
   ): Promise<PaginatedResult<Edge>> {
     const limit = clampLimit(filters?.limit);
@@ -112,7 +113,7 @@ export class SqliteEdgeStore implements EdgeStore {
     if (typed) conditions.push(typed);
 
     if (filters?.cursor) {
-      const { v, id } = decodeCursor(filters.cursor);
+      const { v, id } = decodeKeyedCursor(filters.cursor, cursorKey);
       const cursorCondition = or(
         lt(edges.created_at, v),
         and(eq(edges.created_at, v), lt(edges.id, id)),
@@ -133,7 +134,7 @@ export class SqliteEdgeStore implements EdgeStore {
     let cursor: string | null = null;
     if (hasMore) {
       const last = slice.at(-1);
-      if (last) cursor = encodeCursor(last.created_at, last.id);
+      if (last) cursor = encodeKeyedCursor(last.created_at, last.id, cursorKey);
     }
     return { data: slice.map(rowToEdge), cursor, has_more: hasMore };
   }
@@ -142,14 +143,24 @@ export class SqliteEdgeStore implements EdgeStore {
     sourceId: string,
     filters?: EdgeListFilters,
   ): Promise<PaginatedResult<Edge>> {
-    return this.listByKey(edges.source_id, sourceId, filters);
+    return this.listByKey(
+      edges.source_id,
+      sourceId,
+      ITEM_EDGES_CURSOR_KEY,
+      filters,
+    );
   }
 
   listToTarget(
     targetId: string,
     filters?: EdgeListFilters,
   ): Promise<PaginatedResult<Edge>> {
-    return this.listByKey(edges.target_id, targetId, filters);
+    return this.listByKey(
+      edges.target_id,
+      targetId,
+      ITEM_BACKREFS_CURSOR_KEY,
+      filters,
+    );
   }
 
   async list(filters?: EdgeListFilters): Promise<PaginatedResult<Edge>> {
@@ -178,8 +189,12 @@ export class SqliteEdgeStore implements EdgeStore {
     // listing names its several: column and direction, so one mechanism
     // covers both doors and neither can drift into its own spelling.
     const key: CursorSortKey = catchUp
-      ? cursorSortKey({ kind: "system", column: "updated_at" }, "asc")
-      : cursorSortKey({ kind: "system", column: "created_at" }, "desc");
+      ? cursorSortKey("edges", { kind: "system", column: "updated_at" }, "asc")
+      : cursorSortKey(
+          "edges",
+          { kind: "system", column: "created_at" },
+          "desc",
+        );
     const conditions = [];
     const typed = typeFilter(filters?.edge_type);
     if (typed) conditions.push(typed);
@@ -575,9 +590,12 @@ export class SqliteEdgeStore implements EdgeStore {
     perTypeLimit: number,
   ): Promise<Map<string, Edge[]>> {
     if (sourceIds.length === 0) return new Map();
-    // SQLite supports window functions since 3.25; use ROW_NUMBER() to cap per
-    // (source_id, edge_type) bucket. Raw SQL because Drizzle lacks a first-
-    // class windowed query builder.
+    // ROW_NUMBER() caps each (source_id, edge_type) bucket in one query;
+    // raw SQL because Drizzle has no windowed query builder. The outer
+    // ORDER BY is what the hydrated block's cursor rests on: the block is
+    // cut at the cap and its last visible row becomes the cursor that
+    // `listFromSource` continues, so the rows have to arrive in that
+    // listing's order rather than whatever order the window left them in.
     const rows = await this.db.all<{
       id: string;
       source_id: string;
@@ -600,6 +618,7 @@ export class SqliteEdgeStore implements EdgeStore {
           WHERE source_id IN ${sourceIds}
         )
         WHERE rn <= ${perTypeLimit}
+        ORDER BY source_id, edge_type, rn
       `);
     const out = new Map<string, Edge[]>();
     for (const r of rows) {
@@ -615,7 +634,8 @@ export class SqliteEdgeStore implements EdgeStore {
     perTypeLimit: number,
   ): Promise<Map<string, Edge[]>> {
     if (targetIds.length === 0) return new Map();
-    // Mirror of listFromSourcesBatched: cap per (target_id, edge_type) bucket.
+    // The inbound mirror of `listFromSourcesBatched`, ordered for the same
+    // reason: the block's cursor is continued by `listToTarget`.
     const rows = await this.db.all<{
       id: string;
       source_id: string;
@@ -638,6 +658,7 @@ export class SqliteEdgeStore implements EdgeStore {
           WHERE target_id IN ${targetIds}
         )
         WHERE rn <= ${perTypeLimit}
+        ORDER BY target_id, edge_type, rn
       `);
     const out = new Map<string, Edge[]>();
     for (const r of rows) {
