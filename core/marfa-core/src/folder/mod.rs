@@ -10,7 +10,7 @@ pub mod document;
 pub mod identity;
 pub mod state;
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -90,6 +90,11 @@ pub struct ScanReport {
     pub deleted: usize,
     /// Files outside the folder's slice, left alone.
     pub skipped: usize,
+    /// Items moved off a name another file wanted, and back again
+    /// (`folders.md` 24). Not files: a swap of two files is two
+    /// renames and one of these, and a line that counted only the
+    /// renames would say two where three writes went out.
+    pub parked: usize,
 }
 
 impl Folder {
@@ -216,6 +221,50 @@ impl Folder {
             .cloned()
             .collect();
         let identities = identity::resolve(&held);
+        // The mapping as it stood before this scan touched anything.
+        //
+        // **Which item a file belongs to** is decided against this, so that
+        // answer does not depend on where the file fell in the walk — which
+        // it did before, and a swap was two files each written onto the
+        // other's item. What still depends on the order is the sequence of
+        // writes: which of two contesting items gets parked, and in which
+        // order the moves go out. That is order in the queue rather than
+        // order in the answer, and the queue is ordered on purpose.
+        let snapshot = {
+            let conn = self.core.conn()?;
+            state::every_bound(&conn)?
+        };
+        let at_path: HashMap<&str, &state::Bound> = snapshot
+            .iter()
+            .map(|row| (row.path.as_str(), row))
+            .collect();
+        let identified: HashMap<&str, &state::Bound> = snapshot
+            .iter()
+            .filter_map(|row| row.identity.as_deref().map(|mark| (mark, row)))
+            .collect();
+        // Which item holds which natural key, as far as this folder is
+        // concerned, kept current as writes are queued.
+        //
+        // The mapping's path is the server's key only for rows this folder
+        // created or has moved. A row the pull bound for an item from
+        // another source sits at a path taken from its title, and the server
+        // holds something else entirely — so a contest against one of those
+        // is not a contest, and `keyed_at` is what asks before parking.
+        let mut holder: HashMap<String, String> = snapshot
+            .iter()
+            .map(|row| (row.path.clone(), row.item_id.clone()))
+            .collect();
+        // Rows some file in this walk claims by its identity. A path
+        // match must not overrule one: a stranger's file sitting at a bound
+        // path would otherwise be written onto that item while the file that
+        // really is that item, one rename away, becomes a second.
+        let spoken_for: HashSet<&str> = paths
+            .iter()
+            .filter_map(|path| identities.get(path))
+            .filter_map(|found| identified.get(found.key().as_str()))
+            .map(|row| row.item_id.as_str())
+            .collect();
+        let mut unresolved: Vec<Unresolved> = Vec::new();
         let mut seen: HashSet<String> = HashSet::new();
 
         for path in &paths {
@@ -244,13 +293,30 @@ impl Folder {
             let text = String::from_utf8_lossy(&bytes).into_owned();
             let hash = state::hash(&bytes);
             let mark = identities.get(path).map(|found| found.key());
-
-            let bound = {
-                let conn = self.core.conn()?;
-                state::bound_at(&conn, &key)?
+            let seen = Seen {
+                key: &key,
+                text: &text,
+                hash: &hash,
+                mark: mark.as_deref(),
             };
-            match bound {
-                Some(bound) => {
+
+            // **Identity decides which file is which, and the path follows**
+            // (`folders.md` 8). Asking the path first meant two files that
+            // swapped places were each written onto the other's item: the
+            // path said one thing, the inode said the other, and the code
+            // took the path without either statement saying it should.
+            //
+            // Both lookups go to the snapshot taken before the walk, not to
+            // the mapping as it stands. A swap is two moves, and applying
+            // the first changes what the second would find — the second file
+            // would look up its own identity, find the row the first move
+            // had just overwritten, and become a new item.
+            let by_identity = mark.as_deref().and_then(|mark| identified.get(mark));
+            let here = at_path
+                .get(key.as_str())
+                .filter(|row| !spoken_for.contains(row.item_id.as_str()));
+            match by_identity.or(here) {
+                Some(bound) if bound.path == key => {
                     // A write the folder made never comes back as a change
                     // (`folders.md` 14). The bytes it last agreed with are
                     // the bytes it wrote, so a file that still holds them is
@@ -259,69 +325,176 @@ impl Folder {
                         report.unchanged += 1;
                         continue;
                     }
-                    self.queue_update(
-                        &bound.item_id,
-                        &text,
-                        &key,
-                        mark.as_deref(),
-                        &hash,
-                        &bound.links,
-                    )?;
+                    self.queue_update(bound, &seen, &mut unresolved)?;
                     report.updated += 1;
                 }
-                None => {
-                    // The same file under a new name: the identity did not
-                    // change and the path did, so the item the old path
-                    // named is the item this one names. No identity means a
-                    // new item, never a guess (`folders.md` 8).
-                    let moved = match &mark {
-                        None => None,
-                        Some(mark) => {
-                            let conn = self.core.conn()?;
-                            state::bound_to_identity(&conn, mark)?
+                Some(bound) => {
+                    // **The name this file wants may be one another item has
+                    // not let go of yet** (`folders.md` 24). Two files that
+                    // swap places are two moves whose names collide with each
+                    // other, and the server refuses a name another item
+                    // holds — so whichever went first would land and the
+                    // other would be refused, leaving one item under the
+                    // wrong name and the other under none.
+                    //
+                    // The holder is parked under a name that is not a
+                    // path, which frees this one. Its own move is the next
+                    // row in an ordered, durable queue — but queued is not
+                    // landed, and a refusal or a blocked queue would leave
+                    // it parked, where a second device would make a second
+                    // item for the same file. The pass at the end of the
+                    // scan is what takes it back out.
+                    if let Some(other) = holder.get(key.as_str())
+                        && other != &bound.item_id
+                    {
+                        let other = other.clone();
+                        // **Only an item whose key this folder's mapping
+                        // actually is.** A row the pull bound for an item
+                        // from somewhere else is at a path taken from its
+                        // title, and the server holds a different key for
+                        // it; parking that would write a name that is not a
+                        // path over a real one belonging to another device.
+                        // Nothing here contests it either, because it never
+                        // held the name this file wants.
+                        if self.keyed_at(&other, key.as_str())? {
+                            let parked = parked_key(&other);
+                            self.queue_rekey(&other, &parked)?;
+                            holder.insert(parked, other);
+                            report.parked += 1;
                         }
-                    };
-                    match moved {
-                        Some(from) => {
-                            {
-                                let conn = self.core.conn()?;
-                                state::unbind(&conn, &from.path)?;
-                                // It moved rather than went, so the delete
-                                // the old path journaled is not a delete.
-                                state::journal_clear(&conn, &from.path)?;
-                            }
-                            if from.content_hash == hash {
-                                let conn = self.core.conn()?;
-                                state::bind(
-                                    &conn,
-                                    &state::Bound {
-                                        path: key.clone(),
-                                        item_id: from.item_id,
-                                        identity: mark.clone(),
-                                        content_hash: hash,
-                                        // The bytes did not change, so the
-                                        // links in them did not either.
-                                        links: from.links,
-                                    },
-                                )?;
-                            } else {
-                                self.queue_update(
-                                    &from.item_id,
-                                    &text,
-                                    &key,
-                                    mark.as_deref(),
-                                    &hash,
-                                    &from.links,
-                                )?;
-                            }
-                            report.renamed += 1;
-                        }
-                        None => {
-                            self.queue_create(&text, &key, mark.as_deref(), &hash)?;
-                            report.created += 1;
+                        holder.remove(key.as_str());
+                    }
+                    // Only where the old name is still recorded as this
+                    // item's. In a cycle longer than a swap the snapshot's
+                    // path for this item can already have been taken by an
+                    // earlier move, and removing it then would drop a record
+                    // that is live.
+                    //
+                    // No fixture holds this, and none can: for the wrong
+                    // removal to cost anything, a later file would have to
+                    // want a name an earlier file had already been given,
+                    // which is two files at one path. The rotation and the
+                    // chain below both come out right with the loose version
+                    // in place. It is written the strict way because the map
+                    // is meant to say who holds what, and a map that is
+                    // wrong in a way nothing can reach is still wrong.
+                    if holder.get(bound.path.as_str()) == Some(&bound.item_id) {
+                        holder.remove(&bound.path);
+                    }
+                    holder.insert(key.clone(), bound.item_id.clone());
+                    // The same file under a new name, so the old name
+                    // stops naming it — **unless something else has taken
+                    // that name since the walk began**. In a swap, this
+                    // file's old path is the other file's new one, and the
+                    // other file has already been bound there: unbinding by
+                    // the snapshot's path then deletes the row the earlier
+                    // iteration wrote, and the item it named is left with no
+                    // mapping at all. The pull's byte-for-byte re-adoption
+                    // hides that whenever the bytes are untouched, which is
+                    // why a swap looked right and a swap with an edit did
+                    // not.
+                    {
+                        let conn = self.core.conn()?;
+                        let still_ours = state::bound_at(&conn, &bound.path)?
+                            .is_some_and(|row| row.item_id == bound.item_id);
+                        if still_ours {
+                            state::unbind(&conn, &bound.path)?;
+                            // It moved rather than went, so the delete the
+                            // old path journaled is not a delete.
+                            state::journal_clear(&conn, &bound.path)?;
                         }
                     }
+                    // **A rename is a write even when the bytes are the
+                    // same** (`folders.md` 23). The name is the natural key,
+                    // so a move with no edit still has something to tell the
+                    // server — and telling it nothing is what left the item
+                    // under the old key and had the next pull put the old
+                    // name back.
+                    self.queue_update(bound, &seen, &mut unresolved)?;
+                    report.renamed += 1;
                 }
+                // No identity the mapping knows and no row at this path: a
+                // new item, never a guess (`folders.md` 8).
+                None => {
+                    // **A name an item still holds is parked before a create
+                    // takes it**, exactly as a move parks one.
+                    //
+                    // Without this the create resolves against the incumbent:
+                    // the server takes a create on a live natural key as an
+                    // upsert, and the version the create carries is read off
+                    // the incumbent's own row, so it matches and the write
+                    // lands. One file moves away, an unrelated file takes the
+                    // name it left, and the moved file's item is overwritten
+                    // with the new file's body before its own move is sent.
+                    //
+                    // The move arm could rely on `bound.item_id` to know the
+                    // name was contested. A create has no bound row, so the
+                    // question has to be asked of `holder` directly.
+                    if let Some(other) = holder.get(key.as_str()) {
+                        let other = other.clone();
+                        if self.keyed_at(&other, key.as_str())? {
+                            let parked = parked_key(&other);
+                            self.queue_rekey(&other, &parked)?;
+                            holder.insert(parked, other);
+                            report.parked += 1;
+                        }
+                        holder.remove(key.as_str());
+                    }
+                    self.queue_create(&seen, &mut unresolved)?;
+                    report.created += 1;
+                }
+            }
+        }
+
+        // **A second pass, now that every file the walk found is bound.**
+        // A link naming a file that arrived in the same scan could not
+        // resolve when the walk reached it, and nothing would have asked
+        // again: the next scan finds both files unchanged and skips them
+        // (`folders.md` 25).
+        for pending in unresolved {
+            let (named, _) = self.queue_links(&pending.item_id, &pending.links, &pending.had)?;
+            let conn = self.core.conn()?;
+            if let Some(bound) = state::bound_at(&conn, &pending.path)? {
+                state::bind(
+                    &conn,
+                    &state::Bound {
+                        links: named,
+                        ..bound
+                    },
+                )?;
+            }
+        }
+
+        // **A park that was never followed by its move.** The two are
+        // ordered rows in a durable queue, so this only happens when the
+        // move was refused or the queue is blocked — and then the item sits
+        // under a name that is not a path, where the next device to enroll on
+        // this folder would make a second item for the same file
+        // (`folders.md` 24, and 10 for what it costs).
+        for row in {
+            let conn = self.core.conn()?;
+            state::every_bound(&conn)?
+        } {
+            let Some(item) = self.core.get(&row.item_id)? else {
+                continue;
+            };
+            if item.source_id.as_deref().is_some_and(is_parked) {
+                // **The name has to be free as a natural key**, which is a
+                // question about what an item is keyed at and not about what
+                // the mapping binds. Asking the mapping cannot answer it:
+                // `row` came out of `folder_files` and `path` is its primary
+                // key, so a lookup by that path returns `row` itself and any
+                // comparison against its own id is always false.
+                //
+                // A name another item holds is one the server refuses, and
+                // this pass would ask again on every scan while the item
+                // stayed parked.
+                let taken = self.held_under_key(&row.path)?;
+                if taken.is_some_and(|other| other.id != row.item_id) {
+                    continue;
+                }
+                self.queue_rekey(&row.item_id, &row.path)?;
+                report.parked += 1;
             }
         }
 
@@ -426,7 +599,13 @@ impl Folder {
         )
     }
 
-    fn queue_create(&self, text: &str, key: &str, mark: Option<&str>, hash: &str) -> Result<()> {
+    fn queue_create(&self, seen: &Seen<'_>, unresolved: &mut Vec<Unresolved>) -> Result<()> {
+        let Seen {
+            key,
+            text,
+            hash,
+            mark,
+        } = *seen;
         let document = document::read(text);
         // The version this create is based on, read and never invented.
         //
@@ -441,8 +620,10 @@ impl Folder {
         //
         // Zero always, rather than the row's version, would refuse every
         // create onto an existing row for ever and leave the file
-        // permanently unpushable. The zero-means-absent convention is this
-        // device's and not yet the contract's; it is in the open questions.
+        // permanently unpushable. `folders.md` 13 carries the convention
+        // itself: the version is the one the copy holds under that natural
+        // key, and zero where it holds none, which the server reads as a
+        // create conditional on there being nothing there.
         let version = self
             .held_under_key(key)?
             .map(|item| item.version)
@@ -479,7 +660,15 @@ impl Folder {
         let item_id = queued.item_id.unwrap_or_default();
         // No bytes this folder agreed with before, so no link it can say has
         // gone: a create only ever adds.
-        let named = self.queue_links(&item_id, &document.links, &[])?;
+        let (named, resolved) = self.queue_links(&item_id, &document.links, &[])?;
+        if !resolved {
+            unresolved.push(Unresolved {
+                path: key.to_string(),
+                item_id: item_id.clone(),
+                links: document.links.clone(),
+                had: Vec::new(),
+            });
+        }
         let conn = self.core.conn()?;
         state::bind(
             &conn,
@@ -496,13 +685,18 @@ impl Folder {
 
     fn queue_update(
         &self,
-        item_id: &str,
-        text: &str,
-        key: &str,
-        mark: Option<&str>,
-        hash: &str,
-        had: &[String],
+        bound: &state::Bound,
+        seen: &Seen<'_>,
+        unresolved: &mut Vec<Unresolved>,
     ) -> Result<()> {
+        let Seen {
+            key,
+            text,
+            hash,
+            mark,
+        } = *seen;
+        let item_id = bound.item_id.as_str();
+        let had = bound.links.as_slice();
         let document = document::read(text);
         // The row this file is bound to, as the copy holds it. Absent when
         // the server trashed it, when a catch-up evicted it from the slice,
@@ -528,9 +722,26 @@ impl Folder {
         let edit = Edit {
             properties: sendable(document.properties),
             base_version: Some(held.version),
+            // **The natural key rides only on a move** (`folders.md` 23).
+            // Asserting it on every update reached past the rule and cost
+            // two things: it stamped this folder's path onto the key of an
+            // item from somewhere else, whose path here came from its title;
+            // and a name another item held then refused the whole write, the
+            // person's editing with it, while the mapping recorded the new
+            // hash and the next scan called the file unchanged. An edit that
+            // carries no name cannot be refused for a name.
+            source_id: (bound.path != key).then(|| key.to_string()),
         };
         self.core.update_item(item_id, &edit)?;
-        let named = self.queue_links(item_id, &document.links, had)?;
+        let (named, resolved) = self.queue_links(item_id, &document.links, had)?;
+        if !resolved {
+            unresolved.push(Unresolved {
+                path: key.to_string(),
+                item_id: item_id.to_string(),
+                links: document.links.clone(),
+                had: had.to_vec(),
+            });
+        }
         let conn = self.core.conn()?;
         state::bind(
             &conn,
@@ -540,6 +751,54 @@ impl Folder {
                 identity: mark.map(str::to_string),
                 content_hash: hash.to_string(),
                 links: named,
+            },
+        )?;
+        Ok(())
+    }
+
+    /// Whether this folder's path for an item is the natural key the server
+    /// holds for it.
+    ///
+    /// True for anything this folder created or has renamed. False for a row
+    /// the pull bound for an item from another source, whose path came from
+    /// its title: the folder's mapping says where its file is and nothing
+    /// about what the server calls it.
+    fn keyed_at(&self, item_id: &str, key: &str) -> Result<bool> {
+        Ok(self
+            .core
+            .get(item_id)?
+            .and_then(|item| item.source_id)
+            .is_some_and(|held| held == key))
+    }
+
+    /// Moves a row's natural key and touches nothing else.
+    ///
+    /// What parks the holder of a contested name, and what puts one back
+    /// afterwards (`folders.md` 24).
+    ///
+    /// The properties go back as the copy holds them. The door would take a
+    /// key on its own, but the device's update carries a whole set and this
+    /// keeps that one shape: what is sent is what the copy already believes,
+    /// so nothing but the name moves. It is still a write — a version and an
+    /// event — rather than the no-op the name alone would be.
+    fn queue_rekey(&self, item_id: &str, key: &str) -> Result<()> {
+        let Some(held) = self.core.get(item_id)? else {
+            // **Loud.** Returning quietly let the walk carry on and assert a
+            // name this item still holds, which the server refuses on the
+            // first answer and never retries — and the mapping would record
+            // the move as if it had happened, so the next pull would put the
+            // file back under its old name with nothing saying why.
+            return Err(CoreError::Invalid(format!(
+                "{item_id} holds the name {key} is meant to free and this copy \
+                 no longer has the row, so the file that wants it is left alone"
+            )));
+        };
+        self.core.update_item(
+            item_id,
+            &Edit {
+                properties: held.properties.clone(),
+                base_version: Some(held.version),
+                source_id: Some(key.to_string()),
             },
         )?;
         Ok(())
@@ -556,9 +815,14 @@ impl Folder {
     /// and — where a link could not be resolved and the removal stood down —
     /// the ones it recorded before, because forgetting those would take the
     /// removal rule with them.
-    fn queue_links(&self, item_id: &str, links: &[String], had: &[String]) -> Result<Vec<String>> {
+    fn queue_links(
+        &self,
+        item_id: &str,
+        links: &[String],
+        had: &[String],
+    ) -> Result<(Vec<String>, bool)> {
         if item_id.is_empty() {
-            return Ok(Vec::new());
+            return Ok((Vec::new(), true));
         }
         // Not `unwrap_or_default`. An error read as "this item has no edges"
         // makes every link in the body a fresh `create_edge` for an edge that
@@ -602,7 +866,7 @@ impl Folder {
                     kept.push(target.clone());
                 }
             }
-            return Ok(kept);
+            return Ok((kept, false));
         }
         // **The file used to carry it and now does not.** That is the test,
         // and it is why the mapping holds the links: an edge the copy
@@ -624,7 +888,7 @@ impl Folder {
             }
             self.core.delete_edge(&edge.id)?;
         }
-        Ok(named)
+        Ok((named, true))
     }
 
     /// The item a link names: an id the copy holds, or a file in this folder.
@@ -993,6 +1257,34 @@ impl Folder {
     }
 }
 
+/// A file the walk found, read, and worked out an identity for.
+///
+/// Grouped because the two writers take all four together and neither has
+/// any business with one of them alone.
+struct Seen<'a> {
+    /// The natural key: the path inside the folder (`folders.md` 10).
+    key: &'a str,
+    text: &'a str,
+    hash: &'a str,
+    /// Device, inode and birth time, where the filesystem gave a usable
+    /// three. `None` means a rename cannot be followed (`folders.md` 8).
+    mark: Option<&'a str>,
+}
+
+/// A file whose links the scan could not all resolve on the way past.
+///
+/// A link naming a file that arrives in the same scan cannot resolve when
+/// the walk reaches it, because nothing has bound that file yet — and the
+/// walk is sorted, so it is always the earlier of the two that loses.
+/// Left there, the edge is never made: the next scan finds both files
+/// unchanged and asks nothing (`folders.md` 25).
+struct Unresolved {
+    path: String,
+    item_id: String,
+    links: Vec<String>,
+    had: Vec<String>,
+}
+
 /// The kind of edge a link becomes, and the only kind a folder removes.
 pub const LINK_EDGE: &str = "references";
 
@@ -1087,6 +1379,26 @@ fn plainly_inside(root: &Path, relative: &str) -> bool {
     }
     true
 }
+
+/// A natural key for an item that is between names.
+///
+/// Deliberately not a path: the `..` is what makes `path_for` refuse it and
+/// fall back to the mapping, so a pull that runs while a row is parked
+/// writes the file where it already is rather than somewhere under this.
+/// That fallback needs the row to still be bound, which is why the unbind
+/// in the move arm is conditional — a swap used to destroy one of the two.
+fn parked_key(item_id: &str) -> String {
+    format!("{PARKED}{item_id}")
+}
+
+/// Whether a natural key is one of the folder's parking places.
+fn is_parked(key: &str) -> bool {
+    key.starts_with(PARKED)
+}
+
+/// The prefix a parked key carries. Leads with `..`, which `path_for` and
+/// `plainly_inside` both refuse, so no file is ever written under it.
+const PARKED: &str = "../parked/";
 
 /// A title as a file name, with the separators and the dot-lead taken out.
 fn safe_name(title: &str) -> String {

@@ -347,6 +347,17 @@ impl Core {
         for (key, value) in &edit.properties {
             next.properties.insert(key.clone(), value.clone());
         }
+        // **The natural key moves on the copy too, not only on the wire.**
+        //
+        // The copy is what the folder reads to answer "who holds this name".
+        // Leaving the old key on it means an item that has asked to be
+        // renamed still answers to the name it is leaving, and the next file
+        // to take that name bases its create on this row — which the server
+        // resolves as an upsert onto it. The name is applied for the same
+        // reason the properties are: a refusal reconciles the row back.
+        if let Some(source_id) = &edit.source_id {
+            next.source_id = Some(source_id.clone());
+        }
         next.updated_at = store::now_iso();
 
         let tx = conn.transaction()?;

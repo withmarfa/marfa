@@ -58,8 +58,21 @@ function read(harness: FolderHarness, name: string): string {
 function scriptFolderWrites(
   harness: FolderHarness,
   rows: Array<Record<string, unknown>> = [],
-): void {
+): Map<
+  string,
+  { properties: Record<string, unknown>; source_id: string | null }
+> {
   let next = 0;
+  // What the scripted server holds for each item, so an update that carries
+  // only a natural key does not answer with the properties cleared.
+  //
+  // Returned, so a fixture can ask what each item ended up holding. Asserting
+  // on the natural keys alone cannot tell a swap that moved two names from one
+  // that moved two names and crossed the bodies over.
+  const held = new Map<
+    string,
+    { properties: Record<string, unknown>; source_id: string | null }
+  >();
   scriptWrites(harness.server, {
     create: [
       (request) => {
@@ -70,6 +83,35 @@ function scriptFolderWrites(
         };
         const canned = rows[next];
         next += 1;
+        // **A create onto a natural key something already holds is an upsert
+        // onto that row**, not a second item (`items.md` 5). Scripted here
+        // because the real server does it, and a door that always minted a
+        // fresh row could not show what a create aimed at a live key costs:
+        // the folder would look correct while overwriting somebody's note.
+        const incumbent =
+          sent.source_id === undefined
+            ? undefined
+            : [...held].find(([, row]) => row.source_id === sent.source_id);
+        if (incumbent) {
+          const [id] = incumbent;
+          held.set(id, {
+            properties: sent.properties,
+            source_id: sent.source_id ?? null,
+          });
+          return answers.created(
+            wireItem({
+              id,
+              version: 2,
+              properties: sent.properties,
+              source_id: sent.source_id ?? null,
+              ...(canned ?? {}),
+            }),
+          );
+        }
+        held.set(sent.id, {
+          properties: sent.properties,
+          source_id: sent.source_id ?? null,
+        });
         return answers.created(
           wireItem({
             id: sent.id,
@@ -84,15 +126,26 @@ function scriptFolderWrites(
     update: [
       (request) => {
         const sent = JSON.parse(request.body) as {
-          properties: Record<string, unknown>;
+          properties?: Record<string, unknown>;
+          source_id?: string;
           version: number;
         };
         const id = request.pathname.split("/").at(-1) ?? "unknown";
+        // The natural key is echoed when the write carries one, because a
+        // rename is a write to it and the copy has to learn the new one —
+        // a scripted door that dropped it would leave the folder computing
+        // the old path for ever, which is the defect statement 23 is for.
+        held.set(id, {
+          properties: sent.properties ?? held.get(id)?.properties ?? {},
+          source_id: sent.source_id ?? held.get(id)?.source_id ?? null,
+        });
+        const now = held.get(id)!;
         return answers.updated(
           wireItem({
             id,
             version: sent.version + 1,
-            properties: sent.properties,
+            properties: now.properties,
+            source_id: now.source_id,
           }),
         );
       },
@@ -113,6 +166,7 @@ function scriptFolderWrites(
     status: 204,
     body: {},
   });
+  return held;
 }
 
 /** What the folder sent to the items door, parsed. */
@@ -122,6 +176,50 @@ function sentCreates(harness: FolderHarness): Array<Record<string, unknown>> {
       (request) => request.method === "POST" && request.pathname === "/items",
     )
     .map((request) => JSON.parse(request.body) as Record<string, unknown>);
+}
+
+/** Which item the folder created under each natural key. */
+function keysByItem(harness: FolderHarness): Map<string, string> {
+  return new Map(
+    sentCreates(harness).map((create) => [
+      String(create.id),
+      String(create.source_id ?? ""),
+    ]),
+  );
+}
+
+function itemFor(started: Map<string, string>, key: string): string {
+  const found = [...started].find(([, held]) => held === key);
+  return found?.[0] ?? `no item was created under ${key}`;
+}
+
+/**
+ * Every natural key the folder sent, replayed against who held what.
+ *
+ * A key another item still holds is one the server refuses, so the folder
+ * has to free it first (`folders.md` 24). The scripted server cannot refuse
+ * one, which is exactly why this reads the requests rather than the answers.
+ */
+function replayKeys(
+  harness: FolderHarness,
+  started: Map<string, string>,
+): { collisions: string[]; ended: Map<string, string> } {
+  const ended = new Map(started);
+  const collisions: string[] = [];
+  for (const request of harness.server.requests) {
+    if (request.method !== "PATCH") continue;
+    if (!/^\/items\/[^/]+$/.test(request.pathname)) continue;
+    const id = request.pathname.split("/").at(-1) ?? "";
+    const body = JSON.parse(request.body) as { source_id?: string };
+    if (body.source_id === undefined) continue;
+    const taken = [...ended].find(
+      ([other, key]) => other !== id && key === body.source_id,
+    );
+    if (taken)
+      collisions.push(`${id} -> ${body.source_id} (held by ${taken[0]})`);
+    ended.set(id, body.source_id);
+  }
+  return { collisions, ended };
 }
 
 /** The natural keys the folder sent, in order. */
@@ -636,6 +734,30 @@ describe("files and items", () => {
     ).toEqual([edge!.edge_id]);
   });
 
+  it("makes an edge between two files that arrive together", async () => {
+    harness = await folderHarness("folder-links-same-scan");
+    scriptFolderWrites(harness);
+    // Both new in one scan, each naming the other. The walk returns them
+    // sorted, so one is reached before the other is bound.
+    put(harness, "alpha.md", "---\ntitle: Alpha\n---\nsee [[omega]]\n");
+    put(harness, "omega.md", "---\ntitle: Omega\n---\nsee [[alpha]]\n");
+    expect((await harness.folder.push()).ok).toBe(true);
+
+    const queued = await harness.folder.device().queue();
+    expect(queued.ok).toBe(true);
+    if (!queued.ok) return;
+    const edges = queued.value.filter((row) => row.kind === "create_edge");
+    const creates = sentCreates(harness);
+    expect(
+      creates.length,
+      "the two files never became items, so there is nothing for an edge to join",
+    ).toBe(2);
+    expect(
+      edges.length,
+      "a link to a file that arrived in the same scan never became an edge, and no later scan retries it because both files are unchanged from then on",
+    ).toBe(2);
+  });
+
   it("carries links to edges and edges to links", async () => {
     harness = await folderHarness("folder-links");
     scriptFolderWrites(harness);
@@ -1041,6 +1163,289 @@ describe("identity", () => {
       ),
       "a copied file carried the id of the item it was copied from onto a new item, so the folder's record is now a property naming somebody else's row",
     ).toEqual([]);
+  });
+
+  it("sends the new natural key when the person renames a file", async () => {
+    harness = await folderHarness("folder-rename-sends-key");
+    scriptFolderWrites(harness);
+    put(harness, "before.md", "---\ntitle: Before\n---\nsame bytes\n");
+    expect((await harness.folder.push()).ok).toBe(true);
+
+    renameSync(join(harness.dir, "before.md"), join(harness.dir, "after.md"));
+    // A push, because a scan only queues: what a rename *sends* is the
+    // subject, and nothing reaches the server until the drain.
+    const pushed = await harness.folder.push();
+    expect(
+      pushed.ok,
+      `the folder could not push: ${JSON.stringify(pushed)}`,
+    ).toBe(true);
+    if (!pushed.ok) return;
+    expect(
+      pushed.value.scan.renamed,
+      "the rename was not followed at all, so nothing below is about what a rename sends",
+    ).toBe(1);
+
+    const sent = harness.server.requests
+      .filter(
+        (request) =>
+          request.method === "PATCH" &&
+          /^\/items\/[^/]+$/.test(request.pathname),
+      )
+      .map(
+        (request) =>
+          JSON.parse(request.body) as { source_id?: string; version?: number },
+      );
+    expect(
+      sent.length,
+      "the rename queued nothing to send, so the server is never told the file moved",
+    ).toBeGreaterThan(0);
+    expect(
+      sent.map((body) => body.source_id),
+      "the rename did not carry the new natural key, so the item keeps the old one and the next pull writes the old name back",
+    ).toContain("after.md");
+    expect(
+      sent.every((body) => typeof body.version === "number"),
+      "a write carrying a natural key went without the version it is based on, which is a blind overwrite of whatever name arrived since",
+    ).toBe(true);
+
+    // And the file stays where the person put it, on this pull and the next.
+    expect((await harness.folder.push()).ok).toBe(true);
+    expect(
+      existsSync(join(harness.dir, "after.md")),
+      "the folder put the file back under its old name, undoing the rename inside the command that reported it",
+    ).toBe(true);
+    expect(
+      existsSync(join(harness.dir, "before.md")),
+      "the old name came back, so the folder now holds the note twice",
+    ).toBe(false);
+  });
+
+  it("follows a swap without giving either item the other's name", async () => {
+    harness = await folderHarness("folder-swap");
+    const held = scriptFolderWrites(harness);
+    put(harness, "one.md", "---\ntitle: One\n---\nfirst\n");
+    put(harness, "two.md", "---\ntitle: Two\n---\nsecond\n");
+    expect((await harness.folder.push()).ok).toBe(true);
+
+    const before = sentCreates(harness);
+    expect(
+      before.length,
+      "the two files never became items, so there is nothing to swap",
+    ).toBe(2);
+    const idOf = (key: string): string =>
+      String(before.find((create) => create.source_id === key)?.id ?? "");
+    const one = idOf("one.md");
+    const two = idOf("two.md");
+    expect(
+      [one, two].every(Boolean),
+      "one of the two items could not be resolved from what the folder sent, so every assertion below compares an empty id against another and holds for nothing",
+    ).toBe(true);
+
+    renameSync(join(harness.dir, "one.md"), join(harness.dir, ".swap"));
+    renameSync(join(harness.dir, "two.md"), join(harness.dir, "one.md"));
+    renameSync(join(harness.dir, ".swap"), join(harness.dir, "two.md"));
+    expect((await harness.folder.push()).ok).toBe(true);
+
+    // Every natural key the folder sent, in order, against what each item
+    // held at the time. A key another item holds is one the server refuses,
+    // and the folder has to park one of the two to get out of the cycle.
+    const keys = new Map<string, string>([
+      [one, "one.md"],
+      [two, "two.md"],
+    ]);
+    const collisions: string[] = [];
+    for (const request of harness.server.requests) {
+      if (request.method !== "PATCH") continue;
+      if (!/^\/items\/[^/]+$/.test(request.pathname)) continue;
+      const id = request.pathname.split("/").at(-1) ?? "";
+      const body = JSON.parse(request.body) as { source_id?: string };
+      if (body.source_id === undefined) continue;
+      const taken = [...keys].find(
+        ([other, key]) => other !== id && key === body.source_id,
+      );
+      if (taken) collisions.push(`${id} -> ${body.source_id}`);
+      keys.set(id, body.source_id);
+    }
+    expect(
+      collisions,
+      "the folder asked for a name another item still held, which the server refuses — leaving one item under the wrong name and the other under none",
+    ).toEqual([]);
+    expect(
+      [keys.get(one), keys.get(two)],
+      "the two items did not end up under each other's names, so the swap did not reach the server",
+    ).toEqual(["two.md", "one.md"]);
+
+    // **What each item ended up holding**, not only what it is called. Names
+    // alone cannot tell a swap that moved two names from one that moved two
+    // names and crossed the bodies over, and the second is the failure a
+    // person would actually notice.
+    expect(
+      [held.get(one)?.properties?.body, held.get(two)?.properties?.body],
+      "the two items swapped bodies as well as names, so each note now holds the other's contents and the keys look right",
+    ).toEqual(["first\n", "second\n"]);
+  });
+
+  it("does not write a new file's body onto the item whose name it took", async () => {
+    harness = await folderHarness("folder-name-handover");
+    const held = scriptFolderWrites(harness);
+    put(harness, "a-note.md", "---\ntitle: A\n---\nthe real note\n");
+    expect((await harness.folder.push()).ok).toBe(true);
+
+    const first = sentCreates(harness);
+    expect(
+      first.length,
+      "the file never became an item, so there is no name for a second file to take",
+    ).toBe(1);
+    const incumbent = String(first[0]?.id ?? "");
+    expect(
+      incumbent,
+      "the create carried no id, so there is nothing to follow the note by",
+    ).not.toBe("");
+
+    // The moved file frees `a-note.md`; a brand new file takes it in the same
+    // scan. The walk is sorted, so the newcomer is reached first and the
+    // incumbent still holds the name at that moment.
+    renameSync(join(harness.dir, "a-note.md"), join(harness.dir, "z-note.md"));
+    put(harness, "a-note.md", "---\ntitle: A\n---\nbrand new\n");
+    expect((await harness.folder.push()).ok).toBe(true);
+
+    const survivor = held.get(incumbent);
+    expect(
+      survivor?.properties?.body,
+      "the note the person moved was overwritten by an unrelated new file that took the name it was leaving, and the only trace is a version bump",
+    ).toBe("the real note\n");
+    expect(
+      survivor?.source_id,
+      "the moved note did not end up under its new name, so the rename never reached the server",
+    ).toBe("z-note.md");
+
+    const newcomer = [...held].find(
+      ([id, row]) => id !== incumbent && row.source_id === "a-note.md",
+    );
+    expect(
+      newcomer?.[1]?.properties?.body,
+      "the new file never became an item of its own, so its contents live nowhere on the server",
+    ).toBe("brand new\n");
+  });
+
+  it("keeps a binding for every file after a swap that also edits both", async () => {
+    harness = await folderHarness("folder-swap-and-edit");
+    scriptFolderWrites(harness);
+    put(harness, "one.md", "---\ntitle: One\n---\nfirst\n");
+    put(harness, "two.md", "---\ntitle: Two\n---\nsecond\n");
+    expect((await harness.folder.push()).ok).toBe(true);
+
+    // Swapped **and** edited. With only the swap, a pull re-adopts each file
+    // by comparing bytes and quietly rebuilds a mapping row the scan
+    // destroyed — so the mapping looks right for a reason that has nothing
+    // to do with the scan. An edit puts the bytes beyond that rescue.
+    renameSync(join(harness.dir, "one.md"), join(harness.dir, ".swap"));
+    renameSync(join(harness.dir, "two.md"), join(harness.dir, "one.md"));
+    renameSync(join(harness.dir, ".swap"), join(harness.dir, "two.md"));
+    writeFileSync(
+      join(harness.dir, "one.md"),
+      "---\ntitle: Two\n---\nsecond, and a word the person typed\n",
+    );
+    writeFileSync(
+      join(harness.dir, "two.md"),
+      "---\ntitle: One\n---\nfirst, and another\n",
+    );
+    expect((await harness.folder.push()).ok).toBe(true);
+
+    // The witness the sent-keys assertions could not give: after the scan,
+    // does the folder still know what each file is? A row lost here is a
+    // file the next scan pushes as a second item, taking the first one's
+    // edges and leaving it to be deleted after the grace.
+    const scanned = await harness.folder.scan();
+    expect(scanned.ok).toBe(true);
+    if (!scanned.ok) return;
+    expect(
+      scanned.value.created,
+      "a file came out of the swap with no binding, so the next scan made it a second item",
+    ).toBe(0);
+    expect(
+      scanned.value.missing,
+      "a path came out of the swap bound to nothing that is there, so the grace is now counting down on an item whose file is on the disk",
+    ).toBe(0);
+    expect(
+      [scanned.value.updated, scanned.value.renamed],
+      "the scan after the swap still had something to say about these files, so the swap did not come to rest",
+    ).toEqual([0, 0]);
+  });
+
+  it("follows a three-way rotation without a name landing on a held one", async () => {
+    harness = await folderHarness("folder-rotate");
+    scriptFolderWrites(harness);
+    put(harness, "a.md", "---\ntitle: Alpha\n---\nalpha\n");
+    put(harness, "b.md", "---\ntitle: Beta\n---\nbeta\n");
+    put(harness, "c.md", "---\ntitle: Gamma\n---\ngamma\n");
+    expect((await harness.folder.push()).ok).toBe(true);
+    const started = keysByItem(harness);
+    expect(
+      started.size,
+      "the three files never became items, so there is nothing to rotate",
+    ).toBe(3);
+
+    // a -> b -> c -> a. A cycle of three, which a swap's two-step park does
+    // not obviously generalize to.
+    renameSync(join(harness.dir, "a.md"), join(harness.dir, ".hold"));
+    renameSync(join(harness.dir, "c.md"), join(harness.dir, "a.md"));
+    renameSync(join(harness.dir, "b.md"), join(harness.dir, "c.md"));
+    renameSync(join(harness.dir, ".hold"), join(harness.dir, "b.md"));
+    expect((await harness.folder.push()).ok).toBe(true);
+
+    const { collisions, ended } = replayKeys(harness, started);
+    expect(
+      collisions,
+      "the folder asked for a name another item still held, which a server refuses — so one item lands under the wrong name and another under none",
+    ).toEqual([]);
+    expect(
+      [...ended.entries()].sort(),
+      "the three items did not come to rest under the names their files now have",
+    ).toEqual(
+      [
+        [itemFor(started, "a.md"), "b.md"],
+        [itemFor(started, "b.md"), "c.md"],
+        [itemFor(started, "c.md"), "a.md"],
+      ].sort(),
+    );
+  });
+
+  it("follows a chain of renames that frees its own last name", async () => {
+    harness = await folderHarness("folder-chain");
+    scriptFolderWrites(harness);
+    put(harness, "a.md", "---\ntitle: Alpha\n---\nalpha\n");
+    put(harness, "b.md", "---\ntitle: Beta\n---\nbeta\n");
+    put(harness, "c.md", "---\ntitle: Gamma\n---\ngamma\n");
+    expect((await harness.folder.push()).ok).toBe(true);
+    const started = keysByItem(harness);
+    expect(
+      started.size,
+      "the three files never became three items, so there is no chain to follow and the assertions below pass against a shorter one",
+    ).toBe(3);
+
+    // c -> d, b -> c, a -> b. Not a cycle: the last name is free, and every
+    // other is held by something that is itself about to move.
+    renameSync(join(harness.dir, "c.md"), join(harness.dir, "d.md"));
+    renameSync(join(harness.dir, "b.md"), join(harness.dir, "c.md"));
+    renameSync(join(harness.dir, "a.md"), join(harness.dir, "b.md"));
+    expect((await harness.folder.push()).ok).toBe(true);
+
+    const { collisions, ended } = replayKeys(harness, started);
+    expect(
+      collisions,
+      "the folder asked for a name another item still held part-way along the chain, which the server refuses — leaving one item under the wrong name and the next with none",
+    ).toEqual([]);
+    expect(
+      [...ended.entries()].sort(),
+      "the chain did not come to rest where the files did",
+    ).toEqual(
+      [
+        [itemFor(started, "a.md"), "b.md"],
+        [itemFor(started, "b.md"), "c.md"],
+        [itemFor(started, "c.md"), "d.md"],
+      ].sort(),
+    );
   });
 
   it("moves the file when the item is renamed on the server", async () => {

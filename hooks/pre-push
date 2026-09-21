@@ -21,6 +21,14 @@
 # the full suite on every PR push, and `pnpm test:full` is the explicit
 # local full run for the pre-PR moment.
 #
+# One exception to "only what changed": the conformance offline lane runs
+# every time. It needs no server, takes seconds, and it is the only thing
+# that checks the specification against itself — that each chapter's
+# statements run 1..n with no gap, and that every citation names something
+# that exists. A rebase can join two statements onto one line and leave
+# every other suite green, which is how a chapter lost one and reached a
+# push.
+#
 # The cost, and why it is paid. A pre-push that runs the whole suite is slow
 # enough that contributors and agents bypass it with `--no-verify`, and a
 # hook that's bypassed isn't a gate. So what is here is not everything CI
@@ -42,6 +50,7 @@ pnpm build
 pnpm typecheck
 pnpm lint
 pnpm format:check
+pnpm test:offline-lane
 # The two guards that live outside the command anyone runs. The Swift FFI
 # crate is its own workspace, so `cargo test` in `core/` never reaches it and
 # a change to a shared error type compiles locally and fails on the pool;

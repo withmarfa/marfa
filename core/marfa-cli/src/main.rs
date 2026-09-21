@@ -324,6 +324,10 @@ struct UpdateArgs {
     /// version overwrites whatever it finds.
     #[arg(long)]
     version: Option<i64>,
+    /// The natural key to move the row to. The server refuses one another
+    /// item already holds, so a rename does not take a name off a note.
+    #[arg(long, value_name = "KEY")]
+    source_id: Option<String>,
 }
 
 #[derive(Debug, Args)]
@@ -594,6 +598,7 @@ fn run(cli: Cli) -> Result<(), CliError> {
                     let edit = Edit {
                         properties: properties(&args.properties)?,
                         base_version: args.version,
+                        source_id: args.source_id,
                     };
                     output::queued_one(&core.update_item(&args.id, &edit)?, json)
                 }
@@ -859,14 +864,21 @@ fn describe_pull(report: &marfa_core::PullReport) -> String {
 
 fn describe_scan(report: &marfa_core::ScanReport) -> String {
     format!(
-        "{} created, {} updated, {} renamed, {} unchanged, {} missing, {} deleted, {} skipped",
+        "{} created, {} updated, {} renamed, {} unchanged, {} missing, {} deleted, {} skipped{}",
         report.created,
         report.updated,
         report.renamed,
         report.unchanged,
         report.missing,
         report.deleted,
-        report.skipped
+        report.skipped,
+        // Named only when it happened, because it is rare and it is
+        // the write a line of the other seven does not account for.
+        if report.parked > 0 {
+            format!("; {} moved off a contested name and back", report.parked)
+        } else {
+            String::new()
+        }
     )
 }
 

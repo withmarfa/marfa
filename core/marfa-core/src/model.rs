@@ -331,6 +331,11 @@ impl Hydration {
 pub struct Edit {
     pub properties: Map<String, Value>,
     pub base_version: Option<i64>,
+    /// The natural key this row should be under, where the caller is
+    /// moving it (`folders.md` 23). Sent under the item's id and the
+    /// version it read, so a key another item holds is refused rather
+    /// than taken. Absent leaves the key alone.
+    pub source_id: Option<String>,
 }
 
 impl Edit {
@@ -345,6 +350,9 @@ impl Edit {
         let mut body = Map::new();
         body.insert("properties".into(), Value::Object(self.properties.clone()));
         body.insert("version".into(), Value::from(base_version));
+        if let Some(key) = &self.source_id {
+            body.insert("source_id".into(), Value::String(key.clone()));
+        }
         Ok(serde_json::to_string(&Value::Object(body))?)
     }
 }
