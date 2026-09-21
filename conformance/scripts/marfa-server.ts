@@ -244,8 +244,10 @@ export async function bootServer(args: BootOptions): Promise<void> {
     // The orphan sweep purges what an earlier run reported once this much
     // time has passed: zero, so a fixture can drive the report and the
     // purge as two runs through the housekeeping door. The sweep's own
-    // cadence stays a day, so the runs are the fixture's; replication's
-    // cadence is an hour for the same reason, so between an upload's own
+    // cadence stays a day, but its first run is thirty seconds after boot
+    // and a run is a run — so a fixture that reads the report has to expect
+    // one of its own rows to have been purged by the scheduler and ask
+    // again. Replication's cadence is an hour, so between an upload's own
     // wake and the fixture's runs nothing copies on a clock of its own.
     MARFA_BLOB_CLEANUP_GRACE_MS: "0",
     MARFA_BLOB_REPLICATE_INTERVAL_MS: "3600000",
@@ -345,11 +347,14 @@ export async function stopServer(args: BootOptions): Promise<void> {
  * env file and the log.
  *
  * **A stopped server's database outliving its bucket is a second store.**
- * `garage:down` destroys the bucket and `garage:up` makes a new one with a
- * new name, so a boot against a database that still carries the old store's
- * row attaches beside it and the copy rules then see three copies where the
- * chapter says two. That is what a second run of the suite hit, and it looks
- * like a flaky fixture rather than a stale file.
+ * A store's id comes from a marker the store itself holds rather than from
+ * the configuration that named it, as `spec/stores.md` says under the
+ * statements, so the bucket `garage:up` makes after a `garage:down` carries
+ * no marker and the boot against a database that still holds the old
+ * store's row mints a second id beside it. The old row is detached rather
+ * than removed and its location rows stay, so a deterministic blob
+ * re-uploaded into the new bucket reads as three copies where the chapter
+ * says two.
  *
  * Scoped to the four paths this script writes rather than to the directory,
  * because `garage/` sits inside it and belongs to a node that may still be

@@ -55,15 +55,23 @@ function statementNumbers(file: string): Set<number> {
 }
 
 /**
- * Every `<file>.md <N>` reference in `spec/`, with where it was written.
+ * A citation and every statement number it names.
  *
- * A citation names as many statements as it lists — "`items.md` 1, 2 and 3"
- * is three references, not one — and each is held to an existing statement.
- * Reading the first number alone would leave every number after it uncited
- * in a file whose numbering had moved, which is the whole failure this
- * check exists for. The pattern is the one the code check below uses, so
- * the chapters and the sources are read by the same rule.
+ * One expression for the chapters and for the sources, because a citation
+ * written in a chapter and the same citation written in a comment are the
+ * same claim and were read by two patterns that disagreed about how many
+ * numbers a citation has.
+ *
+ * A citation names as many statements as it lists, so "`items.md` 1, 2 and
+ * 3" is three references rather than one, and every number in the list is
+ * held to a statement that exists. A range is the exception it cannot
+ * cover: "17 to 23" yields 17 and 23, and what sits between them is
+ * whatever the writer meant.
  */
+const CITED_STATEMENTS =
+  /`([a-z][a-z-]*\.md)`\s+((?:\d+(?:\s*(?:,|and|to)\s*)?)+)/g;
+
+/** Every `<file>.md <N>` reference in `spec/`, with where it was written. */
 function statementCitations(): {
   spec: string;
   target: string;
@@ -73,9 +81,7 @@ function statementCitations(): {
   for (const name of readdirSync(specDir)) {
     if (!name.endsWith(".md")) continue;
     const text = readFileSync(resolve(specDir, name), "utf8");
-    for (const match of text.matchAll(
-      /`([a-z][a-z-]*\.md)`\s+((?:\d+(?:\s*(?:,|and|to)\s*)?)+)/g,
-    )) {
+    for (const match of text.matchAll(CITED_STATEMENTS)) {
       for (const raw of match[2].match(/\d+/g) ?? []) {
         out.push({ spec: name, target: match[1], entry: Number(raw) });
       }
@@ -189,9 +195,7 @@ describe("specification citations", () => {
     let counted = 0;
     for (const file of sources) {
       const text = readFileSync(file, "utf8");
-      // "`folders.md` 13", and the same with several numbers after it.
-      const pattern = /`([a-z-]+\.md)`\s+((?:\d+(?:\s*(?:,|and|to)\s*)?)+)/g;
-      for (const found of text.matchAll(pattern)) {
+      for (const found of text.matchAll(CITED_STATEMENTS)) {
         const target = found[1];
         if (!existsSync(resolve(specDir, target))) {
           dangling.push(`${file}: ${target} (no such chapter)`);
