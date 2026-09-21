@@ -162,7 +162,8 @@ export interface AppConfig {
    *  (24h); env override `MARFA_BLOB_CLEANUP_GRACE_MS`. */
   blobCleanupGraceMs?: number;
   /** The live copies a blob keeps at the least: a drop that would leave
-   *  fewer is refused. Default 1; env override `MARFA_BLOB_MIN_COPIES`. */
+   *  fewer is refused. A positive integer; default 1; env override
+   *  `MARFA_BLOB_MIN_COPIES`. */
   blobMinCopies?: number;
   /** Cadence (ms) for `blob-replicate`, which gives every attached store
    *  the copies its policy wants; an upload wakes it too. Default 60_000;
@@ -695,7 +696,13 @@ export function loadConfig(): AppConfig {
       process.env.MARFA_BLOB_CLEANUP_GRACE_MS,
       86_400_000,
     ),
-    blobMinCopies: envNumber(process.env.MARFA_BLOB_MIN_COPIES, 1),
+    // A positive integer, refused otherwise: a value that resolved to NaN
+    // would compare false against every count and let the last copy go.
+    blobMinCopies:
+      parsePositiveIntegerEnv(
+        process.env.MARFA_BLOB_MIN_COPIES,
+        "MARFA_BLOB_MIN_COPIES",
+      ) ?? 1,
     blobReplicateIntervalMs: envNumber(
       process.env.MARFA_BLOB_REPLICATE_INTERVAL_MS,
       60_000,

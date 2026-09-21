@@ -143,9 +143,40 @@ describe("BlobOrphanReporter.runOnce", () => {
   it("never purges what the same run reported, whatever the grace", async () => {
     ctx = await createTestContext();
     const orphan = await upload(ctx, "reported and purged are two runs");
-    const reporter = new BlobOrphanReporter(ctx.storage, ctx.blobs, 0);
+    const time = clock();
+    const reporter = new BlobOrphanReporter(
+      ctx.storage,
+      ctx.blobs,
+      0,
+      time.nowFn,
+    );
     expect(await reporter.runOnce()).toEqual({ reported: 1, purged: 0 });
     expect(await ctx.blobs.disk.has(orphan)).not.toBeNull();
+    // The witness: the next run, a millisecond later under the same zero
+    // grace, is the one that purges.
+    time.advance(1);
+    expect(await reporter.runOnce()).toEqual({ reported: 0, purged: 1 });
+    expect(await ctx.blobs.disk.has(orphan)).toBeNull();
+  });
+
+  it("counts a metadata extension naming a blob as a reference", async () => {
+    ctx = await createTestContext();
+    const orphan = await upload(ctx, "no extension names this");
+    const named = await upload(ctx, "an extension names this");
+    const created = await request(ctx.app, "POST", "/items", {
+      key: ctx.workingKey,
+      body: { type: "core.note", properties: { body: "carries a sidecar" } },
+    });
+    expect(created.status).toBe(201);
+    const { item } = (await created.json()) as { item: { id: string } };
+    await ctx.storage.metadata.setExtension(item.id, "user.files", {
+      attachment: named,
+    });
+
+    await reportThenPurge(ctx);
+
+    expect(await ctx.blobs.disk.has(orphan)).toBeNull();
+    expect(await ctx.blobs.disk.has(named)).not.toBeNull();
   });
 });
 
@@ -260,13 +291,28 @@ describe("what the report counts as a reference", () => {
     expect(await ctx.blobs.disk.has(data)).not.toBeNull();
   });
 
-  it("purges from every attached store, the log and the report", async () => {
+  it("purges the bytes, the log's rows and the report's row together", async () => {
     ctx = await createTestContext();
     const data = new TextEncoder().encode("rows go with the bytes");
     const hash = hashOf(data);
     expect(await upload(ctx, "rows go with the bytes")).toBe(hash);
     expect(await ctx.storage.blobs.listLocations(hash)).toHaveLength(1);
-    await reportThenPurge(ctx);
+    const time = clock();
+    const reporter = new BlobOrphanReporter(
+      ctx.storage,
+      ctx.blobs,
+      0,
+      time.nowFn,
+    );
+    await reporter.runOnce();
+    // Between the runs: reported, still located, still there.
+    expect((await ctx.storage.blobs.listOrphans()).map((r) => r.hash)).toEqual([
+      hash,
+    ]);
+    expect(await ctx.storage.blobs.listLocations(hash)).toHaveLength(1);
+    expect(await ctx.blobs.disk.has(hash)).not.toBeNull();
+    time.advance(1);
+    await reporter.runOnce();
     expect(await ctx.storage.blobs.listLocations(hash)).toHaveLength(0);
     expect(await ctx.storage.blobs.listOrphans()).toEqual([]);
     expect(await ctx.blobs.disk.has(hash)).toBeNull();

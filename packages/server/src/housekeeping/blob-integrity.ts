@@ -5,7 +5,7 @@ import { log } from "../middleware/logger.js";
 import { discardStruckCopy, type Stores } from "./blob-delete.js";
 
 export interface IntegrityBounds {
-  /** Most copies one run checks in each store. */
+  /** Most copies one run checks, over every store. */
   maxRows: number;
   /** Most bytes one run reads or asks about, over every store. */
   maxBytes: number;
@@ -18,14 +18,16 @@ export interface IntegrityResult {
 }
 
 /**
- * Every copy the log claims is checked on a schedule, store by store,
- * least recently checked first. A disk copy is re-hashed, which reads every
- * byte; an object store is asked for the object by name and size, since
- * its bytes were verified before they left and a fetch to re-hash them
- * would cost the transfer the direct link exists to avoid. A copy found
- * present and intact is stamped; one found missing or altered is struck
- * from the log with an error line and an audit row, and the caller wakes
- * replication to put it back from another store.
+ * Every copy the log claims is checked on a schedule, least recently
+ * checked first across every attached store, so a store with many copies
+ * cannot keep the run from ever reaching another. A disk copy is
+ * re-hashed, which reads every byte; an object store is asked for the
+ * object by name and size, since its bytes were verified before they left
+ * and a fetch to re-hash them would cost the transfer the direct link
+ * exists to avoid. A copy found present and intact is stamped; one found
+ * missing or altered is struck from the log with an error line and an
+ * audit row, and the caller wakes replication to put it back from another
+ * store.
  */
 export class BlobIntegrityChecker {
   constructor(
@@ -39,61 +41,66 @@ export class BlobIntegrityChecker {
     let verified = 0;
     let struck = 0;
     let bytes = 0;
-    for (const store of this.stores.stores) {
-      const rows = await this.storage.blobs.listToVerify(
-        store.id,
-        this.bounds.maxRows,
-      );
-      for (const row of rows) {
-        // A copy that would cross the byte bound still goes when it is the
-        // run's first, so one larger than the bound is checked, not skipped
-        // forever.
-        if (
-          verified + struck > 0 &&
-          bytes + row.size_bytes > this.bounds.maxBytes
-        ) {
-          return { verified, struck, bytes };
-        }
-        const intact =
-          store.kind === "disk"
-            ? await this.hashMatches(store, row.hash, row.size_bytes)
-            : (await store.has(row.hash))?.size_bytes === row.size_bytes;
-        bytes += row.size_bytes;
-        if (intact) {
-          await this.storage.blobs.markVerified(
-            row.hash,
-            store.id,
-            this.nowFn().toISOString(),
-          );
-          verified += 1;
-          continue;
-        }
-        await this.storage.blobs.removeLocation(row.hash, store.id);
-        struck += 1;
-        log("error", "blob.copy_struck", {
+    const attached = this.stores.stores.map((store) => store.id);
+    const rows = await this.storage.blobs.listToVerify(
+      attached,
+      this.bounds.maxRows,
+    );
+    for (const row of rows) {
+      const store = this.stores.byId(row.store_id);
+      if (!store) continue;
+      // A copy that would cross the byte bound still goes when it is the
+      // run's first, so one larger than the bound is checked, not skipped
+      // forever.
+      if (
+        verified + struck > 0 &&
+        bytes + row.size_bytes > this.bounds.maxBytes
+      ) {
+        break;
+      }
+      const intact =
+        store.kind === "disk"
+          ? await this.hashMatches(store, row.hash, row.size_bytes)
+          : (await store.has(row.hash))?.size_bytes === row.size_bytes;
+      bytes += row.size_bytes;
+      if (intact) {
+        await this.storage.blobs.markVerified(
+          row.hash,
+          store.id,
+          this.nowFn().toISOString(),
+        );
+        verified += 1;
+        continue;
+      }
+      // A row dropped by an operator between the listing and the check is
+      // not a strike: nothing was found wrong with a copy the log claims.
+      if (!(await this.storage.blobs.removeLocation(row.hash, store.id))) {
+        continue;
+      }
+      struck += 1;
+      log("error", "blob.copy_struck", {
+        hash: row.hash,
+        store_id: store.id,
+        kind: store.kind,
+      });
+      try {
+        await discardStruckCopy(store, row.hash);
+      } catch (err) {
+        // The row is gone either way; bytes that cannot be removed are
+        // logged, and the next check finds them again.
+        log("error", "blob.struck_copy_kept", {
           hash: row.hash,
           store_id: store.id,
-          kind: store.kind,
-        });
-        try {
-          await discardStruckCopy(store, row.hash);
-        } catch (err) {
-          // The row is gone either way; bytes that cannot be removed are
-          // logged, and the next check finds them again.
-          log("error", "blob.struck_copy_kept", {
-            hash: row.hash,
-            store_id: store.id,
-            error: err instanceof Error ? err.message : String(err),
-          });
-        }
-        await this.storage.audit.log({
-          action: "blob.copy_struck",
-          resource_type: "blob",
-          resource_id: row.hash,
-          client_ip: null,
-          details: { store_id: store.id, kind: store.kind },
+          error: err instanceof Error ? err.message : String(err),
         });
       }
+      await this.storage.audit.log({
+        action: "blob.copy_struck",
+        resource_type: "blob",
+        resource_id: row.hash,
+        client_ip: null,
+        details: { store_id: store.id, kind: store.kind },
+      });
     }
     return { verified, struck, bytes };
   }

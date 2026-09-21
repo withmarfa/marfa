@@ -271,10 +271,13 @@ export function registerHousekeepingJobs(
 
   // The copy rules (`conformance/spec/stores.md`). Replication gives every
   // attached store the copies its policy wants; an upload wakes it, and a
-  // run that could not finish its backlog wakes it again itself. The
-  // integrity check strikes a copy found missing or altered and wakes
-  // replication to put it back. Neither has an off switch: a store the
-  // configuration names is a store whose copies are kept.
+  // run that made progress on a backlog it could not finish wakes it
+  // again itself (one that copied nothing waits for its cadence, so a
+  // store that refuses every put is asked once a minute rather than once
+  // a second). The integrity check strikes a copy found missing or
+  // altered and wakes replication to put it back. Neither has an off
+  // switch: a store the configuration names is a store whose copies are
+  // kept.
   const replicator = new BlobReplicator(storage, blobs, {
     maxBlobs: config.blobReplicateBatch ?? 100,
     maxBytes: config.blobReplicateBatchBytes ?? 1024 * 1024 * 1024,
@@ -285,7 +288,9 @@ export function registerHousekeepingJobs(
     firstRunDelayMs: 15_000,
     run: async () => {
       const result = await replicator.runOnce();
-      if (result.remaining > 0) await housekeeping.wake("blob-replicate");
+      if (result.copied > 0 && result.remaining > 0) {
+        await housekeeping.wake("blob-replicate");
+      }
       return result;
     },
   });

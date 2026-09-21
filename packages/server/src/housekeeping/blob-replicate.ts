@@ -21,12 +21,14 @@ export interface ReplicationResult {
 }
 
 /**
- * The policy made true: every attached store with the policy `all` gets a
- * copy of every blob some other attached store holds. One sweep in both
- * directions, disk to bucket on an ordinary instance and bucket to disk
- * after a restore, because the log does not care which kind holds a copy.
- * A location is recorded only after the target's `put` has verified that
- * the bytes hash to their name.
+ * The policy made true: every attached store gets a copy of every blob some
+ * other attached store holds. The column that would say which store wants
+ * less is not consulted, because `all` is the one policy this build
+ * defines and every row carries it. One sweep in both directions, disk to
+ * bucket on an ordinary instance and bucket to disk after a restore,
+ * because the log does not care which kind holds a copy. A location is
+ * recorded only after the target's `put` has verified that the bytes hash
+ * to their name.
  */
 export class BlobReplicator {
   constructor(

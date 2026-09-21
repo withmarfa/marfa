@@ -108,7 +108,7 @@ describe("BlobReplicator.runOnce", () => {
     ).toEqual([ctx.blobs.disk.id, second.id].sort());
   });
 
-  it("stops at its bounds and says how many remain, so the caller wakes it again", async () => {
+  it("stops at its bounds and says how many remain", async () => {
     ctx = await createTestContext();
     const { stores, second } = await withSecondStore(ctx);
     const hashes = [];

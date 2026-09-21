@@ -78,6 +78,10 @@ describe("purgeBlob", () => {
       stream: Readable.from([Buffer.from(content)]),
       size_bytes: content.length,
     });
+    expect(await ctx.blobs.disk.has(hash)).not.toBeNull();
+    expect(await second.has(hash)).not.toBeNull();
+    expect(await ctx.storage.blobs.get(hash)).not.toBeNull();
+    expect(await ctx.storage.blobs.listLocations(hash)).toHaveLength(1);
     await purgeBlob(ctx.storage, stores, hash);
     expect(await ctx.blobs.disk.has(hash)).toBeNull();
     expect(await second.has(hash)).toBeNull();

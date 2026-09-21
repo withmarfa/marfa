@@ -11,6 +11,7 @@ import {
   sql,
 } from "drizzle-orm";
 import type {
+  BlobCopyRef,
   BlobLocation,
   BlobOrphanRow,
   BlobRegistry,
@@ -218,23 +219,71 @@ export class SqliteBlobRegistry implements BlobRegistry {
     return row?.count ?? 0;
   }
 
-  async listToVerify(storeId: string, limit: number): Promise<BlobSizedRef[]> {
+  async listToVerify(
+    storeIds: readonly string[],
+    limit: number,
+  ): Promise<BlobCopyRef[]> {
+    if (storeIds.length === 0) return [];
     return (
       this.db
-        .select({ hash: blobLocations.hash, size_bytes: blobs.size_bytes })
+        .select({
+          hash: blobLocations.hash,
+          store_id: blobLocations.store_id,
+          size_bytes: blobs.size_bytes,
+        })
         .from(blobLocations)
         .innerJoin(blobs, eq(blobLocations.hash, blobs.hash))
-        .where(eq(blobLocations.store_id, storeId))
+        .where(inArray(blobLocations.store_id, [...storeIds]))
         // Never checked first (a null sorts before any stamp), then the least
-        // recently checked.
+        // recently checked, whichever store holds it.
         .orderBy(
           sql`${blobLocations.verified_at} IS NOT NULL`,
           asc(blobLocations.verified_at),
           asc(blobLocations.hash),
+          asc(blobLocations.store_id),
         )
         .limit(limit)
         .all()
     );
+  }
+
+  async dropLocationKeeping(
+    hash: string,
+    storeId: string,
+    minCopies: number,
+  ): Promise<"dropped" | "below_minimum" | "absent"> {
+    // The count of live copies is taken inside the DELETE's own predicate,
+    // so the row goes only if the minimum holds at the moment it goes.
+    const live = this.db
+      .select({ count: sql`count(*)` })
+      .from(blobLocations)
+      .innerJoin(blobStores, eq(blobLocations.store_id, blobStores.id))
+      .where(and(eq(blobLocations.hash, hash), isNull(blobStores.detached_at)));
+    const rows = await this.db
+      .delete(blobLocations)
+      .where(
+        and(
+          eq(blobLocations.hash, hash),
+          eq(blobLocations.store_id, storeId),
+          sql`(${live}) - 1 >= ${minCopies}`,
+        ),
+      )
+      .returning({ hash: blobLocations.hash })
+      .all();
+    if (rows.length > 0) return "dropped";
+    const held = await this.db
+      .select({ hash: blobLocations.hash })
+      .from(blobLocations)
+      .innerJoin(blobStores, eq(blobLocations.store_id, blobStores.id))
+      .where(
+        and(
+          eq(blobLocations.hash, hash),
+          eq(blobLocations.store_id, storeId),
+          isNull(blobStores.detached_at),
+        ),
+      )
+      .get();
+    return held ? "below_minimum" : "absent";
   }
 
   async retainOrphans(hashes: readonly string[], at: string): Promise<number> {

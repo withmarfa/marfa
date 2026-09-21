@@ -1,12 +1,21 @@
 import type { BlobStore } from "../storage/blob-store.js";
 import type { Storage } from "../storage/interface.js";
+import { withBlobUploadLock } from "../storage/blob-upload-lock.js";
 
 /**
- * The one place bytes leave a store. Every deletion reads the location log
- * first, because the copy rules are written over the log: a drop counts
- * the live copies that would remain, and a purge takes a blob to zero only
- * because the orphan report named it on an earlier run. No other module
- * calls a store's `delete`.
+ * Where bytes leave a store once a row has named them. The copy rules are
+ * written over the location log, and every deletion here answers to it: a
+ * drop goes only if the log's count of live copies allows it, decided in
+ * the one statement that removes the row; a purge takes a blob to zero
+ * only because the orphan report named it on an earlier run; a strike's
+ * second half discards bytes the check has just struck from the log. Each
+ * runs under the per-hash lock the upload takes, so an upload's own
+ * check-and-record cannot interleave with it.
+ *
+ * Two other paths call a store's `delete`, and neither is a deletion in
+ * this sense: the upload door and the archive door each take back bytes
+ * this request wrote when the row that would have named them was refused,
+ * under the same lock and before any row exists.
  */
 export interface Stores {
   readonly stores: readonly BlobStore[];
@@ -50,17 +59,22 @@ export async function dropBlobCopy(
   minCopies: number,
 ): Promise<void> {
   const store = stores.byId(storeId);
-  const locations = await storage.blobs.listLocations(hash);
-  const held = locations.some(
-    (location) => location.store_id === storeId && !location.detached,
-  );
-  if (!store || !held) throw new LocationNotFound(hash, storeId);
-  const live = locations.filter((location) => !location.detached).length;
-  if (live - 1 < minCopies) {
-    throw new CopiesBelowMinimum(hash, live, minCopies);
-  }
-  await storage.blobs.removeLocation(hash, storeId);
-  await store.delete(hash);
+  if (!store) throw new LocationNotFound(hash, storeId);
+  await withBlobUploadLock(hash, async () => {
+    const outcome = await storage.blobs.dropLocationKeeping(
+      hash,
+      storeId,
+      minCopies,
+    );
+    if (outcome === "absent") throw new LocationNotFound(hash, storeId);
+    if (outcome === "below_minimum") {
+      const live = (await storage.blobs.listLocations(hash)).filter(
+        (location) => !location.detached,
+      ).length;
+      throw new CopiesBelowMinimum(hash, live, minCopies);
+    }
+    await store.delete(hash);
+  });
 }
 
 /**
@@ -74,10 +88,12 @@ export async function purgeBlob(
   stores: Stores,
   hash: string,
 ): Promise<void> {
-  for (const store of stores.stores) {
-    await store.delete(hash);
-  }
-  await storage.blobs.remove(hash);
+  await withBlobUploadLock(hash, async () => {
+    for (const store of stores.stores) {
+      await store.delete(hash);
+    }
+    await storage.blobs.remove(hash);
+  });
 }
 
 /**

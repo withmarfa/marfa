@@ -66,7 +66,13 @@ Enrichment rewrites file items in the background, which would make
 exact-property assertions on blobs depend on timing. Rate limiting is off so
 that a run's own key minting and revocation, one of each per file, cannot meet
 the one fixed limit the server has — `/keys`, in `packages/server/src/app.ts`.
-Nothing in the fixtures asserts either.
+Nothing in the fixtures asserts either. Two of the copy rules' settings are
+set for the fixtures that drive them through the housekeeping door: the
+orphan sweep's grace is zero, so the run after a report purges, and
+replication's cadence is an hour, so nothing copies on a clock of its own
+between an upload's wake and the fixture's runs. The env file also carries
+`MARFA_BLOB_PATH`, the booted server's disk store, for the fixture that
+corrupts a copy under it.
 
 ## Configuration
 

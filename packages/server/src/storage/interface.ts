@@ -1171,6 +1171,17 @@ export interface BlobRegistry {
   listLocations(hash: string): Promise<BlobLocation[]>;
   /** Strike one store's copy from the log. True when a row went. */
   removeLocation(hash: string, storeId: string): Promise<boolean>;
+  /**
+   * Remove one store's copy from the log only if at least `minCopies`
+   * copies in attached stores would remain, decided in the one statement
+   * so no second writer can slip between the count and the removal.
+   * `"dropped"`, `"below_minimum"`, or `"absent"` when no such row exists.
+   */
+  dropLocationKeeping(
+    hash: string,
+    storeId: string,
+    minCopies: number,
+  ): Promise<"dropped" | "below_minimum" | "absent">;
   /** Stamp a copy the integrity check found present and intact. */
   markVerified(hash: string, storeId: string, at: string): Promise<void>;
   /**
@@ -1181,10 +1192,13 @@ export interface BlobRegistry {
   /** How many blobs `storeId` lacks that some other attached store holds. */
   countMissingFrom(storeId: string): Promise<number>;
   /**
-   * The copies in `storeId` a check should look at next: never checked
-   * first, then the least recently checked, at most `limit`.
+   * The copies a check should look at next, across `storeIds`: never
+   * checked first, then the least recently checked, at most `limit`.
    */
-  listToVerify(storeId: string, limit: number): Promise<BlobSizedRef[]>;
+  listToVerify(
+    storeIds: readonly string[],
+    limit: number,
+  ): Promise<BlobCopyRef[]>;
 
   /**
    * Make the orphan report say exactly `hashes`: a hash already reported
@@ -1207,6 +1221,11 @@ export interface BlobRegistry {
 export interface BlobSizedRef {
   hash: string;
   size_bytes: number;
+}
+
+/** One copy: a blob and the store the log says holds it. */
+export interface BlobCopyRef extends BlobSizedRef {
+  store_id: string;
 }
 
 /** One row of the orphan report: a blob nothing references, and when a run

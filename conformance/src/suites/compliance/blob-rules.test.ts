@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { createHash } from "node:crypto";
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { MarfaClient } from "../../client/api.js";
 import type { TestContext } from "../../client/types.js";
@@ -29,12 +29,25 @@ function bootEnv(name: "MARFA_API_URL" | "MARFA_BLOB_PATH" | "S3_ENDPOINT") {
   return value;
 }
 
-/** Runs a housekeeping job through its door and answers the run's result. */
+/**
+ * Runs a housekeeping job through its door and answers the run's result.
+ * The server this fixture shares runs the same jobs on its own schedule,
+ * and an upload wakes replication, so a run asked for while the scheduler
+ * holds the name answers 409; the in-flight run is the same work, and the
+ * ask is repeated once it has finished.
+ */
 async function run<T>(name: string): Promise<T> {
-  const res = await operator.runHousekeeping(name);
-  expect(res.status, `${name}: ${JSON.stringify(res.error)}`).toBe(200);
-  expect(res.data.outcome, res.data.error ?? "").toBe("ok");
-  return res.data.result as T;
+  for (let i = 0; i < 50; i++) {
+    const res = await operator.runHousekeeping(name);
+    if (res.status === 409) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      continue;
+    }
+    expect(res.status, `${name}: ${JSON.stringify(res.error)}`).toBe(200);
+    expect(res.data.outcome, res.data.error ?? "").toBe("ok");
+    return res.data.result as T;
+  }
+  throw new Error(`${name} was held by a run for five seconds`);
 }
 
 /** Replicates until no store lacks a blob, bounded so a sweep that never
@@ -48,8 +61,8 @@ async function replicateToZero(): Promise<void> {
 }
 
 /** Checks until the predicate holds of the blob's locations, bounded the
- *  same way: one run checks a bounded batch, and the run's store may not
- *  be the one this blob's copy sits in. */
+ *  same way: one run checks a bounded batch, least recently checked first,
+ *  and this blob's copies may not be in it. */
 async function checkUntil(
   hash: string,
   done: (locations: LocationRow[]) => boolean,
@@ -80,15 +93,21 @@ function sha256(bytes: Uint8Array): string {
 }
 
 /** Where the referee's own server keeps a disk copy: the store the run
- *  booted, under two directory levels of the hex. */
+ *  booted, in a directory named by the hex's first four characters. */
 function diskPathFor(hash: string): string {
   const hex = hash.slice("sha256:".length);
   return join(bootEnv("MARFA_BLOB_PATH"), hex.slice(0, 4), hex);
 }
 
-async function uploadText(text: string) {
+/** This run's own bytes, so a state directory reused across runs holds no
+ *  earlier copy, row or audit entry for them. */
+function text(words: string): string {
+  return `${words} ${ctx.runId}`;
+}
+
+async function uploadText(words: string) {
   const upload = await client.uploadBlob(
-    new TextEncoder().encode(text),
+    new TextEncoder().encode(text(words)),
     "text/plain",
   );
   expect(upload.ok, JSON.stringify(upload.error)).toBe(true);
@@ -110,43 +129,59 @@ describe("the rules that keep a blob's bytes", () => {
     for (const word of ["one", "two", "three"]) {
       hashes.push(await uploadText(`replicated ${word}`));
     }
-    // Before replication: one location, the disk, and a link the instance
-    // serves. The witness for what changes below.
-    const first = hashes[0]!;
-    expect(kinds((await client.listBlobLocations(first)).data.data)).toEqual([
-      "disk",
-    ]);
-    const before = await client.getBlobUrl(first);
-    expect(before.status).toBe(200);
-    expect(new URL(before.data.url).host).toBe(
-      new URL(bootEnv("MARFA_API_URL")).host,
-    );
-
-    await replicateToZero();
+    // A run answers what it did, and the last one has nothing left.
+    let result = { copied: -1, bytes: -1, remaining: -1 };
+    for (let i = 0; i < 20 && result.remaining !== 0; i++) {
+      result = await run<{ copied: number; bytes: number; remaining: number }>(
+        "blob-replicate",
+      );
+      expect(result.copied).toBeGreaterThanOrEqual(0);
+      expect(result.bytes).toBeGreaterThanOrEqual(0);
+    }
+    expect(result.remaining).toBe(0);
 
     const stores = await operator.listBlobStores();
-    const s3 = stores.data.data.find((store) => store.kind === "s3");
+    const s3 = stores.data.data.find((store) => store.kind === "s3")!;
     for (const hash of hashes) {
       const locations = (await client.listBlobLocations(hash)).data.data;
       expect(kinds(locations)).toEqual(["disk", "s3"]);
       const copy = locations.find((location) => location.kind === "s3");
-      expect(copy?.store_id).toBe(s3?.id);
+      expect(copy?.store_id).toBe(s3.id);
       expect(Date.parse(copy?.recorded_at ?? "")).not.toBeNaN();
     }
-    // The link is the object store's own now: its host is the store's, not
-    // the instance's, and it still fetches the bytes with no credential.
+    // The link is the object store's own: its host is the store's, not the
+    // instance's, and it fetches the bytes with no credential.
+    const first = hashes[0]!;
     const link = await client.getBlobUrl(first);
     expect(link.status).toBe(200);
-    expect(new URL(link.data.url).host).not.toBe(
-      new URL(bootEnv("MARFA_API_URL")).host,
-    );
     expect(new URL(link.data.url).host).toBe(
       new URL(bootEnv("S3_ENDPOINT")).host,
     );
     const fetched = await fetch(link.data.url);
     expect(fetched.status).toBe(200);
     expect(new Uint8Array(await fetched.arrayBuffer())).toEqual(
-      new TextEncoder().encode("replicated one"),
+      new TextEncoder().encode(text("replicated one")),
+    );
+    // The witness for the preference: with the object store's copy dropped
+    // the link is the instance's own again (its host the instance's, and
+    // it still fetches), and replication makes it the store's once more.
+    // Through the drop door rather than the instant after an upload,
+    // because the server's own scheduler replicates an upload within a
+    // second of it.
+    expect((await operator.dropBlobLocation(first, s3.id)).status).toBe(200);
+    const served = await client.getBlobUrl(first);
+    expect(served.status).toBe(200);
+    expect(new URL(served.data.url).host).toBe(
+      new URL(bootEnv("MARFA_API_URL")).host,
+    );
+    const fetchedFromInstance = await fetch(served.data.url);
+    expect(fetchedFromInstance.status).toBe(200);
+    expect(new Uint8Array(await fetchedFromInstance.arrayBuffer())).toEqual(
+      new TextEncoder().encode(text("replicated one")),
+    );
+    await replicateToZero();
+    expect(new URL((await client.getBlobUrl(first)).data.url).host).toBe(
+      new URL(bootEnv("S3_ENDPOINT")).host,
     );
   });
 
@@ -193,49 +228,73 @@ describe("the rules that keep a blob's bytes", () => {
     ]);
     expect((await client.downloadBlob(hash)).status).toBe(200);
 
-    // A store that no longer holds a copy, and a working key.
+    // A store that no longer holds a copy, one that is not attached, and a
+    // working key.
     const nowhere = await operator.dropBlobLocation(hash, s3.id);
     expect(nowhere.status).toBe(404);
     expect(nowhere.error?.error.code).toBe("blob_location_not_found");
+    const unattached = await operator.dropBlobLocation(hash, "no-such-store");
+    expect(unattached.status).toBe(404);
+    expect(unattached.error?.error.code).toBe("blob_location_not_found");
     const working = await client.dropBlobLocation(hash, disk.id);
     expect(working.status).toBe(403);
     expect(working.error?.error.code).toBe("forbidden");
   });
 
   it("stamps a good copy and strikes a corrupt one, which replication then restores", async () => {
-    const content = "checked, corrupted, restored";
-    const hash = await uploadText(content);
+    const content = text("checked, corrupted, restored");
+    const hash = await uploadText("checked, corrupted, restored");
+    const missing = await uploadText("checked, removed, restored");
     await replicateToZero();
-    // A check over a sound pair stamps both and strikes neither.
-    const stamped = await checkUntil(
-      hash,
-      (locations) =>
-        locations.length === 2 &&
-        locations.every((location) => location.verified_at !== null),
-    );
-    expect(kinds(stamped)).toEqual(["disk", "s3"]);
+    // A check over sound pairs stamps every copy and strikes none.
+    for (const each of [hash, missing]) {
+      const stamped = await checkUntil(
+        each,
+        (locations) =>
+          locations.length === 2 &&
+          locations.every((location) => location.verified_at !== null),
+      );
+      expect(kinds(stamped)).toEqual(["disk", "s3"]);
+    }
+    const before = await client.listAudit({
+      action: "blob.copy_struck",
+      resource_id: hash,
+    });
+    expect(before.data.data).toHaveLength(0);
 
-    // The disk copy overwritten under the referee's own server: the check
-    // strikes it, replication brings the right bytes back from the object
-    // store, and the download reads them.
-    writeFileSync(diskPathFor(hash), "not the bytes");
-    const struck = await checkUntil(
-      hash,
-      (locations) => !locations.some((location) => location.kind === "disk"),
-    );
-    expect(kinds(struck)).toEqual(["s3"]);
+    // The disk copy overwritten under the referee's own server, at its own
+    // length so only the digest can tell, and another's removed: the check
+    // strikes both with an audit row each, replication brings the right
+    // bytes back from the object store, and the download reads them.
+    writeFileSync(diskPathFor(hash), content.replace("corrupted", "CORRUPTED"));
+    unlinkSync(diskPathFor(missing));
+    for (const each of [hash, missing]) {
+      const struck = await checkUntil(
+        each,
+        (locations) => !locations.some((location) => location.kind === "disk"),
+      );
+      expect(kinds(struck)).toEqual(["s3"]);
+      const audited = await client.listAudit({
+        action: "blob.copy_struck",
+        resource_id: each,
+      });
+      expect(audited.status).toBe(200);
+      expect(audited.data.data).toHaveLength(1);
+    }
 
     await replicateToZero();
-    expect(kinds((await client.listBlobLocations(hash)).data.data)).toEqual([
-      "disk",
-      "s3",
-    ]);
+    for (const each of [hash, missing]) {
+      expect(kinds((await client.listBlobLocations(each)).data.data)).toEqual([
+        "disk",
+        "s3",
+      ]);
+      expect(sha256(readFileSync(diskPathFor(each)))).toBe(each);
+    }
     const download = await client.downloadBlob(hash);
     expect(download.status).toBe(200);
     expect(new Uint8Array(download.data)).toEqual(
       new TextEncoder().encode(content),
     );
-    expect(sha256(readFileSync(diskPathFor(hash)))).toBe(hash);
   });
 
   it("reports an unreferenced blob on one run and purges it on the next, never one an item names", async () => {
@@ -258,7 +317,7 @@ describe("the rules that keep a blob's bytes", () => {
     expect(reported).not.toContain(kept);
     expect(report.data.data.find((row) => row.hash === orphan)).toMatchObject({
       mime_type: "text/plain",
-      size_bytes: "nothing names me".length,
+      size_bytes: text("nothing names me").length,
     });
     // Reported is not deleted: the bytes still answer.
     expect((await client.downloadBlob(orphan)).status).toBe(200);

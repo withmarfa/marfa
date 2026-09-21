@@ -231,8 +231,11 @@ async function up(args: Args): Promise<void> {
     // The orphan sweep purges what an earlier run reported once this much
     // time has passed: zero, so a fixture can drive the report and the
     // purge as two runs through the housekeeping door. The sweep's own
-    // cadence stays a day, so the runs are the fixture's.
+    // cadence stays a day, so the runs are the fixture's; replication's
+    // cadence is an hour for the same reason, so between an upload's own
+    // wake and the fixture's runs nothing copies on a clock of its own.
     MARFA_BLOB_CLEANUP_GRACE_MS: "0",
+    MARFA_BLOB_REPLICATE_INTERVAL_MS: "3600000",
     // The suite mints and revokes a key per file through /keys, whose fixed
     // limit of 200 requests a minute per credential a local run exceeds.
     RATE_LIMIT_ENABLED: "false",
