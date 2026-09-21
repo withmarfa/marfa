@@ -23,8 +23,8 @@ describe("resolveRequestId", () => {
   });
 
   it("passes through a client-provided UUIDv7 verbatim", () => {
-    // Matches the shape stamped by the Swift SDK's URLSessionTransport
-    // (UUIDv7.generateString()).
+    // A UUIDv7, which is the shape this server mints when a client sends
+    // none, so a client stamping its own is indistinguishable downstream.
     const clientId = "019d1234-5678-7abc-8def-1234567890ab";
     expect(resolveRequestId(clientId)).toBe(clientId);
   });
@@ -72,27 +72,57 @@ describe("resolveRequestId", () => {
 /**
  * The shape Node raises when every address a hostname resolves to refuses
  * the connection: an AggregateError with an empty own message, all the
- * detail hanging off `errors`.
+ * detail hanging off `errors`. An outbound webhook to a host that is not
+ * listening is the path here that reaches it.
  */
 function connectionRefused(): AggregateError {
   const mk = (address: string): Error =>
-    Object.assign(new Error(`connect ECONNREFUSED ${address}:5432`), {
+    Object.assign(new Error(`connect ECONNREFUSED ${address}:9099`), {
       code: "ECONNREFUSED",
       errno: -61,
       syscall: "connect",
       address,
-      port: 5432,
+      port: 9099,
     });
   return new AggregateError([mk("::1"), mk("127.0.0.1")], "");
 }
 
-/** A database error carrying an SQLSTATE: 55P03 is lock_not_available. */
-function lockNotAvailable(): Error {
-  return Object.assign(new Error("canceling statement due to lock timeout"), {
-    code: "55P03",
-    severity: "ERROR",
-    routine: "ProcessInterrupts",
+/**
+ * What libsql raises when a second connection meets a held write lock.
+ *
+ * The field names and values are the driver's, taken from a real
+ * `@libsql/client` failure rather than written from memory: the wrapper
+ * carries `code`, `extendedCode` and `rawCode`, and the `SqliteError` it
+ * wraps carries the bare message under `cause`.
+ */
+function databaseLocked(): Error {
+  return Object.assign(new Error("SQLITE_BUSY: database is locked"), {
+    name: "LibsqlError",
+    code: "SQLITE_BUSY",
+    extendedCode: "SQLITE_BUSY",
+    rawCode: 5,
+    cause: Object.assign(new Error("database is locked"), {
+      code: "SQLITE_BUSY",
+      rawCode: 5,
+    }),
   });
+}
+
+/**
+ * A constraint failure, which is the case `extendedCode` exists for: every
+ * one of them answers `SQLITE_CONSTRAINT` on `code`, and only the extended
+ * code says which constraint.
+ */
+function uniqueViolation(): Error {
+  return Object.assign(
+    new Error("SQLITE_CONSTRAINT: UNIQUE constraint failed: items.id"),
+    {
+      name: "LibsqlError",
+      code: "SQLITE_CONSTRAINT",
+      extendedCode: "SQLITE_CONSTRAINT_PRIMARYKEY",
+      rawCode: 1555,
+    },
+  );
 }
 
 describe("formatErrorSummary", () => {
@@ -106,23 +136,23 @@ describe("formatErrorSummary", () => {
     const summary = formatErrorSummary(connectionRefused());
     // The regression: a naive `err.message` read produced "" for exactly this.
     expect(summary).toContain("ECONNREFUSED");
-    expect(summary).toContain("5432");
+    expect(summary).toContain("9099");
   });
 
-  it("keeps the SQLSTATE code on a lock failure", () => {
-    const summary = formatErrorSummary(lockNotAvailable());
-    expect(summary).toContain("lock timeout");
-    expect(summary).toContain("55P03");
+  it("keeps the driver's code on a lock failure", () => {
+    const summary = formatErrorSummary(databaseLocked());
+    expect(summary).toContain("database is locked");
+    expect(summary).toContain("SQLITE_BUSY");
   });
 
   it("walks the cause chain", () => {
     const err = new Error("storage init failed", {
-      cause: new Error("pool acquire failed", { cause: lockNotAvailable() }),
+      cause: new Error("write transaction failed", { cause: databaseLocked() }),
     });
     const summary = formatErrorSummary(err);
     expect(summary).toContain("storage init failed");
-    expect(summary).toContain("pool acquire failed");
-    expect(summary).toContain("55P03");
+    expect(summary).toContain("write transaction failed");
+    expect(summary).toContain("SQLITE_BUSY");
   });
 
   it("terminates on a self-referential cause chain", () => {
@@ -155,15 +185,24 @@ describe("serializeError", () => {
     expect(out.errors[0]).toMatchObject({
       code: "ECONNREFUSED",
       address: "::1",
-      port: 5432,
+      port: 9099,
     });
   });
 
   it("keeps the driver's diagnostic fields", () => {
-    const out = serializeError(lockNotAvailable()) as Record<string, unknown>;
-    expect(out.code).toBe("55P03");
-    expect(out.severity).toBe("ERROR");
-    expect(out.routine).toBe("ProcessInterrupts");
+    const out = serializeError(databaseLocked()) as Record<string, unknown>;
+    expect(out.code).toBe("SQLITE_BUSY");
+    expect(out.rawCode).toBe(5);
+  });
+
+  // The pair `code` alone cannot tell apart. Every constraint failure the
+  // driver raises answers `SQLITE_CONSTRAINT`, so a log line carrying only
+  // that says a write was refused and not what refused it.
+  it("keeps the extended code that separates one constraint from another", () => {
+    const out = serializeError(uniqueViolation()) as Record<string, unknown>;
+    expect(out.code).toBe("SQLITE_CONSTRAINT");
+    expect(out.extendedCode).toBe("SQLITE_CONSTRAINT_PRIMARYKEY");
+    expect(out.rawCode).toBe(1555);
   });
 
   it("nests the cause chain", () => {
@@ -192,13 +231,12 @@ describe("serializeError", () => {
 // ---------------------------------------------------------------------------
 
 /**
- * `JSON.stringify` renders an `Error` as `{}` — its message, name, and
- * SQLSTATE all live on non-enumerable properties. The Better Auth logger
- * bridge hands `log()` a payload shaped `{ args: [Error] }`, so a database
- * permission failure reached the log line as `{"args":[{}]}` and the absence
- * of "permission denied" in the logs was then read as evidence that no
- * permission error was occurring. Anything Error-shaped in a logged payload
- * has to survive the trip.
+ * `JSON.stringify` renders an `Error` as `{}` — its message, its name and
+ * the driver's code all live on non-enumerable properties. The Better Auth
+ * logger bridge hands `log()` a payload shaped `{ args: [Error] }`, so a
+ * failed query reaches the log line as `{"args":[{}]}`, and an absence in
+ * the logs then reads as evidence that nothing is failing. Anything
+ * Error-shaped in a logged payload has to survive the trip.
  */
 describe("the OpenTelemetry mirror", () => {
   // **The one line whose message is a credential must not be exported.** The
@@ -263,47 +301,53 @@ describe("log payload serialization", () => {
     return JSON.parse(written.join("")) as Record<string, unknown>;
   }
 
-  /** Shape of a database privilege error, SQLSTATE and all. */
-  function permissionDenied(): Error {
+  /**
+   * What Better Auth's queries meet when the schema behind them has not
+   * landed: libsql's `SQLITE_ERROR`, naming the table it could not find.
+   */
+  function noSuchTable(): Error {
     return Object.assign(
-      new Error("permission denied for table auth_session"),
-      { code: "42501", severity: "ERROR", routine: "aclcheck_error" },
+      new Error("SQLITE_ERROR: no such table: auth_session"),
+      {
+        name: "LibsqlError",
+        code: "SQLITE_ERROR",
+        extendedCode: "SQLITE_ERROR",
+        rawCode: 1,
+      },
     );
   }
 
   it("preserves an error nested inside an array, as Better Auth passes it", () => {
     const entry = captureLog("error", "Better Auth: INTERNAL_SERVER_ERROR", {
-      args: [permissionDenied()],
+      args: [noSuchTable()],
     });
     const args = entry.args as Record<string, unknown>[];
-    expect(args[0]?.message).toBe("permission denied for table auth_session");
-    expect(args[0]?.code).toBe("42501");
+    expect(args[0]?.message).toBe("SQLITE_ERROR: no such table: auth_session");
+    expect(args[0]?.code).toBe("SQLITE_ERROR");
   });
 
-  it("adds a one-line error summary carrying the message and SQLSTATE", () => {
+  it("adds a one-line error summary carrying the message and the code", () => {
     const entry = captureLog("error", "Better Auth: INTERNAL_SERVER_ERROR", {
-      args: [permissionDenied()],
+      args: [noSuchTable()],
     });
-    expect(entry.error_summary).toContain(
-      "permission denied for table auth_session",
-    );
-    expect(entry.error_summary).toContain("42501");
+    expect(entry.error_summary).toContain("no such table: auth_session");
+    expect(entry.error_summary).toContain("SQLITE_ERROR");
   });
 
   it("preserves an error passed directly and one nested in an object", () => {
-    const direct = captureLog("error", "boom", { error: permissionDenied() });
+    const direct = captureLog("error", "boom", { error: noSuchTable() });
     const error = direct.error as Record<string, unknown>;
-    expect(error.message).toBe("permission denied for table auth_session");
-    expect(error.code).toBe("42501");
+    expect(error.message).toBe("SQLITE_ERROR: no such table: auth_session");
+    expect(error.code).toBe("SQLITE_ERROR");
 
     const nested = captureLog("error", "boom", {
-      context: { cause: permissionDenied() },
+      context: { cause: noSuchTable() },
     });
     const context = nested.context as Record<string, Record<string, unknown>>;
     expect(context.cause?.message).toBe(
-      "permission denied for table auth_session",
+      "SQLITE_ERROR: no such table: auth_session",
     );
-    expect(context.cause?.code).toBe("42501");
+    expect(context.cause?.code).toBe("SQLITE_ERROR");
   });
 
   it("leaves ordinary payload values untouched", () => {
@@ -324,7 +368,7 @@ describe("log payload serialization", () => {
 
   it("does not overwrite an error_summary the caller supplied itself", () => {
     const entry = captureLog("error", "boom", {
-      error: permissionDenied(),
+      error: noSuchTable(),
       error_summary: "caller's own summary",
     });
     expect(entry.error_summary).toBe("caller's own summary");
