@@ -17,7 +17,6 @@ import type { Storage } from "./storage/interface.js";
 import type { BlobLayer } from "./storage/blob-layer.js";
 import type { MarfaAuth } from "./auth/instance.js";
 import { createMarfaAuth } from "./auth/instance.js";
-import type { OidcSigner } from "./auth/oidc-signing.js";
 import { itemRoutes } from "./routes/items.js";
 import { oauthProtectedResourceRoutes } from "./routes/oauth-protected-resource.js";
 import { bulkRoutes } from "./routes/bulk.js";
@@ -89,7 +88,6 @@ export function createApp(
    * it, and the server's boot is what calls that.
    */
   instanceId: string,
-  oidcSigner?: OidcSigner,
 ) {
   // The empty string is the one wrong value the type cannot refuse, and it
   // is what a caller reaching for a field that is not there hands over. An
@@ -546,7 +544,7 @@ export function createApp(
   // served exactly when that surface is.
   if (auth) app.route("/owner", ownerRoutes(storage, auth));
   app.route("/export", exportRoutes(storage, blobs, instanceId));
-  app.route("/auth", authRoutes(storage, auth, oidcSigner));
+  app.route("/auth", authRoutes(storage, auth));
   // `/auth/authorize` consent page (the @better-auth/oauth-provider plugin's
   // `consentPage` redirect target). Mounted BEFORE the better-auth catch-all
   // so this explicit GET handler wins over the plugin's own endpoints under

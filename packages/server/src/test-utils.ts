@@ -3,7 +3,6 @@ import type { CreateKeyInput } from "@withmarfa/shared";
 import { createApp } from "./app.js";
 import { ensureInstanceId } from "./storage/instance-id.js";
 import { consentLockDepth } from "./auth/consent-lock.js";
-import { OidcSigner } from "./auth/oidc-signing.js";
 import type { AppConfig } from "./config.js";
 import type { MarfaAuth } from "./auth/instance.js";
 import { createSqliteStorage } from "./storage/sqlite/index.js";
@@ -457,14 +456,12 @@ async function buildUnbootstrappedApp(
   const housekeeping = new Housekeeping(storage.housekeeping, {
     pollIntervalMs: 1_000,
   });
-  const oidcSigner = await OidcSigner.init(storage);
   const app = createApp(
     storage,
     blobs,
     housekeeping,
     config,
     await ensureInstanceId(storage.settings),
-    oidcSigner,
   );
   if (!app.auth) {
     throw new Error("test-utils: createApp mounted no auth instance");

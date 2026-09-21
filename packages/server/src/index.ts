@@ -30,7 +30,6 @@ import {
   formatErrorSummary,
   serializeError,
 } from "./middleware/logger.js";
-import { OidcSigner } from "./auth/oidc-signing.js";
 import {
   BulkActionWorker,
   setBulkJobEnqueueListener,
@@ -94,7 +93,6 @@ async function main() {
     bulkActionWorker.wake();
   });
   await bulkActionWorker.start();
-  const oidcSigner = await OidcSigner.init(storage);
 
   // Admit the runtime custom-namespace roots into the OAuth scope
   // allowlist, before the auth instance is built. Admission only — nothing
@@ -155,14 +153,7 @@ async function main() {
   // door answerable on an instance whose database has since gone.
   const instanceId = await ensureInstanceId(storage.settings);
 
-  const app = createApp(
-    storage,
-    blobs,
-    housekeeping,
-    config,
-    instanceId,
-    oidcSigner,
-  );
+  const app = createApp(storage, blobs, housekeeping, config, instanceId);
   await housekeeping.start();
   log("info", "Housekeeping started", { names: housekeeping.names() });
   const server = serve({ fetch: app.fetch, port: config.port }, (info) => {
