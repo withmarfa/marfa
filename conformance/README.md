@@ -29,6 +29,8 @@ pnpm marfa:up
 
 # Build the device under test. The device fixtures drive this binary, and
 # `marfa:up` does not build it: it boots a server, and the device is not one.
+# They refuse a binary older than the source it came from, so build it again
+# after any change under `core/`.
 (cd ../core && cargo build -p marfa-cli)
 export MARFA_DEVICE_BIN="$PWD/../core/target/debug/marfa"
 
@@ -48,20 +50,26 @@ SQLite file, the blob folder, the server log, the pid and the env file; pass
 
 The server runs with enrichment, OCR and rate limiting switched off.
 Enrichment rewrites file items in the background, which would make
-exact-property assertions on blobs depend on timing. The `/keys` limit of 200
-requests a minute per credential is exceeded by a local run's own key minting
-and revocation, one of each per file. Nothing in the fixtures asserts either.
+exact-property assertions on blobs depend on timing. Rate limiting is off so
+that a run's own key minting and revocation, one of each per file, cannot meet
+the one fixed limit the server has — `/keys`, in `packages/server/src/app.ts`.
+Nothing in the fixtures asserts either.
 
 ## Configuration
 
-| Variable             | Description                                             |
-| -------------------- | ------------------------------------------------------- |
-| `MARFA_API_URL`      | Required. The booted server.                            |
-| `MARFA_API_KEY`      | Required. The key the bootstrap mint returns.           |
-| `MARFA_OPERATOR_KEY` | The same key, for the operator-only maintenance routes. |
-| `MARFA_DEVICE_BIN`   | The built `marfa` binary the device fixtures drive.     |
+| Variable             | Description                                                                       |
+| -------------------- | --------------------------------------------------------------------------------- |
+| `MARFA_API_URL`      | The booted server. Unset, the run stops: there is no default target.              |
+| `MARFA_API_KEY`      | The key the bootstrap mint returns.                                               |
+| `MARFA_OPERATOR_KEY` | The same key, named for its reach on the operator-only routes.                    |
+| `MARFA_DEVICE_BIN`   | The built `marfa` binary the device fixtures drive.                               |
+| `MARFA_LOAD_PROFILE` | Sizes the load suites. `smoke` unset; `src/suites/load/profiles.ts` has the rest. |
 
-The bootstrap mint returns one key, and both variables hold it.
+**`pnpm test:conformance` needs the first four.** `pnpm marfa:up` writes the
+first three — the bootstrap mint returns one key and two of them hold it — and
+the fourth is yours. An unset `MARFA_OPERATOR_KEY` throws in
+`src/utils/setup.ts`, an unset `MARFA_DEVICE_BIN` in
+`src/suites/device/harness.ts`, and neither is a skip.
 
 `MARFA_API_KEY` is the key the suite provisions with. It holds no content
 permissions itself, but a key it mints naming no permission maps carries the
@@ -70,82 +78,42 @@ whole dataset, and that is how each test file gets its own key, with a
 so every row a file writes is attributable to it and to nothing else, and
 teardown revokes the file's key through the provisioning key.
 
-`MARFA_OPERATOR_KEY` is the same key named for the reach it has on the
-operator routes; the fixtures for archive restore and platform-type
-maintenance run as it.
-
-There is no default target. An unset `MARFA_API_URL` stops the run.
+Each load suite seeds its own corpus under its own credential, measures, and
+deletes what it created.
 
 ## Test suites
 
-```bash
-pnpm test:correctness   # data integrity: persistence, versioning, lifecycle, metadata
-pnpm test:compliance    # spec adherence: auth, types, permissions, error codes
-pnpm test:sync          # the server's half of the write contract, over the event stream
-pnpm test:device        # the device's half: the binary against a scripted server
-pnpm test:conformance   # the four above; what the gate runs
-pnpm test:generators    # offline: spec citations, coverage table, generators, harness
-pnpm test:performance   # read/write latency benchmarks, off the gate
-pnpm test:load          # sustained load and concurrency benchmarks, off the gate
-```
-
-### Load profiles
-
-`MARFA_LOAD_PROFILE` sizes the load suites. Each of them seeds its own small
-corpus under its own credential, measures, and deletes what it created. It
-defaults to `smoke`.
-
-```bash
-pnpm test:load           # smoke — 80 items per read-oriented suite (default)
-pnpm test:load:light     # 600
-pnpm test:load:moderate  # 2,000
-pnpm test:load:heavy     # 5,000
-pnpm test:load:extreme   # 12,000
-```
-
-`src/suites/load/profiles.ts` is the whole shape. Each suite writes a JSON
-report under `reports/load/`.
+`package.json` carries the full list, and `pnpm test:conformance` is what the
+gate runs. `pnpm test:generators` is the offline lane and needs no server: the
+generators, everything under `src/utils/` — including
+`spec-citations.test.ts` and `schema-coverage.test.ts`, which read the
+specification against itself — and the `*.decision.test.ts` verdicts the
+suites gate on. `vitest.config.ts` decides which file lands in which project,
+and the `test:conformance` script decides which projects the gate runs.
+`test:performance` and `test:load` sit off the gate.
 
 ## Architecture
 
-```
-scripts/
-  marfa-server.ts — boot, mint and stop a local server
-spec/             — the written specification, one file per area, citing fixtures
-src/
-  client/         — typed HTTP client for the Marfa API
-  generators/     — synthetic test data generators
-  utils/          — test context, teardown, event-stream helpers
-  device/         — the scripted server, the wire-shape builders, the adapter protocol, the CLI adapter
-  suites/
-    correctness/  — functional correctness tests
-    compliance/   — spec adherence tests
-    sync/         — the write contract's server half
-    device/       — the device's half, driving the `marfa` binary
-    performance/  — latency benchmarks
-    load/         — sustained load tests
-```
+`spec/` is the written specification, one file per area, citing fixtures.
+`scripts/marfa-server.ts` boots, mints and stops a local server. Under `src/`,
+`client/` is the typed HTTP client, `generators/` the synthetic data, `utils/`
+the test context and teardown, `device/` the scripted server and the CLI
+adapter, and `suites/` the fixtures themselves, one directory per project.
 
 Tests are isolated by credential: each file mints a key with a unique
 `source`, writes through it, and `cleanup` in `afterAll` deletes every tracked
-resource and revokes the key. No shared state between files.
+resource and revokes the key. No shared state between files. A door whose
+answer is the instance's whole history rather than rows a key can isolate,
+such as the owner, boots its own server with `bootFreshServer` in
+`utils/fresh-server.ts` and stops it in `afterAll`.
 
-A door whose answer is the instance's whole history rather than rows a key
-can isolate, such as the owner, is asserted against a server the file boots
-for itself with `bootFreshServer` in `utils/fresh-server.ts`, through the
-same script as the run's server, and stops in `afterAll`.
-
-## Continuous integration
+## CI
 
 The `conformance` job in `.github/workflows/ci.yml` is the gate, on every pull
-request and every push to `main`. It builds the checkout, builds the
-`marfa` binary and exports `MARFA_DEVICE_BIN` for the device fixtures, runs
-the offline lane, boots that same checkout's server on SQLite with
-`pnpm marfa:up`, runs `pnpm test:conformance` against it, and stops it
-whatever the result. There is no pinned server commit and no second checkout:
-the tree under test is the tree the suite runs against, and the device under
-test is the binary built from it.
-
-Typecheck and formatting are not repeated there. The repository root's
-`pnpm typecheck` and `pnpm format:check` reach this package, and both run in
-the `CI (SQLite)` job.
+request and every push to `main`. The tree under test is the tree the suite
+runs against and the device under test is the binary built from it: there is
+no pinned server commit and no second checkout. Typecheck, lint and formatting
+are not repeated there: the repository root's own checks reach this package
+and run in the job beside it. Lint is the one worth knowing about, because
+this package is deliberately not clean under the root ESLint config and
+`eslint.config.js` at the root says why.
