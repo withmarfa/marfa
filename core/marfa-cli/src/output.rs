@@ -2,6 +2,7 @@ use std::io::{self, Write};
 
 use marfa_core::{DrainReport, Item, QueuedWrite, SearchHit};
 use serde::Serialize;
+use serde_json::Value;
 
 use crate::error::CliError;
 
@@ -206,4 +207,199 @@ pub fn drained(drain: &DrainReport, json: bool) -> Result<(), CliError> {
         }
         lines.join("\n")
     })
+}
+
+// The direct surface prints the server's answer as it came. Under `--json`
+// it is pretty-printed and nothing else, so an agent reads the same document
+// a client would; without it, a listing is one line per record and a single
+// record is its line and its properties, which is what a person scans.
+
+pub struct Printer {
+    pub json: bool,
+}
+
+impl Printer {
+    pub fn value(&self, value: &Value) -> Result<(), CliError> {
+        let mut out = io::stdout().lock();
+        if self.json {
+            writeln!(out, "{}", serde_json::to_string_pretty(value)?)?;
+        } else {
+            writeln!(out, "{}", describe(value)?)?;
+        }
+        Ok(())
+    }
+
+    /// One line, the same under both modes, for a report that is already a
+    /// sentence.
+    pub fn line(&self, text: &str) -> Result<(), CliError> {
+        let mut out = io::stdout().lock();
+        writeln!(out, "{text}")?;
+        Ok(())
+    }
+
+    /// A report built by the binary: JSON under `--json`, the sentence
+    /// otherwise.
+    pub fn report(&self, value: &Value, human: impl FnOnce() -> String) -> Result<(), CliError> {
+        if self.json {
+            self.value(value)
+        } else {
+            self.line(&human())
+        }
+    }
+
+    /// One record of a stream: compact JSON on one line under `--json`, so
+    /// a reader takes the output a line at a time, the sentence otherwise.
+    pub fn record(&self, value: &Value, human: impl FnOnce() -> String) -> Result<(), CliError> {
+        let mut out = io::stdout().lock();
+        if self.json {
+            writeln!(out, "{}", serde_json::to_string(value)?)?;
+        } else {
+            writeln!(out, "{}", human())?;
+        }
+        out.flush()?;
+        Ok(())
+    }
+}
+
+fn describe(value: &Value) -> Result<String, CliError> {
+    match value {
+        Value::Object(map) => {
+            // The write and read doors answer `{item, ...}` and `{edge}`;
+            // the record is what a person is looking at, and the rest of
+            // the envelope is named after it where it says something.
+            for key in ["item", "edge"] {
+                if let Some(record) = map.get(key) {
+                    let mut text = describe(record)?;
+                    if let Some(resolution) = map.get("conflict_resolution") {
+                        text.push_str(&format!(
+                            "\nconflict resolution: {}",
+                            serde_json::to_string(resolution)?
+                        ));
+                    }
+                    if map.get("acknowledged") == Some(&Value::Bool(true)) {
+                        text.push_str("\nacknowledged: the server already held this write");
+                    }
+                    return Ok(text);
+                }
+            }
+            if let Some(Value::Array(rows)) = map.get("data") {
+                return lines(rows, map);
+            }
+            // A listing under its own noun: `keys`, `webhooks`, `versions`,
+            // `extensions`, `types`.
+            if map.len() <= 2
+                && let Some((_, Value::Array(rows))) =
+                    map.iter().find(|(_, value)| value.is_array())
+            {
+                return lines(rows, map);
+            }
+            if let Some(Value::Array(hits)) = map.get("results") {
+                let mut text = Vec::new();
+                for hit in hits {
+                    let item = hit.get("item").unwrap_or(hit);
+                    let score = hit
+                        .get("score")
+                        .and_then(Value::as_f64)
+                        .map(|score| format!("{score:>7.3}  "))
+                        .unwrap_or_default();
+                    text.push(format!("{score}{}", record_line(item)));
+                }
+                if text.is_empty() {
+                    text.push("(no matches)".into());
+                }
+                return Ok(text.join("\n"));
+            }
+            if map.contains_key("id") && map.contains_key("type") {
+                let mut text = record_line(value);
+                if let Some(properties) = map.get("properties") {
+                    text.push('\n');
+                    text.push_str(&serde_json::to_string_pretty(properties)?);
+                }
+                if let Some(Value::Array(tags)) = map.get("tags")
+                    && !tags.is_empty()
+                {
+                    let tags: Vec<&str> = tags.iter().filter_map(Value::as_str).collect();
+                    text.push_str(&format!("\ntags: {}", tags.join(", ")));
+                }
+                return Ok(text);
+            }
+            Ok(serde_json::to_string_pretty(value)?)
+        }
+        Value::Array(rows) => {
+            if rows.is_empty() {
+                return Ok("(none)".into());
+            }
+            let mut text = Vec::new();
+            for row in rows {
+                if row.get("id").is_some() {
+                    text.push(record_line(row));
+                } else {
+                    text.push(serde_json::to_string_pretty(row)?);
+                }
+            }
+            Ok(text.join("\n"))
+        }
+        Value::Null => Ok("done".into()),
+        other => Ok(other.to_string()),
+    }
+}
+
+fn lines(rows: &[Value], page: &serde_json::Map<String, Value>) -> Result<String, CliError> {
+    let mut text: Vec<String> = Vec::new();
+    for row in rows {
+        if row.get("id").is_some() {
+            text.push(record_line(row));
+        } else {
+            text.push(serde_json::to_string(row)?);
+        }
+    }
+    if text.is_empty() {
+        text.push("(none)".into());
+    }
+    if let Some(cursor) = page.get("cursor").and_then(Value::as_str) {
+        text.push(format!("more: --cursor {cursor}"));
+    }
+    Ok(text.join("\n"))
+}
+
+/// One record on one line: the id, then what identifies it, then a state
+/// if it is not the ordinary one.
+fn record_line(record: &Value) -> String {
+    let field = |name: &str| record.get(name).and_then(Value::as_str).unwrap_or("");
+    let properties = record.get("properties");
+    let title = properties
+        .and_then(|properties| properties.get("title"))
+        .and_then(Value::as_str)
+        .or_else(|| {
+            properties
+                .and_then(|properties| properties.get("body"))
+                .and_then(Value::as_str)
+        })
+        .or_else(|| record.get("label").and_then(Value::as_str))
+        .or_else(|| record.get("url").and_then(Value::as_str))
+        .or_else(|| record.get("edge_type").and_then(Value::as_str))
+        .unwrap_or("")
+        .lines()
+        .next()
+        .unwrap_or("");
+    let kind = if !field("type").is_empty() {
+        field("type")
+    } else if !field("edge_type").is_empty() {
+        field("edge_type")
+    } else {
+        field("action")
+    };
+    let when = ["occurred_at", "created_at"]
+        .iter()
+        .map(|name| field(name))
+        .find(|value| !value.is_empty())
+        .unwrap_or("");
+    let state = field("state");
+    let mut line = format!("{}  {}  {}  {}", field("id"), kind, when, title)
+        .trim_end()
+        .to_string();
+    if !state.is_empty() && state != "active" {
+        line.push_str(&format!("  [{state}]"));
+    }
+    line
 }

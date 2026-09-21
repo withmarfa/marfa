@@ -14,7 +14,10 @@ pub const PAGE_LIMIT: u32 = 200;
 pub struct Http {
     agent: Agent,
     base: Url,
-    authorization: String,
+    /// Absent for a transport that carries no credential: the root document,
+    /// the health door and the sign-in endpoints answer without one, and a
+    /// device's transport always holds one.
+    authorization: Option<String>,
 }
 
 pub struct ItemsQuery<'a> {
@@ -23,9 +26,11 @@ pub struct ItemsQuery<'a> {
     pub cursor: Option<&'a str>,
 }
 
-/// What a queued write is, on the wire.
+/// What a call is, on the wire. A queued write is never a `Get`; the
+/// direct surface's reads are.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Method {
+    Get,
     Post,
     Patch,
     Put,
@@ -35,6 +40,7 @@ pub enum Method {
 impl Method {
     pub fn as_str(self) -> &'static str {
         match self {
+            Method::Get => "GET",
             Method::Post => "POST",
             Method::Patch => "PATCH",
             Method::Put => "PUT",
@@ -82,8 +88,53 @@ impl Answer {
     }
 }
 
+/// What a call from the direct surface sends.
+///
+/// A body is JSON text or a reader the request streams from, because a blob
+/// upload must not buffer the file: the cap on a blob is the server's to set
+/// and a binary that read the whole file first would have a cap of its own
+/// that nothing documents.
+pub enum CallBody<'a> {
+    None,
+    Json(&'a str),
+    Reader(Box<dyn Read + Send + 'static>),
+}
+
+pub struct Call<'a> {
+    pub method: Method,
+    pub segments: &'a [&'a str],
+    pub params: &'a [(&'a str, &'a str)],
+    /// Extra headers, such as a `Content-Type` for a streamed body or a
+    /// `Last-Event-ID` for the stream.
+    pub headers: &'a [(&'a str, &'a str)],
+    pub body: CallBody<'a>,
+    /// Whether the credential rides. A door that answers without one is
+    /// called without one even when one is held, so a public read cannot be
+    /// refused for a credential it never needed.
+    pub credential: bool,
+    /// Read the whole body as text (the JSON doors) or hand the reader back
+    /// (the stream, an export, a blob's bytes).
+    pub stream: bool,
+}
+
+/// What a call got back. **The only `Err` is a transport failure**: every
+/// status the server can answer with is a `Reply`, because the direct
+/// surface classifies on the status and the envelope together, exactly as
+/// the drain does with an `Answer`.
+pub struct Reply {
+    pub status: u16,
+    pub content_type: String,
+    pub retry_after_seconds: Option<u64>,
+    pub body: ReplyBody,
+}
+
+pub enum ReplyBody {
+    Text(String),
+    Stream(Box<dyn Read + Send>),
+}
+
 impl Http {
-    pub fn new(url: &str, key: &str) -> Result<Http, CoreError> {
+    pub fn new(url: &str, key: Option<&str>) -> Result<Http, CoreError> {
         let mut base = Url::parse(url)?;
         if base.cannot_be_a_base() {
             return Err(CoreError::Invalid(format!("not a server url: {url}")));
@@ -102,7 +153,7 @@ impl Http {
         Ok(Http {
             agent,
             base,
-            authorization: format!("Bearer {key}"),
+            authorization: key.map(|key| format!("Bearer {key}")),
         })
     }
 
@@ -191,13 +242,16 @@ impl Http {
         // per-method builders: those split at the type level on whether a
         // method carries a body, and the drain's four methods would then be
         // four copies of the same header list with one of them able to drift.
-        let request = ureq::http::Request::builder()
+        let mut builder = ureq::http::Request::builder()
             .method(outgoing.method.as_str())
             .uri(url.as_str())
-            .header("Authorization", &self.authorization)
             .header("Accept", "application/json")
             .header("Content-Type", "application/json")
-            .header("Idempotency-Key", outgoing.idempotency_key)
+            .header("Idempotency-Key", outgoing.idempotency_key);
+        if let Some(authorization) = &self.authorization {
+            builder = builder.header("Authorization", authorization);
+        }
+        let request = builder
             .body(outgoing.body)
             .map_err(|error| CoreError::Invalid(format!("this write cannot be sent: {error}")))?;
         let response = self
@@ -247,11 +301,13 @@ impl Http {
         let mut request = self
             .agent
             .get(url.as_str())
-            .header("Authorization", &self.authorization)
             .header("Accept", "text/event-stream")
             .config()
             .timeout_recv_body(Some(body_timeout))
             .build();
+        if let Some(authorization) = &self.authorization {
+            request = request.header("Authorization", authorization);
+        }
         if let Some(cursor) = last_event_id {
             request = request.header("Last-Event-ID", cursor);
         }
@@ -265,6 +321,84 @@ impl Http {
             return Err(refusal(status, &text, retry_after));
         }
         Ok(Box::new(response.into_body().into_reader()))
+    }
+
+    pub fn has_credential(&self) -> bool {
+        self.authorization.is_some()
+    }
+
+    /// Sends one call from the direct surface and reads whatever came back.
+    pub fn call(&self, call: Call<'_>) -> Result<Reply, CoreError> {
+        let url = self.url(call.segments, call.params);
+        let mut builder = ureq::http::Request::builder()
+            .method(call.method.as_str())
+            .uri(url.as_str())
+            .header(
+                "Accept",
+                if call.stream {
+                    "*/*"
+                } else {
+                    "application/json"
+                },
+            );
+        if call.credential
+            && let Some(authorization) = &self.authorization
+        {
+            builder = builder.header("Authorization", authorization);
+        }
+        if matches!(call.body, CallBody::Json(_)) {
+            builder = builder.header("Content-Type", "application/json");
+        }
+        for (name, value) in call.headers {
+            builder = builder.header(*name, *value);
+        }
+        let cannot_send = |error: ureq::http::Error| {
+            CoreError::Invalid(format!("this call cannot be sent: {error}"))
+        };
+        let response = match call.body {
+            CallBody::None => {
+                let request = builder.body(()).map_err(cannot_send)?;
+                self.agent.run(request)
+            }
+            CallBody::Json(text) => {
+                let request = builder.body(text).map_err(cannot_send)?;
+                self.agent.run(request)
+            }
+            CallBody::Reader(reader) => {
+                let request = builder
+                    .body(ureq::SendBody::from_owned_reader(reader))
+                    .map_err(cannot_send)?;
+                self.agent.run(request)
+            }
+        }
+        .map_err(|error| CoreError::Network(error.to_string()))?;
+        let status = response.status().as_u16();
+        let retry_after_seconds = retry_after(&response);
+        let content_type = response
+            .headers()
+            .get("Content-Type")
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or("")
+            .to_string();
+        // A refusal is read whole even on a streaming call, so the envelope
+        // reaches the classification; only a success is handed back as a
+        // reader.
+        let body = if call.stream && (200..300).contains(&status) {
+            ReplyBody::Stream(Box::new(response.into_body().into_reader()))
+        } else {
+            ReplyBody::Text(
+                response
+                    .into_body()
+                    .read_to_string()
+                    .map_err(|error| CoreError::Network(error.to_string()))?,
+            )
+        };
+        Ok(Reply {
+            status,
+            content_type,
+            retry_after_seconds,
+            body,
+        })
     }
 
     fn url(&self, segments: &[&str], params: &[(&str, &str)]) -> Url {
@@ -289,11 +423,14 @@ impl Http {
         params: &[(&str, &str)],
     ) -> Result<T, CoreError> {
         let url = self.url(segments, params);
-        let response = self
+        let mut request = self
             .agent
             .get(url.as_str())
-            .header("Authorization", &self.authorization)
-            .header("Accept", "application/json")
+            .header("Accept", "application/json");
+        if let Some(authorization) = &self.authorization {
+            request = request.header("Authorization", authorization);
+        }
+        let response = request
             .call()
             .map_err(|error| CoreError::Network(error.to_string()))?;
         let status = response.status().as_u16();
@@ -408,9 +545,9 @@ mod tests {
 
     #[test]
     fn origin_drops_the_key_the_query_and_a_trailing_slash() {
-        let http = Http::new("HTTP://Localhost:8600/?x=1#f", "marfa_k1_secret").unwrap();
+        let http = Http::new("HTTP://Localhost:8600/?x=1#f", Some("marfa_k1_secret")).unwrap();
         assert_eq!(http.origin(), "http://localhost:8600");
-        let gateway = Http::new("https://gw.example/TenantA/", "k").unwrap();
+        let gateway = Http::new("https://gw.example/TenantA/", Some("k")).unwrap();
         assert_eq!(gateway.origin(), "https://gw.example/TenantA");
         assert_eq!(
             gateway

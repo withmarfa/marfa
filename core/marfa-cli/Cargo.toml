@@ -1,6 +1,6 @@
 [package]
 name = "marfa-cli"
-description = "The marfa binary: the core's slice from the command line."
+description = "The marfa binary: every operation of one instance, and a working copy of a slice of it."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -12,6 +12,8 @@ path = "src/main.rs"
 
 [dependencies]
 clap.workspace = true
+# The keychain on macOS and the secret service on Linux, which 4 carries by default.
+keyring = "4"
 marfa-core.workspace = true
 notify.workspace = true
 serde.workspace = true

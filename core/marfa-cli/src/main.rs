@@ -1,3 +1,5 @@
+mod commands;
+mod credentials;
 mod device;
 mod error;
 mod folders;
@@ -10,25 +12,33 @@ use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
 
+use crate::commands::{
+    audit, blobs, config, edge_types, edges, events, export, extensions, grants, housekeeping,
+    items, keys, metadata, operations, search, status, types, webhooks, whoami,
+};
 use crate::device::DeviceArgs;
 use crate::error::{CliError, EXIT_CODES_HELP};
 use crate::folders::FoldersCommand;
-use crate::remote::Named;
+use crate::output::Printer;
+use crate::remote::{Named, Remote};
 
-/// Marfa from the command line: a working copy of a slice of one server
-/// under `device`, and folders that hold a slice as files.
+/// Marfa from the command line: every operation of one instance, a working
+/// copy of a slice of it under `device`, and folders that hold a slice as
+/// files.
 #[derive(Debug, Parser)]
 #[command(name = "marfa", version, after_long_help = EXIT_CODES_HELP)]
 struct Cli {
-    /// The server's base URL. Falls back to MARFA_API_URL.
+    /// The server's base URL. Falls back to MARFA_API_URL, then to the
+    /// server a kept key made current.
     #[arg(long, global = true, value_name = "URL", help_heading = "Server")]
     url: Option<String>,
 
-    /// A key for that server. Falls back to MARFA_API_KEY.
+    /// A key for that server. Falls back to MARFA_API_KEY, then to the
+    /// keychain.
     #[arg(long, global = true, value_name = "KEY", help_heading = "Server")]
     key: Option<String>,
 
-    /// Print records as JSON, and a refusal as one JSON object on stderr.
+    /// Print the answer as JSON, and a refusal as one JSON object on stderr.
     #[arg(long, global = true, help_heading = "Output")]
     json: bool,
 
@@ -38,6 +48,81 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// What the instance says about itself, and item counts where the credential reaches them.
+    Status,
+    /// Which server, instance and credential a bare command would use.
+    Whoami,
+    /// Items: create, read, change, tag, link, attach, and the bulk doors.
+    Items {
+        #[command(subcommand)]
+        command: items::ItemsCommand,
+    },
+    /// Edges between items.
+    Edges {
+        #[command(subcommand)]
+        command: edges::EdgesCommand,
+    },
+    /// The edge types an instance holds.
+    #[command(name = "edge-types")]
+    EdgeTypes {
+        #[command(subcommand)]
+        command: edge_types::EdgeTypesCommand,
+    },
+    /// The types an instance holds, and the shipped ones it has outgrown.
+    Types {
+        #[command(subcommand)]
+        command: types::TypesCommand,
+    },
+    /// Full-text search on the server, best match first.
+    Search(search::SearchArgs),
+    /// An item's tags and the namespaces it carries, and every tag in use.
+    Metadata {
+        #[command(subcommand)]
+        command: metadata::MetadataCommand,
+    },
+    /// An item's extension namespaces.
+    Extensions {
+        #[command(subcommand)]
+        command: extensions::ExtensionsCommand,
+    },
+    /// Bytes stored by content hash, and the stores that hold them.
+    Blobs {
+        #[command(subcommand)]
+        command: blobs::BlobsCommand,
+    },
+    /// Keys: the credentials that reach the API.
+    Keys {
+        #[command(subcommand)]
+        command: keys::KeysCommand,
+    },
+    /// The instance configuration.
+    Config {
+        #[command(subcommand)]
+        command: config::ConfigCommand,
+    },
+    /// Export the instance's data.
+    Export(export::ExportArgs),
+    /// Outbound subscriptions that send events out.
+    Webhooks {
+        #[command(subcommand)]
+        command: webhooks::WebhooksCommand,
+    },
+    /// The audit log.
+    Audit(audit::AuditArgs),
+    /// The event stream, one frame per line.
+    Events(events::EventsArgs),
+    /// The apps the owner has authorized.
+    Grants {
+        #[command(subcommand)]
+        command: grants::GrantsCommand,
+    },
+    /// The jobs the server runs on itself.
+    Housekeeping {
+        #[command(subcommand)]
+        command: housekeeping::HousekeepingCommand,
+    },
+    /// Every published operation and the command that reaches it.
+    Operations,
     /// A working copy of a slice of one server, in the store --db names.
     Device(DeviceArgs),
     /// Folders on this machine: a directory that holds a slice as files.
@@ -65,17 +150,49 @@ fn main() -> ExitCode {
 }
 
 fn run(cli: Cli) -> Result<(), CliError> {
-    let named = Named::from_flags(cli.url, cli.key);
+    let out = Printer { json: cli.json };
+    let named = Named {
+        url: cli.url,
+        key: cli.key,
+    };
+    // The working copy and the folders resolve the server only where a
+    // command sends, and the table needs no server at all.
     match cli.command {
-        Command::Device(args) => device::run(args, &named, cli.json),
-        Command::Folders { command } => folders::run(command, &named, cli.json),
+        Command::Operations => return operations::run(&out),
+        Command::Device(args) => return device::run(args, &named, cli.json),
+        Command::Folders { command } => return folders::run(command, &named, cli.json),
+        _ => {}
+    }
+    let remote = Remote::resolve(&named)?;
+    match cli.command {
+        Command::Status => status::run(&remote, &out),
+        Command::Whoami => whoami::run(&remote, &out),
+        Command::Items { command } => items::run(command, &remote, &out),
+        Command::Edges { command } => edges::run(command, &remote, &out),
+        Command::EdgeTypes { command } => edge_types::run(command, &remote, &out),
+        Command::Types { command } => types::run(command, &remote, &out),
+        Command::Search(args) => search::run(args, &remote, &out),
+        Command::Metadata { command } => metadata::run(command, &remote, &out),
+        Command::Extensions { command } => extensions::run(command, &remote, &out),
+        Command::Blobs { command } => blobs::run(command, &remote, &out),
+        Command::Keys { command } => keys::run(command, &remote, &out),
+        Command::Config { command } => config::run(command, &remote, &out),
+        Command::Export(args) => export::run(args, &remote, &out),
+        Command::Webhooks { command } => webhooks::run(command, &remote, &out),
+        Command::Audit(args) => audit::run(args, &remote, &out),
+        Command::Events(args) => events::run(args, &remote, &out),
+        Command::Grants { command } => grants::run(command, &remote, &out),
+        Command::Housekeeping { command } => housekeeping::run(command, &remote, &out),
+        Command::Operations | Command::Device(_) | Command::Folders { .. } => {
+            unreachable!("answered before the server was resolved")
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::device::{DeviceCommand, ItemsCommand};
+    use crate::device::{DeviceCommand, ItemsCommand as DeviceItemsCommand};
     use crate::values::{ItemState, SortDirection, SortField, Tier};
     use clap::CommandFactory;
 
@@ -197,6 +314,23 @@ mod tests {
                 ..
             })
         ));
+        let direct = Cli::try_parse_from([
+            "marfa",
+            "items",
+            "list",
+            "--url",
+            "http://localhost:8600",
+            "--key",
+            "k",
+        ])
+        .unwrap();
+        assert_eq!(direct.key.as_deref(), Some("k"));
+        assert!(matches!(
+            direct.command,
+            Command::Items {
+                command: items::ItemsCommand::List(_)
+            }
+        ));
         let folder = Cli::try_parse_from([
             "marfa",
             "folders",
@@ -216,15 +350,15 @@ mod tests {
             }
         ));
         // Absent, the parse succeeds and the refusal comes from the
-        // command that needed it, as `remote::Named::server` says.
+        // resolution, as `remote::Remote::resolve` says.
         let none = Cli::try_parse_from(["marfa", "device", "--db", "s", "drain"]).unwrap();
         assert_eq!(none.url, None);
         assert_eq!(none.key, None);
     }
 
     /// The store is named on `device` and lands before or after the leaf,
-    /// and is not an argument of a folder command at all: a folder carries
-    /// its own store.
+    /// and is not an argument of anything else: a folder carries its own
+    /// store, and a direct command has none.
     #[test]
     fn the_store_is_named_on_device_and_nowhere_else() {
         let before = Cli::try_parse_from(["marfa", "device", "--db", "s", "queue"]).unwrap();
@@ -243,8 +377,12 @@ mod tests {
             "a folder command took --db, so two folders could share one mapping"
         );
         assert!(
+            Cli::try_parse_from(["marfa", "items", "list", "--db", "s"]).is_err(),
+            "a direct command took --db, which names a working copy it does not read"
+        );
+        assert!(
             Cli::try_parse_from(["marfa", "--db", "s", "device", "queue"]).is_err(),
-            "--db was accepted at the root, where a folder command could reach it"
+            "--db was accepted at the root, where every command could reach it"
         );
     }
 
@@ -294,7 +432,7 @@ mod tests {
     }
 
     #[test]
-    fn items_list_search_catch_up_status_and_folders_parse() {
+    fn the_device_tree_and_the_folder_tree_parse() {
         let cli = Cli::try_parse_from([
             "marfa",
             "--json",
@@ -324,7 +462,7 @@ mod tests {
             Command::Device(DeviceArgs {
                 command:
                     DeviceCommand::Items {
-                        command: ItemsCommand::List(args),
+                        command: DeviceItemsCommand::List(args),
                     },
                 ..
             }) => {
@@ -352,7 +490,7 @@ mod tests {
         assert!(matches!(
             device(&["items", "get", "abc"]),
             DeviceCommand::Items {
-                command: ItemsCommand::Get { .. }
+                command: DeviceItemsCommand::Get { .. }
             }
         ));
         assert!(matches!(
