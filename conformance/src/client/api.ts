@@ -19,6 +19,9 @@ import type {
   BlobLocationRow,
   HousekeepingJobRow,
   HousekeepingRun,
+  ConnectorRow,
+  ConnectorRun,
+  ConnectorRunInput,
   BulkInput,
   BulkItemInput,
   BulkResponse,
@@ -709,6 +712,61 @@ export class MarfaClient {
     return this.request<HousekeepingRun>(`/housekeeping/${name}/run`, {
       method: "POST",
     });
+  }
+
+  /** `POST /connectors`: register this client's key, or update the
+   *  registration it already has. */
+  async registerConnector(input: {
+    name: string;
+    description?: string;
+  }): Promise<ApiResponse<ConnectorRow>> {
+    return this.request<ConnectorRow>("/connectors", {
+      method: "POST",
+      body: input,
+    });
+  }
+
+  async listConnectors(): Promise<ApiResponse<{ data: ConnectorRow[] }>> {
+    return this.request<{ data: ConnectorRow[] }>("/connectors");
+  }
+
+  async getConnector(id: string): Promise<ApiResponse<ConnectorRow>> {
+    return this.request<ConnectorRow>(`/connectors/${id}`);
+  }
+
+  async deleteConnector(id: string): Promise<ApiResponse<{ ok: true }>> {
+    return this.request<{ ok: true }>(`/connectors/${id}`, {
+      method: "DELETE",
+    });
+  }
+
+  async heartbeatConnector(
+    id: string,
+  ): Promise<ApiResponse<{ last_heartbeat_at: string }>> {
+    return this.request<{ last_heartbeat_at: string }>(
+      `/connectors/${id}/heartbeat`,
+      { method: "POST" },
+    );
+  }
+
+  async reportConnectorRun(
+    id: string,
+    input: ConnectorRunInput,
+  ): Promise<ApiResponse<ConnectorRun>> {
+    return this.request<ConnectorRun>(`/connectors/${id}/runs`, {
+      method: "POST",
+      body: input as unknown as Record<string, unknown>,
+    });
+  }
+
+  async listConnectorRuns(
+    id: string,
+    limit?: number,
+  ): Promise<ApiResponse<{ data: ConnectorRun[] }>> {
+    const query = limit === undefined ? "" : `?limit=${String(limit)}`;
+    return this.request<{ data: ConnectorRun[] }>(
+      `/connectors/${id}/runs${query}`,
+    );
   }
 
   async createKey(

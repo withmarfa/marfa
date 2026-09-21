@@ -227,6 +227,16 @@ export const DELIBERATELY_UNSCANNED: readonly {
       "shows it to the operator as it is, so an unrecognized value is " +
       "displayed, never mishandled, and the next run overwrites it.",
   },
+  {
+    table: "connector_runs",
+    column: "outcome",
+    castType: 'ConnectorRun["outcome"]',
+    because:
+      "A record a connector reported, not a decision. The run door " +
+      "admits only the two values on the way in and nothing branches on " +
+      "the stored one: the listing shows it as it is, and a hundred runs " +
+      "later it is gone.",
+  },
 ];
 
 /** One `GROUP BY` row: a stored value and how many rows hold it. */

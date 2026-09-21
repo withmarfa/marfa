@@ -325,6 +325,31 @@ CREATE TABLE IF NOT EXISTS `bulk_action_jobs` (
 CREATE INDEX IF NOT EXISTS `idx_bulk_action_jobs_status` ON `bulk_action_jobs` (`status`);
 CREATE INDEX IF NOT EXISTS `idx_bulk_action_jobs_gc` ON `bulk_action_jobs` (`status`,`finished_at`);
 CREATE UNIQUE INDEX IF NOT EXISTS `idx_bulk_action_jobs_idempotency` ON `bulk_action_jobs` (`idempotency_key`) WHERE idempotency_key IS NOT NULL;
+CREATE TABLE IF NOT EXISTS `connector_runs` (
+	`id` text PRIMARY KEY NOT NULL,
+	`connector_id` text NOT NULL,
+	`outcome` text NOT NULL,
+	`started_at` text NOT NULL,
+	`finished_at` text NOT NULL,
+	`summary` text,
+	`error` text,
+	`reported_at` text NOT NULL,
+	FOREIGN KEY (`connector_id`) REFERENCES `connectors`(`id`) ON UPDATE no action ON DELETE cascade
+);
+
+CREATE INDEX IF NOT EXISTS `idx_connector_runs_connector_reported` ON `connector_runs` (`connector_id`,`reported_at`);
+CREATE TABLE IF NOT EXISTS `connectors` (
+	`id` text PRIMARY KEY NOT NULL,
+	`key_id` text NOT NULL,
+	`source` text NOT NULL,
+	`name` text NOT NULL,
+	`description` text,
+	`registered_at` text NOT NULL,
+	`updated_at` text NOT NULL,
+	`last_heartbeat_at` text
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS `connectors_key_id_unique` ON `connectors` (`key_id`);
 CREATE TABLE IF NOT EXISTS `edge_types` (
 	`id` text PRIMARY KEY NOT NULL,
 	`schema` text NOT NULL,

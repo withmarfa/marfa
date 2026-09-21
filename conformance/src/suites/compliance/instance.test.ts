@@ -54,6 +54,7 @@ describe("the instance", () => {
         "audit",
         "blobs",
         "bulk",
+        "connectors",
         "edges",
         "events",
         "export",
