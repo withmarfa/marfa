@@ -395,7 +395,8 @@ describe("Housekeeping", () => {
       expect((await ctx.storage.housekeeping.get("slow"))?.running_since).toBe(
         null,
       );
-      // The witness: once released, the same job runs again on demand.
+      // The witness: once released, the same housekeeping job runs again on
+      // demand.
       const again = hk.runNow("slow");
       await vi.waitFor(() => {
         expect(slowRuns).toBe(2);
@@ -973,6 +974,17 @@ describe("one scheduler owns every cadence and the level of every failure", () =
     ).toBeGreaterThanOrEqual(15);
     expect(source).not.toContain("setInterval(");
     expect(source).not.toContain("logJobTickFailure(");
+  });
+
+  it("error-notifier.ts sweeps its debounce on write and keeps no timer", () => {
+    const source = here("../middleware/error-notifier.ts");
+    // The witness: the sweep is called, and called ahead of the write that
+    // adds the entry, which is what puts it on the write path.
+    const sweep = source.indexOf("forgetExpired(now)");
+    const write = source.indexOf("debounceMap.set(errorKey, now)");
+    expect(sweep).toBeGreaterThan(-1);
+    expect(write).toBeGreaterThan(sweep);
+    expect(source).not.toContain("setInterval(");
   });
 
   it("index.ts wires the scheduler and keeps no timer of its own", () => {

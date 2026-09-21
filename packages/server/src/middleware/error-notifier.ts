@@ -12,14 +12,18 @@ const debounceMap = new Map<string, number>();
  *  operator-tunable value is the live one. */
 const DEFAULT_WEBHOOK_TIMEOUT_MS = 5_000;
 
-// Periodic cleanup of expired debounce entries
-const cleanup = setInterval(() => {
-  const now = Date.now();
+/**
+ * Drops the entries the debounce no longer needs, on the write that adds
+ * one. The map holds one entry per distinct error seen inside one window,
+ * and every write that walks it has already decided to send a webhook,
+ * which dwarfs the walk; so the sweep needs no timer, and the scheduler
+ * stays the one place a periodic task lives.
+ */
+function forgetExpired(now: number): void {
   for (const [key, ts] of debounceMap) {
     if (now - ts > DEBOUNCE_MS) debounceMap.delete(key);
   }
-}, 300_000);
-cleanup.unref();
+}
 
 export interface ErrorNotification {
   timestamp: string;
@@ -38,6 +42,7 @@ export function notifyError(
   const now = Date.now();
   const last = debounceMap.get(errorKey);
   if (last && now - last < DEBOUNCE_MS) return;
+  forgetExpired(now);
   debounceMap.set(errorKey, now);
 
   // Telegram sendMessage API — format as a readable text message
