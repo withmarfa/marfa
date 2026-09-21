@@ -140,7 +140,7 @@ export class SqliteHousekeepingStore implements HousekeepingStore {
   async wake(name: string, now: string): Promise<boolean> {
     const row = await this.get(name);
     if (!row) return false;
-    // A job in the middle of a run is marked due strictly after its start,
+    // A name in the middle of a run is marked due strictly after its start,
     // so `finish` can tell the wake from the schedule the run was claimed
     // under and keep it; a wake in the same millisecond as the claim would
     // otherwise be lost to that comparison.

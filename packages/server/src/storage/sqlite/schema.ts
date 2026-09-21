@@ -891,8 +891,8 @@ export const enrichmentState = sqliteTable("enrichment_state", {
   // The configuration signature the row was last written under. A skip is
   // terminal only relative to the settings that produced it; the candidate
   // query re-offers skipped rows whose stamp differs from the sweeper's
-  // current one. Nullable: rows predating the column re-offer once.
-  config_signature: text("config_signature"),
+  // current one.
+  config_signature: text("config_signature").notNull(),
   updated_at: text("updated_at").notNull(),
 });
 
@@ -938,20 +938,21 @@ export const idempotencyRecords = sqliteTable(
 );
 
 // ---------------------------------------------------------------------------
-// housekeeping — the server's own periodic jobs, one row per job.
+// housekeeping — the server's own periodic work, one row per housekeeping
+// job.
 //
 // The row is the schedule and the record in one: the scheduler polls it for
-// jobs whose `next_run_at` has passed, claims one by setting `running_since`
+// names whose `next_run_at` has passed, claims one by setting `running_since`
 // where it is null (SQLite's single writer makes that claim exclusive), and
 // writes the outcome back when the run ends. `next_run_at` survives a
-// restart, so a daily job that ran two hours before a deploy runs in
+// restart, so a daily sweep that ran two hours before a deploy runs in
 // twenty-two hours rather than at boot.
 // ---------------------------------------------------------------------------
 export const housekeeping = sqliteTable("housekeeping", {
   name: text("name").primaryKey(),
   interval_ms: integer("interval_ms").notNull(),
   next_run_at: text("next_run_at").notNull(),
-  /** Set while a run holds the job; a value found at boot was left by a
+  /** Set while a run holds the name; a value found at boot was left by a
    *  run the last process never finished. */
   running_since: text("running_since"),
   last_started_at: text("last_started_at"),

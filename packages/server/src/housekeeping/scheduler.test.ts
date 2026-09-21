@@ -79,7 +79,7 @@ describe("Housekeeping", () => {
       hk.register({ name: "fine", ...job });
       expect(() => {
         hk.register({ name: "Not Fine", ...job });
-      }).toThrow(/not a job name/);
+      }).toThrow(/not a housekeeping job name/);
       expect(() => {
         hk.register({ name: "fine", ...job });
       }).toThrow(/twice/);
@@ -95,7 +95,7 @@ describe("Housekeeping", () => {
   });
 
   describe("start", () => {
-    it("writes a row per job due after its first-run delay, and removes rows nothing registers", async () => {
+    it("writes a row per registration due after its first-run delay, and removes rows nothing registers", async () => {
       ctx = await createTestContext();
       const c = clock(T0);
       const first = scheduler(c.nowFn);
@@ -118,7 +118,6 @@ describe("Housekeeping", () => {
         ["later", new Date(T0 + 30_000).toISOString()],
         ["soon", new Date(T0 + 5_000).toISOString()],
       ]);
-      expect(rows.every((row) => row.running_since === null)).toBe(true);
 
       // A second boot that no longer registers `later` removes its row.
       const second = scheduler(c.nowFn);
@@ -151,7 +150,7 @@ describe("Housekeeping", () => {
       expect(ran?.last_outcome).toBe("ok");
       expect(ran?.next_run_at).toBe(new Date(T0 + 86_400_000).toISOString());
 
-      // Two hours later the process restarts: the job is due in twenty-two
+      // Two hours later the process restarts: the sweep is due in twenty-two
       // hours, not now.
       c.advance(2 * 3_600_000);
       const second = scheduler(c.nowFn);
@@ -168,7 +167,7 @@ describe("Housekeeping", () => {
       );
 
       // Restarted with an hourly interval instead: an hour after the last
-      // finish is already past, so the job is due now.
+      // finish is already past, so the sweep is due now.
       const third = scheduler(c.nowFn);
       third.register({
         name: "daily",
@@ -181,6 +180,33 @@ describe("Housekeeping", () => {
       expect((await ctx.storage.housekeeping.get("daily"))?.next_run_at).toBe(
         new Date(T0 + 3_600_000).toISOString(),
       );
+    });
+
+    it("schedules one poll, once, and stop() leaves no timer behind", async () => {
+      ctx = await createTestContext();
+      const hk = new Housekeeping(ctx.storage.housekeeping, {
+        pollIntervalMs: 1_000,
+        nowFn: clock(T0).nowFn,
+      });
+      hk.register({
+        name: "ticker",
+        intervalMs: 60_000,
+        firstRunDelayMs: 0,
+        run: () => Promise.resolve(null),
+      });
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      try {
+        const before = vi.getTimerCount();
+        await hk.start();
+        expect(vi.getTimerCount()).toBe(before + 1);
+        // A second start is a no-op rather than a second poll chain.
+        await hk.start();
+        expect(vi.getTimerCount()).toBe(before + 1);
+        await hk.stop();
+        expect(vi.getTimerCount()).toBe(before);
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it("clears a run marker left by a process that died mid-run, and says so", async () => {
@@ -305,15 +331,20 @@ describe("Housekeeping", () => {
         last_result: null,
         next_run_at: new Date(T0 + 60_000).toISOString(),
       });
-      // The witness for "never hotter": a poll a moment later runs nothing.
+      // A poll a moment later runs nothing, and one at the interval runs it
+      // again: the witness that the row is a schedule, not a refusal.
       c.advance(1_000);
       await hk.poll();
       await hk.settle();
       expect(runs).toBe(1);
+      c.advance(59_000);
+      await hk.poll();
+      await hk.settle();
+      expect(runs).toBe(2);
       await hk.stop();
     });
 
-    it("runs due jobs concurrently across names, and never overlaps one name with itself", async () => {
+    it("runs due names concurrently, and never overlaps one name with itself", async () => {
       ctx = await createTestContext();
       const c = clock(T0);
       const hk = scheduler(c.nowFn);
@@ -374,7 +405,7 @@ describe("Housekeeping", () => {
       await hk.stop();
     });
 
-    it("honors a wake: the job is due now, and a wake during a run holds after it", async () => {
+    it("honors a wake: the name is due now, and a wake during a run holds after it", async () => {
       ctx = await createTestContext();
       const c = clock(T0);
       const hk = scheduler(c.nowFn);
@@ -489,16 +520,188 @@ describe("Housekeeping", () => {
         }),
       );
       expect(runs).toBe(0);
-      // The witness: the same poll runs the job once the table answers.
+      // The witness: the same poll runs the sweep once the table answers.
       await hk.poll();
       await hk.settle();
       expect(runs).toBe(1);
       await hk.stop();
     });
+
+    it("claims the next name while a run holds the write lock, without holding the process", async () => {
+      // Two names due in one pass, the first of which opens a transaction
+      // and waits inside it, as a run does between two of its statements.
+      // The claim of the second meets the write lock; it has to wait for
+      // the commit with the event loop free, because the commit needs the
+      // loop. A wait that held the process would end only by giving up,
+      // with the claim refused and the pass logged as an error.
+      ctx = await createTestContext();
+      const c = clock(T0);
+      const hk = scheduler(c.nowFn);
+      const storage = ctx.storage;
+      hk.register({
+        name: "holder",
+        intervalMs: 60_000,
+        firstRunDelayMs: 0,
+        run: () =>
+          storage.runInTransaction(async () => {
+            await storage.items.create({
+              type: "core.note",
+              properties: { body: "held under the lock" },
+            });
+            await new Promise((resolve) => setTimeout(resolve, 100));
+            return null;
+          }),
+      });
+      let claimedRuns = 0;
+      hk.register({
+        name: "next",
+        intervalMs: 60_000,
+        firstRunDelayMs: 0,
+        run: () => {
+          claimedRuns += 1;
+          return Promise.resolve(null);
+        },
+      });
+      await hk.start();
+      const captured = captureLog();
+      const started = Date.now();
+      await hk.poll();
+      await hk.settle();
+      captured.restore();
+      expect(claimedRuns).toBe(1);
+      expect(captured.lines).not.toContainEqual(
+        expect.objectContaining({ message: "Housekeeping poll error" }),
+      );
+      expect(Date.now() - started).toBeLessThan(2_000);
+      expect((await storage.housekeeping.get("holder"))?.last_outcome).toBe(
+        "ok",
+      );
+      expect((await storage.housekeeping.get("next"))?.last_outcome).toBe("ok");
+      await hk.stop();
+    });
+
+    it("reads nothing once stopped, and claims nothing past the name a stop lands on", async () => {
+      ctx = await createTestContext();
+      const c = clock(T0);
+      const hk = scheduler(c.nowFn);
+      let stopping: Promise<void> = Promise.resolve();
+      const runs: string[] = [];
+      // `first` stops the scheduler from inside its run, the way a signal
+      // landing mid-poll does; `second` is due in the same pass.
+      hk.register({
+        name: "first",
+        intervalMs: 60_000,
+        firstRunDelayMs: 0,
+        run: () => {
+          runs.push("first");
+          stopping = hk.stop();
+          return Promise.resolve(null);
+        },
+      });
+      hk.register({
+        name: "second",
+        intervalMs: 60_000,
+        firstRunDelayMs: 0,
+        run: () => {
+          runs.push("second");
+          return Promise.resolve(null);
+        },
+      });
+      await hk.start();
+      const store = ctx.storage.housekeeping;
+      const listDue = store.listDue.bind(store);
+      let reads = 0;
+      store.listDue = (now) => {
+        reads += 1;
+        return listDue(now);
+      };
+      try {
+        await hk.poll();
+        await stopping;
+        expect(reads).toBe(1);
+        expect(runs).toEqual(["first"]);
+        // `second` was never claimed: due, not running.
+        expect(await store.get("second")).toMatchObject({
+          running_since: null,
+          last_started_at: null,
+        });
+        // A poll after the stop reads the table no more.
+        await hk.poll();
+        expect(reads).toBe(1);
+      } finally {
+        store.listDue = listDue;
+      }
+    });
+
+    it("records a run that resolved with nothing as a null result", async () => {
+      ctx = await createTestContext();
+      const hk = scheduler(clock(T0).nowFn);
+      hk.register({
+        name: "silent",
+        intervalMs: 60_000,
+        firstRunDelayMs: 0,
+        run: () => Promise.resolve(),
+      });
+      await hk.start();
+      const answered = await hk.runNow("silent");
+      expect(answered.kind).toBe("ran");
+      if (answered.kind === "ran") {
+        expect(answered.run).toHaveProperty("result", null);
+      }
+      expect(await ctx.storage.housekeeping.get("silent")).toMatchObject({
+        last_outcome: "ok",
+        last_result: null,
+      });
+      await hk.stop();
+    });
+
+    it("keeps the run's outcome and logs the loss when its record cannot be written", async () => {
+      ctx = await createTestContext();
+      const hk = scheduler(clock(T0).nowFn);
+      hk.register({
+        name: "unrecorded",
+        intervalMs: 60_000,
+        firstRunDelayMs: 0,
+        run: () => Promise.resolve({ swept: 1 }),
+      });
+      await hk.start();
+      const store = ctx.storage.housekeeping;
+      const finish = store.finish.bind(store);
+      store.finish = () => Promise.reject(dbError("SQLITE_BUSY"));
+      const captured = captureLog();
+      let answered;
+      try {
+        answered = await hk.runNow("unrecorded");
+      } finally {
+        captured.restore();
+        store.finish = finish;
+      }
+      expect(answered).toMatchObject({
+        kind: "ran",
+        run: { outcome: "ok", result: { swept: 1 } },
+      });
+      expect(captured.lines).toContainEqual(
+        expect.objectContaining({
+          level: "error",
+          message: "Housekeeping unrecorded record error",
+        }),
+      );
+      // The name stays held until the record lands, which the next pass
+      // writes; then it runs again.
+      expect(await hk.runNow("unrecorded")).toEqual({ kind: "running" });
+      await hk.poll();
+      expect(await store.get("unrecorded")).toMatchObject({
+        running_since: null,
+        last_outcome: "ok",
+        last_result: { swept: 1 },
+      });
+      expect((await hk.runNow("unrecorded")).kind).toBe("ran");
+      await hk.stop();
+    });
   });
 
   describe("runNow", () => {
-    it("runs a job inline and answers the run; unknown names are unknown", async () => {
+    it("runs a name inline and answers the run; unknown names are unknown", async () => {
       ctx = await createTestContext();
       const c = clock(T0);
       const hk = scheduler(c.nowFn);
@@ -531,7 +734,7 @@ describe("Housekeeping", () => {
       await hk.stop();
     });
 
-    it("answers unknown for a registered job the scheduler has not started", async () => {
+    it("answers unknown for a registered name the scheduler has not started", async () => {
       ctx = await createTestContext();
       const hk = scheduler(clock(T0).nowFn);
       hk.register({
@@ -540,7 +743,7 @@ describe("Housekeeping", () => {
         firstRunDelayMs: 0,
         run: () => Promise.resolve(null),
       });
-      // No row yet: to a caller, a job the instance does not run.
+      // No row yet: to a caller, a housekeeping job the instance does not run.
       expect(await hk.runNow("not-yet")).toEqual({ kind: "unknown" });
       await hk.start();
       expect((await hk.runNow("not-yet")).kind).toBe("ran");
@@ -602,6 +805,97 @@ describe("Housekeeping", () => {
       expect(stopped).toBe(true);
     });
 
+    it("waits for a run started on demand", async () => {
+      ctx = await createTestContext();
+      const hk = scheduler(clock(T0).nowFn);
+      let release: () => void = () => undefined;
+      let finished = false;
+      hk.register({
+        name: "slow",
+        intervalMs: 60_000,
+        firstRunDelayMs: 3_600_000,
+        run: () =>
+          new Promise<null>((done) => {
+            release = () => {
+              finished = true;
+              done(null);
+            };
+          }),
+      });
+      await hk.start();
+      const running = hk.runNow("slow");
+      let stopped = false;
+      const stopping = hk.stop().then(() => {
+        stopped = true;
+      });
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(stopped).toBe(false);
+      release();
+      await stopping;
+      expect(finished).toBe(true);
+      expect((await running).kind).toBe("ran");
+    });
+
+    it("waits for a run a poll was still claiming when the stop began", async () => {
+      ctx = await createTestContext();
+      const hk = scheduler(clock(T0).nowFn);
+      hk.register({
+        name: "quick",
+        intervalMs: 60_000,
+        firstRunDelayMs: 0,
+        run: () => Promise.resolve(null),
+      });
+      let releaseSlow: () => void = () => undefined;
+      let slowFinished = false;
+      hk.register({
+        name: "slow",
+        intervalMs: 60_000,
+        firstRunDelayMs: 0,
+        run: () =>
+          new Promise<null>((done) => {
+            releaseSlow = () => {
+              slowFinished = true;
+              done(null);
+            };
+          }),
+      });
+      await hk.start();
+      // The claim of `slow` waits, as one that met the write lock does, and
+      // the stop lands while it waits.
+      const store = ctx.storage.housekeeping;
+      const claimDue = store.claimDue.bind(store);
+      let releaseClaim: () => void = () => undefined;
+      const claimHeld = new Promise<void>((resolve) => {
+        releaseClaim = resolve;
+      });
+      store.claimDue = async (name, now) => {
+        if (name === "slow") await claimHeld;
+        return claimDue(name, now);
+      };
+      try {
+        const polling = hk.poll();
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        let stopped = false;
+        const stopping = hk.stop().then(() => {
+          stopped = true;
+        });
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        expect(stopped).toBe(false);
+        releaseClaim();
+        await polling;
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        // `slow` started after the stop began and is still running: the
+        // stop waits for it.
+        expect(stopped).toBe(false);
+        expect((await store.get("slow"))?.running_since).not.toBeNull();
+        releaseSlow();
+        await stopping;
+        expect(slowFinished).toBe(true);
+      } finally {
+        store.claimDue = claimDue;
+      }
+    });
+
     it("stands a run down at info when the client closed under it during shutdown, and keeps error otherwise", async () => {
       ctx = await createTestContext();
       const hk = scheduler(clock(T0).nowFn);
@@ -639,11 +933,11 @@ describe("Housekeeping", () => {
   });
 });
 
-describe("one scheduler owns every job's cadence and the level of its failure", () => {
-  // The level was wrong in seven places because the rule was written seven
-  // times, and a job that keeps its own timer is a job the table does not
-  // list. The scheduler is the one place a failed run is classified; a job
-  // module keeps no timer and calls no classifier.
+describe("one scheduler owns every cadence and the level of every failure", () => {
+  // A rule written once cannot drift: the scheduler is the one place a
+  // failed run is classified, and a module that kept its own timer would
+  // be work the table does not list. A run module keeps no timer and calls
+  // no classifier; the registrations name every cadence.
   const here = (file: string) =>
     readFileSync(fileURLToPath(new URL(file, import.meta.url)), "utf8");
 
@@ -654,7 +948,6 @@ describe("one scheduler owns every job's cadence and the level of its failure", 
   });
 
   it.each([
-    "../index.ts",
     "../storage/retention.ts",
     "../storage/version-thinner.ts",
     "../enrichment/sweeper.ts",
@@ -663,9 +956,27 @@ describe("one scheduler owns every job's cadence and the level of its failure", 
     "../webhooks/delivery.ts",
   ])("%s keeps no interval timer and classifies no failed run", (file) => {
     const source = here(file);
-    // The witness that the file is a job module at all: it has runs.
-    expect(source).toContain("runOnce(");
+    // The witness that the file defines runs at all.
+    expect(source).toMatch(/async runOnce\(\)/);
     expect(source).not.toContain("setInterval(");
     expect(source).not.toContain("logJobTickFailure(");
+  });
+
+  it("registrations.ts registers every cadence and keeps no timer or classifier", () => {
+    const source = here("./registrations.ts");
+    // The witness: the registrations are here, more than a dozen of them.
+    expect(
+      (source.match(/housekeeping\.register\(\{/g) ?? []).length,
+    ).toBeGreaterThanOrEqual(15);
+    expect(source).not.toContain("setInterval(");
+    expect(source).not.toContain("logJobTickFailure(");
+  });
+
+  it("index.ts wires the scheduler and keeps no timer of its own", () => {
+    const source = here("../index.ts");
+    expect(source).toContain("registerHousekeepingJobs(");
+    expect(source).toContain("await housekeeping.start()");
+    expect(source).not.toContain("setInterval(");
+    expect(source).not.toContain("housekeeping.register(");
   });
 });

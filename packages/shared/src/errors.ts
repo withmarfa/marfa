@@ -180,8 +180,8 @@ export enum ErrorCode {
    * rather than the server returning an HTTP error.
    */
   BULK_JOB_NOT_FOUND = "bulk_job_not_found",
-  /** `POST /housekeeping/:name/run` named a job this instance does not
-   *  run: unregistered, or switched off by configuration. */
+  /** `POST /housekeeping/:name/run` named a housekeeping job this instance
+   *  does not run: unregistered, or switched off by configuration. */
   HOUSEKEEPING_JOB_NOT_FOUND = "housekeeping_job_not_found",
   /** The housekeeping job is in the middle of a run, and a housekeeping job
    *  never overlaps itself. */

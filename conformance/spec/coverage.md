@@ -130,7 +130,7 @@ Fixture paths are under `src/suites/`.
 
 | Operation                           | Status        | Fixture                                                                   | Notes                                                                                                |
 | ----------------------------------- | ------------- | ------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| `GET /housekeeping`                 | covered       | `compliance/housekeeping.test.ts`                                         | Operator key only. Every job the server runs on itself, with its schedule and last run.              |
+| `GET /housekeeping`                 | covered       | `compliance/housekeeping.test.ts`                                         | Operator key only. Every housekeeping job, with its schedule and last run.                           |
 | `POST /housekeeping/{name}/run`     | covered       | `compliance/housekeeping.test.ts`                                         | Operator key only. `409 housekeeping_job_running` cannot be arranged over the wire: a run is inline. |
 | `POST /admin/restore-archive`       | unpublished   | `compliance/admin-archive.test.ts`, `compliance/export-roundtrip.test.ts` | Operator key only.                                                                                   |
 | `GET /metrics`                      | unpublished   | `compliance/instance.test.ts`                                             | Operator key only. Stripped from the document as internal, so the fixture is what holds its shape.   |

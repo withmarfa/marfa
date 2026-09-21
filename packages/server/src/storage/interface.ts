@@ -2566,7 +2566,7 @@ export interface EnrichmentStateInput {
    * ceiling or enable image reading and the row deserves another look —
    * so the candidate query re-offers skipped rows whose stamp differs.
    */
-  config_signature?: string | null;
+  config_signature: string;
 }
 
 export interface EnrichmentStateRecord extends EnrichmentStateInput {
@@ -2619,22 +2619,23 @@ export interface HousekeepingFinish {
   outcome: HousekeepingOutcome;
   error: string | null;
   result: unknown;
-  /** When the job is next due. A `next_run_at` already past the run's
+  /** When the name is next due. A `next_run_at` already past the run's
    *  start (a wake during the run, or the schedule of a run started ahead
    *  of it) holds instead when it is the earlier of the two. */
   nextRunAt: string;
 }
 
 /**
- * The polling table the scheduler runs the server's own jobs from. Every
- * claim is one statement conditioned on `running_since IS NULL`, which is
- * what makes a job exclusive to one run at a time.
+ * The polling table the scheduler runs the server's housekeeping from.
+ * Every claim is one statement conditioned on `running_since IS NULL`,
+ * which is what makes a name exclusive to one run at a time.
  */
 export interface HousekeepingStore {
   /**
-   * Write a job's row at boot. A new name is inserted due at `nextRunAt`; an
-   * existing one takes the interval and keeps its own `next_run_at`, unless
-   * `nextRunAt` is earlier (an interval shortened by configuration).
+   * Write a housekeeping job's row at boot. A new name is inserted due at
+   * `nextRunAt`; an existing one takes the interval and keeps its own
+   * `next_run_at`, unless `nextRunAt` is earlier (an interval shortened by
+   * configuration).
    */
   upsert(name: string, intervalMs: number, nextRunAt: string): Promise<void>;
   /** Delete every row no registration names. Returns their names. */
@@ -2642,15 +2643,15 @@ export interface HousekeepingStore {
   /** Clear every `running_since` left by a run that never finished. Returns
    *  the names it cleared. */
   clearRunning(): Promise<string[]>;
-  /** Names of the jobs due at `now` and not running. */
+  /** The names due at `now` and not running. */
   listDue(now: string): Promise<string[]>;
-  /** Claim a job that is due and not running. `null` when it is neither. */
+  /** Claim a name that is due and not running. `null` when it is neither. */
   claimDue(name: string, now: string): Promise<HousekeepingRow | null>;
-  /** Claim a job whether or not it is due. `null` when it is running or
+  /** Claim a name whether or not it is due. `null` when it is running or
    *  unknown. */
   claim(name: string, now: string): Promise<HousekeepingRow | null>;
   finish(name: string, outcome: HousekeepingFinish): Promise<void>;
-  /** Make a job due now. False when there is no such job. */
+  /** Make a name due now. False when there is no such row. */
   wake(name: string, now: string): Promise<boolean>;
   list(): Promise<HousekeepingRow[]>;
   get(name: string): Promise<HousekeepingRow | null>;

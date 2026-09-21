@@ -47,11 +47,10 @@ export class SqliteEnrichmentStore implements EnrichmentStore {
               lt(enrichmentState.attempts, maxAttempts),
             ),
             // A skip is terminal only under the configuration that made
-            // it. IS NOT (SQLite's null-safe inequality), so pre-column
-            // NULL rows re-offer once and get stamped.
+            // it.
             and(
               eq(enrichmentState.status, "skipped"),
-              sql`${enrichmentState.config_signature} IS NOT ${configSignature}`,
+              ne(enrichmentState.config_signature, configSignature),
             ),
           ),
         ),
@@ -99,7 +98,7 @@ export class SqliteEnrichmentStore implements EnrichmentStore {
       status: state.status,
       attempts: state.attempts,
       error: state.error ?? null,
-      config_signature: state.config_signature ?? null,
+      config_signature: state.config_signature,
       updated_at: new Date().toISOString(),
     };
     await this.db

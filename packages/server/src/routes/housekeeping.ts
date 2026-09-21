@@ -36,7 +36,7 @@ const NameParam = z.object({
   name: z
     .string()
     .regex(/^[a-z][a-z0-9-]*$/)
-    .describe("The job's name, as `GET /housekeeping` lists it."),
+    .describe("The housekeeping job's name, as `GET /housekeeping` lists it."),
 });
 
 const operatorResponses = {
@@ -69,7 +69,7 @@ const listHousekeepingRoute = createRoute({
   tags: ["Housekeeping"],
   summary: "List the instance's housekeeping jobs",
   description:
-    "Every periodic job the server runs on itself, with its cadence, when it is next due, whether a run holds it now, and what its last run did. A job switched off by configuration is not listed; one whose retention `/config` can set is listed whatever the instance default. Operator key only.",
+    "Every housekeeping job the server runs on itself, with its cadence, when it is next due, whether a run holds it now, and what its last run did. One switched off by configuration is not listed; one whose retention `/config` can set is listed whatever the instance default. Operator key only.",
   security: [{ bearerAuth: [] }],
   responses: {
     200: {
@@ -78,7 +78,7 @@ const listHousekeepingRoute = createRoute({
           schema: z.object({ data: z.array(HousekeepingJobSchema) }),
         },
       },
-      description: "The jobs",
+      description: "The housekeeping jobs",
     },
     ...operatorResponses,
   },
@@ -91,7 +91,7 @@ const runHousekeepingRoute = createRoute({
   tags: ["Housekeeping"],
   summary: "Run one housekeeping job now",
   description:
-    "Runs the job inline and answers what it did, including a failure, which is reported as the run's `outcome` rather than as this door's. A job never overlaps itself: one in the middle of a run answers `409`. Operator key only.",
+    "Runs the housekeeping job inline and answers what it did, including a failure, which is reported as the run's `outcome` rather than as this door's. A housekeeping job never overlaps itself: one in the middle of a run answers `409`. Operator key only.",
   security: [{ bearerAuth: [] }],
   request: { params: NameParam },
   responses: {
@@ -105,7 +105,7 @@ const runHousekeepingRoute = createRoute({
           schema: makeErrorResponseSchema(["validation_error"]),
         },
       },
-      description: "Not a job name",
+      description: "Not a housekeeping job name",
     },
     ...operatorResponses,
     404: {
@@ -114,7 +114,7 @@ const runHousekeepingRoute = createRoute({
           schema: makeErrorResponseSchema(["housekeeping_job_not_found"]),
         },
       },
-      description: "No such job on this instance",
+      description: "No such housekeeping job on this instance",
     },
     409: {
       content: {
@@ -122,7 +122,7 @@ const runHousekeepingRoute = createRoute({
           schema: makeErrorResponseSchema(["housekeeping_job_running"]),
         },
       },
-      description: "A run holds the job",
+      description: "A run holds the housekeeping job",
     },
   },
 });

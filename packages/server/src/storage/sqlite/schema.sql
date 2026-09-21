@@ -347,7 +347,7 @@ CREATE TABLE IF NOT EXISTS `enrichment_state` (
 	`status` text NOT NULL,
 	`attempts` integer DEFAULT 0 NOT NULL,
 	`error` text,
-	`config_signature` text,
+	`config_signature` text NOT NULL,
 	`updated_at` text NOT NULL,
 	FOREIGN KEY (`item_id`) REFERENCES `items`(`id`) ON UPDATE no action ON DELETE cascade
 );

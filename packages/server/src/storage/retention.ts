@@ -305,7 +305,7 @@ export class ActivityPurger {
 
 /**
  * Drops expired better-auth `auth_session` rows. Better Auth itself owns
- * the session TTL via `expiresAt`; this job exists only so the table
+ * the session TTL via `expiresAt`; this sweep exists only so the table
  * doesn't grow unbounded between natural expiries (browser-side ephemeral
  * cookies vanish on tab close, but the server-side row stays around until
  * the sweep catches up).
@@ -385,7 +385,7 @@ export class DcrClientCleaner {
   ) {}
 
   /** One sweep — deletes grantless clients older than the window. No-op
-   *  when the job is disabled or the oauth-provider store is absent (test
+   *  when the window is off or the oauth-provider store is absent (test
    *  contexts that skip better-auth). */
   async runOnce(): Promise<number> {
     if (this.retentionDays <= 0) return 0;
