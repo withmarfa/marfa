@@ -155,15 +155,16 @@ pub fn journal_missing(conn: &Connection, path: &str, item_id: &str) -> Result<(
     Ok(())
 }
 
-/// Takes a path out of the journal: the file is there after all, or the
-/// delete the row named has already been sent.
+/// Takes a path out of the journal, and every caller is the same rule: a
+/// journal row must not outlive the question it asks.
 ///
-/// Called wherever either becomes true — a scan that found the file under
-/// its own name, a scan that followed it to a new one, a pull that is about
-/// to write it, and the sweep that clears the row once the delete has gone.
-/// The sweep is the opposite case and belongs here for the same reason: a
-/// journal row outliving its own delete is a second delete waiting to
-/// happen.
+/// The question is whether an item should be deleted because its file went.
+/// So the row goes the moment the file is there after all — a scan that
+/// found it under its own name, a scan that followed it to a new one, a
+/// pull about to write it — and it goes the moment the question has been
+/// answered or stopped applying: the sweep that has already sent the
+/// delete, a pull taking a departed file away. A row that survives either
+/// becomes a delete nobody asked for.
 pub fn journal_clear(conn: &Connection, path: &str) -> Result<(), CoreError> {
     conn.execute("DELETE FROM folder_journal WHERE path = ?1", [path])?;
     Ok(())
