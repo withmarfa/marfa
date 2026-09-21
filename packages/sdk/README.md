@@ -52,4 +52,4 @@ try {
 
 ## Versioning
 
-Major bumps when `@withmarfa/shared` major-bumps (every wire-shape change cascades). Minor bumps for additive SDK features. Patch for bug fixes. Tag pushes (`v*`) trigger the OIDC-published release workflow; the workflow skips packages whose version is already on npm so unbumped packages are no-ops.
+Major bumps when `@withmarfa/shared` major-bumps (every wire-shape change cascades). Minor bumps for additive SDK features. Patch for bug fixes. Tag pushes (`v*`) run `.github/workflows/publish.yml`, which publishes over OIDC and skips a package whose version is already on npm.
