@@ -57,6 +57,7 @@ import type {
   ResolvedItem,
 } from "../storage/interface.js";
 import { ITEM_EDGES_CURSOR_KEY } from "../storage/interface.js";
+import { staleVersion } from "../storage/conflict.js";
 import { readInstanceConfig } from "../storage/instance-config.js";
 import { planCascadeDelete } from "../storage/edge-cascade.js";
 import { assertEdgesCanBeCreated } from "../storage/edge-constraints.js";
@@ -137,6 +138,23 @@ const ConflictResponseSchema = z.object({
   ancestor: ConflictSnapshotSchema,
   conflicting_fields: z.array(z.string()),
   merge_policy: MergePolicySchema,
+});
+
+/**
+ * The refusal for a stale write that carried nothing to merge.
+ *
+ * `current` and `error.status` are here because every `version_conflict`
+ * carries them, whichever door answered and whatever the write held. What is
+ * absent is what a merge would need and this write has none of: there is no
+ * ancestor to compare against and no field that could have collided.
+ */
+const StaleVersionSchema = z.object({
+  error: z.object({
+    code: z.literal("version_conflict"),
+    status: z.literal(409),
+    message: z.string(),
+  }),
+  current: ConflictSnapshotSchema,
 });
 
 /**
@@ -830,6 +848,7 @@ const updateItemRoute = createRoute({
         "application/json": {
           schema: z.union([
             ConflictResponseSchema,
+            StaleVersionSchema,
             AncestorUnavailableSchema,
             makeErrorResponseSchema([
               "version_conflict",
@@ -2583,17 +2602,21 @@ export function itemRoutes(storage: Storage) {
       // in the window between the two is exactly what the precondition
       // exists to notice.
       //
-      // A bare refusal rather than the three-way envelope, deliberately:
-      // that envelope hands a resolver two property sets and the fields
-      // that collide, and a request carrying no properties has none of
-      // them. There is nothing to merge, only a precondition that failed.
+      // The envelope minus its merge half, rather than a bare refusal.
+      // Nothing here can be merged — that needs two property sets and the
+      // fields that collide, and a request carrying no properties has
+      // neither — so there is no `ancestor`, no `conflicting_fields` and no
+      // `merge_policy`. But `error.status` and `current` are on every
+      // `version_conflict` this server answers, so a client reading
+      // `body.current.version` reads it here too instead of finding
+      // `undefined` on one door out of three.
       if (!hasProperties && !hasTier && !hasOccurredAt && !hasSourceId) {
         const current = await storage.items.get(id);
         if (current && body.version !== current.version) {
-          throw new MarfaError(
-            ErrorCode.VERSION_CONFLICT,
-            `Version ${String(body.version)} is not the current version ${String(current.version)}`,
-            { current_version: current.version },
+          return staleVersion(
+            current.version,
+            current.properties,
+            body.version,
           );
         }
       }
