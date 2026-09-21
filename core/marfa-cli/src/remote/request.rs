@@ -14,6 +14,9 @@ pub enum Body {
         path: PathBuf,
         content_type: String,
     },
+    /// `application/x-www-form-urlencoded`, which is what the OAuth doors
+    /// take.
+    Form(Vec<(String, String)>),
 }
 
 /// One call from the direct surface, before it is sent: the shape a command
@@ -26,8 +29,8 @@ pub struct Request {
     pub query: Vec<(String, String)>,
     pub headers: Vec<(String, String)>,
     pub body: Body,
-    /// Whether the door needs a credential. The root document and the
-    /// health door answer without one.
+    /// Whether the door needs a credential. The root document, the health
+    /// door and the sign-in endpoints answer without one.
     pub credential: bool,
     /// Hand the body back as a reader rather than reading it as text: the
     /// stream, an export, a blob's bytes.
@@ -110,6 +113,16 @@ impl Request {
             path,
             content_type: content_type.into(),
         };
+        self
+    }
+
+    pub fn form(mut self, pairs: &[(&str, &str)]) -> Request {
+        self.body = Body::Form(
+            pairs
+                .iter()
+                .map(|(key, value)| (key.to_string(), value.to_string()))
+                .collect(),
+        );
         self
     }
 

@@ -1,7 +1,8 @@
-//! The server a command talks to, and how it talks to it.
+//! The server a direct command talks to, and how it talks to it.
 
 pub mod request;
 
+use std::cell::RefCell;
 use std::fs::File;
 use std::io::Read;
 
@@ -9,6 +10,7 @@ use marfa_core::Server;
 use marfa_core::http::{Call, CallBody, Http, Reply, ReplyBody};
 use serde_json::Value;
 
+use crate::auth;
 use crate::credentials::{self, Kept};
 use crate::error::CliError;
 use request::{Body, Request};
@@ -32,11 +34,15 @@ impl CredentialSource {
 }
 
 pub struct Remote {
-    http: Http,
+    /// Rebuilt when a kept token is refreshed mid-command.
+    http: RefCell<Http>,
     url: String,
     origin: String,
     credential: Option<CredentialSource>,
-    bearer: Option<String>,
+    bearer: RefCell<Option<String>>,
+    /// The keychain entry the credential came from, when it did, so a
+    /// token can be refreshed and `whoami` can say what was granted.
+    kept: RefCell<Option<Kept>>,
 }
 
 /// The two values the command line and the environment can name.
@@ -49,7 +55,7 @@ pub struct Named {
 impl Named {
     /// What a command that sends from the working copy needs: the server
     /// and the credential, resolved the same way a direct command's are,
-    /// so a key kept in the keychain reaches `device` and `folders` too.
+    /// so a kept key or a sign-in reaches `device` and `folders` too.
     pub fn server(&self) -> Result<Server, CliError> {
         let remote = Remote::resolve(self)?;
         let key = remote.bearer().ok_or_else(|| CliError::NoCredential {
@@ -73,10 +79,10 @@ impl Remote {
             .or_else(|| non_empty(std::env::var("MARFA_API_URL").ok()))
         {
             Some(url) => url,
-            // The origin a kept key made current. A keychain that cannot be
-            // asked is not an error here: the flag and the environment were
-            // empty, so the answer is that no server was named, and the
-            // message says how to name one.
+            // The origin a sign-in or a kept key made current. A keychain
+            // that cannot be asked is not an error here: the flag and the
+            // environment were empty, so the answer is that no server was
+            // named, and the message says how to name one.
             None => match credentials::current() {
                 Ok(Some(origin)) => origin,
                 Ok(None) | Err(CliError::NoKeychain(_)) => return Err(CliError::NoServerNamed),
@@ -84,12 +90,24 @@ impl Remote {
             },
         };
         let origin = Http::new(&url, None)?.origin();
+        let mut kept = None;
         let (key, credential) = match named.key.clone() {
             Some(key) => (Some(key), Some(CredentialSource::Flag)),
             None => match non_empty(std::env::var("MARFA_API_KEY").ok()) {
                 Some(key) => (Some(key), Some(CredentialSource::Environment)),
                 None => match credentials::read(&origin) {
-                    Ok(Some(Kept::Key { key })) => (Some(key), Some(CredentialSource::Keychain)),
+                    Ok(Some(found)) => {
+                        // A token about to expire is refreshed before the
+                        // call rather than after its refusal.
+                        let found = if auth::is_stale(&found) {
+                            auth::refresh(&origin, None)?
+                        } else {
+                            found
+                        };
+                        let bearer = found.bearer().to_string();
+                        kept = Some(found);
+                        (Some(bearer), Some(CredentialSource::Keychain))
+                    }
                     Ok(None) | Err(CliError::NoKeychain(_)) => (None, None),
                     Err(error) => return Err(error),
                 },
@@ -97,17 +115,93 @@ impl Remote {
         };
         let http = Http::new(&url, key.as_deref())?;
         Ok(Remote {
-            http,
+            http: RefCell::new(http),
             url,
             origin,
             credential,
-            bearer: key,
+            bearer: RefCell::new(key),
+            kept: RefCell::new(kept),
         })
+    }
+
+    /// The server as named, without a credential: what `login` starts from.
+    pub fn url_named(named: &Named) -> Result<String, CliError> {
+        match named
+            .url
+            .clone()
+            .or_else(|| non_empty(std::env::var("MARFA_API_URL").ok()))
+        {
+            Some(url) => Ok(url),
+            None => match credentials::current() {
+                Ok(Some(origin)) => Ok(origin),
+                Ok(None) | Err(CliError::NoKeychain(_)) => Err(CliError::NoServerNamed),
+                Err(error) => Err(error),
+            },
+        }
     }
 
     /// The credential's bearer value, for keeping it.
     pub fn bearer(&self) -> Option<String> {
-        self.bearer.clone()
+        self.bearer.borrow().clone()
+    }
+
+    /// The keychain entry the credential came from, if it did.
+    pub fn kept(&self) -> Option<Kept> {
+        self.kept.borrow().clone()
+    }
+
+    /// Whether a `401` can be answered by refreshing: only a kept token can.
+    fn can_refresh(&self) -> bool {
+        matches!(
+            &*self.kept.borrow(),
+            Some(Kept::Token {
+                refresh_token: Some(_),
+                ..
+            })
+        )
+    }
+
+    /// Refreshes the kept token after a `401` and rebuilds the transport
+    /// with the new one.
+    fn refreshed(&self) -> Result<(), CliError> {
+        let refused = self.bearer.borrow().clone().unwrap_or_default();
+        let next = auth::refresh(&self.origin, Some(&refused))?;
+        let bearer = next.bearer().to_string();
+        *self.http.borrow_mut() = Http::new(&self.url, Some(&bearer))?;
+        *self.bearer.borrow_mut() = Some(bearer);
+        *self.kept.borrow_mut() = Some(next);
+        Ok(())
+    }
+
+    /// A remote holding a keychain entry, for the tests of the refresh
+    /// path, which `resolve` reaches only through the real keychain.
+    #[cfg(test)]
+    pub(crate) fn holding(url: &str, kept: Kept) -> Result<Remote, CliError> {
+        let http = Http::new(url, Some(kept.bearer()))?;
+        let origin = http.origin();
+        Ok(Remote {
+            url: url.to_string(),
+            http: RefCell::new(http),
+            origin,
+            credential: Some(CredentialSource::Keychain),
+            bearer: RefCell::new(Some(kept.bearer().to_string())),
+            kept: RefCell::new(Some(kept)),
+        })
+    }
+
+    /// A remote at a URL with no credential: the sign-in surface's doors,
+    /// which take a client id or a token in the body rather than a bearer.
+    pub fn public_at(url: &str) -> Result<Remote, CliError> {
+        let http = Http::new(url, None)?;
+        let origin = http.origin();
+        Ok(Remote {
+            url: url.to_string(),
+            http: RefCell::new(http),
+            origin,
+            credential: None,
+            bearer: RefCell::new(None),
+            kept: RefCell::new(None),
+        })
     }
 
     /// A remote over a transport built for one call, such as the bootstrap
@@ -117,10 +211,11 @@ impl Remote {
         let origin = http.origin();
         Remote {
             url: origin.clone(),
-            http,
+            http: RefCell::new(http),
             origin,
             credential: None,
-            bearer: None,
+            bearer: RefCell::new(None),
+            kept: RefCell::new(None),
         }
     }
 
@@ -137,11 +232,26 @@ impl Remote {
         self.credential
     }
 
-    /// Sends a request. An `Err` is a transport failure, a missing
-    /// credential, or a body that cannot be sent; every status the server
-    /// answers is a `Reply`.
+    /// Sends a request. Every status the server answers is a `Reply`; an
+    /// `Err` is a transport failure, a missing credential, or a refresh
+    /// that could not be made.
+    ///
+    /// A `401` to a kept token is answered by one refresh and one retry,
+    /// because the token may have been rotated by another process since
+    /// this one read the keychain, or have run out between the read and
+    /// the call.
     pub fn call(&self, request: &Request) -> Result<Reply, CliError> {
-        if request.credential && !self.http.has_credential() {
+        let reply = self.send(request)?;
+        if reply.status == 401 && request.credential && self.can_refresh() {
+            self.refreshed()?;
+            return self.send(request);
+        }
+        Ok(reply)
+    }
+
+    fn send(&self, request: &Request) -> Result<Reply, CliError> {
+        let http = self.http.borrow();
+        if request.credential && !http.has_credential() {
             return Err(CliError::NoCredential {
                 origin: self.origin.clone(),
             });
@@ -158,6 +268,7 @@ impl Remote {
             .map(|(name, value)| (name.as_str(), value.as_str()))
             .collect();
         let json_text;
+        let form_text;
         let body = match &request.body {
             Body::None => CallBody::None,
             Body::Json(value) => {
@@ -171,8 +282,19 @@ impl Remote {
                 headers.push(("Content-Type", content_type.as_str()));
                 CallBody::Reader(Box::new(file))
             }
+            Body::Form(pairs) => {
+                form_text = url::form_urlencoded::Serializer::new(String::new())
+                    .extend_pairs(
+                        pairs
+                            .iter()
+                            .map(|(key, value)| (key.as_str(), value.as_str())),
+                    )
+                    .finish();
+                headers.push(("Content-Type", "application/x-www-form-urlencoded"));
+                CallBody::Text(&form_text)
+            }
         };
-        Ok(self.http.call(Call {
+        Ok(http.call(Call {
             method: request.method,
             segments: &segments,
             params: &params,
@@ -241,8 +363,8 @@ struct EnvelopeError {
 }
 
 /// A refusal as the server sent it: the code and message from the standard
-/// envelope, or the first of the body where there was none, which is what a
-/// page or a proxy in front of the server answers.
+/// envelope, from the OAuth shape, or the first of the body where there was
+/// neither, which is what a page or a proxy in front of the server answers.
 pub fn refused(status: u16, text: &str, retry_after_seconds: Option<u64>) -> CliError {
     let (code, message, details) = match serde_json::from_str::<Envelope>(text) {
         Ok(envelope) => (
@@ -250,11 +372,27 @@ pub fn refused(status: u16, text: &str, retry_after_seconds: Option<u64>) -> Cli
             envelope.error.message.unwrap_or_default(),
             envelope.error.details.map(Box::new),
         ),
-        Err(_) => (
-            "unknown".to_string(),
-            text.chars().take(200).collect(),
-            None,
-        ),
+        // The OAuth doors answer `{error, error_description}` rather than
+        // the standard envelope.
+        Err(_) => match serde_json::from_str::<Value>(text) {
+            Ok(Value::Object(map)) => (
+                map.get("error")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown")
+                    .to_string(),
+                map.get("error_description")
+                    .or_else(|| map.get("message"))
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string(),
+                None,
+            ),
+            _ => (
+                "unknown".to_string(),
+                text.chars().take(200).collect(),
+                None,
+            ),
+        },
     };
     CliError::Refused {
         status,
@@ -275,7 +413,7 @@ mod tests {
     }
 
     #[test]
-    fn a_refusal_keeps_the_envelope_and_the_first_of_a_body_that_is_not_one() {
+    fn a_refusal_keeps_the_envelope_and_reads_the_oauth_shape_too() {
         match refused(
             422,
             r#"{"error":{"code":"bulk_atomic_rollback","message":"entry 3","details":{"index":3}}}"#,
@@ -293,6 +431,19 @@ mod tests {
                     (422, "bulk_atomic_rollback", "entry 3")
                 );
                 assert_eq!(details.unwrap()["index"], 3);
+            }
+            other => panic!("{other:?}"),
+        }
+        match refused(
+            400,
+            r#"{"error":"invalid_grant","error_description":"revoked"}"#,
+            None,
+        ) {
+            CliError::Refused { code, message, .. } => {
+                assert_eq!(
+                    (code.as_str(), message.as_str()),
+                    ("invalid_grant", "revoked")
+                );
             }
             other => panic!("{other:?}"),
         }
@@ -344,6 +495,91 @@ mod tests {
             Err(CliError::NoCredential { .. })
         ));
         assert!(door.received().is_empty());
+    }
+
+    /// A `401` to a kept token is answered by one refresh and one retry:
+    /// the door sees the refused call, the refresh with the spent token,
+    /// and the call again under the new one. A later call refused again is
+    /// refreshed again, once, and a token door that refuses that refresh is
+    /// the answer.
+    #[test]
+    fn a_refused_kept_token_is_refreshed_once_and_the_call_sent_again() {
+        let door = Door::open(vec![
+            Answer::json(
+                "401 Unauthorized",
+                r#"{"error":{"code":"unauthorized","message":"expired"}}"#,
+            ),
+            Answer::json(
+                "200 OK",
+                r#"{"access_token":"marfa_at_new","refresh_token":"marfa_rt_new","expires_in":3600,"token_type":"Bearer"}"#,
+            ),
+            Answer::json("200 OK", r#"{"data":[]}"#),
+            Answer::json(
+                "401 Unauthorized",
+                r#"{"error":{"code":"unauthorized","message":"still"}}"#,
+            ),
+            Answer::json(
+                "429 Too Many Requests",
+                r#"{"error":{"code":"rate_limited","message":"slow down"}}"#,
+            ),
+        ]);
+        let kept = Kept::Token {
+            access_token: "marfa_at_old".into(),
+            refresh_token: Some("marfa_rt_old".into()),
+            expires_at: Some(crate::auth::now_seconds() + 3600),
+            client_id: "client".into(),
+            scope: None,
+            token_endpoint: format!("{}/auth/oauth2/token", door.url),
+            revocation_endpoint: None,
+        };
+        // The refresh reads the keychain by the remote's origin, which is
+        // the door's.
+        let origin = Http::new(&door.url, None).unwrap().origin();
+        let _keychain = credentials::hold(&origin);
+        match credentials::keep(&origin, &kept) {
+            Ok(()) => {}
+            Err(CliError::NoKeychain(reason)) => {
+                credentials::skipped(&reason);
+                return;
+            }
+            Err(error) => panic!("{error}"),
+        }
+        let remote = Remote::holding(&door.url, kept).unwrap();
+        let listed = remote.json(&Request::get(&["items"])).unwrap();
+        assert_eq!(listed["data"], serde_json::json!([]));
+        match remote.json(&Request::get(&["items"])) {
+            Err(CliError::Refused { status: 429, .. }) => {}
+            other => panic!("{:?}", other.map(|_| ())),
+        }
+        assert!(
+            matches!(credentials::read(&origin).unwrap(), Some(Kept::Token { access_token, .. }) if access_token == "marfa_at_new"),
+            "the rotated set is the kept one, and the refused refresh left it"
+        );
+        let received = door.received();
+        assert_eq!(received.len(), 5);
+        assert_eq!(received[0].path(), "/items");
+        assert_eq!(
+            received[0].header("authorization"),
+            Some("Bearer marfa_at_old")
+        );
+        assert_eq!(received[1].path(), "/auth/oauth2/token");
+        assert!(
+            received[1].body.contains("refresh_token=marfa_rt_old"),
+            "{}",
+            received[1].body
+        );
+        assert_eq!(received[2].path(), "/items");
+        assert_eq!(
+            received[2].header("authorization"),
+            Some("Bearer marfa_at_new")
+        );
+        assert_eq!(received[3].path(), "/items");
+        assert_eq!(received[4].path(), "/auth/oauth2/token");
+        assert!(
+            received[4].body.contains("refresh_token=marfa_rt_new"),
+            "{}",
+            received[4].body
+        );
     }
 
     /// A refusal is the server's answer carried whole, and an empty

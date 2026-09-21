@@ -63,6 +63,20 @@ jobs:
       - name: Add the iOS targets
         run: rustup target add aarch64-apple-ios aarch64-apple-ios-sim
 
+      # The keychain tests skip, saying so, where no keychain answers. A
+      # runner whose keychain does answer is told to require them, so a
+      # keychain that stops answering later fails the job rather than
+      # quietly narrowing it.
+      - name: Say whether the keychain answers
+        run: |
+          if security add-generic-password -a probe -s marfa-keychain-probe -w probe -U \
+            && security delete-generic-password -a probe -s marfa-keychain-probe >/dev/null; then
+            echo "MARFA_KEYCHAIN_REQUIRED=1" >> "$GITHUB_ENV"
+            echo "the keychain answers; its tests are required"
+          else
+            echo "the keychain does not answer; its tests will skip and say so"
+          fi
+
       - name: Check the core workspace
         working-directory: core
         run: |

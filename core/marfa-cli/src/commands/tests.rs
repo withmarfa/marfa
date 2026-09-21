@@ -610,7 +610,7 @@ fn every_published_operation_has_a_command() {
     let unknown: Vec<&&str> = published.iter().filter(|id| !known.contains(id)).collect();
     assert!(
         unknown.is_empty(),
-        "published operations with neither a command nor a pending entry: {unknown:?}"
+        "published operations with no command: {unknown:?}"
     );
     let stale: Vec<&&str> = known.iter().filter(|id| !published.contains(id)).collect();
     assert!(
@@ -629,68 +629,20 @@ fn every_published_operation_has_a_command() {
 }
 
 /// Every command the table names is one the tree accepts, so the table
-/// cannot advertise a command that does not exist; and a pending entry
-/// names no command, so an operation that gained one cannot stay pending.
+/// cannot advertise a command that does not exist.
 #[test]
-fn every_mapped_command_parses_and_a_pending_entry_is_truly_unreached() {
+fn every_mapped_command_parses() {
     use clap::CommandFactory;
     for operation in operations::OPERATIONS {
-        let command = match operation.reach {
-            operations::Reach::Command(command) => command,
-            operations::Reach::Pending(reason) => {
-                assert!(
-                    !reason.is_empty(),
-                    "{} is pending with no reason",
-                    operation.id
-                );
-                continue;
-            }
-        };
         let mut tree = crate::Cli::command();
         let mut here = &mut tree;
-        for word in command.split(' ') {
+        for word in operation.command.split(' ') {
             here = here.find_subcommand_mut(word).unwrap_or_else(|| {
                 panic!(
                     "{}: `marfa {}` names a subcommand the tree does not have ({word})",
-                    operation.id, command
+                    operation.id, operation.command
                 )
             });
-        }
-    }
-    // A pending entry names the leaf that will reach it, in backticks,
-    // and that leaf must not exist yet: the day it is built, the entry
-    // moves to a command or this test says so.
-    let tree = crate::Cli::command();
-    for operation in operations::OPERATIONS {
-        if let operations::Reach::Pending(reason) = operation.reach {
-            let named: Vec<&str> = reason
-                .split('`')
-                .filter_map(|part| part.strip_prefix("marfa "))
-                .collect();
-            assert!(
-                !named.is_empty(),
-                "{} is pending on nothing the tree could grow",
-                operation.id
-            );
-            for leaf in named {
-                // Walked word by word, as the mapped commands are: a leaf
-                // under a root exists when every word resolves.
-                let mut here = &tree;
-                let exists = leaf
-                    .split(' ')
-                    .all(|word| match here.find_subcommand(word) {
-                        Some(sub) => {
-                            here = sub;
-                            true
-                        }
-                        None => false,
-                    });
-                assert!(
-                    !exists,
-                    "{} is pending on `marfa {leaf}`, which now exists",
-                    operation.id
-                );
-            }
         }
     }
 }
