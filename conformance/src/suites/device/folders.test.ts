@@ -734,6 +734,91 @@ describe("files and items", () => {
     ).toEqual([edge!.edge_id]);
   });
 
+  it("does not write back a link the person took out for an edge it could not have made", async () => {
+    harness = await folderHarness("folder-declined-link");
+    scriptFolderWrites(harness);
+    put(harness, "target.md", "---\ntitle: Target\n---\nthe other end\n");
+    put(harness, "other.md", "---\ntitle: Other\n---\nanother end\n");
+    put(
+      harness,
+      "source.md",
+      "---\ntitle: Source\n---\nsee [[target]] for more\n",
+    );
+    expect((await harness.folder.push()).ok).toBe(true);
+    const device = harness.folder.device();
+    const started = keysByItem(harness);
+    const source = itemFor(started, "source.md");
+    const other = itemFor(started, "other.md");
+
+    // An edge of a kind the folder never writes, to a file the body does
+    // not name, made elsewhere.
+    const made = await device.createEdge({
+      source,
+      target: other,
+      type: "mentions",
+    });
+    expect(made.ok, `the edge was refused: ${JSON.stringify(made)}`).toBe(true);
+
+    // The witness: the pull renders it as a link, as 7 says it does.
+    const rendered = await harness.folder.pull();
+    expect(rendered.ok).toBe(true);
+    if (!rendered.ok) return;
+    expect(
+      rendered.value.rewritten,
+      "the edge was never rendered, so there is no link here for a person to take out",
+    ).toBe(1);
+    expect(read(harness, "source.md")).toContain("[[other]]");
+
+    // The person takes the line out, and nothing else: the frontmatter
+    // the folder wrote stays, so the only difference is the link.
+    const rendered_text = read(harness, "source.md");
+    expect(rendered_text.split("[[other]]")).toHaveLength(2);
+    writeFileSync(
+      join(harness.dir, "source.md"),
+      rendered_text.replace("[[other]]\n", ""),
+    );
+    expect((await harness.folder.scan()).ok).toBe(true);
+
+    // The edge stays (21), and the link does not come back.
+    const again = await harness.folder.pull();
+    expect(again.ok).toBe(true);
+    if (!again.ok) return;
+    expect(
+      again.value.rewritten,
+      "the pull wrote the removed link back, so the person is in the loop 21 was meant to end",
+    ).toBe(0);
+    expect(read(harness, "source.md")).not.toContain("[[other]]");
+    const queued = await device.queue();
+    expect(queued.ok).toBe(true);
+    if (!queued.ok) return;
+    expect(
+      queued.value.filter((row) => row.kind === "delete_edge"),
+      "the folder removed an edge of a kind it could not have made",
+    ).toEqual([]);
+
+    // Naming it again by hand lifts the record: the pull leaves the link
+    // where the person put it, once, and taking it out again declines it
+    // again.
+    writeFileSync(
+      join(harness.dir, "source.md"),
+      read(harness, "source.md") + "[[other]]\n",
+    );
+    expect((await harness.folder.scan()).ok).toBe(true);
+    const lifted = await harness.folder.pull();
+    expect(lifted.ok && lifted.value.rewritten).toBe(0);
+    expect(read(harness, "source.md").split("[[other]]")).toHaveLength(2);
+    writeFileSync(
+      join(harness.dir, "source.md"),
+      read(harness, "source.md").replace("[[other]]\n", ""),
+    );
+    expect((await harness.folder.scan()).ok).toBe(true);
+    expect((await harness.folder.pull()).ok).toBe(true);
+    expect(
+      read(harness, "source.md"),
+      "a link lifted and taken out again came back, so the record was not kept per removal",
+    ).not.toContain("[[other]]");
+  });
+
   it("makes an edge between two files that arrive together", async () => {
     harness = await folderHarness("folder-links-same-scan");
     scriptFolderWrites(harness);
@@ -2144,5 +2229,101 @@ describe("what a folder does not watch", () => {
       existsSync(join(harness.dir, "inside.md")),
       "the item inside the slice did not become a file either, so the folder is writing nothing rather than choosing",
     ).toBe(true);
+  });
+});
+
+describe("what a pull does with a file whose item left the slice", () => {
+  const departed = {
+    id: "01a00000-0000-7000-8000-0000000000d1",
+    source_id: "going.md",
+    properties: { title: "Going", body: "body\n" },
+  };
+
+  /** A folder holding one item, and a stream that archives it. */
+  async function departure(label: string): Promise<FolderHarness> {
+    return folderHarness(label, {
+      rows: { "core.note": [{ item: departed }] },
+      // The server archives it: the row leaves the state the pull writes
+      // (`device.md` 31) while the copy still holds it (32).
+      events: [
+        replay("2", [
+          itemEvent(
+            "2",
+            "item.state_changed",
+            wireItem({ ...departed, version: 2, state: "archived" }),
+          ),
+        ]),
+      ],
+    });
+  }
+
+  it("takes away the file of an item that left the slice, and journals nothing", async () => {
+    harness = await departure("folder-departed");
+    scriptFolderWrites(harness);
+    const first = await harness.folder.pull();
+    expect(first.ok && first.value.written).toBe(1);
+    expect(existsSync(join(harness.dir, "going.md"))).toBe(true);
+
+    const caught = await harness.folder.device().catchUp();
+    expect(
+      caught.ok ? caught.value.applied : 0,
+      `the archive event was not applied, so nothing below is about a departure: ${JSON.stringify(caught)}`,
+    ).toBe(1);
+
+    const second = await harness.folder.pull();
+    expect(second.ok).toBe(true);
+    if (!second.ok) return;
+    expect(
+      second.value.removed,
+      "the item left the slice and its file stayed, bound and unmaintained, for the next scan to push back as an edit to a row the person cannot see",
+    ).toBe(1);
+    expect(second.value.kept).toBe(0);
+    expect(existsSync(join(harness.dir, "going.md"))).toBe(false);
+
+    // The journal was not involved and nothing was queued: the next scan
+    // has nothing to say, and the queue holds no delete.
+    const scanned = await harness.folder.scan();
+    expect(scanned.ok).toBe(true);
+    if (!scanned.ok) return;
+    expect([
+      scanned.value.created,
+      scanned.value.missing,
+      scanned.value.deleted,
+    ]).toEqual([0, 0, 0]);
+    const queued = await harness.folder.device().queue();
+    expect(queued.ok).toBe(true);
+    if (!queued.ok) return;
+    expect(queued.value.filter((row) => row.kind === "delete_item")).toEqual(
+      [],
+    );
+  });
+
+  it("keeps a file the person changed after its item left, and says so", async () => {
+    harness = await departure("folder-departed-edited");
+    scriptFolderWrites(harness);
+    expect((await harness.folder.pull()).ok).toBe(true);
+    writeFileSync(
+      join(harness.dir, "going.md"),
+      read(harness, "going.md") + "an edit the person made\n",
+    );
+    const caught = await harness.folder.device().catchUp();
+    expect(caught.ok ? caught.value.applied : 0).toBe(1);
+
+    const pulled = await harness.folder.pull();
+    expect(pulled.ok).toBe(true);
+    if (!pulled.ok) return;
+    expect(
+      pulled.value.kept,
+      "the pull took away a file the person had changed, and their edit with it",
+    ).toBe(1);
+    expect(pulled.value.removed).toBe(0);
+    expect(read(harness, "going.md")).toContain("an edit the person made");
+    // Still bound: the next scan meets the edit as a change to the row the
+    // copy holds, rather than making a second item from the file.
+    const scanned = await harness.folder.scan();
+    expect(scanned.ok).toBe(true);
+    if (!scanned.ok) return;
+    expect(scanned.value.created).toBe(0);
+    expect(scanned.value.updated).toBe(1);
   });
 });

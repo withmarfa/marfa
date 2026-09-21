@@ -454,6 +454,10 @@ export interface PullReport {
   unwritten: number;
   collided: number;
   outside: number;
+  /** Files of items that left the slice, taken away (`folders.md` 26). */
+  removed: number;
+  /** The same, left where they are because the person changed them. */
+  kept: number;
 }
 
 export interface PushReport {

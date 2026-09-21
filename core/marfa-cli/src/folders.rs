@@ -174,6 +174,24 @@ fn describe_pull(report: &marfa_core::PullReport) -> String {
             report.revived
         ));
     }
+    // Both about items that have left the slice, and both named only when
+    // there were any: a file taken away is one the person may go looking
+    // for, and one kept is an edit the folder is holding for them.
+    let departed: Vec<String> = [
+        (
+            report.removed,
+            "file(s) of items that left the slice removed",
+        ),
+        (report.kept, "kept with the person's changes"),
+    ]
+    .into_iter()
+    .filter(|(count, _)| *count > 0)
+    .map(|(count, what)| format!("{count} {what}"))
+    .collect();
+    if !departed.is_empty() {
+        line.push_str("; ");
+        line.push_str(&departed.join(", "));
+    }
     line
 }
 

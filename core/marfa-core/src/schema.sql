@@ -243,6 +243,11 @@ CREATE TABLE IF NOT EXISTS folder_files (
   -- (`folders.md` 21): both are an edge the copy holds that the body does not
   -- name, and only this says which of them the file used to carry.
   links TEXT NOT NULL,
+  -- The targets whose rendered link the person took out, for edges of a kind
+  -- the folder could not have made, as a JSON array. The edge stays (21), so
+  -- without this the next pull writes the link back and the person removes
+  -- it again, for ever (`folders.md` 27). Naming the link again lifts it.
+  declined_links TEXT NOT NULL,
   seen_at TEXT NOT NULL
 ) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS folder_files_item ON folder_files (item_id);

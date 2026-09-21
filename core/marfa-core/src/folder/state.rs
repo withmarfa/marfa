@@ -17,6 +17,10 @@ pub struct Bound {
     /// The item ids the links in those bytes named, as the folder last read
     /// or wrote them. Empty where the file named none.
     pub links: Vec<String>,
+    /// The targets whose rendered link the person took out, where the edge
+    /// is of a kind the folder could not have made and so keeps
+    /// (`folders.md` 27). A pull renders no link for them.
+    pub declined: Vec<String>,
 }
 
 /// What the folder last agreed with, for the bytes of a file.
@@ -39,13 +43,14 @@ pub fn hash(bytes: &[u8]) -> String {
 
 pub fn bind(conn: &Connection, bound: &Bound) -> Result<(), CoreError> {
     conn.execute(
-        "INSERT INTO folder_files (path, item_id, identity, content_hash, links, seen_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+        "INSERT INTO folder_files (path, item_id, identity, content_hash, links, declined_links, seen_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
          ON CONFLICT (path) DO UPDATE SET
            item_id = excluded.item_id,
            identity = excluded.identity,
            content_hash = excluded.content_hash,
            links = excluded.links,
+           declined_links = excluded.declined_links,
            seen_at = excluded.seen_at",
         params![
             bound.path,
@@ -53,6 +58,7 @@ pub fn bind(conn: &Connection, bound: &Bound) -> Result<(), CoreError> {
             bound.identity,
             bound.content_hash,
             serde_json::to_string(&bound.links).unwrap_or_else(|_| "[]".into()),
+            serde_json::to_string(&bound.declined).unwrap_or_else(|_| "[]".into()),
             now_iso()
         ],
     )?;
@@ -67,7 +73,7 @@ pub fn unbind(conn: &Connection, path: &str) -> Result<(), CoreError> {
 pub fn bound_at(conn: &Connection, path: &str) -> Result<Option<Bound>, CoreError> {
     Ok(conn
         .query_row(
-            "SELECT path, item_id, identity, content_hash, links FROM folder_files WHERE path = ?1",
+            "SELECT path, item_id, identity, content_hash, links, declined_links FROM folder_files WHERE path = ?1",
             [path],
             read_bound,
         )
@@ -81,7 +87,7 @@ pub fn bound_at(conn: &Connection, path: &str) -> Result<Option<Bound>, CoreErro
 pub fn bound_to_identity(conn: &Connection, identity: &str) -> Result<Option<Bound>, CoreError> {
     Ok(conn
         .query_row(
-            "SELECT path, item_id, identity, content_hash, links FROM folder_files WHERE identity = ?1",
+            "SELECT path, item_id, identity, content_hash, links, declined_links FROM folder_files WHERE identity = ?1",
             [identity],
             read_bound,
         )
@@ -91,7 +97,7 @@ pub fn bound_to_identity(conn: &Connection, identity: &str) -> Result<Option<Bou
 pub fn bound_to_item(conn: &Connection, item_id: &str) -> Result<Option<Bound>, CoreError> {
     Ok(conn
         .query_row(
-            "SELECT path, item_id, identity, content_hash, links FROM folder_files WHERE item_id = ?1",
+            "SELECT path, item_id, identity, content_hash, links, declined_links FROM folder_files WHERE item_id = ?1",
             [item_id],
             read_bound,
         )
@@ -100,7 +106,7 @@ pub fn bound_to_item(conn: &Connection, item_id: &str) -> Result<Option<Bound>, 
 
 pub fn every_bound(conn: &Connection) -> Result<Vec<Bound>, CoreError> {
     let mut statement = conn.prepare(
-        "SELECT path, item_id, identity, content_hash, links FROM folder_files ORDER BY path",
+        "SELECT path, item_id, identity, content_hash, links, declined_links FROM folder_files ORDER BY path",
     )?;
     let rows = statement.query_map([], read_bound)?;
     let mut bound = Vec::new();
@@ -112,6 +118,7 @@ pub fn every_bound(conn: &Connection) -> Result<Vec<Bound>, CoreError> {
 
 fn read_bound(row: &rusqlite::Row<'_>) -> rusqlite::Result<Bound> {
     let links: String = row.get(4)?;
+    let declined: String = row.get(5)?;
     Ok(Bound {
         path: row.get(0)?,
         item_id: row.get(1)?,
@@ -120,6 +127,9 @@ fn read_bound(row: &rusqlite::Row<'_>) -> rusqlite::Result<Bound> {
         // A row nobody can read as a list names no links, which makes the
         // folder keep every edge rather than remove one it cannot account for.
         links: serde_json::from_str(&links).unwrap_or_default(),
+        // And declines none, which makes the pull render every link: the
+        // person removes one again rather than losing one for good.
+        declined: serde_json::from_str(&declined).unwrap_or_default(),
     })
 }
 

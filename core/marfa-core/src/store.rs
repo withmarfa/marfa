@@ -18,7 +18,7 @@ pub const META_SLICE_TIER: &str = "slice_tier";
 pub const META_EVENT_CURSOR: &str = "event_cursor";
 pub const META_HYDRATE_STATE: &str = "hydrate_state";
 pub const HYDRATE_IN_PROGRESS: &str = "in_progress";
-pub const SCHEMA_VERSION: &str = "4";
+pub const SCHEMA_VERSION: &str = "5";
 
 const ITEM_COLUMNS: &str = "id, type, state, tier, version, schema_version, source, source_id, device, occurred_at, created_at, updated_at, properties";
 const EDGE_COLUMNS: &str =

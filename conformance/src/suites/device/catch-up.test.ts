@@ -105,6 +105,45 @@ describe("catch-up replays from the cursor", () => {
     ).toEqual(["(none)", "10", "11"]);
   });
 
+  it("resumes from zero after hydrating an empty instance, and applies the first event", async () => {
+    // An instance nothing has written to yet: the log's head is 0, and the
+    // first event it ever writes is 1 (`device.md` 35).
+    harness = await startHarness("catch-up-from-zero");
+    const { server, device } = harness;
+    scriptHydration(server, { head: "0" });
+    server.answer(
+      "GET",
+      "/events",
+      replay("1", [
+        itemEvent(
+          "1",
+          "item.created",
+          wireItem({ id: "first", properties: { title: "first", body: "" } }),
+        ),
+      ]),
+    );
+
+    const hydrated = await device.hydrate(["core.note"], "library");
+    expect(hydrated.ok, JSON.stringify(hydrated)).toBe(true);
+    expect(hydrated.ok ? hydrated.value.cursor : null).toBe("0");
+
+    const caught = await device.catchUp();
+    expect(
+      caught.ok,
+      `a cursor of zero was refused as too old, so every device that hydrated an empty instance hydrates again on its first catch-up: ${JSON.stringify(caught)}`,
+    ).toBe(true);
+    if (!caught.ok) return;
+    expect(caught.value.applied).toBe(1);
+    expect(caught.value.cursor).toBe("1");
+    expect(lastEventIds(harness)).toEqual(["(none)", "0"]);
+    const status = await device.status();
+    expect(status.ok ? status.value.hydration : null).toBe("complete");
+    const held = await device.get("first");
+    expect(held.ok, "the first event was applied and the row is not held").toBe(
+      true,
+    );
+  });
+
   it("skips an event older than the row it holds and still advances the cursor", async () => {
     harness = await startHarness("stale-event");
     const { server, device } = harness;
