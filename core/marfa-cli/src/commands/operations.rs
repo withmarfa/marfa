@@ -115,6 +115,13 @@ pub const OPERATIONS: &[Operation] = &[
     reached("listBlobOrphans", "blobs orphans"),
     reached("listHousekeeping", "housekeeping list"),
     reached("runHousekeeping", "housekeeping run"),
+    reached("registerConnector", "connectors register"),
+    reached("listConnectors", "connectors list"),
+    reached("getConnector", "connectors get"),
+    reached("deleteConnector", "connectors delete"),
+    reached("heartbeatConnector", "connectors heartbeat"),
+    reached("reportConnectorRun", "connectors report"),
+    reached("listConnectorRuns", "connectors runs"),
     pending(
         "registerOAuthClient",
         "the sign-in pull request: `marfa login`",

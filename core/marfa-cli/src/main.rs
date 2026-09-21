@@ -15,8 +15,8 @@ use std::process::ExitCode;
 use clap::{Parser, Subcommand};
 
 use crate::commands::{
-    audit, blobs, config, edge_types, edges, events, export, extensions, housekeeping, items, keys,
-    metadata, operations, search, status, types, webhooks, whoami,
+    audit, blobs, config, connectors, edge_types, edges, events, export, extensions, housekeeping,
+    items, keys, metadata, operations, search, status, types, webhooks, whoami,
 };
 use crate::device::DeviceArgs;
 use crate::error::{CliError, EXIT_CODES_HELP};
@@ -118,6 +118,13 @@ enum Command {
         #[command(subcommand)]
         command: housekeeping::HousekeepingCommand,
     },
+    /// Processes that write on a key's behalf: registered, heard from, and
+    /// reporting their runs. A key registers itself; the operator key sees
+    /// every registration and may remove one.
+    Connectors {
+        #[command(subcommand)]
+        command: connectors::ConnectorsCommand,
+    },
     /// Every published operation and the command that reaches it.
     Operations,
     /// A working copy of a slice of one server, in the store --db names.
@@ -177,6 +184,7 @@ fn run(cli: Cli) -> Result<(), CliError> {
         Command::Audit(args) => audit::run(args, &remote()?, &out),
         Command::Events(args) => events::run(args, &remote()?, &out),
         Command::Housekeeping { command } => housekeeping::run(command, &remote()?, &out),
+        Command::Connectors { command } => connectors::run(command, &remote()?, &out),
     }
 }
 

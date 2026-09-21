@@ -537,6 +537,47 @@ fn a_housekeeping_job_is_listed_and_run_by_name() {
     assert_eq!(run.body, Body::None);
 }
 
+#[test]
+fn a_connector_registers_under_its_name_and_reports_a_run_whole() {
+    let registered = connectors::register_request("mail", Some("reads a mailbox"));
+    assert_eq!(registered.method, Method::Post);
+    assert_eq!(registered.path(), "/connectors");
+    assert_eq!(
+        registered.body,
+        Body::Json(json!({ "name": "mail", "description": "reads a mailbox" }))
+    );
+    assert_eq!(
+        connectors::register_request("mail", None).body,
+        Body::Json(json!({ "name": "mail" })),
+        "an absent description is absent, not null"
+    );
+
+    let report = connectors::report_request(&connectors::ReportArgs {
+        id: "c1".into(),
+        outcome: connectors::Outcome::Failed,
+        started_at: "2026-09-21T10:00:00Z".into(),
+        finished_at: "2026-09-21T10:01:00Z".into(),
+        summary: None,
+        error: Some("the mailbox refused".into()),
+    });
+    assert_eq!(report.method, Method::Post);
+    assert_eq!(report.path(), "/connectors/c1/runs");
+    assert_eq!(
+        report.body,
+        Body::Json(json!({
+            "outcome": "failed",
+            "started_at": "2026-09-21T10:00:00Z",
+            "finished_at": "2026-09-21T10:01:00Z",
+            "error": "the mailbox refused",
+        }))
+    );
+
+    let runs = connectors::runs_request("c1", Some(5));
+    assert_eq!(runs.path(), "/connectors/c1/runs");
+    assert_eq!(query(&runs, "limit").as_deref(), Some("5"));
+    assert_eq!(query(&connectors::runs_request("c1", None), "limit"), None);
+}
+
 /// Every operation the document publishes has a command, and every command
 /// in the table names an operation the document still publishes.
 ///
