@@ -85,11 +85,11 @@ describe("namespace grammar", () => {
    * The roots the grammar refuses outright, which the tiered roots above do
    * not cover and nothing else in this suite reached.
    *
-   * They name permission families rather than namespaces. A type under one
-   * could be written and never granted: `keys.thing:read` is not a type
-   * scope, it is the key family's own literal, so the grammar refuses the
-   * identifier rather than leaving a row nobody can be given access to.
-   * `space` is here for a different reason and behaves the same.
+   * Eleven of them head a scope family — the seven permission roots plus
+   * `content`, `metadata`, `edge` and `profile` — so a type under one could
+   * be written and never granted: `keys.thing:read` is not a type scope, it
+   * is the key family's own literal. `space` heads nothing and is reserved
+   * so nobody may claim it, and the grammar treats it the same way.
    */
   const REFUSED_ROOTS = [
     "schema",

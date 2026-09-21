@@ -319,8 +319,9 @@ export function versionConflict(
  * describe a merge, because a request carrying no properties has no ancestor
  * to compare against and no fields that could have collided. What it does
  * carry is `error.status` and `current`, so a client reading
- * `body.current.version` off a `version_conflict` reads it off every
- * `version_conflict`, whichever door answered.
+ * `body.current.version` off one single-write refusal reads it off all of
+ * them, whichever door answered. The bulk doors are not in that set: they
+ * report the code per entry inside their own envelope.
  */
 export interface StaleVersionResponse {
   error: { code: "version_conflict"; status: 409; message: string };

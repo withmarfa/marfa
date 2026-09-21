@@ -28,13 +28,14 @@ import {
 /**
  * A refused update hands back the edge as it now stands.
  *
- * **Keyed `current`, like every other `version_conflict` this server
- * answers.** A client reading `body.current.version` off one 409 reads it
- * off all of them; keying this one `edge` to match the 200 body saved a
- * caller one word and cost every caller a special case, on the door whose
- * whole job is to be handled generically. The whole row rather than a
- * version number, so a refused client can retry from what it was handed
- * instead of spending a round trip on `GET /edges/{id}`.
+ * **Keyed `current`, like every other door that refuses a single write
+ * with `version_conflict`.** A client reading `body.current.version` off
+ * one such 409 reads it off all of them, which is what lets a refusal be
+ * handled without knowing which door answered. (The bulk doors are not in
+ * that set: `POST /edges/bulk` reports the code per entry inside its own
+ * envelope.) The whole row rather than a version number, so a refused
+ * client can retry from what it was handed instead of spending a round
+ * trip on `GET /edges/{id}`.
  *
  * What is absent is what the item envelope carries and an edge has none
  * of: no ancestor snapshot, no fields in conflict, no merge policy. Edges

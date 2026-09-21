@@ -59,11 +59,9 @@ describe("custom edge-type registration", () => {
     expect(r.ok).toBe(true);
     await expectMatchesSchema("GET", "/edge-types", 200, r.data);
     const ids = r.data.edge_types.map((t) => t.id);
-    // Nine. A copy of the registry rather than a read of it, because
-    // nothing under `src/suites/` may import a workspace package, so what
-    // keeps it honest is that it is checked against the registry when the
-    // registry changes and not before.
-    for (const shipped of [
+    // A copy of the registry rather than a read of it, because nothing
+    // under `src/suites/` may import a workspace package.
+    const SHIPPED = [
       "about",
       "parent-of",
       "in-thread",
@@ -73,9 +71,21 @@ describe("custom edge-type registration", () => {
       "supersedes",
       "references",
       "in-collection",
-    ]) {
+    ];
+    for (const shipped of SHIPPED) {
       expect(ids).toContain(shipped);
     }
+    // And no tenth. `toContain` per name cannot see a shipped type nobody
+    // listed here, which is how `in-collection` was absent from this list
+    // and from every fixture at once.
+    //
+    // Told apart by the namespace rather than by the run: a shipped edge
+    // type is a bare kebab name, and a registered one is dotted
+    // (`mock.listed.<run>`), so this holds the shipped set without having
+    // to know which other cases in the run have registered what.
+    expect(
+      ids.filter((id) => !SHIPPED.includes(id) && !id.includes(".")),
+    ).toEqual([]);
     const mine = r.data.edge_types.find((t) => t.id === etId);
     expect(mine?.cardinality).toBe("one-to-many");
   });
