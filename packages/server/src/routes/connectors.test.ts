@@ -9,14 +9,19 @@ let ctx: TestContext;
  *  key alone. */
 let otherKey: string;
 
-beforeAll(async () => {
-  ctx = await createTestContext();
+/** A working key of its own source, minted through the first. */
+async function mintKey(source: string): Promise<{ id: string; key: string }> {
   const minted = await request(ctx.app, "POST", "/keys", {
     key: ctx.workingKey,
-    body: { label: "another process", source: "another-process" },
+    body: { label: `${source} key`, source },
   });
   expect(minted.status).toBe(201);
-  otherKey = ((await minted.json()) as { key: string }).key;
+  return json<{ id: string; key: string }>(minted);
+}
+
+beforeAll(async () => {
+  ctx = await createTestContext();
+  otherKey = (await mintKey("another-process")).key;
 });
 
 afterAll(async () => {
@@ -104,10 +109,18 @@ describe("POST /connectors", () => {
     expect(await remove(ctx.workingKey, a.connector.id)).toBe(200);
   });
 
-  it("refuses an app's session token, which lists but is not a key", async () => {
+  it("refuses an app's session token, which reads but is not a key", async () => {
+    const mine = await register(ctx.workingKey, "mine, read by an app");
     const { token } = await seedOauthBearer(ctx.storage, ["openid"]);
     const listed = await request(ctx.app, "GET", "/connectors", { key: token });
     expect(listed.status).toBe(200);
+    const one = await request(
+      ctx.app,
+      "GET",
+      `/connectors/${mine.connector.id}`,
+      { key: token },
+    );
+    expect(one.status).toBe(200);
     const refused = await request(ctx.app, "POST", "/connectors", {
       key: token,
       body: { name: "an app" },
@@ -121,6 +134,55 @@ describe("POST /connectors", () => {
         (row) => row.name === "an app",
       ),
     ).toEqual([]);
+    // Nor is it the connector's own key on the doors that ask for one.
+    const path = `/connectors/${mine.connector.id}`;
+    for (const [method, sub, body] of [
+      ["POST", "/heartbeat", undefined],
+      [
+        "POST",
+        "/runs",
+        { outcome: "succeeded", started_at: at(1000), finished_at: at(0) },
+      ],
+      ["DELETE", "", undefined],
+    ] as const) {
+      const res = await request(ctx.app, method, `${path}${sub}`, {
+        key: token,
+        body,
+      });
+      expect(res.status, `${method} ${sub}`).toBe(403);
+    }
+    expect(
+      (await ctx.storage.connectors.get(mine.connector.id))?.last_heartbeat_at,
+    ).toBeNull();
+    expect(await remove(ctx.workingKey, mine.connector.id)).toBe(200);
+  });
+
+  it("answers 404 connector_not_found on every door under an id nothing carries", async () => {
+    const unknown = "/connectors/01a0c000-0000-7000-8000-000000000000";
+    for (const [method, sub, body] of [
+      ["GET", "", undefined],
+      ["DELETE", "", undefined],
+      ["POST", "/heartbeat", undefined],
+      [
+        "POST",
+        "/runs",
+        { outcome: "succeeded", started_at: at(1000), finished_at: at(0) },
+      ],
+      ["GET", "/runs", undefined],
+    ] as const) {
+      const res = await request(ctx.app, method, `${unknown}${sub}`, {
+        key: ctx.operatorKey,
+        body,
+      });
+      expect(res.status, `${method} ${sub}`).toBe(404);
+      expect(await json<{ error: { code: string } }>(res)).toMatchObject({
+        error: { code: "connector_not_found" },
+      });
+    }
+    // The store behind the doors answers the same absence.
+    const id = "01a0c000-0000-7000-8000-000000000000";
+    expect(await ctx.storage.connectors.heartbeat(id)).toBeNull();
+    expect(await ctx.storage.connectors.remove(id)).toBe(false);
   });
 
   it("refuses a name outside the bounds and a description over its cap", async () => {
@@ -188,8 +250,20 @@ describe("GET /connectors/{id} and DELETE /connectors/{id}", () => {
     ).toBe(404);
 
     const again = await register(ctx.workingKey, "mine again");
-    expect(await remove(ctx.workingKey, again.connector.id)).toBe(200);
+    const removed = await request(
+      ctx.app,
+      "DELETE",
+      `/connectors/${again.connector.id}`,
+      { key: ctx.workingKey },
+    );
+    expect(removed.status).toBe(200);
+    expect(await json<unknown>(removed)).toEqual({ ok: true });
     expect(await remove(ctx.workingKey, again.connector.id)).toBe(404);
+
+    const root = await request(ctx.app, "GET", "/", { key: otherKey });
+    expect((await json<{ features: string[] }>(root)).features).toContain(
+      "connectors",
+    );
   });
 
   it("answers one 200 and one 404 when a registration is removed twice at once, auditing once", async () => {
@@ -242,6 +316,25 @@ describe("GET /connectors/{id} and DELETE /connectors/{id}", () => {
       source: "short-lived",
       last_heartbeat_at: expect.any(String) as string,
     });
+
+    // A source is unique among live keys only: a successor minted under
+    // the revoked key's source is another key, not this registration's.
+    const successor = await mintKey("short-lived");
+    const path = `/connectors/${mine.connector.id}`;
+    const beat = await request(ctx.app, "POST", `${path}/heartbeat`, {
+      key: successor.key,
+    });
+    expect(beat.status).toBe(403);
+    const run = await request(ctx.app, "POST", `${path}/runs`, {
+      key: successor.key,
+      body: { outcome: "succeeded", started_at: at(1000), finished_at: at(0) },
+    });
+    expect(run.status).toBe(403);
+    const own = await register(successor.key, "the successor");
+    expect(own.status).toBe(201);
+    expect(own.connector.id).not.toBe(mine.connector.id);
+    expect(own.connector.key_id).toBe(successor.id);
+    expect(await remove(successor.key, own.connector.id)).toBe(200);
     expect(await remove(ctx.operatorKey, mine.connector.id)).toBe(200);
   });
 
@@ -354,19 +447,39 @@ describe("POST /connectors/{id}/runs and GET /connectors/{id}/runs", () => {
       { outcome: "skipped", started_at: at(1000), finished_at: at(0) },
       { outcome: "failed", started_at: at(0), finished_at: at(1000) },
       { outcome: "failed", started_at: "yesterday", finished_at: at(0) },
+      { outcome: "failed", started_at: at(1000), finished_at: "tomorrow" },
       { started_at: at(1000), finished_at: at(0) },
+      {
+        outcome: "failed",
+        started_at: at(1000),
+        finished_at: at(0),
+        summary: "s".repeat(2001),
+      },
+      {
+        outcome: "failed",
+        started_at: at(1000),
+        finished_at: at(0),
+        error: "e".repeat(2001),
+      },
     ]) {
       const res = await request(ctx.app, "POST", path, {
         key: ctx.workingKey,
         body,
       });
-      expect(res.status, JSON.stringify(body)).toBe(400);
+      expect(res.status, JSON.stringify(body).slice(0, 60)).toBe(400);
     }
-    const theirs = await request(ctx.app, "POST", path, {
-      key: otherKey,
-      body: { outcome: "failed", started_at: at(1000), finished_at: at(0) },
-    });
-    expect(theirs.status).toBe(403);
+    for (const key of [otherKey, ctx.operatorKey]) {
+      const theirs = await request(ctx.app, "POST", path, {
+        key,
+        body: { outcome: "failed", started_at: at(1000), finished_at: at(0) },
+      });
+      expect(theirs.status).toBe(403);
+    }
+    expect(
+      await json<{ data: ConnectorRun[] }>(
+        await request(ctx.app, "GET", path, { key: otherKey }),
+      ),
+    ).toEqual({ data: [run] });
 
     const failed = await request(ctx.app, "POST", path, {
       key: ctx.workingKey,
@@ -378,19 +491,124 @@ describe("POST /connectors/{id}/runs and GET /connectors/{id}/runs", () => {
       },
     });
     expect(failed.status).toBe(201);
+    // An instant run, and a summary and an error at their caps, are fine.
+    const instant = at(0);
+    const capped = await request(ctx.app, "POST", path, {
+      key: ctx.workingKey,
+      body: {
+        outcome: "succeeded",
+        started_at: instant,
+        finished_at: instant,
+        summary: "s".repeat(2000),
+        error: "e".repeat(2000),
+      },
+    });
+    expect(capped.status).toBe(201);
+    // Reported last with the earliest start: newest by report, stamped by
+    // the server's clock, not by when the run says it started.
+    const late = await request(ctx.app, "POST", path, {
+      key: ctx.workingKey,
+      body: {
+        outcome: "succeeded",
+        started_at: at(90_000),
+        finished_at: at(80_000),
+        summary: "reported late",
+      },
+    });
+    expect(late.status).toBe(201);
+    const lateRun = await json<ConnectorRun>(late);
+    const cappedRun = await json<ConnectorRun>(capped);
+    expect(lateRun.reported_at >= cappedRun.reported_at).toBe(true);
+    expect(lateRun.reported_at).not.toBe(lateRun.started_at);
 
     const listed = await request(ctx.app, "GET", path, { key: otherKey });
     expect(listed.status).toBe(200);
     const runs = await json<{ data: ConnectorRun[] }>(listed);
-    expect(runs.data.map((r) => r.outcome)).toEqual(["failed", "succeeded"]);
+    expect(runs.data.map((r) => r.summary)).toEqual([
+      "reported late",
+      "s".repeat(2000),
+      null,
+      "12 messages",
+    ]);
     const one = await json<{ data: ConnectorRun[] }>(
       await request(ctx.app, "GET", `${path}?limit=1`, { key: otherKey }),
     );
-    expect(one.data.map((r) => r.outcome)).toEqual(["failed"]);
+    expect(one.data.map((r) => r.summary)).toEqual(["reported late"]);
+    for (const limit of ["0", "201", "x"]) {
+      expect(
+        (
+          await request(ctx.app, "GET", `${path}?limit=${limit}`, {
+            key: otherKey,
+          })
+        ).status,
+      ).toBe(400);
+    }
     expect(
-      (await ctx.storage.connectors.get(mine.connector.id))?.last_run?.error,
-    ).toBe("the mailbox refused the token");
+      (await ctx.storage.connectors.get(mine.connector.id))?.last_run?.summary,
+    ).toBe("reported late");
     expect(await remove(ctx.workingKey, mine.connector.id)).toBe(200);
+  });
+
+  it("keeps each connector's runs to itself", async () => {
+    const a = await register(ctx.workingKey, "a");
+    const b = await register(otherKey, "b");
+    const third = await mintKey("a-third-process");
+    const c = await register(third.key, "c");
+    for (const [key, id, summary] of [
+      [ctx.workingKey, a.connector.id, "a's run"],
+      [otherKey, b.connector.id, "b's run"],
+    ] as const) {
+      const res = await request(ctx.app, "POST", `/connectors/${id}/runs`, {
+        key,
+        body: {
+          outcome: "succeeded",
+          started_at: at(1000),
+          finished_at: at(0),
+          summary,
+        },
+      });
+      expect(res.status).toBe(201);
+    }
+    const runsOf = async (id: string) =>
+      (
+        await json<{ data: ConnectorRun[] }>(
+          await request(ctx.app, "GET", `/connectors/${id}/runs`, {
+            key: third.key,
+          }),
+        )
+      ).data.map((r) => r.summary);
+    expect(await runsOf(a.connector.id)).toEqual(["a's run"]);
+    expect(await runsOf(b.connector.id)).toEqual(["b's run"]);
+    expect(await runsOf(c.connector.id)).toEqual([]);
+    const listed = await json<{ data: Connector[] }>(
+      await request(ctx.app, "GET", "/connectors", { key: third.key }),
+    );
+    const lastRunOf = (id: string) =>
+      listed.data.find((row) => row.id === id)?.last_run?.summary ?? null;
+    expect(lastRunOf(a.connector.id)).toBe("a's run");
+    expect(lastRunOf(b.connector.id)).toBe("b's run");
+    expect(lastRunOf(c.connector.id)).toBeNull();
+    // A hundred and one runs on one connector trim nothing of another's.
+    for (let i = 0; i <= RUNS_KEPT_PER_CONNECTOR; i++) {
+      const res = await request(
+        ctx.app,
+        "POST",
+        `/connectors/${a.connector.id}/runs`,
+        {
+          key: ctx.workingKey,
+          body: {
+            outcome: "succeeded",
+            started_at: at(1000),
+            finished_at: at(0),
+          },
+        },
+      );
+      expect(res.status).toBe(201);
+    }
+    expect(await runsOf(b.connector.id)).toEqual(["b's run"]);
+    expect(await remove(ctx.workingKey, a.connector.id)).toBe(200);
+    expect(await remove(otherKey, b.connector.id)).toBe(200);
+    expect(await remove(third.key, c.connector.id)).toBe(200);
   });
 
   it("keeps the newest hundred runs and drops the oldest beyond", async () => {
@@ -412,8 +630,24 @@ describe("POST /connectors/{id}/runs and GET /connectors/{id}/runs", () => {
       );
       expect(res.status).toBe(201);
     }
+    expect(RUNS_KEPT_PER_CONNECTOR).toBe(100);
     const kept = await ctx.storage.connectors.listRuns(mine.connector.id, 500);
     expect(kept).toHaveLength(RUNS_KEPT_PER_CONNECTOR);
+    const byDefault = await json<{ data: ConnectorRun[] }>(
+      await request(ctx.app, "GET", `/connectors/${mine.connector.id}/runs`, {
+        key: otherKey,
+      }),
+    );
+    expect(byDefault.data).toHaveLength(50);
+    const two = await json<{ data: ConnectorRun[] }>(
+      await request(
+        ctx.app,
+        "GET",
+        `/connectors/${mine.connector.id}/runs?limit=200`,
+        { key: otherKey },
+      ),
+    );
+    expect(two.data).toHaveLength(RUNS_KEPT_PER_CONNECTOR);
     const summaries = kept.map((r) => r.summary);
     expect(summaries[0]).toBe(`run ${String(RUNS_KEPT_PER_CONNECTOR + 1)}`);
     expect(summaries).toContain("run 2");

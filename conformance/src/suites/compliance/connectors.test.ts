@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach, afterAll } from "vitest";
 import { MarfaClient } from "../../client/api.js";
 import type { TestContext } from "../../client/types.js";
 import {
@@ -6,6 +6,7 @@ import {
   createSecondClient,
   cleanup,
   getOperatorClient,
+  removeTrackedRegistrations,
 } from "../../utils/setup.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
 
@@ -18,10 +19,15 @@ beforeAll(async () => {
   other = await createSecondClient(ctx, "other-connector");
 });
 
+beforeEach(async () => {
+  // A fixture that failed before it removed its registration would hand
+  // the next one a `200` where it expects `201`: each starts from none.
+  await removeTrackedRegistrations(ctx);
+});
+
 afterAll(async () => {
-  // Revoking the keys leaves their registrations standing (statement 5), so
-  // every test removes what it registered, or the referee's server
-  // accumulates rows across runs.
+  // Revoking the keys leaves their registrations standing (statement 5);
+  // `cleanup` removes them through the operator first.
   await cleanup(ctx);
 });
 
@@ -121,11 +127,35 @@ describe("registration", () => {
   it("answers 404 for an unknown connector, where a registered one answers", async () => {
     const real = await register(client, `${ctx.runId} real`);
     expect((await client.getConnector(real.data.id)).status).toBe(200);
-    const unknown = await client.getConnector(
-      "01a0c000-0000-7000-8000-000000000000",
+    expect((await client.heartbeatConnector(real.data.id)).status).toBe(200);
+    const at = new Date().toISOString();
+    const run = {
+      outcome: "succeeded" as const,
+      started_at: at,
+      finished_at: at,
+    };
+    expect((await client.reportConnectorRun(real.data.id, run)).status).toBe(
+      201,
     );
-    expect(unknown.status).toBe(404);
-    expect(unknown.error?.error.code).toBe("connector_not_found");
+    expect((await client.listConnectorRuns(real.data.id)).status).toBe(200);
+
+    const unknown = "01a0c000-0000-7000-8000-000000000000";
+    for (const [door, res] of [
+      ["GET /connectors/{id}", await client.getConnector(unknown)],
+      [
+        "POST /connectors/{id}/heartbeat",
+        await client.heartbeatConnector(unknown),
+      ],
+      [
+        "POST /connectors/{id}/runs",
+        await client.reportConnectorRun(unknown, run),
+      ],
+      ["GET /connectors/{id}/runs", await client.listConnectorRuns(unknown)],
+      ["DELETE /connectors/{id}", await client.deleteConnector(unknown)],
+    ] as const) {
+      expect(res.status, door).toBe(404);
+      expect(res.error?.error.code, door).toBe("connector_not_found");
+    }
     expect((await client.deleteConnector(real.data.id)).status).toBe(200);
   });
 
@@ -177,8 +207,11 @@ describe("registration", () => {
 describe("heartbeats and runs", () => {
   it("takes a heartbeat from the connector's key alone", async () => {
     const mine = await register(client, `${ctx.runId} beats`);
-    const refused = await other.heartbeatConnector(mine.data.id);
-    expect(refused.status).toBe(403);
+    for (const c of [other, getOperatorClient()]) {
+      const refused = await c.heartbeatConnector(mine.data.id);
+      expect(refused.status).toBe(403);
+      expect(refused.error?.error.code).toBe("forbidden");
+    }
     expect(
       (await client.getConnector(mine.data.id)).data.last_heartbeat_at,
     ).toBeNull();
@@ -191,9 +224,23 @@ describe("heartbeats and runs", () => {
       beat.data,
     );
     expect(beat.data.last_heartbeat_at).toMatch(ISO);
+    // The server's clock: no later than now, no earlier than the
+    // registration, and moved by the next beat.
+    expect(Date.parse(beat.data.last_heartbeat_at)).toBeGreaterThanOrEqual(
+      Date.parse(mine.data.registered_at),
+    );
+    expect(Date.parse(beat.data.last_heartbeat_at)).toBeLessThanOrEqual(
+      Date.now() + 1_000,
+    );
     expect(
       (await other.getConnector(mine.data.id)).data.last_heartbeat_at,
     ).toBe(beat.data.last_heartbeat_at);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    const again = await client.heartbeatConnector(mine.data.id);
+    expect(again.status).toBe(200);
+    expect(Date.parse(again.data.last_heartbeat_at)).toBeGreaterThan(
+      Date.parse(beat.data.last_heartbeat_at),
+    );
     expect((await client.deleteConnector(mine.data.id)).status).toBe(200);
   });
 
@@ -224,28 +271,56 @@ describe("heartbeats and runs", () => {
       error: "the mailbox refused the token",
     });
     expect(failed.status).toBe(201);
-    const odd = await client.reportConnectorRun(mine.data.id, {
-      outcome: "skipped" as "failed",
-      started_at: startedAt,
-      finished_at: finishedAt,
-    });
-    expect(odd.status).toBe(400);
-    expect(odd.error?.error.code).toBe("validation_error");
-    const backwards = await client.reportConnectorRun(mine.data.id, {
+    await expectMatchesSchema(
+      "POST",
+      "/connectors/{id}/runs",
+      201,
+      failed.data,
+    );
+    expect(failed.data.summary).toBeNull();
+    // An instant run, and a summary and an error at their caps, are fine.
+    const capped = await client.reportConnectorRun(mine.data.id, {
       outcome: "succeeded",
       started_at: finishedAt,
-      finished_at: startedAt,
+      finished_at: finishedAt,
+      summary: "s".repeat(2000),
+      error: "e".repeat(2000),
     });
-    expect(backwards.status).toBe(400);
-    const theirs = await other.reportConnectorRun(mine.data.id, {
-      outcome: "succeeded",
+    expect(capped.status).toBe(201);
+    const good = {
+      outcome: "succeeded" as const,
       started_at: startedAt,
       finished_at: finishedAt,
-    });
-    expect(theirs.status).toBe(403);
+    };
+    for (const [what, body] of [
+      [
+        "an outcome it does not know",
+        { ...good, outcome: "skipped" as "failed" },
+      ],
+      [
+        "a finish before the start",
+        { ...good, started_at: finishedAt, finished_at: startedAt },
+      ],
+      ["a start that is not a timestamp", { ...good, started_at: "yesterday" }],
+      [
+        "a finish that is not a timestamp",
+        { ...good, finished_at: "tomorrow" },
+      ],
+      ["a summary over its cap", { ...good, summary: "s".repeat(2001) }],
+      ["an error over its cap", { ...good, error: "e".repeat(2001) }],
+    ] as const) {
+      const refused = await client.reportConnectorRun(mine.data.id, body);
+      expect(refused.status, what).toBe(400);
+      expect(refused.error?.error.code, what).toBe("validation_error");
+    }
+    for (const c of [other, getOperatorClient()]) {
+      const theirs = await c.reportConnectorRun(mine.data.id, good);
+      expect(theirs.status).toBe(403);
+      expect(theirs.error?.error.code).toBe("forbidden");
+    }
     expect(
       (await client.listConnectorRuns(mine.data.id)).data.data,
-    ).toHaveLength(2);
+    ).toHaveLength(3);
     expect((await client.deleteConnector(mine.data.id)).status).toBe(200);
   });
 
@@ -265,23 +340,71 @@ describe("heartbeats and runs", () => {
       });
       expect(res.status).toBe(201);
     }
+    // Reported last with the earliest start: newest by report, the report
+    // stamped by the server's clock rather than by when the run says it
+    // started.
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    const late = await client.reportConnectorRun(mine.data.id, {
+      outcome: "succeeded",
+      started_at: at(90_000),
+      finished_at: at(80_000),
+      summary: "reported late",
+    });
+    expect(late.status).toBe(201);
+    expect(late.data.reported_at).not.toBe(late.data.started_at);
     const runs = await other.listConnectorRuns(mine.data.id);
     expect(runs.status).toBe(200);
     await expectMatchesSchema("GET", "/connectors/{id}/runs", 200, runs.data);
     expect(runs.data.data.map((run) => run.summary)).toEqual([
+      "reported late",
       "run 1",
       "run 2",
       "run 3",
     ]);
+    expect(Date.parse(runs.data.data[0]?.reported_at ?? "")).toBeGreaterThan(
+      Date.parse(runs.data.data[1]?.reported_at ?? ""),
+    );
     const two = await other.listConnectorRuns(mine.data.id, 2);
-    expect(two.data.data.map((run) => run.summary)).toEqual(["run 1", "run 2"]);
+    expect(two.data.data.map((run) => run.summary)).toEqual([
+      "reported late",
+      "run 1",
+    ]);
     const listed = await other.getConnector(mine.data.id);
-    expect(listed.data.last_run?.summary).toBe("run 1");
+    expect(listed.data.last_run?.summary).toBe("reported late");
     expect(
       (await other.listConnectors()).data.data.find(
         (row) => row.id === mine.data.id,
       )?.last_run?.summary,
-    ).toBe("run 1");
+    ).toBe("reported late");
+
+    // Each connector's runs are its own: another's listing and `last_run`
+    // see none of these.
+    const theirs = await register(other, `${ctx.runId} theirs`);
+    const theirRun = await other.reportConnectorRun(theirs.data.id, {
+      outcome: "failed",
+      started_at: at(2_000),
+      finished_at: at(1_000),
+      summary: "their run",
+    });
+    expect(theirRun.status).toBe(201);
+    expect(
+      (await client.listConnectorRuns(theirs.data.id)).data.data.map(
+        (run) => run.summary,
+      ),
+    ).toEqual(["their run"]);
+    expect(
+      (await client.listConnectorRuns(mine.data.id)).data.data.map(
+        (run) => run.summary,
+      ),
+    ).toEqual(["reported late", "run 1", "run 2", "run 3"]);
+    const rows = (await client.listConnectors()).data.data;
+    expect(
+      rows.find((row) => row.id === theirs.data.id)?.last_run?.summary,
+    ).toBe("their run");
+    expect(rows.find((row) => row.id === mine.data.id)?.last_run?.summary).toBe(
+      "reported late",
+    );
+    expect((await other.deleteConnector(theirs.data.id)).status).toBe(200);
     expect((await client.deleteConnector(mine.data.id)).status).toBe(200);
   });
 

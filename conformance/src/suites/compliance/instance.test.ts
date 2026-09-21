@@ -255,5 +255,13 @@ describe("the instance", () => {
       .map((row) => `${row.method} ${row.path}`)
       .filter((key) => !published.has(key));
     expect(stale).toEqual([]);
+    // And the exemption cannot be borrowed: a row that says unpublished
+    // about a door the document publishes would wave that door out of
+    // both checks above and out of the body validation with one word.
+    const wavedOut = rows
+      .filter((row) => row.status === "unpublished")
+      .map((row) => `${row.method} ${row.path}`)
+      .filter((key) => published.has(key));
+    expect(wavedOut).toEqual([]);
   });
 });
