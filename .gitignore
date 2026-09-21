@@ -49,6 +49,8 @@ data/
 # The local server the conformance suite boots: its SQLite file, blob
 # folder, log, pid and env file. Written per run, never part of the tree.
 .marfa-state/
+# The restore drill's two instances and its Litestream state, likewise.
+.marfa-drill/
 
 # Load and performance reports the conformance suite writes.
 reports/

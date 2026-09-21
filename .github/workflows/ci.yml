@@ -192,6 +192,67 @@ jobs:
           path: ${{ runner.temp }}/marfa/server.log
           if-no-files-found: ignore
 
+  # The restore drill: a fresh instance rebuilt from the bucket alone, to
+  # the byte, against the same local object store the conformance job
+  # attaches. Litestream streams the database and the server's own
+  # replication carries the blobs; `conformance/scripts/restore-drill.ts`
+  # says what it proves and prints its report, which is kept as an
+  # artifact whether or not it passed.
+  restore-drill:
+    name: Restore drill
+    timeout-minutes: 30
+    runs-on: self-hosted
+    # The same group as the suites above: this job boots two servers and a
+    # Litestream process, and a second heavy job on the box would turn the
+    # drill's sync waits into failures the branch never caused.
+    concurrency:
+      group: marfa-suite-shared-host
+      cancel-in-progress: false
+      queue: max
+    env:
+      NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          dest: ${{ runner.temp }}/setup-pnpm
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: Configure registry auth
+        env:
+          NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > .npmrc
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter "@withmarfa/server..." build
+
+      # Both are Homebrew formulae the runner host keeps once installed;
+      # Litestream's is a tap. `garage:up` writes the `S3_*` values to
+      # `GITHUB_ENV`, which is what the drill reads.
+      - name: Put the object store and Litestream on the host
+        working-directory: conformance
+        run: |
+          command -v garage || brew install garage
+          command -v litestream || brew install benbjohnson/litestream/litestream
+          pnpm garage:up --state "$RUNNER_TEMP/garage"
+
+      - name: Run the drill
+        working-directory: conformance
+        run: pnpm drill:restore --state "$RUNNER_TEMP/drill/state"
+
+      - name: Stop the object store
+        if: always()
+        working-directory: conformance
+        run: pnpm garage:down --state "$RUNNER_TEMP/garage"
+
+      - name: Keep the report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: restore-drill-report
+          path: ${{ runner.temp }}/drill/reports/restore-drill.md
+          if-no-files-found: ignore
+
   # Freshness jobs — catch generated-artifact drift, on every event. They
   # were once gated on the paths that could stale each artifact; on the pool
   # the work costs seconds, and a gate that skips is a gate that can be wrong.

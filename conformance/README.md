@@ -54,6 +54,13 @@ server attaches an object store when `S3_BUCKET` is set, and the fixtures in
 `spec/stores.md` assert both stores rather than skipping when one is missing.
 `pnpm garage:down` stops the node and removes its state.
 
+`pnpm drill:restore` is the restore drill, which needs the same `S3_*` values
+plus `litestream` and `sqlite3` on the path: it boots an instance under
+`.marfa-drill/` with Litestream streaming its database to the bucket, writes
+to it, restores a second instance from the bucket alone and compares the two
+to the byte, then removes what it wrote to the bucket. The report goes to
+`reports/restore-drill.md`, and `deploy/README.md` is what it proves.
+
 `pnpm marfa:up` builds the workspace packages if they are not built, starts
 the server with `tsx` (never watch mode), waits for `/health`, reads the
 one-time bootstrap secret from the server's own log, mints the first key with
@@ -114,7 +121,8 @@ and the `test:conformance` script decides which projects the gate runs.
 ## Architecture
 
 `spec/` is the written specification, one file per area, citing fixtures.
-`scripts/marfa-server.ts` boots, mints and stops a local server. Under `src/`,
+`scripts/marfa-server.ts` boots, mints and stops a local server, and
+`scripts/restore-drill.ts` boots two of them for the restore drill. Under `src/`,
 `client/` is the typed HTTP client, `generators/` the synthetic data, `utils/`
 the test context and teardown, `device/` the scripted server and the CLI
 adapter, and `suites/` the fixtures themselves, one directory per project.

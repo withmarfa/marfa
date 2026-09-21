@@ -12,6 +12,7 @@ A typed data layer for structured personal data: items under custom type schemas
 | [`@withmarfa/sdk`](./packages/sdk)       | TypeScript HTTP client                                                                                                   |
 | [`core/`](./core)                        | The Rust engine every native client embeds: a working copy, a queue, the `marfa` binary, and the Swift and Node bindings |
 | [`conformance/`](./conformance)          | The contract: black-box fixtures and the written specification under `conformance/spec/`                                 |
+| [`deploy/`](./deploy)                    | The container recipe: the server with Litestream streaming its database to the bucket its blobs are replicated to        |
 
 `@withmarfa/shared` and `@withmarfa/sdk` publish to npm; the rest stay private.
 
@@ -31,7 +32,7 @@ cd packages/server
 pnpm dev    # http://localhost:8600
 ```
 
-`.env.example` carries the variables an instance usually sets, not the full list: `packages/server/src/config.ts` is where the list actually lives.
+`.env.example` carries the variables an instance usually sets, not the full list: `packages/server/src/config.ts` is where the list actually lives. [`deploy/`](./deploy) is how an instance runs with its database and blobs backed up to a bucket, and `pnpm --filter @withmarfa/conformance drill:restore` is the drill that rebuilds one from the bucket alone.
 
 ## What is authoritative
 
