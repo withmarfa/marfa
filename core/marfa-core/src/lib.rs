@@ -972,16 +972,19 @@ mod tests {
                  queue into one file and neither sees the other's rows"
             );
         }
-        // A plain count, deliberately. There is no expression in Rust that
-        // enumerates the methods calling a guard, so this is a tripwire
-        // rather than a derivation: a door added to `Core` and not listed
-        // above is a door nothing here covers, and this is what says so.
+        // A plain count, deliberately, and it is worth being exact about
+        // what it catches. There is no expression in Rust that enumerates
+        // the methods calling a guard, so this is a tripwire rather than a
+        // derivation, and it fires in one direction only: an entry removed
+        // from the list above reddens it, a door added to `Core` and never
+        // listed does not. The list is the coverage; this only keeps the
+        // list from quietly shrinking.
         assert_eq!(
             refusals.len(),
             17,
-            "the write surface has changed. Every method on `Core` that calls \
-             `refuse_unless_writer` belongs in the list above, and this count \
-             is what notices when one does not."
+            "an entry has gone from the list above. Every method on `Core` \
+             that calls `refuse_unless_writer` belongs in it, and a door \
+             dropped from it is a door nothing here covers."
         );
 
         // The control: the writer is not refused, so the refusals above are

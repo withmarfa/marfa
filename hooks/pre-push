@@ -55,7 +55,8 @@ pnpm test:offline-lane
 # crate is its own workspace, so `cargo test` in `core/` never reaches it and
 # a change to a shared error type compiles locally and fails on the pool;
 # `surface-lock:drift` takes a base ref, so it exists only as a CI job.
-# Neither is reachable from the command anyone runs by hand.
+# Neither is reached by `pnpm test`, which is the command a change is
+# usually checked with.
 pnpm test:rust
 pnpm test:drift
 

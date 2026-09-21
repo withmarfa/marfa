@@ -1627,13 +1627,11 @@ export const CONSENT_SCOPE_DESCRIPTIONS: Record<string, string> = {
   // Edge types: relationships between items.
   //
   // One shape, and it is a question about the reader's own data rather than a
-  // noun for the relation. These entries previously carried three: a
-  // relationship noun ("Parent and child relationships."), a description of
-  // what the platform does with it ("Items grouped into threads."), and an
-  // abstract restatement of the identifier ("References between items.",
-  // "Items derived from other items."). The third shape is the one that
-  // earns nothing: an owner reading it has been told the type id back,
-  // spelled differently, and the row above already said that.
+  // noun for the relation. Two other shapes suggest themselves and neither
+  // is used: a relationship noun ("Parent and child relationships.") and an
+  // abstract restatement of the identifier ("References between items.").
+  // The second earns nothing at all — an owner reading it has been told the
+  // type id back, spelled differently, and the row above already said that.
   //
   // So each of these answers which of the person's things the relation joins,
   // in the words they would use for it. That rule is checkable against a new
@@ -1688,25 +1686,24 @@ export const CONSENT_SCOPE_DESCRIPTIONS: Record<string, string> = {
   // both read. So an entry here says what the grant reaches and stops.
   //
   // **The prohibition is not tidiness, it is the only way the two screens
-  // can be made to agree.** These sentences used to carry a futurity clause,
-  // because the device screen has no second line, so the description is the
-  // whole of what it says about a grant. But `scopeName` on the
-  // authorize screen falls through to this map wherever nothing curated
-  // names the pattern, so the clause written for one screen arrived as the
-  // other screen's toggle label, directly above a line about to state the same
-  // thing. What reconciled them was a regex looking for the word "later" in
-  // the label, and a check on the copy cannot tell a clause that means
-  // futurity from a word that merely spells it: futurity phrased in other
-  // words was stated twice, and a "later" carrying no futurity at all
-  // silenced the line on a wildcard that then said nothing about its reach.
-  // Composing removes the collision rather than arbitrating it.
+  // can be made to agree.** A futurity clause inside one of these sentences
+  // is tempting, because the device screen has no second line and the
+  // description is the whole of what it says about a grant. It cannot work:
+  // `scopeName` on the authorize screen falls through to this map wherever
+  // nothing curated names the pattern, so a clause written for one screen
+  // arrives as the other screen's toggle label, directly above a line about
+  // to state the same thing. Reconciling that needs a check on the copy, and
+  // a check on the copy cannot tell a clause that means futurity from a word
+  // that merely spells it — futurity phrased in other words is stated twice,
+  // and a "later" carrying no futurity at all silences the line on a
+  // wildcard that then says nothing about its reach. Composing removes the
+  // collision rather than arbitrating it.
   //
-  // The global wildcard is no longer an exemption. It read "Everything on
-  // your server." because that sentence cannot be falsified by a type
-  // registered tomorrow, which was all the device screen needed back when
-  // the device screen needed the copy to carry it. It needs nothing of the
-  // sort now, so `*` says what it reaches like every other entry and the
-  // screens add the rest.
+  // The global wildcard is not an exemption either. "Everything on your
+  // server." cannot be falsified by a type registered tomorrow, which is
+  // exactly the property a screen carrying futurity in its copy would want;
+  // no screen needs that here, so `*` says what it reaches like every other
+  // entry and the screens add the rest.
   //
   // The duplicate-copy guard excludes non-dotted keys by construction, since
   // a bare `*` is an ordinary field name in code, so this entry sits outside
@@ -1914,20 +1911,18 @@ function describeScope(scope: ParsedScope): string | undefined {
 /**
  * Build the `{ typePattern: description }` map both consent surfaces read for
  * the plain-English line per scope row: `/auth/authorize` and the device
- * approval screen, which used to hold a second vocabulary of its own.
+ * approval screen. One vocabulary, read by both.
  *
  * Missing entries fall through; the renderer shows the row's label, or the
  * literal where it has no label either.
  *
- * **Metadata scopes and wildcards are described rather than skipped, which
- * reverses what this function used to do.** The skip rested on a claim that
- * `metadata:read` and its siblings are self-explanatory to the audience that
- * requests them. That audience is the wrong one: whoever wrote the
- * connector is not who reads this screen, and the person deciding owns the
- * data rather than operates the server. The device screen had been showing
- * "Register and update custom data types on your server" against
- * `metadata.types` for exactly that reason, and between working copy on one
- * surface and a skip on the other, the copy is what should survive.
+ * **Metadata scopes and wildcards are described rather than skipped.**
+ * Skipping them rests on a claim that `metadata:read` and its siblings are
+ * self-explanatory to the audience that requests them, and that audience is
+ * the wrong one: whoever wrote the connector is not who reads this screen,
+ * and the person deciding owns the data rather than operates the server.
+ * "Register and update custom data types on your server" is a sentence that
+ * audience can act on, which is the test every entry here has to pass.
  *
  * Wildcards were never a judgment call, only an omission: nothing described
  * them here while the device screen did, and the registry cannot describe
