@@ -12,10 +12,11 @@ import type { CidrRange } from "./middleware/client-ip.js";
  *
  * The `Number(env) || default` shorthand silently swallows zero: an
  * operator could not switch a housekeeping job off by setting its
- * retention to `0`, because `0` is falsy and the default wins. This helper is the canonical
- * pattern for every numeric env read in the server: an undefined or empty
- * env var falls back to the default; any other value (including `0`,
- * negatives, or `NaN`) is honored as written.
+ * retention to `0`, because `0` is falsy and the default wins. So every
+ * numeric env read in the server, this helper and the parsers below it,
+ * checks for undefined or empty explicitly: that falls back to the
+ * default, and any other value (including `0`, negatives, or `NaN`) is
+ * honored as written.
  *
  * If you need range/validity checking on top, parse explicitly (see
  * `parseEventLogRetentionHours` for an example with warnings on bad input).
@@ -116,12 +117,13 @@ export interface AppConfig {
    *  cursor can reach; requests with `Last-Event-ID` older than the
    *  oldest retained event get a terminal `catchup_too_old` event.
    *  Optional on the type so callers constructing `AppConfig` literals
-   *  don't have to supply it; `index.ts` applies the 168 fallback. */
+   *  don't have to supply it; `housekeeping/registrations.ts` applies the
+   *  168 fallback. */
   eventLogRetentionHours?: number;
   /** Cadence (ms) for the event-log cleanup sweep that purges expired
    *  `event_log` rows. Default 3_600_000 (1h); env override
    *  `MARFA_EVENT_LOG_CLEANUP_INTERVAL_MS`. Optional on the type;
-   *  `index.ts` applies the 1h fallback when unset. */
+   *  `housekeeping/registrations.ts` applies the 1h fallback when unset. */
   eventLogCleanupIntervalMs?: number;
   versionThinningIntervalMs: number;
   versionRecentDays: number;
@@ -136,7 +138,8 @@ export interface AppConfig {
    *  `auth_session` rows whose `expires_at` has passed. Default
    *  3_600_000 (1h); env override `AUTH_SESSION_CLEANUP_INTERVAL_MS`.
    *  No retention-window knob — Better Auth itself owns the TTL.
-   *  Optional on the type; `index.ts` applies the 1h fallback. */
+   *  Optional on the type; `housekeeping/registrations.ts` applies the 1h
+   *  fallback. */
   authSessionCleanupIntervalMs?: number;
   /** Days a grantless DCR (`auth_oauth_client`) row survives before the
    *  reaper hard-deletes it. A row is reaped only when it's older than this
@@ -144,12 +147,13 @@ export interface AppConfig {
    *  projected `system.connection` app item). Unauthenticated DCR lets
    *  clients accumulate forever; this bounds the abandoned ones. `0`
    *  switches the housekeeping job off. Default 30. Env override
-   *  `MARFA_DCR_CLIENT_RETENTION_DAYS`. Optional on the type; `index.ts`
-   *  applies the 30-day fallback. */
+   *  `MARFA_DCR_CLIENT_RETENTION_DAYS`. Optional on the type;
+   *  `housekeeping/registrations.ts` applies the 30-day fallback. */
   dcrClientRetentionDays?: number;
   /** Cadence (ms) for the grantless-DCR-client reaper sweep. Default
    *  86_400_000 (24h); env override `MARFA_DCR_CLIENT_CLEANUP_INTERVAL_MS`.
-   *  Optional on the type; `index.ts` applies the 24h fallback. */
+   *  Optional on the type; `housekeeping/registrations.ts` applies the
+   *  24h fallback. */
   dcrClientCleanupIntervalMs?: number;
   /** Cadence (ms) for the unreferenced-blob sweep, `blob-orphans`. A full
    *  pass over the item corpus and the version history, so this is
@@ -169,8 +173,9 @@ export interface AppConfig {
   blobMinCopies?: number;
   /** Cadence (ms) for `blob-replicate`, which gives every attached store
    *  the copies its policy wants; an upload wakes it too. A positive
-   *  integer, since the housekeeping job has no off switch: a store the configuration
-   *  names is a store whose copies are kept. Default 60_000; env override
+   *  integer, since the housekeeping job has no off switch: a store the
+   *  configuration names is a store whose copies are kept. Default
+   *  60_000; env override
    *  `MARFA_BLOB_REPLICATE_INTERVAL_MS`. */
   blobReplicateIntervalMs?: number;
   /** Most blobs, and most bytes, one replication run copies before it
@@ -191,8 +196,8 @@ export interface AppConfig {
   blobIntegrityBatchBytes?: number;
   /** Cadence (ms) for the `rate_limit_windows` GC sweep that drops rows
    *  past their `expires_at`. Default 3_600_000 (1h); env override
-   *  `MARFA_RATE_LIMIT_CLEANUP_INTERVAL_MS`. Optional — `index.ts`
-   *  applies the 1h fallback when unset. */
+   *  `MARFA_RATE_LIMIT_CLEANUP_INTERVAL_MS`. Optional;
+   *  `housekeeping/registrations.ts` applies the 1h fallback when unset. */
   rateLimitCleanupIntervalMs?: number;
   /** Deterministic text extraction from file blobs. On unless
    *  `MARFA_ENRICHMENT_ENABLED=false`: extraction is what makes an
@@ -320,8 +325,8 @@ export interface AppConfig {
    *  start without it when telemetry is actually being exported. */
   otelEnvironment?: string;
   /** OTLP traces endpoint (`OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`). Unset,
-   *  the trace pipeline is built and points at nothing, for a collector
-   *  that takes logs and errors but no traces. */
+   *  with no `OTEL_EXPORTER_OTLP_ENDPOINT` to fall back on, no trace
+   *  pipeline is built and only logs export. */
   otelTracesEndpoint?: string;
   /** OTLP logs endpoint (`OTEL_EXPORTER_OTLP_LOGS_ENDPOINT`). A deployment
    *  exporting to PostHog points this at
@@ -594,12 +599,16 @@ export function loadConfig(): AppConfig {
           "Generate one with: openssl rand -hex 32",
       );
     }
-    // MARFA_AUTH_SECRET is the master secret every derived key comes
-    // from: the signature on an instance-served blob link, and the cipher
-    // `system.credential` names. Unset, the crypto layer would fall back
-    // to a per-process random key, so a restart would leave every link
-    // and ciphertext minted before it unverifiable. Enforce presence at
-    // boot so that never happens.
+    // MARFA_AUTH_SECRET has three consumers: better-auth signs its
+    // cookies and the OAuth authorize query with it (`app.ts`,
+    // `auth/instance.ts`), and every key `crypto/secret-encryption.ts`
+    // derives comes from it, for the blob link's signature and the cipher
+    // `system.credential` names. Unset, better-auth would sign with a
+    // secret minted per process, so every session and authorize query
+    // would die at the next restart, and the crypto layer, which refuses
+    // rather than falls back in production, would throw at the first
+    // blob-link mint instead of at boot. Enforce presence here so both
+    // fail at boot or not at all.
     if (!authSecret || authSecret.length < 32) {
       throw new Error(
         "MARFA_AUTH_SECRET must be set to at least 32 characters in production. " +

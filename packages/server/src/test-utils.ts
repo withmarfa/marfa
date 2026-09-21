@@ -88,9 +88,10 @@ export interface TestContext {
    *  by `cleanup`. */
   tmpDir: string;
   /** Awaitable cleanup. Callers that don't `await` still trigger the
-   *  cleanup (the promise is created immediately), but an unawaited
-   *  cleanup races the directory removal with the next context's setup.
-   *  Best practice: `await ctx.cleanup()`. */
+   *  cleanup (the promise is created immediately), but the hook then
+   *  returns and the worker can be torn down before `storage.close()`
+   *  settles, so the `finally` that removes the directory never runs and
+   *  it leaks. Best practice: `await ctx.cleanup()`. */
   cleanup: () => Promise<void>;
   /** The Better Auth instance the app mounted, for tests that need a
    *  signed-in user behind the OAuth provider. `createTestAccount` is the

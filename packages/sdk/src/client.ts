@@ -583,8 +583,8 @@ export interface BulkActionResult {
   ids?: string[];
   errors?: BulkActionErrorEntry[];
   /** Unique blob hashes referenced by items in a `purge` action. Not an
-   *  orphan count: `GET /blobs/orphans` is that. Omitted for non-purge
-   *  actions. */
+   *  orphan count: the orphan report is `GET /blobs/orphans`. Omitted for
+   *  non-purge actions. */
   blob_hashes_referenced?: number;
 }
 

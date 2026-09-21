@@ -1444,17 +1444,17 @@ export function itemRoutes(storage: Storage) {
         stampedSource,
         body.source_id,
       );
-      // The provenance rule is checked on BOTH arms below rather than once
-      // here, and the difference is disclosure. This branch reasons carefully that the
-      // row's type is a gate rather than a filter — gate before disclosing,
-      // so a refusal cannot be read off the body — and the provenance
-      // refusal names `item_id`, `source` and the owning connection's id.
-      // Answering it ahead of `requireTypeAccess` would disclose all three
-      // to a caller the type gate is about to refuse and tell nothing.
+      // The declared-type match is checked on BOTH arms below rather than
+      // once here, and the difference is disclosure. The row's type is a
+      // gate rather than a filter: gate before disclosing, so a refusal
+      // cannot be read off the body, and the match's refusal names
+      // `item_id`, `declared_type` and `actual_type`. Answering it ahead
+      // of `requireTypeAccess` would disclose the row's real type to a
+      // caller the type gate is about to refuse and tell nothing.
       //
       // So each arm runs it last among its own gates. That is two call
       // sites for one rule, which is the shape this codebase treats as a
-      // hazard — the trashed arm has its own named test for exactly that
+      // hazard: the trashed arm has its own named test for exactly that
       // reason, and deleting either call reddens one case and only one.
       if (existing?.state === "trashed") {
         // The user deleted this. Reviving it would overturn that decision
@@ -2740,9 +2740,9 @@ export function itemRoutes(storage: Storage) {
     //
     // The check itself stays where the cascade is, and has to: the type gate
     // above ran against the named row alone, and a `parent-of` edge can carry
-    // a connection out through a delete of something else entirely. A
-    // connector may only destroy what it wrote, as it may only write what
-    // it wrote: the delete is the stronger harm and is protected the same.
+    // a live `system.connection` out through a delete of something else
+    // entirely, when a grant's tokens must not outlive the row that names
+    // their owner (`_connection-refusal.ts`).
     const snapshots = await storage.runInTransaction(async () => {
       const toDelete = await planCascadeDelete(storage.edges, id);
       const snaps = await Promise.all(

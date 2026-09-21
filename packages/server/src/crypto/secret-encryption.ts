@@ -24,9 +24,9 @@ class SecretCryptoError extends Error {
  * AES-256-GCM encrypt/decrypt for short server-side secrets a verifier
  * needs back in plaintext. It is the cipher the shipped `system.credential`
  * type documents for its `secret_encrypted` field, under the
- * `connectionOauthToken` domain; nothing in the server writes that field
- * today, which the connector model decides (see the open questions), so
- * the pair has no live caller and `deriveKey` below has one.
+ * `connectionOauthToken` domain; nothing in the server writes that field,
+ * a decision the connector model owns, so the pair has no live caller and
+ * `deriveKey` below has one.
  *
  * The key is derived from `MARFA_AUTH_SECRET` via HKDF-SHA256, with a
  * caller-supplied `info` string that scopes derivations: rotating

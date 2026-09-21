@@ -8,10 +8,10 @@ import {
 } from "./config.js";
 
 /**
- * `Number(env) || default` swallows zero; `envNumber(raw, default)` is
- * the pattern every numeric env read uses instead. This file pins down its
- * semantics so drift away from the explicit-undefined check is caught
- * locally rather than only at downstream call sites.
+ * `Number(env) || default` swallows zero, so every numeric env read
+ * checks for undefined or empty explicitly, `envNumber(raw, default)`
+ * among them. This file pins down its semantics so drift away from that
+ * check is caught locally rather than only at downstream call sites.
  */
 describe("envNumber (zero-safe env reader)", () => {
   it("returns the fallback when raw is undefined", () => {

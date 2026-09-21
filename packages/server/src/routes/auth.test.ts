@@ -309,7 +309,7 @@ describe("KeyStore.updateLastUsed — DB-side debounce", () => {
     await ctx.storage.keys.updateLastUsed(id);
     const firstKey = await ctx.storage.keys.get(id);
     const firstStamp = firstKey?.last_used_at;
-    expect(firstStamp).not.toBeNull();
+    expect(firstStamp).toEqual(expect.any(String));
 
     // A tiny pause so a naive always-overwrite would surface as a
     // monotonic change — if the stamp still moves, the debounce isn't

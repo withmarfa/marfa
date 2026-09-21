@@ -174,8 +174,8 @@ export async function createSqliteStorage(sqlitePath: string): Promise<
       const result = await raw.execute(query);
       return result.rows;
     },
-    /** Parameterized raw mutation escape hatch, reached through
-     *  `test-utils` by tests that plant rows no door writes. */
+    /** Parameterized raw mutation escape hatch, reached by `test-utils`
+     *  and by tests directly, to plant values no door writes. */
     async __sqliteRun(
       query: string,
       params: unknown[],

@@ -427,8 +427,9 @@ async function handleArchiveExport(
     //
     // It is carried at all because `origin` is not descriptive: it decides
     // whether the consent screen offers a root read-only or
-    // read-and-write. An archive that dropped it would make the restore
-    // guess, and the default is the permissive one.
+    // read-and-write. An archive without it restores as `unknown`,
+    // read-only, so a `user` registration would come back without the
+    // wildcard it earned.
     for (const row of await storage.types.listRegisteredWithProvenance()) {
       typeLines.push(
         JSON.stringify({

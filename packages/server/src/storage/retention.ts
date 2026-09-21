@@ -22,10 +22,9 @@ const MS_PER_DAY = 86_400_000;
 
 /**
  * Optional instance-config wiring shared by the retention housekeeping
- * jobs. When
- * provided, a run resolves the effective retention from the instance
- * configuration (`InstanceConfig`'s override field, falling back to the
- * instance default) and runs one sweep with it.
+ * jobs. When provided, a run resolves the effective retention from the
+ * instance configuration (`InstanceConfig`'s override field, falling back
+ * to the instance default) and runs one sweep with it.
  */
 export interface RetentionOverride {
   settings: SettingsStore;

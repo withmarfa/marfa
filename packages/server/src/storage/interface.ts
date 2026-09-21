@@ -889,7 +889,8 @@ export interface VersionStore {
   deleteByIds(ids: string[]): Promise<number>;
   /**
    * Pages over every version snapshot's parsed properties, instance-wide.
-   * Exists for the `blob-orphans` housekeeping job: a hash referenced only by history is
+   * Exists for the `blob-orphans` housekeeping job: a hash referenced only
+   * by history is
    * still referenced, because deleting it would strip the bytes out from
    * under a version read. Cursor is the version row id.
    */

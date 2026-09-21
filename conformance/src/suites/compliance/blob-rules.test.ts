@@ -31,8 +31,8 @@ function bootEnv(name: "MARFA_API_URL" | "MARFA_BLOB_PATH" | "S3_ENDPOINT") {
 
 /**
  * Runs a housekeeping job through its door and answers the run's result.
- * The server this fixture shares runs the same housekeeping jobs on its
- * own schedule,
+ * The server this fixture shares runs the same housekeeping jobs on its own
+ * schedule,
  * and an upload wakes replication, so a run asked for while the scheduler
  * holds the name answers 409; the in-flight run is the same work, and the
  * ask is repeated once it has finished.

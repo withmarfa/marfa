@@ -229,7 +229,7 @@ export function healthRoutes(storage: Storage, blobs: BlobLayer): Hono<AppEnv> {
     // count.
     //
     // Rows rather than distinct values: "how many rows" is the question
-    // the motivating incident left unanswered, and it is what tells one
+    // that matters, and it is what tells one
     // restored row from a whole table.
     //
     // `scanned` is here because zero rows has three meanings and this is

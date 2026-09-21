@@ -92,13 +92,10 @@ export const SCANNED_COLUMNS: readonly ScannedColumn[] = [
     allowed: ITEM_STATES,
   },
   // Scanned rather than excused, and it is the entry a roster keyed off
-  // casts could never have found: the item projection narrowed this column
-  // with `row.tier === "library" || row.tier === "feed"` — a comparison,
-  // not a cast — and dropped anything else to `undefined` with no log, no count
-  // and no projection. That is `api_keys.default_tier`'s union restated as
-  // two literals one directory away, which is the defect
-  // `SCANNED_COLUMNS`'s own `allowed` field exists to prevent. Those
-  // comparisons now go through `isTier`.
+  // casts could never have found: the item projection reads this column
+  // through `isTier`, a comparison rather than a cast, so a value outside
+  // the union would fall to `undefined` with no log and no count unless
+  // the scan counted it here.
   {
     table: "items",
     column: "tier",
