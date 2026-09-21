@@ -1,10 +1,7 @@
-import { execFile, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
-import { promisify } from "node:util";
 import type { TestContext } from "../../client/types.js";
 import { createTestContext } from "../../utils/setup.js";
-
-const run = promisify(execFile);
 
 /**
  * The `marfa` binary, driven as the reference client against the server the
@@ -12,9 +9,10 @@ const run = promisify(execFile);
  *
  * Every scenario here is a person or an agent at a terminal: the binary is
  * spawned with `--json`, its stdout is the answer, its exit code is the
- * verdict, and a refusal is the one JSON object it prints on stderr. Nothing
- * here reaches the server except through the binary, because the binary is
- * what is under test.
+ * verdict, and a refusal is the one JSON object it prints on stderr. The
+ * server is reached directly only for a witness (the root document, the
+ * published document) or for the person's half of a sign-in, never for the
+ * thing a scenario asserts the binary did.
  */
 
 /** The built binary. The same one the device fixtures drive. */
@@ -46,6 +44,23 @@ export interface Refusal {
   exit: number;
 }
 
+/**
+ * What the child sees of this process's environment: the system's own
+ * variables and nothing of the developer's (a `MARFA_DB`, a kept
+ * `MARFA_API_KEY`), so what a scenario passes is all the binary has.
+ */
+const INHERITED = [
+  "PATH",
+  "HOME",
+  "TMPDIR",
+  "LANG",
+  "XDG_RUNTIME_DIR",
+  "DBUS_SESSION_BUS_ADDRESS",
+];
+
+/** The long-running children a file started, killed when the file ends. */
+const held: ChildProcess[] = [];
+
 export class Cli {
   constructor(
     readonly binary: string,
@@ -59,9 +74,13 @@ export class Cli {
   }
 
   private env(): NodeJS.ProcessEnv {
-    const env: NodeJS.ProcessEnv = { ...process.env, MARFA_API_URL: this.url };
-    if (this.key === undefined) delete env.MARFA_API_KEY;
-    else env.MARFA_API_KEY = this.key;
+    const env: NodeJS.ProcessEnv = {};
+    for (const name of INHERITED) {
+      const value = process.env[name];
+      if (value !== undefined) env[name] = value;
+    }
+    env.MARFA_API_URL = this.url;
+    if (this.key !== undefined) env.MARFA_API_KEY = this.key;
     return env;
   }
 
@@ -100,7 +119,9 @@ export class Cli {
   /**
    * Runs with `--json` and answers the parsed stdout. A non-zero exit throws
    * with the envelope, because a scenario that meant to be refused asks
-   * through `refused` instead, and one that did not should stop here.
+   * through `refused` instead, and one that did not should stop here. An
+   * empty stdout throws too: every door answers something, and a binary
+   * that printed nothing is not proven by its exit code alone.
    */
   async json<T = unknown>(
     args: string[],
@@ -113,7 +134,9 @@ export class Cli {
       );
     }
     const text = outcome.stdout.trim();
-    if (text === "") return null as T;
+    if (text === "") {
+      throw new Error(`marfa ${args.join(" ")} exited 0 and printed nothing`);
+    }
     try {
       return JSON.parse(text) as T;
     } catch {
@@ -150,12 +173,26 @@ export class Cli {
     return { code: outcome.code, envelope };
   }
 
-  /** Starts a long-running command and leaves it to the caller. */
+  /**
+   * Starts a long-running command and leaves it to the caller, who reads
+   * its stdout and stderr; the child is killed when the file ends if the
+   * scenario did not see it out, so a failing scenario does not leave a
+   * binary polling a server that is about to stop.
+   */
   hold(args: string[]): ChildProcess {
-    return spawn(this.binary, ["--json", ...args], {
+    const child = spawn(this.binary, ["--json", ...args], {
       env: this.env(),
       stdio: ["ignore", "pipe", "pipe"],
     });
+    held.push(child);
+    return child;
+  }
+}
+
+/** Ends every held child a file started; part of every file's cleanup. */
+export function releaseHeld(): void {
+  for (const child of held.splice(0)) {
+    if (child.exitCode === null && child.signalCode === null) child.kill();
   }
 }
 
@@ -219,5 +256,3 @@ export async function once(
     process.once(event, (code) => resolve(code));
   });
 }
-
-export { run };

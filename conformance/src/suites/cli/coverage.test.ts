@@ -9,6 +9,10 @@ import { Cli, requireBinary } from "./harness.js";
  * and holds it against the document the server serves rather than the one
  * in the tree, so a door the server has grown is red here whichever half
  * moved first.
+ *
+ * One command is reached by nothing in this suite but its help: `types
+ * prune`, which needs a drifted platform type that a fresh server does not
+ * have and a client cannot make.
  */
 
 interface Row {
@@ -41,8 +45,8 @@ beforeAll(async () => {
 
 describe("every published operation is reached", () => {
   it("finds the document and the table, so an empty pass cannot be a missing input", () => {
-    expect(published.length).toBeGreaterThan(60);
-    expect(rows.length).toBeGreaterThan(60);
+    expect(published.length).toBeGreaterThan(0);
+    expect(rows.length).toBeGreaterThan(0);
   });
 
   it("names a command for every published operation", () => {

@@ -1,4 +1,4 @@
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
@@ -14,12 +14,15 @@ import type { CliContext } from "./harness.js";
  */
 
 let c: CliContext;
+let dir: string;
 
 beforeAll(async () => {
   c = await cliContext("exits");
+  dir = mkdtempSync(join(tmpdir(), "marfa-cli-exits-"));
 });
 
 afterAll(async () => {
+  rmSync(dir, { recursive: true, force: true });
   await cleanup(c.ctx);
 });
 
@@ -65,7 +68,9 @@ describe("the exit codes", () => {
   });
 
   it("leaves by 4 when the working copy refuses under the device rules", async () => {
-    const store = join(mkdtempSync(join(tmpdir(), "marfa-cli-exits-")), "copy");
+    // The same command answers from a hydrated copy in the folder scenario;
+    // here the copy has never been hydrated.
+    const store = join(dir, "copy");
     const unhydrated = await c.cli.refused([
       "device",
       "--db",

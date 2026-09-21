@@ -22,11 +22,14 @@ produce. `spec/device.md` lists the cases it cannot, with a reason for each.
 as the reference client of an instance: every scenario is a person or an agent
 at a terminal, driving the built binary against the server the run booted, end
 to end. Signing in, creating, attaching, searching, linking, a folder round
-trip, an export, every operator door, and a coverage scenario that reads
-`marfa operations` from the binary and holds it against the document the
-server serves, so a door published without a command is red here. It is its
-own job in `ci.yml`, beside the referee rather than inside it, and
-`pnpm test:cli` runs it with the same environment the device fixtures take.
+trip, an export, a connector's registration and runs, the operator's doors, the
+six exit codes, and a coverage scenario that reads `marfa operations` from the
+binary and holds it against the document the server serves, so a door
+published without a command is red here. Every published operation is driven
+past its help but one, `types prune`, which needs a drifted platform type a
+fresh server does not have; the coverage scenario says so. It is its own job
+in `ci.yml`, beside the referee rather than inside it, and `pnpm test:cli`
+runs it with the same environment the device fixtures take.
 
 ## Quick start
 

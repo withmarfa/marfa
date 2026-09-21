@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, statSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
@@ -8,7 +8,7 @@ import {
   trackKey,
   trackWebhook,
 } from "../../utils/setup.js";
-import { cliContext, unique } from "./harness.js";
+import { cliContext, releaseHeld, unique } from "./harness.js";
 import type { CliContext, ItemEnvelope } from "./harness.js";
 
 /**
@@ -26,6 +26,8 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  releaseHeld();
+  rmSync(dir, { recursive: true, force: true });
   await cleanup(c.ctx);
 });
 
@@ -113,13 +115,33 @@ describe("the instance from the terminal", () => {
   });
 
   it("reads and replaces the configuration under a credential that holds config.manage", async () => {
-    const config = await c.cli.json<{ instance_id: string }>(["config", "get"]);
-    expect(config.instance_id).toBeTruthy();
-    const replaced = await c.cli.json<{ instance_id: string }>(
+    const root = (await fetch(`${c.apiUrl}/`).then((r) => r.json())) as {
+      instance_id: string;
+    };
+    const config = await c.cli.json<{
+      instance_id: string;
+      trash_retention_days?: number;
+    }>(["config", "get"]);
+    expect(config.instance_id).toBe(root.instance_id);
+    // A change goes through the door and comes back from the next read,
+    // then the configuration is put back as it was: the door replaces
+    // whole, so sending the first read back restores it.
+    const days = (config.trash_retention_days ?? 30) + 1;
+    const replaced = await c.cli.json<{ trash_retention_days: number }>(
+      ["config", "replace", "--file", "-"],
+      { stdin: JSON.stringify({ ...config, trash_retention_days: days }) },
+    );
+    expect(replaced.trash_retention_days).toBe(days);
+    const read = await c.cli.json<{ trash_retention_days: number }>([
+      "config",
+      "get",
+    ]);
+    expect(read.trash_retention_days).toBe(days);
+    const restored = await c.cli.json<{ trash_retention_days?: number }>(
       ["config", "replace", "--file", "-"],
       { stdin: JSON.stringify(config) },
     );
-    expect(replaced.instance_id).toBe(config.instance_id);
+    expect(restored.trash_retention_days).toBe(config.trash_retention_days);
   });
 
   it("reads the audit log, which holds this file's own writes", async () => {
@@ -132,12 +154,14 @@ describe("the instance from the terminal", () => {
       JSON.stringify({ title: unique("cli-audit"), body: "b" }),
     ]);
     trackItem(c.ctx, created.item.id);
-    const audit = await c.cli.json<{ data: Array<{ resource_id: string }> }>([
-      "audit",
-      "--resource-id",
-      created.item.id,
-    ]);
+    const audit = await c.cli.json<{
+      data: Array<{ resource_id: string; action: string }>;
+    }>(["audit", "--resource-id", created.item.id]);
     expect(audit.data.length).toBeGreaterThan(0);
+    // The filter reached the wire: every row is the item's, and the create
+    // is among them.
+    for (const row of audit.data) expect(row.resource_id).toBe(created.item.id);
+    expect(audit.data.map((row) => row.action)).toContain("item.create");
   });
 
   it("exports as NDJSON to stdout and as an archive to a file", async () => {
@@ -164,7 +188,17 @@ describe("the instance from the terminal", () => {
       .split("\n")
       .filter((line) => line.trim() !== "");
     expect(lines.length).toBeGreaterThan(0);
-    for (const line of lines) JSON.parse(line);
+    // The source filter reached the wire: every item line is this file's,
+    // and the edge lines that follow join only those.
+    for (const line of lines) {
+      const record = JSON.parse(line) as {
+        item?: { source: string };
+        edge?: unknown;
+      };
+      if (record.item !== undefined)
+        expect(record.item.source).toBe(c.ctx.source);
+      else expect(record.edge).toBeDefined();
+    }
     expect(ndjson.stdout).toContain(title);
 
     const archive = join(dir, "export.tar.gz");
@@ -183,8 +217,13 @@ describe("the instance from the terminal", () => {
   });
 
   it("reaches the operator doors under the operator key and is refused them under a working key", async () => {
-    const drift = await c.operator.json<unknown>(["types", "drift"]);
-    expect(drift).toBeDefined();
+    const drift = await c.operator.json<{
+      types: Array<{ id: string; item_count: number; removable: boolean }>;
+    }>(["types", "drift"]);
+    // A fresh server has no drifted type, and the report says so in the
+    // door's own shape; `types prune` needs one and is reached only by its
+    // help in this suite.
+    expect(Array.isArray(drift.types)).toBe(true);
     const refused = await c.cli.refused(["types", "drift"]);
     expect(refused.code).toBe(1);
     expect(refused.envelope.error.server?.status).toBe(403);
@@ -204,6 +243,10 @@ describe("the instance from the terminal", () => {
       "orphans",
     ]);
     expect(Array.isArray(orphans.data)).toBe(true);
+    // Nothing has swept yet, so the report is the empty one rather than
+    // a shape that happens to parse.
+    const refusedOrphans = await c.cli.refused(["blobs", "orphans"]);
+    expect(refusedOrphans.envelope.error.server?.status).toBe(403);
     const jobs = await c.operator.json<{ data: { name: string }[] }>([
       "housekeeping",
       "list",
@@ -266,12 +309,13 @@ describe("the instance from the terminal", () => {
       "--inactive",
     ]);
     expect(paused.active).toBe(false);
-    const deliveries = await c.cli.json<unknown>([
+    const deliveries = await c.cli.json<{ deliveries: unknown[] }>([
       "webhooks",
       "deliveries",
       created.id,
     ]);
-    expect(deliveries).toBeDefined();
+    // Nothing has fired at a paused hook with no matching write yet.
+    expect(deliveries.deliveries).toEqual([]);
     await c.cli.json(["webhooks", "delete", created.id]);
     const gone = await c.cli.refused(["webhooks", "get", created.id]);
     expect(gone.envelope.error.code).toBe("not_found");

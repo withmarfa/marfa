@@ -5,7 +5,7 @@ import {
   trackItem,
   trackType,
 } from "../../utils/setup.js";
-import { cliContext, once, unique } from "./harness.js";
+import { cliContext, once, releaseHeld, unique } from "./harness.js";
 import type { CliContext, ItemEnvelope } from "./harness.js";
 
 /**
@@ -21,6 +21,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  releaseHeld();
   await cleanup(c.ctx);
 });
 
@@ -64,7 +65,9 @@ describe("types and edge types", () => {
     ]);
     trackType(c.ctx, id);
     expect(registered.type.id).toBe(id);
-    const updated = await c.cli.json<{ type: { id: string } }>([
+    const updated = await c.cli.json<{
+      type: { id: string; description: string };
+    }>([
       "types",
       "update",
       id,
@@ -75,6 +78,13 @@ describe("types and edge types", () => {
       }),
     ]);
     expect(updated.type.id).toBe(id);
+    expect(updated.type.description).toBe("Changed from the terminal.");
+    const reread = await c.cli.json<{ description: string }>([
+      "types",
+      "get",
+      id,
+    ]);
+    expect(reread.description).toBe("Changed from the terminal.");
     await c.cli.json(["types", "delete", id, "--force"]);
     const gone = await c.cli.refused(["types", "get", id]);
     expect(gone.envelope.error.code).toBe("not_found");
@@ -96,7 +106,11 @@ describe("types and edge types", () => {
     ]);
     trackEdgeType(c.ctx, id);
     expect(registered.edge_type.id).toBe(id);
+    const before = await c.cli.json<unknown>(["edge-types", "list"]);
+    expect(JSON.stringify(before)).toContain(id);
     await c.cli.json(["edge-types", "delete", id]);
+    const after = await c.cli.json<unknown>(["edge-types", "list"]);
+    expect(JSON.stringify(after)).not.toContain(id);
   });
 });
 
@@ -130,7 +144,9 @@ describe("metadata and extensions", () => {
     const inUse = await c.cli.json<unknown>(["metadata", "tags"]);
     expect(JSON.stringify(inUse)).toContain("three");
 
-    const written = await c.cli.json<unknown>([
+    const written = await c.cli.json<{
+      extensions: Record<string, Record<string, unknown>>;
+    }>([
       "extensions",
       "write",
       id,
@@ -138,16 +154,18 @@ describe("metadata and extensions", () => {
       "--body",
       JSON.stringify({ at: 3 }),
     ]);
-    expect(written).toBeDefined();
-    const listed = await c.cli.json<unknown>(["extensions", "list", id]);
-    expect(JSON.stringify(listed)).toContain("app.cursor");
-    const got = await c.cli.json<unknown>([
+    expect(written.extensions["app.cursor"]).toEqual({ at: 3 });
+    const listed = await c.cli.json<{
+      extensions: Record<string, Record<string, unknown>>;
+    }>(["extensions", "list", id]);
+    expect(listed.extensions["app.cursor"]).toEqual({ at: 3 });
+    const got = await c.cli.json<Record<string, unknown>>([
       "extensions",
       "get",
       id,
       "app.cursor",
     ]);
-    expect(JSON.stringify(got)).toContain("3");
+    expect(JSON.stringify(got)).toContain('"at":3');
     await c.cli.json(["extensions", "delete", id, "app.cursor"]);
     const after = await c.cli.json<unknown>(["extensions", "list", id]);
     expect(JSON.stringify(after)).not.toContain("app.cursor");
@@ -155,16 +173,46 @@ describe("metadata and extensions", () => {
 });
 
 describe("occurrences and the bulk doors", () => {
-  it("answers an occurrence window", async () => {
-    const answer = await c.cli.json<unknown>([
+  it("answers an occurrence window with the event inside it and not the one outside", async () => {
+    const inside = await c.cli.json<ItemEnvelope>([
+      "items",
+      "create",
+      "--type",
+      "core.event",
+      "--properties",
+      JSON.stringify({
+        title: unique("cli-occurrence-in"),
+        starts_at: "2026-06-15T10:00:00Z",
+        ends_at: "2026-06-15T11:00:00Z",
+      }),
+    ]);
+    trackItem(c.ctx, inside.item.id);
+    const outside = await c.cli.json<ItemEnvelope>([
+      "items",
+      "create",
+      "--type",
+      "core.event",
+      "--properties",
+      JSON.stringify({
+        title: unique("cli-occurrence-out"),
+        starts_at: "2027-06-15T10:00:00Z",
+        ends_at: "2027-06-15T11:00:00Z",
+      }),
+    ]);
+    trackItem(c.ctx, outside.item.id);
+    const answer = await c.cli.json<{
+      data: Array<{ starts_at: string; item: { id: string } }>;
+    }>([
       "items",
       "occurrences",
       "--from",
-      "2026-01-01T00:00:00Z",
+      "2026-06-01T00:00:00Z",
       "--to",
-      "2026-12-31T00:00:00Z",
+      "2026-07-01T00:00:00Z",
     ]);
-    expect(answer).toBeDefined();
+    const ids = answer.data.map((row) => row.item.id);
+    expect(ids).toContain(inside.item.id);
+    expect(ids).not.toContain(outside.item.id);
   });
 
   it("upserts many items from stdin, reads many by id, and runs a bulk action to its job", async () => {
@@ -195,7 +243,11 @@ describe("occurrences and the bulk doors", () => {
     expect(JSON.stringify(read)).toContain(ids[0]!);
     expect(JSON.stringify(read)).toContain(ids[1]!);
 
-    const dry = await c.cli.json<{ matched?: number; status?: string }>([
+    const dry = await c.cli.json<{
+      matched: number;
+      dry_run: boolean;
+      ids: string[];
+    }>([
       "items",
       "bulk-action",
       "tags",
@@ -205,7 +257,9 @@ describe("occurrences and the bulk doors", () => {
       c.ctx.source,
       "--dry-run",
     ]);
-    expect(dry).toBeDefined();
+    expect(dry.dry_run).toBe(true);
+    expect(dry.matched).toBeGreaterThanOrEqual(2);
+    expect(dry.ids).toEqual(expect.arrayContaining(ids));
 
     const job = await c.cli.json<{ id: string; status: string }>([
       "items",
@@ -217,21 +271,40 @@ describe("occurrences and the bulk doors", () => {
       c.ctx.source,
     ]);
     expect(job.id).toBeTruthy();
-    const read_job = await c.cli.json<{ id: string; status: string }>([
-      "items",
-      "bulk-action",
-      "job",
-      job.id,
-    ]);
+    // The job runs on its own; its state is read until it has finished,
+    // and the effect is read off an item it matched.
+    let read_job = { id: job.id, status: job.status };
+    const started = Date.now();
+    while (
+      !["completed", "failed", "cancelled"].includes(read_job.status) &&
+      Date.now() - started < 20_000
+    ) {
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      read_job = await c.cli.json<{ id: string; status: string }>([
+        "items",
+        "bulk-action",
+        "job",
+        job.id,
+      ]);
+    }
     expect(read_job.id).toBe(job.id);
-    // A finished job answers its final state to a cancel rather than refusing.
-    const cancelled = await c.cli.json<{ id: string }>([
+    expect(read_job.status).toBe("completed");
+    const swept = await c.cli.json<{ metadata: { tags: string[] } }>([
+      "metadata",
+      "get",
+      ids[0]!,
+    ]);
+    expect(swept.metadata.tags).toContain("swept");
+    // A finished job answers its final state to a cancel rather than
+    // refusing, and the state it answers is the one just read.
+    const canceled = await c.cli.json<{ id: string; status: string }>([
       "items",
       "bulk-action",
       "cancel",
       job.id,
     ]);
-    expect(cancelled.id).toBe(job.id);
+    expect(canceled.id).toBe(job.id);
+    expect(canceled.status).toBe("completed");
   });
 });
 
@@ -239,8 +312,12 @@ describe("the event stream", () => {
   it("delivers a write made while the stream is open, one frame per line", async () => {
     const stream = c.cli.hold(["events", "--type", "core.note", "--for", "6"]);
     let stdout = "";
+    let stderr = "";
     stream.stdout!.on("data", (chunk: Buffer) => {
       stdout += chunk.toString();
+    });
+    stream.stderr!.on("data", (chunk: Buffer) => {
+      stderr += chunk.toString();
     });
     // The stream announces its cursor first; the write goes out once it has.
     const opened = Date.now();
@@ -251,7 +328,8 @@ describe("the event stream", () => {
       "stream_cursor",
     );
     const id = await note(unique("cli-event"));
-    await once(stream, "close");
+    const code = await once(stream, "close");
+    expect(code, stderr).toBe(0);
     const frames = stdout
       .split("\n")
       .filter((line) => line.trim() !== "")

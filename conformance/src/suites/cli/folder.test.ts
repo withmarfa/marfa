@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
@@ -21,6 +21,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  rmSync(dir, { recursive: true, force: true });
   await cleanup(c.ctx);
 });
 
@@ -63,6 +64,20 @@ describe("a folder round trip", () => {
       dir,
     ]);
     expect(hydrated.items).toBeGreaterThanOrEqual(1);
+    // The folder's working copy answers locally once hydrated: the seed is
+    // in it. This is the success the exit-code scenario's unhydrated
+    // refusal is held against.
+    const store = join(dir, ".marfa", "core.sqlite");
+    const local = await c.cli.json<Array<{ id: string }>>([
+      "device",
+      "--db",
+      store,
+      "items",
+      "list",
+      "--type",
+      "core.note",
+    ]);
+    expect(local.map((row) => row.id)).toContain(seed.item.id);
 
     const title = unique("cli-folder-note");
     writeFileSync(
@@ -110,7 +125,6 @@ describe("a folder round trip", () => {
 
     // The change comes back to the folder: the working copy catches up,
     // then the pull writes the file.
-    const store = join(dir, ".marfa", "core.sqlite");
     const caughtUp = await c.cli.json<{
       applied: number;
       reached_head: boolean;

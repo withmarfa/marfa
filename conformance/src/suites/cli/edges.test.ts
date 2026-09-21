@@ -38,8 +38,9 @@ interface Edge {
 }
 
 function rows(answer: unknown): Edge[] {
-  const page = answer as { data?: Edge[]; edges?: Edge[] };
-  return page.data ?? page.edges ?? [];
+  const page = answer as { data: Edge[] };
+  expect(Array.isArray(page.data)).toBe(true);
+  return page.data;
 }
 
 describe("edges from the terminal", () => {
@@ -94,6 +95,33 @@ describe("edges from the terminal", () => {
     expect(after.map((row) => row.id)).not.toContain(edge.id);
     const gone = await c.cli.refused(["edges", "get", edge.id]);
     expect(gone.envelope.error.code).toBe("not_found");
+  });
+
+  it("writes many edges from stdin, each entry with its own outcome", async () => {
+    const a = await note(unique("cli-edge-bulk-a"));
+    const b = await note(unique("cli-edge-bulk-b"));
+    const c2 = await note(unique("cli-edge-bulk-c"));
+    const written = await c.cli.json<{
+      counts: { created: number; errored: number };
+      results: Array<{ index: number; outcome: string; id?: string }>;
+    }>(["edges", "bulk", "--file", "-"], {
+      stdin: JSON.stringify({
+        edges: [
+          { source_id: a, target_id: b, edge_type: "references" },
+          { source_id: a, target_id: c2, edge_type: "references" },
+        ],
+      }),
+    });
+    expect(written.counts.created).toBe(2);
+    expect(written.results.map((row) => row.outcome)).toEqual([
+      "created",
+      "created",
+    ]);
+    const outbound = rows(await c.cli.json(["items", "edges", a]));
+    expect(outbound.map((row) => row.target_id).sort()).toEqual([b, c2].sort());
+    for (const row of written.results) {
+      await c.cli.json(["edges", "delete", row.id!]);
+    }
   });
 
   it("refuses a self-loop with the server's own code", async () => {

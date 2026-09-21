@@ -107,21 +107,32 @@ describe("items from the terminal", () => {
       "core.note",
     ]);
     expect(listed.data.map((row) => row.id)).toContain(created.item.id);
-
-    const versions = await c.cli.json<{ versions: unknown[] }>([
+    // The tag filter reached the wire: the tag just taken off finds nothing.
+    const untaggedList = await c.cli.json<{ data: Array<{ id: string }> }>([
       "items",
-      "versions",
+      "list",
+      "--tag",
+      "alpha",
+      "--type",
+      "core.note",
+    ]);
+    expect(untaggedList.data.map((row) => row.id)).not.toContain(
       created.item.id,
-    ]);
-    expect(Array.isArray(versions.versions)).toBe(true);
+    );
 
-    const stats = await c.cli.json<Record<string, unknown>>([
-      "items",
-      "stats",
-      "--by",
-      "type",
-    ]);
-    expect(stats).toBeTruthy();
+    // The history holds the state before the update: one snapshot, at
+    // version 1, without the property the update added.
+    const versions = await c.cli.json<{
+      versions: Array<{ version: number; properties: Record<string, unknown> }>;
+    }>(["items", "versions", created.item.id]);
+    expect(versions.versions.map((row) => row.version)).toEqual([1]);
+    expect(versions.versions[0]!.properties.status).toBeUndefined();
+
+    const stats = await c.cli.json<{
+      by_type?: Record<string, number>;
+      total?: number;
+    }>(["items", "stats", "--by", "type"]);
+    expect(JSON.stringify(stats)).toContain("core.note");
   });
 
   it("takes a note through archive, the bin, restore, and the purge", async () => {
@@ -156,9 +167,11 @@ describe("items from the terminal", () => {
 
     await c.cli.json(["items", "delete", id]);
     // The purge is the one destruction; the file's key holds `items.purge`
-    // because it inherited the operator-minted key's whole set.
+    // because it inherited the operator-minted key's whole set. A trashed
+    // row could be restored above; a purged one cannot, which is what
+    // tells the purge from a delete that did nothing.
     await c.cli.json(["items", "purge", id]);
-    const purged = await c.cli.refused(["items", "get", id]);
+    const purged = await c.cli.refused(["items", "restore", id]);
     expect(purged.envelope.error.code).toBe("not_found");
   });
 

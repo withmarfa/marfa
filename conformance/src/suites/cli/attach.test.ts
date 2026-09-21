@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
@@ -20,6 +20,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  rmSync(dir, { recursive: true, force: true });
   await cleanup(c.ctx);
 });
 
@@ -69,12 +70,11 @@ describe("attaching a file", () => {
     expect(attached.edge.edge.edge_type).toBe("attached-to");
 
     const inbound = await c.cli.json<{
-      data?: Array<{ source_id: string }>;
-      edges?: Array<{ source_id: string }>;
+      data: Array<{ source_id: string }>;
     }>(["items", "backrefs", created.item.id, "--type", "attached-to"]);
-    expect(
-      (inbound.data ?? inbound.edges ?? []).map((row) => row.source_id),
-    ).toContain(attached.item.id);
+    expect(inbound.data.map((row) => row.source_id)).toContain(
+      attached.item.id,
+    );
 
     const out = join(dir, "diagram.out");
     await c.cli.json([
@@ -95,6 +95,36 @@ describe("attaching a file", () => {
       data: { store_id: string; kind: string }[];
     }>(["blobs", "locations", attached.blob.hash]);
     expect(locations.data.map((copy) => copy.kind)).toContain("disk");
+
+    // A link to the bytes, for a reader that cannot carry the key.
+    const link = await c.cli.json<{ url: string; expires_in: number }>([
+      "blobs",
+      "url",
+      attached.blob.hash,
+      "--ttl",
+      "120",
+    ]);
+    expect(link.url).toContain(attached.blob.hash.replace("sha256:", ""));
+    expect(link.expires_in).toBe(120);
+
+    // The one copy cannot be dropped: the door answers its own refusal
+    // with the floor it holds, and the log still names the copy after.
+    const store = locations.data[0]!.store_id;
+    const kept = await c.operator.refused([
+      "blobs",
+      "drop",
+      attached.blob.hash,
+      "--store",
+      store,
+    ]);
+    expect(kept.code).toBe(1);
+    expect(kept.envelope.error.server?.code).toBe("copies_below_minimum");
+    const still = await c.cli.json<{ data: { store_id: string }[] }>([
+      "blobs",
+      "locations",
+      attached.blob.hash,
+    ]);
+    expect(still.data.map((copy) => copy.store_id)).toContain(store);
   });
 
   it("refuses a file that is not there before anything is sent", async () => {
