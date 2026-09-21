@@ -51,7 +51,6 @@
     "ical.js": "^2.2.1",
     "image-dimensions": "^2.5.1",
     "ipaddr.js": "^2.5.0",
-    "jose": "^6.2.9",
     "music-metadata": "^11.15.0",
     "officeparser": "^7.8.0",
     "tar-stream": "^3.2.0",

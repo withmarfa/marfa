@@ -76,8 +76,9 @@ describe("custom edge-type registration", () => {
       expect(ids).toContain(shipped);
     }
     // And no tenth. `toContain` per name cannot see a shipped type nobody
-    // listed here, which is how `in-collection` was absent from this list
-    // and from every fixture at once.
+    // listed here, so the list could fall behind the registry with nothing
+    // red — and a type absent from this list is a type absent from every
+    // fixture that reads it.
     //
     // Told apart by the namespace rather than by the run: a shipped edge
     // type is a bare kebab name, and a registered one is dotted

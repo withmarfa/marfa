@@ -29,18 +29,24 @@ afterAll(async () => {
 /**
  * Every advertised feature and a request that reaches the door it names.
  *
- * The array used to be asserted against a copy of itself, which cannot tell
- * an advertised feature from a served one: the two lists agree by being the
- * same list, so three entries were asserted present with nothing in this
- * suite reaching a door at all.
+ * A list of feature names asserted against another list of feature names
+ * cannot tell an advertised feature from a served one: the two agree by
+ * being the same list, and an entry the server does not serve sits in both.
+ * So the case below drives the loop from what the root answers and asks
+ * each entry's door for itself.
  *
  * What each probe asks is only whether the route exists. The bodies are
  * deliberately refusable — an empty body, a malformed id, a query the
  * contract rejects — so nothing here writes, and what is asserted is that
- * the answer is not the unmatched-path answer. `404 not_found` is the one
- * the server gives a path it does not serve, and a served route that
- * answers 404 gives its own code (`item_not_found`, `blob_not_found`), so
- * the pair is the test and the status alone is not.
+ * the answer is not `404 not_found`, which is what the server gives a path
+ * it does not serve.
+ *
+ * **That predicate is a property of these paths, not of the server.** A
+ * served route mostly answers a 404 of its own (`item_not_found`,
+ * `blob_not_found`), but two do not: the OAuth plugin fence under
+ * `/auth/oauth2/*` and `DELETE /admin/platform-types/{id}` both answer
+ * `404 not_found` from a route that exists. Every path below is chosen to
+ * avoid them, and a new probe has to be too.
  */
 const FEATURE_DOORS: {
   feature: string;
@@ -56,7 +62,13 @@ const FEATURE_DOORS: {
   { feature: "keys", path: "/keys" },
   { feature: "bulk", path: "/items/bulk", method: "POST", body: {} },
   { feature: "export", path: "/export?state=not-a-state" },
-  { feature: "oauth", path: "/auth/.well-known/oauth-authorization-server" },
+  // Outside `/auth/*` deliberately: the better-auth catch-all at `/auth/*`
+  // answers the metadata paths under it, so a probe there stays green with
+  // Marfa's own handler deleted.
+  {
+    feature: "oauth",
+    path: "/.well-known/oauth-authorization-server/auth",
+  },
   { feature: "owner", path: "/owner", method: "POST", body: {} },
   { feature: "extensions", path: "/items/not-an-id/extensions" },
   { feature: "events", path: "/events?edges=bogus" },
@@ -92,8 +104,7 @@ describe("the instance", () => {
     expect(r.data.name).toBe("marfa");
     expect(typeof r.data.version).toBe("string");
     expect(r.data.instance_id).toMatch(UUID_V7);
-    // The whole array, and every entry held against a door rather than
-    // against a copy of itself — see `FEATURE_DOORS` and the case below.
+    // Every entry held against a door, by the case below.
     expect([...(r.data.features as string[])].sort()).toEqual(
       FEATURE_DOORS.map((door) => door.feature).sort(),
     );
@@ -107,7 +118,18 @@ describe("the instance", () => {
     expect(absent.status).toBe(404);
     expect(absent.error?.error.code).toBe("not_found");
 
-    for (const door of FEATURE_DOORS) {
+    // Driven from what the root actually advertises, not from the table. A
+    // loop over the table proves the table's own entries are served and
+    // says nothing about a feature advertised without one.
+    const r = await client.root();
+    expect(r.ok).toBe(true);
+    for (const feature of r.data.features as string[]) {
+      const door = FEATURE_DOORS.find((entry) => entry.feature === feature);
+      expect(
+        door,
+        `${feature} is advertised with no door to probe`,
+      ).toBeDefined();
+      if (!door) continue;
       const res = await client.rawRequest(door.path, {
         ...(door.method !== undefined && { method: door.method }),
         ...(door.body !== undefined && { body: door.body }),

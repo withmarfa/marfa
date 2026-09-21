@@ -43,12 +43,14 @@ async function makeContainer(): Promise<string> {
  * Every shipped edge type, with what each one's target has to be.
  *
  * Nine, and the list is written out rather than read off the registry
- * because nothing under `src/suites/` may import a workspace package. That
- * makes it a copy, and a copy that fell one behind is what left
- * `in-collection` shipped with no fixture reaching it: its target
- * constraint is a role rather than a type list, so it needs a target
- * declaring `container` where every other type takes any item, and a loop
- * over bare names could not have carried it.
+ * because nothing under `src/suites/` may import a workspace package. So it
+ * is a copy, and `compliance/edge-types.test.ts` is what refuses to let it
+ * fall behind: it holds the served set against the same nine.
+ *
+ * A target per entry rather than one for all of them, because
+ * `in-collection` constrains its target by role: it needs one declaring
+ * `container` where every other type takes any item, so a loop over bare
+ * names could not carry it.
  */
 const CORE_EDGE_TYPES: readonly {
   id: string;
