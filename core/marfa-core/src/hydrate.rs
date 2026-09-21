@@ -88,12 +88,24 @@ pub(crate) fn hydrate(
             if !page.has_more {
                 break;
             }
-            page_cursor = page.cursor.clone();
-            if page_cursor.is_none() {
+            // A cursor that does not move is a server saying there is more
+            // and handing back the same place to look. Without this a
+            // hydration spins for ever before the store is usable at all,
+            // which is worse than the same shape in a drain: there is no
+            // copy to fall back on and nothing has been written yet.
+            let next = page.cursor.clone();
+            if next.is_none() {
                 return Err(CoreError::Decoding(
                     "the server said has_more without a cursor".into(),
                 ));
             }
+            if next == page_cursor {
+                return Err(CoreError::Decoding(
+                    "the server kept answering with the same cursor while reporting more items"
+                        .into(),
+                ));
+            }
+            page_cursor = next;
         }
     }
 
@@ -160,8 +172,16 @@ fn fetch_overflow(
                 "the server said has_more without a cursor".into(),
             ));
         };
+        let asked_for = page_cursor.to_string();
         let page = http.item_edges_page(item_id, edge_type, Some(page_cursor))?;
         edges.extend(page.data);
+        // Same reason as the item pages above: a repeated cursor is an
+        // unbounded loop, and this one runs per item of the slice.
+        if page.has_more && page.cursor.as_deref() == Some(asked_for.as_str()) {
+            return Err(CoreError::Decoding(
+                "the server kept answering with the same cursor while reporting more edges".into(),
+            ));
+        }
         has_more = page.has_more;
         cursor = page.cursor;
     }

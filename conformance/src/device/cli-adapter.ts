@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -6,6 +6,10 @@ import { promisify } from "node:util";
 import {
   type CatchUpReport,
   type DeviceUnderTest,
+  type Draft,
+  type DrainReport,
+  type EdgeDraft,
+  type Edit,
   type HydrateReport,
   type Item,
   type ListFilters,
@@ -40,6 +44,7 @@ const REFUSAL_OPENINGS: ReadonlyArray<readonly [string, string]> = [
   ["no event cursor stored", "no_cursor"],
   ["hydration did not complete", "hydration_incomplete"],
   ["this store was written by schema", "wrong_schema"],
+  ["this is a reading handle", "reading_handle"],
   ["the event log no longer holds the cursor", "catch_up_too_old"],
   ["the event stream ended early", "stream_incomplete"],
   ["this file belongs to", "wrong_server"],
@@ -54,7 +59,6 @@ const REFUSAL_OPENINGS: ReadonlyArray<readonly [string, string]> = [
   ["decoding:", "decoding"],
   ["store:", "store"],
   ["no data directory", "no_data_directory"],
-  ["output closed", "closed_output"],
 ];
 
 function classify(stderr: string, exitCode: number | null): Refusal {
@@ -72,6 +76,13 @@ function classify(stderr: string, exitCode: number | null): Refusal {
   if (exitCode === 2 || /^error: |Usage: /m.test(raw))
     return { code: "usage", raw };
   return { code: "unclassified", raw };
+}
+
+/** A device command left running, for the one-writer rule. */
+export interface HeldCommand {
+  readonly stderr: string;
+  running: () => boolean;
+  stop: () => Promise<void>;
 }
 
 export interface CliDeviceOptions {
@@ -120,6 +131,10 @@ export class CliDevice implements DeviceUnderTest {
     if (filters.type !== undefined) args.push("--type", filters.type);
     if (filters.state !== undefined) args.push("--state", filters.state);
     if (filters.allStates === true) args.push("--all-states");
+    if (filters.occurredAfter !== undefined)
+      args.push("--occurred-after", filters.occurredAfter);
+    if (filters.occurredBefore !== undefined)
+      args.push("--occurred-before", filters.occurredBefore);
     if (filters.tier !== undefined) args.push("--tier", filters.tier);
     for (const tag of filters.tags ?? []) args.push("--tag", tag);
     if (filters.limit !== undefined)
@@ -149,6 +164,56 @@ export class CliDevice implements DeviceUnderTest {
     return this.json<QueuedWrite[]>(["queue"]);
   }
 
+  async create(draft: Draft): Promise<Outcome<QueuedWrite>> {
+    const args = [
+      "items",
+      "create",
+      "--type",
+      draft.type,
+      "--properties",
+      JSON.stringify(draft.properties ?? {}),
+    ];
+    for (const tag of draft.tags ?? []) args.push("--tag", tag);
+    if (draft.tier !== undefined) args.push("--tier", draft.tier);
+    if (draft.source !== undefined) args.push("--source", draft.source);
+    if (draft.sourceId !== undefined) args.push("--source-id", draft.sourceId);
+    if (draft.occurredAt !== undefined)
+      args.push("--occurred-at", draft.occurredAt);
+    if (draft.id !== undefined) args.push("--id", draft.id);
+    if (draft.version !== undefined)
+      args.push("--version", String(draft.version));
+    return this.json<QueuedWrite>(args);
+  }
+
+  async update(id: string, edit: Edit): Promise<Outcome<QueuedWrite>> {
+    const args = [
+      "items",
+      "update",
+      id,
+      "--properties",
+      JSON.stringify(edit.properties),
+    ];
+    // Absent rather than sent empty, so a fixture asserting that an update
+    // with no version is refused drives the same command a caller would.
+    if (edit.version !== undefined)
+      args.push("--version", String(edit.version));
+    return this.json<QueuedWrite>(args);
+  }
+
+  async drain(): Promise<Outcome<DrainReport>> {
+    return this.json<DrainReport>(["drain", ...this.server()]);
+  }
+
+  async release(
+    target: { id: string } | { reason: string },
+  ): Promise<Outcome<number>> {
+    const args =
+      "id" in target
+        ? ["release", target.id]
+        : ["release", "--reason", target.reason];
+    return this.json<number>(args);
+  }
+
   async status(): Promise<Outcome<Status>> {
     return this.json<Status>(["status"]);
   }
@@ -156,6 +221,148 @@ export class CliDevice implements DeviceUnderTest {
   /** An operation the binary offers no command for at all, for the refusal statements. */
   async attempt(args: string[]): Promise<Outcome<unknown>> {
     return this.json<unknown>(args);
+  }
+
+  /**
+   * Starts a command and leaves it running, for the rules that are about two
+   * processes at once.
+   *
+   * One store has one writer, and a writer holds its claim for as long as the
+   * process lives. Every other operation here is one command that opens the
+   * store, does its work and exits, so two of them never overlap and both are
+   * legitimately the writer. Observing the rule needs a command still running
+   * while another starts, which is what this is for.
+   *
+   * The caller stops it. A held process that outlived its fixture would hold
+   * the store for every case after it, and they would fail as the rule rather
+   * than as the leak.
+   */
+  hold(args: string[]): HeldCommand {
+    const child = spawn(
+      this.options.binary,
+      ["--db", this.options.store, "--json", ...args, ...this.server()],
+      { stdio: ["ignore", "pipe", "pipe"] },
+    );
+    let stderr = "";
+    child.stderr.on("data", (chunk: Buffer) => {
+      stderr += chunk.toString();
+    });
+    return {
+      get stderr() {
+        return stderr;
+      },
+      running: () => child.exitCode === null && !child.killed,
+      stop: async () => {
+        if (child.exitCode === null) child.kill("SIGKILL");
+        await new Promise<void>((resolve) => {
+          if (child.exitCode !== null) {
+            resolve();
+            return;
+          }
+          child.once("close", () => {
+            resolve();
+          });
+        });
+      },
+    };
+  }
+
+  async deleteItem(id: string): Promise<Outcome<QueuedWrite>> {
+    return this.json<QueuedWrite>(["items", "delete", id]);
+  }
+
+  async restoreItem(id: string): Promise<Outcome<QueuedWrite>> {
+    return this.json<QueuedWrite>(["items", "restore", id]);
+  }
+
+  async transitionItem(
+    id: string,
+    state: string,
+  ): Promise<Outcome<QueuedWrite>> {
+    return this.json<QueuedWrite>([
+      "items",
+      "transition",
+      id,
+      "--state",
+      state,
+    ]);
+  }
+
+  async createEdge(edge: EdgeDraft): Promise<Outcome<QueuedWrite>> {
+    const args = [
+      "edges",
+      "create",
+      "--source",
+      edge.source,
+      "--target",
+      edge.target,
+      "--type",
+      edge.type,
+      "--properties",
+      JSON.stringify(edge.properties ?? {}),
+    ];
+    if (edge.id !== undefined) args.push("--id", edge.id);
+    return this.json<QueuedWrite>(args);
+  }
+
+  async updateEdge(
+    id: string,
+    edit: { properties: Record<string, unknown>; version?: number },
+  ): Promise<Outcome<QueuedWrite>> {
+    const args = [
+      "edges",
+      "update",
+      id,
+      "--properties",
+      JSON.stringify(edit.properties),
+    ];
+    if (edit.version !== undefined)
+      args.push("--version", String(edit.version));
+    return this.json<QueuedWrite>(args);
+  }
+
+  async deleteEdge(id: string): Promise<Outcome<QueuedWrite>> {
+    return this.json<QueuedWrite>(["edges", "delete", id]);
+  }
+
+  async addTag(item: string, tag: string): Promise<Outcome<QueuedWrite>> {
+    return this.json<QueuedWrite>(["tags", "add", item, tag]);
+  }
+
+  async removeTag(item: string, tag: string): Promise<Outcome<QueuedWrite>> {
+    return this.json<QueuedWrite>(["tags", "remove", item, tag]);
+  }
+
+  async writeMetadata(
+    item: string,
+    tags: string[],
+    mode: "replace" | "merge",
+  ): Promise<Outcome<QueuedWrite>> {
+    const args = ["metadata", mode, item];
+    for (const tag of tags) args.push("--tag", tag);
+    return this.json<QueuedWrite>(args);
+  }
+
+  async writeExtension(
+    item: string,
+    namespace: string,
+    body: Record<string, unknown>,
+  ): Promise<Outcome<QueuedWrite>> {
+    return this.json<QueuedWrite>([
+      "extensions",
+      "write",
+      item,
+      namespace,
+      "--body",
+      JSON.stringify(body),
+    ]);
+  }
+
+  async deleteExtension(
+    item: string,
+    namespace: string,
+  ): Promise<Outcome<QueuedWrite>> {
+    return this.json<QueuedWrite>(["extensions", "delete", item, namespace]);
   }
 
   private server(): string[] {
@@ -218,5 +425,133 @@ export class CliDevice implements DeviceUnderTest {
         `the device exited cleanly and printed something that is not JSON: ${text.slice(0, 200)}`,
       );
     }
+  }
+}
+
+/** What `folders add` is given. */
+export interface FolderSlice {
+  types: string[];
+  tier?: Tier;
+  defaultType?: string;
+  defaults?: Record<string, unknown>;
+  tags?: string[];
+}
+
+export interface ScanReport {
+  created: number;
+  updated: number;
+  renamed: number;
+  unchanged: number;
+  missing: number;
+  deleted: number;
+  skipped: number;
+}
+
+export interface PullReport {
+  written: number;
+  rewritten: number;
+  moved: number;
+  unchanged: number;
+  skipped: number;
+  unwritten: number;
+  collided: number;
+  outside: number;
+}
+
+export interface PushReport {
+  scan: ScanReport;
+  drain: DrainReport;
+  pull: PullReport;
+}
+
+/**
+ * A directory driven as a folder.
+ *
+ * Separate from `CliDevice` because a folder is addressed by its directory
+ * and carries its own store under `.marfa`: pointing one at another store
+ * would be two folders sharing a mapping, and neither would be right about
+ * the other's files.
+ */
+export class CliFolder {
+  constructor(
+    readonly dir: string,
+    private readonly options: { binary: string; url: string; key: string },
+  ) {}
+
+  /** The store this folder keeps its working copy and queue in. */
+  get store(): string {
+    return join(this.dir, ".marfa", "core.sqlite");
+  }
+
+  /** The folder's device, for the queue and the reads. */
+  device(): CliDevice {
+    return new CliDevice({
+      binary: this.options.binary,
+      store: this.store,
+      url: this.options.url,
+      key: this.options.key,
+    });
+  }
+
+  async add(slice: FolderSlice): Promise<Outcome<unknown>> {
+    const args = ["folders", "add", this.dir, "--types", slice.types.join(",")];
+    if (slice.tier !== undefined) args.push("--tier", slice.tier);
+    if (slice.defaultType !== undefined)
+      args.push("--default-type", slice.defaultType);
+    if (slice.defaults !== undefined)
+      args.push("--defaults", JSON.stringify(slice.defaults));
+    for (const tag of slice.tags ?? []) args.push("--tag", tag);
+    return this.run(args);
+  }
+
+  async hydrate(): Promise<Outcome<HydrateReport>> {
+    return this.run<HydrateReport>([
+      "folders",
+      "hydrate",
+      this.dir,
+      ...this.server(),
+    ]);
+  }
+
+  async scan(): Promise<Outcome<ScanReport>> {
+    return this.run<ScanReport>(["folders", "scan", this.dir]);
+  }
+
+  async pull(): Promise<Outcome<PullReport>> {
+    return this.run<PullReport>(["folders", "pull", this.dir]);
+  }
+
+  async push(): Promise<Outcome<PushReport>> {
+    return this.run<PushReport>([
+      "folders",
+      "push",
+      this.dir,
+      ...this.server(),
+    ]);
+  }
+
+  /** A watch left running, which the caller stops. */
+  watch(): HeldCommand {
+    return new CliDevice({
+      binary: this.options.binary,
+      store: this.store,
+      url: this.options.url,
+      key: this.options.key,
+    }).hold(["folders", "watch", this.dir]);
+  }
+
+  private server(): string[] {
+    return ["--url", this.options.url, "--key", this.options.key];
+  }
+
+  private async run<T>(args: string[]): Promise<Outcome<T>> {
+    // A folder's store is its own, under `.marfa`, so the device this
+    // builds is pointed at that rather than at any `--db` a fixture holds.
+    return new CliDevice({
+      binary: this.options.binary,
+      store: this.store,
+      url: this.options.url,
+      key: this.options.key,
+    }).attempt(args) as Promise<Outcome<T>>;
   }
 }

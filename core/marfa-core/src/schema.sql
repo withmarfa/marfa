@@ -138,6 +138,15 @@ CREATE TABLE IF NOT EXISTS queue (
   spent_keys TEXT,
   -- The body, as the device will send it.
   payload TEXT NOT NULL,
+  -- Whether this row has ever gone out on the wire.
+  --
+  -- A release has to tell two refusals apart: one the server gave, which is
+  -- terminal (`queue-and-verdicts.md` 12), and one the drain gave because
+  -- something this row waits for was refused, which is a row that was never
+  -- sent and so can be released without writing twice. `depends_on` cannot
+  -- answer that — a server-refused row may carry one too — and the reason
+  -- text is prose. This is the fact itself.
+  sent INTEGER NOT NULL DEFAULT 0,
   -- The queue rows this one waits for (`queue-and-verdicts.md` 4), as a JSON
   -- array of queue ids. A write naming a row whose create has not been
   -- answered is held rather than sent, because the server has no such row and
@@ -207,3 +216,47 @@ CREATE INDEX IF NOT EXISTS queue_item ON queue (item_id);
 -- containment query reports a scan, and the only shape that could ever search
 -- is equality on the whole string, which misses every row waiting on two
 -- creates. An index here would say the lookup was cheap without making it so.
+
+-- A folder's own state (`folders.md` 18). In this file rather than beside it
+-- because the mapping, the journal and the queue have to move together: a
+-- file bound to an item whose create did not queue is a file the folder
+-- thinks it has pushed, and one transaction is what stops that.
+--
+-- A device that is not a folder simply has no rows here.
+CREATE TABLE IF NOT EXISTS folder_files (
+  -- The path inside the folder, separators normalized. The natural key a
+  -- folder gives a file (`folders.md` 10): nothing about the machine, so the
+  -- same file in the same place on two machines is one item.
+  path TEXT PRIMARY KEY,
+  item_id TEXT NOT NULL,
+  -- Device, inode and birth time, joined. Null where the filesystem gave no
+  -- usable identity, which is not the same as a file nobody has seen: a null
+  -- here means a rename cannot be followed and the file becomes a new item
+  -- rather than a guess (`folders.md` 8).
+  identity TEXT,
+  -- The bytes the folder last agreed with, hashed. What makes echo
+  -- suppression have no gap (`folders.md` 14): a change whose content the
+  -- folder already holds is a change the folder made.
+  content_hash TEXT NOT NULL,
+  -- The item ids the links in those bytes named, as a JSON array. What tells
+  -- a link the person removed from an edge that has not been rendered yet
+  -- (`folders.md` 21): both are an edge the copy holds that the body does not
+  -- name, and only this says which of them the file used to carry.
+  links TEXT NOT NULL,
+  seen_at TEXT NOT NULL
+) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS folder_files_item ON folder_files (item_id);
+CREATE INDEX IF NOT EXISTS folder_files_identity ON folder_files (identity);
+
+-- Deletes, journaled and deferred (`folders.md` 15, 16). A file that
+-- disappears is recorded here rather than sent, because the first half of a
+-- rename looks exactly like a delete; the grace is what tells them apart.
+-- A row that survives the grace becomes a delete.
+CREATE TABLE IF NOT EXISTS folder_journal (
+  path TEXT PRIMARY KEY,
+  item_id TEXT NOT NULL,
+  -- When the file was first found missing. The grace runs from here, so a
+  -- folder that was not running while a file was deleted starts the grace at
+  -- the scan that noticed rather than at a moment it cannot know.
+  missing_since TEXT NOT NULL
+) WITHOUT ROWID;

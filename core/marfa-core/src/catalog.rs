@@ -70,6 +70,16 @@ impl Catalog {
         ids
     }
 
+    /// Whether the copy holds this type.
+    ///
+    /// A local create names a type, and a device that queued one the catalog
+    /// does not know would send a write the server refuses `400 unknown_type`
+    /// — after the caller had been told it was queued, and after the row had
+    /// been written into the working copy.
+    pub fn known(&self, type_id: &str) -> bool {
+        self.entries.contains_key(type_id)
+    }
+
     pub fn title_field(&self, type_id: &str) -> Option<&str> {
         let mut current = type_id;
         for _ in 0..MAX_PARENT_WALK {

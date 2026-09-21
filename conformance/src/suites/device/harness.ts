@@ -1,4 +1,13 @@
-import { CliDevice, newStore } from "../../device/cli-adapter.js";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+  CliDevice,
+  CliFolder,
+  newStore,
+  type FolderSlice,
+} from "../../device/cli-adapter.js";
+import type { Responder } from "../../device/scripted-server.js";
 import { ScriptedServer } from "../../device/scripted-server.js";
 import {
   headRead,
@@ -105,4 +114,179 @@ export function scriptHydration(
       visible.map((row) => ({ item: wireItem(row.item), tags: row.tags })),
     );
   });
+}
+
+/**
+ * A harness whose device has hydrated, which every write fixture needs.
+ *
+ * A write refuses on a store that has never pulled a slice, so a fixture
+ * asserting something about a write would otherwise be asserting the
+ * hydration refusal. `rows` seeds the copy so an update has something to be
+ * based on.
+ */
+export async function hydratedHarness(
+  label: string,
+  options: {
+    head?: string;
+    rows?: Record<string, Array<{ item: WireItemOptions; tags?: string[] }>>;
+    types?: string[];
+  } = {},
+): Promise<Harness> {
+  const harness = await startHarness(label);
+  scriptHydration(harness.server, {
+    head: options.head ?? "1",
+    rows: options.rows,
+  });
+  const hydrated = await harness.device.hydrate(
+    options.types ?? ["core.note"],
+    "library",
+  );
+  if (!hydrated.ok) {
+    await harness.stop();
+    throw new Error(
+      `the fixture could not hydrate the device it is about to write to: ${JSON.stringify(hydrated.refusal)}`,
+    );
+  }
+  return harness;
+}
+
+/**
+ * The door a write goes to, and the answers it gets, in order.
+ *
+ * A door is scripted only where the fixture names one. An unscripted door
+ * answers 501, and a device reads that as one more refusal — which a fixture
+ * asserting a refusal would then read as the refusal it was testing for, so
+ * the harness collects the unmatched requests and throws them at `stop`.
+ */
+export interface ScriptedWrites {
+  create?: Responder[];
+  update?: Responder[];
+  /** The single-item read a refused write is reconciled against. */
+  read?: Responder[];
+  /** The tag and metadata doors, which answer the same sidecar. */
+  tags?: Responder[];
+  extensions?: Responder[];
+  edges?: Responder[];
+}
+
+export function scriptWrites(
+  server: ScriptedServer,
+  options: ScriptedWrites = {},
+): void {
+  if (options.create !== undefined)
+    server.answer("POST", "/items", ...options.create);
+  if (options.update !== undefined)
+    server.answer("PATCH", /^\/items\/[^/]+$/, ...options.update);
+  // A refused write is read back from the server
+  // (`queue-and-verdicts.md` 12), so a fixture that scripts a refusal
+  // scripts the read too or the device meets an unscripted door on its way
+  // to reconciling.
+  if (options.read !== undefined)
+    server.answer("GET", /^\/items\/[^/]+$/, ...options.read);
+  if (options.tags !== undefined) {
+    server.answer("POST", /^\/items\/[^/]+\/tags$/, ...options.tags);
+    server.answer("DELETE", /^\/items\/[^/]+\/tags\/[^/]+$/, ...options.tags);
+    // The metadata doors answer the same sidecar, so they are scripted with
+    // the tag doors rather than needing a group of their own — and leaving
+    // them out is how a drain carrying a metadata write met an unscripted
+    // door and read the 501 as a refusal.
+    server.answer("PUT", /^\/items\/[^/]+\/metadata$/, ...options.tags);
+    server.answer("PATCH", /^\/items\/[^/]+\/metadata$/, ...options.tags);
+  }
+  if (options.extensions !== undefined) {
+    const door = /^\/items\/[^/]+\/extensions\/[^/]+$/;
+    server.answer("PUT", door, ...options.extensions);
+    server.answer("DELETE", door, ...options.extensions);
+  }
+  if (options.edges !== undefined) {
+    server.answer("POST", "/edges", ...options.edges);
+    server.answer("PATCH", /^\/edges\/[^/]+$/, ...options.edges);
+    server.answer("DELETE", /^\/edges\/[^/]+$/, ...options.edges);
+  }
+}
+
+/**
+ * A folder, its directory and the server it talks to.
+ *
+ * The directory is real and temporary: a folder's rules are about paths,
+ * inodes and birth times, and none of them can be asserted against anything
+ * but a filesystem.
+ */
+export interface FolderHarness {
+  server: ScriptedServer;
+  folder: CliFolder;
+  dir: string;
+  stop: () => Promise<void>;
+}
+
+/**
+ * A folder on a scripted server, added and hydrated.
+ *
+ * `rows` seeds what the hydration answers, so a fixture about an item
+ * becoming a file has an item to start from.
+ */
+export async function folderHarness(
+  label: string,
+  options: {
+    slice?: FolderSlice;
+    head?: string;
+    rows?: Record<string, Array<{ item: WireItemOptions; tags?: string[] }>>;
+    /** Skip the hydration, for the cases that are about a folder before one. */
+    hydrate?: boolean;
+    /**
+     * Event-stream answers for the catch-ups after the hydration.
+     *
+     * Scripted here rather than by the fixture, because a door with one
+     * answer left repeats it: an answer appended after the hydration has
+     * been through the stream queues behind the head read that is still
+     * answering, and the catch-up reads that instead — which looks exactly
+     * like the device ignoring the events.
+     */
+    events?: Responder[];
+  } = {},
+): Promise<FolderHarness> {
+  const server = await ScriptedServer.start();
+  const dir = join(
+    mkdtempSync(join(tmpdir(), `marfa-folder-${label}-`)),
+    "notes",
+  );
+  const folder = new CliFolder(dir, {
+    binary: requireBinary(),
+    url: server.url,
+    key: KEY,
+  });
+  const slice = options.slice ?? {
+    types: ["core.note"],
+    defaultType: "core.note",
+  };
+  const stop = async (): Promise<void> => {
+    const unscripted = [...server.unmatchedRequests];
+    await server.stop();
+    if (unscripted.length > 0) {
+      throw new Error(
+        `the folder went to a door no answer was scripted for, and read the 501 as a refusal: ${unscripted.join(", ")}`,
+      );
+    }
+  };
+  const added = await folder.add(slice);
+  if (!added.ok) {
+    await stop();
+    throw new Error(
+      `the fixture could not make a folder: ${JSON.stringify(added.refusal)}`,
+    );
+  }
+  scriptHydration(server, { head: options.head ?? "1", rows: options.rows });
+  if (options.events !== undefined) {
+    server.answer("GET", "/events", ...options.events);
+  }
+  if (options.hydrate !== false) {
+    const hydrated = await folder.hydrate();
+    if (!hydrated.ok) {
+      await stop();
+      throw new Error(
+        `the fixture could not hydrate the folder: ${JSON.stringify(hydrated.refusal)}`,
+      );
+    }
+  }
+  return { server, folder, dir, stop };
 }

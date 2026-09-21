@@ -23,6 +23,65 @@ pub struct ItemsQuery<'a> {
     pub cursor: Option<&'a str>,
 }
 
+/// What a queued write is, on the wire.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Method {
+    Post,
+    Patch,
+    Put,
+    Delete,
+}
+
+impl Method {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Method::Post => "POST",
+            Method::Patch => "PATCH",
+            Method::Put => "PUT",
+            Method::Delete => "DELETE",
+        }
+    }
+}
+
+/// One queued write, addressed.
+pub struct Outgoing<'a> {
+    pub method: Method,
+    pub segments: Vec<String>,
+    pub params: Vec<(String, String)>,
+    pub body: &'a str,
+    /// Minted when the row was queued and never changed
+    /// (`queue-and-verdicts.md` 3), so a retry is answered from the server's
+    /// record rather than written a second time.
+    pub idempotency_key: &'a str,
+}
+
+/// What came back, kept whole and unclassified.
+///
+/// The status and the code both, because neither decides alone: three
+/// different 409s take three different verdicts, and a 422 is a block or a
+/// refusal depending on its code.
+#[derive(Debug, Clone)]
+pub struct Answer {
+    pub status: u16,
+    /// The server's error code, or empty on a success. Parsed out because
+    /// the classification turns on it; the message beside it is not, because
+    /// `body` already carries the envelope whole and a second copy of the
+    /// same value is a second thing to keep in step.
+    pub code: String,
+    /// The response body verbatim. A device reports what it was told
+    /// (`queue-and-verdicts.md` 15), so this is not parsed away.
+    pub body: String,
+    pub retry_after_seconds: Option<u64>,
+    /// The server answered from its idempotency record rather than writing.
+    pub replayed: bool,
+}
+
+impl Answer {
+    pub fn is_success(&self) -> bool {
+        (200..300).contains(&self.status)
+    }
+}
+
 impl Http {
     pub fn new(url: &str, key: &str) -> Result<Http, CoreError> {
         let mut base = Url::parse(url)?;
@@ -91,6 +150,85 @@ impl Http {
             params.push(("cursor", cursor));
         }
         self.get_json(&["items", id, "edges"], &params)
+    }
+
+    /// One item by id, as the server holds it now.
+    ///
+    /// The read a refused write is reconciled against
+    /// (`queue-and-verdicts.md` 12): the working copy holds an edit the
+    /// server declined, and nothing else brings it back, because a write the
+    /// server refused changed nothing and so produced no event for catch-up
+    /// to replay. `Ok(None)` is a 404, which is the server saying it holds
+    /// no such row — for a refused create, the honest answer.
+    pub fn item(&self, id: &str) -> Result<Option<WireItemWithMetadata>, CoreError> {
+        match self.get_json::<WireItemWithMetadata>(&["items", id], &[("include", "metadata")]) {
+            Ok(item) => Ok(Some(item)),
+            Err(CoreError::NotFound { .. }) => Ok(None),
+            Err(error) => Err(error),
+        }
+    }
+
+    /// Sends one queued write and reads whatever came back.
+    ///
+    /// **The only `Err` is a transport failure**, and that is the whole point
+    /// of this signature. Every status the server can answer with is an
+    /// `Answer`, including the refusals, because the classification
+    /// (`queue-and-verdicts.md` 17 to 23) turns on the status and the code
+    /// together: a 409 is `ancestor_unavailable`, `version_conflict` or
+    /// `idempotency_key_in_flight`, and those three take three different
+    /// verdicts. `refusal()` below is the read path's convenience and is
+    /// lossy about exactly that — it maps a status to a variant and drops
+    /// the status — so the drain does not go through it.
+    pub fn send(&self, outgoing: &Outgoing<'_>) -> Result<Answer, CoreError> {
+        let segments: Vec<&str> = outgoing.segments.iter().map(String::as_str).collect();
+        let params: Vec<(&str, &str)> = outgoing
+            .params
+            .iter()
+            .map(|(key, value)| (key.as_str(), value.as_str()))
+            .collect();
+        let url = self.url(&segments, &params);
+        // Built as one request and run, rather than through the agent's
+        // per-method builders: those split at the type level on whether a
+        // method carries a body, and the drain's four methods would then be
+        // four copies of the same header list with one of them able to drift.
+        let request = ureq::http::Request::builder()
+            .method(outgoing.method.as_str())
+            .uri(url.as_str())
+            .header("Authorization", &self.authorization)
+            .header("Accept", "application/json")
+            .header("Content-Type", "application/json")
+            .header("Idempotency-Key", outgoing.idempotency_key)
+            .body(outgoing.body)
+            .map_err(|error| CoreError::Invalid(format!("this write cannot be sent: {error}")))?;
+        let response = self
+            .agent
+            .run(request)
+            .map_err(|error| CoreError::Network(error.to_string()))?;
+        let status = response.status().as_u16();
+        let retry_after_seconds = retry_after(&response);
+        let replayed = response
+            .headers()
+            .get("Idempotency-Replayed")
+            .and_then(|value| value.to_str().ok())
+            .is_some_and(|value| value.eq_ignore_ascii_case("true"));
+        // A body that will not read is a transport failure and not an
+        // answer: the status arrived and the rest of the response did not,
+        // so there is nothing here to classify.
+        let body = response
+            .into_body()
+            .read_to_string()
+            .map_err(|error| CoreError::Network(error.to_string()))?;
+        let code = match serde_json::from_str::<WireErrorEnvelope>(&body) {
+            Ok(envelope) => envelope.error.code,
+            Err(_) => String::new(),
+        };
+        Ok(Answer {
+            status,
+            code,
+            body,
+            retry_after_seconds,
+            replayed,
+        })
     }
 
     /// The raw event stream, left open for `body_timeout` at most.
@@ -172,15 +310,69 @@ impl Http {
     }
 }
 
+/// How long the server asked the caller to wait.
+///
+/// RFC 9110 allows a count of seconds or an HTTP-date, and a device that
+/// read only the first would drop the instruction whenever a server chose
+/// the second — which `DrainReport.retry_after_seconds` exists to stop. The
+/// date form is read against the response's own `Date` header where it has
+/// one, so a clock that disagrees with the server's does not turn a short
+/// wait into a long one.
 fn retry_after<B>(response: &ureq::http::Response<B>) -> Option<u64> {
-    response
+    let raw = response.headers().get("Retry-After")?.to_str().ok()?.trim();
+    if let Ok(seconds) = raw.parse::<u64>() {
+        return Some(seconds);
+    }
+    let until = http_date(raw)?;
+    let from = response
         .headers()
-        .get("Retry-After")?
-        .to_str()
-        .ok()?
-        .trim()
-        .parse()
-        .ok()
+        .get("Date")
+        .and_then(|value| value.to_str().ok())
+        .and_then(http_date)
+        .unwrap_or_else(|| {
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|since| since.as_secs() as i64)
+                .unwrap_or(0)
+        });
+    Some(until.saturating_sub(from).max(0) as u64)
+}
+
+/// An IMF-fixdate — `Sun, 06 Nov 1994 08:49:37 GMT` — as seconds since the
+/// epoch. The one form RFC 9110 requires a sender to produce; the two
+/// obsolete forms it allows a reader to accept are not parsed, and a header
+/// this cannot read is treated as absent rather than as zero.
+fn http_date(raw: &str) -> Option<i64> {
+    let parts: Vec<&str> = raw.split_whitespace().collect();
+    if parts.len() != 6 || parts[5] != "GMT" {
+        return None;
+    }
+    let day: i64 = parts[1].parse().ok()?;
+    let month = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ]
+    .iter()
+    .position(|name| *name == parts[2])? as i64
+        + 1;
+    let year: i64 = parts[3].parse().ok()?;
+    let clock: Vec<&str> = parts[4].split(':').collect();
+    if clock.len() != 3 {
+        return None;
+    }
+    let (hour, minute, second): (i64, i64, i64) = (
+        clock[0].parse().ok()?,
+        clock[1].parse().ok()?,
+        clock[2].parse().ok()?,
+    );
+    // Howard Hinnant's algorithm, as `store::now_iso` uses in the other
+    // direction.
+    let year = if month <= 2 { year - 1 } else { year };
+    let era = if year >= 0 { year } else { year - 399 } / 400;
+    let year_of_era = year - era * 400;
+    let day_of_year = (153 * (if month > 2 { month - 3 } else { month + 9 }) + 2) / 5 + day - 1;
+    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
+    let days = era * 146_097 + day_of_era - 719_468;
+    Some(days * 86_400 + hour * 3_600 + minute * 60 + second)
 }
 
 fn refusal(status: u16, text: &str, retry_after_seconds: Option<u64>) -> CoreError {
@@ -226,6 +418,19 @@ mod tests {
                 .as_str(),
             "https://gw.example/TenantA/items/a%20b?type=core.note"
         );
+    }
+
+    #[test]
+    fn a_wait_is_read_in_either_form_the_standard_allows() {
+        assert_eq!(
+            http_date("Sun, 06 Nov 1994 08:49:37 GMT"),
+            Some(784_111_777)
+        );
+        assert_eq!(http_date("Thu, 01 Jan 1970 00:00:00 GMT"), Some(0));
+        // Not the fixdate form: read as absent rather than as no wait at
+        // all, because a wait of zero is a device asking again at once.
+        assert_eq!(http_date("Sunday, 06-Nov-94 08:49:37 GMT"), None);
+        assert_eq!(http_date("nonsense"), None);
     }
 
     #[test]

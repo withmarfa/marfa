@@ -135,3 +135,38 @@ pub struct EventPayload {
     #[serde(default)]
     pub reason: Option<String>,
 }
+
+/// What the server resolved on a write that collided.
+///
+/// Present only where it resolved one, which is what tells `merged` from
+/// `accepted`; `conflicted_copy_id` present is what tells `conflicted` from
+/// `merged` (`queue-and-verdicts.md` 8).
+#[derive(Debug, Clone, Deserialize)]
+pub struct WireConflictResolution {
+    #[serde(default)]
+    pub fields: Vec<String>,
+    #[serde(default)]
+    pub conflicted_copy_id: Option<String>,
+}
+
+/// The body a successful write answers with.
+#[derive(Debug, Clone, Deserialize)]
+pub struct WireWriteAnswer {
+    pub item: WireItem,
+    #[serde(default)]
+    pub metadata: Option<WireMetadata>,
+    #[serde(default)]
+    pub conflict_resolution: Option<WireConflictResolution>,
+    /// The server recognized the write as one it had already taken. It does
+    /// not change the verdict — the row the server returned is the truth
+    /// either way (`queue-and-verdicts.md` 9) — and it is read so that a
+    /// device is not left comparing rows to find out.
+    #[serde(default)]
+    pub acknowledged: bool,
+}
+
+/// The body an edge write answers with.
+#[derive(Debug, Clone, Deserialize)]
+pub struct WireEdgeAnswer {
+    pub edge: WireEdge,
+}

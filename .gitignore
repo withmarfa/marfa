@@ -73,3 +73,11 @@ infra/digitalocean/server.env
 # Holding folders for things a session was refused permission to delete
 _trash/
 _archive/
+# Scratch folders: throwaway harnesses, captures and never-tracked files that
+# sit in the tree without being part of its source. `eslint.config.js` already
+# treats these as an established convention and skips them; without them here,
+# the only thing keeping them out of a commit is a contributor's own global
+# ignore file.
+_tmp/
+_local/
+_ignore/

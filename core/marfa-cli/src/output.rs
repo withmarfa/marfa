@@ -1,6 +1,6 @@
 use std::io::{self, Write};
 
-use marfa_core::{Item, QueuedWrite, SearchHit};
+use marfa_core::{DrainReport, Item, QueuedWrite, SearchHit};
 use serde::Serialize;
 
 use crate::error::CliError;
@@ -48,6 +48,35 @@ pub fn item(item: &Item, json: bool) -> Result<(), CliError> {
     Ok(())
 }
 
+/// One queued write, as the command that queued it reports it.
+///
+/// The id and the kind, because a caller who has just queued something needs
+/// the handle to ask about it again, and nothing about a verdict: this row
+/// has not been sent, and printing a verdict column here would invite reading
+/// "unanswered" as an answer.
+pub fn queued_one(write: &QueuedWrite, json: bool) -> Result<(), CliError> {
+    let mut out = io::stdout().lock();
+    if json {
+        writeln!(out, "{}", serde_json::to_string_pretty(write)?)?;
+        return Ok(());
+    }
+    writeln!(
+        out,
+        "queued {} {} as {}",
+        write.kind,
+        write.item_id.as_deref().unwrap_or("-"),
+        write.id
+    )?;
+    if !write.depends_on.is_empty() {
+        writeln!(
+            out,
+            "waiting on {} earlier write(s) to the same row",
+            write.depends_on.len()
+        )?;
+    }
+    Ok(())
+}
+
 pub fn queued(writes: &[QueuedWrite], json: bool) -> Result<(), CliError> {
     let mut out = io::stdout().lock();
     if json {
@@ -75,7 +104,7 @@ pub fn queued(writes: &[QueuedWrite], json: bool) -> Result<(), CliError> {
         // only when they say something, so an ordinary queue stays readable.
         let refusals = match write.refusals {
             0 => String::new(),
-            n => format!("  {n}/5 refused"),
+            n => format!("  {n}/{} refused", marfa_core::CEILING),
         };
         let held = match write.depends_on.len() {
             0 => String::new(),
@@ -132,4 +161,49 @@ fn line(item: &Item) -> String {
             format!("  [{}]", item.state)
         }
     )
+}
+
+/// What a drain did, one line per write it sent.
+pub fn drained(drain: &DrainReport, json: bool) -> Result<(), CliError> {
+    report(drain, json, || {
+        let mut lines = Vec::new();
+        for verdict in &drain.verdicts {
+            // An unanswered row is a row the drain sent and the server did
+            // not answer. Printed as such rather than left out: a caller
+            // reading only the answered rows would see a short list and no
+            // sign that anything was attempted.
+            let mut line = format!(
+                "{} {} {}",
+                verdict.verdict.as_deref().unwrap_or("unanswered"),
+                verdict.kind,
+                verdict.item_id.as_deref().unwrap_or(verdict.id.as_str())
+            );
+            if let Some(reason) = &verdict.reason {
+                line.push_str(&format!(" ({reason})"));
+            }
+            if let Some(sibling) = &verdict.conflicted_copy_id {
+                line.push_str(&format!(" conflicted copy {sibling}"));
+            }
+            if !verdict.merged_fields.is_empty() {
+                line.push_str(&format!(" merged {}", verdict.merged_fields.join(",")));
+            }
+            if verdict.replayed {
+                line.push_str(" (answered from the record)");
+            }
+            if verdict.refusals > 0 {
+                line.push_str(&format!(" [{} refusal(s)]", verdict.refusals));
+            }
+            lines.push(line);
+        }
+        lines.push(format!("sent {}, held {}", drain.sent, drain.held));
+        if let Some(wait) = drain.retry_after_seconds {
+            lines.push(format!(
+                "the server asked for {wait}s before the next drain"
+            ));
+        }
+        if let Some(stopped) = &drain.stopped {
+            lines.push(stopped.clone());
+        }
+        lines.join("\n")
+    })
 }

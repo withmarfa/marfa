@@ -96,6 +96,67 @@ export interface QueuedWrite {
   answered_at: string | null;
 }
 
+/** What a drain did (`queue-and-verdicts.md` 6). */
+export interface DrainReport {
+  /** Rows the drain put on the wire. */
+  sent: number;
+  /** Rows it did not send because something they depend on is unanswered. */
+  held: number;
+  verdicts: DrainVerdict[];
+  /** Why the drain stopped before the queue was empty. Only a refused
+   *  credential ends a pass early (`queue-and-verdicts.md` 20). */
+  stopped: string | null;
+  /** The longest `Retry-After` the server asked for this pass. */
+  retry_after_seconds: number | null;
+}
+
+export interface DrainVerdict {
+  id: string;
+  kind: string;
+  item_id: string | null;
+  /** One of the six, or `null` where the write was sent and not answered. */
+  verdict: string | null;
+  reason: string | null;
+  conflicted_copy_id: string | null;
+  refusals: number;
+  /** The server answered from its idempotency record rather than writing
+   *  (`queue-and-verdicts.md` 3). */
+  replayed: boolean;
+  /** The fields the server resolved, on `merged` or `conflicted`. */
+  merged_fields: string[];
+}
+
+/** A create, before it is queued. */
+export interface Draft {
+  type: string;
+  properties?: Record<string, unknown>;
+  tags?: string[];
+  tier?: Tier;
+  source?: string;
+  sourceId?: string;
+  occurredAt?: string;
+  id?: string;
+  /** Optional on a create, and carried when given
+   *  (`queue-and-verdicts.md` 2). */
+  version?: number;
+}
+
+/** An edit, before it is queued. */
+export interface Edit {
+  properties: Record<string, unknown>;
+  /** Required. An update queued without one is refused before it is sent. */
+  version?: number;
+}
+
+/** An edge, before it is queued. */
+export interface EdgeDraft {
+  source: string;
+  target: string;
+  type: string;
+  properties?: Record<string, unknown>;
+  id?: string;
+}
+
 /** Narrowing for a local search: the state axis the list takes, and only
  *  that, because the rest of the grammar is answered by a list. */
 export interface SearchFilters {
@@ -107,6 +168,10 @@ export interface ListFilters {
   type?: string;
   state?: string;
   allStates?: boolean;
+  /** Exclusive lower bound on the item's own time. */
+  occurredAfter?: string;
+  /** Exclusive upper bound on the same. */
+  occurredBefore?: string;
   tier?: Tier;
   tags?: string[];
   limit?: number;
@@ -117,10 +182,9 @@ export interface ListFilters {
 /**
  * A device, as the fixtures drive it.
  *
- * The read half only. The write half is the milestone's, and the operations
- * it needs are added here as the binary grows the commands behind them; until
- * then a fixture that needs one is pending against the statement it will
- * assert (`pending.ts`).
+ * One operation per thing a device can be asked to do. A fixture that needs
+ * an operation the binary has no command for yet is pending against the
+ * statement it will assert (`pending.ts`).
  */
 export interface DeviceUnderTest {
   /** The store this device reads and writes. One device, one store. */
@@ -138,6 +202,50 @@ export interface DeviceUnderTest {
   /** Every queued write and what became of it. */
   queue(): Promise<Outcome<QueuedWrite[]>>;
   status(): Promise<Outcome<Status>>;
+
+  /** Write a new item into the working copy and queue it. */
+  create(draft: Draft): Promise<Outcome<QueuedWrite>>;
+  /** Change an item in the working copy and queue the change. */
+  update(id: string, edit: Edit): Promise<Outcome<QueuedWrite>>;
+  /** Send what the queue holds. One pass. */
+  drain(): Promise<Outcome<DrainReport>>;
+  /** Send a blocked or dead row again, under a fresh key. */
+  release(
+    target: { id: string } | { reason: string },
+  ): Promise<Outcome<number>>;
+
+  /** Move an item to the bin locally and queue the delete. */
+  deleteItem(id: string): Promise<Outcome<QueuedWrite>>;
+  /** Take an item out of the bin locally and queue the restore. */
+  restoreItem(id: string): Promise<Outcome<QueuedWrite>>;
+  /** Move an item to another lifecycle state. */
+  transitionItem(id: string, state: string): Promise<Outcome<QueuedWrite>>;
+  /** Link two items. An edge is its own write. */
+  createEdge(edge: EdgeDraft): Promise<Outcome<QueuedWrite>>;
+  updateEdge(
+    id: string,
+    edit: { properties: Record<string, unknown>; version?: number },
+  ): Promise<Outcome<QueuedWrite>>;
+  deleteEdge(id: string): Promise<Outcome<QueuedWrite>>;
+  /** One tag, as its own write. */
+  addTag(item: string, tag: string): Promise<Outcome<QueuedWrite>>;
+  removeTag(item: string, tag: string): Promise<Outcome<QueuedWrite>>;
+  /** The item's tags, written whole or merged into what is there. */
+  writeMetadata(
+    item: string,
+    tags: string[],
+    mode: "replace" | "merge",
+  ): Promise<Outcome<QueuedWrite>>;
+  /** One extension namespace, as its own write. */
+  writeExtension(
+    item: string,
+    namespace: string,
+    body: Record<string, unknown>,
+  ): Promise<Outcome<QueuedWrite>>;
+  deleteExtension(
+    item: string,
+    namespace: string,
+  ): Promise<Outcome<QueuedWrite>>;
 
   /** A second device over the same store, for the one-writer rule. */
   reopen(options?: { url?: string; key?: string }): DeviceUnderTest;

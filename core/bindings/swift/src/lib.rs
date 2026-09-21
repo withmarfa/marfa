@@ -210,6 +210,9 @@ pub enum MarfaError {
         path: String,
         message: String,
     },
+    ReadingHandle {
+        message: String,
+    },
     CatchUpTooOld {
         min_retained_id: String,
         message: String,
@@ -245,6 +248,7 @@ impl MarfaError {
             | MarfaError::NoCursor { message }
             | MarfaError::HydrationIncomplete { message }
             | MarfaError::WrongSchema { message, .. }
+            | MarfaError::ReadingHandle { message }
             | MarfaError::CatchUpTooOld { message, .. }
             | MarfaError::StreamIncomplete { message, .. }
             | MarfaError::WrongServer { message, .. }
@@ -299,6 +303,7 @@ impl From<marfa_core::CoreError> for MarfaError {
                 path,
                 message,
             },
+            E::ReadingHandle => MarfaError::ReadingHandle { message },
             E::CatchUpTooOld { min_retained_id } => MarfaError::CatchUpTooOld {
                 min_retained_id,
                 message,

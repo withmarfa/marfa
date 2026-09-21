@@ -35,7 +35,19 @@ export type Answer =
     }
   | { kind: "sse"; frames: SseFrame[]; hold?: boolean }
   /** The connection dies mid-answer: what a device sees when a network goes. */
-  | { kind: "drop" };
+  | { kind: "drop" }
+  /**
+   * The request is accepted and never answered.
+   *
+   * A read that timed out, which `queue-and-verdicts.md` 17 names among the
+   * environmental failures and which nothing else here produces: a drop is a
+   * connection that died and a 5xx is an answer, and a device may
+   * reasonably treat those two differently from a server that simply never
+   * replies. It is also the only way to keep a device command running long
+   * enough for a second one to meet it, which is what `device.md` 3 is
+   * about.
+   */
+  | { kind: "stall" };
 
 export interface RecordedRequest {
   method: string;
@@ -47,7 +59,7 @@ export interface RecordedRequest {
   seq: number;
 }
 
-type Responder = Answer | ((request: RecordedRequest) => Answer);
+export type Responder = Answer | ((request: RecordedRequest) => Answer);
 
 interface Route {
   method: string;
@@ -62,6 +74,9 @@ function matches(route: Route, method: string, pathname: string): boolean {
     ? route.pathname === pathname
     : route.pathname.test(pathname);
 }
+
+/** How often a held stream says something, well inside a device's idle bound. */
+const KEEPALIVE_MS = 250;
 
 function renderFrame(frame: SseFrame): string {
   if (frame.comment !== undefined) return `: ${frame.comment}\n\n`;
@@ -82,6 +97,10 @@ export class ScriptedServer {
   private recorded: RecordedRequest[] = [];
   private seq = 0;
   private unmatched: string[] = [];
+  /** Keepalive timers for the streams still open, cleared when the server stops. */
+  private held = new Set<NodeJS.Timeout>();
+  /** Requests accepted and deliberately never answered. */
+  private stalled = new Set<ServerResponse>();
 
   static async start(): Promise<ScriptedServer> {
     const server = createServer();
@@ -163,6 +182,12 @@ export class ScriptedServer {
   }
 
   async stop(): Promise<void> {
+    for (const keepalive of this.held) clearInterval(keepalive);
+    this.held.clear();
+    // Ended rather than left, or `server.close` waits on them and the
+    // fixture's teardown hangs on a socket it opened on purpose.
+    for (const response of this.stalled) response.destroy();
+    this.stalled.clear();
     this.server.closeAllConnections();
     await new Promise<void>((resolve) => {
       this.server.close(() => {
@@ -222,6 +247,13 @@ export class ScriptedServer {
       response.socket?.destroy();
       return;
     }
+    if (answer.kind === "stall") {
+      // Nothing written and nothing ended. The socket stays open and the
+      // device waits on it until its own bound says otherwise.
+      this.stalled.add(response);
+      response.on("close", () => this.stalled.delete(response));
+      return;
+    }
     if (answer.kind === "json") {
       const body = JSON.stringify(answer.body);
       response.writeHead(answer.status, {
@@ -240,6 +272,24 @@ export class ScriptedServer {
     // `hold` leaves the stream open, which is what a live subscription looks
     // like; a device reading one has to decide for itself that it has caught
     // up rather than waiting for the server to end the answer.
-    if (!answer.hold) response.end();
+    if (!answer.hold) {
+      response.end();
+      return;
+    }
+    // Kept alive, because a live subscription is. A held stream that went
+    // silent would be indistinguishable from a server that had stopped
+    // answering, and a device with an idle bound ends the read — which
+    // makes `hold` mean "open for a few seconds" rather than "open".
+    const keepalive = setInterval(() => {
+      response.write(renderFrame({ comment: "keepalive" }));
+    }, KEEPALIVE_MS);
+    keepalive.unref();
+    this.held.add(keepalive);
+    const stop = (): void => {
+      clearInterval(keepalive);
+      this.held.delete(keepalive);
+    };
+    response.on("close", stop);
+    response.on("error", stop);
   }
 }
