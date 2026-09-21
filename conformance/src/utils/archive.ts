@@ -142,6 +142,9 @@ export interface ArchiveItem {
 export interface ArchiveBlob {
   data: Uint8Array;
   mime_type: string;
+  /** The name the entry carries when it is not the bytes' own hash: an
+   *  entry the restore must leave out. */
+  named?: string;
 }
 
 /** `sha256:<hex>` over the bytes, the name a blob entry carries. */
@@ -155,7 +158,9 @@ export function blobHash(data: Uint8Array): string {
  *
  * `edges.ndjson` and `types.ndjson` are emitted empty rather than omitted,
  * which is what the server's own exporter does and what lets the restore
- * tell a damaged archive from an empty one.
+ * tell a damaged archive from an empty one. The blob entries sit between
+ * the items and the edges, so a member follows every blob and a blob whose
+ * padding was wrong would put the reader off that member.
  */
 export function itemsArchive(
   items: ArchiveItem[],
@@ -172,7 +177,7 @@ export function itemsArchive(
     edge_type_count: 0,
     blobs: Object.fromEntries(
       blobs.map((blob) => [
-        blobHash(blob.data),
+        blob.named ?? blobHash(blob.data),
         { mime_type: blob.mime_type, size_bytes: blob.data.length },
       ]),
     ),
@@ -185,11 +190,11 @@ export function itemsArchive(
   return tarGz([
     { name: "manifest.json", body: JSON.stringify(manifest, null, 2) },
     { name: "items.ndjson", body: lines === "" ? "" : `${lines}\n` },
-    { name: "edges.ndjson", body: "" },
-    { name: "types.ndjson", body: "" },
     ...blobs.map((blob) => ({
-      name: `blobs/${blobHash(blob.data)}`,
+      name: `blobs/${blob.named ?? blobHash(blob.data)}`,
       body: blob.data,
     })),
+    { name: "edges.ndjson", body: "" },
+    { name: "types.ndjson", body: "" },
   ]);
 }

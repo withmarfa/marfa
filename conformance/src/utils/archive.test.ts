@@ -12,8 +12,9 @@
  * it needs nothing beyond the writer in the module it tests.
  */
 import { describe, it, expect } from "vitest";
+import { randomBytes } from "node:crypto";
 import { gunzipSync, gzipSync } from "node:zlib";
-import { readTarGzEntry, tarGz } from "./archive.js";
+import { blobHash, itemsArchive, readTarGzEntry, tarGz } from "./archive.js";
 
 /** The same archive with the first entry's size field written differently. */
 function rewriteFirstSize(archive: Uint8Array, field: string): Uint8Array {
@@ -69,5 +70,39 @@ describe("readTarGzEntry", () => {
     expect(() => readTarGzEntry(tar, "manifest.json")).toThrow(
       /unreadable size/,
     );
+  });
+});
+
+describe("itemsArchive", () => {
+  it("pads a blob entry of any size, so the members after it are still found", () => {
+    // One byte past a block boundary: the shape a padding mistake would
+    // put the reader off, with a member after it to be found.
+    const data = new Uint8Array(randomBytes(512 * 3 + 1));
+    const archive = itemsArchive(
+      [{ id: "x", type: "core.note", properties: {}, source: "s" }],
+      [{ data, mime_type: "application/octet-stream" }],
+    );
+    expect(readTarGzEntry(archive, "types.ndjson")).toBe("");
+    expect(readTarGzEntry(archive, "edges.ndjson")).toBe("");
+    const manifest = JSON.parse(
+      readTarGzEntry(archive, "manifest.json") ?? "{}",
+    ) as { blob_count: number; blobs: Record<string, { size_bytes: number }> };
+    expect(manifest.blob_count).toBe(1);
+    expect(manifest.blobs[blobHash(data)]?.size_bytes).toBe(data.length);
+  });
+
+  it("names an entry as asked, whether or not the bytes hash to it", () => {
+    const data = new Uint8Array([1, 2, 3]);
+    const named = "sha256:" + "0".repeat(64);
+    const archive = itemsArchive(
+      [],
+      [{ data, mime_type: "application/octet-stream", named }],
+    );
+    const manifest = JSON.parse(
+      readTarGzEntry(archive, "manifest.json") ?? "{}",
+    ) as { blobs: Record<string, unknown> };
+    expect(Object.keys(manifest.blobs)).toEqual([named]);
+    expect(readTarGzEntry(archive, `blobs/${named}`)).not.toBeNull();
+    expect(readTarGzEntry(archive, `blobs/${blobHash(data)}`)).toBeNull();
   });
 });

@@ -51,6 +51,24 @@ describe("every job runs on the pool", () => {
     expect(found.length, `${file} declares no runs-on`).toBeGreaterThan(0);
     for (const value of found) expect(value).toBe(RUNNER);
   });
+
+  it.each(files)("%s gives every job a runs-on", (file) => {
+    // A job with no `runs-on` is refused by GitHub at parse time, which is
+    // visible; a job whose `runs-on` was dropped while a sibling kept its
+    // own is what the count above cannot see. Jobs are the keys two spaces
+    // under `jobs:`, each followed by its own `runs-on` line.
+    const text = readFileSync(join(WORKFLOWS, file), "utf8");
+    const jobs = text.split(/^jobs:\s*$/m)[1] ?? "";
+    const names = [...jobs.matchAll(/^ {2}([A-Za-z0-9_-]+):\s*$/gm)].map(
+      (m) => m[1] ?? "",
+    );
+    expect(names.length, `${file} declares no jobs`).toBeGreaterThan(0);
+    const runsOn = jobs.match(/^ {4}runs-on:/gm)?.length ?? 0;
+    expect(
+      runsOn,
+      `${file}: ${String(names.length)} jobs, ${String(runsOn)} runs-on`,
+    ).toBe(names.length);
+  });
 });
 
 describe("no job asks setup-node to cache pnpm", () => {

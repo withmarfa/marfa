@@ -82,13 +82,18 @@ describe("admin/restore-archive", () => {
     expect(restored.data.blobs_imported).toBe(0);
   });
 
-  it("restores an archive carrying a blob larger than the request cap, byte for byte", async () => {
+  it("restores an archive carrying a blob larger than the request cap, byte for byte, and leaves out an entry that does not hash to its name", async () => {
     // Random bytes twice the cap every other body sits under (the cap's
-    // own fixture is `compliance/adversarial.test.ts`), so the archive
-    // cannot compress under it. The blob is one nothing on the instance
-    // names, so the restore is what puts the bytes there.
-    const data = new Uint8Array(randomBytes(2 * 1024 * 1024));
+    // own fixture is `compliance/adversarial.test.ts`) and one more, so the
+    // archive cannot compress under it and the entry is not block-aligned.
+    // The blob is one nothing on the instance names, so the restore is
+    // what puts the bytes there, under a type the manifest names and the
+    // default would not. A second entry carries other bytes under a name
+    // they do not hash to, and is left out.
+    const data = new Uint8Array(randomBytes(2 * 1024 * 1024 + 1));
     const hash = blobHash(data);
+    const impostor = new Uint8Array(randomBytes(64));
+    const claimed = blobHash(new Uint8Array(randomBytes(64)));
     const id = uuidv7();
     const archive = itemsArchive(
       [
@@ -97,10 +102,13 @@ describe("admin/restore-archive", () => {
           type: "core.file",
           source: ctx.source,
           source_id: `archive-large-${ctx.runId}`,
-          properties: { blob_ref: hash, mime_type: "application/octet-stream" },
+          properties: { blob_ref: hash, mime_type: "application/x-drill" },
         },
       ],
-      [{ data, mime_type: "application/octet-stream" }],
+      [
+        { data, mime_type: "application/x-drill" },
+        { data: impostor, mime_type: "application/x-drill", named: claimed },
+      ],
     );
     expect(archive.byteLength).toBeGreaterThan(1024 * 1024);
 
@@ -112,7 +120,10 @@ describe("admin/restore-archive", () => {
 
     const read = await client.downloadBlob(hash);
     expect(read.status).toBe(200);
+    expect(read.headers.get("content-type")).toBe("application/x-drill");
     expect(Buffer.from(read.data).equals(Buffer.from(data))).toBe(true);
+    expect((await client.downloadBlob(claimed)).status).toBe(404);
+    expect((await client.downloadBlob(blobHash(impostor))).status).toBe(404);
     const item = await client.getItem(id);
     expect(item.ok).toBe(true);
     expect(item.data.item.properties.blob_ref).toBe(hash);

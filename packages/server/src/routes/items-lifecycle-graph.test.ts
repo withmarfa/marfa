@@ -287,6 +287,31 @@ describe("POST /admin/restore-archive — an archive names a state the type's li
     expect(await c.storage.items.getIncludingTrashed(systemId)).toBeNull();
     expect(await c.storage.items.getIncludingTrashed(noteId)).toBeNull();
 
+    // `archived` is as unreachable for a system row as `trashed`.
+    const archivedId = generateId();
+    const archived = await c.app.request(`/admin/restore-archive`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${c.operatorKey}`,
+        "Content-Type": "application/gzip",
+      },
+      body: await buildArchive(MANIFEST, [
+        JSON.stringify({
+          item: {
+            id: archivedId,
+            type: SYSTEM_TYPE,
+            state: "archived",
+            properties: writer.properties(),
+          },
+        }),
+      ]),
+    });
+    expect(archived.status).toBe(400);
+    expect((await errorOf(archived)).message).toContain(
+      '"active" to "archived"',
+    );
+    expect(await c.storage.items.getIncludingTrashed(archivedId)).toBeNull();
+
     // A state that is no state at all is refused the same way, since the
     // store would otherwise write it as it came.
     const numeric = await c.app.request(`/admin/restore-archive`, {

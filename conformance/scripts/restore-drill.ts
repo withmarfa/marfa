@@ -7,18 +7,19 @@
  * Needs `litestream` and `sqlite3` on the path and the `S3_*` names in the
  * environment, which it reads and never prints. `S3_PREFIX` is not read:
  * the drill works under a prefix of its own, `drill/<id>/`, and removes it,
- * with its own state directory, at the end unless `--keep` is given. The Litestream configuration is the
- * shipped `deploy/litestream.yml` with its replica path moved under that
- * prefix, so what the drill proves is the recipe a deployment runs.
+ * with its own state directory, at the end unless `--keep` is given. The
+ * Litestream configuration is the shipped `deploy/litestream.yml` with its
+ * replica path moved under that prefix, so what the drill proves is the
+ * recipe a deployment runs.
  *
  * 1. A source instance boots with Litestream replicating its database to
  *    `drill/<id>/db` and its object store at `drill/<id>/blobs`. Phase A
  *    writes items and blobs (referenced and unreferenced, one large enough
  *    to take the object store's multipart path) and runs replication to
- *    zero remaining;
- *    the time is recorded as T1. Phase B writes more. The server and then
- *    Litestream are stopped, a last sync is forced, and the source is
- *    fingerprinted at rest: a content hash over every table, the schema,
+ *    zero remaining; the time is recorded as T1. Phase B writes more. The
+ *    server and then Litestream are stopped, a last sync is forced, and the
+ *    source is fingerprinted at rest: a content hash over every table, the
+ *    schema,
  *    the item count, the file's sha256, and every blob's bytes as the
  *    instance served them and as the disk store holds them.
  * 2. `litestream restore` rebuilds the database into an empty directory,
@@ -56,6 +57,7 @@ import {
   S3Client,
 } from "@aws-sdk/client-s3";
 import { bootServer, stopServer } from "./marfa-server.js";
+import { moveReplicaPath, same } from "../src/utils/drill.js";
 import { parseEnvFile } from "../src/utils/target.js";
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -124,18 +126,13 @@ function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-/**
- * The shipped configuration with its replica path moved under the drill's
- * prefix. Everything else, the names it expands and the cadences, is what a
- * deployment runs.
- */
+/** The shipped configuration with its replica path moved under the
+ *  drill's prefix (`moveReplicaPath` says what else holds). */
 function writeLitestreamConfig(path: string, prefix: string): void {
-  const shipped = readFileSync(SHIPPED_CONFIG, "utf8");
-  const line = /^(\s*)path: db$/m;
-  if (!line.test(shipped)) {
-    throw new Error(`${SHIPPED_CONFIG} has no replica line \`path: db\``);
-  }
-  writeFileSync(path, shipped.replace(line, `$1path: ${prefix}/db`));
+  writeFileSync(
+    path,
+    moveReplicaPath(readFileSync(SHIPPED_CONFIG, "utf8"), prefix),
+  );
 }
 
 function litestream(
@@ -469,10 +466,15 @@ async function main(): Promise<void> {
   };
   const failures: string[] = [];
   const check = (name: string, a: unknown, b: unknown) => {
-    const same = JSON.stringify(a) === JSON.stringify(b);
-    say(`- ${same ? "same" : "DIFFERENT"}: ${name}`);
-    if (!same) failures.push(name);
+    const agree = same(a, b);
+    say(`- ${agree ? "same" : "DIFFERENT"}: ${name}`);
+    if (!agree) failures.push(name);
   };
+  // The comparison's own control, before anything is compared: a verdict
+  // that could not say "different" would be no verdict.
+  if (same("source", "restored") || !same("source", "source")) {
+    throw new Error("the comparison cannot tell same from different");
+  }
 
   say(`# Restore drill ${id}`);
   say("");
@@ -580,8 +582,9 @@ async function main(): Promise<void> {
       `Phase B: ${String(hashes.length - 3)} more blob and 11 more items written, ${String(copiedB)} copies made by replication.`,
     );
 
-    // The server first, then the sidecar, then one more sync so the last
-    // writes are in the bucket whatever the sidecar did on the way down.
+    // The server first, then the sidecar, then one more sync. The sidecar
+    // syncs on its way down, and the drill has passed without this; it is
+    // here so the verdict rests on the replica and not on that shutdown.
     await stopServer({ state: sourceState });
     await stopProcess(litestreamPid);
     litestreamPid = undefined;
