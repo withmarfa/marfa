@@ -39,6 +39,19 @@ fn non_empty(value: Option<String>) -> Option<String> {
 mod tests {
     use super::*;
 
+    /// A variable exported as nothing, or as whitespace, names no server:
+    /// it reads as unset rather than as a URL of nothing.
+    #[test]
+    fn an_empty_value_is_unset() {
+        assert_eq!(non_empty(Some(String::new())), None);
+        assert_eq!(non_empty(Some("  ".into())), None);
+        assert_eq!(non_empty(None), None);
+        assert_eq!(
+            non_empty(Some("http://localhost:8600".into())).as_deref(),
+            Some("http://localhost:8600")
+        );
+    }
+
     #[test]
     fn a_sending_command_needs_both_values_and_is_told_which_is_missing() {
         let both = Named {
