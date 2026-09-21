@@ -14,7 +14,6 @@ publish = false
 [workspace.dependencies]
 marfa-core = { path = "marfa-core" }
 clap = { version = "4", features = ["derive", "env"] }
-directories = "6"
 notify = "8"
 rusqlite = { version = "0.40", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }

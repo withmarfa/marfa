@@ -33,49 +33,25 @@ const run = promisify(execFile);
  */
 
 /**
- * The binary prints `marfa: <error>` and exits 1. `CoreError` renders one
- * sentence per variant, each with a distinctive opening, so the opening is
- * what the adapter reads. It is a reading of the device rather than a
- * contract with it: when the binary learns to report a refusal as data, this
- * table goes and the code comes from the device.
+ * Under `--json` the binary reports a refusal as one JSON object on stderr,
+ * `{"error":{"code":...},"exit":N}`, and the code is what the adapter reads.
+ * The one refusal that is not an envelope is clap's own, for a command line
+ * the binary does not offer: it exits 2 with its usage text, which is the
+ * device refusing an operation rather than the core refusing one it does.
  */
-const REFUSAL_OPENINGS: ReadonlyArray<readonly [string, string]> = [
-  ["no server configured", "no_server"],
-  ["no event cursor stored", "no_cursor"],
-  ["hydration did not complete", "hydration_incomplete"],
-  ["this store was written by schema", "wrong_schema"],
-  ["this is a reading handle", "reading_handle"],
-  ["the event log no longer holds the cursor", "catch_up_too_old"],
-  ["the event stream ended early", "stream_incomplete"],
-  ["this file belongs to", "wrong_server"],
-  ["not found (", "not_found"],
-  ["unauthorized (", "unauthorized"],
-  ["forbidden (", "forbidden"],
-  ["validation (", "validation"],
-  ["unknown type:", "unknown_type"],
-  ["rate limited (", "rate_limited"],
-  ["server answered", "server"],
-  ["network:", "network"],
-  ["decoding:", "decoding"],
-  ["store:", "store"],
-  ["no data directory", "no_data_directory"],
-];
-
 function classify(stderr: string, exitCode: number | null): Refusal {
   const raw = stderr.trim();
-  const sentence = raw.startsWith("marfa: ")
-    ? raw.slice("marfa: ".length)
-    : raw;
-  for (const [opening, code] of REFUSAL_OPENINGS) {
-    if (sentence.startsWith(opening)) return { code, raw };
+  if (exitCode === 2 && !raw.startsWith("{")) return { code: "usage", raw };
+  let envelope: { error?: { code?: unknown } };
+  try {
+    envelope = JSON.parse(raw) as { error?: { code?: unknown } };
+  } catch {
+    return { code: "unclassified", raw };
   }
-  if (sentence.includes("is not in the local copy"))
-    return { code: "not_held", raw };
-  // clap's own refusals, which are the device refusing an operation it does
-  // not offer rather than the core refusing one it does.
-  if (exitCode === 2 || /^error: |Usage: /m.test(raw))
-    return { code: "usage", raw };
-  return { code: "unclassified", raw };
+  const code = envelope.error?.code;
+  return typeof code === "string"
+    ? { code, raw }
+    : { code: "unclassified", raw };
 }
 
 /** A device command left running, for the one-writer rule. */
@@ -224,6 +200,14 @@ export class CliDevice implements DeviceUnderTest {
   }
 
   /**
+   * A command at the binary's root rather than under `device`: a folder's,
+   * which names its directory and carries its own store.
+   */
+  async root<T>(args: string[]): Promise<Outcome<T>> {
+    return this.invoke<T>(["--json", ...args]);
+  }
+
+  /**
    * Starts a command and leaves it running, for the rules that are about two
    * processes at once.
    *
@@ -237,10 +221,14 @@ export class CliDevice implements DeviceUnderTest {
    * the store for every case after it, and they would fail as the rule rather
    * than as the leak.
    */
-  hold(args: string[]): HeldCommand {
+  hold(args: string[], at: "device" | "root" = "device"): HeldCommand {
     const child = spawn(
       this.options.binary,
-      ["--db", this.options.store, "--json", ...args, ...this.server()],
+      [
+        ...(at === "device" ? this.prefix() : ["--json"]),
+        ...args,
+        ...this.server(),
+      ],
       { stdio: ["ignore", "pipe", "pipe"] },
     );
     let stderr = "";
@@ -372,6 +360,11 @@ export class CliDevice implements DeviceUnderTest {
     return args;
   }
 
+  /** Every device operation is a `device` command on one store, answered as JSON. */
+  private prefix(): string[] {
+    return ["--json", "device", "--db", this.options.store];
+  }
+
   /**
    * A refusal is a non-zero exit with something on stderr, and nothing else.
    *
@@ -382,7 +375,10 @@ export class CliDevice implements DeviceUnderTest {
    * the one way this suite could be green about nothing.
    */
   private async json<T>(args: string[]): Promise<Outcome<T>> {
-    const full = ["--db", this.options.store, "--json", ...args];
+    return this.invoke<T>([...this.prefix(), ...args]);
+  }
+
+  private async invoke<T>(full: string[]): Promise<Outcome<T>> {
     let stdout: string;
     try {
       // A device that hangs is a failing device, and the runner owns the
@@ -401,7 +397,7 @@ export class CliDevice implements DeviceUnderTest {
       };
       if (failure.killed === true) {
         throw new Error(
-          `the device did not answer \`${args.join(" ")}\` within its bound`,
+          `the device did not answer \`${full.join(" ")}\` within its bound`,
         );
       }
       if (typeof failure.code !== "number") {
@@ -539,7 +535,7 @@ export class CliFolder {
       store: this.store,
       url: this.options.url,
       key: this.options.key,
-    }).hold(["folders", "watch", this.dir]);
+    }).hold(["folders", "watch", this.dir], "root");
   }
 
   private server(): string[] {
@@ -547,13 +543,13 @@ export class CliFolder {
   }
 
   private async run<T>(args: string[]): Promise<Outcome<T>> {
-    // A folder's store is its own, under `.marfa`, so the device this
-    // builds is pointed at that rather than at any `--db` a fixture holds.
+    // A folder command names its directory and finds its own store under
+    // `.marfa`, so it runs at the root, with no `--db` at all.
     return new CliDevice({
       binary: this.options.binary,
       store: this.store,
       url: this.options.url,
       key: this.options.key,
-    }).attempt(args) as Promise<Outcome<T>>;
+    }).root<T>(args);
   }
 }

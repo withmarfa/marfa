@@ -10,6 +10,23 @@ What it does is written down in `conformance/spec/device.md`, `queue-and-verdict
 - `bindings/node`: a napi-rs module with a proof script.
 - `scripts`: boot a server, mint a key, seed items, for the live lane below.
 
+## The binary
+
+`marfa device --db PATH <command>` is the working copy: `hydrate`, `catch-up`, `status`, `items`, `search`, `edges`, `tags`, `metadata`, `extensions`, `queue`, `drain`, `forget` and `release`, on the store `--db` (or `MARFA_DB`) names. There is no default store. `marfa folders <command>` is a folder, which carries its own store. The server a command sends to is `--url`/`--key` on any command, or `MARFA_API_URL`/`MARFA_API_KEY`.
+
+`--json` on any command prints records as JSON and a refusal as one JSON object on stderr, `{"error":{"code","message","server":{"status","code"}|null,"retry_after_seconds"},"exit":N}`, where `error.code` is from the closed set `marfa --help` lists. The exit code is one of six:
+
+| Exit | Meaning                                                                                                   |
+| ---- | --------------------------------------------------------------------------------------------------------- |
+| 0    | Done.                                                                                                     |
+| 1    | The request was refused, by the server or by the binary before sending; a retry does not change it.      |
+| 2    | The command line was wrong, or named no store or server. clap's own refusals print its usage text.        |
+| 3    | The environment failed: unreachable, timed out, a 5xx, a 429. Try again; `retry_after_seconds` says when. |
+| 4    | The working copy or the queue refused under the device rules.                                             |
+| 5    | No credential, or the credential was refused.                                                             |
+
+The device fixtures drive the binary through `conformance/src/device/cli-adapter.ts`, which reads the envelope.
+
 ## Build
 
 Three commands, and `core.yml` runs them here and again in `bindings/swift`,

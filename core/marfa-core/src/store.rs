@@ -27,8 +27,8 @@ const EDGE_COLUMNS: &str =
 pub fn open(path: &Path) -> Result<Connection, CoreError> {
     let conn = Connection::open(path)?;
     // The path travels with the refusal. A person told to delete a store and
-    // not told where it is cannot act on the advice: the location is a
-    // platform data directory nobody has reason to know by heart.
+    // not told where it is cannot act on the advice, and the store may have
+    // been named by an environment variable rather than typed.
     prepare(&conn).map_err(|err| match err {
         CoreError::WrongSchema {
             expected, found, ..
@@ -86,9 +86,10 @@ fn prepare(conn: &Connection) -> Result<(), CoreError> {
         });
     }
     conn.execute_batch(SCHEMA)?;
-    // Only when absent. Writing it on every open would make `marfa queue`
-    // and `marfa status` take a write lock to answer a question about what
-    // is already there, which a reading handle must not do (`device.md` 3).
+    // Only when absent. Writing it on every open would make `marfa device
+    // queue` and `marfa device status` take a write lock to answer a
+    // question about what is already there, which a reading handle must not
+    // do (`device.md` 3).
     // The refusal above has already dealt with a version that differs, so
     // the only case left here is a store that carries none.
     if meta_get(conn, META_SCHEMA_VERSION)?.is_none() {
@@ -1231,8 +1232,8 @@ mod tests {
         assert!(
             format!("{}", refused.unwrap_err()).contains(&path.display().to_string()),
             "the refusal does not say which file to delete, so the one remedy \
-             it offers names a path in a platform data directory the person \
-             reading it has no way to find"
+             it offers names a store the person reading it may only know by \
+             the variable that named it"
         );
 
         // The control: a store this build wrote opens again. Without it the
