@@ -272,20 +272,32 @@ describe("the rules that keep a blob's bytes", () => {
     // length so only the digest can tell, and another's removed: the check
     // strikes both with an audit row each, replication brings the right
     // bytes back from the object store, and the download reads them.
+    //
+    // The strike is read off the audit rows, not off the location log: a
+    // strike wakes replication, which the server runs on its own poll, so
+    // the struck location can be back before a listing sees it gone.
     writeFileSync(diskPathFor(hash), content.replace("corrupted", "CORRUPTED"));
     unlinkSync(diskPathFor(missing));
+    const struckRows = async (each: string) =>
+      (
+        await client.listAudit({
+          action: "blob.copy_struck",
+          resource_id: each,
+        })
+      ).data.data;
+    for (let i = 0; i < 20; i++) {
+      await run("blob-integrity");
+      if (
+        (await struckRows(hash)).length === 1 &&
+        (await struckRows(missing)).length === 1
+      ) {
+        break;
+      }
+    }
     for (const each of [hash, missing]) {
-      const struck = await checkUntil(
-        each,
-        (locations) => !locations.some((location) => location.kind === "disk"),
-      );
-      expect(kinds(struck)).toEqual(["s3"]);
-      const audited = await client.listAudit({
-        action: "blob.copy_struck",
-        resource_id: each,
-      });
-      expect(audited.status).toBe(200);
-      expect(audited.data.data).toHaveLength(1);
+      const audited = await struckRows(each);
+      expect(audited).toHaveLength(1);
+      expect(audited[0]?.details).toMatchObject({ kind: "disk" });
     }
 
     await replicateToZero();
