@@ -474,8 +474,9 @@ export function buildOauthProviderPlugin(
       return claims;
     },
 
-    // id_token claims (OIDC). Reproduces the profile + email gate from
-    // the (now-deleted) homegrown /auth/userinfo handler.
+    // id_token claims (OIDC). The same profile + email gate as
+    // `customUserInfoClaims` below, because a client reading both doors
+    // must not be told more on one of them than on the other.
     customIdTokenClaims: ({ user, scopes }) => {
       const claims: Record<string, unknown> = {};
       // **The union with Category 2, and it is the half that makes the gate

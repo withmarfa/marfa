@@ -212,7 +212,7 @@ describe("the export default is an exclusion", () => {
     ).toEqual(["trashed"]);
     // Against the platform's own list rather than a copy of it. Hard-coding
     // the answer would turn the next state anyone adds into a red test named
-    // for the behaviour that actually happened — carried without being
+    // for the behavior that actually happened — carried without being
     // listed — which is the opposite of what this case is for.
     const carried = ITEM_STATES.filter(
       (state) => !(EXPORT_EXCLUDED_STATES as readonly string[]).includes(state),
