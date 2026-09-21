@@ -7,7 +7,7 @@ import {
   trackEdge,
   cleanup,
 } from "../../../utils/setup.js";
-import { createNote } from "../../../generators/items.js";
+import { createAlbum, createNote } from "../../../generators/items.js";
 import { expectMatchesSchema } from "../../../utils/openapi.js";
 
 let client: MarfaClient;
@@ -21,17 +21,6 @@ afterAll(async () => {
   await cleanup(ctx);
 });
 
-const CORE_EDGE_TYPES = [
-  "about",
-  "parent-of",
-  "in-thread",
-  "attached-to",
-  "authored-by",
-  "derived-from",
-  "supersedes",
-  "references",
-] as const;
-
 async function makeItem(): Promise<string> {
   const r = await client.createItem(createNote({ source: ctx.source }));
   expect(r.ok).toBe(true);
@@ -39,11 +28,48 @@ async function makeItem(): Promise<string> {
   return r.data.item.id;
 }
 
+/**
+ * A target that declares the `container` role, which `in-collection` needs
+ * and no other shipped edge type does.
+ */
+async function makeContainer(): Promise<string> {
+  const r = await client.createItem(createAlbum({ source: ctx.source }));
+  expect(r.ok).toBe(true);
+  trackItem(ctx, r.data.item.id);
+  return r.data.item.id;
+}
+
+/**
+ * Every shipped edge type, with what each one's target has to be.
+ *
+ * Nine, and the list is written out rather than read off the registry
+ * because nothing under `src/suites/` may import a workspace package. That
+ * makes it a copy, and a copy that fell one behind is what left
+ * `in-collection` shipped with no fixture reaching it: its target
+ * constraint is a role rather than a type list, so it needs a target
+ * declaring `container` where every other type takes any item, and a loop
+ * over bare names could not have carried it.
+ */
+const CORE_EDGE_TYPES: readonly {
+  id: string;
+  target: () => Promise<string>;
+}[] = [
+  { id: "about", target: makeItem },
+  { id: "parent-of", target: makeItem },
+  { id: "in-thread", target: makeItem },
+  { id: "attached-to", target: makeItem },
+  { id: "authored-by", target: makeItem },
+  { id: "derived-from", target: makeItem },
+  { id: "supersedes", target: makeItem },
+  { id: "references", target: makeItem },
+  { id: "in-collection", target: makeContainer },
+];
+
 describe("edges CRUD", () => {
-  for (const edgeType of CORE_EDGE_TYPES) {
+  for (const { id: edgeType, target } of CORE_EDGE_TYPES) {
     it(`creates a ${edgeType} edge and reads it back via listItemEdges`, async () => {
       const sourceId = await makeItem();
-      const targetId = await makeItem();
+      const targetId = await target();
 
       const created = await client.createEdge({
         source_id: sourceId,
@@ -69,6 +95,60 @@ describe("edges CRUD", () => {
       expect(edgeIds).toContain(created.data.edge.id);
     });
   }
+
+  it("refuses a stale edge update, under current and not under edge", async () => {
+    // The edge door's `version_conflict`, held to the same envelope as the
+    // item door's. Edges have no per-version history, so there is no
+    // ancestor and no field list to give; what there is has to be reachable
+    // the same way, or a client branching on `error.code` has to know which
+    // door answered before it can read the row out.
+    const sourceId = await makeItem();
+    const targetId = await makeItem();
+    const created = await client.createEdge({
+      source_id: sourceId,
+      target_id: targetId,
+      edge_type: "about",
+      properties: { note: "first" },
+    });
+    expect(created.ok).toBe(true);
+    trackEdge(ctx, created.data.edge.id);
+
+    const advanced = await client.updateEdge(created.data.edge.id, {
+      properties: { note: "winner" },
+      version: created.data.edge.version,
+    });
+    expect(advanced.status).toBe(200);
+
+    const stale = await client.updateEdge(created.data.edge.id, {
+      properties: { note: "loser" },
+      version: created.data.edge.version,
+    });
+    expect(stale.status).toBe(409);
+    const body = stale.error as unknown as {
+      error: { code: string; status?: number };
+      current?: {
+        id: string;
+        version: number;
+        properties: Record<string, unknown>;
+      };
+      edge?: unknown;
+    };
+    expect(body.error.code).toBe("version_conflict");
+    expect(body.error.status).toBe(409);
+    expect(body.current?.id).toBe(created.data.edge.id);
+    expect(body.current?.version).toBe(advanced.data.edge.version);
+    expect(body.current?.properties).toEqual({ note: "winner" });
+    // And under nothing else: a refusal answering both keys lets a client
+    // read either, which is how the two doors drift apart again.
+    expect(body.edge).toBeUndefined();
+
+    // The control: the write the refusal describes is the one that lands.
+    const retried = await client.updateEdge(created.data.edge.id, {
+      properties: { note: "loser" },
+      version: advanced.data.edge.version,
+    });
+    expect(retried.status).toBe(200);
+  });
 
   it("updateEdge patches properties only", async () => {
     const sourceId = await makeItem();

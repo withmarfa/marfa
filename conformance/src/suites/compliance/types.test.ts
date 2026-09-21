@@ -194,6 +194,10 @@ describe("type merge_policy", () => {
     } as TypeSchema);
     expect(r.ok).toBe(false);
     expect(r.status).toBe(400);
+    // The code, not only the status. `invalid_schema` is what the validator
+    // answers when nothing more specific applies, and a 400 alone cannot
+    // tell it from the shape refusals the route's own body schema answers.
+    expect(r.error?.error.code).toBe("invalid_schema");
   });
 
   it("POST /types rejects a merge_policy with an unknown strategy", async () => {
@@ -209,6 +213,7 @@ describe("type merge_policy", () => {
     } as TypeSchema);
     expect(r.ok).toBe(false);
     expect(r.status).toBe(400);
+    expect(r.error?.error.code).toBe("invalid_schema");
   });
 
   it("a core child type exposes the parent's resolved merge_policy on GET", async () => {
