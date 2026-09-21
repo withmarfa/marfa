@@ -8320,7 +8320,7 @@
             }
           },
           "202": {
-            "description": "Job queued. Poll GET /items/bulk-actions/jobs/{id} until status is terminal (completed / failed / cancelled). SDKs do this transparently for callers; the envelope is exposed for explicit-control use cases.",
+            "description": "Job queued. Poll GET /items/bulk-actions/jobs/{id} until status is terminal (completed / failed / canceled). SDKs do this transparently for callers; the envelope is exposed for explicit-control use cases.",
             "content": {
               "application/json": {
                 "schema": {
@@ -8339,7 +8339,7 @@
                         "in_progress",
                         "completed",
                         "failed",
-                        "cancelled"
+                        "canceled"
                       ]
                     },
                     "matched": {
@@ -8722,7 +8722,7 @@
                         "in_progress",
                         "completed",
                         "failed",
-                        "cancelled"
+                        "canceled"
                       ]
                     },
                     "matched": {
@@ -9061,7 +9061,7 @@
           "Items"
         ],
         "summary": "Cancel a bulk-action job",
-        "description": "Signals cancellation of a bulk-action job. Queued jobs flip to `cancelled` immediately and in-progress jobs flip when the worker next checks between chunks; already-terminal jobs return their final state unchanged.",
+        "description": "Signals cancellation of a bulk-action job. Queued jobs flip to `canceled` immediately and in-progress jobs flip when the worker next checks between chunks; already-terminal jobs return their final state unchanged.",
         "security": [
           {
             "bearerAuth": []
@@ -9100,7 +9100,7 @@
                         "in_progress",
                         "completed",
                         "failed",
-                        "cancelled"
+                        "canceled"
                       ]
                     },
                     "matched": {

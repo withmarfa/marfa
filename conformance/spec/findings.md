@@ -26,7 +26,7 @@ The route is stripped from the document as an internal operation, yet it is the 
 
 ## 6. `DELETE /items/bulk-actions/jobs/{id}`: the queued transition is unobservable
 
-The document says a queued job flips to `cancelled` immediately and an in-progress one flips between chunks. The worker takes a job as soon as it is queued and finishes before a second request can reach the door, so no caller over the wire can observe either transition. `compliance/bulk.test.ts › DELETE on a terminal job answers 200 with its final state unchanged`.
+The document says a queued job flips to `canceled` immediately and an in-progress one flips between chunks. The worker takes a job as soon as it is queued and finishes before a second request can reach the door, so no caller over the wire can observe either transition. `compliance/bulk.test.ts › DELETE on a terminal job answers 200 with its final state unchanged`.
 
 ## 7. Statuses the fixtures observe that the document does not declare
 

@@ -653,7 +653,7 @@ export function request(
  *   - `initialStatus`: status of the initial POST (200 for dry_run /
  *     error, 202 for queued).
  *   - `result`: the BulkActionResult once terminal-completed. Absent
- *     when the job ended in `cancelled` / `failed`.
+ *     when the job ended in `canceled` / `failed`.
  *   - `job`: the final BulkActionJob envelope (terminal state); absent
  *     for dry_run and error paths.
  *   - `errorResponse`: the error body when the POST was non-2xx.

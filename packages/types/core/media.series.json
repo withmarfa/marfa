@@ -14,7 +14,7 @@
     "status": {
       "type": "enum",
       "description": "Whether the series is still producing new members.",
-      "enum_values": ["ongoing", "ended", "cancelled"]
+      "enum_values": ["ongoing", "ended", "canceled"]
     }
   },
   "required": [],

@@ -174,12 +174,12 @@ export class EdgeConflictError extends MarfaError {
 }
 
 /**
- * An async `bulkAction` job reached `status: 'cancelled'` — the job was
+ * An async `bulkAction` job reached `status: 'canceled'` — the job was
  * DELETEd mid-run by the caller or another admin credential. The envelope
  * carries the partial-count state; the SDK surfaces it via this error
  * subclass so callers can react explicitly.
  */
-export class BulkJobCancelledError extends MarfaError {
+export class BulkJobCanceledError extends MarfaError {
   readonly jobId: string;
   readonly processed: number;
   readonly succeeded: number;
@@ -191,11 +191,11 @@ export class BulkJobCancelledError extends MarfaError {
     errored: number;
   }) {
     super(
-      "bulk_job_cancelled",
-      `Bulk action job ${args.jobId} was cancelled after ${String(args.processed)} processed`,
+      "bulk_job_canceled",
+      `Bulk action job ${args.jobId} was canceled after ${String(args.processed)} processed`,
       0,
     );
-    this.name = "BulkJobCancelledError";
+    this.name = "BulkJobCanceledError";
     this.jobId = args.jobId;
     this.processed = args.processed;
     this.succeeded = args.succeeded;

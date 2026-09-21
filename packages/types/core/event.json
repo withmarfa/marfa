@@ -50,7 +50,7 @@
     },
     "status": {
       "type": "string",
-      "description": "Recommended values: tentative, confirmed, cancelled, rescheduled"
+      "description": "Recommended values: tentative, confirmed, canceled, rescheduled"
     },
     "notes": {
       "type": "string",

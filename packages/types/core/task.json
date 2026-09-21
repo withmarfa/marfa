@@ -33,7 +33,7 @@
     },
     "status": {
       "type": "string",
-      "description": "Recommended values: pending, in_progress, completed, cancelled"
+      "description": "Recommended values: pending, in_progress, completed, canceled"
     },
     "priority": {
       "type": "enum",

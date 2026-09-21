@@ -433,7 +433,7 @@ describe("GET + DELETE /items/bulk-actions/jobs/:id", () => {
     expect(body.error.code).toBe("bulk_job_not_found");
   });
 
-  it("DELETE flips a queued job to cancelled", async () => {
+  it("DELETE flips a queued job to canceled", async () => {
     const tag = `cancel-${Math.random().toString(36).slice(2, 8)}`;
     await seed("core.note", 2, { tags: [tag] });
 
@@ -457,8 +457,8 @@ describe("GET + DELETE /items/bulk-actions/jobs/:id", () => {
       { key: ctx.workingKey },
     );
     expect(delRes.status).toBe(200);
-    const cancelled = (await delRes.json()) as { status: string };
-    expect(cancelled.status).toBe("cancelled");
+    const canceled = (await delRes.json()) as { status: string };
+    expect(canceled.status).toBe("canceled");
   });
 
   it("DELETE 404s for an unknown job id", async () => {

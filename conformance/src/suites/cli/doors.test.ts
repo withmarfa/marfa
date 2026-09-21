@@ -289,7 +289,7 @@ describe("occurrences and the bulk doors", () => {
     let read_job = { id: job.id, status: job.status };
     const started = Date.now();
     while (
-      !["completed", "failed", "cancelled"].includes(read_job.status) &&
+      !["completed", "failed", "canceled"].includes(read_job.status) &&
       Date.now() - started < 20_000
     ) {
       await new Promise((resolve) => setTimeout(resolve, 200));

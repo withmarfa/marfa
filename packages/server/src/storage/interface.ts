@@ -2446,7 +2446,7 @@ export interface BetterAuthStorageAdapter {
 // ---------------------------------------------------------------------------
 
 export type BulkActionJobStatus =
-  "queued" | "in_progress" | "completed" | "failed" | "cancelled";
+  "queued" | "in_progress" | "completed" | "failed" | "canceled";
 
 /** Server-side row shape for a `bulk_action_jobs` entry. The SDK-facing
  *  envelope (`BulkActionJob` in `@withmarfa/sdk/client`) is a strict subset
@@ -2537,7 +2537,7 @@ export interface BulkActionJobStore {
   /** Terminal `failed`. Writes the error string, sets `finished_at`. */
   fail(id: string, error: string, finishedAt: string): Promise<void>;
   /** Request cancellation. Flips `queued` or `in_progress` rows to
-   *  `cancelled`; no-op (returns `false`) on already-terminal rows.
+   *  `canceled`; no-op (returns `false`) on already-terminal rows.
    *  The worker observes the flag between chunks. */
   cancel(id: string, finishedAt: string): Promise<boolean>;
   /**

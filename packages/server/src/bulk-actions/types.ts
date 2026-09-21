@@ -145,7 +145,7 @@ export const BulkActionJobStatusSchema = z.enum([
   "in_progress",
   "completed",
   "failed",
-  "cancelled",
+  "canceled",
 ]);
 
 export const BulkActionJobSchema = z.object({

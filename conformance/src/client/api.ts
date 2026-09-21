@@ -506,7 +506,7 @@ export class MarfaClient {
       if (
         job.status === "completed" ||
         job.status === "failed" ||
-        job.status === "cancelled"
+        job.status === "canceled"
       ) {
         return job;
       }
