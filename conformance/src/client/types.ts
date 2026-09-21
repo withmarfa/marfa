@@ -245,6 +245,37 @@ export interface HousekeepingRun {
   error: string | null;
 }
 
+export interface ConnectorRun {
+  id: string;
+  connector_id: string;
+  outcome: "succeeded" | "failed";
+  started_at: string;
+  finished_at: string;
+  summary: string | null;
+  error: string | null;
+  reported_at: string;
+}
+
+export interface ConnectorRunInput {
+  outcome: "succeeded" | "failed";
+  started_at: string;
+  finished_at: string;
+  summary?: string;
+  error?: string;
+}
+
+export interface ConnectorRow {
+  id: string;
+  key_id: string;
+  source: string;
+  name: string;
+  description: string | null;
+  registered_at: string;
+  updated_at: string;
+  last_heartbeat_at: string | null;
+  last_run: ConnectorRun | null;
+}
+
 export interface ErrorResponse {
   error: {
     code: string;

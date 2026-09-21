@@ -971,3 +971,45 @@ export const housekeeping = sqliteTable("housekeeping", {
   /** JSON: whatever the last run reported. */
   last_result: text("last_result"),
 });
+
+// ---------------------------------------------------------------------------
+// connectors: a process outside the server that registered under its key,
+// and the runs it reported. The key is the identity, one registration per
+// key. Nothing here runs or supervises anything; a reader decides what a
+// stale heartbeat or a failed run means.
+// ---------------------------------------------------------------------------
+export const connectors = sqliteTable("connectors", {
+  id: text("id").primaryKey(),
+  key_id: text("key_id").notNull().unique(),
+  /** The key's source when it registered, the name its writes carry. */
+  source: text("source").notNull(),
+  name: text("name").notNull(),
+  description: text("description"),
+  registered_at: text("registered_at").notNull(),
+  updated_at: text("updated_at").notNull(),
+  last_heartbeat_at: text("last_heartbeat_at"),
+});
+
+export const connectorRuns = sqliteTable(
+  "connector_runs",
+  {
+    id: text("id").primaryKey(),
+    connector_id: text("connector_id")
+      .notNull()
+      .references(() => connectors.id, { onDelete: "cascade" }),
+    /** `succeeded` or `failed`. */
+    outcome: text("outcome").notNull(),
+    started_at: text("started_at").notNull(),
+    finished_at: text("finished_at").notNull(),
+    summary: text("summary"),
+    error: text("error"),
+    reported_at: text("reported_at").notNull(),
+  },
+  (table) => [
+    // The listing and the trim both take a connector's newest runs.
+    index("idx_connector_runs_connector_reported").on(
+      table.connector_id,
+      table.reported_at,
+    ),
+  ],
+);

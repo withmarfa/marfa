@@ -31,6 +31,7 @@ import { occurrenceRoutes } from "./routes/occurrences.js";
 import { metadataRoutes } from "./routes/metadata.js";
 import { blobRoutes } from "./routes/blobs.js";
 import { housekeepingRoutes } from "./routes/housekeeping.js";
+import { connectorRoutes } from "./routes/connectors.js";
 import type { Housekeeping } from "./housekeeping/scheduler.js";
 import { keyRoutes } from "./routes/keys.js";
 import { exportRoutes } from "./routes/export.js";
@@ -272,6 +273,7 @@ export function createApp(
     "metrics",
     "edges",
     "admin_archive",
+    "connectors",
   ];
   // The deployed `version` comes from `version.json`, read at startup by
   // index.ts and threaded through `config.versionSha`. The OpenAPI document
@@ -534,6 +536,7 @@ export function createApp(
   app.route("/metadata", metadataRoutes(storage));
   app.route("/blobs", blobRoutes(storage, blobs, housekeeping, config));
   app.route("/housekeeping", housekeepingRoutes(housekeeping));
+  app.route("/connectors", connectorRoutes(storage));
   app.route("/keys", keyRoutes(storage, config.apiKeySalt));
   app.route("/config", configRoutes(storage, instanceId));
   app.route("/admin", adminArchiveRoutes(storage, blobs));

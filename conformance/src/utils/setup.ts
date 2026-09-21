@@ -463,6 +463,9 @@ export async function cleanup(ctx: TestContext): Promise<void> {
     );
   }
   outcomes.push(mergeOutcomes("Type", typeLevels));
+  // Before the keys go: a registration stands after its key is revoked
+  // (`connectors.md` 5), and only the operator can remove another key's.
+  outcomes.push(await removeTrackedRegistrations(ctx));
   outcomes.push(
     await deleteAll(ctx.trackedKeys, (id) => provisioner.revokeKey(id), "Key"),
   );
@@ -476,6 +479,34 @@ export async function cleanup(ctx: TestContext): Promise<void> {
           .join("; "),
     );
   }
+}
+
+/**
+ * Remove every connector registration a tracked key made, through the
+ * operator. Called by `cleanup`, and by a file whose fixtures register, so
+ * one failed fixture does not hand the next a registration it did not make.
+ * Without the operator key nothing can remove another key's registration,
+ * and nothing is attempted.
+ */
+export async function removeTrackedRegistrations(
+  ctx: TestContext,
+): Promise<CleanupOutcome> {
+  const kind = "Connector";
+  if (ctx.trackedKeys.length === 0 || !process.env.MARFA_OPERATOR_KEY) {
+    return { kind, failed: 0, total: 0 };
+  }
+  const operator = getOperatorClient();
+  const listed = await operator.listConnectors();
+  if (!listed.ok) {
+    console.warn(
+      `${kind} cleanup could not list registrations (status ${String(listed.status)}).`,
+    );
+    return { kind, failed: 1, total: 1, firstStatus: listed.status };
+  }
+  const mine = listed.data.data
+    .filter((row) => ctx.trackedKeys.includes(row.key_id))
+    .map((row) => row.id);
+  return deleteAll(mine, (id) => operator.deleteConnector(id), kind);
 }
 
 /**

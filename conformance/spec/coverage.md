@@ -128,6 +128,18 @@ Fixture paths are under `src/suites/`.
 | `GET /config` | covered | `compliance/schema-enforcement.test.ts`, `compliance/instance.test.ts` | Carries `instance_id` beside the levers.                                                                                                   |
 | `PUT /config` | covered | `compliance/schema-enforcement.test.ts`                                | Strict mode, source allowlist, source filter; wholesale replacement; `instance_id` round trips and one naming another instance is refused. |
 
+## Connectors
+
+| Operation                         | Status  | Fixture                         | Notes                                                                                                |
+| --------------------------------- | ------- | ------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `POST /connectors`                | covered | `compliance/connectors.test.ts` | The key is the identity: `201` once, `200` with the same id on a repeat; a session token is refused. |
+| `GET /connectors`                 | covered | `compliance/connectors.test.ts` | Any key; newest first, each with its last heartbeat and last run.                                    |
+| `GET /connectors/{id}`            | covered | `compliance/connectors.test.ts` | Any key.                                                                                             |
+| `DELETE /connectors/{id}`         | covered | `compliance/connectors.test.ts` | The connector's own key or the operator's; another key `403`.                                        |
+| `POST /connectors/{id}/heartbeat` | covered | `compliance/connectors.test.ts` | The connector's own key only.                                                                        |
+| `POST /connectors/{id}/runs`      | covered | `compliance/connectors.test.ts` | The connector's own key only; `succeeded` or `failed`; the last hundred kept.                        |
+| `GET /connectors/{id}/runs`       | covered | `compliance/connectors.test.ts` | Any key; newest first, `limit` up to the shared ceiling.                                             |
+
 ## Operator maintenance
 
 | Operation                           | Status        | Fixture                                                                   | Notes                                                                                                |

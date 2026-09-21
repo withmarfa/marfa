@@ -119,6 +119,11 @@ const PUBLIC_TAGS = [
   { name: "Export", description: "Bulk export of the instance's data." },
   { name: "Audit", description: "The instance's audit log." },
   {
+    name: "Connectors",
+    description:
+      "A process outside the server, registered under its key: heartbeats and the runs it reports.",
+  },
+  {
     name: "Housekeeping",
     description:
       "The periodic jobs the server runs on itself: what runs, when, and what the last run did.",

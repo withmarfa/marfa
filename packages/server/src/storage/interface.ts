@@ -2669,6 +2669,68 @@ export interface HousekeepingStore {
   get(name: string): Promise<HousekeepingRow | null>;
 }
 
+// ---------------------------------------------------------------------------
+// Connectors: a process outside the server, registered under its key
+// ---------------------------------------------------------------------------
+
+export type ConnectorRunOutcome = "succeeded" | "failed";
+
+export interface ConnectorRun {
+  id: string;
+  connector_id: string;
+  outcome: ConnectorRunOutcome;
+  started_at: string;
+  finished_at: string;
+  summary: string | null;
+  error: string | null;
+  reported_at: string;
+}
+
+export interface ConnectorRunInput {
+  outcome: ConnectorRunOutcome;
+  started_at: string;
+  finished_at: string;
+  summary?: string;
+  error?: string;
+}
+
+/** A registration: a process outside the server, named under its key. */
+export interface Connector {
+  id: string;
+  key_id: string;
+  /** The key's source, the name its writes carry. */
+  source: string;
+  name: string;
+  description: string | null;
+  registered_at: string;
+  updated_at: string;
+  last_heartbeat_at: string | null;
+  last_run: ConnectorRun | null;
+}
+
+export interface ConnectorStore {
+  /** Register the key, or update its registration: one per key, decided
+   *  by one statement so two first registrations at once answer as a first
+   *  and a repeat. */
+  register(
+    key: { id: string; source: string },
+    name: string,
+    description: string | null,
+  ): Promise<{ connector: Connector; created: boolean }>;
+  /** Every registration, newest first. */
+  list(): Promise<Connector[]>;
+  get(id: string): Promise<Connector | null>;
+  /** Remove the registration and its runs. True when one went. */
+  remove(id: string): Promise<boolean>;
+  /** Stamp the heartbeat with the server's clock; the stamp, or null when
+   *  there is no such registration. */
+  heartbeat(id: string): Promise<string | null>;
+  /** Record a run, keeping the connector's newest hundred. */
+  recordRun(id: string, input: ConnectorRunInput): Promise<ConnectorRun>;
+  /** A connector's runs, newest first. */
+  listRuns(id: string, limit: number): Promise<ConnectorRun[]>;
+}
+
 export interface Storage extends Partial<BetterAuthStorageAdapter> {
   items: ItemStore;
   metadata: MetadataStore;
@@ -2718,6 +2780,8 @@ export interface Storage extends Partial<BetterAuthStorageAdapter> {
   /** The server's own periodic jobs. The scheduler is the only writer; the
    *  housekeeping doors read it through the scheduler. */
   housekeeping: HousekeepingStore;
+  /** The registrations behind `/connectors`, and the runs they report. */
+  connectors: ConnectorStore;
   runInTransaction<T>(fn: () => T | Promise<T>): Promise<T>;
   close(): Promise<void>;
 }
