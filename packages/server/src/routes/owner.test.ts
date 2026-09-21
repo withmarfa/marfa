@@ -10,6 +10,7 @@ import { createApp } from "../app.js";
 import { OidcSigner } from "../auth/oidc-signing.js";
 import { ensureInstanceId } from "../storage/instance-id.js";
 import { createBlobLayer } from "../storage/blob-layer.js";
+import { Housekeeping } from "../housekeeping/scheduler.js";
 import { createSqliteStorage } from "../storage/sqlite/index.js";
 import { auth_account, auth_user } from "../storage/sqlite/schema.js";
 import type { DrizzleDb } from "../storage/sqlite/connection.js";
@@ -333,6 +334,7 @@ describe("POST /owner", () => {
       const other = createApp(
         storage,
         await createBlobLayer(storage, ctx.config),
+        new Housekeeping(storage.housekeeping, { pollIntervalMs: 1_000 }),
         ctx.config,
         await ensureInstanceId(storage.settings),
         await OidcSigner.init(storage),
