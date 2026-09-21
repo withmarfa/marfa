@@ -12,22 +12,22 @@ pub fn run(named: &Named, out: &Printer) -> Result<(), CliError> {
     let origin = Remote::public_at(&url)?.origin().to_string();
     match credentials::read(&origin)? {
         Some(kept @ Kept::Token { .. }) => {
-            // The keychain decides the sign-out; a revocation the server
-            // refuses is reported, not obeyed.
-            let revoked = match auth::revoke(&kept) {
-                Ok(()) => true,
-                Err(CliError::Refused { .. }) => false,
-                Err(error) => return Err(error),
+            // The keychain decides the sign-out: the token is forgotten
+            // whether or not the server took the revocation, and the
+            // answer says which.
+            let not_revoked = match auth::revoke(&kept) {
+                Ok(()) => None,
+                Err(CliError::Refused { .. }) => Some("the server did not accept the revocation"),
+                Err(_) => Some("the server could not be reached to revoke it"),
             };
             credentials::forget(&origin)?;
             out.report(
-                &json!({ "server": origin, "signed_out": true, "revoked": revoked }),
-                || {
-                    if revoked {
-                        format!("signed out of {origin}")
-                    } else {
+                &json!({ "server": origin, "signed_out": true, "revoked": not_revoked.is_none() }),
+                || match not_revoked {
+                    None => format!("signed out of {origin}"),
+                    Some(why) => {
                         format!(
-                            "signed out of {origin}; the server did not accept the revocation, so the token stands until it expires"
+                            "signed out of {origin}; {why}, so the token stands until it expires"
                         )
                     }
                 },

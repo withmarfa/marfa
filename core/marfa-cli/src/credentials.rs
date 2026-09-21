@@ -5,7 +5,8 @@
 //! one entry naming the origin a bare command talks to. Never a file: a file
 //! is readable by anything on the machine, and two processes refreshing one
 //! token from a file race each other into a revoked chain; a process with no
-//! keychain is told so and pointed at `--key` or the environment.
+//! keychain is told so and pointed at `--key`, the environment, or
+//! `login --print-token`.
 
 use keyring::{Entry, Error};
 use serde::{Deserialize, Serialize};
@@ -140,15 +141,41 @@ pub fn current() -> Result<Option<String>, CliError> {
     }
 }
 
-/// Holds the keychain for one test: every test that keeps a credential
-/// writes the one `current` entry, so two running at once read each
-/// other's origin back.
+/// Holds the keychain for one test's origin: every test that keeps a
+/// credential writes the one `current` entry, so two running at once read
+/// each other's origin back; and the entries the test wrote go when the
+/// hold does, a panic included, so a failing test leaves nothing behind
+/// under a service name no later run can find.
 #[cfg(test)]
-pub(crate) fn hold() -> std::sync::MutexGuard<'static, ()> {
+pub(crate) fn hold(origin: &str) -> Held {
     static KEYCHAIN: std::sync::Mutex<()> = std::sync::Mutex::new(());
-    KEYCHAIN
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
+    Held {
+        origin: origin.to_string(),
+        _lock: KEYCHAIN
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()),
+    }
+}
+
+#[cfg(test)]
+pub(crate) struct Held {
+    origin: String,
+    _lock: std::sync::MutexGuard<'static, ()>,
+}
+
+#[cfg(test)]
+impl Drop for Held {
+    fn drop(&mut self) {
+        for account in [
+            self.origin.clone(),
+            format!("{CLIENT}{}", self.origin),
+            CURRENT.to_string(),
+        ] {
+            if let Ok(entry) = entry(&account) {
+                let _ = entry.delete_credential();
+            }
+        }
+    }
 }
 
 /// What a test does where the keychain does not answer: says so, unless
@@ -174,12 +201,11 @@ mod tests {
     /// Skipped with its reason where the keychain does not answer at any
     /// step (a headless runner, or a Mac whose keychain asks a person
     /// before a rebuilt binary may touch an item), unless the runner says
-    /// it has one; the scenario suite covers the same path wherever a
-    /// keychain answers.
+    /// it has one.
     #[test]
     fn keeps_reads_and_forgets_a_credential_for_one_origin() {
-        let _keychain = hold();
         let origin = format!("https://test.invalid:{}", std::process::id());
+        let _keychain = hold(&origin);
         let kept = Kept::Key {
             key: "marfa_k1_test".into(),
         };
@@ -217,5 +243,39 @@ mod tests {
             Err(CliError::NoKeychain(reason)) => skipped(&reason),
             Err(error) => panic!("{error}"),
         }
+    }
+
+    /// A test run's entries never reach the service the binary uses: what a
+    /// test keeps is absent under "marfa", and the run's own service is not
+    /// that name.
+    #[test]
+    fn a_test_run_never_touches_the_service_the_binary_uses() {
+        assert_ne!(service(), "marfa");
+        let origin = format!("https://isolated.invalid:{}", std::process::id());
+        let _keychain = hold(&origin);
+        match keep(
+            &origin,
+            &Kept::Key {
+                key: "marfa_k1_isolated".into(),
+            },
+        ) {
+            Ok(()) => {}
+            Err(CliError::NoKeychain(reason)) => return skipped(&reason),
+            Err(error) => panic!("{error}"),
+        }
+        assert!(matches!(
+            Entry::new("marfa", &origin).unwrap().get_password(),
+            Err(Error::NoEntry)
+        ));
+        assert!(
+            matches!(
+                Entry::new("marfa", CURRENT).unwrap().get_password(),
+                Err(Error::NoEntry)
+            ) || Entry::new("marfa", CURRENT)
+                .unwrap()
+                .get_password()
+                .unwrap()
+                != origin
+        );
     }
 }

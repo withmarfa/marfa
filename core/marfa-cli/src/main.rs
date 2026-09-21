@@ -173,7 +173,8 @@ fn run(cli: Cli) -> Result<(), CliError> {
     // Resolved by the commands that talk to a server: the working copy and
     // the folders resolve it only where a command sends, the table needs no
     // server at all, and signing in and out take the server without a
-    // credential, one having none yet and the other giving its up.
+    // credential, since a sign-in has none yet and a sign-out is giving
+    // its up.
     let remote = || Remote::resolve(&named);
     match cli.command {
         Command::Operations => operations::run(&out),

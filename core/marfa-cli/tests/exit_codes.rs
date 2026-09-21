@@ -47,7 +47,10 @@ fn read_envelope(stderr: &str) -> serde_json::Value {
 
 /// Whether this machine's keychain names a current server, which the
 /// binary consults when nothing else names one: the cases that expect
-/// `no_server` cannot be held on a machine where a kept key answers.
+/// `no_server` cannot be held on a machine where a kept credential answers.
+/// The built binary reads the real keychain (the per-run test service is
+/// the unit tests' alone), so on a developer's machine the verdict adapts
+/// to what they have kept.
 fn keychain_names_a_server() -> bool {
     let (code, _, stderr) = run(&["--json", "status"]);
     code != 2 || !stderr.contains("no_server")

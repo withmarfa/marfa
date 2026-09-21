@@ -24,4 +24,6 @@ thiserror.workspace = true
 fd-lock = "4"
 # The password prompt on a terminal, never an argument.
 rpassword = "7"
+# The user id the refresh lock's directory is named by and checked against.
+libc = "0.2"
 url = "2"

@@ -1166,6 +1166,7 @@ dependencies = [
  "clap",
  "fd-lock",
  "keyring",
+ "libc",
  "marfa-core",
  "notify",
  "rpassword",

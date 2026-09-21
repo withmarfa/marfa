@@ -161,6 +161,16 @@ pub fn on_issuer(discovery: &Discovery, named: &str) -> Result<(), CliError> {
     Ok(())
 }
 
+/// The pages a device code points a browser at, checked like the doors:
+/// the binary is about to hand one to `open`.
+pub fn pages_on_issuer(discovery: &Discovery, code: &DeviceCode) -> Result<(), CliError> {
+    on_issuer(discovery, &code.verification_uri)?;
+    if let Some(complete) = &code.verification_uri_complete {
+        on_issuer(discovery, complete)?;
+    }
+    Ok(())
+}
+
 /// Everything the owner can tick, narrowed to what the server says it
 /// supports. The consent screen narrows further; asking for less here
 /// would hide a toggle the person may want.
@@ -255,16 +265,13 @@ pub fn wait_for_decision(
     client_id: &str,
     code: &DeviceCode,
 ) -> Result<TokenSet, CliError> {
-    let deadline = now_seconds() + code.expires_in;
+    let deadline = now_seconds().saturating_add(code.expires_in);
     let mut interval = code.interval.max(1);
     loop {
-        sleep(Duration::from_secs(interval));
-        match poll(discovery, client_id, &code.device_code)? {
-            Poll::Token(token) => return Ok(token),
-            Poll::Pending => {}
-            Poll::SlowDown => interval += 5,
-        }
-        if now_seconds() >= deadline {
+        // The wait never outlives the code, whatever interval the server
+        // asked for.
+        let remaining = deadline.saturating_sub(now_seconds());
+        if remaining == 0 {
             return Err(CliError::Refused {
                 status: 400,
                 code: "expired_token".to_string(),
@@ -273,6 +280,12 @@ pub fn wait_for_decision(
                 retry_after_seconds: None,
                 details: None,
             });
+        }
+        sleep(Duration::from_secs(interval.min(remaining)));
+        match poll(discovery, client_id, &code.device_code)? {
+            Poll::Token(token) => return Ok(token),
+            Poll::Pending => {}
+            Poll::SlowDown => interval = interval.saturating_add(5),
         }
     }
 }
@@ -290,7 +303,9 @@ pub fn kept(token: &TokenSet, client_id: &str, discovery: &Discovery) -> Kept {
     Kept::Token {
         access_token: token.access_token.clone(),
         refresh_token: token.refresh_token.clone(),
-        expires_at: token.expires_in.map(|seconds| now_seconds() + seconds),
+        expires_at: token
+            .expires_in
+            .map(|seconds| now_seconds().saturating_add(seconds)),
         client_id: client_id.to_string(),
         scope: token.scope.clone(),
         token_endpoint: discovery.token_endpoint.clone(),
@@ -305,7 +320,7 @@ pub fn is_stale(kept: &Kept) -> bool {
             expires_at: Some(expires_at),
             refresh_token: Some(_),
             ..
-        } => now_seconds() + REFRESH_AHEAD_SECONDS >= *expires_at,
+        } => now_seconds().saturating_add(REFRESH_AHEAD_SECONDS) >= *expires_at,
         _ => false,
     }
 }
@@ -325,7 +340,7 @@ pub fn refresh(origin: &str, refused: Option<&str>) -> Result<Kept, CliError> {
         .write(true)
         .create(true)
         .truncate(false)
-        .open(lock_path(origin))?;
+        .open(lock_path(origin)?)?;
     let mut lock = fd_lock::RwLock::new(file);
     let _held = lock.write()?;
 
@@ -383,7 +398,9 @@ pub fn refresh(origin: &str, refused: Option<&str>) -> Result<Kept, CliError> {
             // A server that does not rotate answers no refresh token, and
             // the one held stays good.
             refresh_token: token.refresh_token.or(Some(refresh_token)),
-            expires_at: token.expires_in.map(|seconds| now_seconds() + seconds),
+            expires_at: token
+                .expires_in
+                .map(|seconds| now_seconds().saturating_add(seconds)),
             client_id,
             scope: token.scope.or_else(|| scope.clone()),
             token_endpoint,
@@ -391,37 +408,71 @@ pub fn refresh(origin: &str, refused: Option<&str>) -> Result<Kept, CliError> {
         },
         Kept::Key { .. } => unreachable!("a key was answered above"),
     };
-    credentials::keep(origin, &next)?;
+    if let Err(error) = credentials::keep(origin, &next) {
+        // The server has rotated and the keychain would not take the new
+        // set: the kept refresh token is spent, and replaying it would
+        // revoke the chain, so the entry goes and the reason is the answer.
+        let _ = credentials::drop(origin);
+        return Err(match error {
+            CliError::NoKeychain(reason) => CliError::NoKeychain(format!(
+                "{reason}; the refreshed token could not be kept, so the sign-in ended: run marfa login"
+            )),
+            other => other,
+        });
+    }
     Ok(next)
 }
 
-/// Where the refresh lock for an origin lives: the user's own runtime
-/// directory where the system has one, else the temp directory with the
-/// user's id in the name, since a shared `/tmp` lets another user plant
-/// the file first.
-fn lock_path(origin: &str) -> PathBuf {
-    let dir = std::env::var_os("XDG_RUNTIME_DIR")
+/// Where the refresh lock for an origin lives: a directory of this user's
+/// alone under the runtime directory where the system has one, else the
+/// temp directory, made for them and checked to be theirs, because a
+/// shared `/tmp` lets another user plant the file first and hold its lock
+/// against every refresh.
+fn lock_path(origin: &str) -> Result<PathBuf, CliError> {
+    let base = std::env::var_os("XDG_RUNTIME_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(std::env::temp_dir);
-    dir.join(format!(
-        "marfa-refresh-{}-{}.lock",
-        user_id(),
-        fingerprint(origin)
-    ))
+    let dir = base.join(format!("marfa-{}", user_id()));
+    own_directory(&dir)?;
+    Ok(dir.join(format!("refresh-{}.lock", fingerprint(origin))))
 }
 
 #[cfg(unix)]
-fn user_id() -> String {
-    use std::os::unix::fs::MetadataExt;
-    std::env::home_dir()
-        .and_then(|home| std::fs::metadata(home).ok())
-        .map(|metadata| metadata.uid().to_string())
-        .unwrap_or_default()
+fn user_id() -> u32 {
+    // Safe: getuid takes nothing and cannot fail.
+    unsafe { libc::getuid() }
+}
+
+#[cfg(unix)]
+fn own_directory(dir: &std::path::Path) -> Result<(), CliError> {
+    use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
+    match std::fs::DirBuilder::new().mode(0o700).create(dir) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+        Err(error) => return Err(error.into()),
+    }
+    let metadata = std::fs::metadata(dir)?;
+    if !metadata.is_dir()
+        || metadata.uid() != user_id()
+        || metadata.permissions().mode() & 0o077 != 0
+    {
+        return Err(CliError::Invalid(format!(
+            "{} is not a directory of this user's alone; refusing to take the refresh lock there",
+            dir.display()
+        )));
+    }
+    Ok(())
 }
 
 #[cfg(not(unix))]
-fn user_id() -> String {
-    String::new()
+fn user_id() -> u32 {
+    0
+}
+
+#[cfg(not(unix))]
+fn own_directory(dir: &std::path::Path) -> Result<(), CliError> {
+    std::fs::create_dir_all(dir)?;
+    Ok(())
 }
 
 /// Tells the server the token set is done with: the refresh token where
@@ -591,6 +642,27 @@ mod tests {
             on_issuer(&discovery, "file:///etc/passwd").is_err(),
             "a page that is not a web page is not opened"
         );
+        assert!(
+            on_issuer(&discovery, &format!("blob:{issuer_origin}/x")).is_err(),
+            "a blob URL carries its inner origin, so only the scheme check refuses it"
+        );
+        let code = DeviceCode {
+            device_code: "dc".into(),
+            user_code: "ABCD1234".into(),
+            verification_uri: format!("{issuer_origin}/auth/device"),
+            verification_uri_complete: Some(format!("{elsewhere}/auth/device?user_code=ABCD1234")),
+            expires_in: 600,
+            interval: 5,
+        };
+        assert!(
+            pages_on_issuer(&discovery, &code).is_err(),
+            "the complete page is checked as well as the plain one"
+        );
+        let code = DeviceCode {
+            verification_uri_complete: None,
+            ..code
+        };
+        assert!(pages_on_issuer(&discovery, &code).is_ok());
 
         let door = Door::open_at(|own| vec![Answer::json("200 OK", &document(own, elsewhere))]);
         let refused = discover(&Remote::public_at(&door.url).unwrap());
@@ -665,8 +737,8 @@ mod tests {
     /// sent replaces the one that was spent, sent once.
     #[test]
     fn a_refresh_keeps_the_rotated_pair_and_sends_the_spent_token_once() {
-        let _keychain = credentials::hold();
         let origin = format!("https://refresh.invalid:{}", std::process::id());
+        let _keychain = credentials::hold(&origin);
         let (endpoint, door) = token_door(
             "200 OK",
             r#"{"access_token":"marfa_at_new","refresh_token":"marfa_rt_new","expires_in":3600,"token_type":"Bearer","scope":"*:read"}"#,
@@ -675,7 +747,6 @@ mod tests {
             return;
         }
         let outcome = refresh(&origin, None);
-        let _ = credentials::forget(&origin);
         let received = door.received();
         assert_eq!(received.len(), 1);
         let sent = &received[0];
@@ -716,8 +787,8 @@ mod tests {
     /// anything when the keychain no longer holds what was seen.
     #[test]
     fn a_set_already_rotated_by_another_process_is_not_refreshed_again() {
-        let _keychain = credentials::hold();
         let origin = format!("https://rotated.invalid:{}", std::process::id());
+        let _keychain = credentials::hold(&origin);
         // A token door nothing listens on, so a refresh that should not
         // happen fails loudly.
         let endpoint = format!("{}/token", closed_origin());
@@ -739,7 +810,6 @@ mod tests {
             fresh,
             "the refused bearer is not the kept one: another process already refreshed"
         );
-        let _ = credentials::forget(&origin);
     }
 
     /// A door that refuses the grant ends the sign-in: the entry is gone,
@@ -748,8 +818,8 @@ mod tests {
     /// witness is the same entry surviving a 429.
     #[test]
     fn a_dead_grant_ends_the_sign_in_and_any_other_refusal_leaves_it() {
-        let _keychain = credentials::hold();
         let origin = format!("https://refused.invalid:{}", std::process::id());
+        let _keychain = credentials::hold(&origin);
         let (endpoint, door) = token_door(
             "429 Too Many Requests",
             r#"{"error":{"code":"rate_limited","message":"slow down"}}"#,
@@ -786,6 +856,5 @@ mod tests {
             Some(origin.as_str()),
             "the origin stays current so the next command names the server it lost"
         );
-        let _ = credentials::forget(&origin);
     }
 }

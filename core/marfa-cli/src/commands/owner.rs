@@ -1,4 +1,4 @@
-use std::io::{IsTerminal, Read};
+use std::io::IsTerminal;
 
 use clap::{Args, Subcommand};
 use serde_json::json;
@@ -58,9 +58,9 @@ pub fn run(command: OwnerCommand, remote: &Remote, out: &Printer) -> Result<(), 
 /// hanging on a prompt nobody sees.
 fn read_password(from_stdin: bool) -> Result<String, CliError> {
     let password = if from_stdin {
-        let mut text = String::new();
-        std::io::stdin().read_to_string(&mut text)?;
-        text.lines().next().unwrap_or("").to_string()
+        let mut line = String::new();
+        std::io::stdin().read_line(&mut line)?;
+        line.trim_end_matches(['\r', '\n']).to_string()
     } else {
         if !std::io::stdin().is_terminal() {
             return Err(CliError::Invalid(

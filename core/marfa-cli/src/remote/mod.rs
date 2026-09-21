@@ -504,7 +504,6 @@ mod tests {
     /// the answer.
     #[test]
     fn a_refused_kept_token_is_refreshed_once_and_the_call_sent_again() {
-        let _keychain = credentials::hold();
         let door = Door::open(vec![
             Answer::json(
                 "401 Unauthorized",
@@ -536,6 +535,7 @@ mod tests {
         // The refresh reads the keychain by the remote's origin, which is
         // the door's.
         let origin = Http::new(&door.url, None).unwrap().origin();
+        let _keychain = credentials::hold(&origin);
         match credentials::keep(&origin, &kept) {
             Ok(()) => {}
             Err(CliError::NoKeychain(reason)) => {
@@ -555,7 +555,6 @@ mod tests {
             matches!(credentials::read(&origin).unwrap(), Some(Kept::Token { access_token, .. }) if access_token == "marfa_at_new"),
             "the rotated set is the kept one, and the refused refresh left it"
         );
-        let _ = credentials::forget(&origin);
         let received = door.received();
         assert_eq!(received.len(), 5);
         assert_eq!(received[0].path(), "/items");
