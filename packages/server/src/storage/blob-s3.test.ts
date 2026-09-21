@@ -124,6 +124,18 @@ describe("S3BlobStore", () => {
       expect(store.kind).toBe("s3");
     });
 
+    it("leaves the SDK's checksums to a caller that asks for them", () => {
+      const store = new S3BlobStore(defaultConfig) as unknown as {
+        client: { config: Record<string, unknown> };
+      };
+      expect(store.client.config.requestChecksumCalculation).toBe(
+        "WHEN_REQUIRED",
+      );
+      expect(store.client.config.responseChecksumValidation).toBe(
+        "WHEN_REQUIRED",
+      );
+    });
+
     it("sets path style only when an endpoint is given", () => {
       const aws = new S3BlobStore(defaultConfig) as unknown as {
         client: { config: Record<string, unknown> };

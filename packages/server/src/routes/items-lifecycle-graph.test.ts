@@ -1,30 +1,15 @@
 /**
  * A lifecycle write obeys the type's own graph.
  *
- * `system.*` types declare a bounded lifecycle — `active | revoked`, with
- * `revoked` terminal — while every other type follows the canonical
- * `active | archived | trashed` graph. Three of the four write paths that
- * move an item's `state` asked `validateTransition` about it. Two did not,
- * and they chained:
- *
- *   - `items.restore()` wrote `active` unconditionally once the row read
- *     `trashed`, where `delete()` and `transition()` both validated first.
- *   - `POST /items` accepted an optional `state` checked only for membership
- *     of the universal state list, so a create naming `trashed` would put a
- *     `system.*` row in a state that type's lifecycle does not contain,
- *     reachable by no transition and leavable by none. No credential can
- *     reach it — the fence admits the operator key alone and that key holds
- *     no type permissions — so the guard has a test instead of a caller.
- *
- * Create in `trashed`, then restore, and the row is `active` having passed
- * nothing the graph admits.
- *
- * **The two fixes sit at different layers on purpose**, and the tests below
- * pin the asymmetry as much as the refusals. The restore gate is in the
- * store, beside its two siblings, because keeping the three together is what
- * stops them drifting again. The create gate is in the route, because
- * `storage.items.create` is also the archive restore's writer and has to
- * faithfully replay states written before this rule existed.
+ * `system.*` types declare a bounded lifecycle, `active | revoked` with
+ * `revoked` terminal, while every other type follows the canonical
+ * `active | archived | trashed` graph. Every door that moves or names an
+ * item's `state` asks `validateTransition` about it: `delete()`,
+ * `transition()` and `restore()` in the store, because each is a
+ * transition; `POST /items` and `POST /admin/restore-archive` in the route,
+ * because a create is not a transition and the store's `create` is the
+ * writer both doors share. A `system.*` row in `trashed` would be
+ * reachable by no transition and leavable by none, so no door writes one.
  *
  * Assertions read the error MESSAGE, not only the code: `restore()` already
  * threw `INVALID_TRANSITION` for a non-trashed row, so a code-only assertion
@@ -225,7 +210,7 @@ describe("POST /items — a create names a state the type's lifecycle contains",
 });
 
 // ---------------------------------------------------------------------------
-// The tolerance case: the route/store split has to be real
+// The archive door asks the same question of every row it would write
 // ---------------------------------------------------------------------------
 
 async function buildArchive(
@@ -248,38 +233,136 @@ async function buildArchive(
   return Buffer.concat(chunks);
 }
 
-describe("POST /admin/restore-archive — an archive replays a state the create route refuses", () => {
-  it("restores a system item recorded in trashed, because the store gate was deliberately not added", async () => {
+const MANIFEST = {
+  version: 2,
+  format: "marfa-archive-v2",
+  created_at: new Date().toISOString(),
+  item_count: 2,
+  blob_count: 0,
+  blobs: {},
+};
+
+describe("POST /admin/restore-archive — an archive names a state the type's lifecycle contains", () => {
+  it("refuses the whole archive when a system row is recorded in trashed, and writes nothing", async () => {
     ctx = await createTestContext();
     const c = ctx;
 
-    // Exactly the row the create route refuses two describes above. An
-    // archive is a record of what was held, and rows in this shape exist
-    // because nothing refused them at the time. Tightening
-    // `storage.items.create` alongside the route would make those archives
-    // unrestorable, which is why the two gates sit at different layers.
     const writer = await systemWriter(c);
-    const archiveId = generateId();
-    const archive = await buildArchive(
-      {
-        version: 2,
-        format: "marfa-archive-v2",
-        created_at: new Date().toISOString(),
-        item_count: 1,
-        blob_count: 0,
-        blobs: {},
+    const systemId = generateId();
+    const noteId = generateId();
+    const archive = await buildArchive(MANIFEST, [
+      // An ordinary row first, so the refusal is shown to take the whole
+      // archive with it rather than the rows after the bad one.
+      JSON.stringify({
+        item: {
+          id: noteId,
+          type: "core.note",
+          state: "trashed",
+          properties: { body: "Trashed note" },
+        },
+      }),
+      JSON.stringify({
+        item: {
+          id: systemId,
+          type: SYSTEM_TYPE,
+          state: "trashed",
+          properties: writer.properties(),
+        },
+      }),
+    ]);
+
+    const res = await c.app.request(`/admin/restore-archive`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${c.operatorKey}`,
+        "Content-Type": "application/gzip",
       },
-      [
+      body: archive,
+    });
+    expect(res.status).toBe(400);
+    const error = await errorOf(res);
+    expect(error.code).toBe("validation_error");
+    expect(error.message).toContain(systemId);
+    expect(error.message).toContain('"active" to "trashed"');
+    expect(await c.storage.items.getIncludingTrashed(systemId)).toBeNull();
+    expect(await c.storage.items.getIncludingTrashed(noteId)).toBeNull();
+
+    // `archived` is as unreachable for a system row as `trashed`.
+    const archivedId = generateId();
+    const archived = await c.app.request(`/admin/restore-archive`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${c.operatorKey}`,
+        "Content-Type": "application/gzip",
+      },
+      body: await buildArchive(MANIFEST, [
         JSON.stringify({
           item: {
-            id: archiveId,
+            id: archivedId,
             type: SYSTEM_TYPE,
-            state: "trashed",
+            state: "archived",
             properties: writer.properties(),
           },
         }),
-      ],
+      ]),
+    });
+    expect(archived.status).toBe(400);
+    expect((await errorOf(archived)).message).toContain(
+      '"active" to "archived"',
     );
+    expect(await c.storage.items.getIncludingTrashed(archivedId)).toBeNull();
+
+    // A state that is no state at all is refused the same way, since the
+    // store would otherwise write it as it came.
+    const numeric = await c.app.request(`/admin/restore-archive`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${c.operatorKey}`,
+        "Content-Type": "application/gzip",
+      },
+      body: await buildArchive(MANIFEST, [
+        JSON.stringify({
+          item: {
+            id: noteId,
+            type: "core.note",
+            state: 5,
+            properties: { body: "Numbered note" },
+          },
+        }),
+      ]),
+    });
+    expect(numeric.status).toBe(400);
+    expect((await errorOf(numeric)).message).toContain(
+      'Invalid target state "5"',
+    );
+    expect(await c.storage.items.getIncludingTrashed(noteId)).toBeNull();
+  });
+
+  it("restores the states each lifecycle contains: trashed for an ordinary row, active for a system row", async () => {
+    ctx = await createTestContext();
+    const c = ctx;
+
+    const writer = await systemWriter(c);
+    const systemId = generateId();
+    const noteId = generateId();
+    const archive = await buildArchive(MANIFEST, [
+      JSON.stringify({
+        item: {
+          id: noteId,
+          type: "core.note",
+          state: "trashed",
+          properties: { body: "Trashed note" },
+        },
+      }),
+      JSON.stringify({
+        item: {
+          id: systemId,
+          type: SYSTEM_TYPE,
+          state: "active",
+          properties: writer.properties(),
+        },
+      }),
+    ]);
 
     const res = await c.app.request(`/admin/restore-archive`, {
       method: "POST",
@@ -290,20 +373,10 @@ describe("POST /admin/restore-archive — an archive replays a state the create 
       body: archive,
     });
     expect(res.status).toBe(200);
-    const data = (await res.json()) as { imported: number };
-    expect(data.imported).toBe(1);
-
-    // Replayed faithfully, in the state the archive recorded.
-    const stored = await c.storage.items.getIncludingTrashed(archiveId);
-    expect(stored?.type).toBe(SYSTEM_TYPE);
-    expect(stored?.state).toBe("trashed");
-
-    // And the same chain is still closed at the other end: the row exists,
-    // and the graph still refuses to walk it out to active.
-    const restore = await c.storage.items.restore(archiveId).then(
-      () => null,
-      (err: unknown) => err as { message: string },
+    expect(((await res.json()) as { imported: number }).imported).toBe(2);
+    expect((await c.storage.items.getIncludingTrashed(noteId))?.state).toBe(
+      "trashed",
     );
-    expect(restore?.message).toContain('Transition from "trashed" to "active"');
+    expect((await c.storage.items.get(systemId))?.state).toBe("active");
   });
 });

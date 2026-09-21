@@ -1,4 +1,6 @@
 import { createHash } from "node:crypto";
+import { existsSync, readdirSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { createGzip } from "node:zlib";
 import { describe, expect, it, beforeAll, afterAll, vi } from "vitest";
 import * as tar from "tar-stream";
@@ -47,6 +49,8 @@ async function buildArchive(
   /** Lines for `edges.ndjson`. Omitted entirely when empty, so an archive
    *  without edges keeps the shape every existing case builds. */
   edgeLines: string[] = [],
+  /** Lines for `types.ndjson`, omitted when empty for the same reason. */
+  typeLines: string[] = [],
 ): Promise<Buffer> {
   const pack = tar.pack();
   const chunks: Buffer[] = [];
@@ -65,6 +69,11 @@ async function buildArchive(
   if (edgeLines.length > 0) {
     const edgesBuf = Buffer.from(edgeLines.join("\n") + "\n");
     pack.entry({ name: "edges.ndjson", size: edgesBuf.length }, edgesBuf);
+  }
+
+  if (typeLines.length > 0) {
+    const typesBuf = Buffer.from(typeLines.join("\n") + "\n");
+    pack.entry({ name: "types.ndjson", size: typesBuf.length }, typesBuf);
   }
 
   for (const blob of blobs) {
@@ -87,6 +96,57 @@ function makeBlobData(content: string): {
   const data = Buffer.from(content);
   const hex = createHash("sha256").update(data).digest("hex");
   return { hash: `sha256:${hex}`, data };
+}
+
+/** A version 2 manifest naming the blobs given as `text/plain`. */
+function manifestFor(...blobs: { hash: string; data: Buffer }[]) {
+  return {
+    version: 2,
+    format: "marfa-archive-v2",
+    created_at: new Date().toISOString(),
+    item_count: 1,
+    blob_count: blobs.length,
+    blobs: Object.fromEntries(
+      blobs.map((blob) => [
+        blob.hash,
+        { mime_type: "text/plain", size_bytes: blob.data.length },
+      ]),
+    ),
+  };
+}
+
+/** One `items.ndjson` line: a note naming the blob, with what else is
+ *  given on the row. */
+function noteLine(
+  blob: { hash: string },
+  extra: Record<string, unknown> = {},
+): string {
+  return JSON.stringify({
+    item: {
+      type: "core.note",
+      properties: { body: "Spooled", blob_ref: blob.hash },
+      ...extra,
+    },
+  });
+}
+
+/** The archive posted with the operator key. */
+async function postArchive(archive: Buffer): Promise<Response> {
+  return ctx.app.request("/admin/restore-archive", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${ctx.operatorKey}`,
+      "Content-Type": "application/gzip",
+    },
+    body: archive,
+  });
+}
+
+async function errorOf(
+  res: Response,
+): Promise<{ code: string; message: string }> {
+  return ((await res.json()) as { error: { code: string; message: string } })
+    .error;
 }
 
 describe("POST /admin/restore-archive", () => {
@@ -142,8 +202,197 @@ describe("POST /admin/restore-archive", () => {
       key: ctx.workingKey,
     });
     expect(blobRes.status).toBe(200);
+    // The type the manifest named, not the default an unnamed entry gets.
+    expect(blobRes.headers.get("Content-Type")).toBe("text/plain");
     const blobContent = Buffer.from(await blobRes.arrayBuffer());
     expect(blobContent.toString()).toBe("archive-import-blob-test");
+  });
+
+  it("leaves no spool behind, after a restore and after a refusal that came once the blobs were read", async () => {
+    const spoolDir = ctx.blobs.disk.spoolDir;
+    // The witness that spools were minted at all: every path the store
+    // hands out for this request, seen under its spool directory and gone
+    // once the request has answered.
+    const minted = vi.spyOn(ctx.blobs.disk, "spoolPath");
+    const spoolsMinted = () => {
+      const paths = minted.mock.results.map((r) => r.value as string);
+      minted.mockClear();
+      for (const path of paths) expect(dirname(path)).toBe(spoolDir);
+      return paths;
+    };
+
+    // Refused after its entries were read: more items than the door takes,
+    // with a blob entry ahead of them. The blob's spool goes with the
+    // refusal and the bytes never reach the store.
+    const refused = makeBlobData("spooled then refused");
+    const refusal = await postArchive(
+      await buildArchive(
+        manifestFor(refused),
+        Array.from({ length: 5001 }, () => noteLine(refused)),
+        [refused],
+      ),
+    );
+    expect(refusal.status).toBe(400);
+    expect((await errorOf(refusal)).message).toContain("Maximum 5000 items");
+    // The body's spool and the blob entry's.
+    const refusedSpools = spoolsMinted();
+    expect(refusedSpools).toHaveLength(2);
+    for (const path of refusedSpools) expect(existsSync(path)).toBe(false);
+    expect(readdirSync(spoolDir)).toEqual([]);
+    expect(await ctx.blobs.disk.has(refused.hash)).toBeNull();
+
+    // The same shape under the cap restores, and its spools are consumed:
+    // the blob's moved into place, the body's removed.
+    const kept = makeBlobData("spooled then kept");
+    const fine = await buildArchive(
+      manifestFor(kept),
+      [noteLine(kept)],
+      [kept],
+    );
+    const restored = await postArchive(fine);
+    expect(restored.status).toBe(200);
+    expect(
+      ((await restored.json()) as { blobs_imported: number }).blobs_imported,
+    ).toBe(1);
+    const keptSpools = spoolsMinted();
+    expect(keptSpools).toHaveLength(2);
+    for (const path of keptSpools) expect(existsSync(path)).toBe(false);
+    expect(readdirSync(spoolDir)).toEqual([]);
+    expect(await ctx.blobs.disk.has(kept.hash)).toEqual({
+      size_bytes: kept.data.length,
+    });
+
+    // Restored again, the disk already holds the bytes: the entry still
+    // counts as carried, its spool is removed rather than moved, and the
+    // bytes stay.
+    const again = await postArchive(fine);
+    expect(again.status).toBe(200);
+    expect(
+      ((await again.json()) as { blobs_imported: number }).blobs_imported,
+    ).toBe(1);
+    const againSpools = spoolsMinted();
+    expect(againSpools).toHaveLength(2);
+    for (const path of againSpools) expect(existsSync(path)).toBe(false);
+    expect(readdirSync(spoolDir)).toEqual([]);
+    expect(await ctx.blobs.disk.has(kept.hash)).toEqual({
+      size_bytes: kept.data.length,
+    });
+    minted.mockRestore();
+  });
+
+  it("takes its spools with it on the lifecycle's and the registry's refusals, and when a write fails", async () => {
+    const spoolDir = ctx.blobs.disk.spoolDir;
+
+    // A state the lifecycle cannot produce, refused with a blob entry read.
+    const lifecycle = makeBlobData("spooled, then a state refused");
+    const gate = await postArchive(
+      await buildArchive(
+        manifestFor(lifecycle),
+        [noteLine(lifecycle, { state: "revoked" })],
+        [lifecycle],
+      ),
+    );
+    expect(gate.status).toBe(400);
+    expect((await errorOf(gate)).message).toContain("cannot produce");
+    expect(readdirSync(spoolDir)).toEqual([]);
+    expect(await ctx.blobs.disk.has(lifecycle.hash)).toBeNull();
+
+    // A type the registry refuses, with a blob entry read.
+    const registry = makeBlobData("spooled, then a type refused");
+    const malformed = await postArchive(
+      await buildArchive(
+        manifestFor(registry),
+        [noteLine(registry)],
+        [registry],
+        [],
+        [
+          JSON.stringify({
+            type: {
+              id: "user.garbage_spool",
+              name: "Garbage",
+              description: "Field type is not a field type.",
+              version: 1,
+              fields: { title: { type: "not-a-real-type", description: "T." } },
+            },
+          }),
+        ],
+      ),
+    );
+    expect(malformed.status).toBe(400);
+    expect(readdirSync(spoolDir)).toEqual([]);
+    expect(await ctx.blobs.disk.has(registry.hash)).toBeNull();
+
+    // The disk store's write fails on the first of two blobs: the request
+    // fails, and neither blob's spool nor bytes are left.
+    const first = makeBlobData("spooled, then the store failed, one");
+    const second = makeBlobData("spooled, then the store failed, two");
+    const put = vi
+      .spyOn(ctx.blobs.disk, "put")
+      .mockRejectedValueOnce(new Error("disk fault"));
+    const faulted = await postArchive(
+      await buildArchive(
+        manifestFor(first, second),
+        [noteLine(first), noteLine(second)],
+        [first, second],
+      ),
+    );
+    put.mockRestore();
+    expect(faulted.status).toBe(500);
+    expect(readdirSync(spoolDir)).toEqual([]);
+    expect(await ctx.blobs.disk.has(first.hash)).toBeNull();
+    expect(await ctx.blobs.disk.has(second.hash)).toBeNull();
+
+    // The filesystem fails while an entry is being read: a fault, answered
+    // as one and not as a bad archive, and the body's spool goes.
+    const faulty = makeBlobData("spooled into a directory that is not there");
+    const original = ctx.blobs.disk.spoolPath.bind(ctx.blobs.disk);
+    const mint = vi
+      .spyOn(ctx.blobs.disk, "spoolPath")
+      .mockImplementationOnce(original)
+      .mockImplementationOnce(() => join(spoolDir, "missing", "entry"));
+    const fault = await postArchive(
+      await buildArchive(manifestFor(faulty), [noteLine(faulty)], [faulty]),
+    );
+    mint.mockRestore();
+    expect(fault.status).toBe(500);
+    expect((await errorOf(fault)).code).toBe("internal_error");
+    expect(readdirSync(spoolDir)).toEqual([]);
+    expect(await ctx.blobs.disk.has(faulty.hash)).toBeNull();
+  });
+
+  it("leaves out an entry whose bytes do not hash to its name", async () => {
+    const named = makeBlobData("the bytes the name promises");
+    const carried = makeBlobData("the bytes the entry carries");
+    const mismatch = await postArchive(
+      await buildArchive(
+        manifestFor(named),
+        [noteLine(named)],
+        [{ hash: named.hash, data: carried.data }],
+      ),
+    );
+    expect(mismatch.status).toBe(200);
+    expect(
+      ((await mismatch.json()) as { blobs_imported: number }).blobs_imported,
+    ).toBe(0);
+    expect(await ctx.blobs.disk.has(named.hash)).toBeNull();
+    expect(await ctx.blobs.disk.has(carried.hash)).toBeNull();
+    expect(readdirSync(ctx.blobs.disk.spoolDir)).toEqual([]);
+    const absent = await request(ctx.app, "GET", `/blobs/${named.hash}`, {
+      key: ctx.workingKey,
+    });
+    expect(absent.status).toBe(404);
+
+    // The same bytes under their own name are taken.
+    const honest = await postArchive(
+      await buildArchive(manifestFor(carried), [noteLine(carried)], [carried]),
+    );
+    expect(honest.status).toBe(200);
+    expect(
+      ((await honest.json()) as { blobs_imported: number }).blobs_imported,
+    ).toBe(1);
+    expect(await ctx.blobs.disk.has(carried.hash)).toEqual({
+      size_bytes: carried.data.length,
+    });
   });
 
   it("rejects archives with unsupported version", async () => {
@@ -174,6 +423,8 @@ describe("POST /admin/restore-archive", () => {
       body: new Uint8Array(0),
     });
     expect(res.status).toBe(400);
+    // The door's own refusal, not the decompressor's.
+    expect((await errorOf(res)).message).toBe("Empty archive");
   });
 
   it("refuses a body the gzip reader cannot parse and stays up", async () => {
@@ -303,7 +554,9 @@ describe("POST /admin/restore-archive", () => {
     };
     // Items with same source_id are deduplicated
     expect(data.duplicates).toBeGreaterThan(0);
-    expect(data.blobs_imported).toBeGreaterThanOrEqual(0);
+    // At least the blob uploaded above, which the export carries.
+    expect(data.blobs_imported).toBeGreaterThanOrEqual(1);
+    expect(readdirSync(ctx.blobs.disk.spoolDir)).toEqual([]);
   });
 });
 

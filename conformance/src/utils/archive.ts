@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { gunzipSync, gzipSync } from "node:zlib";
 
 /**
@@ -5,19 +6,19 @@ import { gunzipSync, gzipSync } from "node:zlib";
  *
  * Every other archive fixture posts back what `GET /export?format=archive`
  * produced, which keeps the round trip honest and needs no tar of our own.
- * One precondition cannot be arranged that way: a connector's copy of an
- * external record. No door mints a row whose `source` carries the
+ * Three preconditions cannot be arranged that way. A connector's copy of an
+ * external record: no door mints a row whose `source` carries the
  * `connector:` prefix — `POST /keys` refuses the prefix and `POST /items`
  * stamps the credential's own source over anything the body claims — so the
- * server can never be asked to export one.
- *
- * `POST /admin/restore-archive` writes `item.source` through verbatim, which
- * makes an archive the one door that does mint one. That is what this builds,
- * and it is why the doors behind that precondition are assertable at all.
+ * server can never be asked to export one, while `POST /admin/restore-archive`
+ * writes `item.source` through verbatim and is the one door that does mint
+ * one. A row in a state its type's lifecycle cannot produce, which no door
+ * writes and the restore refuses. And a blob larger than the request cap
+ * that nothing on the instance names yet, which only an archive carries in.
  *
  * USTAR, written out rather than taken from a dependency: the suite carries
- * no tar library and this needs four small entries with no links, no
- * directories and no long names.
+ * no tar library and this needs a few entries with no links, no directories
+ * and no long names.
  */
 
 const BLOCK = 512;
@@ -26,7 +27,7 @@ const BLOCK = 512;
 export interface ArchiveFile {
   /** Path inside the archive, e.g. `items.ndjson`. */
   name: string;
-  body: string;
+  body: string | Uint8Array;
 }
 
 function octal(value: number, width: number): string {
@@ -61,7 +62,10 @@ function header(file: ArchiveFile, size: number): Buffer {
 export function tarGz(files: ArchiveFile[]): Uint8Array {
   const parts: Buffer[] = [];
   for (const file of files) {
-    const body = Buffer.from(file.body, "utf8");
+    const body =
+      typeof file.body === "string"
+        ? Buffer.from(file.body, "utf8")
+        : Buffer.from(file.body);
     parts.push(header(file, body.length));
     parts.push(body);
     const remainder = body.length % BLOCK;
@@ -134,24 +138,49 @@ export interface ArchiveItem {
   occurred_at?: string;
 }
 
+/** A blob entry: its bytes, under the name the restore checks them against. */
+export interface ArchiveBlob {
+  data: Uint8Array;
+  mime_type: string;
+  /** The name the entry carries when it is not the bytes' own hash: an
+   *  entry the restore must leave out. */
+  named?: string;
+}
+
+/** `sha256:<hex>` over the bytes, the name a blob entry carries. */
+export function blobHash(data: Uint8Array): string {
+  return `sha256:${createHash("sha256").update(data).digest("hex")}`;
+}
+
 /**
- * A minimal version 2 archive carrying `items` and nothing else.
+ * A minimal version 2 archive carrying `items`, and the `blobs` given,
+ * and nothing else.
  *
  * `edges.ndjson` and `types.ndjson` are emitted empty rather than omitted,
  * which is what the server's own exporter does and what lets the restore
- * tell a damaged archive from an empty one.
+ * tell a damaged archive from an empty one. The blob entries sit between
+ * the items and the edges, so a member follows every blob and a blob whose
+ * padding was wrong would put the reader off that member.
  */
-export function itemsArchive(items: ArchiveItem[]): Uint8Array {
+export function itemsArchive(
+  items: ArchiveItem[],
+  blobs: ArchiveBlob[] = [],
+): Uint8Array {
   const manifest = {
     version: 2,
     format: "marfa-archive-v2",
     created_at: new Date().toISOString(),
     item_count: items.length,
     edge_count: 0,
-    blob_count: 0,
+    blob_count: blobs.length,
     type_count: 0,
     edge_type_count: 0,
-    blobs: {},
+    blobs: Object.fromEntries(
+      blobs.map((blob) => [
+        blob.named ?? blobHash(blob.data),
+        { mime_type: blob.mime_type, size_bytes: blob.data.length },
+      ]),
+    ),
   };
   const lines = items
     .map((item) =>
@@ -161,6 +190,10 @@ export function itemsArchive(items: ArchiveItem[]): Uint8Array {
   return tarGz([
     { name: "manifest.json", body: JSON.stringify(manifest, null, 2) },
     { name: "items.ndjson", body: lines === "" ? "" : `${lines}\n` },
+    ...blobs.map((blob) => ({
+      name: `blobs/${blob.named ?? blobHash(blob.data)}`,
+      body: blob.data,
+    })),
     { name: "edges.ndjson", body: "" },
     { name: "types.ndjson", body: "" },
   ]);

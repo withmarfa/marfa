@@ -67,6 +67,15 @@ export class S3BlobStore implements BlobStore {
     this.locator = `s3://${this.bucket}/${this.prefix}`;
     this.client = new S3Client({
       region: config.region,
+      // The store's own checksums are the hash in every object's name: a
+      // stream is hashed before it is uploaded and hashed again by whoever
+      // reads it back. The SDK's CRC checksums are left to a caller that
+      // asks for them, because a multipart object read back from an
+      // S3-compatible store can carry a checksum header the SDK's default
+      // validation does not expect, and a read of every large blob fails
+      // on a check that proves nothing the hash does not.
+      requestChecksumCalculation: "WHEN_REQUIRED",
+      responseChecksumValidation: "WHEN_REQUIRED",
       ...(config.endpoint
         ? {
             endpoint: config.endpoint,

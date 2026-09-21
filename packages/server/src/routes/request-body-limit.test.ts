@@ -1,10 +1,14 @@
+import { createHash, randomBytes } from "node:crypto";
+import { createGzip } from "node:zlib";
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
+import * as tar from "tar-stream";
 import { createTestContext } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 
 // Global request-body cap is small here so an oversized JSON write is cheap
 // to construct, and so a blob well over it is cheap too: a blob upload has
-// no cap, and the exemption is what this file shows.
+// no cap, an archive restore has none, and the exemptions are what this
+// file shows.
 const REQUEST_CAP = 2048;
 
 let ctx: TestContext;
@@ -88,6 +92,71 @@ describe("global request-body size cap", () => {
     expect(res.status).toBe(201);
     const body = (await res.json()) as { size_bytes: number };
     expect(body.size_bytes).toBe(data.length);
+  });
+
+  it("exempts the archive restore from the JSON cap: a blob many times the cap comes back byte for byte", async () => {
+    // Random bytes, so the archive is as large as the blob and gzip cannot
+    // bring it under the cap.
+    const data = randomBytes(REQUEST_CAP * 64);
+    const hash = `sha256:${createHash("sha256").update(data).digest("hex")}`;
+    const pack = tar.pack();
+    const chunks: Buffer[] = [];
+    const gzip = createGzip();
+    gzip.on("data", (chunk: Buffer) => chunks.push(chunk));
+    pack.pipe(gzip);
+    const manifest = Buffer.from(
+      JSON.stringify({
+        version: 2,
+        format: "marfa-archive-v2",
+        created_at: new Date().toISOString(),
+        item_count: 1,
+        blob_count: 1,
+        blobs: {
+          [hash]: {
+            mime_type: "application/octet-stream",
+            size_bytes: data.length,
+          },
+        },
+      }),
+    );
+    pack.entry({ name: "manifest.json", size: manifest.length }, manifest);
+    const items = Buffer.from(
+      JSON.stringify({
+        item: {
+          type: "core.file",
+          properties: { blob_ref: hash, mime_type: "application/octet-stream" },
+          source: "body-limit",
+          source_id: "large-archive",
+        },
+      }) + "\n",
+    );
+    pack.entry({ name: "items.ndjson", size: items.length }, items);
+    pack.entry({ name: `blobs/${hash}`, size: data.length }, data);
+    pack.finalize();
+    await new Promise<void>((resolve) => gzip.on("end", resolve));
+    const archive = Buffer.concat(chunks);
+    expect(archive.length).toBeGreaterThan(REQUEST_CAP * 32);
+
+    const res = await ctx.app.request("/admin/restore-archive", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${ctx.operatorKey}`,
+        "Content-Type": "application/gzip",
+      },
+      body: archive,
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      imported: number;
+      blobs_imported: number;
+    };
+    expect(body).toMatchObject({ imported: 1, blobs_imported: 1 });
+
+    const read = await ctx.app.request(`/blobs/${hash}`, {
+      headers: { Authorization: `Bearer ${ctx.workingKey}` },
+    });
+    expect(read.status).toBe(200);
+    expect(Buffer.from(await read.arrayBuffer()).equals(data)).toBe(true);
   });
 
   it("exempts /items/bulk from the small global cap (bulk carries many items)", async () => {

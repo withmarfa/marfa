@@ -19,12 +19,20 @@
  * Paired with GET /export?format=archive.
  */
 
-import { createHash } from "node:crypto";
-import { createGunzip } from "node:zlib";
+import { createReadStream, createWriteStream } from "node:fs";
+import { rm, stat } from "node:fs/promises";
 import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
+import { createGunzip } from "node:zlib";
 import { createRoute, z } from "@hono/zod-openapi";
 import * as tar from "tar-stream";
-import { MarfaError, ErrorCode, isValidBlobHash } from "@withmarfa/shared";
+import {
+  MarfaError,
+  ErrorCode,
+  isValidBlobHash,
+  validateTransition,
+  SYSTEM_DEFAULT_STATE,
+} from "@withmarfa/shared";
 import { publish, publishEdge } from "../pubsub.js";
 import type { Edge, Item, Metadata } from "@withmarfa/shared";
 import type { ItemState, Tier } from "@withmarfa/shared";
@@ -32,6 +40,7 @@ import type { AppEnv } from "../middleware/auth.js";
 import { requireOperatorKey } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import type { BlobLayer } from "../storage/blob-layer.js";
+import { HashingTransform } from "../storage/blob-store.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import { constantTimeEqual } from "../utils/crypto.js";
 import { registerArchiveTypes } from "./admin-archive-types.js";
@@ -179,7 +188,19 @@ const restoreArchiveRoute = createRoute({
 interface PendingBlob {
   hash: string;
   mimeType: string;
-  data: Buffer;
+  /** A spool on the disk store's own filesystem holding the entry's bytes,
+   *  which hashed to `hash` as they were read. */
+  path: string;
+  sizeBytes: number;
+}
+
+/** A filesystem error, which is a fault here and not a fault in the
+ *  archive: Node's own stream and zlib codes carry underscores. */
+function isFilesystemError(err: unknown): err is NodeJS.ErrnoException {
+  return (
+    err instanceof Error &&
+    /^E[A-Z0-9]+$/.test((err as NodeJS.ErrnoException).code ?? "")
+  );
 }
 
 interface BlobRestore {
@@ -205,21 +226,6 @@ async function restoreArchiveBlobs(
   const wroteBytes: string[] = [];
   const wroteRows: string[] = [];
 
-  // Bytes first, rows second, same as `POST /blobs`: a rollback cannot
-  // reach a filesystem or an object store, so the bytes stay outside the
-  // transaction and this request takes back what it wrote on refusal.
-  for (const blob of pending) {
-    await withBlobUploadLock(blob.hash, async () => {
-      if ((await blobs.disk.has(blob.hash)) === null) {
-        await blobs.disk.put(blob.hash, {
-          stream: Readable.from(blob.data),
-          size_bytes: blob.data.length,
-        });
-        wroteBytes.push(blob.hash);
-      }
-    });
-  }
-
   const undoBytes = async (): Promise<void> => {
     for (const hash of wroteBytes) {
       await withBlobUploadLock(hash, async () => {
@@ -236,6 +242,34 @@ async function restoreArchiveBlobs(
     }
   };
 
+  // Bytes first, rows second, same as `POST /blobs`: a rollback cannot
+  // reach a filesystem or an object store, so the bytes stay outside the
+  // transaction and this request takes back what it wrote on refusal. Each
+  // spool is moved into place or removed, so past this loop none is left.
+  let placed = 0;
+  try {
+    for (const blob of pending) {
+      await withBlobUploadLock(blob.hash, async () => {
+        if ((await blobs.disk.has(blob.hash)) === null) {
+          await blobs.disk.put(blob.hash, {
+            path: blob.path,
+            size_bytes: blob.sizeBytes,
+          });
+          wroteBytes.push(blob.hash);
+        } else {
+          await rm(blob.path, { force: true });
+        }
+      });
+      placed++;
+    }
+  } catch (err) {
+    for (const blob of pending.slice(placed)) {
+      await rm(blob.path, { force: true });
+    }
+    await undoBytes();
+    throw err;
+  }
+
   // The rows commit as one transaction, so a failure rolls every row back
   // at once.
   try {
@@ -248,11 +282,7 @@ async function restoreArchiveBlobs(
       }
       if (planned.length === 0) return;
       for (const blob of planned) {
-        await storage.blobs.register(
-          blob.hash,
-          blob.mimeType,
-          blob.data.length,
-        );
+        await storage.blobs.register(blob.hash, blob.mimeType, blob.sizeBytes);
         await storage.blobs.recordLocation(blob.hash, blobs.disk.id);
         wroteRows.push(blob.hash);
       }
@@ -292,8 +322,35 @@ export function adminArchiveRoutes(storage: Storage, blobs: BlobLayer) {
   router.openapi(restoreArchiveRoute, async (c) => {
     requireOperatorKey(c);
 
-    const rawBody = await c.req.arrayBuffer();
-    if (rawBody.byteLength === 0) {
+    // The body streams to a spool on the disk store's filesystem, as an
+    // upload's does, so an archive is as large as an archive is: nothing
+    // here holds it in memory, and the blob entries inside it are spooled
+    // the same way, each hashed as it is read. Every spool is recorded the
+    // moment it is minted, because a refusal can land while an entry's
+    // pipeline is still settling, before that entry is pending.
+    const spools: string[] = [];
+    const mintSpool = (): string => {
+      const spool = blobs.disk.spoolPath();
+      spools.push(spool);
+      return spool;
+    };
+    const bodySpool = mintSpool();
+    try {
+      const body = c.req.raw.body;
+      if (body) {
+        await pipeline(Readable.fromWeb(body), createWriteStream(bodySpool));
+      }
+    } catch (err) {
+      await rm(bodySpool, { force: true });
+      throw err;
+    }
+    if (
+      (await stat(bodySpool).then(
+        (s) => s.size,
+        () => 0,
+      )) === 0
+    ) {
+      await rm(bodySpool, { force: true });
       throw new MarfaError(ErrorCode.VALIDATION_ERROR, "Empty archive");
     }
 
@@ -301,11 +358,11 @@ export function adminArchiveRoutes(storage: Storage, blobs: BlobLayer) {
     const itemLines: string[] = [];
     const edgeLines: string[] = [];
     const typeLines: string[] = [];
-    const pendingBlobs: { hash: string; mimeType: string; data: Buffer }[] = [];
+    const pendingBlobs: PendingBlob[] = [];
     let blobCount = 0;
     const extract = tar.extract();
     const gunzip = createGunzip();
-    const inputStream = Readable.from(Buffer.from(rawBody));
+    const inputStream = createReadStream(bodySpool);
 
     const entries = new Promise<void>((resolve, reject) => {
       // Every stream in the pipeline needs its own listener: `pipe` does not
@@ -314,7 +371,7 @@ export function adminArchiveRoutes(storage: Storage, blobs: BlobLayer) {
       // decompressor or the tar reader cannot parse is a refusal, not a crash.
       const fail = (err: unknown) => {
         reject(
-          err instanceof MarfaError
+          err instanceof MarfaError || isFilesystemError(err)
             ? err
             : new MarfaError(
                 ErrorCode.VALIDATION_ERROR,
@@ -328,8 +385,46 @@ export function adminArchiveRoutes(storage: Storage, blobs: BlobLayer) {
       extract.on("error", fail);
 
       extract.on("entry", (header, stream, next) => {
-        const chunks: Buffer[] = [];
         stream.on("error", fail);
+        // A blob entry goes to a spool of its own, hashed on the way; an
+        // entry that does not hash to its name is left out, as an entry
+        // under a name that is no hash is. The manifest and the line files
+        // are small and are read whole.
+        if (header.name.startsWith("blobs/")) {
+          const hash = header.name.slice("blobs/".length);
+          if (!isValidBlobHash(hash)) {
+            stream.on("end", next);
+            stream.resume();
+            return;
+          }
+          const spool = mintSpool();
+          const hashing = new HashingTransform();
+          pipeline(stream, hashing, createWriteStream(spool)).then(
+            async () => {
+              if (constantTimeEqual(hashing.digest(), hash)) {
+                blobCount++;
+                const mimeType =
+                  manifest?.blobs[hash]?.mime_type ??
+                  "application/octet-stream";
+                pendingBlobs.push({
+                  hash,
+                  mimeType,
+                  path: spool,
+                  sizeBytes: hashing.bytes,
+                });
+              } else {
+                await rm(spool, { force: true });
+              }
+              next();
+            },
+            async (err: unknown) => {
+              await rm(spool, { force: true });
+              fail(err);
+            },
+          );
+          return;
+        }
+        const chunks: Buffer[] = [];
         stream.on("data", (chunk: Buffer) => chunks.push(chunk));
         stream.on("end", () => {
           const buf = Buffer.concat(chunks);
@@ -379,19 +474,6 @@ export function adminArchiveRoutes(storage: Storage, blobs: BlobLayer) {
             if (text) {
               typeLines.push(...text.split("\n"));
             }
-          } else if (header.name.startsWith("blobs/")) {
-            const hash = header.name.slice("blobs/".length);
-            if (isValidBlobHash(hash)) {
-              const hex = createHash("sha256").update(buf).digest("hex");
-              const computed = `sha256:${hex}`;
-              if (constantTimeEqual(computed, hash)) {
-                blobCount++;
-                const mimeType =
-                  manifest?.blobs[hash]?.mime_type ??
-                  "application/octet-stream";
-                pendingBlobs.push({ hash, mimeType, data: buf });
-              }
-            }
           }
 
           next();
@@ -403,6 +485,14 @@ export function adminArchiveRoutes(storage: Storage, blobs: BlobLayer) {
       });
     });
 
+    // The spools this request wrote are its to remove on a refusal, up to
+    // the point `restoreArchiveBlobs` takes them: past it, each is either
+    // in the store under its name or already gone.
+    const refuse = async (err: unknown): Promise<never> => {
+      for (const spool of spools) await rm(spool, { force: true });
+      throw err;
+    };
+
     inputStream.pipe(gunzip).pipe(extract);
     try {
       await entries;
@@ -413,8 +503,9 @@ export function adminArchiveRoutes(storage: Storage, blobs: BlobLayer) {
       inputStream.destroy();
       gunzip.destroy();
       extract.destroy();
-      throw err;
+      return refuse(err);
     }
+    await rm(bodySpool, { force: true });
 
     const items: { item: Record<string, unknown>; metadata?: unknown }[] = [];
     for (const line of itemLines) {
@@ -445,16 +536,52 @@ export function adminArchiveRoutes(storage: Storage, blobs: BlobLayer) {
     }
 
     if (items.length > MAX_ARCHIVE_ITEMS) {
-      throw new MarfaError(
-        ErrorCode.VALIDATION_ERROR,
-        `Maximum ${String(MAX_ARCHIVE_ITEMS)} items per archive`,
+      return refuse(
+        new MarfaError(
+          ErrorCode.VALIDATION_ERROR,
+          `Maximum ${String(MAX_ARCHIVE_ITEMS)} items per archive`,
+        ),
       );
     }
     if (edges.length > MAX_ARCHIVE_EDGES) {
-      throw new MarfaError(
-        ErrorCode.VALIDATION_ERROR,
-        `Maximum ${String(MAX_ARCHIVE_EDGES)} edges per archive`,
+      return refuse(
+        new MarfaError(
+          ErrorCode.VALIDATION_ERROR,
+          `Maximum ${String(MAX_ARCHIVE_EDGES)} edges per archive`,
+        ),
       );
+    }
+
+    // A row in a state its type's lifecycle cannot produce is refused, the
+    // question `POST /items` asks of a caller: `trashed` is a state, and
+    // not one a `system.*` row can be in, and a restore that wrote it would
+    // land a row nothing can purge, restore or move. Only an absent state
+    // (the default) and the default itself pass without the question,
+    // since the store would write whatever else the line carried. The
+    // whole archive is refused, before anything is written, so the answer
+    // is never half a restore.
+    for (const { item } of items) {
+      const state = item.state;
+      if (
+        state === undefined ||
+        state === null ||
+        state === SYSTEM_DEFAULT_STATE
+      ) {
+        continue;
+      }
+      const error = validateTransition(
+        String(item.type),
+        SYSTEM_DEFAULT_STATE,
+        state as ItemState,
+      );
+      if (error) {
+        return refuse(
+          new MarfaError(
+            ErrorCode.VALIDATION_ERROR,
+            `Item ${String(item.id)} of type ${String(item.type)} is recorded in a state its lifecycle cannot produce: ${error}`,
+          ),
+        );
+      }
     }
 
     const typeEntries: ArchiveTypeEntry[] = [];
@@ -469,7 +596,12 @@ export function adminArchiveRoutes(storage: Storage, blobs: BlobLayer) {
 
     // Before the transaction, so a rollback cannot strand the registry
     // holding types the database no longer has. See registerArchiveTypes.
-    const typeResult = await registerArchiveTypes(storage, typeEntries);
+    let typeResult;
+    try {
+      typeResult = await registerArchiveTypes(storage, typeEntries);
+    } catch (err) {
+      return refuse(err);
+    }
 
     // Blobs land only once every refusal above has passed, so an archive
     // this route goes on to reject has not touched the store. They are still

@@ -211,9 +211,10 @@ export function createApp(
   // emits the correct code + status). Mounted after `secureHeaders` and
   // before auth so an oversized unauthenticated body is rejected cheaply.
   //
-  // The blob upload route (`/blobs`) is exempt and has no cap of its own:
-  // the body streams to disk as it arrives, so its size costs disk rather
-  // than memory, and a file is as large as a file is.
+  // The blob upload route (`/blobs`) and the archive restore
+  // (`/admin/restore-archive`) are exempt and have no cap of their own:
+  // each body streams to disk as it arrives, so its size costs disk rather
+  // than memory, and a file, or an archive of files, is as large as it is.
   const tooLarge = () => {
     throw new MarfaError(ErrorCode.REQUEST_TOO_LARGE, "Request body too large");
   };
@@ -234,7 +235,7 @@ export function createApp(
     "*",
     createMiddleware<AppEnv>(async (c, next) => {
       const path = c.req.path;
-      if (path.startsWith("/blobs")) {
+      if (path.startsWith("/blobs") || path === "/admin/restore-archive") {
         return next();
       }
       if (path.startsWith("/items/bulk") || path.startsWith("/edges/bulk")) {

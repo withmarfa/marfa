@@ -1,0 +1,34 @@
+# The database, streamed off-site.
+#
+# One file, one replica, in the bucket the server's own object store uses,
+# under `db/` beside the blobs prefix. Every value is read from the names
+# the server already reads, so the sidecar and the server cannot name two
+# buckets. Litestream expands `${NAME}` from the environment when it reads
+# this file.
+#
+# The blob folder is not here: the server's own `blob-replicate`
+# housekeeping job gives the object store every blob, and `deploy/README.md`
+# says how the two halves relate.
+
+# A snapshot an hour, so a restore reads at most an hour of changes after
+# the snapshot it starts from; a day of snapshots kept, so a point in time
+# up to a day back can be restored to. Litestream removes what is older
+# itself: the bucket has no lifecycle rules of its own.
+snapshot:
+  interval: 1h
+  retention: 24h
+
+dbs:
+  - path: ${SQLITE_PATH}
+    replica:
+      type: s3
+      bucket: ${S3_BUCKET}
+      path: db
+      endpoint: ${S3_ENDPOINT}
+      region: ${S3_REGION}
+      force-path-style: ${S3_FORCE_PATH_STYLE}
+      access-key-id: ${S3_ACCESS_KEY_ID}
+      secret-access-key: ${S3_SECRET_ACCESS_KEY}
+      # Every second, so a restore is at most a second behind the last
+      # commit.
+      sync-interval: 1s

@@ -1,18 +1,22 @@
 /**
  * Conformance for POST /admin/restore-archive.
  *
- * Exercises the export-to-restore round trip end to end: the server builds
- * the archive via GET /export?format=archive and accepts it back via
+ * The round trip is end to end: the server builds the archive via
+ * GET /export?format=archive and accepts it back via
  * POST /admin/restore-archive, which is what proves the manifest contract
  * and blob-hash verification agree.
  *
- * No tar.gz construction in test code — relying on the server's own
- * archive export keeps this dependency-free and exercises the only archive
- * format callers actually see.
+ * Two cases build their archive with `utils/archive.ts` instead: a row in
+ * a state its lifecycle cannot reach, which no export carries because no
+ * door writes one, and a blob the instance does not hold yet, which is what
+ * makes its restore the thing that puts the bytes there.
  */
 
+import { randomBytes } from "node:crypto";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { v7 as uuidv7 } from "uuid";
 import { MarfaClient } from "../../client/api.js";
+import { blobHash, itemsArchive } from "../../utils/archive.js";
 import type { TestContext } from "../../client/types.js";
 import {
   createTestContext,
@@ -76,6 +80,141 @@ describe("admin/restore-archive", () => {
     expect(restored.ok).toBe(true);
     expect(restored.data.duplicates).toBeGreaterThanOrEqual(1);
     expect(restored.data.blobs_imported).toBe(0);
+  });
+
+  it("restores an archive carrying a blob larger than the request cap, byte for byte, and leaves out an entry that does not hash to its name", async () => {
+    // Random bytes twice the cap every other body sits under (the cap's
+    // own fixture is `compliance/adversarial.test.ts`) and one more, so the
+    // archive cannot compress under it and the entry is not block-aligned.
+    // The blob is one nothing on the instance names, so the restore is
+    // what puts the bytes there, under a type the manifest names and the
+    // default would not. A second entry carries other bytes under a name
+    // they do not hash to, and is left out.
+    const data = new Uint8Array(randomBytes(2 * 1024 * 1024 + 1));
+    const hash = blobHash(data);
+    const impostor = new Uint8Array(randomBytes(64));
+    const claimed = blobHash(new Uint8Array(randomBytes(64)));
+    const id = uuidv7();
+    const archive = itemsArchive(
+      [
+        {
+          id,
+          type: "core.file",
+          source: ctx.source,
+          source_id: `archive-large-${ctx.runId}`,
+          properties: { blob_ref: hash, mime_type: "application/x-drill" },
+        },
+      ],
+      [
+        { data, mime_type: "application/x-drill" },
+        { data: impostor, mime_type: "application/x-drill", named: claimed },
+      ],
+    );
+    expect(archive.byteLength).toBeGreaterThan(1024 * 1024);
+
+    expect((await client.downloadBlob(hash)).status).toBe(404);
+    const restored = await operator.restoreArchive(archive);
+    expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
+    trackItem(ctx, id);
+    expect(restored.data).toMatchObject({ imported: 1, blobs_imported: 1 });
+
+    const read = await client.downloadBlob(hash);
+    expect(read.status).toBe(200);
+    expect(read.headers.get("content-type")).toBe("application/x-drill");
+    expect(Buffer.from(read.data).equals(Buffer.from(data))).toBe(true);
+    expect((await client.downloadBlob(claimed)).status).toBe(404);
+    expect((await client.downloadBlob(blobHash(impostor))).status).toBe(404);
+    const item = await client.getItem(id);
+    expect(item.ok).toBe(true);
+    expect(item.data.item.properties.blob_ref).toBe(hash);
+  });
+
+  it("refuses an archive recording a state the type's lifecycle cannot produce, and writes nothing", async () => {
+    // `revoked` is a state, and not one the canonical lifecycle reaches, so
+    // a note recorded in it is a row no door could have written. The whole
+    // archive is refused, the note ahead of the bad row included.
+    const fine = uuidv7();
+    const impossible = uuidv7();
+    const rows = (state: string) => [
+      {
+        id: fine,
+        type: "core.note",
+        source: ctx.source,
+        state: "archived",
+        properties: { body: "Archived note" },
+      },
+      {
+        id: impossible,
+        type: "core.note",
+        source: ctx.source,
+        state,
+        properties: { body: `Note in ${state}` },
+      },
+    ];
+    const refused = await operator.restoreArchive(
+      itemsArchive(rows("revoked")),
+    );
+    expect(refused.status).toBe(400);
+    expect(refused.error?.error.code).toBe("validation_error");
+    expect(refused.error?.error.message).toContain(impossible);
+    expect((await client.getItem(fine)).status).toBe(404);
+    expect((await client.getItem(impossible)).status).toBe(404);
+
+    // A `system.*` row's lifecycle is `active | revoked`: `trashed` is a
+    // state, and not one it can be in. No door writes such a row, which is
+    // why an export never carries one and only a built archive can ask.
+    const systemId = uuidv7();
+    const systemRefused = await operator.restoreArchive(
+      itemsArchive([
+        {
+          id: systemId,
+          type: "system.activity",
+          source: ctx.source,
+          state: "trashed",
+          properties: {
+            connection_id: uuidv7(),
+            severity: "info",
+            summary: "recorded in a state it cannot be in",
+          },
+        },
+      ]),
+    );
+    expect(systemRefused.status).toBe(400);
+    expect(systemRefused.error?.error.message).toContain(systemId);
+    expect(systemRefused.error?.error.message).toContain(
+      '"active" to "trashed"',
+    );
+    expect((await client.getItem(systemId)).status).toBe(404);
+
+    // A value that is no state at all is refused the same way, since the
+    // store would otherwise write it as it came.
+    const numbered = uuidv7();
+    const numeric = await operator.restoreArchive(
+      itemsArchive([
+        {
+          id: numbered,
+          type: "core.note",
+          source: ctx.source,
+          state: 5 as unknown as string,
+          properties: { body: "Numbered note" },
+        },
+      ]),
+    );
+    expect(numeric.status).toBe(400);
+    expect(numeric.error?.error.message).toContain('Invalid target state "5"');
+    expect((await client.getItem(numbered)).status).toBe(404);
+
+    // The same two rows in states the lifecycle contains restore, each in
+    // the state the archive recorded.
+    const restored = await operator.restoreArchive(
+      itemsArchive(rows("active")),
+    );
+    expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
+    trackItem(ctx, fine);
+    trackItem(ctx, impossible);
+    expect(restored.data.imported).toBe(2);
+    expect((await client.getItem(fine)).data.item.state).toBe("archived");
+    expect((await client.getItem(impossible)).data.item.state).toBe("active");
   });
 
   it("requires the operator key", async () => {

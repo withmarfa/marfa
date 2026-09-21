@@ -1,6 +1,7 @@
 /**
  * Boot the server in this repository on SQLite for the suite, mint its first
- * key, and write the env file the run sources.
+ * key, and write the env file the run sources. The restore drill imports
+ * `bootServer` and `stopServer` to boot the same way, twice.
  *
  *   tsx scripts/marfa-server.ts up [--state <dir>] [--port <n>]
  *
@@ -30,7 +31,7 @@ import {
 } from "node:fs";
 import { createServer } from "node:net";
 import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   chooseCredentials,
   parseEnvFile,
@@ -51,6 +52,12 @@ const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
 interface Args {
   command: "up" | "down" | "status";
+  state: string;
+  port?: number;
+}
+
+/** What a boot needs: the state directory, and a port when one is wanted. */
+export interface BootOptions {
   state: string;
   port?: number;
 }
@@ -194,7 +201,7 @@ async function mint(url: string, secret: string) {
   return body as Parameters<typeof chooseCredentials>[0];
 }
 
-async function up(args: Args): Promise<void> {
+export async function bootServer(args: BootOptions): Promise<void> {
   const p = paths(args.state);
   const existing = readPid(p.pid);
   if (existing !== undefined && alive(existing)) {
@@ -299,7 +306,7 @@ async function up(args: Args): Promise<void> {
   console.log(`[marfa-server] minted the first key; env file at ${p.env}`);
 }
 
-async function down(args: Args): Promise<void> {
+export async function stopServer(args: BootOptions): Promise<void> {
   const p = paths(args.state);
   const pid = readPid(p.pid);
   if (pid === undefined) {
@@ -341,7 +348,14 @@ function status(args: Args): void {
   process.exitCode = running ? 0 : 1;
 }
 
-const args = parseArgs(process.argv.slice(2));
-if (args.command === "up") await up(args);
-else if (args.command === "down") await down(args);
-else status(args);
+// The command runs only when this file is the program, so the drill can
+// import the two functions without booting anything.
+if (
+  process.argv[1] !== undefined &&
+  import.meta.url === pathToFileURL(resolve(process.argv[1])).href
+) {
+  const args = parseArgs(process.argv.slice(2));
+  if (args.command === "up") await bootServer(args);
+  else if (args.command === "down") await stopServer(args);
+  else status(args);
+}

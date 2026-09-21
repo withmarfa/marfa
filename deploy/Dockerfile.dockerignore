@@ -1,0 +1,18 @@
+# What the build stage must not receive: installed modules (the image
+# installs its own), build output (the image builds its own), the Rust
+# engine's target directory, and local state. BuildKit reads this file
+# because it sits beside the Dockerfile it is named after.
+.git
+**/node_modules
+**/dist
+**/target
+**/.marfa-state
+**/.marfa-drill
+**/reports
+data
+_tmp
+_local
+_ignore
+_trash
+_archive
+.claude
