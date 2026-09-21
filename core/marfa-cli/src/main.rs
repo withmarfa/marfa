@@ -1,6 +1,8 @@
 mod commands;
 mod credentials;
 mod device;
+#[cfg(test)]
+mod door;
 mod error;
 mod folders;
 mod output;

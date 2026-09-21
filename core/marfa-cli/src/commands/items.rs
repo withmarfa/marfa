@@ -873,7 +873,9 @@ fn attach(args: &AttachArgs, remote: &Remote, out: &Printer) -> Result<(), CliEr
         })?
         .to_string();
     let item = remote.json(&file_item_request(args, &mime_type, &hash))?;
-    let file_item = item.get("item").unwrap_or(&item);
+    let file_item = item.get("item").ok_or_else(|| {
+        CliError::Invalid("the file item was created without an item in the answer".into())
+    })?;
     let file_item_id = file_item
         .get("id")
         .and_then(Value::as_str)

@@ -542,7 +542,7 @@ fn a_housekeeping_job_is_listed_and_run_by_name() {
 ///
 /// The document is the one at the repository root, read relative to the
 /// crate, so a door added to the server is red here before it reaches a
-/// pull request; the scenario suite reads the same table from the binary.
+/// pull request.
 #[test]
 fn every_published_operation_has_a_command() {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../openapi.json");
@@ -651,5 +651,178 @@ fn every_mapped_command_parses_and_a_pending_entry_is_truly_unreached() {
                 );
             }
         }
+    }
+}
+
+/// Every leaf's request goes where the document puts it: the method and the
+/// path, held for the leaves whose tests above assert a body or a query
+/// rather than the door itself.
+#[test]
+fn the_remaining_leaves_reach_the_doors_the_document_names() {
+    let at = |request: &Request, method: Method, path: &str| {
+        assert_eq!(request.method, method, "{path}");
+        assert_eq!(request.path(), path);
+    };
+    at(&edges::get_request("e"), Method::Get, "/edges/e");
+    let bulk_file =
+        std::env::temp_dir().join(format!("marfa-edges-bulk-{}.json", std::process::id()));
+    std::fs::write(&bulk_file, "[]").unwrap();
+    at(
+        &edges::bulk_request(&edges::EdgeBulkArgs {
+            file: bulk_file,
+            ..Default::default()
+        })
+        .unwrap(),
+        Method::Post,
+        "/edges/bulk",
+    );
+    at(&types::list_request(), Method::Get, "/types");
+    at(
+        &types::delete_request("t", false),
+        Method::Delete,
+        "/types/t",
+    );
+    at(
+        &webhooks::create_request(&webhooks::WebhookCreateArgs {
+            to: "https://example.test/hook".into(),
+            events: vec!["item.created".into()],
+            ..Default::default()
+        }),
+        Method::Post,
+        "/webhooks",
+    );
+    at(
+        &webhooks::update_request(&webhooks::WebhookUpdateArgs {
+            id: "w".into(),
+            ..Default::default()
+        }),
+        Method::Patch,
+        "/webhooks/w",
+    );
+    at(
+        &webhooks::deliveries_request("w", None),
+        Method::Get,
+        "/webhooks/w/deliveries",
+    );
+    at(
+        &blobs::url_request("sha256:a", None),
+        Method::Get,
+        "/blobs/sha256:a/url",
+    );
+    at(
+        &metadata::get_request("i"),
+        Method::Get,
+        "/items/i/metadata",
+    );
+    at(
+        &extensions::list_request("i"),
+        Method::Get,
+        "/items/i/extensions",
+    );
+    at(&keys::list_request(), Method::Get, "/keys");
+}
+
+/// The dispatch beside the shaping: what `run` sends through a remote, held
+/// at a door on a local port, for the three places a call site could drop
+/// what the shaping carries.
+mod dispatch {
+    use super::*;
+    use crate::door::{Answer, Door};
+    use crate::output::Printer;
+    use crate::remote::Remote;
+    use marfa_core::http::Http;
+
+    fn remote_at(door: &Door) -> Remote {
+        Remote::with(Http::new(&door.url, Some("marfa_k1_x")).unwrap())
+    }
+
+    const QUIET: Printer = Printer { json: true };
+
+    #[test]
+    fn a_delete_carries_the_idempotency_key_it_was_given() {
+        let door = Door::open(vec![Answer::json("200 OK", r#"{"item":{"id":"i"}}"#)]);
+        items::run(
+            items::ItemsCommand::Delete {
+                id: "i".into(),
+                idempotency: items::IdempotencyArgs {
+                    idempotency_key: Some("once".into()),
+                },
+            },
+            &remote_at(&door),
+            &QUIET,
+        )
+        .unwrap();
+        let received = door.received();
+        assert_eq!(received[0].method(), "DELETE");
+        assert_eq!(received[0].path(), "/items/i");
+        assert_eq!(received[0].header("idempotency-key"), Some("once"));
+    }
+
+    #[test]
+    fn attach_uploads_then_creates_the_file_item_then_the_edge_from_it() {
+        let dir = std::env::temp_dir().join(format!("marfa-attach-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("picture.png");
+        std::fs::write(&file, b"png bytes").unwrap();
+        let door = Door::open(vec![
+            Answer::json(
+                "201 Created",
+                r#"{"hash":"sha256:h","mime_type":"image/png","size_bytes":9}"#,
+            ),
+            Answer::json(
+                "201 Created",
+                r#"{"item":{"id":"f1","type":"core.file.image"}}"#,
+            ),
+            Answer::json("201 Created", r#"{"edge":{"id":"e1"}}"#),
+        ]);
+        items::run(
+            items::ItemsCommand::Attach(items::AttachArgs {
+                id: "target".into(),
+                file,
+                mime_type: None,
+                title: None,
+                type_: None,
+            }),
+            &remote_at(&door),
+            &QUIET,
+        )
+        .unwrap();
+        let received = door.received();
+        assert_eq!(received[0].method(), "POST");
+        assert_eq!(received[0].path(), "/blobs");
+        assert_eq!(received[0].header("content-type"), Some("image/png"));
+        assert_eq!(received[0].body, "png bytes");
+        let item: serde_json::Value = serde_json::from_str(&received[1].body).unwrap();
+        assert_eq!(received[1].path(), "/items");
+        assert_eq!(item["type"], "core.file.image");
+        assert_eq!(item["properties"]["blob_ref"], "sha256:h");
+        let edge: serde_json::Value = serde_json::from_str(&received[2].body).unwrap();
+        assert_eq!(received[2].path(), "/edges");
+        assert_eq!(edge["source_id"], "f1");
+        assert_eq!(edge["target_id"], "target");
+        assert_eq!(edge["edge_type"], "attached-to");
+    }
+
+    #[test]
+    fn bootstrap_sends_the_secret_as_the_bearer_and_nowhere_else() {
+        let door = Door::open(vec![Answer::json(
+            "201 Created",
+            r#"{"key":"marfa_k1_new","id":"k","label":"operator"}"#,
+        )]);
+        keys::run(
+            keys::KeysCommand::Bootstrap {
+                secret: "the-secret".into(),
+            },
+            &remote_at(&door),
+            &QUIET,
+        )
+        .unwrap();
+        let received = door.received();
+        assert_eq!(received[0].path(), "/keys");
+        assert_eq!(
+            received[0].header("authorization"),
+            Some("Bearer the-secret")
+        );
+        assert!(!received[0].body.contains("the-secret"));
     }
 }

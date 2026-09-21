@@ -1,9 +1,9 @@
 //! Every published operation, and the command that reaches it.
 //!
-//! One table, read by three things: `marfa operations`, which prints it; the
-//! crate's own test, which holds it against `openapi.json` so a published
-//! operation without a command is red before anything is pushed; and the
-//! scenario suite, which reads the printed form so it never holds a copy.
+//! One table, read by two things: `marfa operations`, which prints it for
+//! any reader of the binary; and the crate's own test, which holds it
+//! against `openapi.json` so a published operation without a command is
+//! red before anything is pushed.
 //!
 //! An operation may be pending instead of mapped, with the reason and the
 //! pull request that closes it. Pending is a state the test checks both
