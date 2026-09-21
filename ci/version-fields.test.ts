@@ -9,15 +9,21 @@
  * no release can ever be, so a stamped build and an unstamped one cannot be
  * confused.
  *
- * Three files carry one: `package.json` (`version`), `Cargo.toml`
+ * Three files carry one: `package.json` (`version`, on every package; the
+ * root is a workspace, not a package, and holds none), `Cargo.toml`
  * (`version = ` under `[package]` or `[workspace.package]`; a crate that
  * says `version.workspace = true` holds none of its own) and `Cargo.lock`,
  * whose entries for the workspace's own crates, the ones with no `source`,
  * are rewritten by cargo from the manifests. `Package.swift` holds no
- * version by construction: SwiftPM versions a package by its tag.
+ * version by construction: SwiftPM versions a package by its tag. The API
+ * document's `info.version` is the contract version, an integer that moves
+ * when the wire breaks, and is not a product version.
  *
- * The manifests are read from `git ls-files`, so an untracked scratch
- * package is not judged and a tracked one cannot hide.
+ * The placeholder has to be present, not merely not-something-else: the
+ * stamp script sets the version wherever it finds the placeholder, so a
+ * manifest that dropped the field would build unversioned. The manifests
+ * are read from `git ls-files`, the same listing the stamp walks, so the
+ * two cannot disagree about which files are manifests.
  */
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
@@ -34,22 +40,27 @@ export interface Manifest {
   text: string;
 }
 
-/** One manifest holding a version the placeholder rule refuses. */
+/** One manifest holding something other than the placeholder. */
 export interface VersionHeld {
   path: string;
+  /** The version found, or `(none)` where the placeholder is missing. */
   version: string;
 }
 
 function packageJsonVersions(m: Manifest): VersionHeld[] {
   const pkg = JSON.parse(m.text) as { version?: unknown };
-  if (typeof pkg.version !== "string") return [];
-  return pkg.version === PLACEHOLDER
-    ? []
-    : [{ path: m.path, version: pkg.version }];
+  const version = typeof pkg.version === "string" ? pkg.version : "(none)";
+  if (m.path === "package.json") {
+    // The root is the workspace, not a package: nothing publishes it and
+    // nothing reads a version off it.
+    return version === "(none)" ? [] : [{ path: m.path, version }];
+  }
+  return version === PLACEHOLDER ? [] : [{ path: m.path, version }];
 }
 
 function cargoTomlVersions(m: Manifest): VersionHeld[] {
   const held: VersionHeld[] = [];
+  const sections = new Map<string, string[]>();
   let section = "";
   for (const line of m.text.split("\n")) {
     const heading = /^\s*\[([^\]]+)\]\s*$/.exec(line);
@@ -58,10 +69,21 @@ function cargoTomlVersions(m: Manifest): VersionHeld[] {
       continue;
     }
     if (section !== "package" && section !== "workspace.package") continue;
-    const version = /^\s*version\s*=\s*"([^"]*)"/.exec(line);
-    if (version && version[1] !== PLACEHOLDER) {
-      held.push({ path: m.path, version: version[1] ?? "" });
+    const lines = sections.get(section) ?? [];
+    lines.push(line);
+    sections.set(section, lines);
+  }
+  for (const [name, lines] of sections) {
+    const literal = lines
+      .map((line) => /^\s*version\s*=\s*"([^"]*)"/.exec(line)?.[1])
+      .find((v) => v !== undefined);
+    const fromWorkspace = lines.some((line) =>
+      /^\s*version\.workspace\s*=\s*true/.test(line),
+    );
+    if (literal === PLACEHOLDER || (literal === undefined && fromWorkspace)) {
+      continue;
     }
+    held.push({ path: `${m.path} [${name}]`, version: literal ?? "(none)" });
   }
   return held;
 }
@@ -72,10 +94,10 @@ function cargoLockVersions(m: Manifest): VersionHeld[] {
     // A crate cargo fetched carries `source`; a workspace member does not,
     // and its version is the manifest's, which the stamp rewrites.
     if (/^source\s*=/m.test(block)) continue;
-    const version = /^version\s*=\s*"([^"]*)"/m.exec(block);
-    if (version && version[1] !== PLACEHOLDER) {
+    const version = /^version\s*=\s*"([^"]*)"/m.exec(block)?.[1] ?? "(none)";
+    if (version !== PLACEHOLDER) {
       const name = /^name\s*=\s*"([^"]*)"/m.exec(block)?.[1] ?? "?";
-      held.push({ path: `${m.path} (${name})`, version: version[1] ?? "" });
+      held.push({ path: `${m.path} (${name})`, version });
     }
   }
   return held;
@@ -123,13 +145,21 @@ describe("no file holds a version", () => {
     expect(versionsHeld(manifests)).toEqual([]);
   });
 
-  it("would refuse a manifest that holds a version", () => {
+  it("would refuse a manifest that holds a version, or none", () => {
     // The witness: the same rule over manifests that do hold one, so the
     // green above is the rule passing and not the rule reading nothing.
     const held = versionsHeld([
       {
         path: "packages/example/package.json",
         text: JSON.stringify({ name: "@withmarfa/example", version: "0.1.0" }),
+      },
+      {
+        path: "packages/unversioned/package.json",
+        text: JSON.stringify({ name: "@withmarfa/unversioned" }),
+      },
+      {
+        path: "package.json",
+        text: JSON.stringify({ name: "@marfa/root", version: "0.1.0" }),
       },
       {
         path: "core/Cargo.toml",
@@ -140,13 +170,20 @@ describe("no file holds a version", () => {
         text: '[package]\nname = "example"\nversion.workspace = true\n\n[dependencies]\nserde = { version = "1" }\n',
       },
       {
+        path: "core/loose/Cargo.toml",
+        text: '[package]\nname = "loose"\nedition = "2024"\n',
+      },
+      {
         path: "core/Cargo.lock",
         text: '[[package]]\nname = "example"\nversion = "0.1.0"\n\n[[package]]\nname = "serde"\nversion = "1.0.0"\nsource = "registry+https://github.com/rust-lang/crates.io-index"\n',
       },
     ]);
     expect(held).toEqual([
       { path: "packages/example/package.json", version: "0.1.0" },
-      { path: "core/Cargo.toml", version: "0.1.0" },
+      { path: "packages/unversioned/package.json", version: "(none)" },
+      { path: "package.json", version: "0.1.0" },
+      { path: "core/Cargo.toml [workspace.package]", version: "0.1.0" },
+      { path: "core/loose/Cargo.toml [package]", version: "(none)" },
       { path: "core/Cargo.lock (example)", version: "0.1.0" },
     ]);
   });

@@ -3,15 +3,12 @@
  * what shape, recorded so a surface cannot change without the record
  * changing with it.
  *
- * A version is not recorded. Versions come from the git tag the release
- * workflow reads, so no version exists on a branch for a surface to stand
- * under; what the lock holds is the surface itself. The tree is compared
- * against the lock on every run, and a moved surface is refused until the
- * lock is regenerated, which puts the move in the pull request's diff as
- * the names that were added, removed or changed. The release workflow
- * compares the lock at the previous tag against the tag being released and
- * refuses a patch that removed a name, because a breaking change rides a
- * minor.
+ * A version is not recorded. A version is a tag, so no version exists on a
+ * branch for a surface to stand under; what the lock holds is the surface
+ * itself. The tree is compared against the lock on every run, and a moved
+ * surface is refused until the lock is regenerated, which puts the move in
+ * the pull request's diff as the names that were added, removed or changed,
+ * and lets two commits' locks be compared name by name.
  *
  * Why the declaration file rather than the runtime module: a type-only
  * export is part of the contract a consumer compiles against, and the built
@@ -253,7 +250,7 @@ export function describeSurfaceViolation(v: SurfaceViolation): string {
     case "surface-moved":
       return (
         `${v.name}: the surface the tree builds is not the surface the lock records (${describeSurfaceDelta(v.delta)}). ` +
-        `A removed or reshaped name is a break for a consumer, and the release workflow refuses it on a patch tag. ${REGENERATE}`
+        `A removed or reshaped name is a break for a consumer. ${REGENERATE}`
       );
   }
 }
@@ -261,11 +258,10 @@ export function describeSurfaceViolation(v: SurfaceViolation): string {
 /**
  * A parse is not a read.
  *
- * A lock read from another commit is compared against this one, and a
- * comparison that skips what it cannot read reports not knowing as
+ * A comparison that skips what it cannot read reports not knowing as
  * agreement: `{}`, `[]`, or entries missing `hash` or `exports` would all
- * compare equal to everything. The shape is asserted before anything is
- * compared.
+ * compare equal to everything. The shape is asserted before a lock read
+ * off disk is compared with anything.
  */
 export function assertLockShape(value: unknown, what: string): SurfaceLock {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {

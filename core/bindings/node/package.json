@@ -18,5 +18,13 @@
   },
   "devDependencies": {
     "@napi-rs/cli": "^3"
+  },
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "*.node"
+  ],
+  "publishConfig": {
+    "access": "public"
   }
 }

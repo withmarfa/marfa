@@ -22,8 +22,7 @@
     "migrate": "tsx src/storage/migrate.ts",
     "schema-sql:generate": "tsx scripts/generate-schema-sql.ts",
     "generate:openapi": "tsx scripts/generate-openapi.ts",
-    "surface-lock:generate": "tsx scripts/generate-surface-lock.ts",
-    "surface-lock:drift": "tsx scripts/check-surface-lock-drift.ts"
+    "surface-lock:generate": "tsx scripts/generate-surface-lock.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1113.0",

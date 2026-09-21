@@ -11,11 +11,10 @@ on:
 #
 # On a branch a second push means the first answer describes a tree nobody has
 # any more, so canceling is free. `main` is not a branch in that sense: every
-# commit on it is a release candidate, and the release workflow refuses a
-# tag unless a *successful* `ci.yml` run exists at that exact SHA. A
-# canceled run is not a successful one, so a superseded main commit becomes
-# permanently unpublishable — silently, because nothing errors and the commit
-# looks fine.
+# commit on it is a release candidate, and a release is a tag on a commit
+# with a *successful* `ci.yml` run at that exact SHA. A canceled run is not a
+# successful one, so a superseded main commit becomes permanently
+# unreleasable, silently, because nothing errors and the commit looks fine.
 #
 # Before adding `cancel-in-progress` to any group, ask what consumes the run's
 # result at a specific SHA. Cancellation is safe where only the latest answer
@@ -86,10 +85,9 @@ jobs:
   # answering about neither tree. Here the tree under test is the tree the
   # suite runs against.
   #
-  # A job in this workflow rather than one of its own, because the release
-  # workflow names `ci.yml` as the gate a commit must be green on before it
-  # can be released. A published package should not be able to come from a commit the
-  # contract failed.
+  # A job in this workflow rather than one of its own, because a green
+  # `ci.yml` run is what a release asks of a commit. A published package
+  # should not be able to come from a commit the contract failed.
   conformance:
     name: Conformance
     timeout-minutes: 60
@@ -126,8 +124,8 @@ jobs:
       # The device half of the contract drives the `marfa` binary as the
       # device under test, so this job builds it. It stays in this job rather
       # than moving to core.yml because core.yml is path-gated on `core/**`
-      # and would not run for a change to the fixtures alone, and because
-      # the release workflow names ci.yml as the gate a commit must be green on.
+      # and would not run for a change to the fixtures alone, and because a
+      # green ci.yml run is what a release asks of a commit.
       # The two jobs share `marfa-suite-shared-host` above, so a cargo build
       # here never runs beside core.yml's on one machine.
       #

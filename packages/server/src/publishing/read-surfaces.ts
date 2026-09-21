@@ -2,10 +2,12 @@
  * Read every publishable package's export surface off the built tree.
  *
  * A package is publishable when its `package.json` does not say
- * `"private": true`, which is the same test the release workflow makes.
- * Deriving the set rather than listing it means a new published package is
- * locked the day it appears instead of the day somebody remembers to add it
- * here.
+ * `"private": true`, which is npm's own test. Deriving the set rather than
+ * listing it means a new published package is locked the day it appears
+ * instead of the day somebody remembers to add it here. The set is the pnpm
+ * workspace under `packages/`; the Node binding under `core/bindings/node`
+ * is outside the workspace and its declarations are napi's, so it is not
+ * locked here.
  *
  * Every entry point counts, not just the root, so that adding a subpath
  * export does not quietly widen the surface without widening the lock. An
