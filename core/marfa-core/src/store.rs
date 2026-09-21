@@ -1567,13 +1567,13 @@ fn dependants_refused_with(conn: &Connection, id: &str) -> Result<Vec<String>, C
 /// `release` takes — and a releasable row is neither cleared itself nor
 /// allowed to lose the dependency it names.
 ///
-/// Both halves were wrong in the same way and for the same reason: the set
-/// was written as a list of verdicts when the question is whether a caller
-/// can still act on the row. A refused-unsent row was cleared although
-/// `release` accepts it, and a blocked row left its create unprotected — and
-/// the release the caller was told to perform then produced a row whose
-/// dependency could not be found, which `readiness` reads as unanswered and
-/// holds forever against a write that no longer exists.
+/// The set is the question of whether a caller can still act on the row,
+/// never a list of verdicts, because a list gets both halves wrong the same
+/// way: a refused-unsent row cleared although `release` accepts it, and a
+/// blocked row's create left unprotected, so that the release the caller is
+/// told to perform produces a row whose dependency cannot be found, which
+/// `readiness` reads as unanswered and holds forever against a write that
+/// no longer exists.
 pub fn forget_answered(conn: &Connection) -> Result<usize, CoreError> {
     Ok(conn.execute(
         "DELETE FROM queue

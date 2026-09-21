@@ -607,8 +607,8 @@ export const auth_verification = sqliteTable(
 // ---------------------------------------------------------------------------
 // @better-auth/oauth-provider plugin tables
 //
-// Four tables: client registrations, consent grants, opaque access tokens,
-// opaque refresh tokens. Model→table mapping wired in `auth/instance.ts`.
+// Client registrations, consent grants, opaque access tokens, opaque refresh
+// tokens and device codes. Model→table mapping wired in `auth/instance.ts`.
 //
 // FKs on `clientId` (the business key, not the PK) are application-enforced.
 // Cascade behavior on auth_user / auth_session is preserved where those

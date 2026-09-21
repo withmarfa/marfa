@@ -141,10 +141,9 @@ describe("the instance", () => {
   });
 
   it("advertises no inbound webhook feature, and serves no inbound door", async () => {
-    // The root named `inbound-webhooks` after the door left with the
-    // connector runtime. Both halves are asserted, because re-adding the
-    // advertisement and re-adding the door are separate regressions and
-    // either alone puts the root back into contradiction.
+    // Both halves are asserted, because adding the advertisement and adding
+    // the door are separate regressions and either alone puts the root into
+    // contradiction with what it serves.
     const r = await client.root();
     expect(r.ok).toBe(true);
     expect(r.data.features).not.toContain("inbound-webhooks");

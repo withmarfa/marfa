@@ -490,12 +490,13 @@ export function createApp(
     // RFC 8414 §3.1 forms the metadata URL by inserting the well-known
     // segment between host and issuer path, and OIDC discovery appends its
     // segment to the issuer. The issuer here is `<base>/auth`, so those are
-    // the URLs a spec-following client asks for. Four are registered: the
-    // two derivations above, plus the append form of the OAuth document,
-    // which the derivation does not yield but clients ask for anyway. All
-    // serve the same augmented document. The issuer-suffixed
-    // OIDC path resolves here because these registrations run before the
-    // `/auth/*` catch-all mounts.
+    // the URLs a spec-following client asks for. Each document is registered
+    // at both forms, the inserted segment and the appended one, so a client
+    // that follows either derivation for either document finds it: the two
+    // forms the derivations do not yield are asked for anyway. All serve
+    // the same augmented document. The two issuer-suffixed paths resolve
+    // here because these registrations run before the `/auth/*` catch-all
+    // mounts.
     //
     // The bare-root `/.well-known/oauth-authorization-server` and
     // `/.well-known/openid-configuration` are deliberately absent, and a

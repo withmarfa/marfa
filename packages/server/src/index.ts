@@ -136,7 +136,7 @@ async function main() {
     // **Kept out of the telemetry mirror.** The redactor rewrites attributes
     // and leaves the message body alone, on the reasoning that a body is
     // Marfa-controlled and therefore safe. This body is a credential, so
-    // exporting it would put the key to the instance in whatever backend
+    // exporting it would put the key to the instance in whatever sink
     // receives logs — turning "can read the boot log" into "can read the
     // observability stack", which is not the claim this secret is meant to
     // stand for.

@@ -75,10 +75,9 @@ describe("scanStoredValues", () => {
   });
 
   it("offers every rostered value to the comparison and reports nothing", async () => {
-    // Positive, deliberately. An earlier version handed in a fixture keyed
-    // by hand and asserted only that the result was empty and nothing was
-    // logged — both negative, so misspelling all four fixture keys left it
-    // passing while the scan compared nothing at all.
+    // Positive, deliberately. A fixture keyed by hand with only an empty
+    // result and an empty log asserted is two negatives, and a misspelled
+    // fixture key passes it while the scan compares nothing at all.
     //
     // So the fixture is built from `SCANNED_COLUMNS` itself, which makes a
     // misspelling impossible; an unrostered column throws rather than

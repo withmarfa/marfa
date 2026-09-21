@@ -166,11 +166,11 @@ type StreamIncompleteReason =
 /**
  * Most live frames one connection holds while its prologue runs.
  *
- * **Chosen as a memory bound, not derived from anything.** An earlier
- * version of this comment claimed it followed from `REPLAY_DEDUPE_WINDOW`
- * because the two bounded the same population from opposite sides. They
- * do not: that window holds the last few ids the replay actually SENT,
- * after filtering, while this holds live frames on their way in — and
+ * **Chosen as a memory bound, not derived from anything.** It does not
+ * follow from `REPLAY_DEDUPE_WINDOW`, though the two look like bounds on
+ * the same population from opposite sides. They are not: that window
+ * holds the last few ids the replay actually SENT, after filtering, while
+ * this holds live frames on their way in — and
  * whether a held frame's id is still inside that window depends on how
  * many rows the replay sent after it, which is a property of the
  * backlog's length rather than of this buffer's. Neither number is a

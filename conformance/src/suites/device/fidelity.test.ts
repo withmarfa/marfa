@@ -515,11 +515,11 @@ describe("the scripted answers match the server's", () => {
   /**
    * The doors that answer something other than an item.
    *
-   * Ten of the fourteen sendable write kinds go to one of these, and none of
-   * their answers carries an `item`. They were scripted with item-shaped
-   * bodies, which no server returns, and that is what hid a device reading
-   * every one of them as an answer it could not understand — counting a
-   * refusal against a write the server had already taken.
+   * Most of the sendable write kinds go to one of these, and none of their
+   * answers carries an `item`. Scripting them with item-shaped bodies,
+   * which no server returns, would hide a device reading every one of them
+   * as an answer it could not understand — counting a refusal against a
+   * write the server had already taken.
    */
   it("matches the write doors that do not answer with an item", async () => {
     const seeded = await note({ title: "sidecar", body: "sidecar" });

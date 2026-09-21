@@ -25,7 +25,7 @@ import { measure } from "../../utils/timing.js";
  *
  * The property under test is that a bounded read stays bounded: fetching one
  * page, or one item by id, should cost the same whether the caller owns forty
- * rows or six hundred. A backend that scans instead of seeking shows up as
+ * rows or six hundred. A query plan that scans instead of seeking shows up as
  * latency tracking the row count.
  *
  * The working set is scoped to this file's credential rather than to the whole
@@ -36,7 +36,7 @@ import { measure } from "../../utils/timing.js";
  */
 
 /** Same order-of-magnitude sanity bound the other read benchmarks use: a
- *  bounded page read is interactive on every backend this suite targets. */
+ *  bounded page read is interactive on the database this suite targets. */
 const READ_P50_CEILING_MS = 2_000;
 /** The tail absorbs request queueing. */
 const READ_P95_CEILING_MS = 5_000;

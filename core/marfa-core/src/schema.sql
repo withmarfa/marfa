@@ -81,9 +81,9 @@ CREATE TABLE IF NOT EXISTS queue (
   seq INTEGER PRIMARY KEY,
   id TEXT NOT NULL UNIQUE,
   -- One of the closed set in `queue-and-verdicts.md` 32. The `CHECK` is here
-  -- for the reason `verdict`'s is, eleven lines down: this file outlives
-  -- every process that writes it, and a kind outside the set is a row no
-  -- build can ever send. There is no refusal upstream of this to rely on.
+  -- for the reason `verdict`'s is, below: this file outlives every process
+  -- that writes it, and a kind outside the set is a row no build can ever
+  -- send. There is no refusal upstream of this to rely on.
   kind TEXT NOT NULL CHECK (
     kind IN (
       'create_item',
