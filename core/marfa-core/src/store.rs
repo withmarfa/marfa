@@ -20,6 +20,14 @@ pub const META_HYDRATE_STATE: &str = "hydrate_state";
 pub const HYDRATE_IN_PROGRESS: &str = "in_progress";
 pub const SCHEMA_VERSION: &str = "5";
 
+/// The schema the version above names, hashed as the folder mapping hashes
+/// bytes. A change to `schema.sql` without a new version would open a store
+/// from the earlier build and fail on its first read of a column that build
+/// never wrote; the test that holds this hash is what makes the version move
+/// with the schema.
+#[cfg(test)]
+const SCHEMA_HASH: &str = "47eee38026c40172";
+
 const ITEM_COLUMNS: &str = "id, type, state, tier, version, schema_version, source, source_id, device, occurred_at, created_at, updated_at, properties";
 const EDGE_COLUMNS: &str =
     "id, source_id, target_id, edge_type, properties, version, created_at, updated_at";
@@ -844,6 +852,17 @@ mod tests {
     use super::testing::*;
     use super::*;
 
+    /// The version names this schema and no other: a change to the file
+    /// moves both, or this says so.
+    #[test]
+    fn the_schema_version_names_the_schema_as_it_is() {
+        assert_eq!(
+            crate::folder::state::hash(SCHEMA.as_bytes()),
+            SCHEMA_HASH,
+            "schema.sql changed: move SCHEMA_VERSION on and set SCHEMA_HASH to the new value"
+        );
+    }
+
     #[test]
     fn an_item_round_trips_with_its_tags_and_keeps_them_when_none_are_sent() {
         let conn = conn();
@@ -1067,7 +1086,7 @@ mod tests {
             ],
             "a row a caller can still release, or one a releasable row waits on, \
              was cleared: releasing then produces a write whose dependency cannot \
-             be found, which reads as unanswered and is held for ever"
+             be found, which reads as unanswered and is held forever"
         );
         // The control: something was cleared, so the assertion above is not
         // satisfied by a function that deletes nothing at all.
@@ -1504,7 +1523,7 @@ pub fn release(conn: &Connection, id: &str) -> Result<bool, CoreError> {
     // And the writes this one refused by being refused itself
     // (`queue-and-verdicts.md` 16). They were never sent and were never
     // wrong; they were told the row they name would not exist. Releasing
-    // only the row they wait for would leave them `refused` for ever: this
+    // only the row they wait for would leave them `refused` forever: this
     // door takes such a row on its own, but nobody would know to ask for it,
     // so the caller would have released the create, watched it succeed, and
     // had no way to send the update that was waiting on it.
@@ -1534,7 +1553,7 @@ fn dependants_refused_with(conn: &Connection, id: &str) -> Result<Vec<String>, C
 ///
 /// Without it the queue grows without bound: every write door reads the
 /// whole queue to find what a new write depends on, so a queue nobody clears
-/// makes every write slower for ever. This is the caller `schema.sql` has in
+/// makes every write slower forever. This is the caller `schema.sql` has in
 /// mind when it argues about what a foreign key would do to one clearing
 /// their own answered rows.
 ///
@@ -1552,7 +1571,7 @@ fn dependants_refused_with(conn: &Connection, id: &str) -> Result<Vec<String>, C
 /// `release` accepts it, and a blocked row left its create unprotected — and
 /// the release the caller was told to perform then produced a row whose
 /// dependency could not be found, which `readiness` reads as unanswered and
-/// holds for ever against a write that no longer exists.
+/// holds forever against a write that no longer exists.
 pub fn forget_answered(conn: &Connection) -> Result<usize, CoreError> {
     Ok(conn.execute(
         "DELETE FROM queue

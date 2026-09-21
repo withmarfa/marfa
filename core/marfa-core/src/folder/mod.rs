@@ -29,7 +29,7 @@ pub const STATE_DIR: &str = ".marfa";
 ///
 /// The first half of a rename looks exactly like a delete — the old path
 /// stops existing — and this is the window in which the other half can
-/// arrive. A grace of zero sends a delete forevery rename.
+/// arrive. A grace of zero sends a delete for every rename.
 pub const RENAME_GRACE: Duration = Duration::from_secs(5);
 
 /// What a folder is a view on, and what a new file becomes (`folders.md` 1).

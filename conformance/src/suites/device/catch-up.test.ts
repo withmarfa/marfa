@@ -20,7 +20,7 @@ import {
  * Catch-up is the only thing between a copy and the truth once the snapshot
  * is taken, and every failure here is silent. A cursor that moves too far
  * skips rows nothing will fetch again; a cursor that does not move replays
- * for ever; an aged-out cursor answered by reconnecting leaves a copy missing
+ * forever; an aged-out cursor answered by reconnecting leaves a copy missing
  * exactly the writes that aged out.
  */
 
@@ -130,7 +130,7 @@ describe("catch-up replays from the cursor", () => {
     const caught = await device.catchUp();
     expect(
       caught.ok,
-      `a cursor of zero was refused as too old, so every device that hydrated an empty instance hydrates again on its first catch-up: ${JSON.stringify(caught)}`,
+      `a cursor of zero was refused, so every device that hydrated an empty instance is refused its first catch-up: ${JSON.stringify(caught)}`,
     ).toBe(true);
     if (!caught.ok) return;
     expect(caught.value.applied).toBe(1);
@@ -205,7 +205,7 @@ describe("catch-up replays from the cursor", () => {
 
     // Skipping is a success, not a failure: the cursor moves past the event
     // so the next catch-up resumes after it. A cursor left behind would
-    // fetch the same stale event for ever.
+    // fetch the same stale event forever.
     expect(
       caught.value.cursor,
       "the cursor stopped at the stale event, so every later catch-up replays it and never reaches the head",
