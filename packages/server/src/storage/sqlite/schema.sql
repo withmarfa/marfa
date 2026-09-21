@@ -269,11 +269,29 @@ CREATE TABLE IF NOT EXISTS `auth_verification` (
 );
 
 CREATE INDEX IF NOT EXISTS `idx_auth_verification_identifier` ON `auth_verification` (`identifier`);
+CREATE TABLE IF NOT EXISTS `blob_locations` (
+	`hash` text NOT NULL,
+	`store_id` text NOT NULL,
+	`recorded_at` text NOT NULL,
+	`verified_at` text,
+	PRIMARY KEY(`hash`, `store_id`),
+	FOREIGN KEY (`hash`) REFERENCES `blobs`(`hash`) ON UPDATE no action ON DELETE cascade,
+	FOREIGN KEY (`store_id`) REFERENCES `blob_stores`(`id`) ON UPDATE no action ON DELETE no action
+);
+
+CREATE TABLE IF NOT EXISTS `blob_stores` (
+	`id` text PRIMARY KEY NOT NULL,
+	`kind` text NOT NULL,
+	`locator` text NOT NULL,
+	`policy` text DEFAULT 'all' NOT NULL,
+	`attached_at` text NOT NULL,
+	`detached_at` text
+);
+
 CREATE TABLE IF NOT EXISTS `blobs` (
 	`hash` text PRIMARY KEY NOT NULL,
 	`mime_type` text NOT NULL,
 	`size_bytes` integer NOT NULL,
-	`storage_path` text NOT NULL,
 	`created_at` text NOT NULL
 );
 

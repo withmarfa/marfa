@@ -6,7 +6,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createSqliteStorage } from "../src/storage/sqlite/index.js";
-import { FilesystemBlobBackend } from "../src/storage/blob-backend.js";
+import { createBlobLayer } from "../src/storage/blob-layer.js";
 import { createApp } from "../src/app.js";
 import { ensureInstanceId } from "../src/storage/instance-id.js";
 import { hashApiKey } from "../src/middleware/auth.js";
@@ -14,7 +14,14 @@ import { hashApiKey } from "../src/middleware/auth.js";
 async function main(): Promise<void> {
   const dir = mkdtempSync(join(tmpdir(), "bench-"));
   const storage = await createSqliteStorage(join(dir, "b.db"));
-  const blob = new FilesystemBlobBackend(join(dir, "blobs"));
+  const blob = await createBlobLayer(storage, {
+    blobPath: join(dir, "blobs"),
+    s3Bucket: "",
+    s3Region: "us-east-1",
+    s3Endpoint: "",
+    s3AccessKeyId: "",
+    s3SecretAccessKey: "",
+  });
   const instanceId = await ensureInstanceId(storage.settings);
   const app = createApp(
     storage,
@@ -23,8 +30,6 @@ async function main(): Promise<void> {
       port: 0,
       sqlitePath: "",
       blobPath: "",
-      blobBackend: "fs",
-      maxBlobSize: 50 * 1024 * 1024,
       maxRequestBytes: 1_048_576,
       s3Bucket: "",
       s3Region: "us-east-1",
@@ -33,7 +38,6 @@ async function main(): Promise<void> {
       s3SecretAccessKey: "",
       apiKeySalt: "s",
       corsOrigins: [],
-      cdnBaseUrl: "",
       rateLimitEnabled: false,
       enableHsts: false,
       auditRetentionDays: 90,

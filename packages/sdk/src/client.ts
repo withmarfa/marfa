@@ -83,7 +83,6 @@ export type ClientConfig = ClientCredential & {
    */
   onConflictAutoMerge?: ConflictAutoMergeListener;
   timeoutMs?: number;
-  cdnBaseUrl?: string;
 };
 
 export interface UpdateOptions {
@@ -928,11 +927,8 @@ export class MarfaClient {
   private readonly transport: HttpTransport;
   private readonly defaultConflictStrategy: ConflictStrategy;
   private readonly defaultOnConflictAutoMerge?: ConflictAutoMergeListener;
-  private readonly apiBaseUrl: string;
-  private readonly cdnBaseUrl?: string;
 
   constructor(config: ClientConfig) {
-    this.apiBaseUrl = config.url.replace(/\/+$/, "");
     this.transport = new HttpTransport({
       baseUrl: config.url,
       apiKey: config.apiKey,
@@ -942,7 +938,6 @@ export class MarfaClient {
     });
     this.defaultConflictStrategy = config.conflictStrategy ?? "auto";
     this.defaultOnConflictAutoMerge = config.onConflictAutoMerge;
-    this.cdnBaseUrl = config.cdnBaseUrl;
   }
 
   // -------------------------------------------------------------------------
@@ -2037,18 +2032,28 @@ export class MarfaClient {
       return response.status === 200;
     },
 
-    /** Returns a direct CDN URL if configured, otherwise the API proxy URL.
-     *
-     *  Escaped like every other path here, and this is the one that most
-     *  needs it: the return value is not a request this client makes but a
-     *  URL handed to somebody else to fetch, so an unescaped `/` or `..` in
-     *  the caller's hash addresses a different resource on the origin. */
-    url: (hash: string): string => {
+    /**
+     * A time-limited link the bytes can be fetched from without a
+     * credential: the object store's own signed link when one holds the
+     * blob, otherwise one the instance serves. `ttlSeconds` asks for a
+     * lifetime; the server caps it and `expires_in` reports what it gave.
+     */
+    url: async (
+      hash: string,
+      ttlSeconds?: number,
+    ): Promise<{ url: string; expires_in: number }> => {
       const cleanHash = hash.startsWith("sha256:") ? hash : `sha256:${hash}`;
-      const suffix = path`/blobs/${cleanHash}`;
-      return this.cdnBaseUrl
-        ? `${this.cdnBaseUrl}${suffix}`
-        : `${this.apiBaseUrl}${suffix}`;
+      const query =
+        ttlSeconds === undefined ? "" : `?ttl=${String(ttlSeconds)}`;
+      const response = await this.transport.rawRequest(
+        "GET",
+        path`/blobs/${cleanHash}/url` + query,
+      );
+      const body: unknown = await response.json();
+      if (!response.ok) {
+        this.throwRawError(response.status, body);
+      }
+      return body as { url: string; expires_in: number };
     },
   };
 

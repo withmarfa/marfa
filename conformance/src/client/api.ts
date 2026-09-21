@@ -14,6 +14,8 @@ import type {
   ApiKeyResponse,
   Owner,
   BlobUploadResponse,
+  BlobStoreRow,
+  BlobLocationRow,
   BulkInput,
   BulkItemInput,
   BulkResponse,
@@ -643,8 +645,33 @@ export class MarfaClient {
     });
   }
 
-  async downloadBlob(hash: string): Promise<ApiResponse<ArrayBuffer>> {
-    return this.requestRaw(`/blobs/${hash}`);
+  async downloadBlob(
+    hash: string,
+    headers: Record<string, string> = {},
+  ): Promise<ApiResponse<ArrayBuffer>> {
+    return this.requestRaw(`/blobs/${hash}`, headers);
+  }
+
+  /** `HEAD /blobs/{hash}`: the headers a download would carry, no body. */
+  async headBlob(
+    hash: string,
+    headers: Record<string, string> = {},
+  ): Promise<ApiResponse<ArrayBuffer>> {
+    return this.requestRaw(`/blobs/${hash}`, headers, "HEAD");
+  }
+
+  /** `GET /blobs/stores`: the stores the instance keeps bytes in. */
+  async listBlobStores(): Promise<ApiResponse<{ data: BlobStoreRow[] }>> {
+    return this.request<{ data: BlobStoreRow[] }>("/blobs/stores");
+  }
+
+  /** `GET /blobs/{hash}/locations`: the location log for one blob. */
+  async listBlobLocations(
+    hash: string,
+  ): Promise<ApiResponse<{ data: BlobLocationRow[] }>> {
+    return this.request<{ data: BlobLocationRow[] }>(
+      `/blobs/${hash}/locations`,
+    );
   }
 
   async createKey(
@@ -795,7 +822,7 @@ export class MarfaClient {
     return this.request<{ edge: MarfaEdge }>(`/edges/${id}`);
   }
 
-  /** `GET /blobs/{hash}/url`: a presigned URL where the blob backend can mint one. */
+  /** `GET /blobs/{hash}/url`: a time-limited link the bytes can be fetched from. */
   async getBlobUrl(
     hash: string,
     ttl?: number,
@@ -1058,11 +1085,16 @@ export class MarfaClient {
     }
   }
 
-  private async requestRaw(path: string): Promise<ApiResponse<ArrayBuffer>> {
+  private async requestRaw(
+    path: string,
+    extraHeaders: Record<string, string> = {},
+    method: "GET" | "HEAD" = "GET",
+  ): Promise<ApiResponse<ArrayBuffer>> {
     const url = `${this.baseUrl}${path}`;
     try {
       const response = await ofetch.raw(url, {
-        headers: { Authorization: `Bearer ${this.apiKey}` },
+        method,
+        headers: { Authorization: `Bearer ${this.apiKey}`, ...extraHeaders },
         responseType: "arrayBuffer",
         ignoreResponseError: true,
       });

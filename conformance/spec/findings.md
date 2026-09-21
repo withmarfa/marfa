@@ -28,9 +28,9 @@ The route is stripped from the document as an internal operation, yet it is the 
 
 The document says a queued job flips to `cancelled` immediately and an in-progress one flips between chunks. The worker takes a job as soon as it is queued and finishes before a second request can reach the door, so no caller over the wire can observe either transition. `compliance/bulk.test.ts › DELETE on a terminal job answers 200 with its final state unchanged`.
 
-## 7. `GET /blobs/{hash}/url` refuses every hash on the filesystem backend
+## 7. `GET /blobs/{hash}/url` answers on every instance
 
-With the filesystem blob backend the door answers `400 validation_error` with one message, "Presigned URLs are not available with the current blob backend", for a known, an unknown and a malformed hash alike: the backend check runs before the hash is looked at. The document describes the 400 as "invalid blob hash or presigned URLs not available", which is consistent, but the 404 it declares is unreachable on this backend. `correctness/blob-correctness.test.ts › answers 400 for a presigned URL on the filesystem backend`.
+Resolved. The door answers a link on every instance: the object store's own signed link once that store holds the blob, and a link the instance serves until then. The `400` it once answered on a disk-only instance, for a known, an unknown and a malformed hash alike, is gone with the setting that chose one store over the other, and the `404` the document declares is reached. `correctness/blob-correctness.test.ts › mints a link that fetches the bytes without a credential`, `› answers 404 for a link to an unknown hash and 400 for a malformed one`.
 
 ## 8. Statuses the fixtures observe that the document does not declare
 

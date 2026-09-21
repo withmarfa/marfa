@@ -72,25 +72,18 @@ describe("an identifier cannot smuggle a query onto a real route", () => {
     expect(url.pathname).toContain("real-id");
   });
 
-  it("escapes the blob URL it hands to somebody else to fetch", () => {
-    // `blobs.url` makes no request: it returns a URL for an `<img src>` or a
-    // download, so an unescaped separator in the caller's hash is a URL
-    // pointing at a different resource on the origin, resolved by whoever
-    // fetches it rather than by this client. Both branches, because the CDN
-    // one is a different origin and was written separately.
-    const api = new MarfaClient({ url: "http://localhost", apiKey: "k" });
-    expect(api.blobs.url("sha256:abc/../../admin/keys")).toBe(
-      "http://localhost/blobs/sha256%3Aabc%2F..%2F..%2Fadmin%2Fkeys",
-    );
+  it("escapes the hash when it asks the server for a blob's link", async () => {
+    // `blobs.url` asks `GET /blobs/{hash}/url` for a link, so an unescaped
+    // separator in the caller's hash would address a different door.
+    const { client, urls } = recordingClient();
+    await ignoringResult(client.blobs.url("sha256:abc/../../admin/keys", 60));
 
-    const cdn = new MarfaClient({
-      url: "http://localhost",
-      apiKey: "k",
-      cdnBaseUrl: "http://cdn.example",
-    });
-    expect(cdn.blobs.url("sha256:abc/../../admin/keys")).toBe(
-      "http://cdn.example/blobs/sha256%3Aabc%2F..%2F..%2Fadmin%2Fkeys",
+    expect(urls).toHaveLength(1);
+    const url = new URL(urls[0]!);
+    expect(url.pathname).toBe(
+      "/blobs/sha256%3Aabc%2F..%2F..%2Fadmin%2Fkeys/url",
     );
+    expect(url.search).toBe("?ttl=60");
   });
 
   it("puts a caller's slash in the segment, never in the route", async () => {

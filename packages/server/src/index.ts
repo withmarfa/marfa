@@ -19,8 +19,7 @@ import { setRuntimeNamespaceRoots } from "./auth/oauth-provider.js";
 import { createApp } from "./app.js";
 import { ensureInstanceId } from "./storage/instance-id.js";
 import { createSqliteStorage } from "./storage/sqlite/index.js";
-import { FilesystemBlobBackend } from "./storage/blob-backend.js";
-import type { BlobBackend } from "./storage/blob-backend.js";
+import { createBlobLayer } from "./storage/blob-layer.js";
 import type { Storage } from "./storage/interface.js";
 import { WebhookConsumer, WebhookPoller } from "./webhooks/delivery.js";
 import { logJobTickFailure } from "./storage/job-tick.js";
@@ -75,20 +74,14 @@ async function main() {
 
   const storage: Storage = await createSqliteStorage(config.sqlitePath);
 
-  let blobBackend: BlobBackend;
-  if (config.blobBackend === "s3") {
-    const { S3BlobBackend } = await import("./storage/blob-s3.js");
-    blobBackend = new S3BlobBackend({
-      bucket: config.s3Bucket,
-      region: config.s3Region,
-      endpoint: config.s3Endpoint || undefined,
-      accessKeyId: config.s3AccessKeyId || undefined,
-      secretAccessKey: config.s3SecretAccessKey || undefined,
-      forcePathStyle: config.s3ForcePathStyle,
-    });
-  } else {
-    blobBackend = new FilesystemBlobBackend(config.blobPath);
-  }
+  const blobs = await createBlobLayer(storage, config);
+  log("info", "Blob stores attached", {
+    stores: blobs.stores.map((store) => ({
+      id: store.id,
+      kind: store.kind,
+      locator: store.locator,
+    })),
+  });
   initEventLog(storage.eventLog);
 
   // Declared ahead of the jobs rather than beside `shutdown()` because the
@@ -216,9 +209,10 @@ async function main() {
   );
   trashPurger.start();
 
-  // Activity rows are ordinary items and had no retention at all, which
-  // is how production reached 6,015 of them against 805 of everything
-  // else. Same fan-out shape as trash; `0` on the interval disables.
+  // Activity rows are ordinary items, one per connector run, so they are
+  // the fastest-growing type on an instance with connections and the one
+  // that needs a bound of its own. Same fan-out shape as trash; `0` on the
+  // interval disables.
   const activityPurgeIntervalMs = config.activityPurgeIntervalMs ?? 3_600_000;
   const activityPurger =
     activityPurgeIntervalMs > 0
@@ -273,8 +267,6 @@ async function main() {
     activityPurger.start();
   }
 
-  // Ordinary revoked keys had nothing sweeping them, which is how staging
-  // reached 3,044 older than a week.
   const revokedKeyReaper = new RevokedKeyReaper(
     storage,
     activityPurgeIntervalMs,
@@ -322,19 +314,17 @@ async function main() {
   }
 
   // Storing a blob and creating the item that references it are separate
-  // calls, so an item write refused between them leaves bytes registered,
-  // charged against the instance quotas and pointed at by nothing. The
-  // operator route that finds them is a report by default and nothing ran
-  // it; this does, behind a grace window so the gap between a legitimate
-  // upload and its item write is not mistaken for the leak. Grace `0`
-  // disables the job.
+  // calls, so an item write refused between them leaves bytes registered
+  // and pointed at by nothing. The sweep runs behind a grace window so the
+  // gap between a legitimate upload and its item write is not mistaken for
+  // the leak. Grace `0` disables the job.
   const blobCleanupGraceMs = config.blobCleanupGraceMs ?? 86_400_000;
   const blobCleanupIntervalMs = config.blobCleanupIntervalMs ?? 86_400_000;
   const blobOrphanCleaner =
     blobCleanupGraceMs > 0
       ? new BlobOrphanCleaner(
           storage,
-          blobBackend,
+          blobs,
           blobCleanupGraceMs,
           blobCleanupIntervalMs,
           undefined,
@@ -351,7 +341,7 @@ async function main() {
     config.enrichmentEnabled !== false
       ? new TextEnrichmentSweeper({
           storage,
-          blobs: blobBackend,
+          blobs,
           ocr:
             config.enrichmentOcrEnabled !== false
               ? new TesseractOcr({
@@ -458,7 +448,7 @@ async function main() {
   // door answerable on an instance whose database has since gone.
   const instanceId = await ensureInstanceId(storage.settings);
 
-  const app = createApp(storage, blobBackend, config, instanceId, oidcSigner);
+  const app = createApp(storage, blobs, config, instanceId, oidcSigner);
   const server = serve({ fetch: app.fetch, port: config.port }, (info) => {
     log("info", `Marfa server listening on port ${String(info.port)}`);
   });

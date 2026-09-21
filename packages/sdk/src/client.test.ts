@@ -7,7 +7,7 @@ import {
   createApp,
   createSqliteStorage,
   ensureInstanceId,
-  FilesystemBlobBackend,
+  createBlobLayer,
   BulkActionWorker,
 } from "@withmarfa/server";
 import { MarfaClient } from "./client.js";
@@ -50,17 +50,22 @@ beforeAll(async () => {
   const tmpDir = mkdtempSync(join(tmpdir(), "marfa-sdk-test-"));
   const storage = await createSqliteStorage(join(tmpDir, "test.db"));
   testStorage = storage;
-  const blobBackend = new FilesystemBlobBackend(join(tmpDir, "blobs"));
+  const blobs = await createBlobLayer(storage, {
+    blobPath: join(tmpDir, "blobs"),
+    s3Bucket: "",
+    s3Region: "us-east-1",
+    s3Endpoint: "",
+    s3AccessKeyId: "",
+    s3SecretAccessKey: "",
+  });
   const instanceId = await ensureInstanceId(storage.settings);
   const app = createApp(
     storage,
-    blobBackend,
+    blobs,
     {
       port: 0,
       sqlitePath: "",
       blobPath: "",
-      blobBackend: "fs",
-      maxBlobSize: 50 * 1024 * 1024,
       maxRequestBytes: 1_048_576,
       s3Bucket: "",
       s3Region: "us-east-1",
@@ -69,7 +74,6 @@ beforeAll(async () => {
       s3SecretAccessKey: "",
       apiKeySalt: "test-salt",
       corsOrigins: [],
-      cdnBaseUrl: "",
       rateLimitEnabled: false,
       enableHsts: false,
       auditRetentionDays: 90,
@@ -836,6 +840,19 @@ describe("blobs", () => {
         "sha256:0000000000000000000000000000000000000000000000000000000000000000",
       ),
     ).toBe(false);
+  });
+
+  it("asks for a link that fetches the bytes without a credential", async () => {
+    const content = Buffer.from("linked bytes");
+    const { hash } = await client.blobs.upload(content, "text/plain");
+
+    const link = await client.blobs.url(hash, 120);
+    expect(link.expires_in).toBe(120);
+    const fetched = await testFetchFn(link.url);
+    expect(fetched.status).toBe(200);
+    expect(Buffer.from(await fetched.arrayBuffer()).toString("utf-8")).toBe(
+      "linked bytes",
+    );
   });
 });
 

@@ -43,6 +43,7 @@
  */
 import { ITEM_STATES, TIERS } from "@withmarfa/shared";
 import { log } from "../middleware/logger.js";
+import { BLOB_STORE_KINDS } from "./interface.js";
 
 /** One column, and the set of values this build can interpret in it. */
 export interface ScannedColumn {
@@ -115,6 +116,16 @@ export const SCANNED_COLUMNS: readonly ScannedColumn[] = [
     castType: "Tier",
     allowed: TIERS,
     allowsNull: true,
+  },
+  // A store this build cannot attach still has rows in the location log,
+  // and a copy count that silently ignored them would be wrong in the
+  // unsafe direction. The count is what says a build was rolled back past
+  // a kind of store it had attached.
+  {
+    table: "blob_stores",
+    column: "kind",
+    castType: "BlobStoreKind",
+    allowed: BLOB_STORE_KINDS,
   },
 ];
 

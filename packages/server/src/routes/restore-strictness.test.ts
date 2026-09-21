@@ -270,6 +270,6 @@ describe("a refused restore leaves no blobs behind", () => {
     const result = (await res.json()) as RestoreResult;
     expect(result.blobs_imported).toBe(1);
     expect(await ctx.storage.blobs.get(blob.hash)).not.toBeNull();
-    expect(await ctx.blobBackend.exists(blob.hash)).toBe(true);
+    expect(await ctx.blobs.disk.has(blob.hash)).not.toBeNull();
   });
 });

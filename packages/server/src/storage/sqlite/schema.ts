@@ -256,18 +256,65 @@ export const apiKeys = sqliteTable(
 );
 
 // ---------------------------------------------------------------------------
-// blobs — one row per content hash; the backend holds one file per hash.
+// blobs — one row per content hash. Where the bytes are is the location
+// log's business, not this row's.
 // ---------------------------------------------------------------------------
 export const blobs = sqliteTable("blobs", {
   hash: text("hash").primaryKey(),
   mime_type: text("mime_type").notNull(),
   size_bytes: integer("size_bytes").notNull(),
-  storage_path: text("storage_path").notNull(),
   // When the blob was registered. The orphan sweep measures its grace
   // window against it, so a blob whose item write is still in flight is not
   // mistaken for one whose item write never landed.
   created_at: text("created_at").notNull(),
 });
+
+// ---------------------------------------------------------------------------
+// blob_stores — every place bytes live that this instance has attached.
+//
+// A store's id comes from a marker the store itself holds, not from the
+// configuration that named it, so a fresh folder is a fresh store with no
+// claimed copies. A row whose store the configuration no longer names is
+// kept and marked detached rather than deleted: the location log still
+// describes it, and a copy count that forgot a store could never be wrong
+// in the safe direction.
+// ---------------------------------------------------------------------------
+export const blobStores = sqliteTable("blob_stores", {
+  id: text("id").primaryKey(),
+  kind: text("kind").notNull(),
+  // Where the store is, for a person: a directory, or a bucket and prefix.
+  // Never a credential.
+  locator: text("locator").notNull(),
+  // What the store wants to hold. `all` is the one policy this build
+  // defines; the column is open for the presets a store that wants less
+  // will name.
+  policy: text("policy").notNull().default("all"),
+  attached_at: text("attached_at").notNull(),
+  detached_at: text("detached_at"),
+});
+
+// ---------------------------------------------------------------------------
+// blob_locations — the location log: which stores hold which blob.
+//
+// A row is written only once the store has the bytes and they hashed to
+// their name; `verified_at` is the last time a check found the copy present
+// and intact, null until one has. A copy counts only while its store is
+// still attached.
+// ---------------------------------------------------------------------------
+export const blobLocations = sqliteTable(
+  "blob_locations",
+  {
+    hash: text("hash")
+      .notNull()
+      .references(() => blobs.hash, { onDelete: "cascade" }),
+    store_id: text("store_id")
+      .notNull()
+      .references(() => blobStores.id),
+    recorded_at: text("recorded_at").notNull(),
+    verified_at: text("verified_at"),
+  },
+  (table) => [primaryKey({ columns: [table.hash, table.store_id] })],
+);
 
 // The instance's type registrations, the shipped set included.
 export const types = sqliteTable(

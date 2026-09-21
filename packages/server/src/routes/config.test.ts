@@ -8,7 +8,7 @@ import type { TestContext } from "../test-utils.js";
 import { createApp } from "../app.js";
 import { ensureInstanceId } from "../storage/instance-id.js";
 import { createSqliteStorage } from "../storage/sqlite/index.js";
-import { FilesystemBlobBackend } from "../storage/blob-backend.js";
+import { createBlobLayer } from "../storage/blob-layer.js";
 import { hashApiKey } from "../middleware/auth.js";
 import type { AppEnv } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
@@ -38,16 +38,21 @@ async function createConfigContext(): Promise<ConfigContext> {
   const storage = await createSqliteStorage(dbPath);
   const instanceId = await ensureInstanceId(storage.settings);
 
-  const blobBackend = new FilesystemBlobBackend(blobPath);
+  const blobs = await createBlobLayer(storage, {
+    blobPath: blobPath,
+    s3Bucket: "",
+    s3Region: "us-east-1",
+    s3Endpoint: "",
+    s3AccessKeyId: "",
+    s3SecretAccessKey: "",
+  });
   const app = createApp(
     storage,
-    blobBackend,
+    blobs,
     {
       port: 0,
       sqlitePath: "",
       blobPath,
-      blobBackend: "fs",
-      maxBlobSize: 50 * 1024 * 1024,
       maxRequestBytes: 1_048_576,
       s3Bucket: "",
       s3Region: "us-east-1",
@@ -56,7 +61,6 @@ async function createConfigContext(): Promise<ConfigContext> {
       s3SecretAccessKey: "",
       apiKeySalt: SALT,
       corsOrigins: [],
-      cdnBaseUrl: "",
       rateLimitEnabled: false,
       enableHsts: false,
       auditRetentionDays: 90,

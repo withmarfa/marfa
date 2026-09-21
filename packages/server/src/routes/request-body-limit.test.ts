@@ -3,17 +3,15 @@ import { createTestContext } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 
 // Global request-body cap is small here so an oversized JSON write is cheap
-// to construct. The blob cap sits well above it so the exemption is testable:
-// a blob between the two limits must still succeed.
+// to construct, and so a blob well over it is cheap too: a blob upload has
+// no cap, and the exemption is what this file shows.
 const REQUEST_CAP = 2048;
-const BLOB_CAP = 16 * 1024;
 
 let ctx: TestContext;
 
 beforeAll(async () => {
   ctx = await createTestContext({
     maxRequestBytes: REQUEST_CAP,
-    maxBlobSize: BLOB_CAP,
   });
 });
 
@@ -75,10 +73,10 @@ describe("global request-body size cap", () => {
     expect(data.error.code).toBe("request_too_large");
   });
 
-  it("exempts blob uploads between the JSON cap and maxBlobSize", async () => {
-    // Larger than the JSON request cap but under the blob cap — the global
-    // limit must NOT apply to /blobs, and the blob handler accepts it.
-    const data = new Uint8Array(REQUEST_CAP * 3);
+  it("exempts blob uploads from the JSON cap", async () => {
+    // Many times the JSON request cap: the global limit must not apply to
+    // /blobs, and the handler takes the bytes as they are.
+    const data = new Uint8Array(REQUEST_CAP * 64);
     const res = await ctx.app.request("/blobs", {
       method: "POST",
       headers: {
@@ -88,21 +86,8 @@ describe("global request-body size cap", () => {
       body: data,
     });
     expect(res.status).toBe(201);
-  });
-
-  it("still enforces maxBlobSize on blob uploads with blob_too_large", async () => {
-    const data = new Uint8Array(BLOB_CAP + 1);
-    const res = await ctx.app.request("/blobs", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${ctx.workingKey}`,
-        "Content-Type": "application/octet-stream",
-      },
-      body: data,
-    });
-    expect(res.status).toBe(413);
-    const body = (await res.json()) as { error: { code: string } };
-    expect(body.error.code).toBe("blob_too_large");
+    const body = (await res.json()) as { size_bytes: number };
+    expect(body.size_bytes).toBe(data.length);
   });
 
   it("exempts /items/bulk from the small global cap (bulk carries many items)", async () => {

@@ -7,8 +7,8 @@ import { OidcSigner } from "./auth/oidc-signing.js";
 import type { AppConfig } from "./config.js";
 import type { MarfaAuth } from "./auth/instance.js";
 import { createSqliteStorage } from "./storage/sqlite/index.js";
-import { FilesystemBlobBackend } from "./storage/blob-backend.js";
-import type { BlobBackend } from "./storage/blob-backend.js";
+import { createBlobLayer } from "./storage/blob-layer.js";
+import type { BlobLayer } from "./storage/blob-layer.js";
 import { hashApiKey } from "./middleware/auth.js";
 import type { Storage } from "./storage/interface.js";
 import type { Hono } from "hono";
@@ -60,7 +60,7 @@ export type TestApp = ReturnType<typeof createApp>;
 export interface TestContext {
   app: TestApp;
   storage: Storage;
-  blobBackend: BlobBackend;
+  blobs: BlobLayer;
   /** What the app was built with, so a test can build a second app over
    *  the same database. */
   config: AppConfig;
@@ -394,7 +394,7 @@ export async function createTestContext(
 export interface UnbootstrappedTestApp {
   app: TestApp;
   storage: Storage;
-  blobBackend: BlobBackend;
+  blobs: BlobLayer;
   config: AppConfig;
   tmpDir: string;
   cleanup: () => Promise<void>;
@@ -410,13 +410,10 @@ async function buildUnbootstrappedApp(
   const dbPath = join(tmpDir, "test.db");
   const storage = await createSqliteStorage(dbPath);
 
-  const blobBackend = new FilesystemBlobBackend(blobPath);
   const config: AppConfig = {
     port: 0,
     sqlitePath: "",
     blobPath,
-    blobBackend: "fs",
-    maxBlobSize: 50 * 1024 * 1024,
     maxRequestBytes: 1_048_576,
     s3Bucket: "",
     s3Region: "us-east-1",
@@ -426,7 +423,6 @@ async function buildUnbootstrappedApp(
     s3ForcePathStyle: true,
     apiKeySalt: SALT,
     corsOrigins: [],
-    cdnBaseUrl: "",
     rateLimitEnabled: false,
     enableHsts: false,
     auditRetentionDays: 90,
@@ -450,10 +446,11 @@ async function buildUnbootstrappedApp(
     rateLimitWindowMs: 60_000,
     ...overrides,
   };
+  const blobs = await createBlobLayer(storage, config);
   const oidcSigner = await OidcSigner.init(storage);
   const app = createApp(
     storage,
-    blobBackend,
+    blobs,
     config,
     await ensureInstanceId(storage.settings),
     oidcSigner,
@@ -465,7 +462,7 @@ async function buildUnbootstrappedApp(
   return {
     app,
     storage,
-    blobBackend,
+    blobs,
     config,
     tmpDir,
     auth: app.auth,
@@ -507,7 +504,7 @@ async function buildTestContext(
   tmpDir: string,
   overrides?: Partial<AppConfig>,
 ): Promise<TestContext> {
-  const { app, storage, blobBackend, config, cleanup, auth } =
+  const { app, storage, blobs, config, cleanup, auth } =
     await buildUnbootstrappedApp(tmpDir, overrides);
 
   const suffix = Math.random().toString(36).slice(2, 14);
@@ -566,7 +563,7 @@ async function buildTestContext(
   return {
     app,
     storage,
-    blobBackend,
+    blobs,
     config,
     operatorKey: rawKey,
     workingKey: workingRawKey,

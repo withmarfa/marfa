@@ -6,7 +6,7 @@ import {
 import { log } from "../middleware/logger.js";
 import { publish } from "../pubsub.js";
 import type { Storage } from "../storage/interface.js";
-import type { BlobBackend } from "../storage/blob-backend.js";
+import type { BlobLayer } from "../storage/blob-layer.js";
 import {
   mergeUpdateProperties,
   resolveIncomingProperties,
@@ -22,7 +22,7 @@ import type { DimensionField, DimensionOutcome } from "./dimensions.js";
 
 export interface TextEnrichmentSweeperOptions {
   storage: Storage;
-  blobs: BlobBackend;
+  blobs: BlobLayer;
   /** OCR engine, or null when image extraction is disabled. */
   ocr: OcrEngine | null;
   intervalMs: number;
@@ -213,7 +213,7 @@ export class TextEnrichmentSweeper {
     // when the blob, the extractor, or the configuration changes.
     const recordSkip = (error: string) => record("skipped", error);
     // Transient: the world was not in the shape the candidate row claimed
-    // (a blob write not yet landed, a flaky backend read). Recorded as
+    // (a blob write not yet landed, a flaky store read). Recorded as
     // `failed` so the retry budget re-offers it, unlike a skip — a
     // permanent parking is the wrong answer to a temporary miss.
     const recordTransient = async (error: string) => {
@@ -255,7 +255,9 @@ export class TextEnrichmentSweeper {
         return "skipped";
       }
 
-      const bytes = await blobs.get(candidate.blob_ref);
+      // Collected rather than streamed, because every extractor below takes
+      // a buffer; the size gate above is what keeps the buffer bounded.
+      const bytes = await readAll(blobs, candidate.blob_ref);
       if (!bytes) {
         await recordTransient("blob bytes missing");
         return "failed";
@@ -505,4 +507,18 @@ export class TextEnrichmentSweeper {
       });
     }
   }
+}
+
+/** The whole blob from the first attached store that holds it. */
+async function readAll(blobs: BlobLayer, hash: string): Promise<Buffer | null> {
+  for (const store of blobs.stores) {
+    const read = await store.get(hash);
+    if (!read) continue;
+    const chunks: Buffer[] = [];
+    for await (const chunk of read.stream as AsyncIterable<Buffer>) {
+      chunks.push(chunk);
+    }
+    return Buffer.concat(chunks);
+  }
+  return null;
 }

@@ -98,16 +98,18 @@ export enum ErrorCode {
   OWNER_EXISTS = "owner_exists",
   /** The instance has no owner yet; `POST /owner` creates one. */
   OWNER_NOT_FOUND = "owner_not_found",
-  BLOB_TOO_LARGE = "blob_too_large",
   /**
    * The request body exceeded the global JSON-write size cap
-   * (`MARFA_MAX_REQUEST_BYTES`, default 1 MB). Distinct from
-   * `BLOB_TOO_LARGE`, the much larger cap on a blob upload
-   * (`MAX_BLOB_SIZE`, default 50 MB) enforced by the blob upload route,
-   * which is exempt from this global cap. Both surface as HTTP 413; the
-   * code distinguishes which limit fired.
+   * (`MARFA_MAX_REQUEST_BYTES`, default 1 MB). A blob upload is exempt from
+   * that cap and has no cap of its own: its body streams to disk.
    */
   REQUEST_TOO_LARGE = "request_too_large",
+  /**
+   * A `Range` request on a blob asked for bytes the blob does not have. The
+   * response's `Content-Range` names the blob's size so the caller can ask
+   * again within bounds.
+   */
+  RANGE_NOT_SATISFIABLE = "range_not_satisfiable",
   INVALID_PROPERTIES = "invalid_properties",
   INVALID_SCHEMA = "invalid_schema",
   /**
@@ -280,8 +282,8 @@ const STATUS_MAP: Record<ErrorCode, number> = {
   [ErrorCode.OWNER_NOT_FOUND]: 404,
   [ErrorCode.VERSION_BUMP_MISMATCH]: 422,
   [ErrorCode.COMPATIBLE_WITH_VIOLATION]: 422,
-  [ErrorCode.BLOB_TOO_LARGE]: 413,
   [ErrorCode.REQUEST_TOO_LARGE]: 413,
+  [ErrorCode.RANGE_NOT_SATISFIABLE]: 416,
   [ErrorCode.INVALID_PROPERTIES]: 400,
   [ErrorCode.INVALID_SCHEMA]: 400,
   [ErrorCode.INHERITANCE_VIOLATION]: 400,

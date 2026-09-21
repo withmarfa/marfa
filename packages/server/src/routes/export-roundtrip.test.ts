@@ -381,8 +381,12 @@ describe("an archive's blobs", () => {
 
     const bytes = Buffer.from("the file's exact contents, and not a stand-in");
     const hash = `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
-    await source.blobBackend.put(hash, bytes, "text/plain");
-    await source.storage.blobs.register(hash, "text/plain", bytes.length, hash);
+    await source.blobs.disk.put(hash, {
+      stream: Readable.from(bytes),
+      size_bytes: bytes.length,
+    });
+    await source.storage.blobs.register(hash, "text/plain", bytes.length);
+    await source.storage.blobs.recordLocation(hash, source.blobs.disk.id);
     await source.storage.items.create({
       type: "core.file",
       properties: {
@@ -427,8 +431,10 @@ describe("an archive's blobs", () => {
       body: archive,
     });
     expect(restoreRes.status, await restoreRes.clone().text()).toBe(200);
-    const restored = await destination.blobBackend.get(hash);
+    const restored = await destination.blobs.disk.get(hash);
     expect(restored).not.toBeNull();
-    expect(Buffer.from(restored!).toString()).toBe(bytes.toString());
+    const chunks: Buffer[] = [];
+    for await (const chunk of restored!.stream) chunks.push(Buffer.from(chunk));
+    expect(Buffer.concat(chunks).toString()).toBe(bytes.toString());
   });
 });

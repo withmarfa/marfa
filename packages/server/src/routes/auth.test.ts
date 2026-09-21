@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import { createTestContext, request } from "../test-utils.js";
 import { createSqliteStorage } from "../storage/sqlite/index.js";
-import { FilesystemBlobBackend } from "../storage/blob-backend.js";
+import { createBlobLayer } from "../storage/blob-layer.js";
 import { ensureBootstrapSecret } from "../auth/bootstrap-secret.js";
 import { createApp } from "../app.js";
 import { ensureInstanceId } from "../storage/instance-id.js";
@@ -46,16 +46,21 @@ describe("bootstrap mode", () => {
     const freshTmpDir = mkdtempSync(join(tmpdir(), "marfa-boot-"));
     const storage = await createSqliteStorage(join(freshTmpDir, "boot.db"));
     const instanceId = await ensureInstanceId(storage.settings);
-    const blobBackend = new FilesystemBlobBackend(join(freshTmpDir, "blobs"));
+    const blobs = await createBlobLayer(storage, {
+      blobPath: join(freshTmpDir, "blobs"),
+      s3Bucket: "",
+      s3Region: "us-east-1",
+      s3Endpoint: "",
+      s3AccessKeyId: "",
+      s3SecretAccessKey: "",
+    });
     const app = createApp(
       storage,
-      blobBackend,
+      blobs,
       {
         port: 0,
         sqlitePath: "",
         blobPath: "",
-        blobBackend: "fs",
-        maxBlobSize: 50 * 1024 * 1024,
         maxRequestBytes: 1_048_576,
         s3Bucket: "",
         s3Region: "us-east-1",
@@ -64,7 +69,6 @@ describe("bootstrap mode", () => {
         s3SecretAccessKey: "",
         apiKeySalt: "test-salt",
         corsOrigins: [],
-        cdnBaseUrl: "",
         rateLimitEnabled: false,
         enableHsts: false,
         auditRetentionDays: 90,

@@ -1,12 +1,20 @@
 # Blobs
 
-Content-addressed binary storage beside the items that reference it.
+Content-addressed binary storage beside the items that reference it. Where the bytes live, and the rules that keep them, are `stores.md`'s.
 
 1. `POST /blobs` takes the raw bytes as the body with their `Content-Type`, and answers `201` with `hash` (`sha256:` plus 64 hex characters of the content's digest), `mime_type` as sent and `size_bytes`. `correctness/blob-correctness.test.ts › upload returns the sha256 hash, the mime type sent and the byte length`.
-2. Uploading the same bytes again answers the same hash without error. `correctness/blob-correctness.test.ts › duplicate upload returns same hash without error`.
-3. `GET /blobs/{hash}` returns the bytes unchanged with the content type they were uploaded under. `correctness/blob-correctness.test.ts › download returns byte-for-byte identical content`, `› content-type is preserved on download`.
-4. An unknown hash answers `404 blob_not_found`. `correctness/blob-correctness.test.ts › download with an unknown hash returns 404`, `compliance/error-codes.test.ts › returns 404 for non-existent blob`.
-5. A hash outside the `sha256:<64 hex>` form answers `400 validation_error`, and so does an empty upload. `correctness/blob-correctness.test.ts › refuses a malformed hash and an empty upload`.
-6. A blob's hash is stored on an item as a property value (`blob_ref` on file types) and survives a read. `correctness/blob-correctness.test.ts › blob_ref in properties persists after upload`.
-7. `GET /blobs/{hash}/url` answers `400 validation_error` for a known hash, an unknown hash and a malformed hash alike on the filesystem backend, which mints no presigned URLs; the door's success path belongs to a backend this server does not run with. `correctness/blob-correctness.test.ts › answers 400 for a presigned URL on the filesystem backend`.
-8. A request body over the server's cap answers `413 request_too_large` before any handler runs. `compliance/adversarial.test.ts › refuses a request over the body cap with request_too_large`.
+2. An upload has no size cap: the body streams to disk as it arrives, and a body many times the JSON write surface's cap is stored whole, hashed over every byte, and read back at its full length. `correctness/blob-correctness.test.ts › stores a body far larger than the JSON cap, whole`.
+3. Uploading the same bytes again answers the same hash without error. `correctness/blob-correctness.test.ts › duplicate upload returns same hash without error`.
+4. The raw body is the only form: a `multipart/form-data` body answers `400 validation_error`, and the same bytes sent raw are stored. `correctness/blob-correctness.test.ts › refuses a multipart body and takes the same bytes raw`.
+5. `GET /blobs/{hash}` returns the bytes unchanged with the content type they were uploaded under, `Content-Length`, `Accept-Ranges: bytes` and an `ETag` of the hash. `correctness/blob-correctness.test.ts › download returns byte-for-byte identical content`, `› content-type is preserved on download`.
+6. One `Range` of the form `bytes=<first>-<last>` or `bytes=<first>-` answers `206` with `Content-Range: bytes <first>-<last>/<size>` and those bytes; a range starting past the end answers `416 range_not_satisfiable` with `Content-Range: bytes */<size>`. `correctness/blob-correctness.test.ts › serves one byte range with 206, and 416 outside the blob`.
+7. `HEAD /blobs/{hash}` answers the headers a download would carry: the content type, the length, the `ETag` and `Accept-Ranges`. `correctness/blob-correctness.test.ts › answers HEAD with the headers of the bytes`.
+8. An unknown hash answers `404 blob_not_found`. `correctness/blob-correctness.test.ts › download with an unknown hash returns 404`, `compliance/error-codes.test.ts › returns 404 for non-existent blob`.
+9. A hash outside the `sha256:<64 hex>` form answers `400 validation_error`, and so does an empty upload. `correctness/blob-correctness.test.ts › refuses a malformed hash and an empty upload`.
+10. A blob's hash is stored on an item as a property value (`blob_ref` on file types) and survives a read. `correctness/blob-correctness.test.ts › blob_ref in properties persists after upload`.
+11. `GET /blobs/{hash}/url` answers on every instance with `url` and `expires_in`: a URL that fetches the bytes with no credential, honoring a `Range` the same way, and the seconds until it stops working. `ttl` asks for a lifetime. `correctness/blob-correctness.test.ts › mints a link that fetches the bytes without a credential`.
+12. A lifetime is capped at seven days, and `expires_in` reports the cap rather than the request. `correctness/blob-correctness.test.ts › caps a link's lifetime at seven days`.
+13. A link past its lifetime, or with its signature altered, answers a status outside 2xx and none of the bytes; the same link fetched them while it lived. The status is the signer's own, and the instance and an object store answer a dead link with different ones. `correctness/blob-correctness.test.ts › refuses a link that has expired or was altered`.
+14. The link door answers `404 blob_not_found` for an unknown hash and `400 validation_error` for a malformed one. `correctness/blob-correctness.test.ts › answers 404 for a link to an unknown hash and 400 for a malformed one`.
+
+The link's target is not a door a client calls by name. When the instance serves the link itself it is `GET /blobs/{hash}/fetch` with the signature in the query, an operation the document does not publish (`coverage.md`); when an object store holds the blob it is that store's own signed link, and `stores.md` states when each is answered.

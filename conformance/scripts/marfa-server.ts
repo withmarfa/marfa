@@ -222,6 +222,8 @@ async function up(args: Args): Promise<void> {
       process.env.MARFA_AUTH_SECRET ?? randomBytes(32).toString("hex"),
     SQLITE_PATH: p.db,
     BLOB_PATH: p.blobs,
+    // The origin the server is reached at, which a link it mints carries.
+    MARFA_AUTH_BASE_URL: url,
     // Enrichment rewrites file items in the background, which would make
     // exact-property assertions on blobs depend on timing.
     MARFA_ENRICHMENT_ENABLED: "false",

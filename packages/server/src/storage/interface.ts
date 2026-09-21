@@ -1106,26 +1106,45 @@ export interface KeyStore {
   deleteRevokedKeysOlderThan(cutoffIso: string): Promise<number>;
 }
 
+/** The kinds of store this build can attach. A row outside the set is
+ *  counted at boot by `stored-value-scan.ts`. */
+export const BLOB_STORE_KINDS = ["disk", "s3"] as const;
+export type BlobStoreKind = (typeof BLOB_STORE_KINDS)[number];
+
+/** One row of `blob_stores`: a place bytes live that this instance attached. */
+export interface BlobStoreRow {
+  id: string;
+  kind: BlobStoreKind;
+  locator: string;
+  policy: string;
+  attached_at: string;
+  detached_at: string | null;
+}
+
+/** One row of the location log, joined with the store it names. */
+export interface BlobLocation {
+  store_id: string;
+  kind: BlobStoreKind;
+  policy: string;
+  /** True when the configuration no longer names the store. A detached
+   *  store's copy is not counted, because nothing can reach it to check. */
+  detached: boolean;
+  recorded_at: string;
+  verified_at: string | null;
+}
+
 /**
- * Blob metadata store, keyed on the content hash.
- *
- * `listAll` and `count` are admin reconciliation helpers (reconcile route +
- * metrics), gated to operator keys at the route layer.
+ * The blob registry: one row per content hash, the stores this instance
+ * has attached, and the location log that says which stores hold which
+ * blob. The bytes themselves live behind `BlobStore`.
  */
-export interface BlobStore {
-  register(
-    hash: string,
-    mimeType: string,
-    sizeBytes: number,
-    storagePath: string,
-  ): Promise<void>;
+export interface BlobRegistry {
+  register(hash: string, mimeType: string, sizeBytes: number): Promise<void>;
   get(hash: string): Promise<{
     mime_type: string;
     size_bytes: number;
-    storage_path: string;
   } | null>;
-  /** Every registered hash, de-duplicated. Used by the admin reconcile
-   *  route + metrics. */
+  /** Every registered hash. */
   listAll(): Promise<string[]>;
   /**
    * Hashes registered before `cutoff` (ISO 8601). The orphan sweep's
@@ -1136,6 +1155,27 @@ export interface BlobStore {
   listRegisteredBefore(cutoff: string): Promise<string[]>;
   remove(hash: string): Promise<void>;
   count(): Promise<{ count: number; total_size_bytes: number }>;
+
+  /**
+   * Record a store the configuration names, by the id its own marker holds.
+   * Idempotent: a store attached again keeps its row and loses any
+   * `detached_at`.
+   */
+  attachStore(store: {
+    id: string;
+    kind: BlobStoreKind;
+    locator: string;
+  }): Promise<void>;
+  /** Mark every store not in `ids` detached. Returns how many were. */
+  detachStoresExcept(ids: readonly string[]): Promise<number>;
+  listStores(): Promise<BlobStoreRow[]>;
+
+  /**
+   * Write a location row: the store holds the bytes and they hashed to
+   * their name. Idempotent.
+   */
+  recordLocation(hash: string, storeId: string): Promise<void>;
+  listLocations(hash: string): Promise<BlobLocation[]>;
 }
 
 export interface WebhookStore {
@@ -2565,7 +2605,7 @@ export interface Storage extends Partial<BetterAuthStorageAdapter> {
   types: TypeStore;
   search: SearchStore;
   keys: KeyStore;
-  blobs: BlobStore;
+  blobs: BlobRegistry;
   edges: EdgeStore;
   edgeTypes: EdgeTypeStore;
   /** Thin lookup helpers over the @better-auth/oauth-provider plugin's

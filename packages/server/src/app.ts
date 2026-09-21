@@ -14,7 +14,7 @@ import type { AppEnv } from "./middleware/auth.js";
 import { authMiddleware } from "./middleware/auth.js";
 import { createErrorHandler } from "./middleware/error-handler.js";
 import type { Storage } from "./storage/interface.js";
-import type { BlobBackend } from "./storage/blob-backend.js";
+import type { BlobLayer } from "./storage/blob-layer.js";
 import type { MarfaAuth } from "./auth/instance.js";
 import { createMarfaAuth } from "./auth/instance.js";
 import type { OidcSigner } from "./auth/oidc-signing.js";
@@ -62,7 +62,7 @@ import {
 import { healthRoutes } from "./routes/health.js";
 export function createApp(
   storage: Storage,
-  blobBackend: BlobBackend,
+  blobs: BlobLayer,
   config: AppConfig,
   /**
    * The name this instance answers to, resolved by the caller before the
@@ -126,8 +126,8 @@ export function createApp(
   });
 
   // Expose the resolved AppConfig on the request context so handlers and
-  // middleware (e.g. quota enforcement) read env-derived values from the
-  // single config source rather than re-reading `process.env`.
+  // middleware read env-derived values from the single config source
+  // rather than re-reading `process.env`.
   app.use("*", async (c, next) => {
     c.set("config", config);
     await next();
@@ -206,10 +206,9 @@ export function createApp(
   // emits the correct code + status). Mounted after `secureHeaders` and
   // before auth so an oversized unauthenticated body is rejected cheaply.
   //
-  // The blob upload route (`/blobs`) is exempt: it legitimately accepts up
-  // to `maxBlobSize` (50 MB default) and enforces its own cap inside the
-  // handler, returning `blob_too_large`. Applying the small global cap to it
-  // would reject valid uploads, so the middleware is a no-op for that prefix.
+  // The blob upload route (`/blobs`) is exempt and has no cap of its own:
+  // the body streams to disk as it arrives, so its size costs disk rather
+  // than memory, and a file is as large as a file is.
   const tooLarge = () => {
     throw new MarfaError(ErrorCode.REQUEST_TOO_LARGE, "Request body too large");
   };
@@ -283,10 +282,9 @@ export function createApp(
       version: deployedVersion,
       instance_id: instanceId,
       features,
-      cdn_base_url: config.cdnBaseUrl || null,
     }),
   );
-  app.route("/health", healthRoutes(storage, blobBackend));
+  app.route("/health", healthRoutes(storage, blobs));
 
   // Shared auth-page stylesheet. Public — anyone landing on `/auth/sign-in`
   // must be able to fetch the CSS without a session cookie. Mounted BEFORE
@@ -528,15 +526,15 @@ export function createApp(
   app.route("/search", searchRoutes(storage));
   app.route("/occurrences", occurrenceRoutes(storage));
   app.route("/metadata", metadataRoutes(storage));
-  app.route("/blobs", blobRoutes(storage, blobBackend, config.maxBlobSize));
+  app.route("/blobs", blobRoutes(storage, blobs, config));
   app.route("/keys", keyRoutes(storage, config.apiKeySalt));
   app.route("/config", configRoutes(storage, instanceId));
-  app.route("/admin", adminArchiveRoutes(storage, blobBackend));
+  app.route("/admin", adminArchiveRoutes(storage, blobs));
   app.route("/admin", adminPlatformTypeRoutes(storage));
   // The owner door creates the account on the sign-in surface, so it is
   // served exactly when that surface is.
   if (auth) app.route("/owner", ownerRoutes(storage, auth));
-  app.route("/export", exportRoutes(storage, blobBackend, instanceId));
+  app.route("/export", exportRoutes(storage, blobs, instanceId));
   app.route("/auth", authRoutes(storage, auth, oidcSigner));
   // `/auth/authorize` consent page (the @better-auth/oauth-provider plugin's
   // `consentPage` redirect target). Mounted BEFORE the better-auth catch-all
