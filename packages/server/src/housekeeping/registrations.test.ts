@@ -57,6 +57,8 @@ const ALWAYS = [
   "trash-purge",
   "revoked-key-reap",
   "rate-limit-cleanup",
+  "blob-replicate",
+  "blob-integrity",
 ];
 
 describe("the housekeeping registrations", () => {
@@ -75,6 +77,8 @@ describe("the housekeeping registrations", () => {
       "auth-session-cleanup",
       "rate-limit-cleanup",
       "dcr-client-cleanup",
+      "blob-replicate",
+      "blob-integrity",
       "blob-orphans",
       "enrichment-sweep",
       "bulk-action-gc",
@@ -107,7 +111,11 @@ describe("the housekeeping registrations", () => {
       { dcrClientRetentionDays: 0 },
       ["dcr-client-cleanup"],
     ],
-    ["the blob cleanup grace", { blobCleanupGraceMs: 0 }, ["blob-orphans"]],
+    [
+      "the blob cleanup interval",
+      { blobCleanupIntervalMs: 0 },
+      ["blob-orphans"],
+    ],
     ["the enrichment flag", { enrichmentEnabled: false }, ["enrichment-sweep"]],
     [
       "the bulk-action job retention",

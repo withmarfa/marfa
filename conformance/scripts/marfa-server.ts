@@ -228,6 +228,11 @@ async function up(args: Args): Promise<void> {
     // exact-property assertions on blobs depend on timing.
     MARFA_ENRICHMENT_ENABLED: "false",
     MARFA_ENRICHMENT_OCR_ENABLED: "false",
+    // The orphan sweep purges what an earlier run reported once this much
+    // time has passed: zero, so a fixture can drive the report and the
+    // purge as two runs through the housekeeping door. The sweep's own
+    // cadence stays a day, so the runs are the fixture's.
+    MARFA_BLOB_CLEANUP_GRACE_MS: "0",
     // The suite mints and revokes a key per file through /keys, whose fixed
     // limit of 200 requests a minute per credential a local run exceeds.
     RATE_LIMIT_ENABLED: "false",
@@ -272,10 +277,14 @@ async function up(args: Args): Promise<void> {
     const previous = parseEnvFile(readFileSync(p.env, "utf8"));
     writeFileSync(
       p.env,
-      renderEnvFile(url, {
-        apiKey: previous.MARFA_API_KEY ?? "",
-        operatorKey: previous.MARFA_OPERATOR_KEY ?? "",
-      }),
+      renderEnvFile(
+        url,
+        {
+          apiKey: previous.MARFA_API_KEY ?? "",
+          operatorKey: previous.MARFA_OPERATOR_KEY ?? "",
+        },
+        p.blobs,
+      ),
     );
     console.log(`[marfa-server] already bootstrapped; env file at ${p.env}`);
     return;
@@ -283,7 +292,7 @@ async function up(args: Args): Promise<void> {
 
   const response = await mint(url, secret);
   const credentials = chooseCredentials(response);
-  writeFileSync(p.env, renderEnvFile(url, credentials));
+  writeFileSync(p.env, renderEnvFile(url, credentials, p.blobs));
   console.log(`[marfa-server] minted the first key; env file at ${p.env}`);
 }
 

@@ -24,6 +24,12 @@ import {
   verifyBlobLink,
 } from "../storage/blob-link.js";
 import { withBlobUploadLock } from "../storage/blob-upload-lock.js";
+import type { Housekeeping } from "../housekeeping/scheduler.js";
+import {
+  CopiesBelowMinimum,
+  LocationNotFound,
+  dropBlobCopy,
+} from "../housekeeping/blob-delete.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import { refuseUnknownQueryParams } from "./_unknown-query-keys.js";
 
@@ -60,8 +66,22 @@ const BlobLocationSchema = z.object({
   verified_at: z.string().nullable(),
 });
 
+const BlobOrphanSchema = z.object({
+  hash: z.string(),
+  mime_type: z.string(),
+  size_bytes: z.number().int(),
+  reported_at: z.string(),
+});
+
 const HashParam = z.object({
   hash: z.string().describe("Content-addressed `sha256:<hex>` blob hash."),
+});
+
+const HashAndStoreParam = z.object({
+  hash: z.string().describe("Content-addressed `sha256:<hex>` blob hash."),
+  store: z
+    .string()
+    .describe("A store's `id`, as `GET /blobs/stores` lists it."),
 });
 
 /** The headers a served blob carries, declared once for both doors. */
@@ -180,13 +200,16 @@ const listBlobStoresRoute = createRoute({
   tags: ["Blobs"],
   summary: "List the stores this instance keeps bytes in",
   description:
-    "Every store the instance has attached: the disk it uploads to and, when one is configured, the object store. A store the configuration no longer names stays listed with `detached_at` set, because the location log still describes it. Operator key only.",
+    "Every store the instance has attached: the disk it uploads to and, when one is configured, the object store. A store the configuration no longer names stays listed with `detached_at` set, because the location log still describes it. `min_copies` is the live copies a blob keeps at the least: a drop that would leave fewer is refused. Operator key only.",
   security: [{ bearerAuth: [] }],
   responses: {
     200: {
       content: {
         "application/json": {
-          schema: z.object({ data: z.array(BlobStoreSchema) }),
+          schema: z.object({
+            data: z.array(BlobStoreSchema),
+            min_copies: z.number().int(),
+          }),
         },
       },
       description: "The stores",
@@ -395,6 +418,106 @@ const listBlobLocationsRoute = createRoute({
   },
 });
 
+const dropBlobLocationRoute = createRoute({
+  operationId: "dropBlobLocation",
+  method: "delete",
+  path: "/{hash}/locations/{store}",
+  tags: ["Blobs"],
+  summary: "Drop one store's copy of a blob",
+  description:
+    "Removes the copy of the blob that one store holds, and its row in the location log, only when at least `min_copies` live copies would remain; otherwise the copy stays and the door answers `409 copies_below_minimum`. A store that holds no copy, or that is not attached, answers `404 blob_location_not_found`. Operator key only.",
+  security: [{ bearerAuth: [] }],
+  request: { params: HashAndStoreParam },
+  responses: {
+    200: {
+      content: {
+        "application/json": { schema: z.object({ ok: z.literal(true) }) },
+      },
+      description: "The copy is gone",
+    },
+    400: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["validation_error"]),
+        },
+      },
+      description: "Invalid blob hash",
+    },
+    401: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["unauthorized"]),
+        },
+      },
+      description: "Unauthorized",
+    },
+    403: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["forbidden"]),
+        },
+      },
+      description: "Operator key required",
+    },
+    404: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema([
+            "blob_not_found",
+            "blob_location_not_found",
+          ]),
+        },
+      },
+      description: "No such blob, or no such copy",
+    },
+    409: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["copies_below_minimum"]),
+        },
+      },
+      description: "The drop would leave fewer live copies than the minimum",
+    },
+  },
+});
+
+const listBlobOrphansRoute = createRoute({
+  operationId: "listBlobOrphans",
+  method: "get",
+  path: "/orphans",
+  tags: ["Blobs"],
+  summary: "List the blobs nothing references",
+  description:
+    "The orphan report: every registered blob the last run of the `blob-orphans` housekeeping job found nothing referencing, with when a run first said so. A blob stands here for the grace period before a later run purges it, and leaves the report if something names it again. Operator key only.",
+  security: [{ bearerAuth: [] }],
+  responses: {
+    200: {
+      content: {
+        "application/json": {
+          schema: z.object({ data: z.array(BlobOrphanSchema) }),
+        },
+      },
+      description: "The report, oldest first",
+    },
+    401: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["unauthorized"]),
+        },
+      },
+      description: "Unauthorized",
+    },
+    403: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["forbidden"]),
+        },
+      },
+      description: "Operator key required",
+    },
+  },
+});
+
 // ---------------------------------------------------------------------------
 // Router
 // ---------------------------------------------------------------------------
@@ -411,8 +534,10 @@ function normalizeHash(raw: string): string {
 export function blobRoutes(
   storage: Storage,
   blobs: BlobLayer,
-  config: Pick<AppConfig, "authBaseUrl">,
+  housekeeping: Pick<Housekeeping, "wake">,
+  config: Pick<AppConfig, "authBaseUrl" | "blobMinCopies">,
 ) {
+  const minCopies = config.blobMinCopies ?? 1;
   const router = createOpenAPIRouter<AppEnv>();
   // The origin a link the instance serves is minted under. The base URL
   // rather than the request's own origin, because the request's scheme is
@@ -586,8 +711,20 @@ export function blobRoutes(
       resource_id: hash,
       details: { mime_type: mimeType, size_bytes: sizeBytes },
     });
+    // The other stores get their copies at replication's next run, which
+    // this brings forward; a wake is a hint, so a scheduler that is not
+    // running loses nothing but the hurry.
+    await housekeeping.wake("blob-replicate");
 
     return c.json({ hash, mime_type: mimeType, size_bytes: sizeBytes }, 201);
+  });
+
+  // GET /blobs/orphans — the report the orphan sweep writes. Registered
+  // ahead of `/{hash}` so the literal segment is never read as a hash.
+  router.openapi(listBlobOrphansRoute, async (c) => {
+    requireOperatorKey(c);
+    const data = await storage.blobs.listOrphans();
+    return c.json({ data }, 200);
   });
 
   // GET /blobs/stores — the attached stores (operator key only). Registered
@@ -595,7 +732,7 @@ export function blobRoutes(
   router.openapi(listBlobStoresRoute, async (c) => {
     requireOperatorKey(c);
     const data = await storage.blobs.listStores();
-    return c.json({ data }, 200);
+    return c.json({ data, min_copies: minCopies }, 200);
   });
 
   // GET /blobs/:hash — the bytes; HEAD — the headers
@@ -668,6 +805,43 @@ export function blobRoutes(
     }
     const data = await storage.blobs.listLocations(hash);
     return c.json({ data }, 200);
+  });
+
+  // DELETE /blobs/:hash/locations/:store — drop one store's copy
+  router.openapi(dropBlobLocationRoute, async (c) => {
+    requireOperatorKey(c);
+    const params = c.req.valid("param");
+    const hash = normalizeHash(params.hash);
+    if (!(await storage.blobs.get(hash))) {
+      throw new MarfaError(ErrorCode.BLOB_NOT_FOUND, "Blob not found");
+    }
+    try {
+      await dropBlobCopy(storage, blobs, hash, params.store, minCopies);
+    } catch (err) {
+      if (err instanceof LocationNotFound) {
+        throw new MarfaError(
+          ErrorCode.BLOB_LOCATION_NOT_FOUND,
+          `No attached store ${params.store} holds a copy of this blob`,
+        );
+      }
+      if (err instanceof CopiesBelowMinimum) {
+        throw new MarfaError(
+          ErrorCode.COPIES_BELOW_MINIMUM,
+          `Dropping this copy would leave ${String(err.live - 1)} live copies, below the minimum of ${String(err.minCopies)}`,
+          { live: err.live, min_copies: err.minCopies },
+        );
+      }
+      throw err;
+    }
+    await storage.audit.log({
+      client_ip: c.get("clientIp") ?? null,
+      key_id: c.get("apiKey")?.id,
+      action: "blob.copy_dropped",
+      resource_type: "blob",
+      resource_id: hash,
+      details: { store_id: params.store },
+    });
+    return c.json({ ok: true as const }, 200);
   });
 
   return router;

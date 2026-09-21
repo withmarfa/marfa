@@ -18,9 +18,11 @@ import {
   AuthSessionCleaner,
   RateLimitWindowCleaner,
   DcrClientCleaner,
-  BlobOrphanCleaner,
   runSweepAtRetention,
 } from "../storage/retention.js";
+import { BlobReplicator } from "./blob-replicate.js";
+import { BlobIntegrityChecker } from "./blob-integrity.js";
+import { BlobOrphanReporter } from "./blob-orphans.js";
 import type { RetentionOverride } from "../storage/retention.js";
 import { TextEnrichmentSweeper } from "../enrichment/sweeper.js";
 import { TesseractOcr } from "../enrichment/ocr.js";
@@ -267,23 +269,59 @@ export function registerHousekeepingJobs(
     });
   }
 
+  // The copy rules (`conformance/spec/stores.md`). Replication gives every
+  // attached store the copies its policy wants; an upload wakes it, and a
+  // run that could not finish its backlog wakes it again itself. The
+  // integrity check strikes a copy found missing or altered and wakes
+  // replication to put it back. Neither has an off switch: a store the
+  // configuration names is a store whose copies are kept.
+  const replicator = new BlobReplicator(storage, blobs, {
+    maxBlobs: config.blobReplicateBatch ?? 100,
+    maxBytes: config.blobReplicateBatchBytes ?? 1024 * 1024 * 1024,
+  });
+  housekeeping.register({
+    name: "blob-replicate",
+    intervalMs: config.blobReplicateIntervalMs ?? 60_000,
+    firstRunDelayMs: 15_000,
+    run: async () => {
+      const result = await replicator.runOnce();
+      if (result.remaining > 0) await housekeeping.wake("blob-replicate");
+      return result;
+    },
+  });
+  const integrity = new BlobIntegrityChecker(storage, blobs, {
+    maxRows: config.blobIntegrityBatch ?? 500,
+    maxBytes: config.blobIntegrityBatchBytes ?? 1024 * 1024 * 1024,
+  });
+  housekeeping.register({
+    name: "blob-integrity",
+    intervalMs: config.blobIntegrityIntervalMs ?? 3_600_000,
+    firstRunDelayMs: 60_000,
+    run: async () => {
+      const result = await integrity.runOnce();
+      if (result.struck > 0) await housekeeping.wake("blob-replicate");
+      return result;
+    },
+  });
+
   // Storing a blob and creating the item that references it are separate
   // calls, so an item write refused between them leaves bytes registered
-  // and pointed at by nothing. The sweep runs behind a grace window so the
-  // gap between a legitimate upload and its item write is not mistaken for
-  // the leak. Grace `0` disables the sweep.
-  const blobCleanupGraceMs = config.blobCleanupGraceMs ?? 86_400_000;
-  if (blobCleanupGraceMs > 0) {
-    const blobOrphanCleaner = new BlobOrphanCleaner(
+  // and pointed at by nothing. The sweep reports such a blob on one run
+  // and purges it on a later one, once the grace has passed since the
+  // report, so the gap between a legitimate upload and its item write is
+  // never mistaken for the leak. Interval `0` switches the sweep off.
+  const blobCleanupIntervalMs = config.blobCleanupIntervalMs ?? 86_400_000;
+  if (blobCleanupIntervalMs > 0) {
+    const orphans = new BlobOrphanReporter(
       storage,
       blobs,
-      blobCleanupGraceMs,
+      config.blobCleanupGraceMs ?? 86_400_000,
     );
     housekeeping.register({
       name: "blob-orphans",
-      intervalMs: config.blobCleanupIntervalMs ?? 86_400_000,
+      intervalMs: blobCleanupIntervalMs,
       firstRunDelayMs: 30_000,
-      run: async () => ({ removed: await blobOrphanCleaner.runOnce() }),
+      run: () => orphans.runOnce(),
     });
   }
 

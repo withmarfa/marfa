@@ -50,16 +50,20 @@ export function chooseCredentials(response: MintedKey): TargetCredentials {
 
 /**
  * The env file, one `KEY=value` per line, readable by a shell `source` and
- * appendable to a GitHub Actions `GITHUB_ENV` unchanged.
+ * appendable to a GitHub Actions `GITHUB_ENV` unchanged. `blobPath` is the
+ * disk store the booted server keeps its bytes in, for the fixture that
+ * corrupts a copy on disk to see the integrity check strike it.
  */
 export function renderEnvFile(
   apiUrl: string,
   credentials: TargetCredentials,
+  blobPath?: string,
 ): string {
   return [
     `MARFA_API_URL=${apiUrl}`,
     `MARFA_API_KEY=${credentials.apiKey}`,
     `MARFA_OPERATOR_KEY=${credentials.operatorKey}`,
+    ...(blobPath === undefined ? [] : [`MARFA_BLOB_PATH=${blobPath}`]),
     "",
   ].join("\n");
 }

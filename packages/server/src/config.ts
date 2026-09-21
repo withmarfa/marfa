@@ -149,19 +149,39 @@ export interface AppConfig {
    *  86_400_000 (24h); env override `MARFA_DCR_CLIENT_CLEANUP_INTERVAL_MS`.
    *  Optional on the type; `index.ts` applies the 24h fallback. */
   dcrClientCleanupIntervalMs?: number;
-  /** Cadence (ms) for the unreferenced-blob sweep. A full pass over the
-   *  item corpus and the version history, so this is deliberately slow:
-   *  default 86_400_000 (24h); env override
-   *  `MARFA_BLOB_CLEANUP_INTERVAL_MS`. Optional on the type; `index.ts`
-   *  applies the 24h fallback. */
+  /** Cadence (ms) for the unreferenced-blob sweep, `blob-orphans`. A full
+   *  pass over the item corpus and the version history, so this is
+   *  deliberately slow: default 86_400_000 (24h); env override
+   *  `MARFA_BLOB_CLEANUP_INTERVAL_MS`. `0` switches the sweep off. */
   blobCleanupIntervalMs?: number;
-  /** How long (ms) a blob has to have been registered before the sweep
-   *  will consider it unreferenced. Registering a blob and creating the
-   *  item that names it are two calls, so a window between them is normal
-   *  rather than a leak, and this is how much of one the sweep tolerates.
-   *  `0` disables the job. Default 86_400_000 (24h); env override
-   *  `MARFA_BLOB_CLEANUP_GRACE_MS`. */
+  /** How long (ms) a blob has to have stood in the orphan report before a
+   *  later run of the sweep purges it. The report is what stands between
+   *  an unreferenced blob and its deletion: a run reports, and a run at
+   *  least this much later purges what is still unreferenced. `0` lets the
+   *  next run purge what the one before reported. Default 86_400_000
+   *  (24h); env override `MARFA_BLOB_CLEANUP_GRACE_MS`. */
   blobCleanupGraceMs?: number;
+  /** The live copies a blob keeps at the least: a drop that would leave
+   *  fewer is refused. Default 1; env override `MARFA_BLOB_MIN_COPIES`. */
+  blobMinCopies?: number;
+  /** Cadence (ms) for `blob-replicate`, which gives every attached store
+   *  the copies its policy wants; an upload wakes it too. Default 60_000;
+   *  env override `MARFA_BLOB_REPLICATE_INTERVAL_MS`. */
+  blobReplicateIntervalMs?: number;
+  /** Most blobs, and most bytes, one replication run copies before it
+   *  answers and is woken again. Defaults 100 and 1 GiB; env overrides
+   *  `MARFA_BLOB_REPLICATE_BATCH` and `MARFA_BLOB_REPLICATE_BATCH_BYTES`. */
+  blobReplicateBatch?: number;
+  blobReplicateBatchBytes?: number;
+  /** Cadence (ms) for `blob-integrity`, which checks a store's copies,
+   *  least recently checked first. Default 3_600_000 (1h); env override
+   *  `MARFA_BLOB_INTEGRITY_INTERVAL_MS`. */
+  blobIntegrityIntervalMs?: number;
+  /** Most copies per store, and most bytes in all, one integrity run
+   *  checks. Defaults 500 and 1 GiB; env overrides
+   *  `MARFA_BLOB_INTEGRITY_BATCH` and `MARFA_BLOB_INTEGRITY_BATCH_BYTES`. */
+  blobIntegrityBatch?: number;
+  blobIntegrityBatchBytes?: number;
   /** Cadence (ms) for the `rate_limit_windows` GC sweep that drops rows
    *  past their `expires_at`. Default 3_600_000 (1h); env override
    *  `MARFA_RATE_LIMIT_CLEANUP_INTERVAL_MS`. Optional — `index.ts`
@@ -674,6 +694,25 @@ export function loadConfig(): AppConfig {
     blobCleanupGraceMs: envNumber(
       process.env.MARFA_BLOB_CLEANUP_GRACE_MS,
       86_400_000,
+    ),
+    blobMinCopies: envNumber(process.env.MARFA_BLOB_MIN_COPIES, 1),
+    blobReplicateIntervalMs: envNumber(
+      process.env.MARFA_BLOB_REPLICATE_INTERVAL_MS,
+      60_000,
+    ),
+    blobReplicateBatch: envNumber(process.env.MARFA_BLOB_REPLICATE_BATCH, 100),
+    blobReplicateBatchBytes: envNumber(
+      process.env.MARFA_BLOB_REPLICATE_BATCH_BYTES,
+      1024 * 1024 * 1024,
+    ),
+    blobIntegrityIntervalMs: envNumber(
+      process.env.MARFA_BLOB_INTEGRITY_INTERVAL_MS,
+      3_600_000,
+    ),
+    blobIntegrityBatch: envNumber(process.env.MARFA_BLOB_INTEGRITY_BATCH, 500),
+    blobIntegrityBatchBytes: envNumber(
+      process.env.MARFA_BLOB_INTEGRITY_BATCH_BYTES,
+      1024 * 1024 * 1024,
     ),
     enrichmentEnabled: process.env.MARFA_ENRICHMENT_ENABLED !== "false",
     enrichmentIntervalMs: envNumber(

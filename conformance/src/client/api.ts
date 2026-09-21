@@ -14,6 +14,7 @@ import type {
   ApiKeyResponse,
   Owner,
   BlobUploadResponse,
+  BlobOrphanRow,
   BlobStoreRow,
   BlobLocationRow,
   HousekeepingJobRow,
@@ -662,9 +663,29 @@ export class MarfaClient {
     return this.requestRaw(`/blobs/${hash}`, headers, "HEAD");
   }
 
-  /** `GET /blobs/stores`: the stores the instance keeps bytes in. */
-  async listBlobStores(): Promise<ApiResponse<{ data: BlobStoreRow[] }>> {
-    return this.request<{ data: BlobStoreRow[] }>("/blobs/stores");
+  /** `GET /blobs/stores`: the stores the instance keeps bytes in, and the
+   *  live copies a blob keeps at the least. */
+  async listBlobStores(): Promise<
+    ApiResponse<{ data: BlobStoreRow[]; min_copies: number }>
+  > {
+    return this.request<{ data: BlobStoreRow[]; min_copies: number }>(
+      "/blobs/stores",
+    );
+  }
+
+  /** `DELETE /blobs/{hash}/locations/{store}`: drop one store's copy. */
+  async dropBlobLocation(
+    hash: string,
+    store: string,
+  ): Promise<ApiResponse<{ ok: true }>> {
+    return this.request<{ ok: true }>(`/blobs/${hash}/locations/${store}`, {
+      method: "DELETE",
+    });
+  }
+
+  /** `GET /blobs/orphans`: the blobs nothing references. */
+  async listBlobOrphans(): Promise<ApiResponse<{ data: BlobOrphanRow[] }>> {
+    return this.request<{ data: BlobOrphanRow[] }>("/blobs/orphans");
   }
 
   /** `GET /blobs/{hash}/locations`: the location log for one blob. */

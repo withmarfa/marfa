@@ -60,4 +60,13 @@ describe("env file", () => {
       MARFA_OPERATOR_KEY: "marfa_k1_operator",
     });
   });
+
+  it("names the booted server's disk store when given one", () => {
+    const text = renderEnvFile(
+      "http://127.0.0.1:8600",
+      { apiKey: "marfa_k1_working", operatorKey: "marfa_k1_operator" },
+      "/state/blobs",
+    );
+    expect(parseEnvFile(text).MARFA_BLOB_PATH).toBe("/state/blobs");
+  });
 });

@@ -263,9 +263,8 @@ export const blobs = sqliteTable("blobs", {
   hash: text("hash").primaryKey(),
   mime_type: text("mime_type").notNull(),
   size_bytes: integer("size_bytes").notNull(),
-  // When the blob was registered. The orphan sweep measures its grace
-  // window against it, so a blob whose item write is still in flight is not
-  // mistaken for one whose item write never landed.
+  // When the blob was registered; replication copies in this order, so a
+  // backlog drains oldest first.
   created_at: text("created_at").notNull(),
 });
 
@@ -313,8 +312,28 @@ export const blobLocations = sqliteTable(
     recorded_at: text("recorded_at").notNull(),
     verified_at: text("verified_at"),
   },
-  (table) => [primaryKey({ columns: [table.hash, table.store_id] })],
+  (table) => [
+    primaryKey({ columns: [table.hash, table.store_id] }),
+    // The integrity check takes a store's least recently checked copies.
+    index("idx_blob_locations_store_verified").on(
+      table.store_id,
+      table.verified_at,
+    ),
+  ],
 );
+
+// ---------------------------------------------------------------------------
+// blob_orphans — the report that stands between an unreferenced blob and its
+// deletion. A run of the orphan sweep writes every blob nothing references
+// here with the time it was first reported, drops any referenced again, and
+// purges only what an earlier run reported longer ago than the grace.
+// ---------------------------------------------------------------------------
+export const blobOrphans = sqliteTable("blob_orphans", {
+  hash: text("hash")
+    .primaryKey()
+    .references(() => blobs.hash, { onDelete: "cascade" }),
+  reported_at: text("reported_at").notNull(),
+});
 
 // The instance's type registrations, the shipped set included.
 export const types = sqliteTable(

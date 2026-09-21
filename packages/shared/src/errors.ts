@@ -180,6 +180,12 @@ export enum ErrorCode {
    * rather than the server returning an HTTP error.
    */
   BULK_JOB_NOT_FOUND = "bulk_job_not_found",
+  /** `DELETE /blobs/{hash}/locations/{store}` named a store that holds no
+   *  copy of the blob, or that is not attached. */
+  BLOB_LOCATION_NOT_FOUND = "blob_location_not_found",
+  /** Dropping the copy would leave fewer live copies than the instance's
+   *  minimum; the copy stays. */
+  COPIES_BELOW_MINIMUM = "copies_below_minimum",
   /** `POST /housekeeping/:name/run` named a housekeeping job this instance
    *  does not run: unregistered, or switched off by configuration. */
   HOUSEKEEPING_JOB_NOT_FOUND = "housekeeping_job_not_found",
@@ -303,6 +309,8 @@ const STATUS_MAP: Record<ErrorCode, number> = {
   [ErrorCode.BULK_CAP_EXCEEDED]: 400,
   [ErrorCode.BULK_ATOMIC_ROLLBACK]: 400,
   [ErrorCode.BULK_JOB_NOT_FOUND]: 404,
+  [ErrorCode.BLOB_LOCATION_NOT_FOUND]: 404,
+  [ErrorCode.COPIES_BELOW_MINIMUM]: 409,
   [ErrorCode.HOUSEKEEPING_JOB_NOT_FOUND]: 404,
   [ErrorCode.HOUSEKEEPING_JOB_RUNNING]: 409,
   [ErrorCode.STREAM_CAPACITY_EXHAUSTED]: 503,

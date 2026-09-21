@@ -9,6 +9,8 @@ import type { MarfaAuth } from "./auth/instance.js";
 import { createSqliteStorage } from "./storage/sqlite/index.js";
 import { createBlobLayer } from "./storage/blob-layer.js";
 import type { BlobLayer } from "./storage/blob-layer.js";
+import { DiskBlobStore, type BlobStore } from "./storage/blob-store.js";
+import type { Stores } from "./housekeeping/blob-delete.js";
 import { Housekeeping } from "./housekeeping/scheduler.js";
 import { hashApiKey } from "./middleware/auth.js";
 import type { Storage } from "./storage/interface.js";
@@ -967,4 +969,29 @@ export function collectItemEvents(signal: AbortSignal): {
     }
   })();
   return { events, done };
+}
+
+/**
+ * A second disk store beside the context's, standing in for the bucket:
+ * the copy rules do not care which kind holds a copy, and a second folder
+ * is a second store to the log. Attached the way the layer attaches one,
+ * so it has an id and a row, and added to the context's layer so the doors
+ * and the housekeeping see it too.
+ */
+export async function withSecondStore(
+  ctx: TestContext,
+): Promise<{ stores: Stores; second: DiskBlobStore }> {
+  const second = new DiskBlobStore(
+    mkdtempSync(join(ctx.tmpDir, "second-store-")),
+  );
+  await second.attach();
+  await ctx.storage.blobs.attachStore({
+    id: second.id,
+    kind: second.kind,
+    locator: second.locator,
+  });
+  const all = ctx.blobs.stores as BlobStore[];
+  all.push(second);
+  ctx.blobs.byId = (id) => all.find((store) => store.id === id);
+  return { second, stores: ctx.blobs };
 }

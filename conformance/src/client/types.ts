@@ -217,6 +217,13 @@ export interface BlobLocationRow {
   verified_at: string | null;
 }
 
+export interface BlobOrphanRow {
+  hash: string;
+  mime_type: string;
+  size_bytes: number;
+  reported_at: string;
+}
+
 export interface HousekeepingJobRow {
   name: string;
   interval_ms: number;
