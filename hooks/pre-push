@@ -33,9 +33,9 @@
 # enough that contributors and agents bypass it with `--no-verify`, and a
 # hook that's bypassed isn't a gate. So what is here is not everything CI
 # runs: the live-server Rust tests, the iOS builds, the Swift packaging and
-# the full conformance suite all stay in CI. What is here is the set that has
-# actually failed on the pool after passing locally, which is a different and
-# much shorter list.
+# the full conformance suite all stay in CI. What is here is the set that
+# fails on the pool after passing locally, which is a different and much
+# shorter list.
 #
 # Skippable: `git push --no-verify`.
 set -euo pipefail
@@ -54,8 +54,8 @@ pnpm test:offline-lane
 # The two guards that live outside the command anyone runs. The Swift FFI
 # crate is its own workspace, so `cargo test` in `core/` never reaches it and
 # a change to a shared error type compiles locally and fails on the pool;
-# `surface-lock:drift` takes a base ref, so it exists only as a CI job. Each
-# has now cost this repository a red run.
+# `surface-lock:drift` takes a base ref, so it exists only as a CI job.
+# Neither is reachable from the command anyone runs by hand.
 pnpm test:rust
 pnpm test:drift
 

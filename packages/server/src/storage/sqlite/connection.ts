@@ -60,6 +60,7 @@ const REFUSED_DATABASE_REMEDY =
  * rule rather than a property any one of these checks happens to have.
  * Nothing a caller can send creates a `custom_types` table, a `space_config`
  * settings row, a missing column, a retired one or a full-text index of the
+<<<<<<< HEAD
  * older shape, so each of them meets a database an older build wrote and
  * nothing else. A refusal keyed on row *content* is a different animal:
  * a caller can mint a credential carrying the retired `integration:` source
@@ -67,6 +68,16 @@ const REFUSED_DATABASE_REMEDY =
  * instance that never opened again, with the refusal telling its operator
  * to discard the database. A boot check whose trigger a request can write
  * is a denial of service with a polite message.
+=======
+ * older shape, so each of those refusals meets a database an older build
+ * wrote and nothing else. A refusal keyed on row *content* is a different
+ * animal: one keyed on the retired `integration:` provenance prefix would
+ * be, because a caller can mint a credential carrying that source, and a
+ * single request would then leave an instance that never opened again —
+ * with the refusal telling its operator to discard the database. A boot
+ * check whose trigger a request can write is a denial of service with a
+ * polite message.
+>>>>>>> e072dddd (refactor(server,core): the read-only reviewer's findings)
  *
  * **Every renamed column belongs here, not only the indexed ones.** A
  * column an index is built over fails the DDL anyway, which is true and

@@ -984,8 +984,8 @@ mod tests {
              is what notices when one does not."
         );
 
-        // The control: the writer is not refused, so the two above are the
-        // handle rather than a store that refuses everybody.
+        // The control: the writer is not refused, so the refusals above are
+        // the handle rather than a store that refuses everybody.
         let queued = writer.create_item(&draft).unwrap();
         assert_eq!(queued.kind, "create_item");
 

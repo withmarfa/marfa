@@ -172,12 +172,14 @@ export function log(
  * Render a log payload so `JSON.stringify` cannot silently discard the most
  * important thing in it.
  *
- * An `Error` holds its `message`, `name`, and `stack` on non-enumerable
- * properties, so `JSON.stringify(err)` is `{}`. Better Auth's logger bridge
- * hands this function `{ args: [Error] }`, which means a database failure
- * reached the log line as `{"args":[{}]}` — driver code, message and all,
- * deleted at the log layer. That absence was then read as evidence that no
- * such failure was happening.
+ * An `Error` holds its `message`, `stack` and `cause` on non-enumerable
+ * properties, so `JSON.stringify(err)` on a plain one is `{}`. Better Auth's
+ * logger bridge hands this function `{ args: [Error] }`, so without this a
+ * failure reaches the log line as `{"args":[{}]}` and the absence reads as
+ * evidence that nothing is failing. A `LibsqlError` is worse rather than
+ * better: its `code`, `extendedCode` and `rawCode` are enumerable and
+ * survive, so the line carries a code with no message beside it and looks
+ * like a complete record of a failure it does not describe.
  *
  * Errors are replaced with `serializeError`'s structured form wherever they
  * appear: passed directly, nested in an object, or inside an array. The first
