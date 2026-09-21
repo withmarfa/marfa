@@ -1,3 +1,4 @@
+import { DEFAULT_MAX_STRING_LENGTH } from "@withmarfa/shared";
 import type { AppConfig } from "../config.js";
 import type { Storage } from "../storage/interface.js";
 import type { BlobLayer } from "../storage/blob-layer.js";
@@ -348,7 +349,7 @@ export function registerHousekeepingJobs(
       batchSize: config.enrichmentBatchSize ?? 8,
       itemTimeoutMs: config.enrichmentItemTimeoutMs ?? 60_000,
       maxBlobBytes: config.enrichmentMaxBlobBytes ?? 20 * 1024 * 1024,
-      maxTextChars: config.enrichmentMaxTextChars ?? 200_000,
+      maxTextChars: config.enrichmentMaxTextChars ?? DEFAULT_MAX_STRING_LENGTH,
       maxAttempts: config.enrichmentMaxAttempts ?? 3,
     });
     housekeeping.register({

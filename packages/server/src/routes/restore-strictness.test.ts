@@ -2,18 +2,18 @@
  * What an archive may write, and what a refused restore may leave behind.
  *
  * An archive is a file somebody can hand you. Restore is operator-key
- * gated, so this is trust-boundary erosion rather than an open door, but the
- * replay used to go through the raw edge insert: no registry lookup, no
- * endpoint-type constraints, no cardinality, no cycle check, no self-edge
- * guard, no duplicate guard. A hand-edited archive could plant relationships
- * the API refuses, and they counted as imported.
+ * gated, so this is trust-boundary erosion rather than an open door, but a
+ * replay through the raw edge insert (no registry lookup, no endpoint-type
+ * constraints, no cardinality, no cycle check, no self-edge guard, no
+ * duplicate guard) would let a hand-edited archive plant relationships the
+ * API refuses, and count them as imported.
  *
- * Every archive test before this one used `references`, which is
- * many-to-many with `["*"]` on both ends — the one core edge type for which
- * the missing validation makes no observable difference. So the gap was
- * invisible to a suite that otherwise covered restore well.
+ * Driven with edge types whose constraints show, not only `references`,
+ * which is many-to-many with `["*"]` on both ends: the one core edge type
+ * for which the missing validation would make no observable difference.
  */
 import { createGzip } from "node:zlib";
+import { Readable } from "node:stream";
 import { createHash } from "node:crypto";
 import { describe, expect, it, afterAll } from "vitest";
 import * as tar from "tar-stream";
@@ -271,5 +271,83 @@ describe("a refused restore leaves no blobs behind", () => {
     expect(result.blobs_imported).toBe(1);
     expect(await ctx.storage.blobs.get(blob.hash)).not.toBeNull();
     expect(await ctx.blobs.disk.has(blob.hash)).not.toBeNull();
+  });
+
+  it("keeps nothing of an archive it refuses, the blobs included", async () => {
+    const ctx = await newContext();
+    const blob = blobOf(`refused blob`);
+    // A state the row's lifecycle cannot produce refuses the whole archive
+    // before anything is written.
+    const refused = JSON.stringify({
+      item: {
+        id: A,
+        type: "system.activity",
+        state: "trashed",
+        properties: {},
+        source: "strict",
+        source_id: A,
+      },
+      metadata: { item_id: A, tags: [], extensions: {} },
+    });
+    const archive = await buildArchive({
+      itemLines: [refused],
+      edgeLines: [],
+      blobs: [blob],
+    });
+
+    const res = await restoreInto(ctx, archive);
+    expect(res.status).toBe(400);
+    expect(await ctx.storage.items.getIncludingTrashed(A)).toBeNull();
+    expect(await ctx.storage.blobs.get(blob.hash)).toBeNull();
+    expect(await ctx.blobs.disk.has(blob.hash)).toBeNull();
+  });
+
+  it("takes back the blobs it placed when the transaction rolls back", async () => {
+    // The blobs are placed before the rows are written, so a failure the
+    // door cannot classify, after they are placed, rolls the rows back and
+    // has to undo the bytes by hand: nothing sweeps a blob whose restore
+    // was refused. A blob the instance held before the restore stays.
+    const ctx = await newContext();
+    const kept = blobOf(`kept blob`);
+    await ctx.blobs.disk.put(kept.hash, {
+      stream: Readable.from([kept.data]),
+      size_bytes: kept.data.length,
+    });
+    await ctx.storage.blobs.register(kept.hash, "text/plain", kept.data.length);
+    const placed = blobOf(`placed then taken back`);
+    const archive = await buildArchive({
+      itemLines: [noteLine(A, "a"), noteLine(B, "b")],
+      edgeLines: [
+        edgeLine({ source_id: A, target_id: B, edge_type: "references" }),
+        edgeLine({ source_id: B, target_id: A, edge_type: "references" }),
+      ],
+      blobs: [placed],
+    });
+
+    // The second edge fails the way an infrastructure error would, which
+    // is the one failure the import does not skip and count.
+    const store = ctx.storage.edges;
+    const realCreate = store.createRaw.bind(store);
+    let creates = 0;
+    store.createRaw = async (input) => {
+      creates += 1;
+      if (creates === 2) throw new Error("simulated storage failure");
+      return realCreate(input);
+    };
+    let res: Response;
+    try {
+      res = await restoreInto(ctx, archive);
+    } finally {
+      store.createRaw = realCreate;
+    }
+    expect(creates).toBe(2);
+    expect(res.status).toBe(500);
+    expect(await ctx.storage.items.getIncludingTrashed(A)).toBeNull();
+    expect(await ctx.storage.blobs.get(placed.hash)).toBeNull();
+    expect(await ctx.blobs.disk.has(placed.hash)).toBeNull();
+    expect(await ctx.storage.blobs.get(kept.hash)).not.toBeNull();
+    expect(await ctx.blobs.disk.has(kept.hash)).toEqual({
+      size_bytes: kept.data.length,
+    });
   });
 });

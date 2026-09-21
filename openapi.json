@@ -2340,10 +2340,10 @@
                 "state",
                 "type"
               ],
-              "description": "Grouping axis. Defaults to `state`, which is what this route has always returned."
+              "description": "Grouping axis. Defaults to `state`."
             },
             "required": false,
-            "description": "Grouping axis. Defaults to `state`, which is what this route has always returned.",
+            "description": "Grouping axis. Defaults to `state`.",
             "name": "by",
             "in": "query"
           }

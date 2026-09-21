@@ -8,12 +8,12 @@ import {
 } from "./config.js";
 
 /**
- * §3.16 — `Number(env) || default` swallows zero. The canonical pattern
- * is now `envNumber(raw, default)`. This file pins down its semantics so
- * future drift away from the explicit-undefined check is caught locally
- * rather than only at downstream call sites.
+ * `Number(env) || default` swallows zero, so every numeric env read
+ * checks for undefined or empty explicitly, `envNumber(raw, default)`
+ * among them. This file pins down its semantics so drift away from that
+ * check is caught locally rather than only at downstream call sites.
  */
-describe("envNumber (§3.16 zero-safe env reader)", () => {
+describe("envNumber (zero-safe env reader)", () => {
   it("returns the fallback when raw is undefined", () => {
     expect(envNumber(undefined, 100)).toBe(100);
   });
@@ -22,7 +22,7 @@ describe("envNumber (§3.16 zero-safe env reader)", () => {
     expect(envNumber("", 100)).toBe(100);
   });
 
-  it("honors an explicit zero (the bug §3.16 fixes)", () => {
+  it("honors an explicit zero", () => {
     expect(envNumber("0", 100)).toBe(0);
   });
 

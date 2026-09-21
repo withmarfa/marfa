@@ -89,18 +89,14 @@ describe("the instance", () => {
   });
 
   it("names every advertised feature in one convention", async () => {
-    // The hyphen in `inbound-webhooks` was the only one in the array, so
-    // nothing distinguished a second convention from a typo. Pinning the
-    // spelling is what stops the next multi-word entry arriving in the
-    // spelling of the entry that was wrong.
-    //
-    // Digits are inside the convention, not outside it. The first pattern
-    // here was `^[a-z]+(_[a-z]+)*$`, which would have reddened on `oauth2`
-    // or `s3` — names that break no rule this asserts — and the fixture
-    // would have been read as the authority rather than the typo.
+    // One convention, pinned, so a multi-word entry cannot arrive in a
+    // second spelling that nothing distinguishes from a typo. Digits are
+    // inside the convention: `oauth2` or `s3` break no rule this asserts.
     const r = await client.root();
     expect(r.ok).toBe(true);
-    const odd = (r.data.features as string[]).filter(
+    const features = r.data.features as string[];
+    expect(features.length).toBeGreaterThan(0);
+    const odd = features.filter(
       (name) => !/^[a-z][a-z0-9]*(_[a-z0-9]+)*$/.test(name),
     );
     expect(odd).toEqual([]);
@@ -156,14 +152,12 @@ describe("the instance", () => {
 
   it("declares no tag that no operation carries, and no operation without one", async () => {
     // A tag is a heading in the published reference. One with nothing under
-    // it describes a surface the document says exists, and the two that were
-    // here outlived the operations they grouped.
+    // it describes a surface the document says exists.
     //
     // Three arms, and the third is the one the first two could never reach.
     // `carried` is built from `op.tags ?? []`, so an operation carrying no
     // tag at all contributes nothing to it and sails through both of the
-    // others — which is exactly what the two `/admin/platform-types`
-    // operations did, filed under no heading and absent from the reference's
+    // others, filed under no heading and absent from the reference's
     // structure entirely. An untagged operation is asserted directly.
     const doc = (await client.openApiDocument()).data as unknown as {
       tags: { name: string }[];
@@ -181,6 +175,9 @@ describe("the instance", () => {
       }
     }
     const declared = doc.tags.map((tag) => tag.name);
+    // The witness: there are tags to compare, on both sides.
+    expect(declared.length).toBeGreaterThan(0);
+    expect(carried.size).toBeGreaterThan(0);
     expect(declared.filter((name) => !carried.has(name))).toEqual([]);
     expect([...carried].filter((name) => !declared.includes(name))).toEqual([]);
     expect(untagged).toEqual([]);
@@ -248,6 +245,9 @@ describe("the instance", () => {
     const published = new Set(
       (await publishedOperations()).map((op) => `${op.method} ${op.path}`),
     );
+    // The witness: both inventories have entries to reconcile.
+    expect(known.size).toBeGreaterThan(0);
+    expect(published.size).toBeGreaterThan(0);
     const missing = [...published].filter((key) => !known.has(key));
     expect(missing).toEqual([]);
     const stale = rows

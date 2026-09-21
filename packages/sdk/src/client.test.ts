@@ -124,8 +124,7 @@ beforeAll(async () => {
   });
   // Bootstrap hands back the operator key, which is not a working key; the
   // operator mints one through the same door, and a body naming nothing takes
-  // everything. The fixture runs as that working key, which is the setup keys
-  // mode is meant to follow.
+  // everything. The fixture runs as that working key.
   const bootstrap = (await bootstrapRes.json()) as { key: string };
   const workingRes = await testFetch("http://localhost/keys", {
     method: "POST",
@@ -668,8 +667,8 @@ describe("items.update expectedVersion", () => {
     // a create the kit performed.
     expect(spawned).toBeDefined();
 
-    // One PATCH and nothing else. The kit used to fetch the type, create the
-    // sibling and re-send the update — three more round trips, and no
+    // One PATCH and nothing else: fetching the type, creating the sibling
+    // and re-sending the update would be three more round trips with no
     // arrangement of them that is atomic.
     expect(calls).toEqual([{ method: "PATCH", path: `/items/${item.id}` }]);
   });
@@ -1599,10 +1598,9 @@ describe("items.bulkAction", () => {
    * A client whose status polls misbehave on the way in, while the job
    * itself runs normally on the server.
    *
-   * This is the distinction the bug turned on: the job being long and the
-   * question about it being slow are different things, and only the second
-   * one used to be reported as a failure. Faking a slow job would prove
-   * nothing about it.
+   * This is the distinction: the job being long and the question about it
+   * being slow are different things, and only the second is a failure.
+   * Faking a slow job would prove nothing about it.
    */
   function clientWithFailingStatusPolls(failures: number): {
     client: MarfaClient;
@@ -2241,11 +2239,9 @@ describe("the paging helpers and the system opt-in", () => {
    * **The system row is seeded through storage, because no credential writes
    * one.** `system.*` belongs to the platform's own machinery, which writes
    * through the storage layer rather than through a credential. The API door
-   * refuses the namespace outright, and the only credential that used to
-   * reach it did so through the role bypass this model removed. No list of
-   * those writers is given here on purpose: the last one drifted out of date
-   * and named two that no longer exist, and the seeding does not depend on
-   * which they are.
+   * refuses the namespace outright, and no credential holds a role that
+   * bypasses it. No list of those writers is given here on purpose: such
+   * a list drifts, and the seeding does not depend on which they are.
    */
   async function seedPair(
     marker: string,

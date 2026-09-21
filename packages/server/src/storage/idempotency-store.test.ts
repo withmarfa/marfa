@@ -357,19 +357,17 @@ describe("a displaced writer cannot touch the claim that replaced it", () => {
  * what makes an id a row rather than a holder, and nothing about the shape
  * of an unfenced `WHERE` looks wrong on its own.
  *
- * **The first version of this guard matched a vocabulary rather than
- * writers, and that is the failure it now exists twice to avoid.** It
- * anchored each match on the nearest preceding `async <name>(`, so
- * `takeOverExpiredClaim` was labeled `claim` and never appeared under its
- * own name — an exemption naming it would have exempted nothing, and one
- * naming `claim` would have silently exempted the takeover, with the
- * anti-dead-configuration check passing either way because both names
- * exist in the file. It also read whole statements rather than the `where`,
- * so a writer naming the column in a `set` or a `returning` would have
- * passed unfenced, and it could not see a hoisted `where` at all.
+ * **Matched on writers, not on a vocabulary.** A guard anchored on the
+ * nearest preceding `async <name>(` would label `takeOverExpiredClaim` as
+ * `claim` and never show it under its own name, so an exemption naming it
+ * would exempt nothing and one naming `claim` would silently exempt the
+ * takeover, the anti-dead-configuration check passing either way because
+ * both names exist in the file. One reading whole statements rather than
+ * the `where` would pass a writer naming the column in a `set` or a
+ * `returning` unfenced, and could not see a hoisted `where` at all.
  *
  * So the source is parsed into methods by name and each method's `where` is
- * read on its own. What the guard reports is now the same set of things the
+ * read on its own: what the guard reports is the same set of things the
  * store actually does.
  */
 describe("every writer of a claim row is fenced", () => {

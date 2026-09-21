@@ -21,10 +21,10 @@ import { revokeProjectedGrant } from "../auth/grant-lifecycle.js";
 const MS_PER_DAY = 86_400_000;
 
 /**
- * Optional instance-config wiring shared by the retention jobs. When
- * provided, a run resolves the effective retention from the instance
- * configuration (`InstanceConfig`'s override field, falling back to the
- * instance default) and runs one sweep with it.
+ * Optional instance-config wiring shared by the retention housekeeping
+ * jobs. When provided, a run resolves the effective retention from the
+ * instance configuration (`InstanceConfig`'s override field, falling back
+ * to the instance default) and runs one sweep with it.
  */
 export interface RetentionOverride {
   settings: SettingsStore;
@@ -46,13 +46,13 @@ export interface RetentionOverride {
  * Hard-deletes trashed items that entered the bin longer ago than the
  * configured retention window. Idempotent.
  *
- * If `retentionDays <= 0`, the job is a no-op — the operator can leave
- * the deployment running with no trash purge by setting the env var to 0.
- * The default at the config layer is 60.
+ * If `retentionDays <= 0`, the housekeeping job is a no-op: the operator
+ * can leave the deployment running with no trash purge by setting the env
+ * var to 0. The default at the config layer is 60.
  *
  * When `override` is supplied, a `runOnce()` honors the
  * `trash_retention_days` override from the instance configuration. When
- * `override` is omitted the job sweeps at the instance default.
+ * `override` is omitted the housekeeping job sweeps at the instance default.
  *
  * **This sweep announces nothing, and neither do its two siblings below.**
  * Every other path that removes a row publishes `item.purged`, and every
@@ -125,13 +125,14 @@ export class TrashPurger {
  *
  * **Why they accumulate at all.** The grant lookup skips a row whose status is
  * revoked, so an operator soft-delete is permanent rather than reusable, and
- * each revoke-then-reconnect cycle leaves one behind. Nothing swept them.
+ * each revoke-then-reconnect cycle leaves one behind.
  *
  * **The window is the audit window and that is deliberate.** A tombstone and
  * the audit row that recorded the revocation are the same fact written twice,
  * so keeping them for different lengths of time would let the two disagree
  * about whether a revocation is still visible. Ninety days, matching
- * `AUDIT_RETENTION_DAYS`, and `0` disables the job as it does for the others.
+ * `AUDIT_RETENTION_DAYS`, and `0` switches the housekeeping job off as it
+ * does for the others.
  *
  * **A connector's revoked connection is not a tombstone and is not swept.**
  * The uninstall path writes the same `revoked` status as a matter of routine,
@@ -263,7 +264,8 @@ export class GrantInactivityRetirer {
  * `activity_retention_days` override when the instance configuration is
  * wired, and sweeps at the instance default otherwise.
  *
- * This job bounds the rows; it does not decide whether a run deserves one.
+ * This housekeeping job bounds the rows; it does not decide whether a run
+ * deserves one.
  */
 export class ActivityPurger {
   constructor(
@@ -331,7 +333,7 @@ export class AuthSessionCleaner {
  * Drops expired `rate_limit_windows` rows. Expired rows aren't a
  * correctness risk (the upsert path overwrites them transparently); the GC
  * just keeps the table from growing unboundedly across the long tail of
- * one-shot windows (e.g. a single IP that hit `/auth/sign-up` once).
+ * one-shot windows (such as a single IP that asked `GET /` once).
  *
  * Instance-wide.
  */
@@ -372,8 +374,8 @@ export class RateLimitWindowCleaner {
  * instance-wide sweep like `AuthSessionCleaner` and
  * `RateLimitWindowCleaner`, with no configurable override.
  *
- * `retentionDays <= 0` disables the job — the operator can leave the
- * deployment running with no DCR reaper by setting the env var to 0.
+ * `retentionDays <= 0` switches the housekeeping job off: the operator can
+ * leave the deployment running with no DCR reaper by setting the env var to 0.
  */
 export class DcrClientCleaner {
   constructor(
@@ -439,8 +441,8 @@ export class RevokedKeyReaper {
 // Retention-override helpers
 // ---------------------------------------------------------------------------
 
-/** The retention a job runs at: the instance configuration's override for
- *  the job's field when one is set, the instance default otherwise. */
+/** The retention a housekeeping job runs at: the instance configuration's
+ *  override for its field when one is set, the instance default otherwise. */
 async function effectiveRetention(
   override: RetentionOverride,
   instanceDefault: number,
@@ -470,15 +472,14 @@ async function runSweepToCutoff(opts: {
 }
 
 /**
- * Cleanup runner for the audit + event-log jobs that live inline in
- * `index.ts`. Same shape as the in-class runner above but exposed for
- * callsites that don't have their own Purger class. Returns the number of
- * rows deleted this run.
+ * Cleanup runner for the audit and event-log housekeeping jobs, which
+ * `housekeeping/registrations.ts` registers as closures rather than as a
+ * purger class of their own. Returns the number of rows deleted this run.
  *
- * The retention reaches `sweep` in whatever unit the job keeps it in — days
- * for the audit job, hours for the event log — because nothing here converts
- * it and the store on the other side takes the same unit it was configured
- * with.
+ * The retention reaches `sweep` in whatever unit the housekeeping job keeps
+ * it in, days for the audit log and hours for the event log, because
+ * nothing here converts it and the store on the other side takes the same
+ * unit it was configured with.
  */
 export async function runSweepAtRetention(opts: {
   override: RetentionOverride | undefined;

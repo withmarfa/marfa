@@ -126,8 +126,8 @@ export interface UpdateOptions {
    * Repoint the item at a new natural-key identifier under the caller's
    * stamped `source`. The server enforces `(source, source_id)` uniqueness
    * — a collision returns HTTP 409 `source_id_conflict`. PATCHing
-   * the value the item already carries is a no-op success. Used by the
-   * sync agent to preserve item identity through file renames.
+   * the value the item already carries is a no-op success. A device uses
+   * it to preserve item identity through file renames.
    */
   source_id?: string;
   /**
@@ -301,10 +301,9 @@ export interface SearchFilters {
    * excludes by default. It is the only token this route reads, and a `type`
    * filter inside the `system.` namespace opts in without it.
    *
-   * Declared here because the route has always read it and this type has never
-   * offered it, so no caller could reach those rows through search while the
-   * sibling listing could. The value already traveled -- `search` spreads its
-   * filters straight into the query -- so the gap was the declaration alone.
+   * Declared here so a caller can reach those rows through search as the
+   * sibling listing can: `search` spreads its filters straight into the
+   * query, so the declaration is all the route needs.
    */
   include?: string;
 }
@@ -583,9 +582,9 @@ export interface BulkActionResult {
    *  (dry-run always, otherwise when succeeded ≤ 100). */
   ids?: string[];
   errors?: BulkActionErrorEntry[];
-  /** Unique blob hashes referenced by items in a `purge` action. Not a
-   *  strict orphan count — callers that need that should wait for blob
-   *  GC to land. Omitted for non-purge actions. */
+  /** Unique blob hashes referenced by items in a `purge` action. Not an
+   *  orphan count: the orphan report is `GET /blobs/orphans`. Omitted for
+   *  non-purge actions. */
   blob_hashes_referenced?: number;
 }
 
@@ -951,8 +950,6 @@ export class MarfaClient {
    * Returns `null` if either is missing or empty, or if `process` is not
    * available (e.g. browser context with no shim) — callers decide how to
    * fall back.
-   *
-   * Mirrors the Swift SDK's `MarfaClient.fromEnvironment()` shape.
    */
   static fromEnvironment(
     extra: Omit<ClientConfig, "url" | "apiKey" | "tokenProvider"> = {},
@@ -968,9 +965,9 @@ export class MarfaClient {
 
   /**
    * Builds a client by loading the API key from a `SecureStorage`-shaped
-   * backend. Mirrors the Swift SDK's `MarfaClient.fromSecureStorage()` —
-   * the secret-storage abstraction is protocol-only, so callers can plug
-   * in a file-backed store, an OS keyring binding, or an in-memory mock.
+   * store. The secret-storage abstraction is protocol-only, so callers can
+   * plug in a file-backed store, an OS keyring binding, or an in-memory
+   * mock.
    *
    * Throws when the storage does not carry a value for `account`.
    */
@@ -1568,13 +1565,12 @@ export class MarfaClient {
       return data;
     },
 
-    /** Poll a bulk_action job by id. Single GET — no polling loop.
+    /** Poll a bulk_action job by id. Single GET, no polling loop.
      *
      *  The timeout falls through to the client's own rather than being
-     *  pinned here. It was pinned at five seconds, which made the one
-     *  call most likely to be slow the one call whose timeout could not
-     *  be raised: `ClientConfig.timeoutMs` did not reach it and no poll
-     *  option did either. */
+     *  pinned here: pinned, the one call most likely to be slow would be
+     *  the one call whose timeout `ClientConfig.timeoutMs` could not
+     *  raise. */
     bulkActionStatus: (
       jobId: string,
       options?: { timeoutMs?: number },
@@ -1866,9 +1862,9 @@ export class MarfaClient {
      * (default) rolls back the whole batch on any failure — per-edge errors
      * for non-atomic mode land in each result entry.
      *
-     * Sibling to `items.bulk` for the edges half of mode-transition
-     * migrations (where cross-item edges can't reliably ride along as
-     * inline-edge payloads on the item writes).
+     * Sibling to `items.bulk` for edges written in bulk, where cross-item
+     * edges cannot reliably ride along as inline-edge payloads on the item
+     * writes.
      */
     bulk: async (input: BulkEdgeInput): Promise<BulkEdgeResult> => {
       return this.transport.request<BulkEdgeResult>("POST", "/edges/bulk", {

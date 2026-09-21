@@ -954,6 +954,9 @@ describe("one scheduler owns every cadence and the level of every failure", () =
     "../bulk-actions/gc.ts",
     "../heartbeat.ts",
     "../webhooks/delivery.ts",
+    "./blob-replicate.ts",
+    "./blob-integrity.ts",
+    "./blob-orphans.ts",
   ])("%s keeps no interval timer and classifies no failed run", (file) => {
     const source = here(file);
     // The witness that the file defines runs at all.

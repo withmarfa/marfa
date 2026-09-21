@@ -16,12 +16,11 @@ type MetadataRow = typeof metadata.$inferSelect;
 type VersionRow = typeof versions.$inferSelect;
 
 export function rowToItem(row: ItemRow): Item {
-  // Recognized against `TIERS` rather than compared to two hardcoded
-  // literals, which is what this was. Absent stays absent: `system.*` items
-  // have no tier because the dimension does not apply to them, and the
-  // field is optional on the wire to model that — so `undefined` here is a
-  // real answer rather than a fallback, and the boot scan excuses null on
-  // this column for the same reason.
+  // Recognized against `TIERS` rather than compared to hardcoded literals.
+  // The column is NOT NULL, so a value outside the union is a stored value
+  // this build does not recognize: it leaves the wire as `undefined`, the
+  // field being optional there, and the boot scan counts it
+  // (`stored-value-scan.ts`).
   const tier = isTier(row.tier) ? row.tier : undefined;
   return {
     id: row.id,

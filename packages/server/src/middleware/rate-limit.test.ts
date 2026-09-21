@@ -28,9 +28,8 @@ interface Ctx {
 // per-window limit, so we can observe per-credential isolation in a
 // handful of requests rather than thousands.
 async function buildCtx(): Promise<Ctx> {
-  // Rate-limit values now flow through AppConfig (single env-read site
-  // lives in loadConfig). Set them directly on the literal below; the
-  // middleware no longer reads process.env.
+  // Rate-limit values flow through AppConfig, set on the literal below;
+  // the middleware reads nothing from the environment.
   const tmpDir = mkdtempSync(join(tmpdir(), "marfa-ratelimit-"));
   const storage = await createSqliteStorage(join(tmpDir, "test.db"));
   const instanceId = await ensureInstanceId(storage.settings);
@@ -111,8 +110,6 @@ async function buildCtx(): Promise<Ctx> {
       } catch {
         // Best-effort.
       }
-      delete process.env.RATE_LIMIT_REQUESTS;
-      delete process.env.RATE_LIMIT_WINDOW_MS;
     },
   };
 }
@@ -376,10 +373,9 @@ describe("rate-limit aggregate per-identifier window", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Per-path window isolation under /auth — a storm on one auth endpoint must
-// not 429 a sibling. Pre-fix the window was keyed on the coarse `/auth`
-// prefix, so all /auth/* paths shared one counter and a /token storm pushed
-// the shared count past a sibling's (lower) cap, 429ing it.
+// Per-path window isolation under /auth: a storm on one auth endpoint must
+// not 429 a sibling. A window keyed on the coarse `/auth` prefix would let
+// a /token storm push one shared count past a sibling's lower cap.
 // ---------------------------------------------------------------------------
 
 describe("rate-limit per-path isolation under /auth", () => {
@@ -395,18 +391,20 @@ describe("rate-limit per-path isolation under /auth", () => {
   });
 
   it("a /auth/oauth2/token storm does not 429 /auth/oauth2/register", async () => {
-    // Storm /token 15x — comfortably under its own cap (60) so none 429 on
-    // their own window. Pre-fix this pushed the shared `/auth` counter to 15,
-    // past /register's cap (10); a subsequent /register would 429. Post-fix
-    // each matched path has an independent window, so /register is untouched.
-    for (let i = 0; i < 15; i++) {
-      const res = await isoCtx.app.request("/auth/oauth2/token", {
+    // Storm /token past /register's cap (10) and up to its own (60): none
+    // 429 on their own window until the sixty-first, which is the witness
+    // that the window being stormed is real. /register, which a shared
+    // `/auth` counter would have 429ed after the tenth, is untouched.
+    const token = () =>
+      isoCtx.app.request("/auth/oauth2/token", {
         method: "POST",
         headers: { "content-type": "application/x-www-form-urlencoded" },
         body: "grant_type=authorization_code&code=bogus",
       });
-      expect(res.status).not.toBe(429);
+    for (let i = 0; i < 60; i++) {
+      expect((await token()).status, `request ${String(i + 1)}`).not.toBe(429);
     }
+    expect((await token()).status).toBe(429);
 
     const register = await isoCtx.app.request("/auth/oauth2/register", {
       method: "POST",

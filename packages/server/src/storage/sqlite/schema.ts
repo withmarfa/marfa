@@ -199,11 +199,9 @@ export const apiKeys = sqliteTable(
      * Category 2 of the permission model, Your profile. Keyed on the row
      * (`name`, `email`, `avatar`) with the leveled parent keyed on `*`.
      *
-     * A key had nowhere to hold this until now: the field was on the wire type
-     * and on the synthetic principal an OAuth grant projects, and a first-party
-     * key reached the category through its role instead. With the role gone the
-     * map is the only answer, so the column has to exist or no key can ever be
-     * granted the category at all.
+     * The map is the only answer for a key, which holds no role that could
+     * reach the category instead, so the column has to exist or no key can
+     * ever be granted it at all.
      */
     profile_permissions: text("profile_permissions").notNull().default("{}"),
     /**
@@ -339,11 +337,10 @@ export const types = sqliteTable(
     // seeded vocabulary and is locked; `connector` belongs to the manifest
     // named in `owner_connector` and only that package may update it;
     // `user` is a registration through the API. `family` carries the split the
-    // identifier cannot express (core / connector / system). It began as
-    // a property of the shipped set and is written for a connector's
-    // own types too, so a row's family says what kind of type it is
-    // rather than which build shipped it. Absent for `user` rows, which
-    // belong to no platform family and never did.
+    // identifier cannot express (core / connector / system), written for
+    // the shipped set and for a connector's own types alike, so a row's
+    // family says what kind of type it is rather than which build shipped
+    // it. Absent for `user` rows, which belong to no platform family.
     origin: text("origin").notNull().default("user"),
     family: text("family"),
     owner_connector: text("owner_connector"),
@@ -399,10 +396,6 @@ export const outboundWebhookDeliveries = sqliteTable(
       .where(sql`status = 'pending'`),
   ],
 );
-
-// oauth_codes is dropped — the @better-auth/oauth-provider plugin's
-// authorization code state machine is stored in `auth_verification`
-// via the plugin's internal adapter.
 
 export const auditLog = sqliteTable(
   "audit_log",
@@ -633,8 +626,7 @@ export const auth_oauth_client = sqliteTable(
     // The plugin's registration writes the client-credentials ceiling on
     // every client it creates, empty for the ones this server registers.
     clientCredentialsScopes: text("client_credentials_scopes"),
-    // 1.7 additions, nullable so a 1.6 build serves this schema without
-    // noticing. Arrays store as text.
+    // Nullable, as the plugin declares them. Arrays store as text.
     applicationType: text("application_type"),
     backchannelLogoutSessionRequired: integer(
       "backchannel_logout_session_required",
@@ -704,8 +696,7 @@ export const auth_oauth_refresh_token = sqliteTable(
     revoked: integer("revoked", { mode: "timestamp" }),
     authTime: integer("auth_time", { mode: "timestamp" }),
     scopes: text("scopes").notNull(),
-    // 1.7 additions, all nullable so a 1.6 build serves this schema
-    // without noticing. Arrays and json store as text.
+    // Nullable, as the plugin declares them. Arrays and json store as text.
     authorizationCodeId: text("authorization_code_id"),
     confirmation: text("confirmation"),
     requestedUserInfoClaims: text("requested_user_info_claims"),
@@ -723,10 +714,9 @@ export const auth_oauth_refresh_token = sqliteTable(
     index("idx_auth_oauth_refresh_token_authorization_code_id").on(
       table.authorizationCodeId,
     ),
-    // The session-delete hook queries this column on every sign-out, and the
-    // auth plugin's own declared schema marks it indexed. This side had
-    // silently diverged from that declaration, so every sign-out ran a
-    // sequential scan of both token tables.
+    // The session-delete hook queries this column on every sign-out, and
+    // the auth plugin's own declared schema marks it indexed; without the
+    // index every sign-out scans both token tables.
     index("idx_auth_oauth_refresh_token_session_id").on(table.sessionId),
   ],
 );
@@ -758,8 +748,7 @@ export const auth_oauth_access_token = sqliteTable(
     expiresAt: integer("expires_at", { mode: "timestamp" }),
     createdAt: integer("created_at", { mode: "timestamp" }),
     scopes: text("scopes").notNull(),
-    // 1.7 additions, all nullable so a 1.6 build serves this schema
-    // without noticing. Arrays and json store as text.
+    // Nullable, as the plugin declares them. Arrays and json store as text.
     authorizationCodeId: text("authorization_code_id"),
     confirmation: text("confirmation"),
     requestedUserInfoClaims: text("requested_user_info_claims"),
@@ -773,10 +762,9 @@ export const auth_oauth_access_token = sqliteTable(
     index("idx_auth_oauth_access_token_authorization_code_id").on(
       table.authorizationCodeId,
     ),
-    // The session-delete hook queries this column on every sign-out, and the
-    // auth plugin's own declared schema marks it indexed. This side had
-    // silently diverged from that declaration, so every sign-out ran a
-    // sequential scan of both token tables.
+    // The session-delete hook queries this column on every sign-out, and
+    // the auth plugin's own declared schema marks it indexed; without the
+    // index every sign-out scans both token tables.
     index("idx_auth_oauth_access_token_session_id").on(table.sessionId),
   ],
 );
@@ -793,7 +781,7 @@ export const auth_oauth_consent = sqliteTable(
     scopes: text("scopes").notNull(),
     createdAt: integer("created_at", { mode: "timestamp" }),
     updatedAt: integer("updated_at", { mode: "timestamp" }),
-    // 1.7 additions, nullable; arrays store as text.
+    // Nullable, as the plugin declares them; arrays store as text.
     requestedUserInfoClaims: text("requested_user_info_claims"),
     resources: text("resources"),
   },
@@ -812,9 +800,6 @@ export const auth_oauth_consent = sqliteTable(
   ],
 );
 
-// JWT signing keys. One row per rotation; the most recent non-expired
-// row is the active signer. Used by the @better-auth/jwt plugin which
-// the oauth-provider needs for id_token issuance.
 // The Device Authorization Grant (RFC 8628), owned by the OAuth provider's
 // device plugin (`oauthDeviceAuthorization`): it creates the row, claims it
 // for the signed-in person, approves or denies it, and consumes it at the
@@ -844,6 +829,9 @@ export const auth_oauth_device_code = sqliteTable(
   ],
 );
 
+// JWT signing keys. One row per rotation; the most recent non-expired
+// row is the active signer. Used by the @better-auth/jwt plugin which
+// the oauth-provider needs for id_token issuance.
 export const auth_jwks = sqliteTable("auth_jwks", {
   id: text("id").primaryKey(),
   publicKey: text("public_key").notNull(),
@@ -883,8 +871,8 @@ export const auth_passkey = sqliteTable(
 // than in item properties so bookkeeping writes never mint version
 // snapshots or fan out item events. The candidate query anti-joins this
 // table by its PK and drives off `items` via the partial
-// idx_items_enrichment_candidates index — the items side is what needed
-// indexing, a fact the original claim here got wrong. A `blob_ref` change
+// idx_items_enrichment_candidates index, the items side being what the
+// query needs indexed. A `blob_ref` change
 // or an `extractor_version` bump re-admits the item; `attempts` bounds
 // retries of failing blobs. Hard-deleting the item deletes the row.
 export const enrichmentState = sqliteTable("enrichment_state", {

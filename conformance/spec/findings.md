@@ -2,7 +2,7 @@
 
 Where the server contradicts its own OpenAPI document, where its document describes something a caller cannot observe, where it contradicts the device half of this specification, or where two doors that answer the same question answer it differently. Each entry names the operation, what the document says, what the server does, and the fixture that shows it. The fixtures assert what the server does; nothing here is fixed on the suite's side, and nothing is a proposal. This file is the channel to the server's maintainers. Two entries carry no fixture, and each says why.
 
-**An entry goes when the behavior it recorded changes, never because the contract softened.** Five went that way. One was stale on arrival: the conformance tree was folded into this repository at `11930838`, the commit after `a64fe481` taught the archive reader to refuse a body that is not gzip, so the entry recording that crash described a defect the server had already lost before the file was ever tracked here. One recorded a wildcard webhook subscription that `POST /webhooks` stored and dispatch never matched, and went when the door began refusing `events: ["*"]` outright. One recorded a self-loop refused `edge_constraint_violation`, and went when it began answering `edge_cycle` — the shortest cycle there is. The most recent recorded the body check and the row lookup running ahead of the credential check. Twenty-seven doors answered a bare request with something other than `401`, and on eight of them the answer was `404 item_not_found` for a well-formed id nothing carried, which told a caller holding no credential which ids exist. The entry named one of those eight. It went when a door that declares a credential began refusing before the router validates the request and before any handler reads a row.
+**An entry goes when the behavior it recorded changes, never because the contract softened.** Once the server answers as the document says, or the document says what the server does, the entry has nothing left to record, and the fixtures that asserted the old answer assert the new one.
 
 ## 1. `nullable: true` inside a 3.1 document
 
@@ -28,11 +28,7 @@ The route is stripped from the document as an internal operation, yet it is the 
 
 The document says a queued job flips to `cancelled` immediately and an in-progress one flips between chunks. The worker takes a job as soon as it is queued and finishes before a second request can reach the door, so no caller over the wire can observe either transition. `compliance/bulk.test.ts › DELETE on a terminal job answers 200 with its final state unchanged`.
 
-## 7. `GET /blobs/{hash}/url` answers on every instance
-
-Resolved. The door answers a link on every instance: the object store's own signed link once that store holds the blob, and a link the instance serves until then. The `400` it once answered on a disk-only instance, for a known, an unknown and a malformed hash alike, is gone with the setting that chose one store over the other, and the `404` the document declares is reached. `correctness/blob-correctness.test.ts › mints a link that fetches the bytes without a credential`, `› answers 404 for a link to an unknown hash and 400 for a malformed one`.
-
-## 8. Statuses the fixtures observe that the document does not declare
+## 7. Statuses the fixtures observe that the document does not declare
 
 Every entry is a status a fixture asserts on an operation whose served document lists no such response.
 
@@ -49,7 +45,7 @@ Every entry is a status a fixture asserts on an operation whose served document 
 - `POST /keys` declares `201 400 401 403 429`; the server answers `409 conflict` for a `source` already in use. `compliance/key-management.test.ts › refuses a second key claiming a source already in use`.
 - `POST /items/{id}/promote`, `GET /items/{id}/reconcile`, `GET /edge-types`, `POST /edge-types`, `DELETE /edge-types/{id}`, `GET /edges/{id}`, `PATCH /edges/{id}` and `DELETE /edges/{id}` declare no `401`; each answers `401 unauthorized` to a bare request. `compliance/unauthenticated.test.ts › answers 401 unauthorized on each of them`, `compliance/promote-reconcile.test.ts › refuses both doors without a credential`.
 
-## 9. The natural key is scoped by the credential, so two devices cannot share one
+## 8. The natural key is scoped by the credential, so two devices cannot share one
 
 `folders.md` 10 requires that the same file on two separately enrolled machines is one item. The natural key is `(source, source_id)` (`items.md` 5), `source` is stamped from the credential and a value in the body is ignored (`items.md` 4), and a second key naming a `source` already in use is refused `409 conflict` (`keys-and-oauth.md` 7). Two devices with their own keys therefore cannot present the same natural key, and the same file becomes two items on the same server with nothing recording that they are the same file.
 
@@ -57,7 +53,7 @@ Nothing here is a contradiction of the OpenAPI document; it is the server contra
 
 Out of milestone one, which has one folder and one keyed process.
 
-## 10. Contention on one row answers `500`, which a device reads as a fault
+## 9. Contention on one row answers `500`, which a device reads as a fault
 
 Several writers patching one edge at the same time are serialized by the driver, not queued: the store opens each write with `BEGIN IMMEDIATE` and a second one meets `SQLITE_BUSY` rather than waiting. The refusal surfaces as `500 internal_error`.
 
@@ -67,7 +63,7 @@ Contention is not a fault. `device.md` says the server answers a `5xx` "only for
 
 No fixture asserts it. One did, indirectly, until `version` became required on an update: it fired eight concurrent patches to prove the row lock never loses an accepted write, and the version gate now refuses seven of them before the lock is reached, so the case was removed rather than renamed into a claim it could no longer support. `packages/server/src/routes/edges-merge-rather-than-replace.test.ts` carries the reasoning and names the fixture that would reach the lock again: writers that each read the edge and then patch with what they read, rather than several sharing one version.
 
-## 11. `DELETE /edge-types/{id}` removes a registration out from under its edges
+## 10. `DELETE /edge-types/{id}` removes a registration out from under its edges
 
 The door looks at the core edge-type list and at whether the row exists, and at nothing else. Edges of the type are neither counted nor cascaded: the call answers `200`, the registration goes, and every edge of it stays, each still naming an edge type the instance no longer holds and `GET /edges/{id}` still serving it.
 

@@ -5,7 +5,7 @@ export interface MarfaItem {
   properties: Record<string, unknown>; // Typed data validated against the type schema
   source: string | null;
   source_id: string | null;
-  state: string; // Lifecycle state: "active", "archived", "trashed"
+  state: string; // Lifecycle state, such as "active", "archived", "trashed" or "revoked"
   created_at: string; // ISO 8601
   updated_at: string | null;
   occurred_at: string | null; // When the item's content happened (nullable, defaults to created_at)

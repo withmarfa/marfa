@@ -21,10 +21,12 @@ class SecretCryptoError extends Error {
 }
 
 /**
- * Generic AES-256-GCM encrypt/decrypt for short server-side secrets that
- * the verifier needs back in plaintext (HMAC verification keys, OAuth
- * access/refresh tokens, etc). Used for inbound webhook secrets and
- * OAuth tokens.
+ * AES-256-GCM encrypt/decrypt for short server-side secrets a verifier
+ * needs back in plaintext. It is the cipher the shipped `system.credential`
+ * type documents for its `secret_encrypted` field, under the
+ * `connectionOauthToken` domain; nothing in the server writes that field,
+ * a decision the connector model owns, so the pair has no live caller and
+ * `deriveKey` below has one.
  *
  * The key is derived from `MARFA_AUTH_SECRET` via HKDF-SHA256, with a
  * caller-supplied `info` string that scopes derivations: rotating
@@ -150,13 +152,11 @@ export function decryptSecret(ciphertextHex: string, info: string): string {
 /**
  * Domain-tag constants, so every call site reads its info string from one
  * place. Add one here when a new consumer arrives.
- *
- * `connectionOauthToken` outlives the table it was named for: the
- * `system.credential` type still documents `secret_encrypted` as keyed on
- * this domain, so the tag is part of a shipped schema rather than of the
- * storage that went.
  */
 export const SECRET_INFO = {
+  /** The domain the shipped `system.credential` type names for
+   *  `secret_encrypted`; part of that schema, whether or not anything
+   *  writes the field. */
   connectionOauthToken: "connection-oauth-tokens",
   /** The MAC over an instance-served blob link's hash and expiry. */
   blobLink: "blob-link",

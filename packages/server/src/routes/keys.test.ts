@@ -637,11 +637,11 @@ describe("bootstrap sentinel", () => {
 
   it("takes no content reach on bootstrap, whatever the body asks for", async () => {
     // **The operator key holds nothing on any axis.** The permissions
-    // are forced empty and the clamp refuses anything requested, but the four
-    // content maps used to come straight off the body — and bootstrap is
+    // are forced empty and the clamp refuses anything requested; the four
+    // content maps must not come off the body either, because bootstrap is
     // unauthenticated with no creator to clamp against, so `*: write` here
-    // is read and write over everything, in the one row shape the constraint
-    // exists to make unwritable.
+    // would be read and write over everything, in the one row shape the
+    // constraint exists to make unwritable.
     const { app, storage, bootstrapSecret, tmpDir } = await freshApp();
     try {
       const res = await request(app, "POST", "/keys", {
@@ -726,7 +726,7 @@ describe("bootstrap sentinel", () => {
   it("gives the one-shot claim back when the mint itself fails", async () => {
     // The claim has to come first or two concurrent callers both mint, and it
     // is also what stops the middleware admitting an unauthenticated mint. A
-    // throw after it used to leave a sentinel with no operator key behind it:
+    // throw after it must not leave a sentinel with no operator key behind it:
     // an instance nobody can reach and no route can repair. The failure is
     // injected at the key insert because that is the write, and any of the
     // several after it fail the same way.
@@ -894,9 +894,9 @@ describe("bootstrap sentinel", () => {
       // Second POST authenticated as the bootstrap credential — this is the
       // non-bootstrap branch (sentinel is now stamped).
       // Naming no reach, because the caller is the operator key: an
-      // operator key holds nothing and may give nothing, so the
-      // body that used to name a type map is refused now. What this case is
-      // about is which audit action the non-bootstrap branch writes.
+      // operator key holds nothing and may give nothing, so a body naming
+      // a type map is refused. What this case is about is which audit
+      // action the non-bootstrap branch writes.
       const followUpRes = await request(app, "POST", "/keys", {
         key: bootstrap.key,
         body: {
@@ -1009,11 +1009,10 @@ describe("bootstrap sentinel", () => {
 });
 
 describe("POST /keys — a session mints, clamped to its own grant", () => {
-  // The blanket refusal that used to stand here did two jobs: it withheld the
-  // permission, and it prevented the escalation a mint makes possible. Both
-  // still hold, through two things that can fail independently — the
-  // permission gate and the breadth clamp — so each gets its own case
-  // rather than one test standing for both.
+  // Two things hold here and can fail independently: the permission gate,
+  // and the breadth clamp that prevents the escalation a mint makes
+  // possible. Each gets its own case rather than one test standing for
+  // both.
   let oauthCtx: TestContext;
 
   const KEYS = "keys.mint";
@@ -1225,7 +1224,7 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
     const first = (await minted.json()) as { id: string; key: string };
     const stored = await oauthCtx.storage.keys.get(first.id);
     // The grant carried `keys.mint`, so the key carries it and no more: the
-    // other ten are absent even though the account holder holds them all.
+    // other six are absent even though the account holder holds them all.
     expect(stored?.permissions).toEqual(["keys.mint"]);
 
     // And the second hop cannot widen what the first was clamped to.
@@ -1626,11 +1625,10 @@ describe("POST /keys — what an operator key mints", () => {
   });
 
   it("cannot even be handed a widened operator key to mint from", async () => {
-    // This used to seed an operator key carrying every map and then assert
-    // that a mint from it inherited nothing, because the row constraint said
-    // nothing about the maps. The database says both halves now, so the caller this case needed
-    // is a row nothing can write and the route's forcing is unreachable from
-    // below rather than merely unused.
+    // The row constraint says both halves (no permissions, no maps), so
+    // the caller this case would need, an operator key carrying every map,
+    // is a row nothing can write, and the route's forcing is unreachable
+    // from below rather than merely unused.
     //
     // Kept, and pointed at the refusal instead: the reason the forcing above
     // can no longer be exercised is worth a failing test of its own, so a
@@ -1656,8 +1654,7 @@ describe("POST /keys — what an operator key mints", () => {
       ),
     ).rejects.toThrow();
     // Asserted on the row rather than on the message, because the message is
-    // the driver's and carries the constraint's name — which on a database
-    // created before that name changed is still the old one. What matters is
+    // the driver's and carries the constraint's name. What matters is
     // that nothing landed. The constraint itself is
     // `api_keys_operator_holds_nothing`, declared in `schema.ts` and pinned
     // by `schema-sql.test.ts` against a database it builds fresh.
@@ -1691,8 +1688,8 @@ describe("POST /keys — what an operator key mints", () => {
   it("mints the two-hop credential chain a black-box client relies on", async () => {
     // The conformance suite provisions with the operator key and then runs as
     // a working credential minted from it, which mints narrower ones from
-    // itself. Pinned here because that suite runs against a deployed server,
-    // so a regression would only surface after release.
+    // itself. Pinned here as well as there, so a regression names the door
+    // rather than the referee's boot.
     const suffix = Math.random().toString(36).slice(2, 10);
     const harnessKey = await mintWorkingKey(oauthCtx, {
       label: `harness-${suffix}`,

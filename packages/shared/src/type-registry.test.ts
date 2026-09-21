@@ -21,12 +21,11 @@ import { ErrorCode, MarfaError } from "./errors.js";
 import type { ItemState } from "@withmarfa/types";
 import type { Item } from "./types.js";
 
-// The registry's membership — its size and every shipped identifier — is
+// The registry's membership, its size and every shipped identifier, is
 // pinned literally in `type-registry-identity.test.ts`, which also catches a
-// rename that leaves the count intact. A second, weaker copy of that check
-// used to sit here; it could only fail in cases the identity test had already
-// failed, with a worse message. What belongs here is behavior: resolution,
-// inheritance, validation, lifecycle.
+// rename that leaves the count intact; a copy here could only fail in cases
+// that test had already failed, with a worse message. What belongs here is
+// behavior: resolution, inheritance, validation, lifecycle.
 describe("TYPE_REGISTRY", () => {
   it("contains all media group types", () => {
     const mediaTypes = [
@@ -225,9 +224,10 @@ describe("validateProperties", () => {
   });
 
   // The media subtypes that describe something playable carry a pointer to
-  // the file itself. `url` is the page about the work, so a type that only
-  // had `url` forced an episode's audio into a field that means something
-  // else -- or into an undeclared property the type system cannot see.
+  // the file itself. `url` is the page about the work, so a type with
+  // `url` alone would force an episode's audio into a field that means
+  // something else, or into an undeclared property the type system cannot
+  // see.
   it("accepts a media file pointer on the playable media subtypes", () => {
     for (const type of [
       "core.media.episode",
@@ -306,10 +306,9 @@ describe("validateProperties", () => {
   });
 
   it("rejects a datetime field holding anything but an instant", () => {
-    // A declared datetime used to collapse to an unchecked bounded
-    // string, so "not a date" was stored happily and surfaced far away
-    // as a parse error in whatever read it — the calendar expander was
-    // throwing on values the write path had already blessed.
+    // A declared datetime that collapsed to an unchecked bounded string
+    // would store "not a date" happily and surface it far away, as a parse
+    // error in whatever read it.
     for (const bad of [
       "not a date",
       "",
@@ -863,11 +862,12 @@ describe("validateTypeSchema — property shadow rule", () => {
 });
 
 // -----------------------------------------------------------------------------
-// Adversarial input — a cyclical parent chain. Real TYPE_REGISTRY entries are
-// generated from JSON and cannot cycle, but a future runtime registration path
-// could in theory plant one. validateTypeSchema's parent-chain walk has a
-// `seen` guard (type-registry.ts) that keeps it finite — these tests lock that
-// behavior in. Assertions target the stable error code, never message text.
+// Adversarial input: a cyclical parent chain. Shipped TYPE_REGISTRY entries
+// are generated from JSON and cannot cycle, and every registration door
+// refuses one, so a stored cycle has no writer; validateTypeSchema's
+// parent-chain walk still carries a `seen` guard (type-registry.ts) that
+// keeps it finite, and these tests lock that in. Assertions target the
+// stable error code, never message text.
 // -----------------------------------------------------------------------------
 describe("validateTypeSchema — circular inheritance", () => {
   beforeEach(() => {
@@ -942,10 +942,9 @@ describe("validateTypeSchema — circular inheritance", () => {
 // -----------------------------------------------------------------------------
 // Hot-path inheritance walks must also survive a cycle that somehow reached the
 // in-memory registry. `getResolvedFields` (per-write) and `isSubtypeOf`
-// (per-edge-check) walk the `parent` chain unguarded historically — a cyclic
-// chain would loop forever. They now carry a `seen`/depth guard and must THROW
-// a clear error rather than hang. These tests would hang the suite (rather than
-// fail) if the guard regressed.
+// (per-edge-check) walk the `parent` chain under a `seen`/depth guard and
+// must THROW a clear error rather than hang. These tests would hang the
+// suite (rather than fail) if the guard regressed.
 // -----------------------------------------------------------------------------
 describe("hot-path inheritance walks — circular parent chain", () => {
   beforeEach(() => {
@@ -1431,13 +1430,13 @@ describe("directChildrenOf", () => {
 
 /**
  * A compiled Zod schema is built from a type's RESOLVED fields, so removing a
- * type invalidates every compiled schema below it, not only its own. Nothing
- * cleared those, and a stale entry goes on validating writes against a shape
- * the type no longer has.
+ * type invalidates every compiled schema below it, not only its own; a
+ * stale entry would go on validating writes against a shape the type no
+ * longer has.
  *
- * `DELETE /types/:id` refuses this case now, so the route no longer reaches
- * it. The function's contract is still that it clears what it invalidates,
- * and it has other callers.
+ * `DELETE /types/:id` refuses this case, so the route does not reach it.
+ * The function's contract is still that it clears what it invalidates, and
+ * it has other callers.
  */
 describe("unregisterTypeSchema and the schemas it invalidates", () => {
   it("stops a descendant validating against its removed ancestor's fields", () => {
@@ -1592,9 +1591,10 @@ describe("maxDescendantDepth", () => {
 });
 
 /**
- * A chain past the backstop used to throw a bare error, which reached the
- * caller as a 500: the server saying it broke, rather than that this type's
- * stored chain did, with nothing to act on and no way back through the API.
+ * A chain past the backstop throws a named error rather than a bare one,
+ * which would reach the caller as a 500: the server saying it broke, rather
+ * than that this type's stored chain did, with nothing to act on and no way
+ * back through the API.
  */
 describe("a chain past the resolution backstop", () => {
   const link = (n: number): string => `deep.n${String(n)}`;

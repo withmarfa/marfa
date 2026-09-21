@@ -18,14 +18,14 @@
  * twenty lines from where this goes, and it is stronger here rather than
  * weaker:
  *
- * - One image runs `web`, `worker` and `both` from the same
- *   `createSqliteStorage` path. A throw is every replica of every role
- *   exiting at once, including the workers that drain the queues.
+ * - A throw here is the one process exiting, with every housekeeping job
+ *   it drives.
  * - The realistic population is a rollback: a value a newer build wrote,
  *   met by an older one. Refusing makes the recovery action the thing that
  *   cannot complete.
  * - There is no repair path from a server that will not start. The remedy
- *   is a migration or a hand `UPDATE`, and both want an instance up.
+ *   is the build that wrote the rows or a hand `UPDATE`, and both want an
+ *   instance up.
  * - `platform-family.ts` already says in its own comment why a store read
  *   projects rather than refusing to boot. A boot read is the same read,
  *   earlier.
@@ -33,8 +33,8 @@
  * **The severity lives on the log line, not on `/health`.** The boot log
  * is `error`-level and names the table, the column, the true stored string
  * and the count. `/health` carries the number alone: the endpoint is
- * unauthenticated, and the value itself would advertise the shape of a
- * partially-applied migration to anyone who asks.
+ * unauthenticated, and the value itself would advertise what another
+ * build wrote to anyone who asks.
  *
  * **Derived, never stored.** Recomputed at every boot from the rows, for
  * the reason `platform-drift.ts` gives: a stored flag would be a second
@@ -68,17 +68,6 @@ export interface ScannedColumn {
    * wrong. A copy fails loudest exactly when the build is right.
    */
   allowed: readonly string[];
-  /**
-   * Whether an absent value is a state the column legitimately holds.
-   *
-   * Only `items.tier` sets it. That column is nullable by design —
-   * `system.*` items have no tier because the dimension does not apply, and
-   * the field is optional on the wire to model that — so its `GROUP BY`
-   * returns a null group on every healthy instance, and counting it would
-   * report most of the table as broken. Every other column here is NOT
-   * NULL, where a null is genuinely unreadable and stays reportable.
-   */
-  allowsNull?: boolean;
 }
 
 /**
@@ -103,19 +92,15 @@ export const SCANNED_COLUMNS: readonly ScannedColumn[] = [
     allowed: ITEM_STATES,
   },
   // Scanned rather than excused, and it is the entry a roster keyed off
-  // casts could never have found: the item projection narrowed this column
-  // with `row.tier === "library" || row.tier === "feed"` — a comparison,
-  // not a cast — and dropped anything else to `undefined` with no log, no count
-  // and no projection. That is `api_keys.default_tier`'s union restated as
-  // two literals one directory away, which is the defect
-  // `SCANNED_COLUMNS`'s own `allowed` field exists to prevent. Those
-  // comparisons now go through `isTier`.
+  // casts could never have found: the item projection reads this column
+  // through `isTier`, a comparison rather than a cast, so a value outside
+  // the union would fall to `undefined` with no log and no count unless
+  // the scan counted it here.
   {
     table: "items",
     column: "tier",
     castType: "Tier",
     allowed: TIERS,
-    allowsNull: true,
   },
   // A store this build cannot attach still has rows in the location log,
   // and a copy count that silently ignored them would be wrong in the
@@ -280,9 +265,9 @@ export interface UnrecognizedStoredValue {
  * whose reader contract this otherwise copies, has only two — nothing
  * recorded yet, or nothing found — and no failure path at all. This has a
  * third: looked and could not read. The scenario is the one the feature
- * exists for. A newer build meets a database whose migration has not
- * landed, the query fails on the missing column, the catch fires,
- * and without this flag `/health` serves exactly what a healthy instance
+ * exists for: a build meets a database another build wrote, the query
+ * fails on a column one of them does not have, the catch fires, and
+ * without this flag `/health` serves exactly what a healthy instance
  * serves.
  *
  * A boolean carries no identifier, so the reason `/health` publishes a
@@ -304,16 +289,10 @@ export interface StoredValueScan {
 /**
  * How long one column's aggregate may take before the scan stops waiting.
  *
- * Measured on production: `items` holds 6,970 rows and `GROUP BY state`
- * answers in 5 ms, planned as an index-only scan over `idx_items_state`
- * with 314 heap fetches and 89 shared buffers hit. So this budget is three
- * orders of magnitude above the observed cost, and it is not here for
- * today's data.
- *
- * It is here for a freshly restored database, where the planner has no
- * statistics until the first `ANALYZE` and falls back to a sequential
- * scan — which is nothing at seven thousand rows and is not nothing
- * forever. Boot is the one place where waiting is expensive, because a
+ * A `GROUP BY` over an indexed column is milliseconds at the sizes an
+ * instance holds, so the budget is orders above the cost and is not here
+ * for today's data. It bounds a cold scan of a table far larger than
+ * that, because boot is the one place where waiting is expensive: a
  * deploy's health check is waiting on it.
  *
  * A losing query keeps running and holds its handle, exactly as
@@ -389,7 +368,7 @@ export async function scanStoredValues(
 ): Promise<StoredValueScan> {
   const found: UnrecognizedStoredValue[] = [];
 
-  for (const { table, column, allowed, allowsNull } of SCANNED_COLUMNS) {
+  for (const { table, column, allowed } of SCANNED_COLUMNS) {
     let groups: StoredValueCount[];
     try {
       const outcome = await withBudget(counts(table, column));
@@ -412,9 +391,6 @@ export async function scanStoredValues(
     }
 
     for (const group of groups) {
-      // A nullable column's null group is a real state rather than an
-      // unreadable one — see `allowsNull`.
-      if (group.value === null && allowsNull) continue;
       // Recognized, not merely present. A non-string cannot be in the
       // union whatever it is, and testing membership first would let a
       // driver-shaped surprise through the `includes` on a widened type.

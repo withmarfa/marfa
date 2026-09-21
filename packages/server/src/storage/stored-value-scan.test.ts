@@ -107,16 +107,14 @@ describe("scanStoredValues", () => {
     expect(logSpy).not.toHaveBeenCalled();
   });
 
-  it("counts a null on a NOT NULL column and excuses one where null is a state", async () => {
-    // `items.tier` is nullable by design — `system.*` items have no tier
-    // because the dimension does not apply — so its null group is a real
-    // state and counting it would report most of the table as broken.
-    // Every other column here is NOT NULL, where a null is genuinely
-    // unreadable and stays reportable.
+  it("counts a null on every column, tier included", async () => {
+    // Every scanned column is NOT NULL (`items.tier` defaults to `library`
+    // and `system.*` items carry it like any other), so a null is an
+    // unreadable value wherever it turns up and stays reportable.
     const found = await scanStoredValues(
       answering({
         "items.tier": [
-          { value: null, count: 900 },
+          { value: null, count: 9 },
           { value: "library", count: 12 },
         ],
         "items.state": [{ value: null, count: 1 }],
@@ -125,7 +123,10 @@ describe("scanStoredValues", () => {
 
     expect(found).toEqual({
       scanned: true,
-      values: [{ table: "items", column: "state", value: "null", count: 1 }],
+      values: [
+        { table: "items", column: "state", value: "null", count: 1 },
+        { table: "items", column: "tier", value: "null", count: 9 },
+      ],
     });
   });
 

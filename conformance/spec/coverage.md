@@ -5,7 +5,7 @@ Every operation the server publishes in its OpenAPI document, with the fixture t
 Status values:
 
 - **covered**: a fixture asserts a successful observable and the refusals the document declares that a caller can arrange.
-- **refusals only**: the success path cannot be arranged over the wire; the reason is in the row and the refusals are asserted. Two rows sat here on a precondition that turned out to be arrangeable through a third door, so the reason is what a row has to state, not the conclusion.
+- **refusals only**: the success path cannot be arranged over the wire; the reason is in the row and the refusals are asserted. The reason is what a row has to state, not the conclusion, because a precondition can turn out to be arrangeable through a third door.
 - **unpublished**: served and asserted, but absent from the document; the row goes when the server drops the door, and its status changes when the document gains it.
 
 `compliance/unauthenticated.test.ts` asserts `401 unauthorized` for every published operation but `POST /auth/oauth2/register`, which RFC 7591 leaves open, so no row cites it. `compliance/instance.test.ts` also fails when a row other than an unpublished one names an operation the document no longer publishes.

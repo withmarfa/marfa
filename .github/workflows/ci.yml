@@ -80,11 +80,11 @@ jobs:
 
   # The contract, run against the server in this same checkout.
   #
-  # No pinned server commit and no second checkout. The suite used to live in
-  # its own repository and gate a SHA somebody had to remember to move, which
-  # meant a server change and the contract change that admits it were two
-  # pull requests and the gate answered about neither tree. Here the tree
-  # under test is the tree the suite runs against.
+  # No pinned server commit and no second checkout: a suite gating a SHA
+  # somebody had to remember to move would make a server change and the
+  # contract change that admits it two pull requests, with the gate
+  # answering about neither tree. Here the tree under test is the tree the
+  # suite runs against.
   #
   # A job in this workflow rather than one of its own, because `publish.yml`
   # names `ci.yml` as the gate a commit must be green on before it can be
@@ -253,9 +253,9 @@ jobs:
           path: ${{ runner.temp }}/drill/reports/restore-drill.md
           if-no-files-found: ignore
 
-  # Freshness jobs — catch generated-artifact drift, on every event. They
-  # were once gated on the paths that could stale each artifact; on the pool
-  # the work costs seconds, and a gate that skips is a gate that can be wrong.
+  # Freshness jobs catch generated-artifact drift, on every event rather
+  # than behind a path filter: on the pool the work costs seconds, and a
+  # gate that skips is a gate that can be wrong.
   types-freshness:
     name: Types codegen freshness
     timeout-minutes: 15

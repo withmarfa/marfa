@@ -10,9 +10,9 @@
  *
  * **Scope: the item and edge write doors.** Those are the routes a client
  * writes its own graph through, and they are what this file speaks for.
- * Other code publishes too, and its events are not lesser ones: connection
- * lifecycle, grant projection, the install pipeline, archive restore,
- * sign-up seeding and the enrichment sweeper all put ordinary item events on
+ * Other code publishes too, and its events are not lesser ones: grant
+ * projection at sign-in and at consent, archive restore and the enrichment
+ * sweeper all put ordinary item events on
  * the same stream a durable client persists. They are outside this file as a
  * boundary decision rather than an oversight, and the census at the bottom
  * names every one of them so the decision stays visible instead of implied.

@@ -453,9 +453,7 @@ const getItemStatsRoute = createRoute({
       by: z
         .enum(["state", "type"])
         .optional()
-        .describe(
-          "Grouping axis. Defaults to `state`, which is what this route has always returned.",
-        ),
+        .describe("Grouping axis. Defaults to `state`."),
     }),
   },
   responses: {
@@ -1370,11 +1368,9 @@ export function itemRoutes(storage: Storage) {
     // seed: one refusing the tier while the other still stamps a default is
     // how a platform record ends up with a field its own lifecycle has no
     // room for.
-    // The refusal comes from the shared rule rather than a copy of it. This
-    // door had its own, with the same message, in the file that already
-    // imports the rule for the update door — which is the disagreement
-    // `_tier-rules.ts` was written to prevent, surviving inside one of the
-    // doors it was written for.
+    // The refusal comes from the shared rule rather than a copy of it: a
+    // copy here would be the disagreement between doors `_tier-rules.ts`
+    // exists to prevent.
     assertTierApplicable(type, body.tier);
     // Still needed after the refusal, because what a system write stamps is a
     // separate question from what it accepts. What it prevents is inheriting
@@ -1439,26 +1435,26 @@ export function itemRoutes(storage: Storage) {
     // state, device, capture_*) are ignored — the existing row's id wins.
     if (stampedSource && body.source_id) {
       // Including trashed rows, deliberately. `findBySourceId` hides them,
-      // which sent a re-sync of a mirror the user had deleted into the
-      // create path, where `create`'s own dedup pre-check — which does not
-      // filter state — found the same row and refused with a 409. That 409
-      // never clears: the row stays trashed, so every subsequent sync
-      // fails the same way and the connector is wedged on one item.
+      // which would send a re-sync of a mirror the user had deleted into
+      // the create path, where `create`'s own dedup pre-check (which does
+      // not filter state) finds the same row and refuses with a 409 that
+      // never clears: the row stays trashed, so every later sync fails the
+      // same way and the connector is wedged on one item.
       const existing = await storage.items.findBySourceIdIncludingTrashed(
         stampedSource,
         body.source_id,
       );
-      // D63 is checked on BOTH arms below rather than once here, and the
-      // difference is disclosure. This branch reasons carefully that the
-      // row's type is a gate rather than a filter — gate before disclosing,
-      // so a refusal cannot be read off the body — and the provenance
-      // refusal names `item_id`, `source` and the owning connection's id.
-      // Answering it ahead of `requireTypeAccess` would disclose all three
-      // to a caller the type gate is about to refuse and tell nothing.
+      // The declared-type match is checked on BOTH arms below rather than
+      // once here, and the difference is disclosure. The row's type is a
+      // gate rather than a filter: gate before disclosing, so a refusal
+      // cannot be read off the body, and the match's refusal names
+      // `item_id`, `declared_type` and `actual_type`. Answering it ahead
+      // of `requireTypeAccess` would disclose the row's real type to a
+      // caller the type gate is about to refuse and tell nothing.
       //
       // So each arm runs it last among its own gates. That is two call
       // sites for one rule, which is the shape this codebase treats as a
-      // hazard — the trashed arm has its own named test for exactly that
+      // hazard: the trashed arm has its own named test for exactly that
       // reason, and deleting either call reddens one case and only one.
       if (existing?.state === "trashed") {
         // The user deleted this. Reviving it would overturn that decision
@@ -1490,9 +1486,8 @@ export function itemRoutes(storage: Storage) {
         // Gate before disclosing, so a refusal cannot be read off the body.
         requireTypeAccess(c, existing.type, "write");
         // A write never re-types the row it lands on, and an
-        // acknowledgment is a write's answer. Without this the arm
-        // accepted a body naming any type at all, which is what made the
-        // route's own 409 description untrue of it.
+        // acknowledgment is a write's answer, so a body naming another
+        // type is refused here as the route's 409 description says.
         requireDeclaredTypeMatches(type, existing);
         return c.json(
           await acknowledgedItemBody(storage, c.get("apiKey"), existing),
@@ -1502,13 +1497,13 @@ export function itemRoutes(storage: Storage) {
       if (existing) {
         // Authorize the update against the row it lands on, not the body
         // that addressed it. Every gate above ran on `type`, which the
-        // caller chose and which this branch never writes — the update
-        // takes the resolved row's type as it stands. Naming a type the
-        // credential holds write on therefore admitted an edit to a row
-        // of any other type, and skipped every gate keyed on the real
-        // one. These are the gates `PATCH /items/{id}` runs; running them
-        // here is what makes the two doors agree. The create path below
-        // keeps authorizing the claim, because there the claim is the row.
+        // caller chose and which this branch never writes: the update
+        // takes the resolved row's type as it stands, so a type the
+        // credential holds write on must not admit an edit to a row of
+        // another. These are the gates `PATCH /items/{id}` runs; running
+        // them here is what makes the two doors agree. The create path
+        // below keeps authorizing the claim, because there the claim is
+        // the row.
         requireTypeAccess(c, existing.type, "write");
         // **No mirror check here, and its absence is the honest shape.**
         // Every other door that resolves a row calls
@@ -1759,9 +1754,6 @@ export function itemRoutes(storage: Storage) {
     let writeResult;
     try {
       writeResult = await storage.runInTransaction(async () => {
-        // The reservation is the first thing in this transaction and holds for
-        // the rest of it, so the count it reads includes every create already
-        // committed against the instance's ceiling.
         const created = await storage.items.create({
           type,
           properties,
@@ -2140,8 +2132,7 @@ export function itemRoutes(storage: Storage) {
 
     // system.* is excluded by default and opted back in by the token or by a
     // type filter that names the namespace. Through the shared rule rather
-    // than restated here: this sentence was written out twice and omitted
-    // once, and the door that omitted it matched rows its siblings hide.
+    // than restated here, so no door matches rows its siblings hide.
     const excludeSystemTypes = excludesSystemTypes(includeSet, type);
 
     const callerKeyForRead = c.get("apiKey");
@@ -2511,12 +2502,10 @@ export function itemRoutes(storage: Storage) {
 
     if (body.properties) {
       // Through the shared helper rather than a shallow spread of its own,
-      // because this has to predict exactly what the store will write. A
-      // hand-rolled copy was a fourth version of a rule that already had
-      // three, and it silently stopped agreeing the moment a caller could
-      // ask for a replace: it would have validated the merged set while the
-      // store wrote the replaced one, so a write dropping a required field
-      // passed validation on the strength of the value it was removing.
+      // because this has to predict exactly what the store will write: a
+      // copy that validated the merged set while the store wrote the
+      // replaced one would pass a write dropping a required field on the
+      // strength of the value it was removing.
       // The type the row ends up as, which is what the resulting
       // properties have to satisfy. Validating against the type being left
       // would admit a move whose result the destination calls invalid,
@@ -2645,14 +2634,9 @@ export function itemRoutes(storage: Storage) {
         return updated;
       }
 
-      // Through the shared helper rather than a second copy of it.
-      //
-      // The copy here did the same work — the self-edge refusal and the
-      // empty-set case were both already covered, by the pre-validation
-      // above and by an empty list being a no-op respectively. What a
-      // second copy costs is not correctness today but every change
-      // after: adding edge events meant editing two places, and this is
-      // the one that would have been missed.
+      // Through the shared helper rather than a second copy of it: what a
+      // second copy costs is every change after, made in one place and
+      // missed in the other.
       if (hasEdges && body.edges) {
         patchedEdgeChanges = await applyInlineEdges(
           storage,
@@ -2752,16 +2736,13 @@ export function itemRoutes(storage: Storage) {
     // below already covers it.** `planCascadeDelete` walks post-order and
     // pushes the root itself, so `toDelete` always contains the row named in
     // the URL and the loop inside the transaction asks the refusal of it like
-    // any other. A second call here was a duplicate rather than a defense.
+    // any other. A second call here would be a duplicate rather than a defense.
     //
     // The check itself stays where the cascade is, and has to: the type gate
     // above ran against the named row alone, and a `parent-of` edge can carry
-    // a connection out through a delete of something else entirely.
-    // D64: a connector may only destroy what it wrote. Trashing a sibling
-    // connection's corpus was the destructive half D63 left open — the
-    // property write was refused and the delete was not, which is the
-    // stronger harm being the less protected one.
-    //
+    // a live `system.connection` out through a delete of something else
+    // entirely, when a grant's tokens must not outlive the row that names
+    // their owner (`_connection-refusal.ts`).
     const snapshots = await storage.runInTransaction(async () => {
       const toDelete = await planCascadeDelete(storage.edges, id);
       const snaps = await Promise.all(
@@ -2771,9 +2752,9 @@ export function itemRoutes(storage: Storage) {
       // `parent-of` ships with `cascade_on_delete: "cascade"` and admits any
       // type at either end, so a connection that deletes a row it wrote takes
       // every child with it — including rows a live sibling wrote. Guarding
-      // the target alone left the rule one edge away from being void: the
-      // direct delete of a sibling's row was refused while the same row went
-      // through the cascade, and it published a `deleted` event on the way.
+      // the target alone would leave the rule one edge away from being
+      // void: the direct delete of a sibling's row refused while the same
+      // row goes through the cascade.
       //
       // Inside the transaction so a refusal rolls the whole plan back rather
       // than leaving a partial cascade, and against the snapshots already
@@ -2988,11 +2969,11 @@ export function itemRoutes(storage: Storage) {
     //
     // **Including trashed, and that is the whole of what this door normally
     // sees.** A plain `get` answers `null` for a `trashed` row, so on the
-    // ordinary path — trash, then purge — the read came back empty and the
-    // announcement below never fired. The two refusals above still worked,
-    // because both only have anything to say about a row that is NOT
-    // soft-deleted, which is exactly the shape a plain `get` does return.
-    // This is the same read `items.purge` runs for its own gate.
+    // ordinary path (trash, then purge) it would come back empty and the
+    // announcement below would never fire. The two refusals above only
+    // have anything to say about a row that is NOT soft-deleted, which is
+    // exactly the shape a plain `get` does return. This is the same read
+    // `items.purge` runs for its own gate.
     const purgeTarget = await storage.items.getIncludingTrashed(id);
     refuseUnlessUninstalled(purgeTarget);
 
@@ -3011,12 +2992,12 @@ export function itemRoutes(storage: Storage) {
     //
     // **The state compared is the type's own, never the literal `trashed`.**
     // `softDeleteState` resolves `revoked` for a type with a bounded
-    // lifecycle, which `system.connection` has, so a literal comparison sent
-    // every revoked connection down this branch to be refused by the write
-    // rule that no credential passes. That left the rows uninstall produces
-    // permanently unpurgeable. `items.purge` gates on the same derived
-    // state, and the two have to agree or one of them refuses what the
-    // other admits.
+    // lifecycle, which `system.connection` has; a literal comparison would
+    // send every revoked connection down this branch to be refused by the
+    // write rule that no credential passes, leaving the rows uninstall
+    // produces permanently unpurgeable. `items.purge` gates on the same
+    // derived state, and the two have to agree or one of them refuses what
+    // the other admits.
     if (
       purgeTarget &&
       purgeTarget.state !== softDeleteState(purgeTarget.type)
@@ -3059,13 +3040,12 @@ export function itemRoutes(storage: Storage) {
     for (const edge of cascaded) {
       await publishEdge({ type: "edge_deleted", edge });
     }
-    // The item itself, and the cascade above is what made its absence look
-    // covered. A trashed row announced `item.deleted`, which says
-    // recoverable; nothing then said the row had gone, and no later event
-    // can, because the row is absent rather than changed. A client holding
-    // it kept it until a full re-import, and one that was offline across
-    // the purge never learned it happened at all. An item with no edges
-    // cascaded nothing and so was silent outright.
+    // The item itself, which the cascade above does not cover. A trashed
+    // row announced `item.deleted`, which says recoverable; nothing else
+    // says the row has gone, and no later event can, because the row is
+    // absent rather than changed. Without this a client holding it would
+    // keep it until a full re-import, and one offline across the purge
+    // would never learn it happened.
     //
     // Last, mirroring the ordering a create states in reverse: an edge
     // arrives behind the item it belongs to, so a removal puts the edges

@@ -41,14 +41,11 @@ CREATE VIRTUAL TABLE IF NOT EXISTS items_fts USING fts5(
 
 /**
  * What an operator can do about a database this build will not open, and it
- * is deliberately not "export it and load it here".
- *
- * That was the advice until the archive format moved with the registry
- * rename: an export taken by the build that wrote such a database is a
- * version 1 archive, and `POST /admin/restore-archive` refuses version 1.
- * Naming a recovery that ends in a `400` is worse than naming none, so the
- * sentence says what is true — the file belongs to the build that wrote it,
- * and nothing here reads it.
+ * is deliberately not "export it and load it here": an export taken by the
+ * build that wrote such a database is a version 1 archive, which
+ * `POST /admin/restore-archive` refuses. Naming a recovery that ends in a
+ * `400` is worse than naming none, so the sentence says what is true: the
+ * file belongs to the build that wrote it, and nothing here reads it.
  */
 const REFUSED_DATABASE_REMEDY =
   "Nothing is upgraded in place and no export taken from it can be loaded here, so this file is " +
@@ -60,20 +57,18 @@ const REFUSED_DATABASE_REMEDY =
  * so a fresh database — which has none of these tables yet — is not refused.
  *
  * **A refusal here must not be reachable through the API**, and that is the
- * rule rather than a property these three happen to have. Nothing a caller
+ * rule rather than a property these checks happen to have. Nothing a caller
  * can send creates a `custom_types` table, a `space_config` settings row or
  * a missing column, so each of these refuses a database an older build wrote
  * and nothing else. A refusal keyed on row *content* is a different animal:
- * one keyed on the retired `integration:` provenance prefix stood here
- * briefly, and because a caller could mint a credential carrying that source,
- * a single request could leave an instance that never opened again — with
- * the refusal telling its operator to discard the database. A boot check
- * whose trigger a request can write is a denial of service with a polite
- * message.
+ * a caller can mint a credential carrying the retired `integration:` source
+ * prefix, so a check keyed on it would let a single request leave an
+ * instance that never opened again, with the refusal telling its operator
+ * to discard the database. A boot check whose trigger a request can write
+ * is a denial of service with a polite message.
  *
- * **Every renamed column belongs here, not only the indexed ones.** An
- * earlier draft of this list reasoned that a column an index is built over
- * fails the DDL anyway, so only those need naming. That is true and it is
+ * **Every renamed column belongs here, not only the indexed ones.** A
+ * column an index is built over fails the DDL anyway, which is true and
  * the wrong conclusion: a column nothing indexes passes the DDL silently,
  * because `CREATE TABLE IF NOT EXISTS` no-ops against the old table and a
  * CHECK constraint is never re-evaluated. The boot then succeeds, `GET /`
@@ -376,7 +371,7 @@ export async function createConnection(sqlitePath: string): Promise<{
   }
 
   // A retired settings key is refused on the same terms, and it is the
-  // quietest of the three by some way.
+  // quietest of these checks by some way.
   //
   // The instance configuration moved from the row keyed `space_config` to
   // one keyed `instance_config`. Nothing about that fails: the table is
@@ -410,8 +405,8 @@ export async function createConnection(sqlitePath: string): Promise<{
     }
   }
 
-  // Enable WAL for better concurrent read/write performance. PRAGMA is a
-  // no-op on libsql remote URLs but harmless.
+  // WAL: readers do not block the writer, and it is what Litestream
+  // replicates.
   await client.execute("PRAGMA journal_mode = WAL");
   await client.execute("PRAGMA foreign_keys = ON");
 
@@ -421,15 +416,12 @@ export async function createConnection(sqlitePath: string): Promise<{
   // cannot express FTS5, so it is applied separately.
   await client.executeMultiple(CREATE_FTS);
 
-  // An index that predates the schema is refused, not repaired.
-  //
-  // This rebuilt it: dropped the table and re-indexed every row. That is an
-  // in-place upgrade of an old database, and the decisions in force allow
-  // none — nothing is upgraded, an old instance is exported through the API
-  // or discarded. Repairing on open is also the shape that hides the
-  // problem, because it runs silently on every boot and a half-finished
+  // An index that predates the schema is refused, not repaired. Rebuilding
+  // it here would be an in-place upgrade of an old database, which the
+  // decisions in force allow none of: an old instance is exported through
+  // the API or discarded. Repairing on open is also the shape that hides
+  // the problem, because it runs silently on every boot and a half-finished
   // re-index leaves a search index nobody knows is partial.
-  //
   //
   // FTS5 has no ALTER TABLE, so probing for the column is the only way to
   // tell an index of this shape from an older one. Only a missing column

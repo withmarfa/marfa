@@ -424,15 +424,19 @@ describe("skips", () => {
       await seedBlob(Buffer.from("trashed quokkatrash"), "text/plain"),
       "text/plain",
     );
+    const candidateIds = async () =>
+      (
+        await ctx.storage.enrichment.listCandidates(
+          EXTRACTOR_VERSION,
+          3,
+          100,
+          DEFAULT_SIGNATURE,
+        )
+      ).map((c) => c.item_id);
+    // A candidate while it is live, and not once it is trashed.
+    expect(await candidateIds()).toContain(id);
     await request(ctx.app, "DELETE", `/items/${id}`, { key: ctx.workingKey });
-
-    const candidates = await ctx.storage.enrichment.listCandidates(
-      EXTRACTOR_VERSION,
-      3,
-      100,
-      DEFAULT_SIGNATURE,
-    );
-    expect(candidates.map((c) => c.item_id)).not.toContain(id);
+    expect(await candidateIds()).not.toContain(id);
   });
 
   it("records an empty document rather than writing an empty string", async () => {
@@ -452,11 +456,11 @@ describe("skips", () => {
   });
 
   it("parks an extraction the type would refuse rather than writing it", async () => {
-    // The reported shape, driven by the only configuration that can still
+    // The reported shape, driven by the only configuration that can
     // produce it: a truncation ceiling set above the one the validator
-    // enforces. Neither store validates on update, so before this the write
-    // simply succeeded and every later edit of the item was refused, naming
-    // a property the caller had never set.
+    // enforces. Neither store validates on update, so without the judge
+    // the write would simply succeed and every later edit of the item be
+    // refused, naming a property the caller had never set.
     const overLong = "q".repeat(DEFAULT_MAX_STRING_LENGTH + 1);
     const id = await createFileItem(
       await seedBlob(Buffer.from(overLong), "text/plain"),
@@ -511,8 +515,7 @@ describe("skips", () => {
 
 describe("dimensions", () => {
   it("derives an image's width and height", async () => {
-    // No client values at all, which is the upload the schema used to
-    // refuse outright after the blob had already been stored and charged.
+    // No client values at all: the dimensions are derived, not sent.
     const id = await createFileItem(
       await seedBlob(await fixture("sample.png"), "image/png"),
       "image/png",
