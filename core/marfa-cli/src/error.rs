@@ -377,7 +377,7 @@ mod tests {
         assert_eq!(CliError::ClosedOutput.exit(), Exit::Done);
         // A refusal from the direct surface takes its code from the status;
         // the ones with a code of their own are listed above, the rest fold
-        // into the four the core also answers.
+        // into the six the core also answers.
         for (status, code) in [
             (400, "validation"),
             (422, "validation"),

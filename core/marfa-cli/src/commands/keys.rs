@@ -1,12 +1,13 @@
 use clap::{Args, Subcommand, ValueEnum};
 use serde_json::{Map, Value, json};
 
-use super::{Tier, insert_opt, object, pairs};
+use super::{insert_opt, object, pairs};
 use crate::credentials::{self, Kept};
 use crate::error::CliError;
 use crate::output::Printer;
 use crate::remote::Remote;
 use crate::remote::request::Request;
+use crate::values::Tier;
 use marfa_core::http::Http;
 
 #[derive(Debug, Subcommand)]

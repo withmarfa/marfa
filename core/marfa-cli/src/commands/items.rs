@@ -3,14 +3,12 @@ use std::path::PathBuf;
 use clap::{Args, Subcommand, ValueEnum};
 use serde_json::{Map, Value, json};
 
-use super::{
-    Direction, ItemState, PageArgs, PropertyArgs, SortField, StateFilter, Tier, TierFilter,
-    insert_opt, object,
-};
+use super::{PageArgs, PropertyArgs, StateFilter, TierFilter, insert_opt, object};
 use crate::error::CliError;
 use crate::output::Printer;
 use crate::remote::Remote;
 use crate::remote::request::Request;
+use crate::values::{ItemState, SortDirection, SortField, Tier};
 
 #[derive(Debug, Subcommand)]
 pub enum ItemsCommand {
@@ -210,7 +208,7 @@ pub struct ListArgs {
     pub sort: Option<SortField>,
     /// `asc` or `desc`; the server's default is newest first.
     #[arg(long)]
-    pub direction: Option<Direction>,
+    pub direction: Option<SortDirection>,
     /// Exclusive lower bound on the item's own time, RFC 3339.
     #[arg(long, value_name = "TIME")]
     pub occurred_after: Option<String>,
@@ -483,7 +481,7 @@ pub fn list_request(args: &ListArgs) -> Request {
         .query_list("tags", &args.tags)
         .query_opt("filter", args.filter.clone())
         .query_opt("sort", args.sort.map(SortField::as_str))
-        .query_opt("direction", args.direction.map(Direction::as_str))
+        .query_opt("direction", args.direction.map(SortDirection::as_str))
         .query_opt("occurred_after", args.occurred_after.clone())
         .query_opt("occurred_before", args.occurred_before.clone())
         .query_opt("updated_after", args.updated_after.clone())

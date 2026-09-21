@@ -3,7 +3,7 @@
  *
  * Trashing an item announces `item.deleted`, and a client that hears it
  * knows the row is recoverable. The purge behind it announced nothing, so
- * the same client held a trashed row for ever: no later event corrects it,
+ * the same client held a trashed row forever: no later event corrects it,
  * because the row is absent rather than changed, and only a full re-import
  * would have found out. A device that was offline across the purge never
  * learned it happened at all.

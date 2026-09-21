@@ -964,10 +964,9 @@ mod tests {
         meta_set(&conn, META_SLICE_TIER, "library").unwrap();
         assert!(refuse_unless_hydrated(&conn).is_ok());
 
-        // Each part of the slice on its own, because the guard and the
-        // status report read one predicate and used to read two: an empty
-        // type list satisfied one of them and the tier satisfied neither,
-        // while catch-up required it.
+        // Each part of the slice on its own: an empty type list and a
+        // missing tier must each refuse, because catch-up requires both
+        // and a guard reading one predicate would pass one of them.
         meta_set(&conn, META_SLICE_TYPES, "[]").unwrap();
         assert_eq!(
             refuse_unless_hydrated(&conn),

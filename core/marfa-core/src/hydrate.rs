@@ -90,7 +90,7 @@ pub(crate) fn hydrate(
             }
             // A cursor that does not move is a server saying there is more
             // and handing back the same place to look. Without this a
-            // hydration spins for ever before the store is usable at all,
+            // hydration spins forever before the store is usable at all,
             // which is worse than the same shape in a drain: there is no
             // copy to fall back on and nothing has been written yet.
             let next = page.cursor.clone();

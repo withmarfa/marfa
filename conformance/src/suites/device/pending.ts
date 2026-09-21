@@ -58,7 +58,7 @@ export const ALL_PENDING: Readonly<Record<string, string>> = {
  *
  * It runs. While the statement is on the list the body has to fail, and the
  * run goes red the day it stops failing, asking for the entry to be removed —
- * which is what keeps a satisfied statement from sitting skipped for ever.
+ * which is what keeps a satisfied statement from sitting skipped forever.
  * Off the list it is an ordinary assertion.
  */
 export async function pendingUntilItPasses(

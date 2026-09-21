@@ -1870,9 +1870,9 @@ describe("writing", () => {
     ).toBe(false);
     // **Past the grace**, which is the only thing that tells a journal the
     // rename cleared from one that is merely still waiting. Both look
-    // identical until the grace runs out, and an earlier version of this
-    // case asserted the second and called it the first: remove
-    // `journal_clear` from the rename path and it stayed green.
+    // identical until the grace runs out, so an assertion made before it
+    // passes with `journal_clear` removed from the rename path; the wait is
+    // what makes this a witness.
     await vi.waitFor(
       async () => {
         const swept = await harness?.folder.scan();

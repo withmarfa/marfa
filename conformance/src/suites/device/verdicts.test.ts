@@ -470,7 +470,7 @@ describe("the server did not take the write", () => {
     if (!queue.ok) return;
     expect(
       queue.value[0]?.verdict,
-      "five counted refusals did not kill the write, so a device retries a failure that never clears for ever",
+      "five counted refusals did not kill the write, so a device retries a failure that never clears forever",
     ).toBe("dead");
 
     // Terminal: a further drain does not send it.

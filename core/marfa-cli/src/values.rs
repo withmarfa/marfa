@@ -10,12 +10,34 @@ pub enum Tier {
     Feed,
 }
 
+impl Tier {
+    /// The value the server's doors take.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Tier::Library => "library",
+            Tier::Feed => "feed",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum ItemState {
     Active,
     Archived,
     Trashed,
     Revoked,
+}
+
+impl ItemState {
+    /// The value the server's doors take.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ItemState::Active => "active",
+            ItemState::Archived => "archived",
+            ItemState::Trashed => "trashed",
+            ItemState::Revoked => "revoked",
+        }
+    }
 }
 
 // Every sortable column is a verb plus `_at`, so the shared `At` suffix the
@@ -28,10 +50,30 @@ pub enum SortField {
     OccurredAt,
 }
 
+impl SortField {
+    /// The column name the server's listing takes.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            SortField::CreatedAt => "created_at",
+            SortField::UpdatedAt => "updated_at",
+            SortField::OccurredAt => "occurred_at",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum SortDirection {
     Asc,
     Desc,
+}
+
+impl SortDirection {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            SortDirection::Asc => "asc",
+            SortDirection::Desc => "desc",
+        }
+    }
 }
 
 impl From<Tier> for marfa_core::Tier {

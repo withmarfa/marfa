@@ -11,6 +11,7 @@ use serde_json::json;
 
 use super::*;
 use crate::remote::request::{Body, Method, Request};
+use crate::values::Tier;
 
 fn query(request: &Request, key: &str) -> Option<String> {
     request
