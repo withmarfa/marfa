@@ -485,8 +485,8 @@ export class MarfaClient {
   }
 
   /**
-   * Tight defaults suit fast in-test convergence; raise them through `options`
-   * where a job is expected to take longer than a few seconds.
+   * Tight defaults suit fast in-test convergence; raise them through
+   * `options` where a bulk-action job is expected to outlast them.
    */
   async pollBulkActionToTerminal(
     jobId: string,
@@ -707,7 +707,7 @@ export class MarfaClient {
     return this.request<{ data: HousekeepingJobRow[] }>("/housekeeping");
   }
 
-  /** `POST /housekeeping/{name}/run`: one job, now. */
+  /** `POST /housekeeping/{name}/run`: one housekeeping job, now. */
   async runHousekeeping(name: string): Promise<ApiResponse<HousekeepingRun>> {
     return this.request<HousekeepingRun>(`/housekeeping/${name}/run`, {
       method: "POST",
@@ -1032,7 +1032,7 @@ export class MarfaClient {
   /**
    * `DELETE /admin/platform-types/{id}`: the operator key only.
    *
-   * Encoded because the identifier is now the last segment: a `?` or a `#`
+   * Encoded because the identifier is the last segment: a `?` or a `#`
    * in one would otherwise end the path early and the door would answer a
    * plausible refusal about a shorter identifier than the fixture sent.
    */

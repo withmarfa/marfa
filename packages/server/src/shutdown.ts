@@ -47,9 +47,8 @@ export interface ShutdownBounds {
  * boot reruns, and not a failed shutdown, so it leaves the exit code
  * alone. The server and the storage failing to close in time do not.
  *
- * Each step is bounded and reported separately: a shared catch produced a
- * warning that could not say which step overran, and it fired on every
- * production shutdown for a week before anything made it loud.
+ * Each step is bounded and reported separately: a shared catch would
+ * produce a warning that could not say which step overran.
  */
 export async function shutdownInOrder(
   parts: ShutdownParts,

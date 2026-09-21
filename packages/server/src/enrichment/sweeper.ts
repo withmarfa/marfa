@@ -167,9 +167,9 @@ export class TextEnrichmentSweeper {
     const { storage, blobs } = this.opts;
     const prior = await storage.enrichment.get(candidate.item_id);
     // Attempts count against one generation of content: a new blob or a
-    // bumped extractor is a fresh start, not attempt N+1 of the old one.
-    // Carrying the count across generations meant the first attempt on
-    // genuinely new content could already be past the cap.
+    // bumped extractor is a fresh start, not attempt N+1 of the old one,
+    // or the first attempt on genuinely new content could already be past
+    // the cap.
     const sameGeneration =
       prior !== null &&
       prior.blob_ref === candidate.blob_ref &&
@@ -273,7 +273,7 @@ export class TextEnrichmentSweeper {
       }
 
       // A text extraction that throws is still a transient failure with a
-      // retry budget, exactly as before. Captured rather than propagated so
+      // retry budget. Captured rather than propagated so
       // a derivation that already succeeded reaches the item instead of
       // being discarded by the outer handler.
       let textError: string | null = null;
@@ -334,11 +334,11 @@ export class TextEnrichmentSweeper {
 
       // Judge the merged result before writing it. Neither store validates
       // on update, only on create, so a server-internal writer reaching this
-      // door can put a row into a state no caller could have produced, and
-      // did: text longer than the type's string ceiling was written
-      // successfully and refused every later edit of the item, naming a
-      // property nobody had set. Same sequence as the bulk-action runner,
-      // through the same helpers, so there is one rule rather than two.
+      // door could put a row into a state no caller could have produced:
+      // text longer than the type's string ceiling, written successfully
+      // and refusing every later edit of the item on a property nobody
+      // had set. Same sequence as the bulk-action runner, through the same
+      // helpers, so there is one rule rather than two.
       //
       // Guarded on the schema resolving, because `validateProperties`
       // reports an absent schema as `Unknown type` rather than as no
@@ -448,10 +448,9 @@ export class TextEnrichmentSweeper {
    * media parser is asynchronous and yields, so the timeout reaches it.
    * The image reader is synchronous: if it ever looped it would hold the
    * event loop and no timer would fire. That is why the reader is one
-   * with no published advisory rather than the wider-format alternative
-   * whose current release carries three unfixed infinite-loop advisories,
-   * one of them in the HEIF parser this most wants. The size gate above
-   * bounds the input; the choice of reader bounds the rest.
+   * with no published infinite-loop advisory rather than a wider-format
+   * alternative carrying open ones. The size gate above bounds the input;
+   * the choice of reader bounds the rest.
    */
   private async deriveWithTimeout(
     bytes: Buffer,

@@ -2,16 +2,15 @@
  * What an archive may write, and what a refused restore may leave behind.
  *
  * An archive is a file somebody can hand you. Restore is operator-key
- * gated, so this is trust-boundary erosion rather than an open door, but the
- * replay used to go through the raw edge insert: no registry lookup, no
- * endpoint-type constraints, no cardinality, no cycle check, no self-edge
- * guard, no duplicate guard. A hand-edited archive could plant relationships
- * the API refuses, and they counted as imported.
+ * gated, so this is trust-boundary erosion rather than an open door, but a
+ * replay through the raw edge insert (no registry lookup, no endpoint-type
+ * constraints, no cardinality, no cycle check, no self-edge guard, no
+ * duplicate guard) would let a hand-edited archive plant relationships the
+ * API refuses, and count them as imported.
  *
- * Every archive test before this one used `references`, which is
- * many-to-many with `["*"]` on both ends — the one core edge type for which
- * the missing validation makes no observable difference. So the gap was
- * invisible to a suite that otherwise covered restore well.
+ * Driven with edge types whose constraints show, not only `references`,
+ * which is many-to-many with `["*"]` on both ends: the one core edge type
+ * for which the missing validation would make no observable difference.
  */
 import { createGzip } from "node:zlib";
 import { createHash } from "node:crypto";
@@ -271,5 +270,34 @@ describe("a refused restore leaves no blobs behind", () => {
     expect(result.blobs_imported).toBe(1);
     expect(await ctx.storage.blobs.get(blob.hash)).not.toBeNull();
     expect(await ctx.blobs.disk.has(blob.hash)).not.toBeNull();
+  });
+
+  it("keeps nothing of an archive it refuses, the blobs included", async () => {
+    const ctx = await newContext();
+    const blob = blobOf(`refused blob`);
+    // A state the row's lifecycle cannot produce refuses the whole archive
+    // before anything is written.
+    const refused = JSON.stringify({
+      item: {
+        id: A,
+        type: "system.activity",
+        state: "trashed",
+        properties: {},
+        source: "strict",
+        source_id: A,
+      },
+      metadata: { item_id: A, tags: [], extensions: {} },
+    });
+    const archive = await buildArchive({
+      itemLines: [refused],
+      edgeLines: [],
+      blobs: [blob],
+    });
+
+    const res = await restoreInto(ctx, archive);
+    expect(res.status).toBe(400);
+    expect(await ctx.storage.items.getIncludingTrashed(A)).toBeNull();
+    expect(await ctx.storage.blobs.get(blob.hash)).toBeNull();
+    expect(await ctx.blobs.disk.has(blob.hash)).toBeNull();
   });
 });

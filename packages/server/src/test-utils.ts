@@ -33,10 +33,9 @@ const SALT = TEST_API_KEY_SALT;
 /**
  * Resolve the raw-SQL test escape hatch off the storage object, throwing
  * if it is absent. It is a test-only internal (`__sqliteRun`) the storage
- * layer exposes for direct setup writes. An
- * earlier version silently no-op'd when they were missing — so a change to
- * the storage shape would quietly skip the setup and surface as a confusing
- * downstream failure. Fail loudly instead.
+ * layer exposes for direct setup writes. Loud rather than a no-op, so a
+ * change to the storage shape cannot quietly skip the setup and surface
+ * as a confusing downstream failure.
  */
 function requireSqliteRun(
   storage: Storage,
@@ -89,9 +88,9 @@ export interface TestContext {
    *  by `cleanup`. */
   tmpDir: string;
   /** Awaitable cleanup. Callers that don't `await` still trigger the
-   *  cleanup (the promise is created immediately), but unawaited
-   *  cleanups queue against admin-URL DROPs from other test files and
-   *  can starve afterAll hooks. Best practice: `await ctx.cleanup()`. */
+   *  cleanup (the promise is created immediately), but an unawaited
+   *  cleanup races the directory removal with the next context's setup.
+   *  Best practice: `await ctx.cleanup()`. */
   cleanup: () => Promise<void>;
   /** The Better Auth instance the app mounted, for tests that need a
    *  signed-in user behind the OAuth provider. `createTestAccount` is the
@@ -488,8 +487,7 @@ async function buildUnbootstrappedApp(
       } finally {
         // In `finally` because a failed close must not strand the
         // directory: the database file inside it is unreachable either
-        // way, and one leaked directory per context is what filled a
-        // disk with six hundred thousand of them.
+        // way, and one leaked directory per context fills a disk.
         rmSync(tmpDir, { recursive: true, force: true });
       }
     },
@@ -730,10 +728,10 @@ export async function runBulkActionAsync(
 /**
  * Ceiling for a read that waits on a condition.
  *
- * Deliberately below the server package's `testTimeout` of 60s. The two used
- * to be equal, so vitest's timer always won the race and the diagnostic below
- * could never print: every failure surfaced as a bare `Test timed out in
- * 60000ms`, naming neither the condition nor what had been read. A ceiling is
+ * Deliberately below the server package's `testTimeout` of 60s: were the
+ * two equal, vitest's timer would win the race and the diagnostic below
+ * could never print, every failure surfacing as a bare `Test timed out in
+ * 60000ms` naming neither the condition nor what had been read. A ceiling is
  * only useful if it is reached first.
  *
  * With `until` this is a ceiling rather than a cost. The read returns the
@@ -784,9 +782,8 @@ export interface SseReadOptions {
 /**
  * Read an SSE response body until a condition holds or the budget runs out.
  *
- * Shared rather than per-suite because the two hand-rolled copies this
- * replaces had drifted into different signatures, different return shapes and
- * different failure semantics, and both carried the same defect.
+ * Shared rather than per-suite, so no two copies drift into different
+ * signatures, return shapes and failure semantics.
  */
 export async function readSse(
   res: Response,

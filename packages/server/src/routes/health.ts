@@ -30,16 +30,12 @@ interface Placement {
  *
  * It is here because placement is otherwise invisible from outside the
  * platform's own API, and getting it wrong produces no error, no failed
- * deploy and no degraded status — only latency, against a database that then
- * takes the blame. Production ran a continent away from its data for four
- * months while every check stayed green, and the one field that would have
- * said so did not exist.
- *
- * These replaced a set of provider-supplied variables the container runtime
- * populated on its own. That was cheaper to operate and is exactly why the
- * field vanished when the deployment moved: nothing outside that provider
- * sets them, so the check went quiet without ever failing. A stated value is
- * worth the three lines of configuration it costs.
+ * deploy and no degraded status, only latency against a database that then
+ * takes the blame: an instance can run a continent away from its data
+ * while every check stays green. Stated rather than read from a
+ * provider's own variables, because nothing outside that provider sets
+ * those and a check keyed on them goes quiet without ever failing; a
+ * stated value is worth the three lines of configuration it costs.
  */
 function readPlacement(): Placement | null {
   const region = process.env.MARFA_PLACEMENT_REGION;
@@ -58,12 +54,11 @@ function readPlacement(): Placement | null {
  * on it and reports what it knows.
  *
  * A liveness answer that waits is not a liveness answer. Both probes below
- * are unbounded by nature — the database probe waits on a held database,
- * and the blob probe is a network round trip. When the database was fully
- * held, `/health` did not report a busy server: it never answered,
- * for fifty-two seconds and then a 500, while ordinary requests were still
- * being served. The one endpoint whose job is to say how things are was
- * the only one that could not say anything.
+ * are unbounded by nature: the database probe waits on a held database,
+ * and the blob probe is a network round trip. Unbounded, `/health` would
+ * not report a busy server but hang on it, while ordinary requests were
+ * still being served, and the one endpoint whose job is to say how things
+ * are would be the only one that could not say anything.
  *
  * Two seconds is well past a healthy answer (single-digit milliseconds) and
  * well short of any caller's patience.
@@ -203,14 +198,11 @@ export function healthRoutes(storage: Storage, blobs: BlobLayer): Hono<AppEnv> {
     // type holding nothing is untidy rather than unhealthy: it resolves,
     // it serves, it costs nothing. Overall status answers whether this
     // instance is serving correctly right now, and a row that changes no
-    // behavior is not part of that answer.
-    //
-    // It degraded the response first, which paged unattended alerting for
-    // housekeeping no operator could always clear, and a component that
-    // can sit degraded indefinitely teaches its readers to ignore the ones
-    // that matter. The rule that replaces it: a check earns the right to
-    // degrade only if something is wrong now. If the honest description is
-    // "someone could tidy this up", it is a report.
+    // behavior is not part of that answer. A component that can sit
+    // degraded indefinitely teaches its readers to ignore the ones that
+    // matter, so the rule: a check earns the right to degrade only if
+    // something is wrong now. If the honest description is "someone could
+    // tidy this up", it is a report.
     const platformTypes = { drifted: platformDrift().length };
 
     // How many rows this instance holds whose stored value falls outside
@@ -220,17 +212,17 @@ export function healthRoutes(storage: Storage, blobs: BlobLayer): Hono<AppEnv> {
     //
     // A count and nothing else, and here that is sharper than it is for
     // the drift figure above: this endpoint is unauthenticated, and the
-    // value itself would advertise the shape of a partially-applied
-    // migration to anyone who asks. The true stored string is on the boot
-    // log, behind the operator's access to it.
+    // value itself would advertise what another build wrote to anyone who
+    // asks. The true stored string is on the boot log, behind the
+    // operator's access to it.
     //
     // Not a component, and this is the shape decision rather than the
     // field. It carries no status and never moves `overall`, which is
     // `platform_types`'s shape. The
     // rule is already written into this file: a check earns the right to
     // degrade only if something is wrong now. This one can sit non-zero
-    // indefinitely — clearing it needs a migration or a hand `UPDATE` on
-    // somebody's schedule, not a button — and a component that can sit
+    // indefinitely (clearing it needs the build that wrote the rows or a
+    // hand `UPDATE` on somebody's schedule, not a button) and a component that can sit
     // degraded indefinitely teaches its readers to ignore the ones that
     // matter. The severity lives on the boot log, which is `error`-level
     // and names the table, the column, the true stored string and the
@@ -243,10 +235,10 @@ export function healthRoutes(storage: Storage, blobs: BlobLayer): Hono<AppEnv> {
     // `scanned` is here because zero rows has three meanings and this is
     // one number over all of them: nothing recorded yet, nothing found,
     // and looked-but-could-not-read. The third is reachable and is the
-    // scenario the whole feature exists for — a newer image meeting a
-    // database whose migration has not landed raises `42703`, the scan's
-    // catch fires, and without this field the endpoint would serve exactly
-    // what a healthy instance serves. It carries no identifier, so it does
+    // scenario the whole feature exists for: a build meeting a database
+    // another build wrote fails on a column one of them does not have, the
+    // scan's catch fires, and without this field the endpoint would serve
+    // exactly what a healthy instance serves. It carries no identifier, so it does
     // not touch the reason the values themselves stay off an
     // unauthenticated endpoint.
     //

@@ -241,7 +241,7 @@ describe("GET /health unrecognized stored values", () => {
     setStoredValueScan({
       scanned: true,
       values: [
-        { table: "users", column: "role", value: "owner", count: 40 },
+        { table: "blob_stores", column: "kind", value: "tape", count: 40 },
         { table: "items", column: "state", value: "quarantined", count: 2 },
       ],
     });
@@ -281,7 +281,9 @@ describe("GET /health unrecognized stored values", () => {
     // that matter. The severity lives on the boot log instead.
     setStoredValueScan({
       scanned: true,
-      values: [{ table: "users", column: "role", value: "owner", count: 40 }],
+      values: [
+        { table: "blob_stores", column: "kind", value: "tape", count: 40 },
+      ],
     });
 
     const res = await build().request("/");
@@ -312,12 +314,12 @@ describe("GET /health unrecognized stored values", () => {
     setStoredValueScan({
       scanned: true,
       values: [
-        { table: "users", column: "role", value: "tenant_admin", count: 40 },
+        { table: "blob_stores", column: "kind", value: "tape", count: 40 },
       ],
     });
 
     const text = await (await build().request("/")).text();
-    expect(text).not.toContain("tenant_admin");
-    expect(text).not.toContain("users");
+    expect(text).not.toContain("tape");
+    expect(text).not.toContain("blob_stores");
   });
 });

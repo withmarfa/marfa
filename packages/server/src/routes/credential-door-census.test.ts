@@ -198,9 +198,9 @@ function concrete(path: string): string {
 }
 
 /**
- * A bare request carrying everything that used to be answered ahead of the
- * credential: an unparseable body, an unknown query key, and a path naming
- * rows nothing carries.
+ * A bare request carrying everything a door might be tempted to answer
+ * ahead of the credential: an unparseable body, an unknown query key, and
+ * a path naming rows nothing carries.
  */
 async function bare(
   door: string,

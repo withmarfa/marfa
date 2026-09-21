@@ -95,8 +95,7 @@ function archiveExtensions(
  * and the authority on the format. This one stops at the fields the restore
  * consults — `version`, which it refuses, and `blobs`, whose mime type it
  * falls back to. Widening it to match the writer would have it claim fields
- * of every archive ever written, including the ones written before those
- * fields existed, which is a claim nothing here can keep.
+ * of every archive ever written, which is a claim nothing here can keep.
  */
 interface ArchiveManifest {
   version: number;
@@ -436,11 +435,11 @@ export function adminArchiveRoutes(storage: Storage, blobs: BlobLayer) {
                 reject(
                   new MarfaError(
                     ErrorCode.VALIDATION_ERROR,
-                    // Version 1 named the registrations in `types.ndjson`
-                    // `custom_type` and `custom_edge_type`. This build reads
-                    // neither, and there is no fallback key, so the refusal
-                    // has to be here: parsing a version 1 archive would drop
-                    // every registration it carries and answer 200.
+                    // A version 1 archive names its registrations under
+                    // keys this build does not read, and there is no
+                    // fallback key, so the refusal has to be here: parsing
+                    // one would drop every registration it carries and
+                    // answer 200.
                     `Unsupported archive version: ${String(manifest.version)}. This build reads version 2 only, and nothing converts an older one: a version 1 archive is readable by the build that wrote it and by nothing here.`,
                   ),
                 );
@@ -742,9 +741,9 @@ export function adminArchiveRoutes(storage: Storage, blobs: BlobLayer) {
             skipEdge("already_present");
             continue;
           }
-          // An archive is a file someone can hand you, and replaying it
-          // through the raw insert meant a hand-edited one could plant edges
-          // of an unregistered type, or edges violating every constraint the
+          // An archive is a file someone can hand you: replayed through the
+          // raw insert, a hand-edited one could plant edges of an
+          // unregistered type, or edges violating every constraint the
           // enforcer exists to apply, past checks the API refuses at. It is
           // validated exactly the way `POST /edges` validates, one edge at a
           // time: the batch entry point throws on its first violation, which
@@ -812,8 +811,7 @@ export function adminArchiveRoutes(storage: Storage, blobs: BlobLayer) {
     //
     // Items before edges, because an edge names two endpoints and a client
     // receiving one for a row it has never heard of has no way to resolve
-    // it. Announcing only the edges was worse than announcing neither for
-    // exactly that reason.
+    // it.
     //
     // Fan-out is declined, as it is on every other door that writes in
     // bulk. A restore carries up to `MAX_ARCHIVE_ITEMS` rows, and driving

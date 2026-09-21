@@ -86,13 +86,13 @@ async function createConfigContext(): Promise<ConfigContext> {
   );
 
   const suffix = Math.random().toString(36).slice(2, 10);
-  const operatorKey = `marfa_k1_operator_quotas_${suffix}`;
+  const operatorKey = `marfa_k1_operator_cfg_${suffix}`;
   const workingKey = `marfa_k1_working_cfg_${suffix}`;
 
   await storage.keys.create(
     {
-      label: "operator-quotas",
-      source: `operator-quotas-${suffix}`,
+      label: "operator-cfg",
+      source: `operator-cfg-${suffix}`,
       is_operator: true,
       type_permissions: {},
       default_tier: "feed",

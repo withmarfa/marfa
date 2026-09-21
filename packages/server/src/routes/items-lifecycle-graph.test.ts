@@ -73,10 +73,9 @@ describe("POST /items/:id/restore — the restore obeys the type's graph", () =>
     const writer = await systemWriter(c);
 
     // Built through the store rather than the API, and it has to be: the
-    // create route now refuses this exact state for this exact type, which
-    // is the other half of the same fix. The store stays permissive so the
-    // archive restore can replay it, so it is the only way to reach the row
-    // shape the restore gate exists for.
+    // create route refuses this exact state for this exact type. The store
+    // stays permissive so the archive restore can replay it, so it is the
+    // only way to reach the row shape the restore gate exists for.
     const trashed = await c.storage.items.create({
       type: SYSTEM_TYPE,
       state: "trashed",
@@ -135,9 +134,10 @@ describe("POST /items/:id/restore — the restore obeys the type's graph", () =>
 
 describe("POST /items/:id/transition — a transition out of the trash is judged by the graph", () => {
   it("refuses trashed → archived by name, and admits trashed → active", async () => {
-    // The route used to read through the trashed-invisible getter, so every
-    // trashed row answered 404 and the graph's own refusal was unreachable.
-    // `trashed` admits `active` alone, and the refusal has to say so.
+    // Read through the getter that sees trashed rows: through the other
+    // one every trashed row would answer 404 and the graph's own refusal
+    // would be unreachable. `trashed` admits `active` alone, and the
+    // refusal has to say so.
     ctx = await createTestContext();
     const c = ctx;
 

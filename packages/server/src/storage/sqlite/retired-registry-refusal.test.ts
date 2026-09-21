@@ -71,12 +71,11 @@ describe("a retired registry table is refused on open", () => {
   });
 
   it("leaves a refused database byte for byte as it found it", async () => {
-    // Asserted on the bytes rather than on the absence of a `types` table,
-    // because the first draft of this refusal ran after
-    // `PRAGMA journal_mode = WAL` and so rewrote the file header of every
-    // database it then refused. A table-shaped assertion passes through
-    // that; a hash does not. A refused boot must change nothing, or a
-    // second attempt meets a file the first one altered.
+    // Asserted on the bytes rather than on the absence of a `types` table:
+    // a refusal placed after `PRAGMA journal_mode = WAL` rewrites the file
+    // header of every database it refuses, which a table-shaped assertion
+    // passes through and a hash does not. A refused boot must change
+    // nothing, or a second attempt meets a file the first one altered.
     const path = scratch();
     await seedTables(path, ["custom_types"]);
     const before = createHash("sha256")
@@ -91,10 +90,9 @@ describe("a retired registry table is refused on open", () => {
   });
 
   it("names a remedy it has not itself taken away", async () => {
-    // The advice used to be "export with the previous build and load that
-    // export here". The archive format moved with the registry rename, so
-    // that export is a version 1 archive and the restore door refuses it:
-    // the sentence named a recovery ending in a 400. It must not come back.
+    // An export taken by the build that wrote such a database is a version 1
+    // archive, which the restore door refuses, so advising an export names
+    // a recovery that ends in a 400.
     const path = scratch();
     await seedTables(path, ["custom_types"]);
 
@@ -182,7 +180,7 @@ describe("a retired registry table is refused on open", () => {
   });
 
   it("refuses a blobs table that predates the size_bytes rename", async () => {
-    // The third unindexed column, and the quietest read of the three. Nothing
+    // An unindexed column, and the quietest read of them. Nothing
     // indexes it, so the DDL passes against a file still carrying `size`, and
     // the columns a sweep selects — `hash`, `created_at` — are both still
     // there. What dies is every door that reads a blob's row: upload,
@@ -265,7 +263,7 @@ describe("a retired registry table is refused on open", () => {
   });
 
   it("refuses settings still keyed to the retired config name", async () => {
-    // The quietest of the three. Nothing fails: the table and the column are
+    // The quietest of the checks. Nothing fails: the table and the column are
     // both there, the read finds no row and answers an empty object, and the
     // operator's enforcement levers and retention overrides are replaced by
     // this build's defaults with nothing in the log. An instance keeping
@@ -338,29 +336,28 @@ describe("a retired registry table is refused on open", () => {
   });
 
   it("opens a database carrying the retired provenance prefix", async () => {
-    // Deliberately not refused, and the reason is worth the test.
+    // Deliberately not refused, and the reason is worth the test: a
+    // refusal keyed on row content is reachable through the API. `POST
+    // /keys` accepts a caller-chosen `source`, so one request could stamp a
+    // row that the next boot refused, permanently, with the refusal
+    // advising the operator to discard the database. Every other check in
+    // this file refuses a shape no request can create. What the prefix
+    // costs instead is bounded: mirror protection knows one spelling, so a
+    // row carrying this one is an ordinary row.
     //
-    // A refusal keyed on this prefix stood here briefly. It was reachable
-    // through the API: `POST /keys` accepts a caller-chosen `source`, so one
-    // request could stamp a row that the next boot refused, permanently, with
-    // the refusal advising the operator to discard the database. Every other
-    // check in this file refuses a shape no request can create.
-    //
-    // What the prefix costs instead is bounded: mirror protection knows one
-    // spelling, so a row an older build stamped is an ordinary row. There is
-    // no corpus of them — the estate is torn down and every database here is
-    // test data — which is why that is the cheaper of the two failures.
+    // The row goes into a database this build wrote, so the open that
+    // follows fails for nothing else and the resolve means what it says.
     const path = scratch();
+    const written = await createConnection(path);
+    await written.close();
     const seed = createClient({ url: `file:${path}` });
     await seed.execute(
-      "CREATE TABLE api_keys (id TEXT PRIMARY KEY, source TEXT NOT NULL, permissions TEXT)",
-    );
-    await seed.execute(
-      "INSERT INTO api_keys (id, source, permissions) VALUES ('k1', 'integration:acme/thing', '[]')",
+      "INSERT INTO api_keys (id, key_hash, label, source, created_at) VALUES ('k1', 'h1', 'acme', 'integration:acme/thing', '2026-01-01T00:00:00.000Z')",
     );
     seed.close();
 
-    await expect(createConnection(path)).rejects.not.toThrow(/integration:/);
+    const opened = await createConnection(path);
+    await opened.close();
   });
 
   it("opens a stranger's table that happens to share a name", async () => {

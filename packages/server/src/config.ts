@@ -10,9 +10,9 @@ import type { CidrRange } from "./middleware/client-ip.js";
 /**
  * Numeric env-var read with explicit "missing or empty → default" semantics.
  *
- * The `Number(env) || default` shorthand silently swallows zero — operators
- * cannot disable a sub-job (e.g. set a retention to `0`) because `0` is
- * falsy and gets overridden by the default. This helper is the canonical
+ * The `Number(env) || default` shorthand silently swallows zero: an
+ * operator could not switch a housekeeping job off by setting its
+ * retention to `0`, because `0` is falsy and the default wins. This helper is the canonical
  * pattern for every numeric env read in the server: an undefined or empty
  * env var falls back to the default; any other value (including `0`,
  * negatives, or `NaN`) is honored as written.
@@ -77,11 +77,12 @@ export interface AppConfig {
   auditCleanupIntervalMs: number;
   /** Days a `system.activity` item survives before the purger drops it.
    *  Default 14; env override `MARFA_ACTIVITY_RETENTION_DAYS`; instance-config
-   *  override `activity_retention_days`. `0` disables the job.
+   *  override `activity_retention_days`. `0` switches the housekeeping
+   *  job off.
    *
    *  A connector reports every run as an activity row, including the
    *  runs that found nothing to do, so this is the fastest-growing item
-   *  type on an instance with connections and nothing aged it out before.
+   *  type on an instance with connections.
    *
    *  Optional on the type because a dozen test contexts build
    *  `AppConfig` literals, and a required field with
@@ -90,7 +91,7 @@ export interface AppConfig {
   activityRetentionDays?: number;
   /** Days a revoked application-grant tombstone survives before the purger
    *  drops it. Default 90; env override `MARFA_REVOKED_GRANT_RETENTION_DAYS`.
-   *  `0` disables the job.
+   *  `0` switches the housekeeping job off.
    *
    *  **Ninety rather than a number of its own, and matching
    *  `AUDIT_RETENTION_DAYS` on purpose.** The tombstone and the audit row that
@@ -100,7 +101,7 @@ export interface AppConfig {
    *
    *  They accumulate because the grant lookup skips a revoked row, which makes
    *  a soft-delete permanent rather than reusable: every revoke-then-reconnect
-   *  cycle leaves one behind and nothing swept them. */
+   *  cycle leaves one behind. */
   revokedGrantRetentionDays?: number;
   /** Days an app grant may go unused before it is retired: the grant
    *  cascade runs and an `auth.grant.retired` row is written. Default 365;
@@ -109,7 +110,8 @@ export interface AppConfig {
   /** Cadence (ms) for the activity purger. Default 3_600_000 (1h);
    *  env override `MARFA_ACTIVITY_PURGE_INTERVAL_MS`. */
   activityPurgeIntervalMs?: number;
-  /** Hours an event_log entry survives before the cleanup job purges it.
+  /** Hours an event_log entry survives before the event-log housekeeping
+   *  job purges it.
    *  Default 168 (7 days). Controls how far back a client's SSE replay
    *  cursor can reach; requests with `Last-Event-ID` older than the
    *  oldest retained event get a terminal `catchup_too_old` event.
@@ -127,7 +129,7 @@ export interface AppConfig {
   versionWeeklySnapshotDays: number;
   versionMaxVersions: number;
   /** Days a trashed item survives before it's hard-deleted by the trash
-   *  purger. `0` disables the job. Default: 60. */
+   *  purger. `0` switches the housekeeping job off. Default: 60. */
   trashRetentionDays: number;
   trashPurgeIntervalMs: number;
   /** Cadence (ms) for the better-auth session cleanup sweep — drops
@@ -141,7 +143,7 @@ export interface AppConfig {
    *  AND carries zero grants (no access token, no refresh token, no
    *  projected `system.connection` app item). Unauthenticated DCR lets
    *  clients accumulate forever; this bounds the abandoned ones. `0`
-   *  disables the job. Default 30. Env override
+   *  switches the housekeeping job off. Default 30. Env override
    *  `MARFA_DCR_CLIENT_RETENTION_DAYS`. Optional on the type; `index.ts`
    *  applies the 30-day fallback. */
   dcrClientRetentionDays?: number;
@@ -167,7 +169,7 @@ export interface AppConfig {
   blobMinCopies?: number;
   /** Cadence (ms) for `blob-replicate`, which gives every attached store
    *  the copies its policy wants; an upload wakes it too. A positive
-   *  integer, since the job has no off switch: a store the configuration
+   *  integer, since the housekeeping job has no off switch: a store the configuration
    *  names is a store whose copies are kept. Default 60_000; env override
    *  `MARFA_BLOB_REPLICATE_INTERVAL_MS`. */
   blobReplicateIntervalMs?: number;
@@ -317,10 +319,9 @@ export interface AppConfig {
    *  reads the env var directly (it runs before `loadConfig`) and refuses to
    *  start without it when telemetry is actually being exported. */
   otelEnvironment?: string;
-  /** OTLP traces endpoint (`OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`). Empty in
-   *  A deployment exporting to PostHog leaves it unset — the trace pipeline
-   *  is built but points at no store, because PostHog has no general-trace
-   *  ingest, only logs and errors. */
+  /** OTLP traces endpoint (`OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`). Unset,
+   *  the trace pipeline is built and points at nothing, for a collector
+   *  that takes logs and errors but no traces. */
   otelTracesEndpoint?: string;
   /** OTLP logs endpoint (`OTEL_EXPORTER_OTLP_LOGS_ENDPOINT`). A deployment
    *  exporting to PostHog points this at
@@ -378,11 +379,11 @@ export function parseEventLogRetentionHours(raw: string | undefined): number {
 
 const DEFAULT_GRANT_INACTIVITY_DAYS = 365;
 
-/** The inactivity window in days: `0` disables the retirement job; a value
- *  that is not a non-negative integer is refused with a warning and the
- *  default stands, because `Number("thirty")` is `NaN`, `NaN > 0` is false,
- *  and the job would otherwise be silently never built for an operator who
- *  believes it is running. */
+/** The inactivity window in days: `0` switches the retirement housekeeping
+ *  job off; a value that is not a non-negative integer is refused with a
+ *  warning and the default stands, because `Number("thirty")` is `NaN`,
+ *  `NaN > 0` is false, and the housekeeping job would otherwise be silently
+ *  never registered for an operator who believes it is running. */
 export function parseGrantInactivityDays(raw: string | undefined): number {
   if (raw === undefined || raw === "") return DEFAULT_GRANT_INACTIVITY_DAYS;
   const parsed = Number(raw);
@@ -593,12 +594,12 @@ export function loadConfig(): AppConfig {
           "Generate one with: openssl rand -hex 32",
       );
     }
-    // MARFA_AUTH_SECRET derives the at-rest encryption key for every
-    // stored ciphertext (OAuth tokens, webhook secrets, OAuth callback
-    // state, system.credential rows). If it is unset, the crypto layer
-    // would fall back to a per-process random key, so a restart on a
-    // scale-to-zero container leaves all prior ciphertexts
-    // undecryptable. Enforce presence at boot so that never happens.
+    // MARFA_AUTH_SECRET is the master secret every derived key comes
+    // from: the signature on an instance-served blob link, and the cipher
+    // `system.credential` names. Unset, the crypto layer would fall back
+    // to a per-process random key, so a restart would leave every link
+    // and ciphertext minted before it unverifiable. Enforce presence at
+    // boot so that never happens.
     if (!authSecret || authSecret.length < 32) {
       throw new Error(
         "MARFA_AUTH_SECRET must be set to at least 32 characters in production. " +
@@ -709,7 +710,8 @@ export function loadConfig(): AppConfig {
       ) ?? 1,
     // Positive integers, refused otherwise, for the same reason as the
     // minimum: a value that resolved to NaN or zero would make every run
-    // copy or check nothing, silently, and neither job has an off switch.
+    // copy or check nothing, silently, and neither housekeeping job has an
+    // off switch.
     blobReplicateIntervalMs:
       parsePositiveIntegerEnv(
         process.env.MARFA_BLOB_REPLICATE_INTERVAL_MS,
@@ -754,11 +756,9 @@ export function loadConfig(): AppConfig {
       process.env.MARFA_ENRICHMENT_MAX_BLOB_BYTES,
       20 * 1024 * 1024,
     ),
-    // Derived, not restated. These were two independent constants that
-    // happened not to match: enrichment truncated at 200_000 and the
-    // validator refused anything over 100_000, so a long document was
-    // extracted successfully onto an item that could never be written to
-    // again.
+    // Derived from the validator's cap, not restated: a text cap above it
+    // would extract a long document onto an item that could never be
+    // written to again.
     enrichmentMaxTextChars: envNumber(
       process.env.MARFA_ENRICHMENT_MAX_TEXT_CHARS,
       DEFAULT_MAX_STRING_LENGTH,
@@ -842,8 +842,7 @@ export function loadConfig(): AppConfig {
 /**
  * Refuses to boot on a value that is not a non-negative integer.
  * `envNumber` would resolve garbage to NaN, and `NaN > 0` is false, so
- * a typo would silently switch a stated viewer ceiling OFF — the exact
- * fail-open the worker-threads parser refuses for the same reason.
+ * a typo would silently switch a stated viewer ceiling off.
  */
 export function parseSseMaxViewers(raw: string | undefined): number {
   if (raw === undefined || raw.trim() === "") return 0;

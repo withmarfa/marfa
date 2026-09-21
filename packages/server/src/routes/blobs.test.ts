@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { readdir } from "node:fs/promises";
-import { describe, expect, it, beforeAll, afterAll } from "vitest";
+import { dirname } from "node:path";
+import { describe, expect, it, beforeAll, afterAll, vi } from "vitest";
 import { Readable } from "node:stream";
 import { createTestContext, request, withSecondStore } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
@@ -84,9 +85,18 @@ describe("POST /blobs", () => {
   });
 
   it("leaves no spool behind, whether the bytes were new or already held", async () => {
+    // The witness is the spool the store hands each upload, seen minted
+    // under the spool directory and gone once the request has answered.
+    const minted = vi.spyOn(ctx.blobs.disk, "spoolPath");
     const data = new TextEncoder().encode("spooled twice");
-    await upload(data);
-    await upload(data);
+    expect((await upload(data)).status).toBe(201);
+    expect((await upload(data)).status).toBe(201);
+    const spools = minted.mock.results.map((r) => r.value as string);
+    minted.mockRestore();
+    expect(spools).toHaveLength(2);
+    for (const spool of spools) {
+      expect(dirname(spool)).toBe(ctx.blobs.disk.spoolDir);
+    }
     expect(await readdir(ctx.blobs.disk.spoolDir)).toEqual([]);
   });
 

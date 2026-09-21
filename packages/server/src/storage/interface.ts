@@ -889,7 +889,7 @@ export interface VersionStore {
   deleteByIds(ids: string[]): Promise<number>;
   /**
    * Pages over every version snapshot's parsed properties, instance-wide.
-   * Exists for the admin blob cleanup: a hash referenced only by history is
+   * Exists for the `blob-orphans` housekeeping job: a hash referenced only by history is
    * still referenced, because deleting it would strip the bytes out from
    * under a version read. Cursor is the version row id.
    */
@@ -929,7 +929,7 @@ export interface TypeStore {
   /**
    * The instance's registrations with their stored provenance.
    *
-   * `listRegistered` returns bare schemas, which is all three of its other
+   * `listRegistered` returns bare schemas, which is all its two other
    * callers need. This exists because deciding what a type IS cannot be
    * done from its identifier: a vendor's `readwise.book` and a person's
    * `jonah.reading_item` under a claimed handle are the same shape, and
@@ -1905,8 +1905,7 @@ export interface PersistedEvent {
    * Whether this event drives outbound side effects — webhook delivery.
    * Persisted because a catch-up rebuilds the event from this row, and a
    * rebuilt event that read as fanning out when its writer said otherwise
-   * would be a different event from the one that was emitted. True on every
-   * row written before the column existed.
+   * would be a different event from the one that was emitted.
    */
   enable_fanout: boolean;
   created_at: string;
@@ -2196,12 +2195,11 @@ export interface EdgeStore {
    * the edge to recreate it restarts the version at 1 and puts a delete
    * and a create on the wire where every other edit is an update. So an
    * edge's property set can only grow. That is a real limit rather than
-   * an oversight in this doc, and it is narrower than what the replacing
-   * write allowed.
+   * an oversight in this doc.
    *
-   * Properties are parsed and re-serialized on every write now, so keys
-   * the caller never named are rewritten through `JSON.stringify` rather
-   * than kept as the bytes the last client sent.
+   * Properties are parsed and re-serialized on every write, so keys the
+   * caller never named are rewritten through `JSON.stringify` rather than
+   * kept as the bytes the last client sent.
    *
    * Returns the written edge, or the current one when the precondition did
    * not hold. A discriminated result rather than a thrown error so a new
@@ -2410,9 +2408,8 @@ export interface RateLimitStore {
    * same upsert semantics per row. Exists because the rate-limit
    * middleware consults up to three windows on every request — same
    * table, same method, same timestamp — and three sequential round
-   * trips on the hot path were pure multiplier. Keys are deduplicated
-   * and applied in sorted order so two concurrent batches cannot
-   * deadlock on row-lock ordering. Returns a map keyed by window key.
+   * trips on the hot path were pure multiplier. Keys are deduplicated.
+   * Returns a map keyed by window key.
    */
   incrementWindows(
     family: string,
@@ -2551,8 +2548,8 @@ export interface BulkActionJobStore {
   recoverStale(staleBeforeIso: string): Promise<number>;
   /**
    * GC: drop terminal rows whose `finished_at` is older than
-   * `expireBeforeIso`. Returns the number of rows deleted. Called by
-   * the maintenance sweep on the same cadence as `purgeTrashedOlderThan`.
+   * `expireBeforeIso`. Returns the number of rows deleted. Called by the
+   * `bulk-action-gc` housekeeping job at its own cadence.
    */
   gcExpired(expireBeforeIso: string): Promise<number>;
 }
@@ -2751,8 +2748,8 @@ export interface Storage extends Partial<BetterAuthStorageAdapter> {
   audit: AuditStore;
   eventLog: EventLogStore;
   /** Optional sweep store for expired better-auth session rows. Absent on
-   *  test contexts that don't wire better-auth (the cleanup job in
-   *  `index.ts` is gated on this being present). */
+   *  test contexts that don't wire better-auth (the `auth-session-cleanup`
+   *  housekeeping job is registered only when it is present). */
   authSessions?: AuthSessionStore;
   /** The owner behind the sign-in surface. Absent, like `authSessions`, on
    *  a storage that wires no better-auth tables. */

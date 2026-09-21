@@ -16,10 +16,8 @@ coverage/
 .env.*
 !.env.example
 
-# Registry auth — local devs copy from .npmrc.example with NPM_TOKEN
-# set in the shell (publish flow). CI generates .npmrc per-job from
-# secrets.GITHUB_TOKEN. Tracking it in the repo caused pnpm to warn
-# on every invocation when NPM_TOKEN was unset.
+# Registry auth: CI writes .npmrc per job from secrets.GITHUB_TOKEN, and a
+# tracked one makes pnpm warn on every invocation when NPM_TOKEN is unset.
 .npmrc
 
 # IDE
@@ -38,9 +36,6 @@ Thumbs.db
 
 # Logs
 *.log
-
-# Seed data (local dev only)
-seed/
 
 # Database and blob data
 data/
@@ -61,16 +56,9 @@ version.json
 .claude/plans/
 .claude/scheduled_tasks.lock
 
-# Wrangler local cache and mid-deploy scratch bundles (generated tool output).
-.wrangler/
-
 # Page snapshots from a local Playwright CLI run. Machine-local tooling
 # output, not part of the project.
 .playwright-cli/
-
-# Deployment env files live on the box, never in git.
-infra/digitalocean/.env
-infra/digitalocean/server.env
 
 # Holding folders for things a session was refused permission to delete
 _trash/

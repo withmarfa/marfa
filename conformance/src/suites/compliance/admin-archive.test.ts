@@ -163,6 +163,9 @@ describe("admin/restore-archive", () => {
     // A `system.*` row's lifecycle is `active | revoked`: `trashed` is a
     // state, and not one it can be in. No door writes such a row, which is
     // why an export never carries one and only a built archive can ask.
+    // The same row restored in `active` is the server suite's witness
+    // (`routes/items-lifecycle-graph.test.ts`), not this file's: no door
+    // the referee holds could remove a system row it restored.
     const systemId = uuidv7();
     const systemRefused = await operator.restoreArchive(
       itemsArchive([

@@ -80,13 +80,10 @@ const exportRoute = createRoute({
         .describe(
           "Include only items whose own time — `occurred_at`, falling back to `created_at` — is strictly before this.",
         ),
-      // Enforced, not merely documented. `z.string()` took `?format=bogus`,
-      // answered 200 with NDJSON and recorded `format: "bogus"` in the audit
-      // row, while the description offered a two-value enumeration a reader
-      // takes as closed. The reasoning is the one `refuseUnknownQueryParams`
-      // is given twelve lines below: a caller who asked for an archive and
-      // was handed a stream, or asked for anything and was handed the
-      // default, believes the file is something it is not.
+      // Enforced, not merely documented, for the reason
+      // `refuseUnknownQueryParams` is given below: a caller who asked for
+      // an archive and was handed a stream, or asked for anything and was
+      // handed the default, believes the file is something it is not.
       format: z
         .enum(["ndjson", "archive"])
         .optional()
@@ -189,7 +186,7 @@ export function exportRoutes(
     // has begun and the caller is handed an empty body with a success
     // status. That is an export narrowed by a filter nobody could read,
     // written to a file the caller believes is a slice. The archive format
-    // of this same door already refuses it, and the two disagreed.
+    // of this same door refuses it too, and the two have to agree.
     const occurredAfter = normalizeTimeBound(
       query.occurred_after,
       "occurred_after",
@@ -428,10 +425,10 @@ async function handleArchiveExport(
     // field added into the schema would read as a different registration
     // and turn every re-restore into a conflict.
     //
-    // It is carried at all because `origin` stopped being descriptive:
-    // it decides whether the consent screen offers a root read-only or
-    // read-and-write. An archive that drops it makes the restore guess,
-    // and the default it guessed was the permissive one.
+    // It is carried at all because `origin` is not descriptive: it decides
+    // whether the consent screen offers a root read-only or
+    // read-and-write. An archive that dropped it would make the restore
+    // guess, and the default is the permissive one.
     for (const row of await storage.types.listRegisteredWithProvenance()) {
       typeLines.push(
         JSON.stringify({

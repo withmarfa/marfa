@@ -161,7 +161,6 @@ export async function createSqliteStorage(sqlitePath: string): Promise<
      * `BEGIN IMMEDIATE` via Drizzle's `db.transaction(async tx => …)`,
      * stores `tx` on the per-request ALS so every store call inside `fn`
      * resolves its executor to the transaction, and rolls back on throw.
-     * Rollback is real — not a no-op for async bodies.
      */
     async runInTransaction<T>(fn: () => T | Promise<T>): Promise<T> {
       return await baseDb.transaction(async (tx) => {
@@ -175,8 +174,8 @@ export async function createSqliteStorage(sqlitePath: string): Promise<
       const result = await raw.execute(query);
       return result.rows;
     },
-    /** Parameterized raw mutation escape hatch — used by retention tests
-     *  that need to plant non-default `updated_at` values. */
+    /** Parameterized raw mutation escape hatch, reached through
+     *  `test-utils` by tests that plant rows no door writes. */
     async __sqliteRun(
       query: string,
       params: unknown[],

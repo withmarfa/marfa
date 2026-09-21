@@ -57,11 +57,11 @@ describe("an identifier cannot smuggle a query onto a real route", () => {
   }
 
   it("puts a caller's question mark in the path, never in the query", async () => {
-    // The sharp case. A `?` in an identifier used to split the path, and the
-    // remainder became a query string on a route that is otherwise exactly the
-    // one asked for -- so the request succeeded, carrying parameters the caller
-    // never passed. Nothing threw, and the id is the kind of value that arrives
-    // from outside.
+    // The sharp case. A `?` in an identifier left raw would split the path,
+    // the remainder becoming a query string on a route that is otherwise
+    // exactly the one asked for: a request that succeeds carrying
+    // parameters the caller never passed. Nothing would throw, and the id
+    // is the kind of value that arrives from outside.
     const { client, urls } = recordingClient();
     await ignoringResult(client.items.get("real-id?include=system&limit=500"));
 

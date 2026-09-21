@@ -781,7 +781,7 @@ describe("RevokedGrantPurger.runOnce — the tombstone sweep", () => {
     expect(await ctx.storage.items.get(live.id)).not.toBeNull();
   });
 
-  it("is a no-op at retentionDays 0, like every other job here", async () => {
+  it("is a no-op at retentionDays 0, like every other housekeeping job here", async () => {
     const id = await seedTombstone(OLD);
     const purger = new RevokedGrantPurger(ctx.storage.items, 0);
     expect(await purger.runOnce()).toBe(0);

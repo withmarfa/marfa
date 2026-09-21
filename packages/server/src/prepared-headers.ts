@@ -36,8 +36,8 @@
 /**
  * **Which responses this covers, enumerated rather than assumed.** The list
  * below is every `withPreparedHeaders` call site, and it is kept by reading
- * them rather than by remembering them: an earlier version of this comment
- * named three surfaces that no longer exist, which is worse than naming none.
+ * them rather than by remembering them: a list naming a surface that does
+ * not exist is worse than none.
  *
  * Wrapped, because they are the API surface a client calls: the SSE stream
  * (`routes/events.ts`), both export shapes (`routes/export.ts`), the blob

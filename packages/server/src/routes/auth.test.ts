@@ -303,10 +303,9 @@ describe("KeyStore.updateLastUsed — DB-side debounce", () => {
     });
     const { id } = (await createRes.json()) as { id: string };
 
-    // Three writes in rapid succession. With the old unconditional UPDATE
-    // every instance would stamp its own `last_used_at`; with the new
-    // conditional UPDATE the first write wins and subsequent attempts
-    // inside the debounce window are no-ops.
+    // Three writes in rapid succession: the first stamps `last_used_at`
+    // (the witness that a write can move it) and the ones inside the
+    // debounce window are no-ops.
     await ctx.storage.keys.updateLastUsed(id);
     const firstKey = await ctx.storage.keys.get(id);
     const firstStamp = firstKey?.last_used_at;

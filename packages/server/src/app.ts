@@ -67,7 +67,8 @@ export function createApp(
   storage: Storage,
   blobs: BlobLayer,
   /** The scheduler the housekeeping doors list and drive. Registered and
-   *  started by the caller; the app only reads it and runs jobs on demand. */
+   *  started by the caller; the app only reads it and runs a housekeeping
+   *  job on demand. */
   housekeeping: Housekeeping,
   config: AppConfig,
   /**
