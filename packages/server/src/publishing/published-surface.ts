@@ -161,7 +161,8 @@ export function surfaceDelta(
 export type SurfaceViolation =
   | { kind: "unlocked"; name: string }
   | { kind: "removed"; name: string }
-  | { kind: "surface-moved"; name: string; delta: SurfaceDelta };
+  | { kind: "surface-moved"; name: string; delta: SurfaceDelta }
+  | { kind: "names-stale"; name: string; delta: SurfaceDelta };
 
 /**
  * Compare the tree against the lock.
@@ -190,16 +191,21 @@ export function compareToSurfaceLock(
       violations.push({ kind: "unlocked", name: s.name });
       continue;
     }
-    const hash = hashSurface(s.exports);
-    if (entry.hash !== hash) {
-      violations.push({
-        kind: "surface-moved",
-        name: s.name,
-        delta: surfaceDelta(entry, {
-          hash,
-          exports: hashEachExport(s.exports),
-        }),
-      });
+    const current = {
+      hash: hashSurface(s.exports),
+      exports: hashEachExport(s.exports),
+    };
+    const delta = surfaceDelta(entry, current);
+    if (entry.hash !== current.hash) {
+      violations.push({ kind: "surface-moved", name: s.name, delta });
+    } else if (
+      delta.added.length + delta.removed.length + delta.changed.length >
+      0
+    ) {
+      // The whole hash is what gates; the per-name map is what a reader
+      // diffs. A map that no longer describes the hash would tell a reader
+      // the wrong names moved, so it is held to the tree as well.
+      violations.push({ kind: "names-stale", name: s.name, delta });
     }
   }
 
@@ -252,6 +258,11 @@ export function describeSurfaceViolation(v: SurfaceViolation): string {
         `${v.name}: the surface the tree builds is not the surface the lock records (${describeSurfaceDelta(v.delta)}). ` +
         `A removed or reshaped name is a break for a consumer. ${REGENERATE}`
       );
+    case "names-stale":
+      return (
+        `${v.name}: the lock's hash matches the tree and its names do not (${describeSurfaceDelta(v.delta)}), ` +
+        `so the lock was edited by hand. ${REGENERATE}`
+      );
   }
 }
 
@@ -282,7 +293,8 @@ export function assertLockShape(value: unknown, what: string): SurfaceLock {
       typeof e.hash !== "string" ||
       typeof e.exports !== "object" ||
       e.exports === null ||
-      Array.isArray(e.exports)
+      Array.isArray(e.exports) ||
+      Object.keys(e.exports).length === 0
     ) {
       throw new Error(
         `${what}: ${name} carries no hash or no exports, so it would be skipped rather than compared.`,

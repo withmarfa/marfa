@@ -1,0 +1,120 @@
+name: Release
+
+# A release is a tag. Pushing `v<version>` builds the artefacts from that
+# commit and uploads them to the run, and publishes nothing: publishing is a
+# second, deliberate act, the workflow dispatched at the tag's ref with
+# `publish` ticked, and no job here publishes yet. The tag push is the dry
+# run every release gets first.
+#
+# The version is the tag's, and nowhere else: `scripts/release/stamp-version.sh`
+# writes it into every manifest in this checkout, which is why no manifest in
+# the repository holds one (`ci/version-fields.test.ts`).
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Publish what this run builds. Off, the run is a dry run."
+        type: boolean
+        default: false
+
+# Never cancel a release in flight. The key is per ref, so two tags queue
+# rather than cancel each other.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  require-green-ci:
+    name: Require green CI
+    runs-on: self-hosted
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      # A tag points at a commit that already went through `ci.yml` on
+      # main. Verifying that run is stronger than recomputing it here: the
+      # steps below would pass against the tag's own tree either way, and
+      # nothing else stops a tag being cut on a commit CI never saw. This is
+      # why `ci.yml` does not cancel a superseded run on `main`: a canceled
+      # run is not a successful one.
+      - name: Require a green CI run for this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          runs=$(gh api \
+            "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$GITHUB_SHA&status=success" \
+            --jq '.total_count')
+          if [ "${runs:-0}" -lt 1 ]; then
+            echo "::error::No successful ci.yml run for $GITHUB_SHA. A release refuses a commit CI has not passed."
+            exit 1
+          fi
+          echo "ci.yml is green for $GITHUB_SHA"
+
+  build:
+    name: Build the artefacts
+    needs: require-green-ci
+    runs-on: self-hosted
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Read the version off the tag
+        id: version
+        run: |
+          ref="${GITHUB_REF#refs/tags/}"
+          if [ "$ref" = "$GITHUB_REF" ]; then
+            echo "::error::A release runs at a tag ref; $GITHUB_REF is not one."
+            exit 1
+          fi
+          version="${ref#v}"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "building $version from $GITHUB_SHA"
+
+      # Homebrew's rustup is keg-only, so nothing it installs is on the
+      # default PATH.
+      - name: Put the Rust toolchain on PATH
+        run: |
+          echo "/opt/homebrew/opt/rustup/bin" >> "$GITHUB_PATH"
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+      - uses: pnpm/action-setup@v6
+        with:
+          dest: ${{ runner.temp }}/setup-pnpm
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - run: pnpm install --frozen-lockfile
+
+      - name: Stamp the version into every manifest
+        run: bash scripts/release/stamp-version.sh "${{ steps.version.outputs.version }}"
+
+      - run: pnpm build
+
+      - name: Build and pack @withmarfa/core
+        working-directory: core/bindings/node
+        run: |
+          mkdir -p "$RUNNER_TEMP/artefacts"
+          pnpm --ignore-workspace install --frozen-lockfile
+          pnpm --ignore-workspace run build
+          pnpm --ignore-workspace pack --pack-destination "$RUNNER_TEMP/artefacts"
+
+      - name: Build the binary for macOS
+        working-directory: core
+        run: |
+          cargo build --release -p marfa-cli
+          version="${{ steps.version.outputs.version }}"
+          tar -czf "$RUNNER_TEMP/artefacts/marfa-$version-darwin-arm64.tar.gz" -C target/release marfa
+          target/release/marfa --version
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-${{ steps.version.outputs.version }}
+          path: ${{ runner.temp }}/artefacts/
+          if-no-files-found: error

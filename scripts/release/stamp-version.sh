@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Stamp one product version into every manifest.
 #
-# The only writer of a version. The release workflow runs it in its own
-# checkout after reading the tag, and nothing commits the result: every
-# manifest in the repository carries the placeholder `0.0.0`, and
+# The only writer of a version. `release.yml` runs it in its own checkout
+# after reading the tag, and nothing on a branch runs it: every manifest in
+# the repository carries the placeholder `0.0.0`, and
 # `ci/version-fields.test.ts` refuses a tree where one does not. Run by hand
 # it leaves a tree that check refuses, which is the point: a version is a
 # fact about a tag, not about a branch.
@@ -12,8 +12,9 @@
 # reports one number everywhere it can be asked: `marfa --version`, the
 # packed tarballs, the crate, the workspace's private packages. The
 # manifests are the tracked ones, listed the way the check lists them, so
-# the two cannot disagree about which files are manifests; a manifest with
-# no placeholder to replace stops the stamp rather than being skipped.
+# the two cannot disagree about which files are manifests. Every manifest is
+# checked before any is written, so a refusal leaves the tree as it was
+# rather than half stamped.
 set -euo pipefail
 
 version="${1:-}"
@@ -30,31 +31,48 @@ cd "$(git rev-parse --show-toplevel)"
 
 placeholder='0.0.0'
 
+packages=()
 while IFS= read -r manifest; do
   # The root is the workspace, not a package, and holds no version.
   [ "$manifest" = "package.json" ] && continue
-  dir="$(dirname "$manifest")"
   current="$(node -p "require('./$manifest').version ?? ''")"
   if [ "$current" != "$placeholder" ]; then
-    echo "stamp-version: $manifest carries '$current', not the placeholder" >&2
+    echo "stamp-version: $manifest carries '$current', not the placeholder; nothing stamped" >&2
     exit 1
   fi
-  (cd "$dir" && npm pkg set version="$version")
-  echo "$manifest: $version"
+  packages+=("$manifest")
 done < <(git ls-files -- '*package.json')
 
+crates=()
 while IFS= read -r manifest; do
   if grep -q '^version\.workspace = true' "$manifest"; then
     continue
   fi
   if ! grep -q "^version = \"$placeholder\"$" "$manifest"; then
-    echo "stamp-version: $manifest carries no placeholder version line" >&2
+    echo "stamp-version: $manifest carries no placeholder version line; nothing stamped" >&2
     exit 1
   fi
+  crates+=("$manifest")
+done < <(git ls-files -- '*Cargo.toml')
+
+# Rewritten in place with the version and nothing else changed: `JSON.parse`
+# keeps key order, and assigning an existing key keeps its position.
+for manifest in "${packages[@]}"; do
+  node -e '
+    const fs = require("node:fs");
+    const [path, version] = process.argv.slice(1);
+    const pkg = JSON.parse(fs.readFileSync(path, "utf8"));
+    pkg.version = version;
+    fs.writeFileSync(path, JSON.stringify(pkg, null, 2) + "\n");
+  ' "$manifest" "$version"
+  echo "$manifest: $version"
+done
+
+for manifest in "${crates[@]}"; do
   sed -i.stamp "s/^version = \"$placeholder\"$/version = \"$version\"/" "$manifest"
   rm "$manifest.stamp"
   echo "$manifest: $version"
-done < <(git ls-files -- '*Cargo.toml')
+done
 
 # The lock files record the workspace crates' own versions; cargo rewrites
 # them from the manifests. Offline, because the dependencies are already

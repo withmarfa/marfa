@@ -11,9 +11,9 @@ on:
 #
 # On a branch a second push means the first answer describes a tree nobody has
 # any more, so canceling is free. `main` is not a branch in that sense: every
-# commit on it is a release candidate, and a release is a tag on a commit
-# with a *successful* `ci.yml` run at that exact SHA. A canceled run is not a
-# successful one, so a superseded main commit becomes permanently
+# commit on it is a release candidate, and `release.yml` refuses a tag unless
+# a *successful* `ci.yml` run exists at that exact SHA. A canceled run is not
+# a successful one, so a superseded main commit becomes permanently
 # unreleasable, silently, because nothing errors and the commit looks fine.
 #
 # Before adding `cancel-in-progress` to any group, ask what consumes the run's
@@ -85,9 +85,10 @@ jobs:
   # answering about neither tree. Here the tree under test is the tree the
   # suite runs against.
   #
-  # A job in this workflow rather than one of its own, because a green
-  # `ci.yml` run is what a release asks of a commit. A published package
-  # should not be able to come from a commit the contract failed.
+  # A job in this workflow rather than one of its own, because `release.yml`
+  # names `ci.yml` as the run a commit must be green on before it can be
+  # released. A published package should not be able to come from a commit
+  # the contract failed.
   conformance:
     name: Conformance
     timeout-minutes: 60
@@ -124,8 +125,8 @@ jobs:
       # The device half of the contract drives the `marfa` binary as the
       # device under test, so this job builds it. It stays in this job rather
       # than moving to core.yml because core.yml is path-gated on `core/**`
-      # and would not run for a change to the fixtures alone, and because a
-      # green ci.yml run is what a release asks of a commit.
+      # and would not run for a change to the fixtures alone, and because
+      # `release.yml` names ci.yml as the run a commit must be green on.
       # The two jobs share `marfa-suite-shared-host` above, so a cargo build
       # here never runs beside core.yml's on one machine.
       #
@@ -424,9 +425,14 @@ jobs:
           NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > .npmrc
       - run: pnpm install --frozen-lockfile
+      - name: Put the Rust toolchain on PATH
+        run: |
+          echo "/opt/homebrew/opt/rustup/bin" >> "$GITHUB_PATH"
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
       # No build step: the check reads manifests off the tree. A version
-      # exists only when a tag is cut, and the release workflow is the one
-      # writer; a pull request that moves a manifest off the placeholder is
-      # refused here, whatever else it does.
+      # exists only when a tag is cut, and `release.yml` is the one writer;
+      # a pull request that moves a manifest off the placeholder is refused
+      # here, whatever else it does. cargo is on PATH because the check asks
+      # cargo how it reads the manifests rather than parsing TOML itself.
       - name: Every manifest carries the placeholder
         run: pnpm vitest run ci/version-fields.test.ts

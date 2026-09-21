@@ -2,9 +2,9 @@
  * The published surface lock's own tests, plus the check that gates a merge.
  *
  * The gating test lives here, in the ordinary suite, because a plain test
- * cannot be merged past, and the release workflow packs nothing without a
- * green run of this suite on the same commit, so a surface that moved under
- * a stale lock cannot reach a registry either.
+ * cannot be merged past, and `release.yml` builds nothing without a green
+ * `ci.yml` run on the same commit, so a surface that moved under a stale
+ * lock cannot reach a registry either.
  *
  * Every case that asks whether something is REFUSED asserts on
  * `blockingViolations`, never on the raw list: a violation that is recorded
@@ -143,6 +143,27 @@ describe("compareToSurfaceLock", () => {
     });
   });
 
+  it("blocks a lock whose names were edited under a standing hash", () => {
+    // The hash gates and the names are what a reader diffs; a map that no
+    // longer describes the hash would name the wrong moves.
+    const locked = buildSurfaceLock([surface()]);
+    const edited = {
+      "@withmarfa/example": {
+        hash: locked["@withmarfa/example"]!.hash,
+        exports: { alpha: locked["@withmarfa/example"]!.exports.alpha! },
+      },
+    };
+    const blocking = blockingViolations(
+      compareToSurfaceLock([surface()], edited),
+    );
+    expect(blocking).toHaveLength(1);
+    expect(blocking[0]).toMatchObject({
+      kind: "names-stale",
+      delta: { added: ["beta"], removed: [], changed: [] },
+    });
+    expect(describeSurfaceViolation(blocking[0]!)).toContain("edited by hand");
+  });
+
   it("is quiet once the lock is regenerated for the moved surface", () => {
     // The normal, correct flow, and the one that has to stay silent:
     // change the surface, regenerate, commit both.
@@ -190,6 +211,25 @@ describe("describeSurfaceViolation", () => {
     );
     expect(text).toContain("added gamma");
     expect(text).toContain("removed alpha");
+  });
+});
+
+describe("assertLockShape", () => {
+  it("refuses what a comparison would skip", () => {
+    for (const bad of [
+      {},
+      [],
+      { "@withmarfa/example": { hash: "x" } },
+      { "@withmarfa/example": { hash: "x", exports: {} } },
+      { "@withmarfa/example": { hash: "x", exports: [] } },
+    ]) {
+      expect(() => assertLockShape(bad, "a lock")).toThrow();
+    }
+  });
+
+  it("accepts what the generator writes", () => {
+    const lock = buildSurfaceLock([surface()]);
+    expect(assertLockShape(lock, "a lock")).toBe(lock);
   });
 });
 

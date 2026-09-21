@@ -1,35 +1,45 @@
 /**
  * No file in the repository holds a product version.
  *
- * A version exists only when a git tag is cut. The release workflow reads
- * the tag, stamps it into every manifest in its own checkout and commits
- * nothing, so every manifest here carries the placeholder and a change that
- * moves one off it is refused, whatever else it does. The placeholder is
- * `0.0.0`, which npm, cargo and SwiftPM all accept as a version and which
- * no release can ever be, so a stamped build and an unstamped one cannot be
- * confused.
+ * A version exists only when a git tag is cut: `release.yml` runs
+ * `scripts/release/stamp-version.sh` in its own checkout, which writes the
+ * tag's version into every manifest there, and nothing on a branch runs it.
+ * So every manifest here carries the placeholder, and a change that moves
+ * one off it is refused, whatever else it does. The placeholder is `0.0.0`, which npm, cargo and SwiftPM all
+ * accept as a version and which no release can ever be, so a stamped build
+ * and an unstamped one cannot be confused.
  *
  * Three files carry one: `package.json` (`version`, on every package; the
- * root is a workspace, not a package, and holds none), `Cargo.toml`
- * (`version = ` under `[package]` or `[workspace.package]`; a crate that
- * says `version.workspace = true` holds none of its own) and `Cargo.lock`,
- * whose entries for the workspace's own crates, the ones with no `source`,
- * are rewritten by cargo from the manifests. `Package.swift` holds no
+ * root is a workspace, not a package, and holds none), `Cargo.toml` and
+ * `Cargo.lock`. Cargo manifests are read through `cargo metadata` rather
+ * than parsed here, because TOML has more than one spelling for a version
+ * (`version = `, `version.workspace = true`, a dotted key, a commented
+ * header) and cargo's own reading is the one a build uses. The lock's
+ * entries for the workspace's own crates, the ones with no `source`, are
+ * cargo's own formatting and are read directly. `Package.swift` holds no
  * version by construction: SwiftPM versions a package by its tag. The API
  * document's `info.version` is the contract version, an integer that moves
  * when the wire breaks, and is not a product version.
  *
  * The placeholder has to be present, not merely not-something-else: the
- * stamp script sets the version wherever it finds the placeholder, so a
- * manifest that dropped the field would build unversioned. The manifests
- * are read from `git ls-files`, the same listing the stamp walks, so the
- * two cannot disagree about which files are manifests.
+ * stamp sets the version wherever it finds the placeholder, so a manifest
+ * that dropped the field would build unversioned. The manifests are read
+ * from `git ls-files`, the same listing the stamp walks, so the two cannot
+ * disagree about which files are manifests.
  */
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
-import { dirname, join, resolve } from "node:path";
-import { describe, expect, it } from "vitest";
+import { dirname, join, relative, resolve } from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -58,36 +68,6 @@ function packageJsonVersions(m: Manifest): VersionHeld[] {
   return version === PLACEHOLDER ? [] : [{ path: m.path, version }];
 }
 
-function cargoTomlVersions(m: Manifest): VersionHeld[] {
-  const held: VersionHeld[] = [];
-  const sections = new Map<string, string[]>();
-  let section = "";
-  for (const line of m.text.split("\n")) {
-    const heading = /^\s*\[([^\]]+)\]\s*$/.exec(line);
-    if (heading) {
-      section = heading[1] ?? "";
-      continue;
-    }
-    if (section !== "package" && section !== "workspace.package") continue;
-    const lines = sections.get(section) ?? [];
-    lines.push(line);
-    sections.set(section, lines);
-  }
-  for (const [name, lines] of sections) {
-    const literal = lines
-      .map((line) => /^\s*version\s*=\s*"([^"]*)"/.exec(line)?.[1])
-      .find((v) => v !== undefined);
-    const fromWorkspace = lines.some((line) =>
-      /^\s*version\.workspace\s*=\s*true/.test(line),
-    );
-    if (literal === PLACEHOLDER || (literal === undefined && fromWorkspace)) {
-      continue;
-    }
-    held.push({ path: `${m.path} [${name}]`, version: literal ?? "(none)" });
-  }
-  return held;
-}
-
 function cargoLockVersions(m: Manifest): VersionHeld[] {
   const held: VersionHeld[] = [];
   for (const block of m.text.split(/^\[\[package\]\]\s*$/m).slice(1)) {
@@ -103,15 +83,42 @@ function cargoLockVersions(m: Manifest): VersionHeld[] {
   return held;
 }
 
-/** Every version a manifest holds that is not the placeholder. */
+/** Every version a `package.json` or `Cargo.lock` holds that is not the placeholder. */
 export function versionsHeld(manifests: readonly Manifest[]): VersionHeld[] {
   const held: VersionHeld[] = [];
   for (const m of manifests) {
     if (m.path.endsWith("package.json")) held.push(...packageJsonVersions(m));
-    else if (m.path.endsWith("Cargo.toml")) held.push(...cargoTomlVersions(m));
     else if (m.path.endsWith("Cargo.lock")) held.push(...cargoLockVersions(m));
   }
   return held;
+}
+
+interface CargoPackage {
+  name: string;
+  version: string;
+  manifest_path: string;
+}
+
+/**
+ * Every crate of the cargo workspace at `dir` whose version is not the
+ * placeholder, as cargo itself reads the manifests. Offline and without
+ * dependencies: the question is about the workspace's own crates, and a
+ * check must not reach for the registry.
+ */
+export function cargoVersionsHeld(dir: string, root: string): VersionHeld[] {
+  const metadata = JSON.parse(
+    execFileSync(
+      "cargo",
+      ["metadata", "--no-deps", "--offline", "--format-version", "1"],
+      { cwd: dir, encoding: "utf8" },
+    ),
+  ) as { packages: CargoPackage[] };
+  return metadata.packages
+    .filter((p) => p.version !== PLACEHOLDER)
+    .map((p) => ({
+      path: `${relative(realpathSync(root), p.manifest_path)} (${p.name})`,
+      version: p.version,
+    }));
 }
 
 /** The tracked manifests, read off the tree. */
@@ -129,8 +136,22 @@ function trackedManifests(): Manifest[] {
   }));
 }
 
+/** A cargo workspace root is a tracked `Cargo.lock`'s directory. */
+function cargoWorkspaces(manifests: readonly Manifest[]): string[] {
+  return manifests
+    .filter((m) => m.path.endsWith("Cargo.lock"))
+    .map((m) => dirname(join(ROOT, m.path)));
+}
+
 describe("no file holds a version", () => {
   const manifests = trackedManifests();
+  const scratch: string[] = [];
+
+  afterEach(() => {
+    while (scratch.length > 0) {
+      rmSync(scratch.pop()!, { recursive: true, force: true });
+    }
+  });
 
   it("finds the manifests, so an empty pass cannot be a missing tree", () => {
     const kinds = new Set(manifests.map((m) => m.path.split("/").pop()));
@@ -139,13 +160,20 @@ describe("no file holds a version", () => {
       "Cargo.toml",
       "package.json",
     ]);
+    expect(cargoWorkspaces(manifests).length).toBeGreaterThan(0);
   });
 
-  it("every tracked manifest carries the placeholder", () => {
+  it("every tracked package.json and Cargo.lock carries the placeholder", () => {
     expect(versionsHeld(manifests)).toEqual([]);
   });
 
-  it("would refuse a manifest that holds a version, or none", () => {
+  it("every crate cargo reads off the tree carries the placeholder", () => {
+    for (const dir of cargoWorkspaces(manifests)) {
+      expect(cargoVersionsHeld(dir, ROOT)).toEqual([]);
+    }
+  });
+
+  it("would refuse a package.json or Cargo.lock that holds a version, or none", () => {
     // The witness: the same rule over manifests that do hold one, so the
     // green above is the rule passing and not the rule reading nothing.
     const held = versionsHeld([
@@ -162,18 +190,6 @@ describe("no file holds a version", () => {
         text: JSON.stringify({ name: "@marfa/root", version: "0.1.0" }),
       },
       {
-        path: "core/Cargo.toml",
-        text: '[workspace.package]\nversion = "0.1.0"\nedition = "2024"\n',
-      },
-      {
-        path: "core/example/Cargo.toml",
-        text: '[package]\nname = "example"\nversion.workspace = true\n\n[dependencies]\nserde = { version = "1" }\n',
-      },
-      {
-        path: "core/loose/Cargo.toml",
-        text: '[package]\nname = "loose"\nedition = "2024"\n',
-      },
-      {
         path: "core/Cargo.lock",
         text: '[[package]]\nname = "example"\nversion = "0.1.0"\n\n[[package]]\nname = "serde"\nversion = "1.0.0"\nsource = "registry+https://github.com/rust-lang/crates.io-index"\n',
       },
@@ -182,9 +198,38 @@ describe("no file holds a version", () => {
       { path: "packages/example/package.json", version: "0.1.0" },
       { path: "packages/unversioned/package.json", version: "(none)" },
       { path: "package.json", version: "0.1.0" },
-      { path: "core/Cargo.toml [workspace.package]", version: "0.1.0" },
-      { path: "core/loose/Cargo.toml [package]", version: "(none)" },
       { path: "core/Cargo.lock (example)", version: "0.1.0" },
     ]);
+  });
+
+  it("would refuse a crate whose manifest holds a version, however spelled", () => {
+    // A workspace of one crate, spelled two ways a line parser misses and
+    // cargo reads: a commented table header, and dotted keys with no header.
+    const dir = mkdtempSync(join(tmpdir(), "version-fields-"));
+    scratch.push(dir);
+    mkdirSync(join(dir, "src"));
+    writeFileSync(join(dir, "src", "lib.rs"), "");
+
+    writeFileSync(
+      join(dir, "Cargo.toml"),
+      '[package] # the crate\nname = "probe"\nedition = "2024"\nversion = "0.1.0"\n',
+    );
+    expect(cargoVersionsHeld(dir, dir)).toEqual([
+      { path: "Cargo.toml (probe)", version: "0.1.0" },
+    ]);
+
+    writeFileSync(
+      join(dir, "Cargo.toml"),
+      'package.name = "probe"\npackage.edition = "2024"\npackage.version = "0.1.0"\n',
+    );
+    expect(cargoVersionsHeld(dir, dir)).toEqual([
+      { path: "Cargo.toml (probe)", version: "0.1.0" },
+    ]);
+
+    writeFileSync(
+      join(dir, "Cargo.toml"),
+      '[package]\nname = "probe"\nedition = "2024"\nversion = "0.0.0"\n',
+    );
+    expect(cargoVersionsHeld(dir, dir)).toEqual([]);
   });
 });

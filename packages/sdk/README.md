@@ -52,4 +52,4 @@ try {
 
 ## Versioning
 
-The package carries the placeholder `0.0.0`. A version is a git tag on the repository, stamped into every manifest by the release workflow when it builds; nothing on a branch holds one.
+The package carries the placeholder `0.0.0`. A version is a git tag on the repository, stamped into every manifest by `release.yml` when it builds; nothing on a branch holds one.

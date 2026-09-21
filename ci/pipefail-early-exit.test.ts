@@ -27,7 +27,7 @@
  *   - Only `run:` blocks that set `pipefail`. GitHub runs a `run:` step under
  *     `bash -e`, not `-o pipefail`, so without an explicit set the pipeline
  *     already takes grep's own status and the shape is correct, and a check
- *     that ignored the set would flag every one of those.
+ *     that ignored the set would flag a correct block.
  *   - Only `if` conditions, because that is where a wrong answer becomes a
  *     wrong decision. A pipeline whose status is discarded, or one guarded
  *     with `|| true`, is outside this deliberately.
