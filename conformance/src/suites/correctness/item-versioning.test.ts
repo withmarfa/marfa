@@ -4,6 +4,7 @@ import type {
   AncestorUnavailableResponse,
   ConflictResponse,
   MarfaItem,
+  StaleVersionResponse,
   TestContext,
 } from "../../client/types.js";
 import { createTestContext, trackItem, cleanup } from "../../utils/setup.js";
@@ -247,6 +248,55 @@ describe("item versioning", () => {
     expect(body.merge_policy.fields?.body).toBe("keep_both_copies");
     expect(body.merge_policy.fields?.notes).toBe("keep_both_copies");
     expect(body.merge_policy.fields?.title).toBeUndefined();
+  });
+
+  it("answers an edges-only stale write with the envelope minus its merge half", async () => {
+    // The third shape this code is answered in, and the one a client is
+    // most likely to be surprised by: there is nothing to merge, so there
+    // is no ancestor and no field list, but `error.status` and `current`
+    // are on every `version_conflict` the server answers.
+    const r = await client.createItem(
+      createNote({
+        source: ctx.source,
+        properties: { title: "Edges only", body: "Original" },
+      }),
+    );
+    expect(r.ok).toBe(true);
+    trackItem(ctx, r.data.item.id);
+    const target = await client.createItem(createNote({ source: ctx.source }));
+    expect(target.ok).toBe(true);
+    trackItem(ctx, target.data.item.id);
+
+    const advanced = await client.updateItem(r.data.item.id, {
+      properties: { title: "Server title" },
+      version: 1,
+    });
+    expect(advanced.ok).toBe(true);
+
+    const stale = await client.updateItem(r.data.item.id, {
+      version: 1,
+      edges: { references: [target.data.item.id] },
+    } as unknown as Parameters<typeof client.updateItem>[1]);
+    expect(stale.status).toBe(409);
+    expect(stale.error?.error.code).toBe("version_conflict");
+
+    const body = stale.error as unknown as StaleVersionResponse &
+      Partial<ConflictResponse>;
+    expect(body.error.status).toBe(409);
+    expect(body.current.version).toBe(2);
+    expect(body.current.properties.title).toBe("Server title");
+    // And not the three a merge would need.
+    expect(body.ancestor).toBeUndefined();
+    expect(body.conflicting_fields).toBeUndefined();
+    expect(body.merge_policy).toBeUndefined();
+
+    // The control: the same write at the current version lands, so the 409
+    // is the version rather than the shape of the request.
+    const fresh = await client.updateItem(r.data.item.id, {
+      version: 2,
+      edges: { references: [target.data.item.id] },
+    } as unknown as Parameters<typeof client.updateItem>[1]);
+    expect(fresh.status).toBe(200);
   });
 
   it("version history for item with no updates is empty", async () => {

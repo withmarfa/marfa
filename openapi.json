@@ -3888,6 +3888,58 @@
                             "code": {
                               "type": "string",
                               "enum": [
+                                "version_conflict"
+                              ]
+                            },
+                            "status": {
+                              "type": "number",
+                              "enum": [
+                                409
+                              ]
+                            },
+                            "message": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "code",
+                            "status",
+                            "message"
+                          ]
+                        },
+                        "current": {
+                          "type": "object",
+                          "properties": {
+                            "version": {
+                              "type": "number"
+                            },
+                            "properties": {
+                              "type": "object",
+                              "additionalProperties": {
+                                "nullable": true
+                              }
+                            }
+                          },
+                          "required": [
+                            "version",
+                            "properties"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "error",
+                        "current"
+                      ]
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "error": {
+                          "type": "object",
+                          "properties": {
+                            "code": {
+                              "type": "string",
+                              "enum": [
                                 "ancestor_unavailable"
                               ]
                             },
@@ -3944,7 +3996,6 @@
                             "code": {
                               "type": "string",
                               "enum": [
-                                "version_conflict",
                                 "source_id_conflict",
                                 "type_mismatch"
                               ]
@@ -13334,7 +13385,7 @@
                         "message"
                       ]
                     },
-                    "edge": {
+                    "current": {
                       "type": "object",
                       "properties": {
                         "id": {
@@ -13379,7 +13430,7 @@
                   },
                   "required": [
                     "error",
-                    "edge"
+                    "current"
                   ]
                 }
               }

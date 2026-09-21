@@ -6,6 +6,7 @@ import type {
   AncestorUnavailableResponse,
   ConflictResolutionReport,
   ConflictResponse,
+  ConflictSnapshot,
   Item,
   MergePolicy,
   MergeStrategy,
@@ -308,6 +309,41 @@ export function versionConflict(
     ancestor: { version: requestedVersion, properties: ancestorProperties },
     conflicting_fields: conflictingFields,
     merge_policy: policy,
+  };
+}
+
+/**
+ * What a stale write is answered with when there is nothing to merge.
+ *
+ * The same envelope as {@link versionConflict} minus the three fields that
+ * describe a merge, because a request carrying no properties has no ancestor
+ * to compare against and no fields that could have collided. What it does
+ * carry is `error.status` and `current`, so a client reading
+ * `body.current.version` off one single-write refusal reads it off all of
+ * them, whichever door answered. The bulk doors are not in that set: they
+ * report the code per entry inside their own envelope.
+ */
+export interface StaleVersionResponse {
+  error: { code: "version_conflict"; status: 409; message: string };
+  current: ConflictSnapshot;
+}
+
+/** The 409 for a stale write with nothing to merge: a failed precondition. */
+export function staleVersion(
+  currentVersion: number,
+  currentProperties: Record<string, unknown>,
+  requestedVersion: number,
+): StaleVersionResponse {
+  return {
+    error: {
+      code: "version_conflict",
+      status: 409,
+      message:
+        `Version ${String(requestedVersion)} is stale; current version is ` +
+        `${String(currentVersion)}. This write carried nothing to merge, so ` +
+        `re-read the item and send again at version ${String(currentVersion)}.`,
+    },
+    current: { version: currentVersion, properties: currentProperties },
   };
 }
 

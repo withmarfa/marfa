@@ -7,7 +7,6 @@ import { join } from "node:path";
 import { eq } from "drizzle-orm";
 import { afterEach, describe, expect, it } from "vitest";
 import { createApp } from "../app.js";
-import { OidcSigner } from "../auth/oidc-signing.js";
 import { ensureInstanceId } from "../storage/instance-id.js";
 import { createBlobLayer } from "../storage/blob-layer.js";
 import { Housekeeping } from "../housekeeping/scheduler.js";
@@ -337,7 +336,6 @@ describe("POST /owner", () => {
         new Housekeeping(storage.housekeeping, { pollIntervalMs: 1_000 }),
         ctx.config,
         await ensureInstanceId(storage.settings),
-        await OidcSigner.init(storage),
       );
       const [a, b] = await Promise.all([
         create(ctx, { email: "first@example.com", password: PASSWORD }),

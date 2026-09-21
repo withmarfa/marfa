@@ -96,6 +96,21 @@ describe("occurrences", () => {
     expect(missing.status).toBe(400);
     expect(missing.error?.error.code).toBe("missing_required_field");
 
+    // Each bound on its own, because a request omitting both cannot tell
+    // one required bound from two: a door requiring only `from` refuses
+    // the empty request the same way.
+    const noTo = await client.listOccurrences({
+      from: "2031-03-10T00:00:00.000Z",
+    });
+    expect(noTo.status).toBe(400);
+    expect(noTo.error?.error.code).toBe("missing_required_field");
+
+    const noFrom = await client.listOccurrences({
+      to: "2031-03-11T00:00:00.000Z",
+    });
+    expect(noFrom.status).toBe(400);
+    expect(noFrom.error?.error.code).toBe("missing_required_field");
+
     const inverted = await client.listOccurrences({
       from: "2031-03-11T00:00:00.000Z",
       to: "2031-03-10T00:00:00.000Z",

@@ -28,18 +28,19 @@ import {
 /**
  * A refused update hands back the edge as it now stands.
  *
- * Deliberately not the item conflict envelope. That one carries an
- * ancestor snapshot, the fields in conflict, and the type's merge policy;
- * edges have no per-version history, no field-level merge, and no policy,
- * so three of those four slots would be invented. What a client needs here
- * is the current row and a version to retry against.
+ * **Keyed `current`, like every other door that refuses a single write
+ * with `version_conflict`.** A client reading `body.current.version` off
+ * one such 409 reads it off all of them, which is what lets a refusal be
+ * handled without knowing which door answered. (The bulk doors are not in
+ * that set: `POST /edges/bulk` reports the code per entry inside its own
+ * envelope.) The whole row rather than a version number, so a refused
+ * client can retry from what it was handed instead of spending a round
+ * trip on `GET /edges/{id}`.
  *
- * Keyed `edge`, the same as the 200 body, so `res.edge` reads the same
- * either way — and so that nothing parses it as an item's snapshot. The
- * body still carries the whole edge rather than a version number now that
- * `GET /edges/{id}` exists: a refused client can retry from what it was
- * handed instead of spending a round trip re-reading what the refusal
- * already knew.
+ * What is absent is what the item envelope carries and an edge has none
+ * of: no ancestor snapshot, no fields in conflict, no merge policy. Edges
+ * have no per-version history and no field-level merge, so three of those
+ * four slots would be invented.
  */
 const EdgeConflictSchema = z.object({
   error: z.object({
@@ -51,7 +52,7 @@ const EdgeConflictSchema = z.object({
      *  the hard way. */
     message: z.string(),
   }),
-  edge: EdgeSchema,
+  current: EdgeSchema,
 });
 
 const EdgeListSchema = z.object({
@@ -614,7 +615,7 @@ export function edgeRoutes(storage: Storage) {
               `version ${String(result.current.version)}. Re-apply the change ` +
               `over the edge returned here and send again.`,
           },
-          edge: result.current,
+          current: result.current,
         },
         409,
       );

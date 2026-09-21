@@ -19,6 +19,51 @@ afterAll(async () => {
 });
 
 describe("PATCH /items/:id source_id mutation", () => {
+  it("refuses a move onto a natural key another row already holds", async () => {
+    // The natural key is unique per source, so moving one row onto
+    // another's key would leave two rows a connector's next re-sync cannot
+    // tell apart. Refused rather than merged, and with its own code: a
+    // caller retrying a rename needs to know the target is taken rather
+    // than that its version was stale.
+    const takenSourceId = `taken-${generateId()}`;
+    const movingSourceId = `moving-${generateId()}`;
+
+    const taken = await client.createItem(
+      createNote({ source: ctx.source, source_id: takenSourceId }),
+    );
+    expect(taken.ok).toBe(true);
+    trackItem(ctx, taken.data.item.id);
+
+    const moving = await client.createItem(
+      createNote({ source: ctx.source, source_id: movingSourceId }),
+    );
+    expect(moving.ok).toBe(true);
+    trackItem(ctx, moving.data.item.id);
+
+    const collided = await client.updateItem(moving.data.item.id, {
+      source_id: takenSourceId,
+      version: moving.data.item.version,
+    });
+    expect(collided.status).toBe(409);
+    expect(collided.error?.error.code).toBe("source_id_conflict");
+
+    // Nothing moved: both rows still answer under the keys they had.
+    const after = await client.getItem(moving.data.item.id);
+    expect(after.ok).toBe(true);
+    expect(after.data.item.source_id).toBe(movingSourceId);
+    const other = await client.getItem(taken.data.item.id);
+    expect(other.ok).toBe(true);
+    expect(other.data.item.source_id).toBe(takenSourceId);
+
+    // The control: a key nothing holds is taken, so the refusal above is
+    // the collision and not the door.
+    const free = await client.updateItem(moving.data.item.id, {
+      source_id: `free-${generateId()}`,
+      version: moving.data.item.version,
+    });
+    expect(free.status).toBe(200);
+  });
+
   it("mutates source_id, returns 200, and round-trips on subsequent GET", async () => {
     const originalSourceId = `original-${generateId()}`;
     const newSourceId = `mutated-${generateId()}`;

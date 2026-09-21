@@ -449,4 +449,69 @@ describe("a refusal and its replay describe one conflict", () => {
     // literal — the two refusals share this door.
     expect(res.headers.get("X-Error-Code")).toBe("ancestor_unavailable");
   });
+
+  /**
+   * The third `version_conflict` this door can answer: a write naming a
+   * version and nothing else, so there is no merge to attempt and no
+   * ancestor to attempt it against.
+   *
+   * What it holds is that the envelope is still the envelope. A client
+   * branching on `error.code` and then reading `body.current.version`
+   * cannot be made to discover, on one write out of three, that the field
+   * is not there.
+   */
+  it("answers a stale precondition with the envelope, minus the merge half", async () => {
+    const created = await request(ctx.app, "POST", "/items", {
+      key: ctx.workingKey,
+      body: { type: "core.note", properties: { title: "t", body: "b" } },
+    });
+    const { item } = (await created.json()) as CreatedItem;
+    const moved = await request(ctx.app, "PATCH", `/items/${item.id}`, {
+      key: ctx.workingKey,
+      body: { properties: { body: "moved on" }, version: item.version },
+    });
+    expect(moved.status).toBe(200);
+    const now = ((await moved.json()) as CreatedItem).item.version;
+
+    // An edges-only write: no properties, no tier, no `occurred_at`, no
+    // `source_id`. This is the branch with nothing to merge, and edges are
+    // how it is reached — a write naming none of those five and no `retype`
+    // is refused `400 validation_error` before the version is looked at.
+    const other = await request(ctx.app, "POST", "/items", {
+      key: ctx.workingKey,
+      body: { type: "core.note", properties: { title: "o", body: "o" } },
+    });
+    const target = ((await other.json()) as CreatedItem).item.id;
+    const stale = await request(ctx.app, "PATCH", `/items/${item.id}`, {
+      key: ctx.workingKey,
+      body: { version: item.version, edges: { references: [target] } },
+    });
+    expect(stale.status).toBe(409);
+    expect(stale.headers.get("X-Error-Code")).toBe("version_conflict");
+    const body = (await stale.json()) as {
+      error: { code: string; status?: number };
+      current?: { version: number; properties: Record<string, unknown> };
+      ancestor?: unknown;
+      conflicting_fields?: unknown;
+      merge_policy?: unknown;
+    };
+    expect(body.error.code).toBe("version_conflict");
+    // The two the three-way envelope also carries.
+    expect(body.error.status).toBe(409);
+    expect(body.current?.version).toBe(now);
+    expect(body.current?.properties).toEqual({ title: "t", body: "moved on" });
+    // And the three it cannot: there is no ancestor to give, so giving one
+    // would be inventing it.
+    expect(body.ancestor).toBeUndefined();
+    expect(body.conflicting_fields).toBeUndefined();
+    expect(body.merge_policy).toBeUndefined();
+
+    // The control: the same write at the current version lands, so the 409
+    // above is the version and not the shape of the request.
+    const fresh = await request(ctx.app, "PATCH", `/items/${item.id}`, {
+      key: ctx.workingKey,
+      body: { version: now, edges: { references: [target] } },
+    });
+    expect(fresh.status).toBe(200);
+  });
 });

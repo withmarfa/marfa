@@ -81,6 +81,61 @@ describe("namespace grammar", () => {
     expect(errors?.[0]?.path).toBe("type");
   });
 
+  /**
+   * The roots the grammar refuses outright, which the tiered roots above do
+   * not cover and nothing else in this suite reached.
+   *
+   * Eleven of them head a scope family — the seven permission roots plus
+   * `content`, `metadata`, `edge` and `profile` — so a type under one could
+   * be written and never granted: the `keys` family publishes literals like
+   * `keys.mint`, and `keys.thing:read` is not a scope at all, so a
+   * `keys.thing` type is a row no grant can reach. `space` heads nothing
+   * and is reserved so nobody may claim it; the grammar treats it the same.
+   */
+  const REFUSED_ROOTS = [
+    "schema",
+    "keys",
+    "items",
+    "webhooks",
+    "config",
+    "audit",
+    "grants",
+    "content",
+    "metadata",
+    "edge",
+    "profile",
+    "space",
+  ];
+
+  it("refuses a two-segment type under every root the grammar reserves", async () => {
+    for (const root of REFUSED_ROOTS) {
+      const r = await client.createItem({
+        type: `${root}.namespace-refused`,
+        properties: {},
+      });
+      expect(r.status, root).toBe(400);
+      // `validation_error`, not `unknown_type`. The difference is the whole
+      // point: an unregistered publisher type answers `unknown_type` and
+      // could be registered, and these never can.
+      expect(r.error?.error.code, root).toBe("validation_error");
+      const errors = r.error?.error.details?.errors as
+        { path: string }[] | undefined;
+      expect(errors?.[0]?.path, root).toBe("type");
+    }
+  });
+
+  it("still answers unknown_type for a publisher root that merely looks reserved", async () => {
+    // The control for the case above. The refusal is on the root segment
+    // and not on a prefix, so a root that begins with a refused one is an
+    // ordinary publisher namespace and reaches the registration gate.
+    const r = await client.createItem({
+      type: "keys-pub.namespace-accept",
+      properties: {},
+    });
+    expect(r.status).toBe(400);
+    expect(r.error?.error.code).toBe("unknown_type");
+  });
+
   it("rejects forward-slash type identifiers", async () => {
     const r = await client.createItem({
       type: "acme/deal",

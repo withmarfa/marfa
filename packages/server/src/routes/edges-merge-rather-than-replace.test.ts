@@ -207,9 +207,9 @@ describe("an edge update merges over what the edge holds", () => {
       body: { properties: { label: "loser" }, version: edge.version },
     });
     expect(stale.status).toBe(409);
-    const body = (await stale.json()) as { edge?: WireEdge };
-    expect(body.edge?.properties).toEqual(AFTER);
-    expect(body.edge?.version).toBe(edge.version + 1);
+    const body = (await stale.json()) as { current?: WireEdge };
+    expect(body.current?.properties).toEqual(AFTER);
+    expect(body.current?.version).toBe(edge.version + 1);
 
     // And the losing write changed nothing.
     expect(await storedProperties(edge.id)).toEqual(AFTER);

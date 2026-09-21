@@ -9,7 +9,7 @@ The specification has two halves.
 - `items.md`: items, their lifecycle, bulk doors, metadata, tags and extensions.
 - `types.md`: the type registry, its grammar, inheritance and enforcement levers.
 - `edges.md`: edges, edge types, hydration and traversal.
-- `versions.md`: versions, snapshots, the two 409 envelopes and server-side merge.
+- `versions.md`: versions, snapshots, the 409 envelopes and server-side merge.
 - `blobs.md`: uploads, downloads, ranges and the link door.
 - `stores.md`: where a blob's bytes live, the location log, and the rules that keep them.
 - `housekeeping.md`: the housekeeping jobs the server runs on itself, listed and run on demand.
