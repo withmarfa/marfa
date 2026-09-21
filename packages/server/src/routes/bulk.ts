@@ -539,10 +539,10 @@ async function processBulkItem(
      * makes the doors agree.
      *
      * Authorizing against the row closes the escalation. It does not make
-     * the entry's `type` meaningful, and a claim that disagrees with the
-     * row used to be merged in regardless — so the caller is separately
-     * held to the type it named, by `requireDeclaredTypeMatches` at the
-     * call site below.
+     * the entry's `type` meaningful, and on its own it would let a claim
+     * that disagrees with the row be merged in regardless — so the caller
+     * is separately held to the type it named, by
+     * `requireDeclaredTypeMatches` at the call site below.
      */
     checkUpdate: (
       existing: Item,
@@ -748,12 +748,13 @@ async function processBulkItem(
     const resultingType =
       retype && raw.type !== existing.type ? raw.type : existing.type;
     const isMove = resultingType !== existing.type;
-    // Both arms, and it used to be only the move. A same-type update ran
-    // no property validation at all, so this door stored the number 12345
-    // into `core.note.body`, a required string, and reported the entry as
-    // `updated`, while `PATCH /items/{id}` refuses the identical payload. The row was then invalid against its own type for every
-    // reader that trusts the declared shape because the server enforced
-    // it, and the door that skipped the check is the one built for volume.
+    // Both arms, not only the move. Without it on a same-type update this
+    // door stores the number 12345 into `core.note.body`, a required
+    // string, and reports the entry as `updated`, while
+    // `PATCH /items/{id}` refuses the identical payload. The row is then
+    // invalid against its own type for every reader that trusts the
+    // declared shape because the server enforced it, and this is the door
+    // built for volume.
     //
     // A move cannot go without it either, for its own reason: the
     // destination may require fields the row has never carried, and its
@@ -1259,9 +1260,8 @@ export function bulkRoutes(storage: Storage) {
     // `PATCH /items/{id}` refuses the same key on the same row. This door
     // runs no per-row permission check, so the filter is the whole of it.
     //
-    // **Purge narrows here too, and that is new.** It used to be a no-op for
-    // the only callers who reached purge, because a rank admitted them past
-    // their maps. Under one model a caller purges what it may write: holding
+    // **Purge narrows here too, rather than trusting the permission that
+    // opened the door.** A caller purges what it may write: holding
     // `items.purge` says a credential may destroy rows irrecoverably, and
     // its type permissions say which.
     const { allowed: allowedTypes, excluded: excludedTypes } = getTypeFilter(
@@ -1492,11 +1492,10 @@ function assertJobAuth(c: Context<AppEnv>, job: BulkActionJobRow): void {
   // deliberately unscoped, so this is the only fence.
   if (apiKey.is_operator) return;
   // **A job belongs to the credential that started it, and to nothing else.**
-  // There used to be a rank arm above this one, admitting an admin to any job
-  // anyone else had started; with rank retired there is no permission that says
-  // "read another credential's bulk jobs", and inventing one to preserve the
-  // arm would be widening the model to fit a line rather than the other way
-  // round. What is left is the narrower half that was always here.
+  // No permission says "read another credential's bulk jobs", and an arm
+  // admitting an administrator to any job anyone else had started would need
+  // one invented for it — widening the model to fit a line rather than the
+  // other way round.
   if (job.api_key_id && apiKey.id === job.api_key_id) return;
   // The job's existence is not a secret, only its contents, so this is a
   // 403 rather than a cloaked 404.

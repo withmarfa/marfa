@@ -85,7 +85,23 @@ function connectionRefused(): AggregateError {
       address,
       port: 9099,
     });
-  return new AggregateError([mk("::1"), mk("127.0.0.1")], "");
+  return Object.assign(new AggregateError([mk("::1"), mk("127.0.0.1")], ""), {
+    code: "ECONNREFUSED",
+  });
+}
+
+/**
+ * The other outbound failure, and the only one that reaches `hostname`: a
+ * name that does not resolve. No `address` and no `port`, because nothing
+ * was ever dialed.
+ */
+function nameNotResolved(): Error {
+  return Object.assign(new Error("getaddrinfo ENOTFOUND webhook.invalid"), {
+    errno: -3008,
+    code: "ENOTFOUND",
+    syscall: "getaddrinfo",
+    hostname: "webhook.invalid",
+  });
 }
 
 /**
@@ -152,7 +168,7 @@ describe("formatErrorSummary", () => {
     expect(summary).toContain("9099");
   });
 
-  it("keeps the driver's code on a lock failure", () => {
+  it("carries the driver's message through on a lock failure", () => {
     const summary = formatErrorSummary(databaseLocked());
     expect(summary).toContain("database is locked");
     expect(summary).toContain("SQLITE_BUSY");
@@ -226,6 +242,16 @@ describe("serializeError", () => {
   // The pair `code` alone cannot tell apart. Every constraint failure the
   // driver raises answers `SQLITE_CONSTRAINT`, so a log line carrying only
   // that says a write was refused and not what refused it.
+  // `hostname` earns its place on a name that never resolved: there is no
+  // socket, so `address` and `port` are absent and it is the only field
+  // naming what the server failed to reach.
+  it("keeps the hostname a DNS failure names", () => {
+    const out = serializeError(nameNotResolved()) as Record<string, unknown>;
+    expect(out.hostname).toBe("webhook.invalid");
+    expect(out.code).toBe("ENOTFOUND");
+    expect(out).not.toHaveProperty("address");
+  });
+
   it("keeps the extended code that separates one constraint from another", () => {
     const out = serializeError(uniqueViolation()) as Record<string, unknown>;
     expect(out.code).toBe("SQLITE_CONSTRAINT");
@@ -343,6 +369,11 @@ describe("log payload serialization", () => {
         code: "SQLITE_ERROR",
         extendedCode: "SQLITE_ERROR",
         rawCode: 1,
+        cause: Object.assign(new Error("no such table: auth_session"), {
+          name: "SqliteError",
+          code: "SQLITE_ERROR",
+          rawCode: 1,
+        }),
       },
     );
   }
@@ -356,7 +387,7 @@ describe("log payload serialization", () => {
     expect(args[0]?.code).toBe("SQLITE_ERROR");
   });
 
-  it("adds a one-line error summary carrying the message and the code", () => {
+  it("adds a one-line error summary carrying the failing message", () => {
     const entry = captureLog("error", "Better Auth: INTERNAL_SERVER_ERROR", {
       args: [noSuchTable()],
     });

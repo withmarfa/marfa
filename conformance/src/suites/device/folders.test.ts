@@ -1868,11 +1868,10 @@ describe("writing", () => {
       after.value.some((row) => row.kind === "delete_item"),
       "the rename completed and the delete went anyway, so the grace records the delete and sends it regardless",
     ).toBe(false);
-    // **Past the grace**, which is the only thing that tells a journal the
-    // rename cleared from one that is merely still waiting. The two look
-    // identical until the grace runs out, so a case that stops short of it
-    // asserts the second and reads as the first: remove `journal_clear`
-    // from the rename path and such a case stays green.
+    // **Past the grace**, which is what separates a journal row that was
+    // cleared from one that is merely still waiting. The two look identical
+    // until the grace runs out, so the scan above can only say that nothing
+    // has been sent yet; this is the half that says nothing will be.
     await vi.waitFor(
       async () => {
         const swept = await harness?.folder.scan();

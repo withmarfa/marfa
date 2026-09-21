@@ -150,11 +150,12 @@ pub fn hydration_complete(conn: &Connection) -> Result<bool, CoreError> {
 /// whose cursor has gone cannot be kept current, so it refuses reads until
 /// it is hydrated again (`device.md` 4).
 ///
-/// **One predicate, read by the guard and by the status report alike.** Two
-/// readings of it disagree on the cases that matter: an empty type list
-/// satisfies one and not the other, and the tier satisfies neither while
-/// catch-up requires it, so a store would report that it had never hydrated
-/// and answer a listing in the same breath.
+/// **One predicate, read by the guard and by the status report alike**, and
+/// one rather than two because a second implementation would have to agree
+/// with this on parts that are easy to read differently: whether an empty
+/// type list counts as hydrated, and whether the tier counts at all when
+/// catch-up requires it. A pair that disagreed would let a store report
+/// that it had never hydrated and answer a listing in the same breath.
 pub fn hydrated(conn: &Connection) -> Result<bool, CoreError> {
     if !hydration_complete(conn)? {
         return Ok(false);

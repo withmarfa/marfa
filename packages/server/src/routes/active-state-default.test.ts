@@ -177,9 +177,9 @@ describe("GET /search with no state named", () => {
 
   it("does not reach a row born in the bin, under any state value", async () => {
     // `trashedId` was created with its state named rather than transitioned
-    // into, which is the door that used to index it: only `transition` took a
-    // row back out of the index, so a row that was never transitioned stayed
-    // in and answered a search the rule says reaches nothing.
+    // into, which is the harder half. An index maintained only by
+    // `transition` would never see this row leave, so it would stay in and
+    // answer a search the rule says reaches nothing.
     const widened = await searchedIds(`q=${MARKER}&state=any&limit=100`);
     expect(
       widened,
