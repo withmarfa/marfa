@@ -850,11 +850,10 @@ const updateItemRoute = createRoute({
             ConflictResponseSchema,
             StaleVersionSchema,
             AncestorUnavailableSchema,
-            makeErrorResponseSchema([
-              "version_conflict",
-              "source_id_conflict",
-              "type_mismatch",
-            ]),
+            // No bare `version_conflict` here. Every one this route answers
+            // is one of the three envelopes above, and declaring a fourth
+            // shape nothing produces is a client's excuse for handling it.
+            makeErrorResponseSchema(["source_id_conflict", "type_mismatch"]),
           ]),
         },
       },
@@ -2607,9 +2606,10 @@ export function itemRoutes(storage: Storage) {
       // fields that collide, and a request carrying no properties has
       // neither — so there is no `ancestor`, no `conflicting_fields` and no
       // `merge_policy`. But `error.status` and `current` are on every
-      // `version_conflict` this server answers, so a client reading
+      // single-write refusal carrying this code, so a client reading
       // `body.current.version` reads it here too instead of finding
-      // `undefined` on one door out of three.
+      // `undefined` on one door out of three. (The bulk doors report the
+      // code per entry inside their own envelope and are not in that set.)
       if (!hasProperties && !hasTier && !hasOccurredAt && !hasSourceId) {
         const current = await storage.items.get(id);
         if (current && body.version !== current.version) {

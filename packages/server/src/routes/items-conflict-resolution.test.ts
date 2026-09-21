@@ -474,9 +474,9 @@ describe("a refusal and its replay describe one conflict", () => {
     const now = ((await moved.json()) as CreatedItem).item.version;
 
     // An edges-only write: no properties, no tier, no `occurred_at`, no
-    // `source_id`. This is the branch with nothing to merge, and the only
-    // way to reach it — a write naming none of the five is refused `400
-    // missing_required_field` before the version is looked at.
+    // `source_id`. This is the branch with nothing to merge, and edges are
+    // how it is reached — a write naming none of those five and no `retype`
+    // is refused `400 validation_error` before the version is looked at.
     const other = await request(ctx.app, "POST", "/items", {
       key: ctx.workingKey,
       body: { type: "core.note", properties: { title: "o", body: "o" } },

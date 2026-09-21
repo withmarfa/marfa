@@ -3996,7 +3996,6 @@
                             "code": {
                               "type": "string",
                               "enum": [
-                                "version_conflict",
                                 "source_id_conflict",
                                 "type_mismatch"
                               ]

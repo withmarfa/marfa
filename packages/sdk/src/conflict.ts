@@ -110,8 +110,9 @@ function toConflictError(
 /**
  * A `409` that is neither of the two this module knows how to read.
  *
- * The route publishes three: a version conflict, an ancestor that cannot
- * be merged against, and an ordinary error envelope carrying
+ * The route publishes four: a version conflict carrying an ancestor to
+ * merge against, a stale version carrying nothing to merge, an ancestor
+ * that cannot be merged against, and an ordinary error envelope carrying
  * `source_id_conflict` or `type_mismatch`. The
  * transport hands every `409` body back unchanged rather than throwing,
  * so deciding "not the first, not the second, therefore success" reads the
