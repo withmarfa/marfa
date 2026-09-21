@@ -241,10 +241,12 @@ pub const WRITE_KINDS: &[&str] = &[
 
 /// Queues a write and returns the row as the queue will report it.
 ///
-/// The idempotency key is minted here and nowhere else, because
-/// `queue-and-verdicts.md` 3 turns on it being minted once: a key minted at
-/// send time would be a fresh key on every retry, and a write whose answer
-/// the device never saw would be written a second time.
+/// The idempotency key is minted at enqueue, not at send, because
+/// `queue-and-verdicts.md` 3 turns on it: a key minted at send time would be
+/// a fresh key on every retry, and a write whose answer the device never saw
+/// would be written a second time. `release` is the one other minter, and it
+/// mints deliberately — a released row is a new attempt under a fresh key
+/// (`queue-and-verdicts.md` 27), with the spent one kept beside it.
 pub fn enqueue(conn: &Connection, write: &NewWrite<'_>) -> Result<QueuedWrite, CoreError> {
     if !WRITE_KINDS.contains(&write.kind) {
         return Err(CoreError::Invalid(format!(
@@ -965,9 +967,9 @@ mod tests {
         assert!(refuse_unless_hydrated(&conn).is_ok());
 
         // Each part of the slice on its own, because the guard and the
-        // status report read one predicate and used to read two: an empty
-        // type list satisfied one of them and the tier satisfied neither,
-        // while catch-up required it.
+        // status report read one predicate and two readings of it are not
+        // the same test: an empty type list can satisfy one and the tier
+        // neither, while catch-up requires it.
         meta_set(&conn, META_SLICE_TYPES, "[]").unwrap();
         assert_eq!(
             refuse_unless_hydrated(&conn),
