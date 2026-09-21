@@ -14,7 +14,7 @@ What it does is written down in `conformance/spec/device.md`, `queue-and-verdict
 
 `marfa device --db PATH <command>` is the working copy: `hydrate`, `catch-up`, `status`, `items`, `search`, `edges`, `tags`, `metadata`, `extensions`, `queue`, `drain`, `forget` and `release`, on the store `--db` (or `MARFA_DB`) names. There is no default store. `marfa folders <command>` is a folder, which carries its own store. The server a command sends to is `--url`/`--key` on any command, or `MARFA_API_URL`/`MARFA_API_KEY`.
 
-`--json` on any command prints records as JSON and a refusal as one JSON object on stderr, `{"error":{"code","message","server":{"status","code"}|null,"retry_after_seconds"},"exit":N}`, where `error.code` is from the closed set `marfa --help` lists. The exit code is one of five:
+`--json` on any command prints records as JSON and a refusal as one JSON object on stderr, `{"error":{"code","message","server":{"status","code"}|null,"retry_after_seconds"},"exit":N}`, where `error.code` is from the closed set `marfa --help` lists. The exit code is one of six:
 
 | Exit | Meaning                                                                                                   |
 | ---- | --------------------------------------------------------------------------------------------------------- |

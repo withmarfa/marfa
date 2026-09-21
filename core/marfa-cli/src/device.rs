@@ -15,7 +15,7 @@ use crate::values::{ItemState, SortDirection, SortField, Tier, properties};
 
 #[derive(Debug, Args)]
 pub struct DeviceArgs {
-    /// The working copy's database file. Falls back to MARFA_DB.
+    /// The working copy's database file.
     #[arg(
         long,
         global = true,
@@ -561,7 +561,8 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<(), CliError> 
 
 /// A working copy is named by `--db` or `MARFA_DB` or it does not exist:
 /// there is no default store, because a store nobody named is one nobody
-/// can find again.
+/// can find again. The file is made at the named path on first open, so
+/// the state report is answerable before a hydration (`device.md` 5).
 fn open(db: &Option<PathBuf>, server: Option<Server>) -> Result<Core, CliError> {
     let Some(path) = db else {
         return Err(CliError::NoStoreNamed);

@@ -4,7 +4,7 @@ use marfa_core::CoreError;
 
 /// Every way the binary can refuse or fail, and how each one leaves.
 ///
-/// The exit code is one of five and the code string is from a closed set,
+/// The exit code is one of six and the code string is from a closed set,
 /// both documented in the root's help. An agent reads the exit code to decide
 /// what to do next and the code string to say why, so neither may be one
 /// thing here and another in the help.
@@ -32,7 +32,7 @@ pub enum CliError {
     Invalid(String),
 }
 
-/// The five ways out, and what each means to a caller.
+/// The six ways out, and what each means to a caller.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Exit {
     /// Done.
@@ -102,8 +102,11 @@ impl CliError {
                 | CoreError::Network(_)
                 | CoreError::Decoding(_)
                 | CoreError::StreamIncomplete { .. } => Exit::Environment,
+                // The binary passes a server to every command that sends,
+                // so the core never answers this; mapped beside the binary's
+                // own `NoServerNamed` so the two cannot disagree.
+                CoreError::NoServer => Exit::Usage,
                 CoreError::Store(_)
-                | CoreError::NoServer
                 | CoreError::NoCursor
                 | CoreError::HydrationIncomplete
                 | CoreError::ReadingHandle
@@ -182,8 +185,8 @@ impl From<serde_json::Error> for CliError {
     }
 }
 
-/// The text the root's help carries about leaving. One place, quoted by the
-/// help and by the README, so the two cannot disagree.
+/// The text the root's help carries about leaving. `core/README.md`
+/// carries the same table by hand.
 pub const EXIT_CODES_HELP: &str = "\
 Exit codes:
   0  done
@@ -292,8 +295,10 @@ mod tests {
         sorted_answered.sort_unstable();
         assert_eq!(sorted_listed, sorted_answered);
         // `no_server` is answered twice, by the core's variant and the
-        // binary's, and `closed_output` never leaves the process.
+        // binary's, through one door; `closed_output` never leaves the
+        // process.
         assert_eq!(CliError::Core(CoreError::NoServer).code(), "no_server");
+        assert_eq!(CliError::Core(CoreError::NoServer).exit(), Exit::Usage);
         assert_eq!(CliError::ClosedOutput.exit(), Exit::Done);
     }
 
