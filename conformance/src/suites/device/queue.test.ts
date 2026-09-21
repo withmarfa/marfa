@@ -1,5 +1,13 @@
-import { describe, it } from "vitest";
+import { describe, it, expect, afterEach } from "vitest";
+import { startHarness, type Harness } from "./harness.js";
 import { notWrittenYet, skipIfPending } from "./pending.js";
+
+let harness: Harness | undefined;
+
+afterEach(async () => {
+  await harness?.stop();
+  harness = undefined;
+});
 
 /**
  * "A device holds a working copy and a queue."
@@ -11,6 +19,28 @@ import { notWrittenYet, skipIfPending } from "./pending.js";
  * that drops a write reports nothing, because the caller was already told the
  * write was queued.
  */
+
+describe("the queue answers before there is anything in it", () => {
+  it("reports an empty queue on a store that has never been written to", async () => {
+    harness = await startHarness("queue-empty");
+
+    // Answerable without a hydration, and this is the case that says so. A
+    // caller asking what is outstanding is asking about what they queued,
+    // not about the copy: a device that made them hydrate first would
+    // refuse the question at the moment it matters most, which is when the
+    // server cannot be reached.
+    const queued = await harness.device.queue();
+    expect(
+      queued.ok,
+      `a device refused to report its queue, so a caller cannot find out what is outstanding: ${JSON.stringify(queued)}`,
+    ).toBe(true);
+    if (!queued.ok) return;
+    expect(
+      queued.value,
+      "a store with no writes reported something queued, so the queue reports rows nobody asked for",
+    ).toEqual([]);
+  });
+});
 
 describe("the queue keeps its order", () => {
   it("sends queued writes in the order they were queued", (context) => {

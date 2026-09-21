@@ -1,11 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, it, expect, afterEach } from "vitest";
 import { KEY, startHarness, scriptHydration, type Harness } from "./harness.js";
-import {
-  notWrittenYet,
-  pendingUntilItPasses,
-  skipIfPending,
-} from "./pending.js";
+import { notWrittenYet, skipIfPending } from "./pending.js";
 import {
   connected,
   itemEvent,
@@ -316,16 +312,45 @@ describe("the working copy says what it is", () => {
     ).toEqual([0, 0]);
   });
 
-  it("refuses a read before any hydration", async (context) => {
+  it("refuses a read before any hydration", async () => {
     harness = await startHarness("read-before-hydration");
-    const started = harness;
-    await pendingUntilItPasses(context, async () => {
-      const listed = await started.device.list();
+    const { device } = harness;
+
+    // Every read door, because a refusal on one and an empty page on
+    // another is the same wrong answer with a smaller blast radius.
+    const listed = await device.list();
+    expect(
+      listed.ok,
+      "a store that has never hydrated answered a listing, so a caller cannot tell an empty slice from a copy that was never pulled",
+    ).toBe(false);
+    if (!listed.ok) {
       expect(
-        listed.ok,
-        "a store that has never hydrated answered a listing, so a caller cannot tell an empty slice from a copy that was never pulled",
-      ).toBe(false);
-    });
+        listed.refusal.code,
+        `the read was refused for some other reason, so a caller is told to fix the wrong thing and never learns a hydration is owed: ${listed.refusal.raw}`,
+      ).toBe("hydration_incomplete");
+    }
+
+    const found = await device.search("anything");
+    expect(
+      found.ok,
+      "a store that has never hydrated answered a search, so an empty result set reads as a corpus with nothing in it",
+    ).toBe(false);
+
+    const got = await device.get("whatever");
+    expect(
+      got.ok,
+      "a store that has never hydrated answered a read by id, so an absent row and a copy that was never pulled read the same",
+    ).toBe(false);
+
+    // The control: the device answers about itself before it has hydrated,
+    // which is how a caller learns a hydration is owed (`device.md` 5). A
+    // device that refused everything would satisfy the three above for a
+    // reason that has nothing to do with the slice.
+    const status = await device.status();
+    expect(
+      status.ok,
+      "a device that has not hydrated could not report its own state, so the refusals above are a broken binary rather than the rule",
+    ).toBe(true);
   });
 
   it("refuses a read after an interrupted hydration", async () => {
@@ -520,6 +545,44 @@ describe("a local read answers the active state unless asked otherwise", () => {
       filed.ok ? filed.value.map((hit) => hit.item.id) : [],
       "naming a state no longer reaches it on the local search door, so the rows the default hides are unreachable by any local read",
     ).toEqual(["filed"]);
+  });
+
+  it("keeps a row in the bin out of the index, whatever state a search names", async () => {
+    await hydrateEveryState("local-search-bin");
+    const device = harness!.device;
+
+    // The copy holds it, so what follows is the index rather than the slice.
+    expect(
+      await heldIds(),
+      "the copy does not hold the row in the bin, so a search that misses it proves nothing about the index",
+    ).toContain("binned");
+
+    for (const [named, filters] of [
+      ["the widening", { allStates: true }],
+      ["the bin by name", { state: "trashed" }],
+    ] as const) {
+      const hits = await device.search("zqlocal", filters);
+      expect(
+        hits.ok,
+        `a local search naming ${named} was refused outright: ${JSON.stringify(hits)}`,
+      ).toBe(true);
+      if (!hits.ok) continue;
+      const ids = hits.value.map((hit) => hit.item.id);
+      expect(
+        ids,
+        `a local search naming ${named} answers a row in the bin, so a device matches text the server it copies answers nothing for`,
+      ).not.toContain("binned");
+    }
+
+    // The control, and it is the whole point of the case: the widening does
+    // reach the archive. Without it the two absences above would be
+    // satisfied by a widening that reached nothing at all.
+    const widened = await device.search("zqlocal", { allStates: true });
+    expect(widened.ok).toBe(true);
+    expect(
+      widened.ok ? widened.value.map((hit) => hit.item.id).sort() : [],
+      "the widening reaches neither the archive nor the bin, so it widens nothing and the absences above say nothing about the bin",
+    ).toEqual(["filed", "live"]);
   });
 
   it("reads an archived row by id and reports a trashed one as absent", async () => {

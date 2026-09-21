@@ -19,9 +19,6 @@ import { basename } from "node:path";
 export const PENDING: Readonly<Record<string, string>> = {
   "working-copy.test.ts › gives a second opener a reading handle that refuses writes":
     "device.md 3",
-  "working-copy.test.ts › refuses a read before any hydration": "device.md 4",
-  "catch-up.test.ts › skips an event older than the row it holds and still advances the cursor":
-    "device.md 13",
   "local-refusals.test.ts › refuses to merge two values for one field":
     "device.md 19",
   "local-refusals.test.ts › refuses to advance a version of its own accord":

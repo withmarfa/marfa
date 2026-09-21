@@ -68,6 +68,34 @@ export interface SearchHit {
   snippet: string;
 }
 
+/** One queued write, as the queue reports it.
+ *
+ *  A `verdict` of `null` is a write the server has not answered. It is not a
+ *  seventh verdict (`queue-and-verdicts.md` 7); it is the absence of one. */
+export interface QueuedWrite {
+  id: string;
+  kind: string;
+  item_id: string | null;
+  target_id: string | null;
+  edge_id: string | null;
+  namespace: string | null;
+  tag: string | null;
+  base_version: number | null;
+  idempotency_key: string;
+  /** The queue rows this one waits for. Empty when nothing holds it; more
+   *  than one when an edge waits on both of its endpoints. */
+  depends_on: string[];
+  verdict: string | null;
+  reason: string | null;
+  /** The server's answer, kept whole, because a device reports a verdict and
+   *  never acts on one (`queue-and-verdicts.md` 15). */
+  answer: string | null;
+  conflicted_copy_id: string | null;
+  refusals: number;
+  queued_at: string;
+  answered_at: string | null;
+}
+
 /** Narrowing for a local search: the state axis the list takes, and only
  *  that, because the rest of the grammar is answered by a list. */
 export interface SearchFilters {
@@ -107,6 +135,8 @@ export interface DeviceUnderTest {
     filters?: SearchFilters,
     limit?: number,
   ): Promise<Outcome<SearchHit[]>>;
+  /** Every queued write and what became of it. */
+  queue(): Promise<Outcome<QueuedWrite[]>>;
   status(): Promise<Outcome<Status>>;
 
   /** A second device over the same store, for the one-writer rule. */

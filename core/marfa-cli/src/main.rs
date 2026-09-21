@@ -91,6 +91,8 @@ enum Command {
         #[arg(long, default_value_t = 20)]
         limit: usize,
     },
+    /// Every queued write and what became of it.
+    Queue,
     /// What the local copy holds and where it came from.
     Status,
     /// Watch a folder on this machine.
@@ -316,6 +318,7 @@ fn run(cli: Cli) -> Result<(), CliError> {
             };
             output::hits(&open(&cli.db, None)?.search(&query, &filters, limit)?, json)
         }
+        Command::Queue => output::queued(&open(&cli.db, None)?.queue()?, json),
         Command::Status => {
             let status = open(&cli.db, None)?.status()?;
             output::report(&status, json, || {

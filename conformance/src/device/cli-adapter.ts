@@ -10,6 +10,7 @@ import {
   type Item,
   type ListFilters,
   type Outcome,
+  type QueuedWrite,
   type Refusal,
   type SearchFilters,
   type SearchHit,
@@ -38,6 +39,7 @@ const REFUSAL_OPENINGS: ReadonlyArray<readonly [string, string]> = [
   ["no server configured", "no_server"],
   ["no event cursor stored", "no_cursor"],
   ["hydration did not complete", "hydration_incomplete"],
+  ["this store was written by schema", "wrong_schema"],
   ["the event log no longer holds the cursor", "catch_up_too_old"],
   ["the event stream ended early", "stream_incomplete"],
   ["this file belongs to", "wrong_server"],
@@ -141,6 +143,10 @@ export class CliDevice implements DeviceUnderTest {
     if (filters.allStates === true) args.push("--all-states");
     if (limit !== undefined) args.push("--limit", String(limit));
     return this.json<SearchHit[]>(args);
+  }
+
+  async queue(): Promise<Outcome<QueuedWrite[]>> {
+    return this.json<QueuedWrite[]>(["queue"]);
   }
 
   async status(): Promise<Outcome<Status>> {

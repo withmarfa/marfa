@@ -28,7 +28,9 @@ struct Slice {
 pub(crate) fn catch_up(core: &Core, http: &Http, idle: Duration) -> Result<CatchUpReport> {
     let (slice, cursor) = {
         let conn = core.conn()?;
-        store::refuse_unless_hydrated(&conn)?;
+        if !store::hydration_complete(&conn)? {
+            return Err(CoreError::HydrationIncomplete);
+        }
         let cursor =
             store::meta_get(&conn, store::META_EVENT_CURSOR)?.ok_or(CoreError::NoCursor)?;
         if cursor.is_empty() || !cursor.bytes().all(|byte| byte.is_ascii_digit()) {
@@ -191,6 +193,31 @@ fn apply(
             let Some(item) = &payload.item else {
                 return Ok(false);
             };
+            // An event carrying a version *older* than the row held is
+            // stale, and applying it would put back fields a later event
+            // already replaced. Ids are assigned before commit, so a lower
+            // id can arrive after a higher one: the stream's order is not
+            // the version's (`device.md` 13).
+            //
+            // **Strictly older, not "no newer".** The version moves on a
+            // write to an item's fields and on nothing else: a transition,
+            // a delete, a restore and a tag write all move the modification
+            // time and leave the version where it was. Every one of those
+            // events therefore carries the version the device already
+            // holds, and skipping them would mean a device never learning
+            // that a row was archived, deleted or restored — silently, for
+            // ever, while reporting the catch-up as clean.
+            //
+            // What is left is a genuine tie: two events can share a version
+            // when one of them changed no field, and the version cannot
+            // order them. The stream's order decides those, which is what
+            // `device.md` 13 now says rather than claiming the version
+            // decides every pair.
+            if let Some(held) = store::held_version(tx, &item.id)?
+                && item.version < held
+            {
+                return Ok(false);
+            }
             let tier = Tier::parse_wire(item.tier.as_deref())?;
             let in_slice = tier == Some(slice.tier)
                 && slice

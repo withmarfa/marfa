@@ -1,6 +1,5 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { startHarness, scriptHydration, type Harness } from "./harness.js";
-import { notWrittenYet, skipIfPending } from "./pending.js";
 import {
   catchupTooOld,
   connected,
@@ -106,9 +105,184 @@ describe("catch-up replays from the cursor", () => {
     ).toEqual(["(none)", "10", "11"]);
   });
 
-  it("skips an event older than the row it holds and still advances the cursor", async (context) => {
-    skipIfPending(context);
-    notWrittenYet("an event older than the row the copy holds");
+  it("skips an event older than the row it holds and still advances the cursor", async () => {
+    harness = await startHarness("stale-event");
+    const { server, device } = harness;
+    scriptHydration(server, { head: "10" });
+    server.answer(
+      "GET",
+      "/events",
+      replay("13", [
+        // Version 3 lands, then version 2 arrives behind it. Ids are
+        // assigned before commit, so this is the ordinary shape of two
+        // writes to one row rather than a contrived one.
+        itemEvent(
+          "11",
+          "item.created",
+          wireItem({
+            id: "row",
+            version: 3,
+            properties: { title: "row", body: "the newer body" },
+          }),
+        ),
+        itemEvent(
+          "12",
+          "item.updated",
+          wireItem({
+            id: "row",
+            version: 2,
+            properties: { title: "row", body: "the older body" },
+          }),
+        ),
+        // A third row, so the count assertions below are about the skip
+        // rather than about a stream that carried one event.
+        itemEvent("13", "item.created", wireItem({ id: "other", version: 1 })),
+      ]),
+    );
+
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    const caught = await device.catchUp();
+    expect(
+      caught.ok,
+      `the catch-up failed, so nothing below is a statement about a skip: ${JSON.stringify(caught)}`,
+    ).toBe(true);
+    if (!caught.ok) return;
+
+    const held = await device.get("row");
+    expect(
+      held.ok,
+      `the row is not readable at all after two events about it, so the version assertions below never run: ${JSON.stringify(held)}`,
+    ).toBe(true);
+    if (held.ok) {
+      expect(
+        held.value.version,
+        "the older event was applied over the newer one, so a copy holds a row the server replaced and nothing says so",
+      ).toBe(3);
+      expect(
+        held.value.properties.body,
+        "the fields moved back with the version, so a device shows a caller a body the server no longer holds",
+      ).toBe("the newer body");
+    }
+
+    // Skipping is a success, not a failure: the cursor moves past the event
+    // so the next catch-up resumes after it. A cursor left behind would
+    // fetch the same stale event for ever.
+    expect(
+      caught.value.cursor,
+      "the cursor stopped at the stale event, so every later catch-up replays it and never reaches the head",
+    ).toBe("13");
+    expect(
+      caught.value.skipped,
+      "the stale event was counted as applied, so a report cannot tell a caller what their copy actually took",
+    ).toBeGreaterThanOrEqual(1);
+    // The control: the events either side of the stale one did land.
+    expect(
+      caught.value.applied,
+      "nothing was applied at all, so the skip above is a catch-up that did nothing rather than one that judged an event",
+    ).toBeGreaterThanOrEqual(2);
+  });
+
+  it("applies a transition, a delete and a restore, none of which move the version", async () => {
+    harness = await startHarness("lifecycle-events");
+    const { server, device } = harness;
+    scriptHydration(server, { head: "10" });
+    server.answer(
+      "GET",
+      "/events",
+      // Every one of these carries version 1, because the server moves the
+      // modification time on a lifecycle write and leaves the version
+      // alone. A rule that skipped a version "no newer than" the one held
+      // would drop all three and report the catch-up as clean.
+      replay("14", [
+        itemEvent("11", "item.created", wireItem({ id: "row", version: 1 })),
+        itemEvent(
+          "12",
+          "item.state_changed",
+          wireItem({ id: "row", version: 1, state: "archived" }),
+        ),
+        itemEvent(
+          "13",
+          "item.deleted",
+          wireItem({ id: "row", version: 1, state: "trashed" }),
+        ),
+        itemEvent(
+          "14",
+          "item.restored",
+          wireItem({ id: "row", version: 1, state: "active" }),
+        ),
+      ]),
+    );
+
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    const caught = await device.catchUp();
+    expect(
+      caught.ok,
+      `the catch-up failed, so nothing below is a statement about lifecycle events: ${JSON.stringify(caught)}`,
+    ).toBe(true);
+    if (!caught.ok) return;
+
+    // The last one wins, and it is the state the row ends in that says all
+    // four landed: a device that skipped the three same-version events
+    // would hold the row exactly as the create left it.
+    const held = await device.get("row");
+    expect(
+      held.ok,
+      `the row is not readable at all after four events about it: ${JSON.stringify(held)}`,
+    ).toBe(true);
+    if (held.ok) {
+      expect(
+        held.value.state,
+        "a lifecycle event that did not move the version was skipped, so a device never learns a row was archived, deleted or restored and goes on answering the state it first saw",
+      ).toBe("active");
+    }
+
+    expect(
+      caught.value.skipped,
+      "an event was skipped, and the only candidates here are the three that share a version with the row they change",
+    ).toBe(0);
+    expect(
+      caught.value.applied,
+      "fewer than four events landed, so at least one lifecycle change was dropped",
+    ).toBe(4);
+  });
+
+  it("applies a tag write that leaves the version where it was", async () => {
+    harness = await startHarness("metadata-event");
+    const { server, device } = harness;
+    scriptHydration(server, { head: "10" });
+    server.answer(
+      "GET",
+      "/events",
+      replay("12", [
+        itemEvent("11", "item.created", wireItem({ id: "row", version: 1 })),
+        // A tag write moves `updated_at` and not the version, so this frame
+        // carries the version the device already holds.
+        itemEvent(
+          "12",
+          "metadata.changed",
+          wireItem({ id: "row", version: 1 }),
+          {
+            tags: ["filed"],
+          },
+        ),
+      ]),
+    );
+
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    const caught = await device.catchUp();
+    expect(
+      caught.ok,
+      `the catch-up failed, so nothing below is a statement about a tag write: ${JSON.stringify(caught)}`,
+    ).toBe(true);
+
+    const held = await device.get("row");
+    expect(held.ok).toBe(true);
+    if (held.ok) {
+      expect(
+        held.value.tags,
+        "a tag write that did not move the version was skipped, so a device's tags drift from the server's with nothing to say so",
+      ).toContain("filed");
+    }
   });
 
   it("leaves the cursor at the last applied event when the stream ends early", async () => {
@@ -352,5 +526,82 @@ describe("a cursor the log no longer holds", () => {
       again.ok ? again.value.cursor : undefined,
       "the hydration after an aged-out cursor stored some other resume point, so the next catch-up ages out again",
     ).toBe("900");
+  });
+  it("refuses reads after the cursor ages out, until a hydration", async () => {
+    harness = await startHarness("aged-out-reads");
+    const { server, device } = harness;
+    scriptHydration(server, {
+      head: "10",
+      rows: { "core.note": [{ item: { id: "first" } }] },
+    });
+    server.answer("GET", "/events", {
+      kind: "sse",
+      frames: [connected, streamCursor("900"), catchupTooOld("500", "10")],
+    });
+
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+
+    // The control, and the reason this case is not the sibling above: the
+    // copy answers before the cursor ages out. What follows is the aging,
+    // not a device that was refusing all along.
+    const before = await device.list();
+    expect(
+      before.ok,
+      `a hydrated copy would not answer a listing at all, so the refusal below says nothing about the cursor: ${JSON.stringify(before)}`,
+    ).toBe(true);
+    expect(
+      before.ok ? before.value.map((item) => item.id) : [],
+      "the hydration landed no rows, so the refusal below is about an empty copy rather than an aged-out one",
+    ).toContain("first");
+
+    expect((await device.catchUp()).ok).toBe(false);
+
+    // The copy is complete as of the moment it stopped, and it refuses
+    // anyway: it can no longer be kept current, and a copy that has quietly
+    // stopped tracking is worse than one that says it cannot answer.
+    const after = await device.list();
+    expect(
+      after.ok,
+      "a copy whose cursor has aged out still answers reads, so it goes on serving a snapshot that has silently stopped tracking the server",
+    ).toBe(false);
+    if (!after.ok) {
+      expect(
+        after.refusal.code,
+        `the refusal did not say a hydration is owed: ${after.refusal.raw}`,
+      ).toBe("hydration_incomplete");
+    }
+
+    // What the report says about a store in this state, pinned rather than
+    // left to be discovered. It reads `never` while carrying the slice and
+    // the rows a hydration left, because the predicate behind it wants a
+    // cursor and the aging deleted one. The advice is right — a hydration is
+    // owed — and the fact is wrong, and a caller reading the two lines
+    // together is told a copy that holds three rows has never hydrated.
+    // Whether that wants a fourth value of its own is in the open questions.
+    const reported = await device.status();
+    expect(
+      reported.ok,
+      `the status door was refused, so nothing below says what an aged-out store reports: ${JSON.stringify(reported)}`,
+    ).toBe(true);
+    if (reported.ok) {
+      expect(
+        reported.value.hydration,
+        "the report for an aged-out store changed without the statement changing with it, so a caller learns something different about the same state",
+      ).toBe("never");
+      expect(
+        reported.value.slice_types,
+        "the report says the slice is empty as well, so `never` would be a plain description rather than the mismatch this pins",
+      ).toContain("core.note");
+    }
+
+    // And a hydration clears it, which is what makes the refusal a state to
+    // leave rather than a store to discard.
+    server.answer("GET", "/events", headRead("900"));
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    const recovered = await device.list();
+    expect(
+      recovered.ok,
+      `a hydration did not clear the refusal, so an aged-out cursor bricks the store: ${JSON.stringify(recovered)}`,
+    ).toBe(true);
   });
 });

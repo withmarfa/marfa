@@ -16,11 +16,13 @@
     "test:changed": "vitest run --changed origin/main",
     "test:related": "vitest related --run",
     "test:fresh-sqlite": "bash scripts/test-fresh-sqlite.sh",
-    "test:full": "pnpm build && pnpm typecheck && pnpm lint && pnpm format:check && pnpm test:fresh-sqlite",
+    "test:full": "pnpm build && pnpm typecheck && pnpm lint && pnpm format:check && pnpm test:rust && pnpm test:drift && pnpm test:fresh-sqlite",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
-    "format:check": "prettier --check ."
+    "format:check": "prettier --check .",
+    "test:rust": "cd core && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test && cd bindings/swift && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test",
+    "test:drift": "bash scripts/surface-lock-drift.sh"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
