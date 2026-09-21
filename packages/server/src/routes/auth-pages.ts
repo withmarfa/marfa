@@ -32,7 +32,6 @@ import {
 import { setNoStore } from "./no-store.js";
 import { forwardHeaders } from "./forward-headers.js";
 import { publish } from "../pubsub.js";
-import type { OidcSigner } from "../auth/oidc-signing.js";
 
 /**
  * Persist (or refresh) a `kind: app` connection through `ItemStore`. Routes
@@ -189,19 +188,11 @@ async function createUserAppGrant(
 }
 
 /**
- * Note on the signature: the @better-auth/oauth-provider plugin owns
- * token issuance + id_token signing, with its own salt + signer wired
- * through `instance.ts`. `oidcSigner` is threaded into `authRoutes` by
- * app.ts and is read by nothing here — `authRoutes` has one caller, and
- * this package is private, so nothing outside the repository depends on the
- * shape of this signature.
+ * Token issuance and id_token signing belong to the
+ * @better-auth/oauth-provider plugin, with its own salt and signer wired
+ * through `instance.ts`. Nothing here signs anything.
  */
-export function authRoutes(
-  storage: Storage,
-  auth?: MarfaAuth,
-  oidcSigner?: OidcSigner,
-): Hono<AppEnv> {
-  void oidcSigner;
+export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
   const router = new Hono<AppEnv>();
 
   // Per-`user_code` failed-attempt throttle on the device-flow
