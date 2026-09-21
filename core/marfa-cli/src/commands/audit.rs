@@ -6,7 +6,6 @@ use crate::output::Printer;
 use crate::remote::Remote;
 use crate::remote::request::Request;
 
-/// The audit log: every write, with the acting key. Needs `audit.read`.
 #[derive(Debug, Default, Args)]
 pub struct AuditArgs {
     /// Only entries with this action, such as `item.create`.

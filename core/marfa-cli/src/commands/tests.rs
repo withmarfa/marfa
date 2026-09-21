@@ -52,6 +52,15 @@ fn a_listing_sends_only_the_filters_it_was_given() {
     assert_eq!(query(&request, "source"), None);
     assert_eq!(query(&request, "tier"), None);
     assert_eq!(query(&request, "include"), None);
+    let given = items::list_request(&items::ListArgs {
+        source: Some("test/cli".into()),
+        tier: Some(TierFilter::All),
+        include: vec!["edges".into(), "metadata".into()],
+        ..Default::default()
+    });
+    assert_eq!(query(&given, "source").as_deref(), Some("test/cli"));
+    assert_eq!(query(&given, "tier").as_deref(), Some("all"));
+    assert_eq!(query(&given, "include").as_deref(), Some("edges,metadata"));
 }
 
 #[test]
@@ -467,11 +476,6 @@ fn the_instance_doors_are_reached_where_the_document_puts_them() {
     assert!(!status::root_request().credential);
     assert!(!status::health_request().credential);
     assert!(status::stats_request().credential);
-    assert_eq!(grants::list_request().path(), "/auth/grants");
-    assert_eq!(
-        query(&grants::revoke_request("g", true), "revoke_keys").as_deref(),
-        Some("true")
-    );
 }
 
 #[test]
@@ -541,9 +545,7 @@ fn a_housekeeping_job_is_listed_and_run_by_name() {
 /// pull request; the scenario suite reads the same table from the binary.
 #[test]
 fn every_published_operation_has_a_command() {
-    let path = std::env::var("MARFA_OPENAPI")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../openapi.json"));
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../openapi.json");
     let document: serde_json::Value = serde_json::from_str(
         &std::fs::read_to_string(&path)
             .unwrap_or_else(|error| panic!("cannot read {}: {error}", path.display())),
@@ -624,9 +626,26 @@ fn every_mapped_command_parses_and_a_pending_entry_is_truly_unreached() {
                 .split('`')
                 .filter_map(|part| part.strip_prefix("marfa "))
                 .collect();
+            assert!(
+                !named.is_empty(),
+                "{} is pending on nothing the tree could grow",
+                operation.id
+            );
             for leaf in named {
+                // Walked word by word, as the mapped commands are: a leaf
+                // under a root exists when every word resolves.
+                let mut here = &tree;
+                let exists = leaf
+                    .split(' ')
+                    .all(|word| match here.find_subcommand(word) {
+                        Some(sub) => {
+                            here = sub;
+                            true
+                        }
+                        None => false,
+                    });
                 assert!(
-                    tree.find_subcommand(leaf).is_none(),
+                    !exists,
                     "{} is pending on `marfa {leaf}`, which now exists",
                     operation.id
                 );

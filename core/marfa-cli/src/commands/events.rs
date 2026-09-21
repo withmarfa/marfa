@@ -64,14 +64,21 @@ pub struct Frame {
 }
 
 /// Reads frames off a stream, sending each as it completes. Ends when the
-/// stream does.
-fn read_frames(reader: Box<dyn Read + Send>, frames: mpsc::Sender<Frame>) {
-    let mut lines = BufReader::new(reader).lines();
+/// stream does; a read that fails is sent as the failure it is, so a
+/// connection that broke is not reported as a stream that closed.
+fn read_frames(reader: Box<dyn Read + Send>, frames: mpsc::Sender<Result<Frame, std::io::Error>>) {
     let mut frame = Frame::default();
     let mut has_content = false;
-    while let Some(Ok(line)) = lines.next() {
+    for line in BufReader::new(reader).lines() {
+        let line = match line {
+            Ok(line) => line,
+            Err(error) => {
+                let _ = frames.send(Err(error));
+                break;
+            }
+        };
         if line.is_empty() {
-            if has_content && frames.send(std::mem::take(&mut frame)).is_err() {
+            if has_content && frames.send(Ok(std::mem::take(&mut frame))).is_err() {
                 break;
             }
             has_content = false;
@@ -100,7 +107,7 @@ fn read_frames(reader: Box<dyn Read + Send>, frames: mpsc::Sender<Frame>) {
 
 pub fn run(args: EventsArgs, remote: &Remote, out: &Printer) -> Result<(), CliError> {
     let (_, reader) = remote.stream(&request(&args))?;
-    let (sender, frames) = mpsc::channel::<Frame>();
+    let (sender, frames) = mpsc::channel::<Result<Frame, std::io::Error>>();
     std::thread::spawn(move || read_frames(reader, sender));
     let started = Instant::now();
     let limit = args.r#for.map(Duration::from_secs);
@@ -113,14 +120,19 @@ pub fn run(args: EventsArgs, remote: &Remote, out: &Printer) -> Result<(), CliEr
             None => Duration::from_secs(3600),
         };
         match frames.recv_timeout(remaining) {
-            Ok(frame) => print_frame(&frame, out)?,
+            Ok(Ok(frame)) => print_frame(&frame, out)?,
+            Ok(Err(error)) => {
+                return Err(CliError::Core(marfa_core::CoreError::Network(format!(
+                    "the stream broke: {error}"
+                ))));
+            }
             Err(mpsc::RecvTimeoutError::Timeout) => {
                 if limit.is_some() {
                     return Ok(());
                 }
             }
-            // The server closed the stream: a terminal frame preceded it
-            // and was printed, or the connection went.
+            // The server closed the stream, and a terminal frame preceded
+            // it and was printed.
             Err(mpsc::RecvTimeoutError::Disconnected) => return Ok(()),
         }
     }

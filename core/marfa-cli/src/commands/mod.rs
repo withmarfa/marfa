@@ -14,7 +14,6 @@ pub mod edges;
 pub mod events;
 pub mod export;
 pub mod extensions;
-pub mod grants;
 pub mod housekeeping;
 pub mod items;
 pub mod keys;

@@ -22,16 +22,10 @@ pub fn stats_request() -> Request {
 pub fn run(remote: &Remote, out: &Printer) -> Result<(), CliError> {
     let instance = remote.json(&root_request())?;
     let health = remote.json(&health_request())?;
+    // The counts are scoped to what the credential can read, never
+    // refused to one, so a refusal here is the credential's and propagates.
     let stats = match remote.credential() {
-        Some(_) => match remote.json(&stats_request()) {
-            Ok(stats) => Some(stats),
-            // A credential without reach to the counts is still a credential;
-            // the counts are the part that goes, and the answer says so.
-            Err(CliError::Refused {
-                status: 401 | 403, ..
-            }) => None,
-            Err(error) => return Err(error),
-        },
+        Some(_) => Some(remote.json(&stats_request())?),
         None => None,
     };
     let report = json!({
@@ -69,13 +63,7 @@ pub fn run(remote: &Remote, out: &Printer) -> Result<(), CliError> {
                     serde_json::to_string(stats).unwrap_or_default()
                 ));
             }
-            (None, Some(source)) => {
-                lines.push(format!(
-                    "credential from {}, without reach to the item counts",
-                    source.as_str()
-                ));
-            }
-            (_, None) => lines.push("no credential".into()),
+            _ => lines.push("no credential".into()),
         }
         lines.join("\n")
     })

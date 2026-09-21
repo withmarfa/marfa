@@ -117,10 +117,13 @@ pub const OPERATIONS: &[Operation] = &[
     reached("runHousekeeping", "housekeeping run"),
     pending(
         "registerOAuthClient",
-        "signing in: `marfa login` registers the binary as a client",
+        "the sign-in pull request: `marfa login`",
     ),
-    pending("getOwner", "signing in: `marfa owner show`"),
-    pending("createOwner", "signing in: `marfa owner create`"),
+    pending("getOwner", "the sign-in pull request: `marfa owner show`"),
+    pending(
+        "createOwner",
+        "the sign-in pull request: `marfa owner create`",
+    ),
 ];
 
 pub fn run(out: &Printer) -> Result<(), CliError> {

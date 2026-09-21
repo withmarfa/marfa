@@ -25,7 +25,8 @@ pub enum KeysCommand {
     List,
     /// Change a key's label, tier or permission maps. Needs `keys.mint`.
     Update(KeyUpdateArgs),
-    /// Revoke a key; the next request bearing it is refused.
+    /// Revoke a key; the next request bearing it is refused. Needs
+    /// `keys.mint`, or the operator key.
     Revoke {
         /// The key id.
         id: String,

@@ -14,9 +14,9 @@ pub const PAGE_LIMIT: u32 = 200;
 pub struct Http {
     agent: Agent,
     base: Url,
-    /// Absent for a transport that carries no credential: the root document,
-    /// the health door and the sign-in endpoints answer without one, and a
-    /// device's transport always holds one.
+    /// Absent for a transport that carries no credential: the root document
+    /// and the health door answer without one, and a device's transport
+    /// always holds one.
     authorization: Option<String>,
 }
 
@@ -355,20 +355,24 @@ impl Http {
         let cannot_send = |error: ureq::http::Error| {
             CoreError::Invalid(format!("this call cannot be sent: {error}"))
         };
+        // The agent's body budget is a minute, sized for a JSON answer. A
+        // streamed body is the event stream, an export or a blob, none of
+        // which has a length a budget could be sized for, so a streamed call
+        // has none; `events --for` bounds its own reading.
         let response = match call.body {
             CallBody::None => {
                 let request = builder.body(()).map_err(cannot_send)?;
-                self.agent.run(request)
+                self.run_call(request, call.stream)
             }
             CallBody::Json(text) => {
                 let request = builder.body(text).map_err(cannot_send)?;
-                self.agent.run(request)
+                self.run_call(request, call.stream)
             }
             CallBody::Reader(reader) => {
                 let request = builder
                     .body(ureq::SendBody::from_owned_reader(reader))
                     .map_err(cannot_send)?;
-                self.agent.run(request)
+                self.run_call(request, call.stream)
             }
         }
         .map_err(|error| CoreError::Network(error.to_string()))?;
@@ -399,6 +403,23 @@ impl Http {
             retry_after_seconds,
             body,
         })
+    }
+
+    fn run_call<B: ureq::AsSendBody>(
+        &self,
+        request: ureq::http::Request<B>,
+        stream: bool,
+    ) -> Result<ureq::http::Response<ureq::Body>, ureq::Error> {
+        if stream {
+            let request = self
+                .agent
+                .configure_request(request)
+                .timeout_recv_body(None)
+                .build();
+            self.agent.run(request)
+        } else {
+            self.agent.run(request)
+        }
     }
 
     fn url(&self, segments: &[&str], params: &[(&str, &str)]) -> Url {

@@ -858,8 +858,10 @@ pub fn run(command: ItemsCommand, remote: &Remote, out: &Printer) -> Result<(), 
 /// Upload, then the file item, then the edge: three doors, one command,
 /// because "attach a file" is what a person means and no door does it.
 ///
-/// Reported as it goes under `--json`, one object per step, so a run that
-/// stops at the second step leaves a record of the blob it did store.
+/// Reported once, at the end, with all three answers. A run that stops at
+/// the second or third step leaves the earlier steps standing, and its
+/// refusal names the door that refused; the blob is addressed by content,
+/// so the next attempt uploads nothing new.
 fn attach(args: &AttachArgs, remote: &Remote, out: &Printer) -> Result<(), CliError> {
     let mime_type = mime_type_for(&args.file, args.mime_type.as_deref());
     let blob = remote.json(&upload_request(&args.file, &mime_type))?;

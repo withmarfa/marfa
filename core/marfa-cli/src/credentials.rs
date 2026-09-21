@@ -3,8 +3,7 @@
 //!
 //! One entry per server origin, holding a key as JSON, and one entry naming
 //! the origin a bare command talks to. Never a file: a file is readable by
-//! anything on the machine, and two processes refreshing one credential
-//! from a file race each other; a process with no keychain is told so and
+//! anything on the machine; a process with no keychain is told so and
 //! pointed at `--key` or the environment.
 
 use keyring::{Entry, Error};
@@ -18,7 +17,8 @@ const SERVICE: &str = "marfa";
 /// The account that names the origin a command with no `--url` talks to.
 const CURRENT: &str = "current";
 
-/// What is kept for one origin.
+/// What is kept for one origin. Tagged by kind, so an entry of another
+/// kind can join without changing what an entry already kept reads as.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Kept {

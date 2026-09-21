@@ -13,8 +13,8 @@ use std::process::ExitCode;
 use clap::{Parser, Subcommand};
 
 use crate::commands::{
-    audit, blobs, config, edge_types, edges, events, export, extensions, grants, housekeeping,
-    items, keys, metadata, operations, search, status, types, webhooks, whoami,
+    audit, blobs, config, edge_types, edges, events, export, extensions, housekeeping, items, keys,
+    metadata, operations, search, status, types, webhooks, whoami,
 };
 use crate::device::DeviceArgs;
 use crate::error::{CliError, EXIT_CODES_HELP};
@@ -102,21 +102,16 @@ enum Command {
     },
     /// Export the instance's data.
     Export(export::ExportArgs),
-    /// Outbound subscriptions that send events out.
+    /// Outbound subscriptions that send events out. Every command needs `webhooks.manage`.
     Webhooks {
         #[command(subcommand)]
         command: webhooks::WebhooksCommand,
     },
-    /// The audit log.
+    /// The audit log: every write, with the acting key. Needs `audit.read`.
     Audit(audit::AuditArgs),
     /// The event stream, one frame per line.
     Events(events::EventsArgs),
-    /// The apps the owner has authorized.
-    Grants {
-        #[command(subcommand)]
-        command: grants::GrantsCommand,
-    },
-    /// The jobs the server runs on itself.
+    /// The jobs the server runs on itself. Operator key only.
     Housekeeping {
         #[command(subcommand)]
         command: housekeeping::HousekeepingCommand,
@@ -155,37 +150,31 @@ fn run(cli: Cli) -> Result<(), CliError> {
         url: cli.url,
         key: cli.key,
     };
-    // The working copy and the folders resolve the server only where a
-    // command sends, and the table needs no server at all.
+    // Resolved by the commands that talk to a server: the working copy and
+    // the folders resolve it only where a command sends, and the table
+    // needs no server at all.
+    let remote = || Remote::resolve(&named);
     match cli.command {
-        Command::Operations => return operations::run(&out),
-        Command::Device(args) => return device::run(args, &named, cli.json),
-        Command::Folders { command } => return folders::run(command, &named, cli.json),
-        _ => {}
-    }
-    let remote = Remote::resolve(&named)?;
-    match cli.command {
-        Command::Status => status::run(&remote, &out),
-        Command::Whoami => whoami::run(&remote, &out),
-        Command::Items { command } => items::run(command, &remote, &out),
-        Command::Edges { command } => edges::run(command, &remote, &out),
-        Command::EdgeTypes { command } => edge_types::run(command, &remote, &out),
-        Command::Types { command } => types::run(command, &remote, &out),
-        Command::Search(args) => search::run(args, &remote, &out),
-        Command::Metadata { command } => metadata::run(command, &remote, &out),
-        Command::Extensions { command } => extensions::run(command, &remote, &out),
-        Command::Blobs { command } => blobs::run(command, &remote, &out),
-        Command::Keys { command } => keys::run(command, &remote, &out),
-        Command::Config { command } => config::run(command, &remote, &out),
-        Command::Export(args) => export::run(args, &remote, &out),
-        Command::Webhooks { command } => webhooks::run(command, &remote, &out),
-        Command::Audit(args) => audit::run(args, &remote, &out),
-        Command::Events(args) => events::run(args, &remote, &out),
-        Command::Grants { command } => grants::run(command, &remote, &out),
-        Command::Housekeeping { command } => housekeeping::run(command, &remote, &out),
-        Command::Operations | Command::Device(_) | Command::Folders { .. } => {
-            unreachable!("answered before the server was resolved")
-        }
+        Command::Operations => operations::run(&out),
+        Command::Device(args) => device::run(args, &named, cli.json),
+        Command::Folders { command } => folders::run(command, &named, cli.json),
+        Command::Status => status::run(&remote()?, &out),
+        Command::Whoami => whoami::run(&remote()?, &out),
+        Command::Items { command } => items::run(command, &remote()?, &out),
+        Command::Edges { command } => edges::run(command, &remote()?, &out),
+        Command::EdgeTypes { command } => edge_types::run(command, &remote()?, &out),
+        Command::Types { command } => types::run(command, &remote()?, &out),
+        Command::Search(args) => search::run(args, &remote()?, &out),
+        Command::Metadata { command } => metadata::run(command, &remote()?, &out),
+        Command::Extensions { command } => extensions::run(command, &remote()?, &out),
+        Command::Blobs { command } => blobs::run(command, &remote()?, &out),
+        Command::Keys { command } => keys::run(command, &remote()?, &out),
+        Command::Config { command } => config::run(command, &remote()?, &out),
+        Command::Export(args) => export::run(args, &remote()?, &out),
+        Command::Webhooks { command } => webhooks::run(command, &remote()?, &out),
+        Command::Audit(args) => audit::run(args, &remote()?, &out),
+        Command::Events(args) => events::run(args, &remote()?, &out),
+        Command::Housekeeping { command } => housekeeping::run(command, &remote()?, &out),
     }
 }
 

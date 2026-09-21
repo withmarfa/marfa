@@ -26,8 +26,8 @@ pub struct Request {
     pub query: Vec<(String, String)>,
     pub headers: Vec<(String, String)>,
     pub body: Body,
-    /// Whether the door needs a credential. The root document, the health
-    /// door and the sign-in endpoints answer without one.
+    /// Whether the door needs a credential. The root document and the
+    /// health door answer without one.
     pub credential: bool,
     /// Hand the body back as a reader rather than reading it as text: the
     /// stream, an export, a blob's bytes.

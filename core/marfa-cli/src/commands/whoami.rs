@@ -15,10 +15,11 @@ pub fn run(remote: &Remote, out: &Printer) -> Result<(), CliError> {
     let credential = match remote.credential() {
         None => json!(null),
         Some(source) => {
+            // A key as the server mints them, or something else handed
+            // over as one: the kind is read off the bearer, and only a key
+            // is a shape this build keeps.
             let bearer = remote.bearer().unwrap_or_default();
-            let kind = if bearer.starts_with("marfa_at_") {
-                "token"
-            } else if bearer.starts_with("marfa_k1_") {
+            let kind = if bearer.starts_with("marfa_k1_") {
                 "key"
             } else {
                 "unknown"

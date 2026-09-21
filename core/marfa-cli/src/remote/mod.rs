@@ -250,7 +250,8 @@ struct EnvelopeError {
 }
 
 /// A refusal as the server sent it: the code and message from the standard
-/// envelope, or the first of the body where there was none.
+/// envelope, or the first of the body where there was none, which is what a
+/// page or a proxy in front of the server answers.
 pub fn refused(status: u16, text: &str, retry_after_seconds: Option<u64>) -> CliError {
     let (code, message, details) = match serde_json::from_str::<Envelope>(text) {
         Ok(envelope) => (
@@ -258,27 +259,11 @@ pub fn refused(status: u16, text: &str, retry_after_seconds: Option<u64>) -> Cli
             envelope.error.message.unwrap_or_default(),
             envelope.error.details.map(Box::new),
         ),
-        // The OAuth doors answer `{error, error_description}` rather than
-        // the standard envelope, and a page or a proxy answers no JSON at all.
-        Err(_) => match serde_json::from_str::<Value>(text) {
-            Ok(Value::Object(map)) => (
-                map.get("error")
-                    .and_then(Value::as_str)
-                    .unwrap_or("unknown")
-                    .to_string(),
-                map.get("error_description")
-                    .or_else(|| map.get("message"))
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .to_string(),
-                None,
-            ),
-            _ => (
-                "unknown".to_string(),
-                text.chars().take(200).collect(),
-                None,
-            ),
-        },
+        Err(_) => (
+            "unknown".to_string(),
+            text.chars().take(200).collect(),
+            None,
+        ),
     };
     CliError::Refused {
         status,
@@ -294,7 +279,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_refusal_keeps_the_envelope_and_reads_the_oauth_shape_too() {
+    fn a_refusal_keeps_the_envelope_and_the_first_of_a_body_that_is_not_one() {
         match refused(
             422,
             r#"{"error":{"code":"bulk_atomic_rollback","message":"entry 3","details":{"index":3}}}"#,
@@ -312,19 +297,6 @@ mod tests {
                     (422, "bulk_atomic_rollback", "entry 3")
                 );
                 assert_eq!(details.unwrap()["index"], 3);
-            }
-            other => panic!("{other:?}"),
-        }
-        match refused(
-            400,
-            r#"{"error":"invalid_grant","error_description":"revoked"}"#,
-            None,
-        ) {
-            CliError::Refused { code, message, .. } => {
-                assert_eq!(
-                    (code.as_str(), message.as_str()),
-                    ("invalid_grant", "revoked")
-                );
             }
             other => panic!("{other:?}"),
         }
