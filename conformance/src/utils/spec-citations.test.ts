@@ -54,7 +54,16 @@ function statementNumbers(file: string): Set<number> {
   return out;
 }
 
-/** Every `<file>.md <N>` reference in `spec/`, with where it was written. */
+/**
+ * Every `<file>.md <N>` reference in `spec/`, with where it was written.
+ *
+ * A citation names as many statements as it lists — "`items.md` 1, 2 and 3"
+ * is three references, not one — and each is held to an existing statement.
+ * Reading the first number alone would leave every number after it uncited
+ * in a file whose numbering had moved, which is the whole failure this
+ * check exists for. The pattern is the one the code check below uses, so
+ * the chapters and the sources are read by the same rule.
+ */
 function statementCitations(): {
   spec: string;
   target: string;
@@ -64,8 +73,12 @@ function statementCitations(): {
   for (const name of readdirSync(specDir)) {
     if (!name.endsWith(".md")) continue;
     const text = readFileSync(resolve(specDir, name), "utf8");
-    for (const match of text.matchAll(/`([a-z][a-z-]*\.md)`\s+(\d+)/g)) {
-      out.push({ spec: name, target: match[1], entry: Number(match[2]) });
+    for (const match of text.matchAll(
+      /`([a-z][a-z-]*\.md)`\s+((?:\d+(?:\s*(?:,|and|to)\s*)?)+)/g,
+    )) {
+      for (const raw of match[2].match(/\d+/g) ?? []) {
+        out.push({ spec: name, target: match[1], entry: Number(raw) });
+      }
     }
   }
   return out;
