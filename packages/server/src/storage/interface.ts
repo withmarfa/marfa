@@ -1146,13 +1146,6 @@ export interface BlobRegistry {
   } | null>;
   /** Every registered hash. */
   listAll(): Promise<string[]>;
-  /**
-   * Hashes registered before `cutoff` (ISO 8601). The orphan sweep's
-   * candidate set: a blob is unreferenced for the whole window between its
-   * upload and the item write that names it, so sweeping on unreferenced
-   * alone would delete bytes a caller is still on its way to using.
-   */
-  listRegisteredBefore(cutoff: string): Promise<string[]>;
   remove(hash: string): Promise<void>;
   count(): Promise<{ count: number; total_size_bytes: number }>;
 
@@ -1176,6 +1169,73 @@ export interface BlobRegistry {
    */
   recordLocation(hash: string, storeId: string): Promise<void>;
   listLocations(hash: string): Promise<BlobLocation[]>;
+  /** Strike one store's copy from the log. True when a row went. */
+  removeLocation(hash: string, storeId: string): Promise<boolean>;
+  /**
+   * Remove one store's copy from the log only if at least `minCopies`
+   * copies in attached stores would remain, decided in the one statement
+   * so no second writer can slip between the count and the removal.
+   * `"dropped"`, `"below_minimum"`, or `"absent"` when no such row exists.
+   */
+  dropLocationKeeping(
+    hash: string,
+    storeId: string,
+    minCopies: number,
+  ): Promise<"dropped" | "below_minimum" | "absent">;
+  /** Stamp a copy the integrity check found present and intact. */
+  markVerified(hash: string, storeId: string, at: string): Promise<void>;
+  /**
+   * Blobs `storeId` lacks that some other attached store holds: what
+   * replication copies next, oldest registration first, at most `limit`.
+   */
+  listMissingFrom(storeId: string, limit: number): Promise<BlobSizedRef[]>;
+  /** How many blobs `storeId` lacks that some other attached store holds. */
+  countMissingFrom(storeId: string): Promise<number>;
+  /**
+   * The copies a check should look at next, across `storeIds`: never
+   * checked first, then the least recently checked, at most `limit`.
+   */
+  listToVerify(
+    storeIds: readonly string[],
+    limit: number,
+  ): Promise<BlobCopyRef[]>;
+
+  /**
+   * Make the orphan report say exactly `hashes`: a hash already reported
+   * keeps its first `reported_at`, a new one is recorded at `at`, and a row
+   * for a hash no longer in the set is removed. Answers how many rows the
+   * report holds afterwards.
+   */
+  retainOrphans(hashes: readonly string[], at: string): Promise<number>;
+  /** The report, oldest first. */
+  listOrphans(): Promise<BlobOrphanRow[]>;
+  /**
+   * Reported orphans whose first report is strictly before `before` and
+   * strictly before `runStartedAt`: what a run may purge. The first bound
+   * is the grace, the second keeps a run from purging what it reported
+   * itself.
+   */
+  listOrphansToPurge(before: string, runStartedAt: string): Promise<string[]>;
+}
+
+/** A blob by hash with the size its row records. */
+export interface BlobSizedRef {
+  hash: string;
+  size_bytes: number;
+}
+
+/** One copy: a blob and the store the log says holds it. */
+export interface BlobCopyRef extends BlobSizedRef {
+  store_id: string;
+}
+
+/** One row of the orphan report: a blob nothing references, and when a run
+ *  first said so. */
+export interface BlobOrphanRow {
+  hash: string;
+  mime_type: string;
+  size_bytes: number;
+  reported_at: string;
 }
 
 export interface WebhookStore {

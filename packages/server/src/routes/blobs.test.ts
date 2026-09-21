@@ -1,10 +1,10 @@
 import { createHash } from "node:crypto";
 import { readdir } from "node:fs/promises";
-import { join } from "node:path";
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
-import { createTestContext, request } from "../test-utils.js";
+import { Readable } from "node:stream";
+import { createTestContext, request, withSecondStore } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
-import { sweepUnreferencedBlobs } from "../storage/blob-orphans.js";
+import { BlobOrphanReporter } from "../housekeeping/blob-orphans.js";
 
 let ctx: TestContext;
 
@@ -36,15 +36,6 @@ async function upload(
 
 function hashOf(bytes: Uint8Array): string {
   return `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
-}
-
-/** An unreferenced upload in the corpus: one sweep, no dry run. */
-async function sweep(): Promise<void> {
-  await sweepUnreferencedBlobs({
-    storage: ctx.storage,
-    blobs: ctx.blobs,
-    dryRun: false,
-  });
 }
 
 describe("POST /blobs", () => {
@@ -525,6 +516,21 @@ describe("GET /blobs/stores", () => {
     // The marker in the folder is where the id came from.
     const files = await readdir(ctx.blobs.disk.locator);
     expect(files).toContain(".marfa-store");
+    // The minimum a drop is held to, the instance default here.
+    expect(body).toHaveProperty("min_copies", 1);
+  });
+
+  it("reports the configured minimum copies", async () => {
+    const two = await createTestContext({ blobMinCopies: 2 });
+    try {
+      const res = await request(two.app, "GET", "/blobs/stores", {
+        key: two.operatorKey,
+      });
+      expect(res.status).toBe(200);
+      expect(await res.json()).toMatchObject({ min_copies: 2 });
+    } finally {
+      await two.cleanup();
+    }
   });
 
   it("refuses a working key where the operator key is answered", async () => {
@@ -579,117 +585,157 @@ describe("GET /blobs/:hash/locations", () => {
   });
 });
 
-describe("the unreferenced-blob sweep", () => {
-  it("removes a blob nothing references and keeps one an item names", async () => {
-    const orphan = new TextEncoder().encode("orphan blob content");
-    const named = new TextEncoder().encode("custom field blob");
-    await upload(orphan);
-    await upload(named);
-    const created = await request(ctx.app, "POST", "/items", {
-      key: ctx.workingKey,
-      body: {
-        type: "core.note",
-        properties: { body: "has a logo", logo_blob_hash: hashOf(named) },
-      },
-    });
-    expect(created.status).toBe(201);
-
-    await sweep();
-
-    expect(await ctx.storage.blobs.get(hashOf(orphan))).toBeNull();
-    expect(await ctx.blobs.disk.has(hashOf(orphan))).toBeNull();
-    expect(await ctx.storage.blobs.get(hashOf(named))).not.toBeNull();
-    expect(await ctx.blobs.disk.has(hashOf(named))).not.toBeNull();
-  });
-
-  it("keeps a blob referenced only by a trashed item", async () => {
-    const data = new TextEncoder().encode("bytes only the bin points at");
-    await upload(data);
-    const createRes = await request(ctx.app, "POST", "/items", {
-      key: ctx.workingKey,
-      body: {
-        type: "core.note",
-        state: "trashed",
-        properties: {
-          body: "in the bin, still holds a file",
-          blob_ref: hashOf(data),
+describe("POST /blobs wakes replication", () => {
+  it("makes blob-replicate due at once", async () => {
+    const woken = await createTestContext();
+    try {
+      let runs = 0;
+      woken.housekeeping.register({
+        name: "blob-replicate",
+        intervalMs: 3_600_000,
+        firstRunDelayMs: 3_600_000,
+        run: () => {
+          runs += 1;
+          return Promise.resolve(null);
         },
-      },
-    });
-    expect(createRes.status).toBe(201);
-
-    await sweep();
-
-    expect(await ctx.blobs.disk.has(hashOf(data))).not.toBeNull();
-  });
-
-  it("keeps a blob referenced only by an archived or revoked item", async () => {
-    for (const [state, type, properties] of [
-      ["archived", "core.note", { body: "archived, holds a file" }],
-      ["revoked", "system.device", { name: "Revoked laptop", kind: "laptop" }],
-    ] as const) {
-      const data = new TextEncoder().encode(`bytes only ${state} points at`);
-      await upload(data);
-      // Written through the storage layer rather than `POST /items`, because
-      // one of these rows is a `system.*` type and the reserved namespace is
-      // closed to every credential. The claim here is about what the scan
-      // keeps, not about which door wrote the row.
-      await ctx.storage.items.create({
-        type,
-        tier: "library",
-        state,
-        properties: { ...properties, blob_ref: hashOf(data) },
-        source: "test/blob-cleanup",
       });
-
-      await sweep();
-
-      expect(await ctx.blobs.disk.has(hashOf(data))).not.toBeNull();
+      await woken.housekeeping.start();
+      // Not due for an hour: a poll runs nothing.
+      await woken.housekeeping.poll();
+      await woken.housekeeping.settle();
+      expect(runs).toBe(0);
+      const res = await woken.app.request("/blobs", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${woken.workingKey}`,
+          "Content-Type": "application/octet-stream",
+        },
+        body: new TextEncoder().encode("wakes the copier"),
+      });
+      expect(res.status).toBe(201);
+      await woken.housekeeping.poll();
+      await woken.housekeeping.settle();
+      expect(runs).toBe(1);
+      await woken.housekeeping.stop();
+    } finally {
+      await woken.cleanup();
     }
   });
+});
 
-  it("keeps a blob referenced only by version history", async () => {
-    const data = new TextEncoder().encode("bytes only history points at");
+describe("GET /blobs/orphans", () => {
+  it("answers the report to the operator key and refuses a working key", async () => {
+    const data = new TextEncoder().encode("reported, not yet purged");
     await upload(data);
-    const createRes = await request(ctx.app, "POST", "/items", {
-      key: ctx.workingKey,
-      body: {
-        type: "core.note",
-        properties: { body: "carries a file", attachment_hash: hashOf(data) },
-      },
+    const reporter = new BlobOrphanReporter(ctx.storage, ctx.blobs, 3_600_000);
+    await reporter.runOnce();
+    const res = await request(ctx.app, "GET", "/blobs/orphans", {
+      key: ctx.operatorKey,
     });
-    expect(createRes.status).toBe(201);
-    const created = (await createRes.json()) as {
-      item: { id: string; version: number };
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      data: { hash: string; mime_type: string; size_bytes: number }[];
     };
-    const patchRes = await request(
-      ctx.app,
-      "PATCH",
-      `/items/${created.item.id}`,
-      {
-        key: ctx.workingKey,
-        body: {
-          properties: { attachment_hash: "replaced" },
-          version: created.item.version,
-        },
-      },
-    );
-    expect(patchRes.status, await patchRes.clone().text()).toBe(200);
-
-    await sweep();
-
-    expect(await ctx.blobs.disk.has(hashOf(data))).not.toBeNull();
+    expect(body.data.map((row) => row.hash)).toContain(hashOf(data));
+    expect(body.data.find((row) => row.hash === hashOf(data))).toMatchObject({
+      mime_type: "application/octet-stream",
+      size_bytes: data.length,
+    });
+    const working = await request(ctx.app, "GET", "/blobs/orphans", {
+      key: ctx.workingKey,
+    });
+    expect(working.status).toBe(403);
   });
+});
 
-  it("removes the location rows with the blob", async () => {
-    const data = new TextEncoder().encode("rows go with the bytes");
+describe("DELETE /blobs/:hash/locations/:store", () => {
+  it("drops a copy while the minimum holds, refuses the one that would break it, and audits the drop", async () => {
+    const { second } = await withSecondStore(ctx);
+    const data = new TextEncoder().encode("two copies, then one");
     await upload(data);
-    expect(await ctx.storage.blobs.listLocations(hashOf(data))).toHaveLength(1);
-    await sweep();
-    expect(await ctx.storage.blobs.listLocations(hashOf(data))).toHaveLength(0);
-    // The folder the spool and the marker live in is untouched.
-    expect(await readdir(join(ctx.blobs.disk.locator))).toContain(
-      ".marfa-store",
+    const hash = hashOf(data);
+    // The second store holds a copy: recorded the way replication records
+    // one, after a put.
+    await second.put(hash, {
+      stream: Readable.from([Buffer.from(data)]),
+      size_bytes: data.length,
+    });
+    await ctx.storage.blobs.recordLocation(hash, second.id);
+    expect(await ctx.storage.blobs.listLocations(hash)).toHaveLength(2);
+
+    // A working key is refused a drop the minimum would allow, and the
+    // copy stays for the operator to drop.
+    const working = await request(
+      ctx.app,
+      "DELETE",
+      `/blobs/${hash}/locations/${second.id}`,
+      { key: ctx.workingKey },
     );
+    expect(working.status).toBe(403);
+    expect(await ctx.storage.blobs.listLocations(hash)).toHaveLength(2);
+    const dropped = await request(
+      ctx.app,
+      "DELETE",
+      `/blobs/${hash}/locations/${second.id}`,
+      { key: ctx.operatorKey },
+    );
+    expect(dropped.status).toBe(200);
+    expect(await dropped.json()).toEqual({ ok: true });
+    expect(
+      (await ctx.storage.blobs.listLocations(hash)).map((l) => l.store_id),
+    ).toEqual([ctx.blobs.disk.id]);
+    expect(await second.has(hash)).toBeNull();
+    expect(await ctx.blobs.disk.has(hash)).not.toBeNull();
+    const audits = await ctx.storage.audit.list({
+      action: "blob.copy_dropped",
+      limit: 10,
+    });
+    expect(audits.data.map((row) => row.resource_id)).toContain(hash);
+
+    // The last copy is refused: the log and the bytes are untouched.
+    const refused = await request(
+      ctx.app,
+      "DELETE",
+      `/blobs/${hash}/locations/${ctx.blobs.disk.id}`,
+      { key: ctx.operatorKey },
+    );
+    expect(refused.status).toBe(409);
+    const body = (await refused.json()) as {
+      error: { code: string; details?: Record<string, unknown> };
+    };
+    expect(body.error.code).toBe("copies_below_minimum");
+    expect(body.error.details).toMatchObject({ live: 1, min_copies: 1 });
+    expect(await ctx.storage.blobs.listLocations(hash)).toHaveLength(1);
+    expect(await ctx.blobs.disk.has(hash)).not.toBeNull();
+
+    // A store that holds no copy, and a store that is not attached.
+    const nowhere = await request(
+      ctx.app,
+      "DELETE",
+      `/blobs/${hash}/locations/${second.id}`,
+      { key: ctx.operatorKey },
+    );
+    expect(nowhere.status).toBe(404);
+    expect(
+      ((await nowhere.json()) as { error: { code: string } }).error.code,
+    ).toBe("blob_location_not_found");
+    const unattached = await request(
+      ctx.app,
+      "DELETE",
+      `/blobs/${hash}/locations/no-such-store`,
+      { key: ctx.operatorKey },
+    );
+    expect(unattached.status).toBe(404);
+    // An unknown blob, and a working key.
+    const unknown = await request(
+      ctx.app,
+      "DELETE",
+      `/blobs/sha256:${"0".repeat(64)}/locations/${ctx.blobs.disk.id}`,
+      { key: ctx.operatorKey },
+    );
+    expect(unknown.status).toBe(404);
+    expect(
+      ((await unknown.json()) as { error: { code: string } }).error.code,
+    ).toBe("blob_not_found");
   });
 });

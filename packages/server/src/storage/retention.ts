@@ -6,10 +6,8 @@ import type {
 } from "./interface.js";
 import type { InstanceConfig } from "@withmarfa/shared";
 import { readInstanceConfig } from "./instance-config.js";
-import type { BlobLayer } from "./blob-layer.js";
 import { log } from "../middleware/logger.js";
 import { isConnectionLostError } from "./job-tick.js";
-import { sweepUnreferencedBlobs } from "./blob-orphans.js";
 import { revokeProjectedGrant } from "../auth/grant-lifecycle.js";
 
 /**
@@ -402,56 +400,6 @@ export class DcrClientCleaner {
       });
     }
     return deleted;
-  }
-}
-
-/**
- * Reclaims blobs nothing references.
- *
- * `POST /blobs` and `POST /items` are separate calls, and the bytes are
- * stored by the first one. An item write refused for any reason leaves the
- * blob registered with nothing pointing at it, and nothing else reconciles
- * the two.
- *
- * The grace window is what makes running it unattended safe. Unreferenced
- * is also the ordinary state of a blob between its upload and the item
- * write that names it, so the sweep considers only hashes registered
- * longer than `graceMs` ago and lets the rest wait for the next run.
- *
- * Instance-wide, like the other sweeps with no configurable override: a
- * hash is deleted from every store once, so the question "does anything
- * reference this" has to be asked of every item at once.
- *
- * `graceMs <= 0` disables the job. A zero window would sweep a blob the
- * instant it is unreferenced, which is the defect rather than a
- * configuration of it, so the value doubles as the operator's off switch.
- */
-export class BlobOrphanCleaner {
-  constructor(
-    private storage: Storage,
-    private blobs: BlobLayer,
-    private graceMs: number,
-    private nowFn: () => Date = () => new Date(),
-  ) {}
-
-  /** One sweep. Returns the number of blobs removed. */
-  async runOnce(): Promise<number> {
-    if (this.graceMs <= 0) return 0;
-    const result = await sweepUnreferencedBlobs({
-      storage: this.storage,
-      blobs: this.blobs,
-      dryRun: false,
-      registeredBefore: new Date(
-        this.nowFn().getTime() - this.graceMs,
-      ).toISOString(),
-    });
-    if (result.removed > 0) {
-      log("info", "Blob cleanup", {
-        removed: result.removed,
-        graceMs: this.graceMs,
-      });
-    }
-    return result.removed;
   }
 }
 

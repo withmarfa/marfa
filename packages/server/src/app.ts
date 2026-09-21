@@ -531,7 +531,7 @@ export function createApp(
   app.route("/search", searchRoutes(storage));
   app.route("/occurrences", occurrenceRoutes(storage));
   app.route("/metadata", metadataRoutes(storage));
-  app.route("/blobs", blobRoutes(storage, blobs, config));
+  app.route("/blobs", blobRoutes(storage, blobs, housekeeping, config));
   app.route("/housekeeping", housekeepingRoutes(housekeeping));
   app.route("/keys", keyRoutes(storage, config.apiKeySalt));
   app.route("/config", configRoutes(storage, instanceId));

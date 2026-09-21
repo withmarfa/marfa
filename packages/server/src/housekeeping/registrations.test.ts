@@ -10,8 +10,11 @@ import {
   createUnbootstrappedTestApp,
   type UnbootstrappedTestApp,
 } from "../test-utils.js";
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { Housekeeping } from "./scheduler.js";
 import { registerHousekeepingJobs } from "./registrations.js";
+import { DiskBlobStore, type BlobStore } from "../storage/blob-store.js";
 
 const contexts: UnbootstrappedTestApp[] = [];
 
@@ -57,6 +60,8 @@ const ALWAYS = [
   "trash-purge",
   "revoked-key-reap",
   "rate-limit-cleanup",
+  "blob-replicate",
+  "blob-integrity",
 ];
 
 describe("the housekeeping registrations", () => {
@@ -75,6 +80,8 @@ describe("the housekeeping registrations", () => {
       "auth-session-cleanup",
       "rate-limit-cleanup",
       "dcr-client-cleanup",
+      "blob-replicate",
+      "blob-integrity",
       "blob-orphans",
       "enrichment-sweep",
       "bulk-action-gc",
@@ -107,7 +114,11 @@ describe("the housekeeping registrations", () => {
       { dcrClientRetentionDays: 0 },
       ["dcr-client-cleanup"],
     ],
-    ["the blob cleanup grace", { blobCleanupGraceMs: 0 }, ["blob-orphans"]],
+    [
+      "the blob cleanup interval",
+      { blobCleanupIntervalMs: 0 },
+      ["blob-orphans"],
+    ],
     ["the enrichment flag", { enrichmentEnabled: false }, ["enrichment-sweep"]],
     [
       "the bulk-action job retention",
@@ -145,6 +156,18 @@ describe("the housekeeping registrations", () => {
     );
   });
 
+  it("runs replication and the integrity check on their configured cadences", async () => {
+    const { intervalOf } = await namesUnder({
+      blobReplicateIntervalMs: 120_000,
+      blobIntegrityIntervalMs: 240_000,
+    });
+    expect(intervalOf("blob-replicate")).toBe(120_000);
+    expect(intervalOf("blob-integrity")).toBe(240_000);
+    const { intervalOf: defaults } = await namesUnder({});
+    expect(defaults("blob-replicate")).toBe(60_000);
+    expect(defaults("blob-integrity")).toBe(3_600_000);
+  });
+
   it("runs the revoked-key reap on the activity purge's cadence, hourly when that purge is off", async () => {
     const { intervalOf } = await namesUnder({
       activityPurgeIntervalMs: 120_000,
@@ -154,5 +177,148 @@ describe("the housekeeping registrations", () => {
       activityPurgeIntervalMs: 0,
     });
     expect(off("revoked-key-reap")).toBe(3_600_000);
+  });
+});
+
+describe("the copy rules' wakes", () => {
+  const T0 = Date.parse("2026-09-20T12:00:00.000Z");
+
+  /** The app's layer with a second disk store beside its disk, attached
+   *  the way the layer attaches one, so the registrations copy between
+   *  them. */
+  async function twoStores(ctx: UnbootstrappedTestApp): Promise<BlobStore> {
+    const second = new DiskBlobStore(join(ctx.tmpDir, "second-store"));
+    await second.attach();
+    await ctx.storage.blobs.attachStore({
+      id: second.id,
+      kind: second.kind,
+      locator: second.locator,
+    });
+    const all = ctx.blobs.stores as BlobStore[];
+    all.push(second);
+    ctx.blobs.byId = (id) => all.find((store) => store.id === id);
+    return second;
+  }
+
+  async function upload(ctx: UnbootstrappedTestApp, content: string) {
+    const disk = ctx.blobs.disk;
+    const hash = `sha256:${(await import("node:crypto"))
+      .createHash("sha256")
+      .update(content)
+      .digest("hex")}`;
+    const { Readable } = await import("node:stream");
+    await disk.put(hash, {
+      stream: Readable.from([Buffer.from(content)]),
+      size_bytes: content.length,
+    });
+    await ctx.storage.blobs.register(hash, "text/plain", content.length);
+    await ctx.storage.blobs.recordLocation(hash, disk.id);
+    return hash;
+  }
+
+  it("wakes replication again after a run that copied some of a backlog, and not after one that copied nothing", async () => {
+    const ctx = await createUnbootstrappedTestApp({ blobReplicateBatch: 1 });
+    contexts.push(ctx);
+    const second = await twoStores(ctx);
+    await upload(ctx, "backlog one");
+    await upload(ctx, "backlog two");
+    let now = T0;
+    const housekeeping = new Housekeeping(ctx.storage.housekeeping, {
+      pollIntervalMs: 3_600_000,
+      nowFn: () => new Date(now),
+    });
+    registerHousekeepingJobs(housekeeping, ctx.storage, ctx.blobs, ctx.config);
+    await housekeeping.start();
+    const dueAt = async () =>
+      (await ctx.storage.housekeeping.get("blob-replicate"))?.next_run_at;
+    // Not due for its first-run delay.
+    expect(await dueAt()).toBe(new Date(T0 + 15_000).toISOString());
+
+    // One of two copied: due again now, not in a minute. A wake during a
+    // run is recorded a millisecond after the run's start, so the finish
+    // can tell it from the schedule.
+    now = T0 + 20_000;
+    const first = await housekeeping.runNow("blob-replicate");
+    expect(first).toMatchObject({
+      kind: "ran",
+      run: { result: { copied: 1, remaining: 1 } },
+    });
+    expect(await dueAt()).toBe(new Date(now + 1).toISOString());
+
+    // The rest copied: the next run is a cadence away.
+    now = T0 + 21_000;
+    expect(await housekeeping.runNow("blob-replicate")).toMatchObject({
+      run: { result: { copied: 1, remaining: 0 } },
+    });
+    expect(await dueAt()).toBe(new Date(now + 60_000).toISOString());
+
+    // A backlog nothing can be copied from: no wake, the cadence stands.
+    const refused = await upload(ctx, "backlog three");
+    const put = second.put.bind(second);
+    second.put = () => Promise.reject(new Error("no room"));
+    const write = process.stdout.write.bind(process.stdout);
+    process.stdout.write = () => true;
+    try {
+      now = T0 + 22_000;
+      expect(await housekeeping.runNow("blob-replicate")).toMatchObject({
+        run: { result: { copied: 0, remaining: 1 } },
+      });
+    } finally {
+      process.stdout.write = write;
+      second.put = put;
+    }
+    // A run ahead of schedule leaves the schedule where it was: the
+    // cadence set by the run before, not a wake.
+    expect(await dueAt()).toBe(new Date(T0 + 21_000 + 60_000).toISOString());
+    expect(await second.has(refused)).toBeNull();
+    await housekeeping.stop();
+  });
+
+  it("wakes replication after the integrity check strikes a copy", async () => {
+    const ctx = await createUnbootstrappedTestApp();
+    contexts.push(ctx);
+    await twoStores(ctx);
+    const hash = await upload(ctx, "struck, then put back");
+    let now = T0;
+    const housekeeping = new Housekeeping(ctx.storage.housekeeping, {
+      pollIntervalMs: 3_600_000,
+      nowFn: () => new Date(now),
+    });
+    registerHousekeepingJobs(housekeeping, ctx.storage, ctx.blobs, ctx.config);
+    await housekeeping.start();
+    now = T0 + 20_000;
+    expect(await housekeeping.runNow("blob-replicate")).toMatchObject({
+      run: { result: { copied: 1, remaining: 0 } },
+    });
+    const dueAt = async () =>
+      (await ctx.storage.housekeeping.get("blob-replicate"))?.next_run_at;
+    expect(await dueAt()).toBe(new Date(now + 60_000).toISOString());
+
+    // A sound check wakes nothing.
+    now = T0 + 30_000;
+    expect(await housekeeping.runNow("blob-integrity")).toMatchObject({
+      run: { result: { verified: 2, struck: 0 } },
+    });
+    expect(await dueAt()).toBe(new Date(T0 + 20_000 + 60_000).toISOString());
+
+    // A strike wakes replication.
+    const hex = hash.slice("sha256:".length);
+    writeFileSync(
+      join(ctx.blobs.disk.locator, hex.slice(0, 4), hex),
+      "struck, THEN put back",
+    );
+    const write = process.stdout.write.bind(process.stdout);
+    process.stdout.write = () => true;
+    try {
+      now = T0 + 40_000;
+      expect(await housekeeping.runNow("blob-integrity")).toMatchObject({
+        run: { result: { verified: 1, struck: 1 } },
+      });
+    } finally {
+      process.stdout.write = write;
+    }
+    // Woken from another run, so due at the wake's own instant.
+    expect(await dueAt()).toBe(new Date(now).toISOString());
+    await housekeeping.stop();
   });
 });

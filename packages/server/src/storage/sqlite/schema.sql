@@ -279,6 +279,13 @@ CREATE TABLE IF NOT EXISTS `blob_locations` (
 	FOREIGN KEY (`store_id`) REFERENCES `blob_stores`(`id`) ON UPDATE no action ON DELETE no action
 );
 
+CREATE INDEX IF NOT EXISTS `idx_blob_locations_store_verified` ON `blob_locations` (`store_id`,`verified_at`);
+CREATE TABLE IF NOT EXISTS `blob_orphans` (
+	`hash` text PRIMARY KEY NOT NULL,
+	`reported_at` text NOT NULL,
+	FOREIGN KEY (`hash`) REFERENCES `blobs`(`hash`) ON UPDATE no action ON DELETE cascade
+);
+
 CREATE TABLE IF NOT EXISTS `blob_stores` (
 	`id` text PRIMARY KEY NOT NULL,
 	`kind` text NOT NULL,

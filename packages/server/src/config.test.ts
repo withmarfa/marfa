@@ -162,3 +162,29 @@ describe("loadConfig MARFA_AUTH_SECRET production guard", () => {
     expect(() => loadConfig()).not.toThrow();
   });
 });
+
+describe("loadConfig MARFA_BLOB_MIN_COPIES", () => {
+  const saved = process.env.MARFA_BLOB_MIN_COPIES;
+
+  afterEach(() => {
+    if (saved === undefined) {
+      Reflect.deleteProperty(process.env, "MARFA_BLOB_MIN_COPIES");
+    } else {
+      process.env.MARFA_BLOB_MIN_COPIES = saved;
+    }
+  });
+
+  it("defaults to one copy and takes a positive integer", () => {
+    delete process.env.MARFA_BLOB_MIN_COPIES;
+    expect(loadConfig().blobMinCopies).toBe(1);
+    process.env.MARFA_BLOB_MIN_COPIES = "2";
+    expect(loadConfig().blobMinCopies).toBe(2);
+  });
+
+  it("refuses to boot on zero, a negative or a non-number, which would let the last copy go", () => {
+    for (const raw of ["0", "-1", "two", "1.5"]) {
+      process.env.MARFA_BLOB_MIN_COPIES = raw;
+      expect(() => loadConfig(), raw).toThrow(/MARFA_BLOB_MIN_COPIES/);
+    }
+  });
+});
