@@ -21,12 +21,31 @@ pub enum CliError {
     /// The reader went away (a closed pipe); nothing is wrong.
     #[error("output closed")]
     ClosedOutput,
+    /// The server refused a call from the direct surface. The status and the
+    /// server's own code are both kept, because neither classifies alone.
+    #[error(
+        "the server refused ({status} {code}): {message}{}",
+        details_suffix(details)
+    )]
+    Refused {
+        status: u16,
+        code: String,
+        message: String,
+        retry_after_seconds: Option<u64>,
+        /// The envelope's `details`, carried whole: a bulk door names the
+        /// entry that failed there, and a validation names the field.
+        details: Option<Box<serde_json::Value>>,
+    },
     #[error("no working copy named: pass --db or set MARFA_DB")]
     NoStoreNamed,
     #[error("no server named: pass --url or set MARFA_API_URL")]
     NoServerNamed,
-    #[error("no credential named: pass --key or set MARFA_API_KEY")]
-    NoCredentialNamed,
+    #[error(
+        "no credential for {origin}: pass --key, set MARFA_API_KEY, or keep one with `marfa keys keep`"
+    )]
+    NoCredential { origin: String },
+    #[error("no keychain on this system: {0}")]
+    NoKeychain(String),
     /// An argument the binary judged wrong before anything was sent.
     #[error("{0}")]
     Invalid(String),
@@ -81,9 +100,20 @@ impl CliError {
             CliError::NotHeld(_) => "not_held",
             CliError::Watch(_) => "watch",
             CliError::ClosedOutput => "closed_output",
+            CliError::Refused { status, .. } => match status {
+                400 | 422 => "validation",
+                401 => "unauthorized",
+                403 => "forbidden",
+                404 => "not_found",
+                409 => "conflict",
+                413 => "too_large",
+                429 => "rate_limited",
+                _ => "server",
+            },
             CliError::NoStoreNamed => "no_store",
             CliError::NoServerNamed => "no_server",
-            CliError::NoCredentialNamed => "no_credential",
+            CliError::NoCredential { .. } => "no_credential",
+            CliError::NoKeychain(_) => "no_keychain",
             CliError::Invalid(_) => "invalid",
         }
     }
@@ -102,11 +132,8 @@ impl CliError {
                 | CoreError::Network(_)
                 | CoreError::Decoding(_)
                 | CoreError::StreamIncomplete { .. } => Exit::Environment,
-                // The binary passes a server to every command that sends,
-                // so the core never answers this; mapped beside the binary's
-                // own `NoServerNamed` so the two cannot disagree.
-                CoreError::NoServer => Exit::Usage,
                 CoreError::Store(_)
+                | CoreError::NoServer
                 | CoreError::NoCursor
                 | CoreError::HydrationIncomplete
                 | CoreError::ReadingHandle
@@ -117,27 +144,40 @@ impl CliError {
             CliError::Io(_) | CliError::Watch(_) => Exit::Environment,
             CliError::NotHeld(_) | CliError::Invalid(_) => Exit::Refused,
             CliError::ClosedOutput => Exit::Done,
+            CliError::Refused { status, .. } => match status {
+                401 => Exit::Credential,
+                429 => Exit::Environment,
+                500.. => Exit::Environment,
+                _ => Exit::Refused,
+            },
             CliError::NoStoreNamed | CliError::NoServerNamed => Exit::Usage,
-            CliError::NoCredentialNamed => Exit::Credential,
+            CliError::NoCredential { .. } => Exit::Credential,
+            CliError::NoKeychain(_) => Exit::Local,
         }
     }
 
-    /// The server's answer, where there was one: its status and its own
-    /// code.
-    fn server(&self) -> Option<(Option<u16>, &str)> {
+    /// The server's answer, where there was one: its status, its own code,
+    /// and its details.
+    fn server(&self) -> Option<(Option<u16>, &str, Option<&serde_json::Value>)> {
         match self {
             CliError::Core(core) => match core {
-                CoreError::NotFound { code, .. } => Some((Some(404), code)),
-                CoreError::Unauthorized { code, .. } => Some((Some(401), code)),
-                CoreError::Forbidden { code, .. } => Some((Some(403), code)),
+                CoreError::NotFound { code, .. } => Some((Some(404), code, None)),
+                CoreError::Unauthorized { code, .. } => Some((Some(401), code, None)),
+                CoreError::Forbidden { code, .. } => Some((Some(403), code, None)),
                 // The variant folds 400 and 422 together, so the status is
                 // not known here and is not invented.
-                CoreError::Validation { code, .. } => Some((None, code)),
-                CoreError::UnknownType { .. } => Some((Some(400), "unknown_type")),
-                CoreError::RateLimited { code, .. } => Some((Some(429), code)),
-                CoreError::Server { status, code, .. } => Some((Some(*status), code)),
+                CoreError::Validation { code, .. } => Some((None, code, None)),
+                CoreError::UnknownType { .. } => Some((Some(400), "unknown_type", None)),
+                CoreError::RateLimited { code, .. } => Some((Some(429), code, None)),
+                CoreError::Server { status, code, .. } => Some((Some(*status), code, None)),
                 _ => None,
             },
+            CliError::Refused {
+                status,
+                code,
+                details,
+                ..
+            } => Some((Some(*status), code, details.as_deref())),
             _ => None,
         }
     }
@@ -148,6 +188,10 @@ impl CliError {
                 retry_after_seconds,
                 ..
             }) => *retry_after_seconds,
+            CliError::Refused {
+                retry_after_seconds,
+                ..
+            } => *retry_after_seconds,
             _ => None,
         }
     }
@@ -156,7 +200,7 @@ impl CliError {
     pub fn envelope(&self) -> serde_json::Value {
         let server = self
             .server()
-            .map(|(status, code)| serde_json::json!({ "status": status, "code": code }));
+            .map(|(status, code, details)| serde_json::json!({ "status": status, "code": code, "details": details }));
         serde_json::json!({
             "error": {
                 "code": self.code(),
@@ -166,6 +210,15 @@ impl CliError {
             },
             "exit": self.exit() as u8,
         })
+    }
+}
+
+/// The details of a refusal, on the human line, compact: the entry a bulk
+/// door names or the field a validation names is the part a person acts on.
+fn details_suffix(details: &Option<Box<serde_json::Value>>) -> String {
+    match details {
+        Some(details) => format!(" {details}"),
+        None => String::new(),
     }
 }
 
@@ -193,19 +246,29 @@ Exit codes:
   1  the request was refused, by the server or by the binary before sending; a retry does not change it
   2  the command line was wrong, or named no store or server; clap's own refusals print its usage text
   3  the environment failed (unreachable, timed out, a 5xx, a 429); try again
-  4  the working copy or the queue refused under the device rules
+  4  the working copy or the queue refused under the device rules, or this system has no keychain
   5  no credential, or the credential was refused
 
 With --json a refusal is one JSON object on stderr:
-  {\"error\":{\"code\":...,\"message\":...,\"server\":{\"status\":...,\"code\":...}|null,\"retry_after_seconds\":...},\"exit\":N}
-where error.code is one of: invalid, not_found, unauthorized, forbidden, validation, unknown_type,
-rate_limited, server, network, decoding, io, watch, store, no_store, no_server, no_credential,
-no_cursor, hydration_incomplete, reading_handle, wrong_schema, catch_up_too_old, stream_incomplete,
-wrong_server, not_held.";
+  {\"error\":{\"code\":...,\"message\":...,\"server\":{\"status\":...,\"code\":...,\"details\":...}|null,\"retry_after_seconds\":...},\"exit\":N}
+where error.code is one of: invalid, not_found, unauthorized, forbidden, validation, conflict,
+too_large, unknown_type, rate_limited, server, network, decoding, io, watch, store, no_store,
+no_server, no_credential, no_keychain, no_cursor, hydration_incomplete, reading_handle,
+wrong_schema, catch_up_too_old, stream_incomplete, wrong_server, not_held.";
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn refused(status: u16) -> CliError {
+        CliError::Refused {
+            status,
+            code: "code".into(),
+            message: String::new(),
+            retry_after_seconds: None,
+            details: None,
+        }
+    }
 
     /// Every code the help names is one a variant answers, and the other
     /// way round, so the closed set is closed in one place.
@@ -241,6 +304,8 @@ mod tests {
                 message: String::new(),
             })
             .code(),
+            refused(409).code(),
+            refused(413).code(),
             CliError::Core(CoreError::UnknownType {
                 message: String::new(),
             })
@@ -264,7 +329,11 @@ mod tests {
             CliError::Core(CoreError::Store(String::new())).code(),
             CliError::NoStoreNamed.code(),
             CliError::NoServerNamed.code(),
-            CliError::NoCredentialNamed.code(),
+            CliError::NoCredential {
+                origin: String::new(),
+            }
+            .code(),
+            CliError::NoKeychain(String::new()).code(),
             CliError::Core(CoreError::NoCursor).code(),
             CliError::Core(CoreError::HydrationIncomplete).code(),
             CliError::Core(CoreError::ReadingHandle).code(),
@@ -295,11 +364,24 @@ mod tests {
         sorted_answered.sort_unstable();
         assert_eq!(sorted_listed, sorted_answered);
         // `no_server` is answered twice, by the core's variant and the
-        // binary's, through one door; `closed_output` never leaves the
-        // process.
+        // binary's, and `closed_output` never leaves the process.
         assert_eq!(CliError::Core(CoreError::NoServer).code(), "no_server");
-        assert_eq!(CliError::Core(CoreError::NoServer).exit(), Exit::Usage);
         assert_eq!(CliError::ClosedOutput.exit(), Exit::Done);
+        // A refusal from the direct surface takes its code from the status;
+        // the ones with a code of their own are listed above, the rest fold
+        // into the four the core also answers.
+        for (status, code) in [
+            (400, "validation"),
+            (422, "validation"),
+            (401, "unauthorized"),
+            (403, "forbidden"),
+            (404, "not_found"),
+            (429, "rate_limited"),
+            (500, "server"),
+            (503, "server"),
+        ] {
+            assert_eq!(refused(status).code(), code, "{status}");
+        }
     }
 
     #[test]
@@ -331,13 +413,36 @@ mod tests {
         });
         assert!(validation.envelope()["error"]["server"]["status"].is_null());
         assert_eq!(validation.envelope()["exit"], 1);
+
+        // The direct surface keeps the status and the details whole.
+        let direct = CliError::Refused {
+            status: 422,
+            code: "bulk_atomic_rollback".into(),
+            message: "entry 3 failed".into(),
+            retry_after_seconds: None,
+            details: Some(Box::new(serde_json::json!({ "index": 3 }))),
+        };
+        let envelope = direct.envelope();
+        assert_eq!(envelope["error"]["code"], "validation");
+        assert_eq!(envelope["error"]["server"]["status"], 422);
+        assert_eq!(envelope["error"]["server"]["code"], "bulk_atomic_rollback");
+        assert_eq!(envelope["error"]["server"]["details"]["index"], 3);
+        assert_eq!(envelope["exit"], 1);
+        assert!(direct.to_string().ends_with(r#"{"index":3}"#));
     }
 
     #[test]
     fn each_class_of_refusal_leaves_by_its_own_door() {
         assert_eq!(CliError::NoStoreNamed.exit(), Exit::Usage);
         assert_eq!(CliError::NoServerNamed.exit(), Exit::Usage);
-        assert_eq!(CliError::NoCredentialNamed.exit(), Exit::Credential);
+        assert_eq!(
+            CliError::NoCredential {
+                origin: String::new()
+            }
+            .exit(),
+            Exit::Credential
+        );
+        assert_eq!(CliError::NoKeychain(String::new()).exit(), Exit::Local);
         assert_eq!(CliError::NotHeld("x".into()).exit(), Exit::Refused);
         assert_eq!(CliError::Invalid("x".into()).exit(), Exit::Refused);
         assert_eq!(
@@ -357,5 +462,11 @@ mod tests {
             CliError::from(io::Error::from(io::ErrorKind::BrokenPipe)).exit(),
             Exit::Done
         );
+        assert_eq!(refused(401).exit(), Exit::Credential);
+        assert_eq!(refused(429).exit(), Exit::Environment);
+        assert_eq!(refused(502).exit(), Exit::Environment);
+        for status in [400, 403, 404, 409, 413, 422] {
+            assert_eq!(refused(status).exit(), Exit::Refused, "{status}");
+        }
     }
 }

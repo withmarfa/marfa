@@ -1,7 +1,7 @@
 //! The binary leaves by the door its help documents, end to end: the process
 //! exit code and what stderr carries, for every class reachable without a
-//! server. The class a server refusal takes (exit 1) needs one and is held
-//! by the scenario suite under `conformance/`.
+//! server. A server's own refusal (exit 1 with the server's code) needs one
+//! and is held by the scenario suite under `conformance/`.
 
 use std::path::PathBuf;
 use std::process::Command;
@@ -19,13 +19,20 @@ fn scratch(name: &str) -> PathBuf {
 /// Runs the binary with no server or credential in the environment, so the
 /// answer comes from the arguments alone.
 fn run(args: &[&str]) -> (i32, String, String) {
-    let output = marfa()
+    run_with(args, &[])
+}
+
+fn run_with(args: &[&str], env: &[(&str, &str)]) -> (i32, String, String) {
+    let mut command = marfa();
+    command
         .args(args)
         .env_remove("MARFA_API_URL")
         .env_remove("MARFA_API_KEY")
-        .env_remove("MARFA_DB")
-        .output()
-        .unwrap();
+        .env_remove("MARFA_DB");
+    for (name, value) in env {
+        command.env(name, value);
+    }
+    let output = command.output().unwrap();
     (
         output.status.code().unwrap(),
         String::from_utf8_lossy(&output.stdout).into_owned(),
@@ -38,6 +45,14 @@ fn read_envelope(stderr: &str) -> serde_json::Value {
         .unwrap_or_else(|error| panic!("stderr is not one JSON object: {error}\n{stderr}"))
 }
 
+/// Whether this machine's keychain names a current server, which the
+/// binary consults when nothing else names one: the cases that expect
+/// `no_server` cannot be held on a machine where a kept key answers.
+fn keychain_names_a_server() -> bool {
+    let (code, _, stderr) = run(&["--json", "status"]);
+    code != 2 || !stderr.contains("no_server")
+}
+
 #[test]
 fn a_usage_refusal_leaves_by_two() {
     let (code, stdout, stderr) = run(&["--json", "device", "queue"]);
@@ -48,9 +63,21 @@ fn a_usage_refusal_leaves_by_two() {
     assert_eq!(envelope["exit"], 2);
 
     let store = scratch("usage");
-    let (code, _, stderr) = run(&["--json", "device", "--db", store.to_str().unwrap(), "drain"]);
-    assert_eq!(code, 2, "{stderr}");
-    assert_eq!(read_envelope(&stderr)["error"]["code"], "no_server");
+    if keychain_names_a_server() {
+        eprintln!("skipped the no_server cases: this machine's keychain names a server");
+    } else {
+        let (code, _, stderr) =
+            run(&["--json", "device", "--db", store.to_str().unwrap(), "drain"]);
+        assert_eq!(code, 2, "{stderr}");
+        assert_eq!(read_envelope(&stderr)["error"]["code"], "no_server");
+        let (code, _, stderr) = run(&["--json", "items", "list"]);
+        assert_eq!(code, 2, "{stderr}");
+        assert_eq!(read_envelope(&stderr)["error"]["code"], "no_server");
+    }
+    // The table needs no server at all.
+    let (code, stdout, _) = run(&["--json", "operations"]);
+    assert_eq!(code, 0);
+    assert!(stdout.contains("\"operation_id\""));
 
     // clap's own refusal: exit 2, its usage text, no envelope.
     let (code, _, stderr) = run(&[
@@ -63,6 +90,30 @@ fn a_usage_refusal_leaves_by_two() {
     assert_eq!(code, 2, "{stderr}");
     assert!(stderr.contains("Usage:"), "{stderr}");
     assert!(!stderr.trim_start().starts_with('{'), "{stderr}");
+}
+
+/// The binary's own refusal of an argument, before anything is sent.
+#[test]
+fn an_argument_the_binary_refuses_leaves_by_one() {
+    let (code, stdout, stderr) = run(&[
+        "--json",
+        "--url",
+        "http://127.0.0.1:1",
+        "--key",
+        "marfa_k1_test",
+        "items",
+        "create",
+        "--type",
+        "core.note",
+        "--properties",
+        "[1]",
+    ]);
+    assert_eq!(code, 1, "{stderr}");
+    assert_eq!(stdout, "");
+    let envelope = read_envelope(&stderr);
+    assert_eq!(envelope["error"]["code"], "invalid");
+    assert!(envelope["error"]["server"].is_null());
+    assert_eq!(envelope["exit"], 1);
 }
 
 #[test]
@@ -88,6 +139,18 @@ fn an_environment_failure_leaves_by_three() {
     assert_eq!(envelope["error"]["code"], "network");
     assert!(envelope["error"]["server"].is_null());
     assert_eq!(envelope["exit"], 3);
+
+    // A direct command takes the same flags and meets the same door.
+    let (code, _, stderr) = run(&[
+        "--json",
+        "--url",
+        "http://127.0.0.1:1",
+        "--key",
+        "marfa_k1_test",
+        "status",
+    ]);
+    assert_eq!(code, 3, "{stderr}");
+    assert_eq!(read_envelope(&stderr)["error"]["code"], "network");
 }
 
 #[test]
@@ -130,4 +193,12 @@ fn a_missing_credential_leaves_by_five() {
     let envelope = read_envelope(&stderr);
     assert_eq!(envelope["error"]["code"], "no_credential");
     assert_eq!(envelope["exit"], 5);
+
+    // A variable exported as nothing names no credential.
+    let (code, _, stderr) = run_with(
+        &["--json", "--url", "http://127.0.0.1:1", "items", "list"],
+        &[("MARFA_API_KEY", "  ")],
+    );
+    assert_eq!(code, 5, "{stderr}");
+    assert_eq!(read_envelope(&stderr)["error"]["code"], "no_credential");
 }
