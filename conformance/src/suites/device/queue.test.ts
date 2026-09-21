@@ -167,6 +167,32 @@ describe("every write names the version it read", () => {
       await queueOf(harness.device),
       "a refused update was queued anyway, so a drain would send it later",
     ).toEqual([]);
+
+    // **The witness for both absences above.** An empty queue and an empty
+    // request log are what a device that queues nothing and sends nothing
+    // also has, so neither assertion says anything on its own. The same
+    // update with a version queues, and draining it puts a non-GET on the
+    // server: both things the assertions above say did not happen are
+    // producible on this harness, in this case.
+    const accepted = await harness.device.update(HELD.id, {
+      properties: { title: "with version" },
+      version: HELD.version,
+    });
+    expect(
+      accepted.ok,
+      "the same update with a version was refused too, so the refusal above is the door rather than the missing version",
+    ).toBe(true);
+    expect((await queueOf(harness.device)).length).toBe(1);
+
+    scriptWrites(harness.server, {
+      update: [answers.updated(wireItem({ id: HELD.id, version: 4 }))],
+    });
+    expect((await harness.device.drain()).ok).toBe(true);
+    expect(
+      harness.server.requests.filter((request) => request.method !== "GET")
+        .length,
+      "a queued update did not reach the server either, so the empty request log above says nothing about the refusal",
+    ).toBe(1);
   });
 
   it("sends a create with the version it was based on", async () => {
