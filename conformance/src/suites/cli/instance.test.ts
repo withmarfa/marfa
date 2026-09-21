@@ -54,11 +54,11 @@ async function upload(text: string): Promise<string> {
 /**
  * Runs a housekeeping job by name and answers what the run reported.
  *
- * The server this file shares runs the same jobs on its own clock, and a
- * name the scheduler is already running answers `409`: the run in flight is
- * the same work, so the ask is repeated rather than failed.
+ * The server this file shares runs the same housekeeping jobs on its own
+ * clock, and a name the scheduler is already running answers `409`: the run
+ * in flight is the same work, so the ask is repeated rather than failed.
  */
-async function runJob(
+async function runHousekeepingJob(
   name: string,
 ): Promise<{ name: string; outcome: string }> {
   for (let attempt = 0; attempt < 50; attempt++) {
@@ -71,9 +71,15 @@ async function runJob(
     if (outcome.code === 0) {
       return JSON.parse(outcome.stdout) as { name: string; outcome: string };
     }
-    const envelope = JSON.parse(outcome.stderr.trim()) as {
-      error: { server: { status: number | null } | null };
-    };
+    // A refusal the binary makes is one JSON object on stderr. Anything
+    // else there is the binary failing outside the envelope, and that text
+    // is the finding rather than a parse error over it.
+    let envelope: { error: { server: { status: number | null } | null } };
+    try {
+      envelope = JSON.parse(outcome.stderr.trim()) as typeof envelope;
+    } catch {
+      throw new Error(`marfa housekeeping run ${name}: ${outcome.stderr}`);
+    }
     if (envelope.error.server?.status !== 409) {
       throw new Error(`marfa housekeeping run ${name}: ${outcome.stderr}`);
     }
@@ -284,14 +290,6 @@ describe("the instance from the terminal", () => {
   });
 
   it("reaches the operator doors under the operator key and is refused them under a working key", async () => {
-    // A type of this scenario's own, so the report below is held against a
-    // row that is there rather than against the whole instance. Drift is a
-    // platform row an older build seeded and this one no longer ships, and
-    // it is computed at boot: no door on a running server can make one, so
-    // the report's rows are not this suite's to produce and an assertion
-    // that it is empty would be an assertion about somebody else's server.
-    // What this scenario owns is a runtime registration, which must never
-    // be reported as drift however many rows the report holds.
     const drift = await c.operator.json<{
       types: Array<{ id: string; item_count: number; removable: boolean }>;
     }>(["types", "drift"]);
@@ -342,12 +340,17 @@ describe("the instance from the terminal", () => {
     // on its own clock purges what the run below reported the moment it
     // lands between the run and the read — which is a race rather than the
     // contract failing, and a fresh upload is what takes it out of the way.
+    // Only the positive witness is retried. The negative is held against
+    // the report the loop settled on, because a retry after a report that
+    // named the referenced blob would purge that blob and the evidence with
+    // it, and pass the second time round against nothing.
     let orphaned = "";
+    let reported: string[] = [];
     await vi.waitFor(
       async () => {
         orphaned = await upload(`nothing names me ${unique("orphan")}`);
-        await runJob("blob-orphans");
-        const reported = (
+        await runHousekeepingJob("blob-orphans");
+        reported = (
           await c.operator.json<{ data: { hash: string }[] }>([
             "blobs",
             "orphans",
@@ -359,29 +362,40 @@ describe("the instance from the terminal", () => {
           reported,
           "the sweep found nothing this scenario uploaded, so the absence below is about a report nothing reaches",
         ).toContain(orphaned);
-        expect(
-          reported,
-          "a blob an item names was reported unreferenced",
-        ).not.toContain(referenced);
       },
       { timeout: 30_000, interval: 250 },
     );
+    expect(
+      reported,
+      "a blob an item names was reported unreferenced",
+    ).not.toContain(referenced);
     const refusedOrphans = await c.cli.refused(["blobs", "orphans"]);
     expect(refusedOrphans.envelope.error.server?.status).toBe(403);
-    // Reported on one run and purged on the next: the scenario leaves the
-    // report as it found it rather than a row for somebody else's run.
-    await runJob("blob-orphans");
+    // Reported on one run and purged on the next. This run also re-reports
+    // whatever else on the instance is unreferenced, as any run does; what
+    // it must never do is touch the blob an item names, which is why those
+    // bytes are read back after it rather than trusted to a report.
+    await runHousekeepingJob("blob-orphans");
     const swept = (
       await c.operator.json<{ data: { hash: string }[] }>(["blobs", "orphans"])
     ).data.map((row) => row.hash);
-    expect(swept).not.toContain(orphaned);
+    expect(
+      swept,
+      "the blob reported on the previous run was not purged on this one",
+    ).not.toContain(orphaned);
+    const kept = await c.cli.run(["blobs", "download", referenced]);
+    expect(
+      kept.code,
+      `the blob an item names did not survive the sweeps: ${kept.stderr}`,
+    ).toBe(0);
+    expect(kept.stdout).toBe("an item names me");
     const jobs = await c.operator.json<{ data: { name: string }[] }>([
       "housekeeping",
       "list",
     ]);
     const names = jobs.data.map((job) => job.name);
     expect(names).toContain("trash-purge");
-    const ran = await runJob("trash-purge");
+    const ran = await runHousekeepingJob("trash-purge");
     expect(ran.name).toBe("trash-purge");
     expect(ran.outcome).toBe("ok");
     const unknown = await c.operator.refused([

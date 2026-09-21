@@ -62,14 +62,20 @@ function statementNumbers(file: string): Set<number> {
  * same claim and were read by two patterns that disagreed about how many
  * numbers a citation has.
  *
- * A citation names as many statements as it lists, so "`items.md` 1, 2 and
- * 3" is three references rather than one, and every number in the list is
- * held to a statement that exists. A range is the exception it cannot
- * cover: "17 to 23" yields 17 and 23, and what sits between them is
- * whatever the writer meant.
+ * A citation names as many statements as it lists, so a chapter name
+ * followed by "1, 2 and 3" is three references rather than one, and every
+ * number in the list is held to a statement that exists. A range is the
+ * exception it cannot cover: "17 to 23" yields 17 and 23, and what sits
+ * between them is whatever the writer meant. (No example here carries a
+ * chapter name in code font, because this file is inside the walk below
+ * and the example would be counted as a citation.)
+ *
+ * The gap between the name and the first number is spaces on one line,
+ * never a newline: a chapter name that ends a line above an ordered-list
+ * item is not citing that item's number.
  */
 const CITED_STATEMENTS =
-  /`([a-z][a-z-]*\.md)`\s+((?:\d+(?:\s*(?:,|and|to)\s*)?)+)/g;
+  /`([a-z][a-z-]*\.md)`[ \t]+((?:\d+(?:\s*(?:,|and|to)\s*)?)+)/g;
 
 /** Every `<file>.md <N>` reference in `spec/`, with where it was written. */
 function statementCitations(): {

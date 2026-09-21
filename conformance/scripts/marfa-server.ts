@@ -327,7 +327,13 @@ export async function stopServer(args: BootOptions): Promise<void> {
     return;
   }
   // The server was spawned detached, so its pid is also its process group.
-  process.kill(-pid, "SIGTERM");
+  // A group that is gone between the liveness check and the signal is the
+  // outcome wanted, not a failure to stop.
+  try {
+    process.kill(-pid, "SIGTERM");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+  }
   const deadline = Date.now() + SHUTDOWN_BUDGET_MS;
   while (alive(pid) && Date.now() < deadline) {
     await new Promise((r) => setTimeout(r, 200));
@@ -336,7 +342,11 @@ export async function stopServer(args: BootOptions): Promise<void> {
     console.log(
       `[marfa-server] pid ${String(pid)} ignored SIGTERM; sending SIGKILL`,
     );
-    process.kill(-pid, "SIGKILL");
+    try {
+      process.kill(-pid, "SIGKILL");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+    }
   }
   rmSync(p.pid, { force: true });
   console.log(`[marfa-server] stopped pid ${String(pid)}`);
@@ -348,8 +358,9 @@ export async function stopServer(args: BootOptions): Promise<void> {
  *
  * **A stopped server's database outliving its bucket is a second store.**
  * A store's id comes from a marker the store itself holds rather than from
- * the configuration that named it, as `spec/stores.md` says under the
- * statements, so the bucket `garage:up` makes after a `garage:down` carries
+ * the configuration that named it (the prose after `spec/stores.md`'s first
+ * four statements says so, and why it is not a statement), so the bucket
+ * `garage:up` makes after a `garage:down` carries
  * no marker and the boot against a database that still holds the old
  * store's row mints a second id beside it. The old row is detached rather
  * than removed and its location rows stay, so a deterministic blob
@@ -376,6 +387,36 @@ function clearState(state: string): void {
   console.log(`[marfa-server] cleared the state under ${state}`);
 }
 
+/**
+ * `stopServer` stops the process the pid file names and stops there: with
+ * no pid file, or a pid that is not running, it has nothing to signal. A
+ * server can still be answering on the URL the env file recorded (its pid
+ * file removed by hand, or the state directory shared with a boot this
+ * script did not make), and unlinking the database and the disk store
+ * under a live server is the one thing `down` must never do. So the URL is
+ * asked before anything is removed.
+ */
+async function refuseToClearUnderALiveServer(state: string): Promise<void> {
+  const p = paths(state);
+  if (!existsSync(p.env)) return;
+  const url = parseEnvFile(readFileSync(p.env, "utf8")).MARFA_API_URL;
+  if (!url) return;
+  let answered = false;
+  try {
+    const response = await fetch(`${url}/health`, {
+      signal: AbortSignal.timeout(1_000),
+    });
+    answered = response.ok;
+  } catch {
+    answered = false;
+  }
+  if (answered) {
+    throw new Error(
+      `${url} still answers /health and ${p.pid} does not name it, so the state under ${state} is not cleared. Stop that server first.`,
+    );
+  }
+}
+
 function status(args: Args): void {
   const p = paths(args.state);
   const pid = readPid(p.pid);
@@ -400,6 +441,7 @@ if (
   if (args.command === "up") await bootServer(args);
   else if (args.command === "down") {
     await stopServer(args);
+    await refuseToClearUnderALiveServer(args.state);
     clearState(args.state);
   } else status(args);
 }
