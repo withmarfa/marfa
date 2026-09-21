@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { readdirSync } from "node:fs";
 import { createGzip } from "node:zlib";
 import { describe, expect, it, beforeAll, afterAll, vi } from "vitest";
 import * as tar from "tar-stream";
@@ -144,6 +145,69 @@ describe("POST /admin/restore-archive", () => {
     expect(blobRes.status).toBe(200);
     const blobContent = Buffer.from(await blobRes.arrayBuffer());
     expect(blobContent.toString()).toBe("archive-import-blob-test");
+  });
+
+  it("leaves no spool behind, after a restore and after a refusal that came once the blobs were read", async () => {
+    const spoolDir = ctx.blobs.disk.spoolDir;
+    const manifestFor = (blob: { hash: string; data: Buffer }) => ({
+      version: 2,
+      format: "marfa-archive-v2",
+      created_at: new Date().toISOString(),
+      item_count: 1,
+      blob_count: 1,
+      blobs: {
+        [blob.hash]: { mime_type: "text/plain", size_bytes: blob.data.length },
+      },
+    });
+    const line = (blob: { hash: string }) =>
+      JSON.stringify({
+        item: {
+          type: "core.note",
+          properties: { body: "Spooled", blob_ref: blob.hash },
+        },
+      });
+
+    // Refused after its entries were read: more items than the door takes,
+    // with a blob entry ahead of them. The blob's spool goes with the
+    // refusal and the bytes never reach the store.
+    const refused = makeBlobData("spooled then refused");
+    const tooMany = await buildArchive(
+      manifestFor(refused),
+      Array.from({ length: 5001 }, () => line(refused)),
+      [refused],
+    );
+    const refusal = await ctx.app.request("/admin/restore-archive", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${ctx.operatorKey}`,
+        "Content-Type": "application/gzip",
+      },
+      body: tooMany,
+    });
+    expect(refusal.status).toBe(400);
+    expect(
+      ((await refusal.json()) as { error: { message: string } }).error.message,
+    ).toContain("Maximum 5000 items");
+    expect(readdirSync(spoolDir)).toEqual([]);
+    expect(await ctx.blobs.disk.has(refused.hash)).toBeNull();
+
+    // The same shape under the cap restores, and its spools are consumed:
+    // the blob's moved into place, the body's removed.
+    const kept = makeBlobData("spooled then kept");
+    const fine = await buildArchive(manifestFor(kept), [line(kept)], [kept]);
+    const restored = await ctx.app.request("/admin/restore-archive", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${ctx.operatorKey}`,
+        "Content-Type": "application/gzip",
+      },
+      body: fine,
+    });
+    expect(restored.status).toBe(200);
+    expect(readdirSync(spoolDir)).toEqual([]);
+    expect(await ctx.blobs.disk.has(kept.hash)).toEqual({
+      size_bytes: kept.data.length,
+    });
   });
 
   it("rejects archives with unsupported version", async () => {

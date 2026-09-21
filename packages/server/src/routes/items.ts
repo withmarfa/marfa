@@ -1287,13 +1287,12 @@ export function itemRoutes(storage: Storage) {
     //
     // **In the route, not in `storage.items.create`**, and the asymmetry
     // with `items.restore()` is deliberate. The store's `create` is also
-    // the archive restore's writer (`POST /admin/restore-archive` calls it
-    // directly with the archived `state`), and an archive is a faithful
-    // record of rows written before this rule existed. Tightening the store
-    // would make those archives unrestorable, which is a worse failure than
-    // the inconsistency being closed here. The lifecycle gate that DOES
-    // belong in the store is the one on `restore()`, because a restore is a
-    // transition and its two siblings live there.
+    // the archive restore's writer, and that door asks the same question
+    // of every archived row before it writes any: a create is not a
+    // transition, so the gate belongs to the doors that create. The
+    // lifecycle gate that DOES belong in the store is the one on
+    // `restore()`, because a restore is a transition and its two siblings
+    // live there.
     if (body.state && body.state !== SYSTEM_DEFAULT_STATE) {
       const error = validateTransition(
         type,
