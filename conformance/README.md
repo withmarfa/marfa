@@ -18,6 +18,16 @@ repeated until a ceiling. So those fixtures drive a server the fixture scripts
 scripted answer against the real server's for the cases the real server can
 produce. `spec/device.md` lists the cases it cannot, with a reason for each.
 
+**The scenario suite** is `src/suites/cli/`, and it gates the `marfa` binary
+as the reference client of an instance: every scenario is a person or an agent
+at a terminal, driving the built binary against the server the run booted, end
+to end. Signing in, creating, attaching, searching, linking, a folder round
+trip, an export, every operator door, and a coverage scenario that reads
+`marfa operations` from the binary and holds it against the document the
+server serves, so a door published without a command is red here. It is its
+own job in `ci.yml`, beside the referee rather than inside it, and
+`pnpm test:cli` runs it with the same environment the device fixtures take.
+
 ## Quick start
 
 From this directory, in a checkout where `pnpm install` has been run at the
@@ -41,6 +51,9 @@ export MARFA_DEVICE_BIN="$PWD/../core/target/debug/marfa"
 # Correctness, compliance, the server's write contract and the device's half
 set -a; . .marfa-state/env; set +a
 pnpm test:conformance
+
+# The scenario suite: the binary as the reference client, end to end
+pnpm test:cli
 
 pnpm marfa:down
 pnpm garage:down
@@ -88,7 +101,7 @@ corrupts a copy under it.
 | `MARFA_API_URL`      | The booted server. Unset, the run stops: there is no default target.              |
 | `MARFA_API_KEY`      | The key the bootstrap mint returns.                                               |
 | `MARFA_OPERATOR_KEY` | The same key, named for its reach on the operator-only routes.                    |
-| `MARFA_DEVICE_BIN`   | The built `marfa` binary the device fixtures drive.                               |
+| `MARFA_DEVICE_BIN`   | The built `marfa` binary the device fixtures and the scenario suite drive.        |
 | `MARFA_LOAD_PROFILE` | Sizes the load suites. `smoke` unset; `src/suites/load/profiles.ts` has the rest. |
 
 **`pnpm test:conformance` needs the first four.** `pnpm marfa:up` writes the
@@ -116,6 +129,7 @@ generators, everything under `src/utils/` — including
 specification against itself — and the `*.decision.test.ts` verdicts the
 suites gate on. `vitest.config.ts` decides which file lands in which project,
 and the `test:conformance` script decides which projects the gate runs.
+`test:cli` is the scenario suite's own gate, run by its own job.
 `test:performance` and `test:load` sit off the gate.
 
 ## Architecture

@@ -14,6 +14,7 @@
     "test:compliance": "vitest run --project compliance",
     "test:sync": "vitest run --project sync",
     "test:device": "vitest run --project device",
+    "test:cli": "vitest run --project cli",
     "test:load": "NODE_OPTIONS='--max-old-space-size=8192' vitest run --project load",
     "test:load:light": "MARFA_LOAD_PROFILE=light NODE_OPTIONS='--max-old-space-size=8192' vitest run --project load",
     "test:load:moderate": "MARFA_LOAD_PROFILE=moderate NODE_OPTIONS='--max-old-space-size=8192' vitest run --project load",

@@ -87,6 +87,17 @@ export default defineConfig({
         },
       },
       {
+        // The scenario suite: the binary driven as the reference client
+        // against the server the run booted. Every step is a process spawn
+        // plus a round trip, so the budget matches the device project.
+        test: {
+          name: "cli",
+          include: ["src/suites/cli/**/*.test.ts"],
+          testTimeout: 120_000,
+          hookTimeout: 120_000,
+        },
+      },
+      {
         test: {
           name: "load",
           include: ["src/suites/load/**/*.test.ts"],

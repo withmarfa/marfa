@@ -192,6 +192,78 @@ jobs:
           path: ${{ runner.temp }}/marfa/server.log
           if-no-files-found: ignore
 
+  # The scenario suite: the `marfa` binary driven as the reference client
+  # against a server booted from this same checkout, end to end. A gate
+  # beside the referee rather than a lane inside it, because the two answer
+  # different questions: the referee asks whether the server keeps the
+  # contract, this asks whether a person or an agent at a terminal can do
+  # everything the server publishes.
+  #
+  # The same shared-host group as the jobs above, for the same reason: it
+  # boots a server and builds the binary, and a second heavy job on the box
+  # manufactures timeouts in scenarios the branch never touched.
+  cli-scenarios:
+    name: CLI scenarios
+    timeout-minutes: 60
+    runs-on: self-hosted
+    concurrency:
+      group: marfa-suite-shared-host
+      cancel-in-progress: false
+      queue: max
+    env:
+      NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          dest: ${{ runner.temp }}/setup-pnpm
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: Configure registry auth
+        env:
+          NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > .npmrc
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter "@withmarfa/server..." build
+
+      # Homebrew's rustup is keg-only, so nothing it installs is on the
+      # default PATH.
+      - name: Put the Rust toolchain on PATH
+        run: |
+          echo "/opt/homebrew/opt/rustup/bin" >> "$GITHUB_PATH"
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+      - name: Build the binary under test
+        working-directory: core
+        run: |
+          cargo build -p marfa-cli
+          echo "MARFA_DEVICE_BIN=$PWD/target/debug/marfa" >> "$GITHUB_ENV"
+
+      - name: Boot the server from this checkout
+        working-directory: conformance
+        run: |
+          pnpm marfa:up --state "$RUNNER_TEMP/marfa-cli"
+          cat "$RUNNER_TEMP/marfa-cli/env" >> "$GITHUB_ENV"
+
+      - name: Run the scenarios
+        working-directory: conformance
+        run: pnpm test:cli
+
+      # Always, including when a scenario failed: the server was spawned
+      # detached, so nothing else reaps it.
+      - name: Stop the server
+        if: always()
+        working-directory: conformance
+        run: pnpm marfa:down --state "$RUNNER_TEMP/marfa-cli"
+
+      - name: Keep the server log
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: marfa-cli-server-log
+          path: ${{ runner.temp }}/marfa-cli/server.log
+          if-no-files-found: ignore
+
   # The restore drill: a fresh instance rebuilt from the bucket alone, to
   # the byte, against the same local object store the conformance job
   # attaches. Litestream streams the database and the server's own
