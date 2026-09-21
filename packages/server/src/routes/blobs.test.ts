@@ -663,6 +663,16 @@ describe("DELETE /blobs/:hash/locations/:store", () => {
     await ctx.storage.blobs.recordLocation(hash, second.id);
     expect(await ctx.storage.blobs.listLocations(hash)).toHaveLength(2);
 
+    // A working key is refused a drop the minimum would allow, and the
+    // copy stays for the operator to drop.
+    const working = await request(
+      ctx.app,
+      "DELETE",
+      `/blobs/${hash}/locations/${second.id}`,
+      { key: ctx.workingKey },
+    );
+    expect(working.status).toBe(403);
+    expect(await ctx.storage.blobs.listLocations(hash)).toHaveLength(2);
     const dropped = await request(
       ctx.app,
       "DELETE",
@@ -727,12 +737,5 @@ describe("DELETE /blobs/:hash/locations/:store", () => {
     expect(
       ((await unknown.json()) as { error: { code: string } }).error.code,
     ).toBe("blob_not_found");
-    const working = await request(
-      ctx.app,
-      "DELETE",
-      `/blobs/${hash}/locations/${ctx.blobs.disk.id}`,
-      { key: ctx.workingKey },
-    );
-    expect(working.status).toBe(403);
   });
 });

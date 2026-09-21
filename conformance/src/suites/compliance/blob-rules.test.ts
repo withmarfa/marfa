@@ -198,8 +198,16 @@ describe("the rules that keep a blob's bytes", () => {
       "s3",
     ]);
 
-    // Two copies: the object store's can go, and the bytes go with the
-    // row, which replication then puts back.
+    // Two copies: a working key is refused the drop the minimum would
+    // allow, and the copy stays; the operator's drop takes the object
+    // store's copy, bytes and row, which replication then puts back.
+    const workingFirst = await client.dropBlobLocation(hash, s3.id);
+    expect(workingFirst.status).toBe(403);
+    expect(workingFirst.error?.error.code).toBe("forbidden");
+    expect(kinds((await client.listBlobLocations(hash)).data.data)).toEqual([
+      "disk",
+      "s3",
+    ]);
     const dropped = await operator.dropBlobLocation(hash, s3.id);
     expect(dropped.status, JSON.stringify(dropped.error)).toBe(200);
     await expectMatchesSchema(
@@ -236,9 +244,6 @@ describe("the rules that keep a blob's bytes", () => {
     const unattached = await operator.dropBlobLocation(hash, "no-such-store");
     expect(unattached.status).toBe(404);
     expect(unattached.error?.error.code).toBe("blob_location_not_found");
-    const working = await client.dropBlobLocation(hash, disk.id);
-    expect(working.status).toBe(403);
-    expect(working.error?.error.code).toBe("forbidden");
   });
 
   it("stamps a good copy and strikes a corrupt one, which replication then restores", async () => {
@@ -300,6 +305,7 @@ describe("the rules that keep a blob's bytes", () => {
   it("reports an unreferenced blob on one run and purges it on the next, never one an item names", async () => {
     const orphan = await uploadText("nothing names me");
     const kept = await uploadText("an item names me");
+    const late = await uploadText("an item names me after the report");
     const item = await client.createItem({
       type: "core.file",
       source: ctx.source,
@@ -314,6 +320,7 @@ describe("the rules that keep a blob's bytes", () => {
     await expectMatchesSchema("GET", "/blobs/orphans", 200, report.data);
     const reported = report.data.data.map((row) => row.hash);
     expect(reported).toContain(orphan);
+    expect(reported).toContain(late);
     expect(reported).not.toContain(kept);
     expect(report.data.data.find((row) => row.hash === orphan)).toMatchObject({
       mime_type: "text/plain",
@@ -322,12 +329,24 @@ describe("the rules that keep a blob's bytes", () => {
     // Reported is not deleted: the bytes still answer.
     expect((await client.downloadBlob(orphan)).status).toBe(200);
 
+    // A reported blob an item names before the next run leaves the report
+    // and stays; the one still unreferenced goes.
+    const lateItem = await client.createItem({
+      type: "core.file",
+      source: ctx.source,
+      properties: { blob_ref: late, mime_type: "text/plain" },
+    });
+    expect(lateItem.ok, JSON.stringify(lateItem.error)).toBe(true);
+    trackItem(ctx, lateItem.data.item.id);
     await run("blob-orphans");
     expect((await client.downloadBlob(orphan)).status).toBe(404);
     expect((await client.downloadBlob(kept)).status).toBe(200);
-    expect(
-      (await operator.listBlobOrphans()).data.data.map((row) => row.hash),
-    ).not.toContain(orphan);
+    expect((await client.downloadBlob(late)).status).toBe(200);
+    const after = (await operator.listBlobOrphans()).data.data.map(
+      (row) => row.hash,
+    );
+    expect(after).not.toContain(orphan);
+    expect(after).not.toContain(late);
     const working = await client.listBlobOrphans();
     expect(working.status).toBe(403);
     expect(working.error?.error.code).toBe("forbidden");

@@ -140,6 +140,64 @@ describe("BlobOrphanReporter.runOnce", () => {
     expect(await ctx.blobs.disk.has(late)).not.toBeNull();
   });
 
+  it("forgets only the blob referenced again, keeping the others reported", async () => {
+    ctx = await createTestContext();
+    const kept = await upload(ctx, "still nothing names this");
+    const late = await upload(ctx, "named after the report, beside another");
+    const time = clock();
+    const reporter = new BlobOrphanReporter(
+      ctx.storage,
+      ctx.blobs,
+      GRACE_MS,
+      time.nowFn,
+    );
+    expect(await reporter.runOnce()).toEqual({ reported: 2, purged: 0 });
+    const itemRes = await request(ctx.app, "POST", "/items", {
+      key: ctx.workingKey,
+      body: { type: "core.note", properties: { body: "late", blob_ref: late } },
+    });
+    expect(itemRes.status).toBe(201);
+    time.advance(1);
+    expect(await reporter.runOnce()).toEqual({ reported: 1, purged: 0 });
+    expect((await ctx.storage.blobs.listOrphans()).map((r) => r.hash)).toEqual([
+      kept,
+    ]);
+    // Past the grace, only the one still unreferenced goes.
+    time.advance(GRACE_MS);
+    expect(await reporter.runOnce()).toEqual({ reported: 0, purged: 1 });
+    expect(await ctx.blobs.disk.has(kept)).toBeNull();
+    expect(await ctx.blobs.disk.has(late)).not.toBeNull();
+  });
+
+  it("lists the report oldest first, and purges a report only once it is older than the grace", async () => {
+    ctx = await createTestContext();
+    const first = await upload(ctx, "reported first");
+    const time = clock();
+    const reporter = new BlobOrphanReporter(
+      ctx.storage,
+      ctx.blobs,
+      GRACE_MS,
+      time.nowFn,
+    );
+    await reporter.runOnce();
+    time.advance(1_000);
+    const second = await upload(ctx, "reported second");
+    await reporter.runOnce();
+    const report = await ctx.storage.blobs.listOrphans();
+    expect(report.map((r) => r.hash)).toEqual([first, second]);
+    expect(Date.parse(report[0]!.reported_at)).toBeLessThan(
+      Date.parse(report[1]!.reported_at),
+    );
+    // Exactly the grace old: waits for the next run. A millisecond older:
+    // purged.
+    time.advance(GRACE_MS - 1_000);
+    expect(await reporter.runOnce()).toEqual({ reported: 2, purged: 0 });
+    time.advance(1);
+    expect(await reporter.runOnce()).toEqual({ reported: 1, purged: 1 });
+    expect(await ctx.blobs.disk.has(first)).toBeNull();
+    expect(await ctx.blobs.disk.has(second)).not.toBeNull();
+  });
+
   it("never purges what the same run reported, whatever the grace", async () => {
     ctx = await createTestContext();
     const orphan = await upload(ctx, "reported and purged are two runs");

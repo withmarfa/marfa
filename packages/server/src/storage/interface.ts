@@ -1210,9 +1210,10 @@ export interface BlobRegistry {
   /** The report, oldest first. */
   listOrphans(): Promise<BlobOrphanRow[]>;
   /**
-   * Reported orphans whose first report is older than `before` and earlier
-   * than `runStartedAt`: what a run may purge. The second bound keeps a
-   * run from purging what it reported itself.
+   * Reported orphans whose first report is strictly before `before` and
+   * strictly before `runStartedAt`: what a run may purge. The first bound
+   * is the grace, the second keeps a run from purging what it reported
+   * itself.
    */
   listOrphansToPurge(before: string, runStartedAt: string): Promise<string[]>;
 }

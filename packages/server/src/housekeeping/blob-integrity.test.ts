@@ -42,11 +42,27 @@ function diskPath(locator: string, hash: string): string {
   return join(locator, hex.slice(0, 4), hex);
 }
 
-function quiet(): () => void {
+/** Silences the process's stdout for a check that strikes, and hands back
+ *  the JSON lines it wrote. */
+function quiet(): {
+  restore: () => void;
+  lines: () => Record<string, unknown>[];
+} {
   const write = process.stdout.write.bind(process.stdout);
-  process.stdout.write = () => true;
-  return () => {
-    process.stdout.write = write;
+  const lines: Record<string, unknown>[] = [];
+  process.stdout.write = (chunk: unknown) => {
+    try {
+      lines.push(JSON.parse(String(chunk)) as Record<string, unknown>);
+    } catch {
+      /* not a log line */
+    }
+    return true;
+  };
+  return {
+    restore: () => {
+      process.stdout.write = write;
+    },
+    lines: () => lines,
   };
 }
 
@@ -86,14 +102,22 @@ describe("BlobIntegrityChecker.runOnce", () => {
       "will be overwritten on DISK",
     );
     await rm(diskPath(second.locator, missing));
-    const restore = quiet();
+    const silenced = quiet();
     let result;
     try {
       result = await checker.runOnce();
     } finally {
-      restore();
+      silenced.restore();
     }
     expect(result).toMatchObject({ verified: 4, struck: 2 });
+    // The error line, one per strike, naming the copy.
+    const struckLines = silenced
+      .lines()
+      .filter((line) => line.message === "blob.copy_struck");
+    expect(struckLines.map((line) => line.level)).toEqual(["error", "error"]);
+    expect(struckLines.map((line) => line.hash).sort()).toEqual(
+      [altered, missing].sort(),
+    );
     expect(
       (await ctx.storage.blobs.listLocations(altered)).map((l) => l.store_id),
     ).toEqual([second.id]);
@@ -251,6 +275,7 @@ describe("BlobIntegrityChecker.runOnce", () => {
       [wrong, { size_bytes: 1 }],
     ]);
     let fetched = 0;
+    let asked = 0;
     const deleted: string[] = [];
     const stub: BlobStore = {
       id: "stub-object-store",
@@ -267,7 +292,10 @@ describe("BlobIntegrityChecker.runOnce", () => {
           length: 0,
         });
       },
-      has: (hash) => Promise.resolve(answers.get(hash) ?? null),
+      has: (hash) => {
+        asked += 1;
+        return Promise.resolve(answers.get(hash) ?? null);
+      },
       delete: (hash) => {
         deleted.push(hash);
         return Promise.resolve();
@@ -287,16 +315,19 @@ describe("BlobIntegrityChecker.runOnce", () => {
       { stores: all, byId: (id) => all.find((s) => s.id === id) },
       { maxRows: 100, maxBytes: 1024 * 1024 },
     );
-    const restore = quiet();
+    const silenced = quiet();
     let result;
     try {
       result = await checker.runOnce();
     } finally {
-      restore();
+      silenced.restore();
     }
     // Three disk copies and the good stub copy stamped; the missing and
-    // the wrong-sized stub copies struck, and their names discarded.
+    // the wrong-sized stub copies struck, and their names discarded. Asked
+    // by name three times, never read: the counters are the witness for
+    // each other.
     expect(result).toMatchObject({ verified: 4, struck: 2 });
+    expect(asked).toBe(3);
     expect(fetched).toBe(0);
     expect(deleted.sort()).toEqual([gone, wrong].sort());
     const stubHolds = async (hash: string) =>
@@ -306,5 +337,68 @@ describe("BlobIntegrityChecker.runOnce", () => {
     expect(await stubHolds(good)).toBe(true);
     expect(await stubHolds(gone)).toBe(false);
     expect(await stubHolds(wrong)).toBe(false);
+  });
+
+  it("counts no strike for a row dropped between the listing and the check", async () => {
+    // The listing named a copy; by the time the check reaches it an
+    // operator has dropped the row. Nothing was found wrong with a copy
+    // the log claims, so nothing is logged, audited or discarded.
+    ctx = await createTestContext();
+    const { stores, second } = await withSecondStore(ctx);
+    const hash = await upload(ctx, "dropped under the check");
+    await new BlobReplicator(ctx.storage, stores, {
+      maxBlobs: 100,
+      maxBytes: 1024 * 1024,
+    }).runOnce();
+    await rm(diskPath(second.locator, hash));
+    const registry = ctx.storage.blobs;
+    const listToVerify = registry.listToVerify.bind(registry);
+    registry.listToVerify = async (storeIds, limit) => {
+      const rows = await listToVerify(storeIds, limit);
+      // The drop lands after the listing was taken.
+      await registry.removeLocation(hash, second.id);
+      return rows;
+    };
+    const deletes: string[] = [];
+    const del = second.delete.bind(second);
+    second.delete = (h) => {
+      deletes.push(h);
+      return del(h);
+    };
+    const silenced = quiet();
+    let result;
+    try {
+      result = await new BlobIntegrityChecker(ctx.storage, stores, {
+        maxRows: 100,
+        maxBytes: 1024 * 1024,
+      }).runOnce();
+    } finally {
+      silenced.restore();
+      registry.listToVerify = listToVerify;
+    }
+    expect(result).toMatchObject({ verified: 1, struck: 0 });
+    expect(
+      silenced.lines().filter((l) => l.message === "blob.copy_struck"),
+    ).toEqual([]);
+    expect(
+      (await ctx.storage.audit.list({ action: "blob.copy_struck", limit: 10 }))
+        .data,
+    ).toEqual([]);
+    expect(deletes).toEqual([]);
+    // The witness: the same missing copy with its row in place is struck.
+    await ctx.storage.blobs.recordLocation(hash, second.id);
+    const again = quiet();
+    let struck;
+    try {
+      struck = await new BlobIntegrityChecker(ctx.storage, stores, {
+        maxRows: 100,
+        maxBytes: 1024 * 1024,
+      }).runOnce();
+    } finally {
+      again.restore();
+      second.delete = del;
+    }
+    expect(struck).toMatchObject({ struck: 1 });
+    expect(deletes).toEqual([hash]);
   });
 });

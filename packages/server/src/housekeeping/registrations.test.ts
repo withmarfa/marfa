@@ -156,6 +156,18 @@ describe("the housekeeping registrations", () => {
     );
   });
 
+  it("runs replication and the integrity check on their configured cadences", async () => {
+    const { intervalOf } = await namesUnder({
+      blobReplicateIntervalMs: 120_000,
+      blobIntegrityIntervalMs: 240_000,
+    });
+    expect(intervalOf("blob-replicate")).toBe(120_000);
+    expect(intervalOf("blob-integrity")).toBe(240_000);
+    const { intervalOf: defaults } = await namesUnder({});
+    expect(defaults("blob-replicate")).toBe(60_000);
+    expect(defaults("blob-integrity")).toBe(3_600_000);
+  });
+
   it("runs the revoked-key reap on the activity purge's cadence, hourly when that purge is off", async () => {
     const { intervalOf } = await namesUnder({
       activityPurgeIntervalMs: 120_000,

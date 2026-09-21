@@ -67,9 +67,21 @@ describe("BlobReplicator.runOnce", () => {
       expect(locations.map((l) => l.store_id).sort()).toEqual(
         [ctx.blobs.disk.id, second.id].sort(),
       );
+      // Recorded unverified: the stamp is the integrity check's to write,
+      // which is what makes it a fact about the copy rather than a default.
       expect(
         locations.find((l) => l.store_id === second.id)?.verified_at,
       ).toBeNull();
+      await ctx.storage.blobs.markVerified(
+        hash,
+        second.id,
+        "2026-09-21T00:00:00.000Z",
+      );
+      expect(
+        (await ctx.storage.blobs.listLocations(hash)).find(
+          (l) => l.store_id === second.id,
+        )?.verified_at,
+      ).toBe("2026-09-21T00:00:00.000Z");
     }
     // Nothing left to copy: a second run copies nothing.
     expect(await replicator.runOnce()).toEqual({
@@ -184,5 +196,137 @@ describe("BlobReplicator.runOnce", () => {
       remaining: 0,
     });
     expect(await second.has(hash)).not.toBeNull();
+  });
+
+  it("reads from the disk when both a disk and an object store hold the blob", async () => {
+    ctx = await createTestContext();
+    const { stores, second } = await withSecondStore(ctx);
+    const hash = await upload(ctx, "read from the nearer copy");
+    // An object-store stub the log also names as holding the blob, which
+    // counts how often it is read from.
+    let reads = 0;
+    const stub: BlobStore = {
+      id: "stub-object-store",
+      kind: "s3",
+      locator: "s3://stub/blobs",
+      attach: () => Promise.resolve(),
+      put: () => Promise.resolve(),
+      get: () => {
+        reads += 1;
+        return Promise.resolve({
+          stream: Readable.from([Buffer.from("read from the nearer copy")]),
+          size_bytes: "read from the nearer copy".length,
+          offset: 0,
+          length: "read from the nearer copy".length,
+        });
+      },
+      has: () => Promise.resolve({ size_bytes: 25 }),
+      delete: () => Promise.resolve(),
+    };
+    await ctx.storage.blobs.attachStore({
+      id: stub.id,
+      kind: stub.kind,
+      locator: stub.locator,
+    });
+    await ctx.storage.blobs.recordLocation(hash, stub.id);
+    const all = [...stores.stores, stub];
+    const replicator = new BlobReplicator(
+      ctx.storage,
+      { stores: all, byId: (id) => all.find((s) => s.id === id) },
+      { maxBlobs: 100, maxBytes: 1024 * 1024 },
+    );
+    expect(await replicator.runOnce()).toMatchObject({
+      copied: 1,
+      remaining: 0,
+    });
+    expect(await second.has(hash)).not.toBeNull();
+    expect(reads).toBe(0);
+    // The witness that the stub is a source at all: with the disk's copy
+    // struck from the log, the object store is what is read.
+    const third = await upload(
+      ctx,
+      "read from the far copy when it is all there is",
+    );
+    await ctx.storage.blobs.recordLocation(third, stub.id);
+    await ctx.storage.blobs.removeLocation(third, ctx.blobs.disk.id);
+    await ctx.blobs.disk.delete(third);
+    stub.get = () => {
+      reads += 1;
+      return Promise.resolve({
+        stream: Readable.from([
+          Buffer.from("read from the far copy when it is all there is"),
+        ]),
+        size_bytes: "read from the far copy when it is all there is".length,
+        offset: 0,
+        length: "read from the far copy when it is all there is".length,
+      });
+    };
+    // The disk gets its copy from the stub, the one read; the second store
+    // then gets its copy from the disk, which now has one.
+    expect(await replicator.runOnce()).toMatchObject({
+      copied: 2,
+      remaining: 0,
+    });
+    expect(reads).toBe(1);
+    expect(await ctx.blobs.disk.has(third)).not.toBeNull();
+    expect(await second.has(third)).not.toBeNull();
+  });
+
+  it("records nothing for a copy the log names but the source no longer has", async () => {
+    ctx = await createTestContext();
+    const { stores, second } = await withSecondStore(ctx);
+    const hash = await upload(ctx, "named by the log, gone from the disk");
+    await ctx.blobs.disk.delete(hash);
+    const replicator = new BlobReplicator(ctx.storage, stores, {
+      maxBlobs: 100,
+      maxBytes: 1024 * 1024,
+    });
+    expect(await replicator.runOnce()).toEqual({
+      copied: 0,
+      bytes: 0,
+      remaining: 1,
+    });
+    expect(await second.has(hash)).toBeNull();
+    expect(
+      (await ctx.storage.blobs.listLocations(hash)).map((l) => l.store_id),
+    ).toEqual([ctx.blobs.disk.id]);
+    // The witness: with the bytes back, the same run copies them.
+    await ctx.blobs.disk.put(hash, {
+      stream: Readable.from([
+        Buffer.from("named by the log, gone from the disk"),
+      ]),
+      size_bytes: "named by the log, gone from the disk".length,
+    });
+    expect(await replicator.runOnce()).toMatchObject({
+      copied: 1,
+      remaining: 0,
+    });
+  });
+
+  it("does not count a copy only a detached store holds as a source, or as work remaining", async () => {
+    ctx = await createTestContext();
+    const { stores, second } = await withSecondStore(ctx);
+    const content = "held by a store the configuration no longer names";
+    const hash = `sha256:${createHash("sha256").update(content).digest("hex")}`;
+    await second.put(hash, {
+      stream: Readable.from([Buffer.from(content)]),
+      size_bytes: content.length,
+    });
+    await ctx.storage.blobs.register(hash, "text/plain", content.length);
+    await ctx.storage.blobs.recordLocation(hash, second.id);
+    const replicator = new BlobReplicator(ctx.storage, stores, {
+      maxBlobs: 100,
+      maxBytes: 1024 * 1024,
+    });
+    // Attached: the second store is a source, and the disk lacks the blob.
+    expect(await ctx.storage.blobs.countMissingFrom(ctx.blobs.disk.id)).toBe(1);
+    await ctx.storage.blobs.detachStoresExcept([ctx.blobs.disk.id]);
+    expect(await ctx.storage.blobs.countMissingFrom(ctx.blobs.disk.id)).toBe(0);
+    expect(await replicator.runOnce()).toEqual({
+      copied: 0,
+      bytes: 0,
+      remaining: 0,
+    });
+    expect(await ctx.blobs.disk.has(hash)).toBeNull();
   });
 });

@@ -342,7 +342,7 @@ export class SqliteBlobRegistry implements BlobRegistry {
       .where(
         and(
           lt(blobOrphans.reported_at, runStartedAt),
-          sql`${blobOrphans.reported_at} <= ${before}`,
+          lt(blobOrphans.reported_at, before),
         ),
       )
       .orderBy(asc(blobOrphans.reported_at), asc(blobOrphans.hash))

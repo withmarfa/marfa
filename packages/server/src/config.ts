@@ -166,20 +166,24 @@ export interface AppConfig {
    *  `MARFA_BLOB_MIN_COPIES`. */
   blobMinCopies?: number;
   /** Cadence (ms) for `blob-replicate`, which gives every attached store
-   *  the copies its policy wants; an upload wakes it too. Default 60_000;
-   *  env override `MARFA_BLOB_REPLICATE_INTERVAL_MS`. */
+   *  the copies its policy wants; an upload wakes it too. A positive
+   *  integer, since the job has no off switch: a store the configuration
+   *  names is a store whose copies are kept. Default 60_000; env override
+   *  `MARFA_BLOB_REPLICATE_INTERVAL_MS`. */
   blobReplicateIntervalMs?: number;
   /** Most blobs, and most bytes, one replication run copies before it
-   *  answers and is woken again. Defaults 100 and 1 GiB; env overrides
-   *  `MARFA_BLOB_REPLICATE_BATCH` and `MARFA_BLOB_REPLICATE_BATCH_BYTES`. */
+   *  answers and is woken again. Positive integers; defaults 100 and 1 GiB;
+   *  env overrides `MARFA_BLOB_REPLICATE_BATCH` and
+   *  `MARFA_BLOB_REPLICATE_BATCH_BYTES`. */
   blobReplicateBatch?: number;
   blobReplicateBatchBytes?: number;
-  /** Cadence (ms) for `blob-integrity`, which checks a store's copies,
-   *  least recently checked first. Default 3_600_000 (1h); env override
+  /** Cadence (ms) for `blob-integrity`, which checks the copies the log
+   *  claims, least recently checked first. A positive integer, for the
+   *  reason replication's is. Default 3_600_000 (1h); env override
    *  `MARFA_BLOB_INTEGRITY_INTERVAL_MS`. */
   blobIntegrityIntervalMs?: number;
-  /** Most copies per store, and most bytes in all, one integrity run
-   *  checks. Defaults 500 and 1 GiB; env overrides
+  /** Most copies, and most bytes, one integrity run checks. Positive
+   *  integers; defaults 500 and 1 GiB; env overrides
    *  `MARFA_BLOB_INTEGRITY_BATCH` and `MARFA_BLOB_INTEGRITY_BATCH_BYTES`. */
   blobIntegrityBatch?: number;
   blobIntegrityBatchBytes?: number;
@@ -703,24 +707,39 @@ export function loadConfig(): AppConfig {
         process.env.MARFA_BLOB_MIN_COPIES,
         "MARFA_BLOB_MIN_COPIES",
       ) ?? 1,
-    blobReplicateIntervalMs: envNumber(
-      process.env.MARFA_BLOB_REPLICATE_INTERVAL_MS,
-      60_000,
-    ),
-    blobReplicateBatch: envNumber(process.env.MARFA_BLOB_REPLICATE_BATCH, 100),
-    blobReplicateBatchBytes: envNumber(
-      process.env.MARFA_BLOB_REPLICATE_BATCH_BYTES,
-      1024 * 1024 * 1024,
-    ),
-    blobIntegrityIntervalMs: envNumber(
-      process.env.MARFA_BLOB_INTEGRITY_INTERVAL_MS,
-      3_600_000,
-    ),
-    blobIntegrityBatch: envNumber(process.env.MARFA_BLOB_INTEGRITY_BATCH, 500),
-    blobIntegrityBatchBytes: envNumber(
-      process.env.MARFA_BLOB_INTEGRITY_BATCH_BYTES,
-      1024 * 1024 * 1024,
-    ),
+    // Positive integers, refused otherwise, for the same reason as the
+    // minimum: a value that resolved to NaN or zero would make every run
+    // copy or check nothing, silently, and neither job has an off switch.
+    blobReplicateIntervalMs:
+      parsePositiveIntegerEnv(
+        process.env.MARFA_BLOB_REPLICATE_INTERVAL_MS,
+        "MARFA_BLOB_REPLICATE_INTERVAL_MS",
+      ) ?? 60_000,
+    blobReplicateBatch:
+      parsePositiveIntegerEnv(
+        process.env.MARFA_BLOB_REPLICATE_BATCH,
+        "MARFA_BLOB_REPLICATE_BATCH",
+      ) ?? 100,
+    blobReplicateBatchBytes:
+      parsePositiveIntegerEnv(
+        process.env.MARFA_BLOB_REPLICATE_BATCH_BYTES,
+        "MARFA_BLOB_REPLICATE_BATCH_BYTES",
+      ) ?? 1024 * 1024 * 1024,
+    blobIntegrityIntervalMs:
+      parsePositiveIntegerEnv(
+        process.env.MARFA_BLOB_INTEGRITY_INTERVAL_MS,
+        "MARFA_BLOB_INTEGRITY_INTERVAL_MS",
+      ) ?? 3_600_000,
+    blobIntegrityBatch:
+      parsePositiveIntegerEnv(
+        process.env.MARFA_BLOB_INTEGRITY_BATCH,
+        "MARFA_BLOB_INTEGRITY_BATCH",
+      ) ?? 500,
+    blobIntegrityBatchBytes:
+      parsePositiveIntegerEnv(
+        process.env.MARFA_BLOB_INTEGRITY_BATCH_BYTES,
+        "MARFA_BLOB_INTEGRITY_BATCH_BYTES",
+      ) ?? 1024 * 1024 * 1024,
     enrichmentEnabled: process.env.MARFA_ENRICHMENT_ENABLED !== "false",
     enrichmentIntervalMs: envNumber(
       process.env.MARFA_ENRICHMENT_INTERVAL_MS,

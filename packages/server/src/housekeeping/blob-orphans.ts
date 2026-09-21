@@ -40,8 +40,9 @@ export class BlobOrphanReporter {
       unreferenced,
       startedAt,
     );
-    // Strictly before this run's own stamp, so a grace of zero means the
-    // next run and never this one.
+    // Strictly before both bounds: a report exactly the grace old waits for
+    // the next run, and a grace of zero means the next run and never this
+    // one.
     const before = new Date(now.getTime() - this.graceMs).toISOString();
     const due = await this.storage.blobs.listOrphansToPurge(before, startedAt);
     let purged = 0;
