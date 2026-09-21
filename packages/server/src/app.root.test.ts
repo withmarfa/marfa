@@ -51,10 +51,12 @@ describe("GET /", () => {
   });
 
   it("serves the same identity as GET /config", async () => {
-    // Three doors, one name — and two of them are in this package. The
-    // conformance suite asserts all three together against a booted server;
-    // this holds the two that need no boot, so the pair cannot drift
-    // between conformance runs.
+    // Three doors, one name, and all three are in this package: the root,
+    // `/config` and the export manifest. The conformance suite asserts them
+    // together against a booted server; this holds the root against
+    // `/config`, and `export.test.ts` holds the manifest against
+    // `ensureInstanceId`, so neither pair can drift between conformance
+    // runs.
     const root = (await (await ctx.app.request("/")).json()) as {
       instance_id: string;
     };

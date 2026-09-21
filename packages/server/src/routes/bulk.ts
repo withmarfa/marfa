@@ -1157,7 +1157,6 @@ export function bulkRoutes(storage: Storage) {
     const action = body.action;
     const filter = body.filter ?? {};
     const dryRun = body.dry_run ?? false;
-    const enableFanout = body.enable_fanout ?? false;
 
     const cap = Math.min(
       body.max_items ?? MAX_BULK_ACTION_ITEMS,
@@ -1405,9 +1404,9 @@ export function bulkRoutes(storage: Storage) {
     //
     // Publishing belongs to whoever performs the write, and the write
     // happens in the worker: this handler freezes a match set and answers
-    // 202. The flag travels to the worker inside the stored input, which
-    // is the request body verbatim.
-    void enableFanout;
+    // 202. `enable_fanout` is never read here for that reason — it travels
+    // to the worker inside the stored input, which is the request body
+    // verbatim.
     const idempotencyKey = c.req.header("Idempotency-Key") ?? null;
     const apiKeyId = c.get("apiKey")?.id ?? null;
     const job = await storage.bulkActionJobs.create({
