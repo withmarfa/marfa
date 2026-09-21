@@ -1,5 +1,7 @@
+use marfa_core::http::Http;
 use serde_json::{Value, json};
 
+use crate::auth;
 use crate::error::CliError;
 use crate::output::Printer;
 use crate::remote::request::Request;
@@ -32,13 +34,19 @@ pub fn run(remote: &Remote, out: &Printer) -> Result<(), CliError> {
                 record["expires_at"] = json!(expires_at);
             }
             if kind == "token" {
-                // The person the token was issued to, where the token's
-                // scope reaches the identity claims; a token without them
-                // is refused there and reported without a person.
-                match remote.json(&Request::get(&["auth", "oauth2", "userinfo"])) {
-                    Ok(person) => record["person"] = person,
-                    Err(CliError::Refused { .. }) => {}
-                    Err(error) => return Err(error),
+                // The person the token was issued to, at the door the server
+                // names for it. A token whose scope does not reach the
+                // identity claims is refused there (401 or 403) and reported
+                // without a person; any other refusal is this command's.
+                if let Some(endpoint) = auth::discover(remote)?.userinfo_endpoint {
+                    let door = Remote::with(Http::new(&endpoint, Some(&bearer))?);
+                    match door.json(&Request::get(&[])) {
+                        Ok(person) => record["person"] = person,
+                        Err(CliError::Refused {
+                            status: 401 | 403, ..
+                        }) => {}
+                        Err(error) => return Err(error),
+                    }
                 }
             }
             record

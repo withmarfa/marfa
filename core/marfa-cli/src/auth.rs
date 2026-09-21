@@ -13,11 +13,13 @@
 use std::collections::hash_map::DefaultHasher;
 use std::fs::OpenOptions;
 use std::hash::{Hash, Hasher};
+use std::path::PathBuf;
 use std::thread::sleep;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::Deserialize;
 use serde_json::Value;
+use url::Url;
 
 use crate::credentials::{self, Kept};
 use crate::error::CliError;
@@ -26,18 +28,38 @@ use crate::remote::request::Request;
 
 pub const DEVICE_CODE_GRANT: &str = "urn:ietf:params:oauth:grant-type:device_code";
 
-/// Everything the owner can tick on the consent screen. The screen is the
-/// narrowing; asking for less here would hide a toggle the person may want.
-pub const DEFAULT_SCOPE: &str = "openid profile email offline_access \
-*:read *:write edge.*:read edge.*:write metadata:read metadata:write \
-schema.write keys.mint items.purge webhooks.manage config.manage audit.read grants.manage";
+/// Everything the owner can hold at the terminal: the protocol's own
+/// scopes (the identity claims `whoami` reads, and the refresh token),
+/// every type and edge type either way, metadata, and the seven
+/// permissions the glossary names. Held against the server's
+/// `scopes_supported` at sign-in, so a scope the server does not publish
+/// is not asked for.
+const OWNER_SCOPES: [&str; 17] = [
+    "openid",
+    "profile",
+    "email",
+    "offline_access",
+    "*:read",
+    "*:write",
+    "edge.*:read",
+    "edge.*:write",
+    "metadata:read",
+    "metadata:write",
+    "schema.write",
+    "keys.mint",
+    "items.purge",
+    "webhooks.manage",
+    "config.manage",
+    "audit.read",
+    "grants.manage",
+];
 
 /// A refresh this close to the access token's end happens before the call
 /// rather than after its 401.
 const REFRESH_AHEAD_SECONDS: u64 = 60;
 
 /// What the authorization server says about itself, reduced to the doors
-/// the binary uses.
+/// the binary uses and the scopes it supports.
 #[derive(Debug, Clone, Deserialize)]
 pub struct Discovery {
     pub issuer: String,
@@ -46,6 +68,10 @@ pub struct Discovery {
     pub registration_endpoint: String,
     pub revocation_endpoint: Option<String>,
     pub userinfo_endpoint: Option<String>,
+    /// RFC 8414 recommends the list and does not require it; absent, the
+    /// default scope is asked for whole.
+    #[serde(default)]
+    pub scopes_supported: Vec<String>,
 }
 
 /// The device code as the server issued it.
@@ -80,10 +106,11 @@ pub fn now_seconds() -> u64 {
         .unwrap_or(0)
 }
 
-/// Reads the discovery document at the server's own path and refuses one
-/// that sends any door off the issuer's scheme and host, or onto plain http
-/// from an https issuer: a document is data from the network, and the
-/// binary is about to post a person's credential to what it names.
+/// Reads the discovery document at the server's own path and holds it to
+/// the origin it was read from (RFC 8414 section 3.3): the issuer it names
+/// and every door it names are on that origin, or the sign-in is refused.
+/// A document is data from the network, and the binary is about to post a
+/// person's credential to what it names.
 pub fn discover(remote: &Remote) -> Result<Discovery, CliError> {
     let value = remote
         .json(&Request::get(&["auth", ".well-known", "oauth-authorization-server"]).public())?;
@@ -93,13 +120,14 @@ pub fn discover(remote: &Remote) -> Result<Discovery, CliError> {
             remote.origin()
         ))
     })?;
-    let issuer = url::Url::parse(&discovery.issuer)
-        .map_err(|error| CliError::Invalid(format!("the issuer is not a URL: {error}")))?;
-    let api = url::Url::parse(remote.url())
+    let read_from = Url::parse(remote.url())
         .map_err(|error| CliError::Invalid(format!("the server url is not a URL: {error}")))?;
-    if api.scheme() == "https" && issuer.scheme() != "https" {
+    let issuer = Url::parse(&discovery.issuer)
+        .map_err(|error| CliError::Invalid(format!("the issuer is not a URL: {error}")))?;
+    if issuer.origin() != read_from.origin() {
         return Err(CliError::Invalid(format!(
-            "the issuer {} is not https while the server is; refusing to sign in over a downgrade",
+            "the discovery document at {} names {} as its issuer; refusing to sign in through a server that speaks for another",
+            remote.origin(),
             discovery.issuer
         )));
     }
@@ -111,16 +139,50 @@ pub fn discover(remote: &Remote) -> Result<Discovery, CliError> {
         discovery.userinfo_endpoint.as_ref(),
     ];
     for door in doors.into_iter().flatten() {
-        let parsed = url::Url::parse(door)
-            .map_err(|error| CliError::Invalid(format!("{door} is not a URL: {error}")))?;
-        if parsed.origin() != issuer.origin() {
-            return Err(CliError::Invalid(format!(
-                "the discovery document sends {door} off the issuer {}; refusing to sign in",
-                discovery.issuer
-            )));
-        }
+        on_issuer(&discovery, door)?;
     }
     Ok(discovery)
+}
+
+/// Refuses a URL the server named that is not on the issuer's origin, or
+/// is not a web page at all: the doors of the document, and the pages the
+/// device code points a browser at.
+pub fn on_issuer(discovery: &Discovery, named: &str) -> Result<(), CliError> {
+    let issuer = Url::parse(&discovery.issuer)
+        .map_err(|error| CliError::Invalid(format!("the issuer is not a URL: {error}")))?;
+    let parsed = Url::parse(named)
+        .map_err(|error| CliError::Invalid(format!("{named} is not a URL: {error}")))?;
+    if !matches!(parsed.scheme(), "http" | "https") || parsed.origin() != issuer.origin() {
+        return Err(CliError::Invalid(format!(
+            "the server sends {named} off the issuer {}; refusing to sign in",
+            discovery.issuer
+        )));
+    }
+    Ok(())
+}
+
+/// Everything the owner can tick, narrowed to what the server says it
+/// supports. The consent screen narrows further; asking for less here
+/// would hide a toggle the person may want.
+pub fn default_scope(discovery: &Discovery) -> Result<String, CliError> {
+    let scopes: Vec<&str> = OWNER_SCOPES
+        .iter()
+        .copied()
+        .filter(|scope| {
+            discovery.scopes_supported.is_empty()
+                || discovery
+                    .scopes_supported
+                    .iter()
+                    .any(|supported| supported == scope)
+        })
+        .collect();
+    if scopes.is_empty() {
+        return Err(CliError::Invalid(format!(
+            "the server at {} supports none of the scopes an owner signs in with; pass --scope",
+            discovery.issuer
+        )));
+    }
+    Ok(scopes.join(" "))
 }
 
 /// Registers the binary as a public native client that may use the device
@@ -161,6 +223,7 @@ pub fn device_code(
 }
 
 /// What one poll of the token door said.
+#[derive(Debug)]
 pub enum Poll {
     /// The person has not decided.
     Pending,
@@ -252,17 +315,17 @@ pub fn is_stale(kept: &Kept) -> bool {
 /// while this one waited, in which case its set is the live one and a second
 /// refresh would replay a rotated token.
 ///
-/// `force` refreshes even a set that is not stale, for the call that was
-/// just answered `401`.
-pub fn refresh(origin: &str, force: bool) -> Result<Kept, CliError> {
-    let lock_path =
-        std::env::temp_dir().join(format!("marfa-refresh-{}.lock", fingerprint(origin)));
+/// `refused` is the bearer a call was just answered `401` with. The refresh
+/// then happens only if that bearer is still the kept one; a set already
+/// rotated by another process is answered as it is. Without it, the refresh
+/// happens only for a stale set.
+pub fn refresh(origin: &str, refused: Option<&str>) -> Result<Kept, CliError> {
     let file = OpenOptions::new()
         .read(true)
         .write(true)
         .create(true)
         .truncate(false)
-        .open(&lock_path)?;
+        .open(lock_path(origin))?;
     let mut lock = fd_lock::RwLock::new(file);
     let _held = lock.write()?;
 
@@ -281,7 +344,11 @@ pub fn refresh(origin: &str, force: bool) -> Result<Kept, CliError> {
         Kept::Token { .. } => return Err(signed_out(origin)),
         Kept::Key { .. } => return Ok(current),
     };
-    if !force && !is_stale(&current) {
+    let due = match refused {
+        Some(bearer) => current.bearer() == bearer,
+        None => is_stale(&current),
+    };
+    if !due {
         return Ok(current);
     }
     let door = Remote::public_at(&token_endpoint)?;
@@ -292,11 +359,16 @@ pub fn refresh(origin: &str, force: bool) -> Result<Kept, CliError> {
     ]));
     let token = match answer {
         Ok(value) => token_set(value)?,
-        // A refusal means the chain is dead: revoked, replayed or expired.
-        // The entry goes so the next command says "signed out" once rather
-        // than every command failing the same way until a logout.
-        Err(CliError::Refused { status, .. }) if (400..500).contains(&status) => {
-            credentials::forget(origin)?;
+        // The grant is dead: revoked, replayed, expired, or issued to a
+        // client the server has forgotten. The token goes and the origin
+        // stays current, so the next command is refused for want of a
+        // credential and names `marfa login`. Any other refusal, a 429
+        // among them, is the server's answer to this call and leaves the
+        // set alone.
+        Err(CliError::Refused { code, .. })
+            if code == "invalid_grant" || code == "invalid_client" =>
+        {
+            credentials::drop(origin)?;
             return Err(signed_out(origin));
         }
         Err(error) => return Err(error),
@@ -321,6 +393,35 @@ pub fn refresh(origin: &str, force: bool) -> Result<Kept, CliError> {
     };
     credentials::keep(origin, &next)?;
     Ok(next)
+}
+
+/// Where the refresh lock for an origin lives: the user's own runtime
+/// directory where the system has one, else the temp directory with the
+/// user's id in the name, since a shared `/tmp` lets another user plant
+/// the file first.
+fn lock_path(origin: &str) -> PathBuf {
+    let dir = std::env::var_os("XDG_RUNTIME_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir);
+    dir.join(format!(
+        "marfa-refresh-{}-{}.lock",
+        user_id(),
+        fingerprint(origin)
+    ))
+}
+
+#[cfg(unix)]
+fn user_id() -> String {
+    use std::os::unix::fs::MetadataExt;
+    std::env::home_dir()
+        .and_then(|home| std::fs::metadata(home).ok())
+        .map(|metadata| metadata.uid().to_string())
+        .unwrap_or_default()
+}
+
+#[cfg(not(unix))]
+fn user_id() -> String {
+    String::new()
 }
 
 /// Tells the server the token set is done with: the refresh token where
@@ -389,6 +490,43 @@ mod tests {
         token(token_endpoint, Some(1), Some("marfa_rt_old"))
     }
 
+    /// A discovery document whose doors sit on `origin`, naming
+    /// `issuer_origin` as its issuer, supporting a few of the owner's
+    /// scopes and one that is nobody's default.
+    fn document(origin: &str, issuer_origin: &str) -> String {
+        serde_json::json!({
+            "issuer": format!("{issuer_origin}/auth"),
+            "token_endpoint": format!("{origin}/auth/oauth2/token"),
+            "device_authorization_endpoint": format!("{origin}/auth/device/code"),
+            "registration_endpoint": format!("{origin}/auth/oauth2/register"),
+            "revocation_endpoint": format!("{origin}/auth/oauth2/revoke"),
+            "userinfo_endpoint": format!("{origin}/auth/oauth2/userinfo"),
+            "scopes_supported": ["openid", "offline_access", "*:read", "core.note:read", "keys.mint"]
+        })
+        .to_string()
+    }
+
+    /// An origin on the loopback interface that nothing listens on, from a
+    /// door opened and closed for its port.
+    fn closed_origin() -> String {
+        let door = Door::open(vec![]);
+        let origin = door.url.clone();
+        door.received();
+        origin
+    }
+
+    /// Keeps a token for a test, or says why the keychain did not answer.
+    fn keep_or_skip(origin: &str, kept: &Kept) -> bool {
+        match credentials::keep(origin, kept) {
+            Ok(()) => true,
+            Err(CliError::NoKeychain(reason)) => {
+                credentials::skipped(&reason);
+                false
+            }
+            Err(error) => panic!("{error}"),
+        }
+    }
+
     #[test]
     fn a_stale_token_is_one_within_a_minute_of_its_end_that_can_be_refreshed() {
         let door = "http://door.invalid/token";
@@ -412,10 +550,119 @@ mod tests {
         }));
     }
 
+    /// A document read from its own origin is read whole and narrows the
+    /// default scope to what it supports; the same document naming another
+    /// issuer, or one door on another port, is refused.
+    #[test]
+    fn discovery_is_held_to_the_origin_it_was_read_from() {
+        let elsewhere = "https://elsewhere.invalid";
+
+        let door = Door::open_at(|own| vec![Answer::json("200 OK", &document(own, own))]);
+        let discovery = discover(&Remote::public_at(&door.url).unwrap()).unwrap();
+        assert_eq!(
+            door.received()[0].path(),
+            "/auth/.well-known/oauth-authorization-server"
+        );
+        assert_eq!(
+            default_scope(&discovery).unwrap(),
+            "openid offline_access *:read keys.mint",
+            "the owner's scopes the server supports, in the owner's order, and none it does not"
+        );
+        let mut unlisted = discovery.clone();
+        unlisted.scopes_supported.clear();
+        assert_eq!(
+            default_scope(&unlisted).unwrap(),
+            OWNER_SCOPES.join(" "),
+            "a document that does not list its scopes is asked for the whole default"
+        );
+        let mut foreign = discovery.clone();
+        foreign.scopes_supported = vec!["core.note:read".into()];
+        assert!(matches!(default_scope(&foreign), Err(CliError::Invalid(_))));
+        let issuer_origin = Url::parse(&discovery.issuer)
+            .unwrap()
+            .origin()
+            .ascii_serialization();
+        assert!(on_issuer(&discovery, &format!("{issuer_origin}/auth/device")).is_ok());
+        assert!(
+            on_issuer(&discovery, &format!("{elsewhere}/auth/device")).is_err(),
+            "a page off the issuer is not opened"
+        );
+        assert!(
+            on_issuer(&discovery, "file:///etc/passwd").is_err(),
+            "a page that is not a web page is not opened"
+        );
+
+        let door = Door::open_at(|own| vec![Answer::json("200 OK", &document(own, elsewhere))]);
+        let refused = discover(&Remote::public_at(&door.url).unwrap());
+        door.received();
+        assert!(
+            matches!(&refused, Err(CliError::Invalid(message)) if message.contains("speaks for another")),
+            "{refused:?}"
+        );
+
+        let other_port = closed_origin();
+        let door = Door::open_at(|own| {
+            let mut moved: Value = serde_json::from_str(&document(own, own)).unwrap();
+            moved["token_endpoint"] = Value::String(format!("{other_port}/auth/oauth2/token"));
+            vec![Answer::json("200 OK", &moved.to_string())]
+        });
+        let refused = discover(&Remote::public_at(&door.url).unwrap());
+        door.received();
+        assert!(
+            matches!(&refused, Err(CliError::Invalid(message)) if message.contains("off the issuer")),
+            "{refused:?}"
+        );
+    }
+
+    /// The token door's two ways of saying "not yet" are read as such, a
+    /// refusal is carried, and a decision is a token.
+    #[test]
+    fn a_poll_reads_pending_slow_down_a_refusal_and_a_token() {
+        let door = Door::open(vec![
+            Answer::json("400 Bad Request", r#"{"error":"authorization_pending"}"#),
+            Answer::json("400 Bad Request", r#"{"error":"slow_down"}"#),
+            Answer::json(
+                "400 Bad Request",
+                r#"{"error":"access_denied","error_description":"the person declined"}"#,
+            ),
+            Answer::json(
+                "200 OK",
+                r#"{"access_token":"marfa_at_1","token_type":"Bearer","expires_in":3600}"#,
+            ),
+        ]);
+        let discovery: Discovery = serde_json::from_str(&document(&door.url, &door.url)).unwrap();
+        assert!(matches!(
+            poll(&discovery, "client", "dc").unwrap(),
+            Poll::Pending
+        ));
+        assert!(matches!(
+            poll(&discovery, "client", "dc").unwrap(),
+            Poll::SlowDown
+        ));
+        match poll(&discovery, "client", "dc") {
+            Err(CliError::Refused { code, .. }) => assert_eq!(code, "access_denied"),
+            other => panic!("{other:?}"),
+        }
+        match poll(&discovery, "client", "dc").unwrap() {
+            Poll::Token(token) => assert_eq!(token.access_token, "marfa_at_1"),
+            other => panic!("{other:?}"),
+        }
+        let sent = door.received();
+        assert_eq!(sent.len(), 4);
+        assert_eq!(sent[0].path(), "/auth/oauth2/token");
+        assert!(
+            sent[0]
+                .body
+                .contains("grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Adevice_code"),
+            "{}",
+            sent[0].body
+        );
+        assert!(sent[0].body.contains("device_code=dc"), "{}", sent[0].body);
+    }
+
     /// The refresh, through the real keychain, against a door on a local
     /// port: the rotated pair is kept, and the refresh token the server
-    /// sent replaces the one that was spent. Skipped where the keychain
-    /// does not answer, as `credentials` skips.
+    /// sent replaces the one that was spent, sent once.
     #[test]
     fn a_refresh_keeps_the_rotated_pair_and_sends_the_spent_token_once() {
         let _keychain = credentials::hold();
@@ -424,17 +671,14 @@ mod tests {
             "200 OK",
             r#"{"access_token":"marfa_at_new","refresh_token":"marfa_rt_new","expires_in":3600,"token_type":"Bearer","scope":"*:read"}"#,
         );
-        match credentials::keep(&origin, &stale_token(&endpoint)) {
-            Ok(()) => {}
-            Err(CliError::NoKeychain(reason)) => {
-                eprintln!("skipped: the keychain did not answer ({reason})");
-                return;
-            }
-            Err(error) => panic!("{error}"),
+        if !keep_or_skip(&origin, &stale_token(&endpoint)) {
+            return;
         }
-        let outcome = refresh(&origin, false);
+        let outcome = refresh(&origin, None);
         let _ = credentials::forget(&origin);
-        let sent = door.received().remove(0);
+        let received = door.received();
+        assert_eq!(received.len(), 1);
+        let sent = &received[0];
         assert_eq!(sent.method(), "POST");
         assert_eq!(sent.path(), "/token");
         assert_eq!(
@@ -467,30 +711,81 @@ mod tests {
         }
     }
 
-    /// A door that refuses the refresh ends the sign-in: the entry is gone
-    /// and the answer is "signed out", so the next command says so once.
+    /// A set another process rotated while this one waited on the lock is
+    /// answered as it is: neither a stale check nor a refused bearer sends
+    /// anything when the keychain no longer holds what was seen.
     #[test]
-    fn a_refused_refresh_forgets_the_entry_and_says_signed_out() {
+    fn a_set_already_rotated_by_another_process_is_not_refreshed_again() {
+        let _keychain = credentials::hold();
+        let origin = format!("https://rotated.invalid:{}", std::process::id());
+        // A token door nothing listens on, so a refresh that should not
+        // happen fails loudly.
+        let endpoint = format!("{}/token", closed_origin());
+        let fresh = token(
+            &endpoint,
+            Some(now_seconds() + 3600),
+            Some("marfa_rt_fresh"),
+        );
+        if !keep_or_skip(&origin, &fresh) {
+            return;
+        }
+        assert_eq!(
+            refresh(&origin, None).unwrap(),
+            fresh,
+            "not stale: nothing to do"
+        );
+        assert_eq!(
+            refresh(&origin, Some("marfa_at_refused_elsewhere")).unwrap(),
+            fresh,
+            "the refused bearer is not the kept one: another process already refreshed"
+        );
+        let _ = credentials::forget(&origin);
+    }
+
+    /// A door that refuses the grant ends the sign-in: the entry is gone,
+    /// the origin stays current, and the answer is "signed out". A door that
+    /// refuses the call for another reason leaves the set alone, and the
+    /// witness is the same entry surviving a 429.
+    #[test]
+    fn a_dead_grant_ends_the_sign_in_and_any_other_refusal_leaves_it() {
         let _keychain = credentials::hold();
         let origin = format!("https://refused.invalid:{}", std::process::id());
+        let (endpoint, door) = token_door(
+            "429 Too Many Requests",
+            r#"{"error":{"code":"rate_limited","message":"slow down"}}"#,
+        );
+        if !keep_or_skip(&origin, &stale_token(&endpoint)) {
+            return;
+        }
+        let outcome = refresh(&origin, None);
+        door.received();
+        assert!(
+            matches!(outcome, Err(CliError::Refused { status: 429, .. })),
+            "{outcome:?}"
+        );
+        assert_eq!(
+            credentials::read(&origin).unwrap(),
+            Some(stale_token(&endpoint)),
+            "a 429 is the server's answer to this call, not the end of the grant"
+        );
+
         let (endpoint, door) = token_door(
             "400 Bad Request",
             r#"{"error":"invalid_grant","error_description":"revoked"}"#,
         );
-        match credentials::keep(&origin, &stale_token(&endpoint)) {
-            Ok(()) => {}
-            Err(CliError::NoKeychain(reason)) => {
-                eprintln!("skipped: the keychain did not answer ({reason})");
-                return;
-            }
-            Err(error) => panic!("{error}"),
-        }
-        let outcome = refresh(&origin, false);
+        credentials::keep(&origin, &stale_token(&endpoint)).unwrap();
+        let outcome = refresh(&origin, None);
         door.received();
         assert!(
             matches!(outcome, Err(CliError::SignedOut { .. })),
             "{outcome:?}"
         );
         assert_eq!(credentials::read(&origin).unwrap(), None);
+        assert_eq!(
+            credentials::current().unwrap().as_deref(),
+            Some(origin.as_str()),
+            "the origin stays current so the next command names the server it lost"
+        );
+        let _ = credentials::forget(&origin);
     }
 }

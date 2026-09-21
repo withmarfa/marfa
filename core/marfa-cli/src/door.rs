@@ -61,8 +61,15 @@ impl Door {
     /// connection; every answer closes its connection so the next call
     /// arrives as a fresh one.
     pub fn open(answers: Vec<Answer>) -> Door {
+        Door::open_at(|_| answers)
+    }
+
+    /// Opens the door and lets the answers name its own URL, for a document
+    /// that has to say where it was served from.
+    pub fn open_at(answers: impl FnOnce(&str) -> Vec<Answer>) -> Door {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap());
+        let answers = answers(&url);
         let handle = std::thread::spawn(move || {
             let mut received = Vec::new();
             for answer in answers {

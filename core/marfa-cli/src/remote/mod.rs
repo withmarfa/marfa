@@ -100,7 +100,7 @@ impl Remote {
                         // A token about to expire is refreshed before the
                         // call rather than after its refusal.
                         let found = if auth::is_stale(&found) {
-                            auth::refresh(&origin, false)?
+                            auth::refresh(&origin, None)?
                         } else {
                             found
                         };
@@ -164,12 +164,29 @@ impl Remote {
     /// Refreshes the kept token after a `401` and rebuilds the transport
     /// with the new one.
     fn refreshed(&self) -> Result<(), CliError> {
-        let next = auth::refresh(&self.origin, true)?;
+        let refused = self.bearer.borrow().clone().unwrap_or_default();
+        let next = auth::refresh(&self.origin, Some(&refused))?;
         let bearer = next.bearer().to_string();
         *self.http.borrow_mut() = Http::new(&self.url, Some(&bearer))?;
         *self.bearer.borrow_mut() = Some(bearer);
         *self.kept.borrow_mut() = Some(next);
         Ok(())
+    }
+
+    /// A remote holding a keychain entry, for the tests of the refresh
+    /// path, which `resolve` reaches only through the real keychain.
+    #[cfg(test)]
+    pub(crate) fn holding(url: &str, kept: Kept) -> Result<Remote, CliError> {
+        let http = Http::new(url, Some(kept.bearer()))?;
+        let origin = http.origin();
+        Ok(Remote {
+            url: url.to_string(),
+            http: RefCell::new(http),
+            origin,
+            credential: Some(CredentialSource::Keychain),
+            bearer: RefCell::new(Some(kept.bearer().to_string())),
+            kept: RefCell::new(Some(kept)),
+        })
     }
 
     /// A remote at a URL with no credential: the sign-in surface's doors,
@@ -215,12 +232,14 @@ impl Remote {
         self.credential
     }
 
-    /// Sends a request. The only `Err` is a transport failure or a missing
-    /// credential; every status the server answers is a `Reply`.
+    /// Sends a request. Every status the server answers is a `Reply`; an
+    /// `Err` is a transport failure, a missing credential, or a refresh
+    /// that could not be made.
     ///
     /// A `401` to a kept token is answered by one refresh and one retry,
-    /// because the token may have been revoked by a refresh another process
-    /// made since this one read the keychain.
+    /// because the token may have been rotated by another process since
+    /// this one read the keychain, or have run out between the read and
+    /// the call.
     pub fn call(&self, request: &Request) -> Result<Reply, CliError> {
         let reply = self.send(request)?;
         if reply.status == 401 && request.credential && self.can_refresh() {
@@ -476,6 +495,92 @@ mod tests {
             Err(CliError::NoCredential { .. })
         ));
         assert!(door.received().is_empty());
+    }
+
+    /// A `401` to a kept token is answered by one refresh and one retry:
+    /// the door sees the refused call, the refresh with the spent token,
+    /// and the call again under the new one. A later call refused again is
+    /// refreshed again, once, and a token door that refuses that refresh is
+    /// the answer.
+    #[test]
+    fn a_refused_kept_token_is_refreshed_once_and_the_call_sent_again() {
+        let _keychain = credentials::hold();
+        let door = Door::open(vec![
+            Answer::json(
+                "401 Unauthorized",
+                r#"{"error":{"code":"unauthorized","message":"expired"}}"#,
+            ),
+            Answer::json(
+                "200 OK",
+                r#"{"access_token":"marfa_at_new","refresh_token":"marfa_rt_new","expires_in":3600,"token_type":"Bearer"}"#,
+            ),
+            Answer::json("200 OK", r#"{"data":[]}"#),
+            Answer::json(
+                "401 Unauthorized",
+                r#"{"error":{"code":"unauthorized","message":"still"}}"#,
+            ),
+            Answer::json(
+                "429 Too Many Requests",
+                r#"{"error":{"code":"rate_limited","message":"slow down"}}"#,
+            ),
+        ]);
+        let kept = Kept::Token {
+            access_token: "marfa_at_old".into(),
+            refresh_token: Some("marfa_rt_old".into()),
+            expires_at: Some(crate::auth::now_seconds() + 3600),
+            client_id: "client".into(),
+            scope: None,
+            token_endpoint: format!("{}/auth/oauth2/token", door.url),
+            revocation_endpoint: None,
+        };
+        // The refresh reads the keychain by the remote's origin, which is
+        // the door's.
+        let origin = Http::new(&door.url, None).unwrap().origin();
+        match credentials::keep(&origin, &kept) {
+            Ok(()) => {}
+            Err(CliError::NoKeychain(reason)) => {
+                credentials::skipped(&reason);
+                return;
+            }
+            Err(error) => panic!("{error}"),
+        }
+        let remote = Remote::holding(&door.url, kept).unwrap();
+        let listed = remote.json(&Request::get(&["items"])).unwrap();
+        assert_eq!(listed["data"], serde_json::json!([]));
+        match remote.json(&Request::get(&["items"])) {
+            Err(CliError::Refused { status: 429, .. }) => {}
+            other => panic!("{:?}", other.map(|_| ())),
+        }
+        assert!(
+            matches!(credentials::read(&origin).unwrap(), Some(Kept::Token { access_token, .. }) if access_token == "marfa_at_new"),
+            "the rotated set is the kept one, and the refused refresh left it"
+        );
+        let _ = credentials::forget(&origin);
+        let received = door.received();
+        assert_eq!(received.len(), 5);
+        assert_eq!(received[0].path(), "/items");
+        assert_eq!(
+            received[0].header("authorization"),
+            Some("Bearer marfa_at_old")
+        );
+        assert_eq!(received[1].path(), "/auth/oauth2/token");
+        assert!(
+            received[1].body.contains("refresh_token=marfa_rt_old"),
+            "{}",
+            received[1].body
+        );
+        assert_eq!(received[2].path(), "/items");
+        assert_eq!(
+            received[2].header("authorization"),
+            Some("Bearer marfa_at_new")
+        );
+        assert_eq!(received[3].path(), "/items");
+        assert_eq!(received[4].path(), "/auth/oauth2/token");
+        assert!(
+            received[4].body.contains("refresh_token=marfa_rt_new"),
+            "{}",
+            received[4].body
+        );
     }
 
     /// A refusal is the server's answer carried whole, and an empty

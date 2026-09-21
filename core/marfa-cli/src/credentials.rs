@@ -18,6 +18,11 @@ const SERVICE: &str = "marfa";
 /// The account that names the origin a command with no `--url` talks to.
 const CURRENT: &str = "current";
 
+/// The account prefix under which an origin's registered client id is
+/// kept: the registration outlives any one sign-in, so it is not part of
+/// the token entry that a sign-out removes.
+const CLIENT: &str = "client:";
+
 /// What is kept for one origin, tagged by kind.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -77,13 +82,10 @@ pub fn keep(origin: &str, kept: &Kept) -> Result<(), CliError> {
     entry(CURRENT)?.set_password(origin).map_err(no_keychain)
 }
 
-/// Forgets an origin's credential. Answers whether there was one.
+/// Forgets an origin's credential, and that the origin was current.
+/// Answers whether there was one.
 pub fn forget(origin: &str) -> Result<bool, CliError> {
-    let had = match entry(origin)?.delete_credential() {
-        Ok(()) => true,
-        Err(Error::NoEntry) => false,
-        Err(error) => return Err(no_keychain(error)),
-    };
+    let had = drop(origin)?;
     if current()?.as_deref() == Some(origin) {
         match entry(CURRENT)?.delete_credential() {
             Ok(()) | Err(Error::NoEntry) => {}
@@ -91,6 +93,32 @@ pub fn forget(origin: &str) -> Result<bool, CliError> {
         }
     }
     Ok(had)
+}
+
+/// Removes an origin's credential and leaves the origin current, for a
+/// sign-in that ended on its own: the next bare command still knows which
+/// server it was talking to, and says what to do about it.
+pub fn drop(origin: &str) -> Result<bool, CliError> {
+    match entry(origin)?.delete_credential() {
+        Ok(()) => Ok(true),
+        Err(Error::NoEntry) => Ok(false),
+        Err(error) => Err(no_keychain(error)),
+    }
+}
+
+/// The client id the binary registered at an origin, if it has.
+pub fn client_id(origin: &str) -> Result<Option<String>, CliError> {
+    match entry(&format!("{CLIENT}{origin}"))?.get_password() {
+        Ok(id) => Ok(Some(id)),
+        Err(Error::NoEntry) => Ok(None),
+        Err(error) => Err(no_keychain(error)),
+    }
+}
+
+pub fn keep_client_id(origin: &str, id: &str) -> Result<(), CliError> {
+    entry(&format!("{CLIENT}{origin}"))?
+        .set_password(id)
+        .map_err(no_keychain)
 }
 
 /// The origin a command with no `--url` talks to, if one was kept.
@@ -113,17 +141,31 @@ pub(crate) fn hold() -> std::sync::MutexGuard<'static, ()> {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
+/// What a test does where the keychain does not answer: says so, unless
+/// `MARFA_KEYCHAIN_REQUIRED` is set, in which case a keychain that does not
+/// answer is the failure, so a runner that was told it has one cannot pass
+/// these tests by skipping them.
+#[cfg(test)]
+pub(crate) fn skipped(reason: &str) {
+    if std::env::var_os("MARFA_KEYCHAIN_REQUIRED").is_some() {
+        panic!("the keychain did not answer and MARFA_KEYCHAIN_REQUIRED is set: {reason}");
+    }
+    eprintln!("skipped: the keychain did not answer ({reason})");
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// A round trip through the real keychain, on a machine that has one.
+    /// A round trip through the real keychain, on a machine that has one:
+    /// the credential, the current origin, and the client id that outlives
+    /// both.
     ///
     /// Skipped with its reason where the keychain does not answer at any
-    /// step, because the alternative is a test that fails on every headless
-    /// runner, and on a Mac whose keychain asks a person before a rebuilt
-    /// binary may touch an item, for a reason that is not the code's; the
-    /// scenario suite covers the same path wherever a keychain answers.
+    /// step (a headless runner, or a Mac whose keychain asks a person
+    /// before a rebuilt binary may touch an item), unless the runner says
+    /// it has one; the scenario suite covers the same path wherever a
+    /// keychain answers.
     #[test]
     fn keeps_reads_and_forgets_a_credential_for_one_origin() {
         let _keychain = hold();
@@ -133,19 +175,36 @@ mod tests {
         };
         let outcome = (|| -> Result<(), CliError> {
             keep(&origin, &kept)?;
+            keep_client_id(&origin, "client-1")?;
             assert_eq!(read(&origin)?, Some(kept.clone()));
             assert_eq!(current()?.as_deref(), Some(origin.as_str()));
+            assert_eq!(client_id(&origin)?.as_deref(), Some("client-1"));
+            assert!(drop(&origin)?);
+            assert_eq!(read(&origin)?, None);
+            assert_eq!(
+                current()?.as_deref(),
+                Some(origin.as_str()),
+                "a drop leaves the origin current"
+            );
+            keep(&origin, &kept)?;
             assert!(forget(&origin)?);
             assert_eq!(read(&origin)?, None);
             assert_eq!(current()?, None);
+            assert_eq!(
+                client_id(&origin)?.as_deref(),
+                Some("client-1"),
+                "a registration outlives the credential"
+            );
             assert!(!forget(&origin)?);
+            entry(&format!("{CLIENT}{origin}"))?
+                .delete_credential()
+                .map_err(no_keychain)?;
+            assert_eq!(client_id(&origin)?, None);
             Ok(())
         })();
         match outcome {
             Ok(()) => {}
-            Err(CliError::NoKeychain(reason)) => {
-                eprintln!("skipped: the keychain did not answer ({reason})");
-            }
+            Err(CliError::NoKeychain(reason)) => skipped(&reason),
             Err(error) => panic!("{error}"),
         }
     }

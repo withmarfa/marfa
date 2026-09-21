@@ -41,7 +41,7 @@ pub enum CliError {
     #[error("no server named: pass --url or set MARFA_API_URL")]
     NoServerNamed,
     #[error(
-        "no credential for {origin}: pass --key, set MARFA_API_KEY, or keep one with `marfa keys keep`"
+        "no credential for {origin}: pass --key, set MARFA_API_KEY, keep a key with `marfa keys keep`, or sign in with `marfa login`"
     )]
     NoCredential { origin: String },
     #[error("no keychain on this system: {0}")]
@@ -251,7 +251,7 @@ Exit codes:
   2  the command line was wrong, or named no store or server; clap's own refusals print its usage text
   3  the environment failed (unreachable, timed out, a 5xx, a 429); try again
   4  the working copy or the queue refused under the device rules, or this system has no keychain
-  5  no credential, or the credential was refused
+  5  no credential, the credential was refused, or the sign-in ended; `marfa login` starts one
 
 With --json a refusal is one JSON object on stderr:
   {\"error\":{\"code\":...,\"message\":...,\"server\":{\"status\":...,\"code\":...,\"details\":...}|null,\"retry_after_seconds\":...},\"exit\":N}

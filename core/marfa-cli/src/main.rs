@@ -33,12 +33,12 @@ use crate::remote::{Named, Remote};
 #[command(name = "marfa", version, after_long_help = EXIT_CODES_HELP)]
 struct Cli {
     /// The server's base URL. Falls back to MARFA_API_URL, then to the
-    /// server a kept key made current.
+    /// server a kept credential made current.
     #[arg(long, global = true, value_name = "URL", help_heading = "Server")]
     url: Option<String>,
 
-    /// A key for that server. Falls back to MARFA_API_KEY, then to the
-    /// keychain.
+    /// A key or a token for that server. Falls back to MARFA_API_KEY, then
+    /// to the keychain.
     #[arg(long, global = true, value_name = "KEY", help_heading = "Server")]
     key: Option<String>,
 
