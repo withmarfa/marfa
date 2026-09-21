@@ -1,7 +1,7 @@
 /**
  * The set of housekeeping jobs is a function of the configuration, and
- * each gate is asserted from both sides: the job is there under the
- * setting that admits it, and gone under the one that switches it off.
+ * each gate is asserted from both sides: the housekeeping job is there under
+ * the setting that admits it, and gone under the one that switches it off.
  */
 import { afterEach, describe, expect, it } from "vitest";
 import type { AppConfig } from "../config.js";
@@ -65,7 +65,7 @@ const ALWAYS = [
 ];
 
 describe("the housekeeping registrations", () => {
-  it("registers every job the defaults admit, the heartbeat only with a receiver", async () => {
+  it("registers every housekeeping job the defaults admit, the heartbeat only with a receiver", async () => {
     const { names } = await namesUnder({});
     expect(names).toEqual([
       "event-log-cleanup",
