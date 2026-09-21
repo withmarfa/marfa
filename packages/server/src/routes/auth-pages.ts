@@ -192,8 +192,9 @@ async function createUserAppGrant(
  * Note on the signature: the @better-auth/oauth-provider plugin owns
  * token issuance + id_token signing, with its own salt + signer wired
  * through `instance.ts`. `oidcSigner` is threaded into `authRoutes` by
- * app.ts and is currently unused; kept on the signature for caller
- * stability.
+ * app.ts and is read by nothing here. This package is private and both
+ * callers are in this repository, so the parameter buys nothing and is
+ * carried only until the module it names goes.
  */
 export function authRoutes(
   storage: Storage,

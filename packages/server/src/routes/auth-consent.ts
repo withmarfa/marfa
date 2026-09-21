@@ -323,9 +323,11 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
     // refuses invalid grammar with a 400 and admits nothing to a stored
     // ceiling. Everything it passes is re-validated by the plugin against the
     // client's registered row, so a withheld literal arriving here is refused
-    // one step later rather than published. The three sites that DO write are
-    // `buildAllowedScopes`, `bundlePublishedScopes` and the self-serve key
-    // mint, and all three consult `isWithheldFromAllowlist`.
+    // one step later rather than published. The sites that DO write are
+    // `buildAllowedScopes` (`auth/oauth-provider.ts`) and
+    // `bundlePublishedScopes` (`auth/ceiling-catchup.ts`), and both reach
+    // `isWithheldFromAllowlist` — the second through
+    // `publishableBundleScopes`.
     // Deduplicated, order preserved. A client may name the same literal
     // twice and nothing upstream stops it, which produced two identical
     // toggles carrying one checkbox value: unticking the row in front of you
