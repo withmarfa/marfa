@@ -984,6 +984,10 @@ export class MarfaClient {
         `No API key found in secure storage for account "${options.account}".`,
       );
     }
+    // Named only to keep them out of `rest`, which becomes the client's
+    // config. The lint rule this repository runs exempts neither a rest
+    // sibling nor an underscore, so each is discarded where it is named
+    // rather than through a disable comment.
     const { storage, account, ...rest } = options;
     void storage;
     void account;

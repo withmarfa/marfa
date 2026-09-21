@@ -1,5 +1,5 @@
 /**
- * D32's one rule at the wire: nothing writes to an item a connector owns.
+ * The mirror rule at the wire: nothing writes to an item a connector owns.
  * The owning connector re-syncs its mirror (with faithful-mirror null
  * semantics); everyone else, the operator key included, is refused toward
  * promotion, which mints a user-owned copy joined by derived-from. Items
@@ -170,8 +170,9 @@ describe("the mirror rule", () => {
   });
 
   it("leaves items outside connector provenance untouched by the rule", async () => {
-    // Sync's items arrive under a client credential with no connector
-    // provenance, so this is also the D43 exemption, structurally.
+    // A client credential carries no connector provenance, so an item
+    // written under one sits outside the rule rather than being exempted
+    // from it.
     const own = await request(ctx.app, "POST", "/items", {
       key: memberKey,
       body: { type: "core.note", properties: { body: "client-owned" } },

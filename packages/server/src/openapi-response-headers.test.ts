@@ -330,11 +330,8 @@ describe("the server sends the headers the spec declares", () => {
 
     it("sends them on a blob HEAD", async () => {
       // A HEAD is a request clients make, so what it carries is worth
-      // pinning. There used to be a separate `.on("HEAD", "/:hash")`
-      // handler beside the GET route which never ran — a HEAD has always
-      // been answered by the GET route — and it is gone. This asserts the
-      // client-visible behavior, which is what it asserted before and what
-      // it still asserts now that only one handler exists.
+      // pinning. Hono answers it from the GET route, so what is asserted
+      // here is the client-visible behavior rather than any one handler.
       const res = await request(ctx.app, "HEAD", `/blobs/${blobHash}`, {
         key: ctx.workingKey,
       });

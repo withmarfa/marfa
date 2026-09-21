@@ -2,9 +2,9 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { MarfaClient, type SecureStorage } from "./client.js";
 
 /**
- * Static factory parity tests — covers `MarfaClient.fromEnvironment()`
- * and `MarfaClient.fromSecureStorage()`. Mirrors the Swift SDK's
- * `MarfaClientTests` coverage of the same surfaces.
+ * The two static factories, `MarfaClient.fromEnvironment()` and
+ * `MarfaClient.fromSecureStorage()`. Both build a client from something
+ * outside the process, so both are held against what that something says.
  */
 
 describe("MarfaClient.fromEnvironment", () => {
