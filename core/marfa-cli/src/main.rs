@@ -1,159 +1,45 @@
+mod device;
 mod error;
+mod folders;
 mod output;
+mod remote;
+mod values;
 mod watch;
 
-use std::path::PathBuf;
 use std::process::ExitCode;
-use std::time::Duration;
 
-use clap::{Args, Parser, Subcommand, ValueEnum};
-use marfa_core::{
-    Core, Draft, EdgeDraft, EdgeEdit, Edit, Folder, ListFilters, MetadataWrite, SearchFilters,
-    Server, Slice, Sort,
-};
+use clap::{Parser, Subcommand};
 
-use crate::error::CliError;
+use crate::device::DeviceArgs;
+use crate::error::{CliError, EXIT_CODES_HELP};
+use crate::folders::FoldersCommand;
+use crate::remote::Named;
 
-/// Marfa from the command line: a local copy of a slice of one server.
+/// Marfa from the command line: a working copy of a slice of one server
+/// under `device`, and folders that hold a slice as files.
 #[derive(Debug, Parser)]
-#[command(name = "marfa", version)]
+#[command(name = "marfa", version, after_long_help = EXIT_CODES_HELP)]
 struct Cli {
-    /// The local database file.
-    #[arg(
-        long,
-        global = true,
-        env = "MARFA_DB",
-        value_name = "PATH",
-        hide_env_values = true,
-        help_heading = "Global"
-    )]
-    db: Option<PathBuf>,
+    /// The server's base URL. Falls back to MARFA_API_URL.
+    #[arg(long, global = true, value_name = "URL", help_heading = "Server")]
+    url: Option<String>,
 
-    /// Print records as JSON.
-    #[arg(long, global = true, help_heading = "Global")]
+    /// A key for that server. Falls back to MARFA_API_KEY.
+    #[arg(long, global = true, value_name = "KEY", help_heading = "Server")]
+    key: Option<String>,
+
+    /// Print records as JSON, and a refusal as one JSON object on stderr.
+    #[arg(long, global = true, help_heading = "Output")]
     json: bool,
 
     #[command(subcommand)]
     command: Command,
 }
 
-#[derive(Debug, Args)]
-struct ServerArgs {
-    /// The server's base URL.
-    #[arg(
-        long,
-        env = "MARFA_API_URL",
-        value_name = "URL",
-        hide_env_values = true
-    )]
-    url: String,
-
-    /// A key for that server.
-    #[arg(
-        long,
-        env = "MARFA_API_KEY",
-        value_name = "KEY",
-        hide_env_values = true
-    )]
-    key: String,
-}
-
-impl From<ServerArgs> for Server {
-    fn from(args: ServerArgs) -> Server {
-        Server {
-            url: args.url,
-            key: args.key,
-        }
-    }
-}
-
 #[derive(Debug, Subcommand)]
 enum Command {
-    /// Replace the local copy with the declared types at one tier.
-    Hydrate {
-        #[command(flatten)]
-        server: ServerArgs,
-        /// Comma-separated type identifiers, such as core.note,core.file.
-        #[arg(long, value_delimiter = ',', required = true, value_name = "TYPE")]
-        types: Vec<String>,
-        #[arg(long)]
-        tier: Tier,
-    },
-    /// Apply every event since the last hydrate or catch-up.
-    #[command(name = "catch-up")]
-    CatchUp {
-        #[command(flatten)]
-        server: ServerArgs,
-    },
-    /// Read items from the local copy.
-    Items {
-        #[command(subcommand)]
-        command: ItemsCommand,
-    },
-    /// Full-text search over the local copy, best match first.
-    Search {
-        /// Words to look for; each is a prefix, all must match.
-        query: String,
-        /// Exactly one state. Unset answers the active state.
-        #[arg(long)]
-        state: Option<ItemState>,
-        /// Every state, not just the active one.
-        #[arg(long)]
-        all_states: bool,
-        /// How many hits at most.
-        #[arg(long, default_value_t = 20)]
-        limit: usize,
-    },
-    /// Every queued write and what became of it.
-    Queue,
-    /// Send what the queue holds and record what came back.
-    ///
-    /// One pass. A write that met a network rather than an answer is left
-    /// where it was, uncounted, for the next drain.
-    Drain {
-        #[command(flatten)]
-        server: ServerArgs,
-    },
-    /// Clear the writes the server has answered.
-    ///
-    /// A queue nobody empties makes every later write slower. Blocked and
-    /// dead rows stay, because a caller may still release them.
-    Forget,
-    /// Send a blocked or dead write again, under a fresh key.
-    Release {
-        /// The queued write to release.
-        #[arg(
-            value_name = "ID",
-            conflicts_with = "reason",
-            required_unless_present = "reason"
-        )]
-        id: Option<String>,
-        /// Release every write blocked for this reason instead of one by id.
-        #[arg(long, value_name = "REASON")]
-        reason: Option<String>,
-    },
-    /// What the local copy holds and where it came from.
-    Status,
-    /// Edges between items, each its own write.
-    Edges {
-        #[command(subcommand)]
-        command: EdgesCommand,
-    },
-    /// Tags on an item, each its own write.
-    Tags {
-        #[command(subcommand)]
-        command: TagsCommand,
-    },
-    /// An item's metadata, written whole or merged.
-    Metadata {
-        #[command(subcommand)]
-        command: MetadataCommand,
-    },
-    /// An item's extension namespaces, each its own write.
-    Extensions {
-        #[command(subcommand)]
-        command: ExtensionsCommand,
-    },
+    /// A working copy of a slice of one server, in the store --db names.
+    Device(DeviceArgs),
     /// Folders on this machine: a directory that holds a slice as files.
     Folders {
         #[command(subcommand)]
@@ -161,754 +47,36 @@ enum Command {
     },
 }
 
-#[derive(Debug, Subcommand)]
-enum ItemsCommand {
-    /// List items, newest first unless sorted otherwise.
-    List(ListArgs),
-    /// One item by id, with its properties and tags.
-    Get {
-        /// The item id.
-        id: String,
-    },
-    /// Write a new item into the local copy and queue it for the server.
-    Create(CreateArgs),
-    /// Change an item in the local copy and queue the change.
-    Update(UpdateArgs),
-    /// Move an item to the bin locally and queue the delete.
-    Delete {
-        /// The item id.
-        id: String,
-    },
-    /// Take an item out of the bin locally and queue the restore.
-    Restore {
-        /// The item id.
-        id: String,
-    },
-    /// Move an item to another lifecycle state.
-    Transition {
-        /// The item id.
-        id: String,
-        /// The state to move it to. `revoked` is the server's alone.
-        #[arg(long)]
-        state: ItemState,
-    },
-}
-
-#[derive(Debug, Subcommand)]
-enum EdgesCommand {
-    /// Link two items, and queue the edge.
-    Create {
-        #[arg(long, value_name = "ID")]
-        source: String,
-        #[arg(long, value_name = "ID")]
-        target: String,
-        #[arg(long = "type", value_name = "TYPE")]
-        type_: String,
-        /// The edge's properties, as a JSON object.
-        #[arg(long, value_name = "JSON", default_value = "{}")]
-        properties: String,
-        /// The id to mint it under. Omitted, the device mints one.
-        #[arg(long)]
-        id: Option<String>,
-    },
-    /// Change an edge's properties.
-    Update {
-        /// The edge id.
-        id: String,
-        #[arg(long, value_name = "JSON")]
-        properties: String,
-        /// The version the edit was based on. Required, as on an item.
-        #[arg(long)]
-        version: Option<i64>,
-    },
-    /// Drop an edge locally and queue the delete.
-    Delete {
-        /// The edge id.
-        id: String,
-    },
-}
-
-#[derive(Debug, Subcommand)]
-enum TagsCommand {
-    /// Put one tag on an item.
-    Add {
-        /// The item id.
-        item: String,
-        tag: String,
-    },
-    /// Take one tag off an item.
-    Remove {
-        /// The item id.
-        item: String,
-        tag: String,
-    },
-}
-
-#[derive(Debug, Subcommand)]
-enum MetadataCommand {
-    /// Write the item's tags whole, dropping any not named.
-    Replace {
-        /// The item id.
-        item: String,
-        #[arg(long = "tag", value_name = "TAG")]
-        tags: Vec<String>,
-    },
-    /// Add the named tags, leaving the rest.
-    Merge {
-        /// The item id.
-        item: String,
-        #[arg(long = "tag", value_name = "TAG")]
-        tags: Vec<String>,
-    },
-}
-
-#[derive(Debug, Subcommand)]
-enum ExtensionsCommand {
-    /// Write one extension namespace.
-    Write {
-        /// The item id.
-        item: String,
-        namespace: String,
-        /// The namespace's contents, as a JSON object.
-        #[arg(long, value_name = "JSON", default_value = "{}")]
-        body: String,
-    },
-    /// Remove one extension namespace.
-    Delete {
-        /// The item id.
-        item: String,
-        namespace: String,
-    },
-}
-
-#[derive(Debug, Args)]
-struct CreateArgs {
-    /// The type the item is.
-    #[arg(long = "type", value_name = "TYPE")]
-    type_: String,
-    /// The properties, as a JSON object.
-    #[arg(long, value_name = "JSON")]
-    properties: String,
-    /// A tag, repeatable. Each is queued as a write of its own.
-    #[arg(long = "tag", value_name = "TAG")]
-    tags: Vec<String>,
-    /// The tier to write it at; the default is the library.
-    #[arg(long)]
-    tier: Option<Tier>,
-    /// The source to stamp it with.
-    #[arg(long)]
-    source: Option<String>,
-    /// The id this row has in the system it came from.
-    #[arg(long)]
-    source_id: Option<String>,
-    /// The item's own time, RFC 3339. Defaults to now.
-    #[arg(long)]
-    occurred_at: Option<String>,
-    /// The id to mint it under. Omitted, the device mints one.
-    #[arg(long)]
-    id: Option<String>,
-    /// The version this create is conditional on, where its natural key
-    /// resolves a row the server already holds.
-    #[arg(long)]
-    version: Option<i64>,
-}
-
-#[derive(Debug, Args)]
-struct UpdateArgs {
-    /// The item id.
-    id: String,
-    /// The properties to write, as a JSON object. Whole values.
-    #[arg(long, value_name = "JSON")]
-    properties: String,
-    /// The version the edit was based on. Required: an update that names no
-    /// version overwrites whatever it finds.
-    #[arg(long)]
-    version: Option<i64>,
-    /// The natural key to move the row to. The server refuses one another
-    /// item already holds, so a rename does not take a name off a note.
-    #[arg(long, value_name = "KEY")]
-    source_id: Option<String>,
-}
-
-#[derive(Debug, Args)]
-struct ListArgs {
-    /// A type identifier; its subtypes are included.
-    #[arg(long = "type", value_name = "TYPE")]
-    type_: Option<String>,
-    /// Exactly one state. Unset answers the active state.
-    #[arg(long)]
-    state: Option<ItemState>,
-    /// Every state, not just the active one.
-    #[arg(long)]
-    all_states: bool,
-    /// Only items at this tier.
-    #[arg(long)]
-    tier: Option<Tier>,
-    /// Items must carry every tag given.
-    #[arg(long = "tag", value_name = "TAG")]
-    tags: Vec<String>,
-    /// Exclusive lower bound on the item's own time, RFC 3339.
-    ///
-    /// Named for the field rather than shortened to `--after`, because the
-    /// binary sorts on three times — `created_at`, `updated_at` and this
-    /// one — so an unqualified `--after` would not say which.
-    #[arg(long = "occurred-after", value_name = "TIME")]
-    occurred_after: Option<String>,
-    /// Exclusive upper bound on the item's own time, RFC 3339.
-    #[arg(long = "occurred-before", value_name = "TIME")]
-    occurred_before: Option<String>,
-    #[arg(long, default_value = "created-at")]
-    sort: SortField,
-    #[arg(long, default_value = "desc")]
-    direction: SortDirection,
-    /// How many items at most.
-    #[arg(long)]
-    limit: Option<u32>,
-    /// How many items to skip first.
-    #[arg(long)]
-    offset: Option<u32>,
-}
-
-#[derive(Debug, Subcommand)]
-enum FoldersCommand {
-    /// Make a directory a folder: a view on a slice, with defaults.
-    Add {
-        /// The directory. It is made if it is not there.
-        dir: PathBuf,
-        /// The types this folder holds.
-        #[arg(long, value_delimiter = ',', required = true, value_name = "TYPE")]
-        types: Vec<String>,
-        #[arg(long, default_value = "library")]
-        tier: Tier,
-        /// What a new file becomes. The default is the first type named.
-        #[arg(long = "default-type", value_name = "TYPE")]
-        default_type: Option<String>,
-        /// Properties every new file gets, as a JSON object.
-        #[arg(long, value_name = "JSON", default_value = "{}")]
-        defaults: String,
-        /// A tag every item in this folder carries.
-        #[arg(long = "tag", value_name = "TAG")]
-        tags: Vec<String>,
-    },
-    /// Pull the folder's slice into its working copy.
-    Hydrate {
-        dir: PathBuf,
-        #[command(flatten)]
-        server: ServerArgs,
-    },
-    /// Read the folder and queue what has changed. Sends nothing.
-    Scan { dir: PathBuf },
-    /// Write the slice out as files.
-    Pull { dir: PathBuf },
-    /// Scan, drain and pull: everything a folder does, once.
-    Push {
-        dir: PathBuf,
-        #[command(flatten)]
-        server: ServerArgs,
-    },
-    /// Watch a folder and keep it in step until interrupted.
-    Watch {
-        /// The directory to watch, recursively.
-        dir: PathBuf,
-        #[command(flatten)]
-        server: ServerArgs,
-        /// Stop after this long. Unset, it runs until interrupted.
-        #[arg(long, value_name = "SECONDS")]
-        r#for: Option<u64>,
-    },
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-enum Tier {
-    Library,
-    Feed,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-enum ItemState {
-    Active,
-    Archived,
-    Trashed,
-    Revoked,
-}
-
-// Every sortable column is a verb plus `_at`, so the shared `At` suffix the
-// lint reports is the naming rule rather than noise the variants could drop.
-#[allow(clippy::enum_variant_names)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-enum SortField {
-    CreatedAt,
-    UpdatedAt,
-    OccurredAt,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-enum SortDirection {
-    Asc,
-    Desc,
-}
-
-impl From<Tier> for marfa_core::Tier {
-    fn from(tier: Tier) -> Self {
-        match tier {
-            Tier::Library => marfa_core::Tier::Library,
-            Tier::Feed => marfa_core::Tier::Feed,
-        }
-    }
-}
-
-impl From<ItemState> for marfa_core::ItemState {
-    fn from(state: ItemState) -> Self {
-        match state {
-            ItemState::Active => marfa_core::ItemState::Active,
-            ItemState::Archived => marfa_core::ItemState::Archived,
-            ItemState::Trashed => marfa_core::ItemState::Trashed,
-            ItemState::Revoked => marfa_core::ItemState::Revoked,
-        }
-    }
-}
-
-impl From<SortField> for marfa_core::SortField {
-    fn from(field: SortField) -> Self {
-        match field {
-            SortField::CreatedAt => marfa_core::SortField::CreatedAt,
-            SortField::UpdatedAt => marfa_core::SortField::UpdatedAt,
-            SortField::OccurredAt => marfa_core::SortField::OccurredAt,
-        }
-    }
-}
-
-impl From<SortDirection> for marfa_core::SortDirection {
-    fn from(direction: SortDirection) -> Self {
-        match direction {
-            SortDirection::Asc => marfa_core::SortDirection::Ascending,
-            SortDirection::Desc => marfa_core::SortDirection::Descending,
-        }
-    }
-}
-
-/// A `--properties` argument as the object the core takes.
-///
-/// Refused here rather than deeper, because a caller who typed malformed JSON
-/// wants to hear about their argument rather than about a field a queue could
-/// not build. An array or a bare value is refused for the same reason: the
-/// wire shape is an object and a caller who sent something else meant an
-/// object.
-fn properties(text: &str) -> Result<serde_json::Map<String, serde_json::Value>, CliError> {
-    match serde_json::from_str::<serde_json::Value>(text) {
-        Ok(serde_json::Value::Object(map)) => Ok(map),
-        Ok(_) => Err(CliError::Core(marfa_core::CoreError::Invalid(
-            "--properties takes a JSON object".into(),
-        ))),
-        Err(error) => Err(CliError::Core(marfa_core::CoreError::Invalid(format!(
-            "--properties is not JSON: {error}"
-        )))),
-    }
-}
-
 fn main() -> ExitCode {
     let cli = Cli::parse();
+    let json = cli.json;
     match run(cli) {
         Ok(()) => ExitCode::SUCCESS,
         Err(CliError::ClosedOutput) => ExitCode::SUCCESS,
         Err(error) => {
-            eprintln!("marfa: {error}");
-            ExitCode::from(1)
+            if json {
+                eprintln!("{}", error.envelope());
+            } else {
+                eprintln!("marfa: {error}");
+            }
+            ExitCode::from(error.exit() as u8)
         }
     }
 }
 
 fn run(cli: Cli) -> Result<(), CliError> {
-    let json = cli.json;
+    let named = Named::from_flags(cli.url, cli.key);
     match cli.command {
-        Command::Hydrate {
-            server,
-            types,
-            tier,
-        } => {
-            let report = open(&cli.db, Some(server))?.hydrate(&types, tier.into())?;
-            output::report(&report, json, || {
-                format!(
-                    "hydrated {} item(s) and {} edge(s) of {} at {} in {} page(s); cursor {}",
-                    report.items,
-                    report.edges,
-                    report.types.join(","),
-                    report.tier,
-                    report.pages,
-                    report.cursor
-                )
-            })
-        }
-        Command::CatchUp { server } => {
-            let report = open(&cli.db, Some(server))?.catch_up()?;
-            output::report(&report, json, || {
-                format!(
-                    "applied {} event(s), skipped {}; cursor {}{}",
-                    report.applied,
-                    report.skipped,
-                    report.cursor,
-                    if report.reached_head {
-                        ""
-                    } else {
-                        " (stopped on silence)"
-                    }
-                )
-            })
-        }
-        Command::Items { command } => {
-            let core = open(&cli.db, None)?;
-            match command {
-                ItemsCommand::List(args) => {
-                    let filters = ListFilters {
-                        r#type: args.type_,
-                        state: args.state.map(Into::into),
-                        all_states: args.all_states,
-                        tier: args.tier.map(Into::into),
-                        tags: args.tags,
-                        occurred_after: args.occurred_after,
-                        occurred_before: args.occurred_before,
-                        limit: args.limit,
-                        offset: args.offset,
-                    };
-                    let sort = Sort {
-                        field: args.sort.into(),
-                        direction: args.direction.into(),
-                    };
-                    output::items(&core.list(&filters, sort)?, json)
-                }
-                ItemsCommand::Get { id } => match core.get(&id)? {
-                    Some(item) => output::item(&item, json),
-                    None => Err(CliError::NotHeld(id)),
-                },
-                ItemsCommand::Create(args) => {
-                    let draft = Draft {
-                        r#type: args.type_,
-                        id: args.id,
-                        properties: properties(&args.properties)?,
-                        tags: args.tags,
-                        tier: args.tier.map(Into::into),
-                        source: args.source,
-                        source_id: args.source_id,
-                        occurred_at: args.occurred_at,
-                        base_version: args.version,
-                    };
-                    output::queued_one(&core.create_item(&draft)?, json)
-                }
-                ItemsCommand::Update(args) => {
-                    let edit = Edit {
-                        properties: properties(&args.properties)?,
-                        base_version: args.version,
-                        source_id: args.source_id,
-                    };
-                    output::queued_one(&core.update_item(&args.id, &edit)?, json)
-                }
-                ItemsCommand::Delete { id } => output::queued_one(&core.delete_item(&id)?, json),
-                ItemsCommand::Restore { id } => output::queued_one(&core.restore_item(&id)?, json),
-                ItemsCommand::Transition { id, state } => {
-                    output::queued_one(&core.transition_item(&id, state.into())?, json)
-                }
-            }
-        }
-        Command::Search {
-            query,
-            state,
-            all_states,
-            limit,
-        } => {
-            let filters = SearchFilters {
-                state: state.map(Into::into),
-                all_states,
-            };
-            output::hits(&open(&cli.db, None)?.search(&query, &filters, limit)?, json)
-        }
-        Command::Edges { command } => {
-            let core = open(&cli.db, None)?;
-            match command {
-                EdgesCommand::Create {
-                    source,
-                    target,
-                    type_,
-                    properties: props,
-                    id,
-                } => {
-                    let draft = EdgeDraft {
-                        source_id: source,
-                        target_id: target,
-                        edge_type: type_,
-                        properties: properties(&props)?,
-                        id,
-                    };
-                    output::queued_one(&core.create_edge(&draft)?, json)
-                }
-                EdgesCommand::Update {
-                    id,
-                    properties: props,
-                    version,
-                } => {
-                    let edit = EdgeEdit {
-                        properties: properties(&props)?,
-                        base_version: version,
-                    };
-                    output::queued_one(&core.update_edge(&id, &edit)?, json)
-                }
-                EdgesCommand::Delete { id } => output::queued_one(&core.delete_edge(&id)?, json),
-            }
-        }
-        Command::Tags { command } => {
-            let core = open(&cli.db, None)?;
-            let queued = match command {
-                TagsCommand::Add { item, tag } => core.add_tag(&item, &tag)?,
-                TagsCommand::Remove { item, tag } => core.remove_tag(&item, &tag)?,
-            };
-            output::queued_one(&queued, json)
-        }
-        Command::Metadata { command } => {
-            let core = open(&cli.db, None)?;
-            let (item, tags, replace) = match command {
-                MetadataCommand::Replace { item, tags } => (item, tags, true),
-                MetadataCommand::Merge { item, tags } => (item, tags, false),
-            };
-            let write = MetadataWrite { tags };
-            output::queued_one(&core.write_metadata(&item, &write, replace)?, json)
-        }
-        Command::Extensions { command } => {
-            let core = open(&cli.db, None)?;
-            let queued = match command {
-                ExtensionsCommand::Write {
-                    item,
-                    namespace,
-                    body,
-                } => {
-                    // Parsed before it is queued, so a body that is not an
-                    // object is refused here rather than sent and refused.
-                    properties(&body)?;
-                    core.write_extension(&item, &namespace, &body)?
-                }
-                ExtensionsCommand::Delete { item, namespace } => {
-                    core.delete_extension(&item, &namespace)?
-                }
-            };
-            output::queued_one(&queued, json)
-        }
-        Command::Queue => output::queued(&open(&cli.db, None)?.queue()?, json),
-        Command::Forget => {
-            let cleared = open(&cli.db, None)?.forget_answered()?;
-            output::report(&cleared, json, || {
-                format!("cleared {cleared} answered write(s)")
-            })
-        }
-        Command::Drain { server } => {
-            let report = open(&cli.db, Some(server))?.drain()?;
-            output::drained(&report, json)
-        }
-        Command::Release { id, reason } => {
-            let core = open(&cli.db, None)?;
-            let released = match (&id, &reason) {
-                (_, Some(reason)) => core.release_reason(reason)?,
-                (Some(id), None) => usize::from(core.release(id)?),
-                // clap refuses this combination, so reaching it means the
-                // argument rules and this branch have drifted apart.
-                (None, None) => {
-                    return Err(CliError::Core(marfa_core::CoreError::Invalid(
-                        "name a queued write to release, or a reason to release every write blocked for it".into(),
-                    )));
-                }
-            };
-            output::report(&released, json, || {
-                if released == 0 {
-                    "nothing to release: a write is released only where it is blocked or dead"
-                        .into()
-                } else {
-                    format!("released {released} write(s), each under a fresh key")
-                }
-            })
-        }
-        Command::Status => {
-            let status = open(&cli.db, None)?.status()?;
-            output::report(&status, json, || {
-                format!(
-                    "server {}\nslice {} at {}\ncursor {}\nhydration {}\n{} item(s), {} edge(s)",
-                    status.server_origin.as_deref().unwrap_or("(none)"),
-                    if status.slice_types.is_empty() {
-                        "(none)".to_string()
-                    } else {
-                        status.slice_types.join(",")
-                    },
-                    status
-                        .slice_tier
-                        .map(|tier| tier.to_string())
-                        .unwrap_or_else(|| "(none)".into()),
-                    status.event_cursor.as_deref().unwrap_or("(none)"),
-                    status.hydration.as_str(),
-                    status.items,
-                    status.edges
-                )
-            })
-        }
-        Command::Folders { command } => folders(command, json),
+        Command::Device(args) => device::run(args, &named, cli.json),
+        Command::Folders { command } => folders::run(command, &named, cli.json),
     }
-}
-
-/// Every folder command. A folder carries its own store under `.marfa`, so
-/// none of these takes `--db`: pointing one at another store would be two
-/// folders sharing a mapping, and neither would be right about the other's
-/// files.
-fn folders(command: FoldersCommand, json: bool) -> Result<(), CliError> {
-    match command {
-        FoldersCommand::Add {
-            dir,
-            types,
-            tier,
-            default_type,
-            defaults,
-            tags,
-        } => {
-            let slice = Slice {
-                default_type: default_type
-                    .unwrap_or_else(|| types.first().cloned().unwrap_or_default()),
-                types,
-                tier: tier.into(),
-                defaults: properties(&defaults)?,
-                tags,
-            };
-            let folder = Folder::add(&dir, slice, None)?;
-            output::report(folder.slice(), json, || {
-                format!("{} is a folder", folder.root().display())
-            })
-        }
-        FoldersCommand::Hydrate { dir, server } => {
-            let folder = Folder::open(&dir, Some(server.into()))?;
-            let report = folder.hydrate()?;
-            output::report(&report, json, || {
-                format!("{} item(s) into {}", report.items, dir.display())
-            })
-        }
-        FoldersCommand::Scan { dir } => {
-            let report = Folder::open(&dir, None)?.scan()?;
-            output::report(&report, json, || describe_scan(&report))
-        }
-        FoldersCommand::Pull { dir } => {
-            let report = Folder::open(&dir, None)?.pull()?;
-            output::report(&report, json, || describe_pull(&report))
-        }
-        FoldersCommand::Push { dir, server } => {
-            let folder = Folder::open(&dir, Some(server.into()))?;
-            let scanned = folder.scan()?;
-            let drained = folder.core().drain()?;
-            let pulled = folder.pull()?;
-            output::report(
-                &serde_json::json!({
-                    "scan": scanned,
-                    "drain": drained,
-                    "pull": pulled,
-                }),
-                json,
-                || {
-                    format!(
-                        "{}\nsent {}, held {}\n{} file(s) written",
-                        describe_scan(&scanned),
-                        drained.sent,
-                        drained.held,
-                        pulled.written + pulled.rewritten
-                    )
-                },
-            )
-        }
-        FoldersCommand::Watch { dir, server, r#for } => {
-            watch::watch(&dir, server.into(), r#for.map(Duration::from_secs), json)
-        }
-    }
-}
-
-/// What a pull did, for somebody who did not ask for JSON.
-///
-/// The three counts after the semicolon are items that have no file and are
-/// not going to get one on this pass. `folders.md` 20 requires the third be
-/// reported and 22 the first; a line of the first five numbers alone says
-/// nothing about any of them, so a person reading five zeroes has been told
-/// the pull was quiet rather than that it declined to write. Left off when
-/// they are zero, because the ordinary pull is the one nobody needs to read
-/// twice.
-fn describe_pull(report: &marfa_core::PullReport) -> String {
-    let mut line = format!(
-        "{} written, {} rewritten, {} moved, {} unchanged, {} skipped",
-        report.written, report.rewritten, report.moved, report.unchanged, report.skipped
-    );
-    let held: Vec<String> = [
-        (
-            report.unwritten,
-            "the folder did not write and would not write over",
-        ),
-        (report.collided, "wanting a path another item took"),
-        (report.outside, "wanting a path outside the folder"),
-    ]
-    .into_iter()
-    .filter(|(count, _)| *count > 0)
-    .map(|(count, why)| format!("{count} {why}"))
-    .collect();
-    if !held.is_empty() {
-        line.push_str("; not written: ");
-        line.push_str(&held.join(", "));
-    }
-    // Named only when it happened. A file the person deleted and the folder
-    // wrote back is the one outcome of a pull they did not ask for, and a
-    // count they never see is the same as no count at all.
-    if report.revived > 0 {
-        line.push_str(&format!(
-            "; {} written back over a pending delete",
-            report.revived
-        ));
-    }
-    line
-}
-
-fn describe_scan(report: &marfa_core::ScanReport) -> String {
-    format!(
-        "{} created, {} updated, {} renamed, {} unchanged, {} missing, {} deleted, {} skipped{}",
-        report.created,
-        report.updated,
-        report.renamed,
-        report.unchanged,
-        report.missing,
-        report.deleted,
-        report.skipped,
-        // Named only when it happened, because it is rare and it is
-        // the write a line of the other seven does not account for.
-        if report.parked > 0 {
-            format!("; {} moved off a contested name and back", report.parked)
-        } else {
-            String::new()
-        }
-    )
-}
-
-fn open(db: &Option<PathBuf>, server: Option<ServerArgs>) -> Result<Core, CliError> {
-    let path = match db {
-        Some(path) => path.clone(),
-        None => default_db_path()?,
-    };
-    if let Some(parent) = path.parent()
-        && !parent.as_os_str().is_empty()
-        && !parent.exists()
-    {
-        std::fs::create_dir_all(parent)?;
-    }
-    let server = server.map(|server| Server {
-        url: server.url,
-        key: server.key,
-    });
-    Ok(Core::open(path, server)?)
-}
-
-fn default_db_path() -> Result<PathBuf, CliError> {
-    directories::ProjectDirs::from("", "", "marfa")
-        .map(|dirs| dirs.data_dir().join("core.sqlite"))
-        .ok_or(CliError::NoDataDirectory)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::device::{DeviceCommand, ItemsCommand};
+    use crate::values::{ItemState, SortDirection, SortField, Tier};
     use clap::CommandFactory;
 
     #[test]
@@ -916,128 +84,223 @@ mod tests {
         Cli::command().debug_assert();
     }
 
+    /// Every subcommand has an `about` and every argument has help. This is
+    /// the gate on "help is complete": a leaf added without a sentence is
+    /// red here rather than found by a person typing `--help`.
     #[test]
-    fn hydrate_parses_a_type_list_and_a_tier_and_needs_both_server_args() {
-        let cli = Cli::try_parse_from([
-            "marfa",
+    fn every_command_and_argument_is_documented() {
+        fn walk(command: &clap::Command, path: &str, missing: &mut Vec<String>) {
+            for arg in command.get_arguments() {
+                if arg.get_help().is_none() {
+                    let shown = if arg.is_positional() {
+                        format!("<{}>", arg.get_id())
+                    } else {
+                        format!("--{}", arg.get_id())
+                    };
+                    missing.push(format!("{path} {shown}"));
+                }
+            }
+            for sub in command.get_subcommands() {
+                let here = format!("{path} {}", sub.get_name());
+                if sub.get_about().is_none() {
+                    missing.push(here.clone());
+                }
+                walk(sub, &here, missing);
+            }
+        }
+        let mut missing = Vec::new();
+        walk(&Cli::command(), "marfa", &mut missing);
+        assert!(missing.is_empty(), "undocumented: {}", missing.join(", "));
+    }
+
+    fn device(args: &[&str]) -> DeviceCommand {
+        let mut argv = vec!["marfa", "device", "--db", "store.sqlite"];
+        argv.extend(args);
+        match Cli::try_parse_from(argv).unwrap().command {
+            Command::Device(device) => device.command,
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn hydrate_parses_a_type_list_and_a_tier() {
+        match device(&[
             "hydrate",
-            "--url",
-            "http://localhost:8600",
-            "--key",
-            "k",
             "--types",
             "core.note,core.file",
             "--tier",
             "library",
-        ])
-        .unwrap();
-        match cli.command {
-            Command::Hydrate {
-                server,
-                types,
-                tier,
-            } => {
-                assert_eq!(server.url, "http://localhost:8600");
+        ]) {
+            DeviceCommand::Hydrate { types, tier } => {
                 assert_eq!(types, vec!["core.note", "core.file"]);
                 assert_eq!(tier, Tier::Library);
             }
             other => panic!("{other:?}"),
         }
-        let refused = Cli::try_parse_from([
+        assert!(
+            Cli::try_parse_from([
+                "marfa",
+                "device",
+                "--db",
+                "s",
+                "hydrate",
+                "--types",
+                "core.note",
+                "--tier",
+                "all",
+            ])
+            .is_err(),
+            "`all` is a tier filter, not a tier a slice can be hydrated at"
+        );
+        assert!(
+            Cli::try_parse_from(["marfa", "device", "--db", "s", "hydrate", "--tier", "feed"])
+                .is_err(),
+            "a hydration with no types was accepted"
+        );
+    }
+
+    /// The server is named once, at the root, and lands wherever it is
+    /// written: before the subcommand, after it, or in the environment.
+    #[test]
+    fn the_server_is_named_at_the_root_and_reaches_every_command() {
+        let before = Cli::try_parse_from([
             "marfa",
-            "hydrate",
             "--url",
             "http://localhost:8600",
             "--key",
             "k",
-            "--types",
-            "core.note",
-            "--tier",
-            "all",
-        ]);
-        assert!(refused.is_err());
-        let missing_key = Cli::try_parse_from([
+            "device",
+            "--db",
+            "s",
+            "catch-up",
+        ])
+        .unwrap();
+        assert_eq!(before.url.as_deref(), Some("http://localhost:8600"));
+        assert_eq!(before.key.as_deref(), Some("k"));
+        let after = Cli::try_parse_from([
             "marfa",
-            "hydrate",
+            "device",
+            "--db",
+            "s",
+            "drain",
             "--url",
             "http://localhost:8600",
-            "--types",
-            "core.note",
-            "--tier",
-            "feed",
-        ]);
-        assert!(missing_key.is_err());
+            "--key",
+            "k",
+        ])
+        .unwrap();
+        assert_eq!(after.url.as_deref(), Some("http://localhost:8600"));
+        assert!(matches!(
+            after.command,
+            Command::Device(DeviceArgs {
+                command: DeviceCommand::Drain,
+                ..
+            })
+        ));
+        let folder = Cli::try_parse_from([
+            "marfa",
+            "folders",
+            "watch",
+            ".",
+            "--url",
+            "http://localhost:8600",
+            "--key",
+            "k",
+        ])
+        .unwrap();
+        assert_eq!(folder.key.as_deref(), Some("k"));
+        assert!(matches!(
+            folder.command,
+            Command::Folders {
+                command: FoldersCommand::Watch { .. }
+            }
+        ));
+        // Absent, the parse succeeds and the refusal comes from the
+        // command that needed it, as `remote::Named::server` says.
+        let none = Cli::try_parse_from(["marfa", "device", "--db", "s", "drain"]).unwrap();
+        assert_eq!(none.url, None);
+        assert_eq!(none.key, None);
+    }
+
+    /// The store is named on `device` and lands before or after the leaf,
+    /// and is not an argument of a folder command at all: a folder carries
+    /// its own store.
+    #[test]
+    fn the_store_is_named_on_device_and_nowhere_else() {
+        let before = Cli::try_parse_from(["marfa", "device", "--db", "s", "queue"]).unwrap();
+        let after = Cli::try_parse_from(["marfa", "device", "queue", "--db", "s"]).unwrap();
+        for cli in [before, after] {
+            match cli.command {
+                Command::Device(DeviceArgs { db, command }) => {
+                    assert_eq!(db.as_deref(), Some(std::path::Path::new("s")));
+                    assert!(matches!(command, DeviceCommand::Queue));
+                }
+                other => panic!("{other:?}"),
+            }
+        }
+        assert!(
+            Cli::try_parse_from(["marfa", "folders", "scan", ".", "--db", "s"]).is_err(),
+            "a folder command took --db, so two folders could share one mapping"
+        );
+        assert!(
+            Cli::try_parse_from(["marfa", "--db", "s", "device", "queue"]).is_err(),
+            "--db was accepted at the root, where a folder command could reach it"
+        );
     }
 
     /// The release door takes one row or one reason, never both and never
     /// neither.
     ///
     /// `clap` enforces it and the dispatch has a branch that says so, and the
-    /// two are asserted together here: without the refusals, `marfa release`
-    /// with no argument would reach a branch that exists only because it
-    /// cannot be reached.
+    /// two are asserted together here: without the refusals, `marfa device
+    /// release` with no argument would reach a branch that exists only
+    /// because it cannot be reached.
     #[test]
     fn release_takes_one_row_or_one_reason_and_refuses_the_other_shapes() {
-        match Cli::try_parse_from(["marfa", "release", "abc"])
-            .unwrap()
-            .command
-        {
-            Command::Release { id, reason } => {
+        match device(&["release", "abc"]) {
+            DeviceCommand::Release { id, reason } => {
                 assert_eq!(id.as_deref(), Some("abc"));
                 assert_eq!(reason, None);
             }
             other => panic!("`release <id>` parsed as {other:?}"),
         }
-        match Cli::try_parse_from(["marfa", "release", "--reason", "key_spent"])
-            .unwrap()
-            .command
-        {
-            Command::Release { id, reason } => {
+        match device(&["release", "--reason", "key_spent"]) {
+            DeviceCommand::Release { id, reason } => {
                 assert_eq!(id, None);
                 assert_eq!(reason.as_deref(), Some("key_spent"));
             }
             other => panic!("`release --reason` parsed as {other:?}"),
         }
         assert!(
-            Cli::try_parse_from(["marfa", "release"]).is_err(),
+            Cli::try_parse_from(["marfa", "device", "--db", "s", "release"]).is_err(),
             "`release` with neither a row nor a reason was accepted, so the door \
              would have to guess which writes a caller meant"
         );
         assert!(
-            Cli::try_parse_from(["marfa", "release", "abc", "--reason", "key_spent"]).is_err(),
+            Cli::try_parse_from([
+                "marfa",
+                "device",
+                "--db",
+                "s",
+                "release",
+                "abc",
+                "--reason",
+                "key_spent",
+            ])
+            .is_err(),
             "`release` took a row and a reason together, and the two select \
              different sets: whichever the dispatch reads, the other was ignored"
         );
     }
 
     #[test]
-    fn drain_needs_a_server_because_it_is_the_one_command_that_sends() {
-        match Cli::try_parse_from([
-            "marfa",
-            "drain",
-            "--url",
-            "http://localhost:8600",
-            "--key",
-            "marfa_k1_test",
-        ])
-        .unwrap()
-        .command
-        {
-            Command::Drain { server } => assert_eq!(server.url, "http://localhost:8600"),
-            other => panic!("`drain` parsed as {other:?}"),
-        }
-        assert!(
-            Cli::try_parse_from(["marfa", "drain"]).is_err(),
-            "`drain` was accepted with no server, and a drain with nowhere to send \
-             is a command that can only refuse once it has opened the store"
-        );
-    }
-
-    #[test]
-    fn items_list_search_catch_up_status_and_watch_parse() {
+    fn items_list_search_catch_up_status_and_folders_parse() {
         let cli = Cli::try_parse_from([
             "marfa",
             "--json",
+            "device",
+            "--db",
+            "s",
             "items",
             "list",
             "--type",
@@ -1058,9 +321,13 @@ mod tests {
         .unwrap();
         assert!(cli.json);
         match cli.command {
-            Command::Items {
-                command: ItemsCommand::List(args),
-            } => {
+            Command::Device(DeviceArgs {
+                command:
+                    DeviceCommand::Items {
+                        command: ItemsCommand::List(args),
+                    },
+                ..
+            }) => {
                 assert_eq!(args.type_.as_deref(), Some("core.note"));
                 assert_eq!(args.tags, vec!["a", "b"]);
                 assert_eq!(args.state, Some(ItemState::Archived));
@@ -1070,55 +337,24 @@ mod tests {
             }
             other => panic!("{other:?}"),
         }
-        assert!(Cli::try_parse_from(["marfa", "items", "list", "--state", "gone"]).is_err());
-        assert!(matches!(
-            Cli::try_parse_from(["marfa", "search", "zebra"])
-                .unwrap()
-                .command,
-            Command::Search { limit: 20, .. }
-        ));
-        assert!(matches!(
-            Cli::try_parse_from([
-                "marfa",
-                "catch-up",
-                "--url",
-                "http://localhost:8600",
-                "--key",
-                "k"
-            ])
-            .unwrap()
-            .command,
-            Command::CatchUp { .. }
-        ));
-        assert!(matches!(
-            Cli::try_parse_from(["marfa", "status"]).unwrap().command,
-            Command::Status
-        ));
-        // A folder watch needs a server: it drains what the scan queues.
         assert!(
-            Cli::try_parse_from(["marfa", "folders", "watch", "."]).is_err(),
-            "`folders watch` was accepted with no server, and a watch that \
-             cannot send is a watch that queues for ever"
+            Cli::try_parse_from([
+                "marfa", "device", "--db", "s", "items", "list", "--state", "gone",
+            ])
+            .is_err()
         );
         assert!(matches!(
-            Cli::try_parse_from([
-                "marfa",
-                "folders",
-                "watch",
-                ".",
-                "--url",
-                "http://localhost:8600",
-                "--key",
-                "marfa_k1_test",
-            ])
-            .unwrap()
-            .command,
-            Command::Folders {
-                command: FoldersCommand::Watch { .. }
+            device(&["search", "zebra"]),
+            DeviceCommand::Search { limit: 20, .. }
+        ));
+        assert!(matches!(device(&["catch-up"]), DeviceCommand::CatchUp));
+        assert!(matches!(device(&["status"]), DeviceCommand::Status));
+        assert!(matches!(
+            device(&["items", "get", "abc"]),
+            DeviceCommand::Items {
+                command: ItemsCommand::Get { .. }
             }
         ));
-        // A folder carries its own store, so the reading commands take no
-        // server at all.
         assert!(matches!(
             Cli::try_parse_from(["marfa", "folders", "scan", "."])
                 .unwrap()
@@ -1148,13 +384,5 @@ mod tests {
             }
             other => panic!("`folders add` parsed as {other:?}"),
         }
-        assert!(matches!(
-            Cli::try_parse_from(["marfa", "items", "get", "abc"])
-                .unwrap()
-                .command,
-            Command::Items {
-                command: ItemsCommand::Get { .. }
-            }
-        ));
     }
 }
