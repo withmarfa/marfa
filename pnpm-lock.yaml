@@ -178,9 +178,6 @@ importers:
       ipaddr.js:
         specifier: ^2.5.0
         version: 2.5.0
-      jose:
-        specifier: ^6.2.9
-        version: 6.2.9
       music-metadata:
         specifier: ^11.15.0
         version: 11.15.0

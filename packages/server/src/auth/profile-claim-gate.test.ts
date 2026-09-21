@@ -3,10 +3,10 @@
  *
  * `profilePermissionCovers` is the sole decider for `email` and
  * `email_verified`, and for every claim a client holding no OIDC literal
- * asks for. Nothing named it before this file: the function is reached
- * through `scopes.ts` on the narrowing path, so a blanket mutation of it
- * reddens `shared`, but the two claim builders here are the place a wrong
- * answer becomes a claim on the wire, and neither was driven.
+ * asks for. It is also reached through `scopes.ts` on the narrowing path,
+ * so a blanket mutation of it reddens `shared` — which is not the same
+ * thing: these two builders are where a wrong answer becomes a claim on
+ * the wire, and only a case driving them says what a client would receive.
  *
  * The scope list below holds neither `profile` nor `email`, deliberately.
  * Both builders read `scopes.includes("profile") || profilePermissionCovers(…)`,
