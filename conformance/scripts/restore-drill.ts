@@ -13,8 +13,9 @@
  *
  * 1. A source instance boots with Litestream replicating its database to
  *    `drill/<id>/db` and its object store at `drill/<id>/blobs`. Phase A
- *    writes items and blobs (referenced and unreferenced, one far above
- *    the cap uploads once had) and runs replication to zero remaining;
+ *    writes items and blobs (referenced and unreferenced, one large enough
+ *    to take the object store's multipart path) and runs replication to
+ *    zero remaining;
  *    the time is recorded as T1. Phase B writes more. The server and then
  *    Litestream are stopped, a last sync is forced, and the source is
  *    fingerprinted at rest: a content hash over every table, the schema,
@@ -71,8 +72,9 @@ const REQUIRED_NAMES = [
  *  after the last write, so a restore at T1 has an L0 boundary to land on. */
 const SYNC_SETTLE_MS = 3_000;
 const PROCESS_STOP_BUDGET_MS = 20_000;
-/** Above the cap uploads once had, so the drill carries what a real
- *  instance may hold. */
+/** Well past the object store's multipart threshold (the upload's part
+ *  size, 5 MiB), so the drill reads a multipart object back as well as a
+ *  single-part one. */
 const LARGE_BLOB_BYTES = 70 * 1024 * 1024;
 
 interface Args {
@@ -363,21 +365,33 @@ interface AtRest {
   tables: Record<string, string>;
 }
 
+/**
+ * One table's content hash, for naming what differs when the whole hash
+ * does. `.sha3sum` prints the hash for one of SQLite's own tables and then
+ * exits non-zero, so the answer is read off its output rather than its
+ * exit status; a table it cannot hash at all answers "unhashable".
+ */
+function tableHash(db: string, table: string): string {
+  const out = spawnSync("sqlite3", [db, `.sha3sum --sha3-256 ${table}`], {
+    encoding: "utf8",
+  });
+  const line = out.stdout.split("\n").find((l) => l.includes("|"));
+  return line?.split("|")[0] ?? "unhashable";
+}
+
 /** The database as a file nothing has open: a checkpoint first, so the
- *  file alone carries every page. */
+ *  file alone carries every page. The whole-database hash with `--schema`
+ *  covers every table, SQLite's own included; the per-table hashes are for
+ *  the report, and a virtual table's content is in its shadow tables. */
 function fingerprintAtRest(db: string): AtRest {
   sqlite3(db, "PRAGMA wal_checkpoint(TRUNCATE);");
   const tables: Record<string, string> = {};
-  // Ordinary tables only, which is what the whole-database hash covers:
-  // a virtual table's content lives in its shadow tables, which are
-  // ordinary and listed, and SQLite's own `sqlite_*` tables are left to it.
   for (const table of sqlite3(
     db,
-    "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite\\_%' ESCAPE '\\' AND sql NOT LIKE 'CREATE VIRTUAL TABLE%' ORDER BY name;",
+    "SELECT name FROM sqlite_master WHERE type = 'table' AND sql NOT LIKE 'CREATE VIRTUAL TABLE%' ORDER BY name;",
   ).split("\n")) {
     if (table === "") continue;
-    tables[table] =
-      sqlite3(db, `.sha3sum --sha3-256 ${table}`).split("|")[0] ?? "";
+    tables[table] = tableHash(db, table);
   }
   return {
     contentHash: sqlite3(db, ".sha3sum --sha3-256 --schema"),
@@ -486,14 +500,11 @@ async function main(): Promise<void> {
     S3_FORCE_PATH_STYLE: process.env.S3_FORCE_PATH_STYLE ?? "true",
   };
 
-  let sourceUp = false;
-  let restoredUp = false;
   let litestreamPid: number | undefined;
   try {
     // 1. The source instance, replicating.
     process.env.S3_PREFIX = `${prefix}/blobs`;
     await bootServer({ state: sourceState });
-    sourceUp = true;
     const sourceOperator = apiFor(sourceState);
     const workingKey = await mintWorkingKey(sourceOperator);
     const source: Api = { url: sourceOperator.url, key: workingKey };
@@ -572,7 +583,6 @@ async function main(): Promise<void> {
     // The server first, then the sidecar, then one more sync so the last
     // writes are in the bucket whatever the sidecar did on the way down.
     await stopServer({ state: sourceState });
-    sourceUp = false;
     await stopProcess(litestreamPid);
     litestreamPid = undefined;
     const once = litestream(
@@ -610,14 +620,12 @@ async function main(): Promise<void> {
       readFileSync(join(sourceState, "env")),
     );
     await bootServer({ state: restoredState });
-    restoredUp = true;
     const restoredOperator = apiFor(restoredState);
     const restored: Api = { url: restoredOperator.url, key: workingKey };
     const restoredInstance = await instanceId(restored);
     const copiedBack = await replicateToZero(restoredOperator);
     const restoredOverHttp = await blobsOverHttp(restored, hashes);
     await stopServer({ state: restoredState });
-    restoredUp = false;
     const restoredOnDisk = blobsOnDisk(join(restoredState, "blobs"));
     say(
       `Restored instance booted from the file and the bucket alone: instance \`${restoredInstance}\`; replication brought ${String(copiedBack)} copies to its empty disk store.`,
@@ -662,27 +670,30 @@ async function main(): Promise<void> {
     );
   } catch (err) {
     say("");
-    say(`Aborted: ${err instanceof Error ? err.message : String(err)}`);
+    // The first line only: a boot's failure quotes the server log, which
+    // can carry the bootstrap secret, and this report is kept as an
+    // artifact.
+    const message = err instanceof Error ? err.message : String(err);
+    say(`Aborted: ${message.split("\n")[0] ?? ""}`);
     failures.push("the drill aborted before its comparison");
     throw err;
   } finally {
-    if (sourceUp)
-      await stopServer({ state: sourceState }).catch(() => undefined);
-    if (restoredUp)
-      await stopServer({ state: restoredState }).catch(() => undefined);
+    // Both, whether or not a boot got as far as answering: a server that
+    // was spawned and never answered `/health` is still running, and
+    // `stopServer` answers quietly when there is nothing to stop.
+    await stopServer({ state: sourceState }).catch(() => undefined);
+    await stopServer({ state: restoredState }).catch(() => undefined);
     if (litestreamPid !== undefined) await stopProcess(litestreamPid);
     say("");
     if (args.keep) {
-      say(
-        `Kept the objects under \`${prefix}/\` and the state at ${args.state}.`,
-      );
+      say(`Kept the objects under \`${prefix}/\` and the state directory.`);
     } else {
       const removed = await deletePrefix(prefix);
       // The state goes too: three copies of the large blob, and two server
       // logs and a Litestream log that name the bucket.
       rmSync(args.state, { recursive: true, force: true });
       say(
-        `Removed ${String(removed)} objects under \`${prefix}/\` and the state at ${args.state}.`,
+        `Removed ${String(removed)} objects under \`${prefix}/\` and the state directory.`,
       );
     }
     say("");

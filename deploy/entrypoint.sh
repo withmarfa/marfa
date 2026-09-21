@@ -13,10 +13,15 @@ set -eu
 
 : "${SQLITE_PATH:=/data/marfa.db}"
 : "${BLOB_PATH:=/data/blobs}"
-# The server reads an unset value as `true`; the sidecar's file needs a
-# word, and the same one.
-: "${S3_FORCE_PATH_STYLE:=true}"
-export SQLITE_PATH BLOB_PATH S3_FORCE_PATH_STYLE
+# The sidecar's file needs a word where the server takes a default: path
+# style with an endpoint, which is every S3-compatible store, and virtual
+# hosting without one, which is AWS; the region the server assumes when
+# none is named.
+if [ -z "${S3_FORCE_PATH_STYLE:-}" ]; then
+  if [ -n "${S3_ENDPOINT:-}" ]; then S3_FORCE_PATH_STYLE=true; else S3_FORCE_PATH_STYLE=false; fi
+fi
+: "${S3_REGION:=us-east-1}"
+export SQLITE_PATH BLOB_PATH S3_FORCE_PATH_STYLE S3_REGION
 
 mkdir -p "$(dirname "$SQLITE_PATH")" "$BLOB_PATH"
 

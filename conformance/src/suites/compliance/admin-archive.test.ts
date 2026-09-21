@@ -6,10 +6,10 @@
  * POST /admin/restore-archive, which is what proves the manifest contract
  * and blob-hash verification agree.
  *
- * The two cases the server's export can never produce, a row in a state its
- * lifecycle cannot reach and a blob larger than the request cap that
- * nothing on the instance names yet, build their archive with
- * `utils/archive.ts`.
+ * Two cases build their archive with `utils/archive.ts` instead: a row in
+ * a state its lifecycle cannot reach, which no export carries because no
+ * door writes one, and a blob the instance does not hold yet, which is what
+ * makes its restore the thing that puts the bytes there.
  */
 
 import { randomBytes } from "node:crypto";
@@ -148,6 +148,50 @@ describe("admin/restore-archive", () => {
     expect(refused.error?.error.message).toContain(impossible);
     expect((await client.getItem(fine)).status).toBe(404);
     expect((await client.getItem(impossible)).status).toBe(404);
+
+    // A `system.*` row's lifecycle is `active | revoked`: `trashed` is a
+    // state, and not one it can be in. No door writes such a row, which is
+    // why an export never carries one and only a built archive can ask.
+    const systemId = uuidv7();
+    const systemRefused = await operator.restoreArchive(
+      itemsArchive([
+        {
+          id: systemId,
+          type: "system.activity",
+          source: ctx.source,
+          state: "trashed",
+          properties: {
+            connection_id: uuidv7(),
+            severity: "info",
+            summary: "recorded in a state it cannot be in",
+          },
+        },
+      ]),
+    );
+    expect(systemRefused.status).toBe(400);
+    expect(systemRefused.error?.error.message).toContain(systemId);
+    expect(systemRefused.error?.error.message).toContain(
+      '"active" to "trashed"',
+    );
+    expect((await client.getItem(systemId)).status).toBe(404);
+
+    // A value that is no state at all is refused the same way, since the
+    // store would otherwise write it as it came.
+    const numbered = uuidv7();
+    const numeric = await operator.restoreArchive(
+      itemsArchive([
+        {
+          id: numbered,
+          type: "core.note",
+          source: ctx.source,
+          state: 5 as unknown as string,
+          properties: { body: "Numbered note" },
+        },
+      ]),
+    );
+    expect(numeric.status).toBe(400);
+    expect(numeric.error?.error.message).toContain('Invalid target state "5"');
+    expect((await client.getItem(numbered)).status).toBe(404);
 
     // The same two rows in states the lifecycle contains restore, each in
     // the state the archive recorded.

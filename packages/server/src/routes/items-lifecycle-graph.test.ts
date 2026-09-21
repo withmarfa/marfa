@@ -286,6 +286,31 @@ describe("POST /admin/restore-archive — an archive names a state the type's li
     expect(error.message).toContain('"active" to "trashed"');
     expect(await c.storage.items.getIncludingTrashed(systemId)).toBeNull();
     expect(await c.storage.items.getIncludingTrashed(noteId)).toBeNull();
+
+    // A state that is no state at all is refused the same way, since the
+    // store would otherwise write it as it came.
+    const numeric = await c.app.request(`/admin/restore-archive`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${c.operatorKey}`,
+        "Content-Type": "application/gzip",
+      },
+      body: await buildArchive(MANIFEST, [
+        JSON.stringify({
+          item: {
+            id: noteId,
+            type: "core.note",
+            state: 5,
+            properties: { body: "Numbered note" },
+          },
+        }),
+      ]),
+    });
+    expect(numeric.status).toBe(400);
+    expect((await errorOf(numeric)).message).toContain(
+      'Invalid target state "5"',
+    );
+    expect(await c.storage.items.getIncludingTrashed(noteId)).toBeNull();
   });
 
   it("restores the states each lifecycle contains: trashed for an ordinary row, active for a system row", async () => {

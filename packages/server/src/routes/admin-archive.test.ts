@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
-import { readdirSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
+import { dirname } from "node:path";
 import { createGzip } from "node:zlib";
 import { describe, expect, it, beforeAll, afterAll, vi } from "vitest";
 import * as tar from "tar-stream";
@@ -149,6 +150,16 @@ describe("POST /admin/restore-archive", () => {
 
   it("leaves no spool behind, after a restore and after a refusal that came once the blobs were read", async () => {
     const spoolDir = ctx.blobs.disk.spoolDir;
+    // The witness that spools were minted at all: every path the store
+    // hands out for this request, seen under its spool directory and gone
+    // once the request has answered.
+    const minted = vi.spyOn(ctx.blobs.disk, "spoolPath");
+    const spoolsMinted = () => {
+      const paths = minted.mock.results.map((r) => r.value as string);
+      minted.mockClear();
+      for (const path of paths) expect(dirname(path)).toBe(spoolDir);
+      return paths;
+    };
     const manifestFor = (blob: { hash: string; data: Buffer }) => ({
       version: 2,
       format: "marfa-archive-v2",
@@ -188,6 +199,10 @@ describe("POST /admin/restore-archive", () => {
     expect(
       ((await refusal.json()) as { error: { message: string } }).error.message,
     ).toContain("Maximum 5000 items");
+    // The body's spool and the blob entry's.
+    const refusedSpools = spoolsMinted();
+    expect(refusedSpools).toHaveLength(2);
+    for (const path of refusedSpools) expect(existsSync(path)).toBe(false);
     expect(readdirSync(spoolDir)).toEqual([]);
     expect(await ctx.blobs.disk.has(refused.hash)).toBeNull();
 
@@ -204,10 +219,14 @@ describe("POST /admin/restore-archive", () => {
       body: fine,
     });
     expect(restored.status).toBe(200);
+    const keptSpools = spoolsMinted();
+    expect(keptSpools).toHaveLength(2);
+    for (const path of keptSpools) expect(existsSync(path)).toBe(false);
     expect(readdirSync(spoolDir)).toEqual([]);
     expect(await ctx.blobs.disk.has(kept.hash)).toEqual({
       size_bytes: kept.data.length,
     });
+    minted.mockRestore();
   });
 
   it("rejects archives with unsupported version", async () => {

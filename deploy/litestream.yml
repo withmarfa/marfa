@@ -6,9 +6,9 @@
 # buckets. Litestream expands `${NAME}` from the environment when it reads
 # this file.
 #
-# The blob folder is not here: the server's own `blob-replicate` job gives
-# the object store every blob, and `deploy/README.md` says how the two
-# halves relate.
+# The blob folder is not here: the server's own `blob-replicate`
+# housekeeping job gives the object store every blob, and `deploy/README.md`
+# says how the two halves relate.
 
 # A snapshot an hour, so a restore reads at most an hour of changes after
 # the snapshot it starts from; a day of snapshots kept, so a point in time

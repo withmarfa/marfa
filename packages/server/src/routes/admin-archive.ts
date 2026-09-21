@@ -325,8 +325,16 @@ export function adminArchiveRoutes(storage: Storage, blobs: BlobLayer) {
     // The body streams to a spool on the disk store's filesystem, as an
     // upload's does, so an archive is as large as an archive is: nothing
     // here holds it in memory, and the blob entries inside it are spooled
-    // the same way, each hashed as it is read.
-    const bodySpool = blobs.disk.spoolPath();
+    // the same way, each hashed as it is read. Every spool is recorded the
+    // moment it is minted, because a refusal can land while an entry's
+    // pipeline is still settling, before that entry is pending.
+    const spools: string[] = [];
+    const mintSpool = (): string => {
+      const spool = blobs.disk.spoolPath();
+      spools.push(spool);
+      return spool;
+    };
+    const bodySpool = mintSpool();
     try {
       const body = c.req.raw.body;
       if (body) {
@@ -389,7 +397,7 @@ export function adminArchiveRoutes(storage: Storage, blobs: BlobLayer) {
             stream.resume();
             return;
           }
-          const spool = blobs.disk.spoolPath();
+          const spool = mintSpool();
           const hashing = new HashingTransform();
           pipeline(stream, hashing, createWriteStream(spool)).then(
             async () => {
@@ -481,8 +489,7 @@ export function adminArchiveRoutes(storage: Storage, blobs: BlobLayer) {
     // the point `restoreArchiveBlobs` takes them: past it, each is either
     // in the store under its name or already gone.
     const refuse = async (err: unknown): Promise<never> => {
-      await rm(bodySpool, { force: true });
-      for (const blob of pendingBlobs) await rm(blob.path, { force: true });
+      for (const spool of spools) await rm(spool, { force: true });
       throw err;
     };
 
@@ -548,12 +555,20 @@ export function adminArchiveRoutes(storage: Storage, blobs: BlobLayer) {
     // A row in a state its type's lifecycle cannot produce is refused, the
     // question `POST /items` asks of a caller: `trashed` is a state, and
     // not one a `system.*` row can be in, and a restore that wrote it would
-    // land a row nothing can purge, restore or move. The whole archive is
-    // refused, before anything is written, so the answer is never half a
-    // restore.
+    // land a row nothing can purge, restore or move. Only an absent state
+    // (the default) and the default itself pass without the question,
+    // since the store would write whatever else the line carried. The
+    // whole archive is refused, before anything is written, so the answer
+    // is never half a restore.
     for (const { item } of items) {
       const state = item.state;
-      if (typeof state !== "string" || state === SYSTEM_DEFAULT_STATE) continue;
+      if (
+        state === undefined ||
+        state === null ||
+        state === SYSTEM_DEFAULT_STATE
+      ) {
+        continue;
+      }
       const error = validateTransition(
         String(item.type),
         SYSTEM_DEFAULT_STATE,

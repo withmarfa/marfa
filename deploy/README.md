@@ -12,17 +12,17 @@ The container recipe here runs the server with its database streamed off-site an
 
 The six the server reads for its object store are the six the sidecar reads, from the same environment, so the two cannot name different buckets:
 
-| Name                   | Read by                                                                       |
-| ---------------------- | ----------------------------------------------------------------------------- |
-| `S3_BUCKET`            | the server, Litestream                                                        |
-| `S3_REGION`            | the server, Litestream                                                        |
-| `S3_ENDPOINT`          | the server, Litestream                                                        |
-| `S3_ACCESS_KEY_ID`     | the server, Litestream                                                        |
-| `S3_SECRET_ACCESS_KEY` | the server, Litestream                                                        |
-| `S3_FORCE_PATH_STYLE`  | the server, Litestream (`true` when unset, which the entrypoint spells out)   |
-| `S3_PREFIX`            | the server (default `blobs`); the database replica sits under `db/` beside it |
-| `SQLITE_PATH`          | the server, Litestream (`/data/marfa.db` in the image)                        |
-| `BLOB_PATH`            | the server (`/data/blobs` in the image)                                       |
+| Name                   | Read by                                                                                                                          |
+| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `S3_BUCKET`            | the server, Litestream                                                                                                           |
+| `S3_REGION`            | the server, Litestream (`us-east-1` when unset, which the entrypoint spells out)                                                 |
+| `S3_ENDPOINT`          | the server, Litestream                                                                                                           |
+| `S3_ACCESS_KEY_ID`     | the server, Litestream                                                                                                           |
+| `S3_SECRET_ACCESS_KEY` | the server, Litestream                                                                                                           |
+| `S3_FORCE_PATH_STYLE`  | the server, Litestream (path style with an endpoint and virtual hosting without one when unset, which the entrypoint spells out) |
+| `S3_PREFIX`            | the server (default `blobs`); the database replica sits under `db/` beside it                                                    |
+| `SQLITE_PATH`          | the server, Litestream (`/data/marfa.db` in the image)                                                                           |
+| `BLOB_PATH`            | the server (`/data/blobs` in the image)                                                                                          |
 
 Plus what any instance needs: `API_KEY_SALT` and `MARFA_AUTH_SECRET`, which the image's `NODE_ENV=production` makes the server refuse to boot without, `MARFA_AUTH_BASE_URL`, and `PORT` when `8600` is not wanted. `.env.example` at the repository root carries the rest by name; values live in the deployment's own secret store, never in a file here.
 
