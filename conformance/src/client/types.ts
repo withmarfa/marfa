@@ -305,6 +305,19 @@ export interface ConflictResponse {
   merge_policy: MergePolicy;
 }
 
+/**
+ * The 409 a stale write gets when it carried nothing to merge.
+ *
+ * The same envelope minus the three fields that describe a merge. A client
+ * reads `current.version` off this exactly as it does off the three-way
+ * one, which is the whole of why it exists as a shape rather than as a bare
+ * refusal.
+ */
+export interface StaleVersionResponse {
+  error: { code: "version_conflict"; status: 409; message: string };
+  current: { version: number; properties: Record<string, unknown> };
+}
+
 /** The 409 a write gets when no snapshot exists for the version it names. */
 export interface AncestorUnavailableResponse {
   error: { code: "ancestor_unavailable"; status: 409; message: string };

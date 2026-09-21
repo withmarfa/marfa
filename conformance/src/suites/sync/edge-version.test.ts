@@ -119,7 +119,13 @@ describe("edges carry a version", () => {
     // convenience: without the body in the refusal a client holding a stale
     // version has to go and read the edge again before it can rebase, on a
     // round trip the refusal already had the answer for.
-    const refused: EdgeEnvelope["edge"] | undefined = stale.data.edge;
+    //
+    // Under `current`, which is where every `version_conflict` this server
+    // answers puts the live row (`errors.md` 9), rather than under `edge`
+    // where the 200 puts it.
+    const refused: EdgeEnvelope["edge"] | undefined = (
+      stale.data as unknown as { current?: EdgeEnvelope["edge"] }
+    ).current;
     expect(
       refused,
       "the refusal carried no edge, so the client it refused cannot rebase its change and there is no route it can call to recover",

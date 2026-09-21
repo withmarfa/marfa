@@ -362,6 +362,38 @@ describe("outbound webhooks", () => {
     expect(survived.data.active).toBe(true);
   });
 
+  it("refuses a subscription from a credential that cannot read everything", async () => {
+    // A second gate, past `webhooks.manage`, and a different refusal. A
+    // subscription sends whatever matches to an endpoint the server does
+    // not control, so a credential that can read only some types would be
+    // exporting the rest through a door it cannot read them through.
+    const keyResp = await client.createKey({
+      label: "scoped-reader",
+      source: `${ctx.source}-scoped-reader`,
+      permissions: ["webhooks.manage"],
+      type_permissions: { "core.note": "write" },
+    });
+    expect(keyResp.ok).toBe(true);
+    trackKey(ctx, keyResp.data.id);
+    const scoped = new MarfaClient({
+      baseUrl: apiUrl,
+      apiKey: keyResp.data.key,
+    });
+
+    const create = await scoped.createWebhook({
+      url: receiverUrl,
+      events: ["item.created"],
+    });
+    expect(create.status).toBe(403);
+    expect(create.error?.error.code).toBe("scoped_credential_not_permitted");
+
+    // The control: the same credential holds `webhooks.manage`, so the
+    // refusal is the reach and not the permission — a key missing the
+    // permission answers `forbidden` in the case above.
+    const list = await scoped.listWebhooks();
+    expect(list.ok).toBe(true);
+  });
+
   it("answers 404 for an unknown subscription on every door", async () => {
     const unknown = "00000000-0000-7000-8000-000000000000";
     expect((await client.getWebhook(unknown)).status).toBe(404);
