@@ -26,6 +26,53 @@ afterAll(async () => {
   await cleanup(ctx);
 });
 
+/**
+ * Every advertised feature and a request that reaches the door it names.
+ *
+ * The array used to be asserted against a copy of itself, which cannot tell
+ * an advertised feature from a served one: the two lists agree by being the
+ * same list, so three entries were asserted present with nothing in this
+ * suite reaching a door at all.
+ *
+ * What each probe asks is only whether the route exists. The bodies are
+ * deliberately refusable — an empty body, a malformed id, a query the
+ * contract rejects — so nothing here writes, and what is asserted is that
+ * the answer is not the unmatched-path answer. `404 not_found` is the one
+ * the server gives a path it does not serve, and a served route that
+ * answers 404 gives its own code (`item_not_found`, `blob_not_found`), so
+ * the pair is the test and the status alone is not.
+ */
+const FEATURE_DOORS: {
+  feature: string;
+  path: string;
+  method?: "GET" | "POST";
+  body?: Record<string, unknown>;
+}[] = [
+  { feature: "items", path: "/items?limit=1" },
+  { feature: "search", path: "/search" },
+  { feature: "blobs", path: "/blobs/not-a-hash" },
+  { feature: "types", path: "/types" },
+  { feature: "type_crud", path: "/types", method: "POST", body: {} },
+  { feature: "keys", path: "/keys" },
+  { feature: "bulk", path: "/items/bulk", method: "POST", body: {} },
+  { feature: "export", path: "/export?state=not-a-state" },
+  { feature: "oauth", path: "/auth/.well-known/oauth-authorization-server" },
+  { feature: "owner", path: "/owner", method: "POST", body: {} },
+  { feature: "extensions", path: "/items/not-an-id/extensions" },
+  { feature: "events", path: "/events?edges=bogus" },
+  { feature: "webhooks", path: "/webhooks" },
+  { feature: "audit", path: "/audit" },
+  { feature: "metrics", path: "/metrics" },
+  { feature: "edges", path: "/edges", method: "POST", body: {} },
+  {
+    feature: "admin_archive",
+    path: "/admin/restore-archive",
+    method: "POST",
+    body: {},
+  },
+  { feature: "connectors", path: "/connectors" },
+];
+
 describe("the instance", () => {
   it("answers /health without a credential and names its components", async () => {
     const r = await fetch(`${apiUrl}/health`);
@@ -45,31 +92,30 @@ describe("the instance", () => {
     expect(r.data.name).toBe("marfa");
     expect(typeof r.data.version).toBe("string");
     expect(r.data.instance_id).toMatch(UUID_V7);
-    // The whole array, not a subset: the root once advertised a feature it
-    // did not serve, and a subset could never catch an entry that should
-    // not be there.
+    // The whole array, and every entry held against a door rather than
+    // against a copy of itself — see `FEATURE_DOORS` and the case below.
     expect([...(r.data.features as string[])].sort()).toEqual(
-      [
-        "admin_archive",
-        "audit",
-        "blobs",
-        "bulk",
-        "connectors",
-        "edges",
-        "events",
-        "export",
-        "extensions",
-        "items",
-        "keys",
-        "metrics",
-        "oauth",
-        "owner",
-        "search",
-        "type_crud",
-        "types",
-        "webhooks",
-      ].sort(),
+      FEATURE_DOORS.map((door) => door.feature).sort(),
     );
+  });
+
+  it("serves a route for every feature it advertises", async () => {
+    // The witness first, so the assertions after it are about something. A
+    // path nothing serves answers `404 not_found`, which is exactly what
+    // every probe below asserts it did not get.
+    const absent = await client.rawRequest("/no-such-door-at-all");
+    expect(absent.status).toBe(404);
+    expect(absent.error?.error.code).toBe("not_found");
+
+    for (const door of FEATURE_DOORS) {
+      const res = await client.rawRequest(door.path, {
+        ...(door.method !== undefined && { method: door.method }),
+        ...(door.body !== undefined && { body: door.body }),
+      });
+      const unmatched =
+        res.status === 404 && res.error?.error.code === "not_found";
+      expect(unmatched, `${door.feature} (${door.path})`).toBe(false);
+    }
   });
 
   it("advertises no inbound webhook feature, and serves no inbound door", async () => {
