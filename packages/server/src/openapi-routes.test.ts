@@ -180,7 +180,7 @@ describe("the document and the routes", () => {
 
   it("strips exactly the operations named internal", () => {
     expect(INTERNAL_OPERATION_IDS.size).toBeGreaterThan(0);
-    const registry = ctx.app.getOpenAPIDocument({
+    const registry = ctx.app.getOpenAPI31Document({
       openapi: "3.1.0",
       info: { title: "registry", version: "0" },
     });

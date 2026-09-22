@@ -100,13 +100,11 @@ describe("OAuth provider", () => {
   });
 
   it("refuses an unparseable redirect URI with an RFC 7591 error object", async () => {
-    // The document declares this 400 with no content; the body the server
-    // sends is the RFC error shape, not the envelope every other door uses.
-    // Recorded in spec/findings.md.
     const r = await client.registerOAuthClient({
       redirect_uris: ["not a url"],
     });
     expect(r.status).toBe(400);
+    await expectMatchesSchema("POST", "/auth/oauth2/register", 400, r.data);
     const body = r.data as { error?: string; error_description?: string };
     expect(body.error).toBe("invalid_redirect_uri");
     expect(typeof body.error_description).toBe("string");

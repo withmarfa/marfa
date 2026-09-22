@@ -21,17 +21,6 @@ interface Citation {
   title?: string;
 }
 
-/**
- * The statement numbers a spec file defines: its ordered-list items, and the
- * `## N.` headings `findings.md` uses instead.
- *
- * The files cite each other by bare integer — "`findings.md` 1",
- * "`items.md` 5" — so nothing in a citation ties it to what it names.
- * Renumber a file and every citation still reads as a sentence while pointing
- * somewhere else, or nowhere at all. Neither the fixture checks in this file
- * nor any suite can see it: those resolve to fixture files and test titles,
- * and this is a reference between two documents.
- */
 /** Every file under `dir` with this extension, at any depth. */
 function walk(dir: string, extension: string): string[] {
   if (!existsSync(dir)) return [];
@@ -44,6 +33,17 @@ function walk(dir: string, extension: string): string[] {
   return found;
 }
 
+/**
+ * The statement numbers a spec file defines: its ordered-list items, and the
+ * `## N.` headings `findings.md` uses instead.
+ *
+ * The files cite each other by chapter name and bare integer, so nothing in
+ * a citation ties it to what it names.
+ * Renumber a file and every citation still reads as a sentence while pointing
+ * somewhere else, or nowhere at all. Neither the fixture checks in this file
+ * nor any suite can see it: those resolve to fixture files and test titles,
+ * and this is a reference between two documents.
+ */
 function statementNumbers(file: string): Set<number> {
   const text = readFileSync(resolve(specDir, file), "utf8");
   const out = new Set<number>();
@@ -58,16 +58,14 @@ function statementNumbers(file: string): Set<number> {
  *
  * One expression for the chapters and for the sources, because a citation
  * written in a chapter and the same citation written in a comment are the
- * same claim and were read by two patterns that disagreed about how many
- * numbers a citation has.
+ * same claim.
  *
  * A citation names as many statements as it lists, so a chapter name
  * followed by "1, 2 and 3" is three references rather than one, and every
  * number in the list is held to a statement that exists. A range is the
  * exception it cannot cover: "17 to 23" yields 17 and 23, and what sits
- * between them is whatever the writer meant. (No example here carries a
- * chapter name in code font, because this file is inside the walk below
- * and the example would be counted as a citation.)
+ * between them is whatever the writer meant. This file is inside the source
+ * walk, so no example here puts a chapter name in code font.
  *
  * The gap between the name and the first number is spaces on one line,
  * never a newline: a chapter name that ends a line above an ordered-list
@@ -181,8 +179,7 @@ describe("specification citations", () => {
    * The same check, over the code that cites the chapters.
    *
    * There are more citations in Rust comments and in the fixtures than in
-   * the chapters themselves, and nothing looked at any of them. A comment
-   * citing a statement number reads as authority — it is how the next
+   * the chapters themselves. A comment citing a statement number reads as authority — it is how the next
    * person finds the rule a piece of code exists for — so one that resolves
    * to nothing, or to a chapter with fewer statements than it names, sends
    * them somewhere else entirely.

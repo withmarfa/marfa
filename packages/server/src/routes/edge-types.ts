@@ -271,12 +271,8 @@ export function edgeTypeRoutes(storage: Storage) {
     }
     // A registered edge type uses the `<app>.<kebab-name>` shape, and
     // kebab is allowed because core types like `parent-of` set the
-    // precedent. That used to be
-    // expressed as `!isValidTypeIdentifier(id) && !id.includes("-")`, which
-    // admitted the kebab set by skipping the check for anything hyphenated —
-    // so `"-"`, `"MY-EDGE"`, `"a b-c"` and `"../-"` all registered.
-    // `isValidEdgeTypeIdentifier` states the kebab form instead of exempting
-    // it.
+    // precedent. The kebab form is stated rather than exempted, so `"-"`,
+    // `"MY-EDGE"`, `"a b-c"` and `"../-"` are refused.
     if (!isValidEdgeTypeIdentifier(body.id)) {
       throw new MarfaError(
         ErrorCode.VALIDATION_ERROR,

@@ -68,14 +68,8 @@ const searchRoute = createRoute({
         .enum(["library", "feed", "all"])
         .describe("Filter by tier; `all` or absent means unfiltered.")
         .optional(),
-      /** What the token does is in the published description rather than
-       *  restated here, and the rule deciding whether it applies is in
-       *  `_system-type-visibility.ts` rather than in this file. That module
-       *  is also where the rationale lives now: this comment used to say it
-       *  was recorded nowhere, which was true when written and stopped being
-       *  so when the rule three doors were each spelling out became one
-       *  function. An earlier draft of this comment invented a rationale,
-       *  which is why it then asserted nothing. */
+      /** The rule deciding whether `system` applies, and why, is in
+       *  `_system-type-visibility.ts`, shared by every door that takes it. */
       include: z
         .string()
         .describe(

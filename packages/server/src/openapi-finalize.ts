@@ -1,7 +1,7 @@
 /**
  * Final shaping of the generated OpenAPI document for the public reference.
  *
- * `app.getOpenAPIDocument()` reflects every registered `createRoute`, in
+ * `app.getOpenAPI31Document()` reflects every registered `createRoute`, in
  * registration order, with no top-level tag list and no operations for the
  * routes defined as plain Hono handlers. This pass makes the published spec
  * a deliberate, consumer-facing shape:
@@ -766,9 +766,9 @@ export function finalizeOpenAPISpec<T extends OpenAPIDoc>(spec: T): T {
   }
 
   // The chain's own refusals, added only where no route already registered
-  // the shape. `unauthorized` is registered by the seventy doors that
-  // declare it themselves, and a second object under one name is a
-  // component whose meaning is whichever arrived first.
+  // the shape. `unauthorized` is registered by every door that declares it
+  // itself, and a second object under one name is a component whose meaning
+  // is whichever arrived first.
   const schemas: Record<string, unknown> = {
     ...((spec.components as { schemas?: Record<string, unknown> } | undefined)
       ?.schemas ?? {}),

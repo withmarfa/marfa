@@ -85,10 +85,6 @@ describe("published OpenAPI spec", () => {
     // description that does not say, and the somewhere else is a page
     // nothing in this repository can hold to the code.
     //
-    // This replaces a check that the links pointed at sections that exist.
-    // Every such link has since gone, so that check was asserting a
-    // property of an empty set — green whatever the descriptions said.
-    //
     // A floor rather than a proof. It catches the shapes that leave the
     // document — root-relative, protocol-relative, and anything carrying a
     // scheme — and lets a relative target or a bare anchor through, because
@@ -238,16 +234,17 @@ describe("published OpenAPI spec", () => {
     const components = (
       document.components as { schemas: Record<string, unknown> }
     ).schemas;
+    const admitsNull = (schema: unknown): boolean => {
+      const declared = (schema as { type?: unknown }).type;
+      const values = (schema as { enum?: unknown[] }).enum;
+      return (
+        (Array.isArray(declared) && declared.includes("null")) ||
+        declared === "null" ||
+        (Array.isArray(values) && values.includes(null))
+      );
+    };
     const admitting = Object.entries(components)
-      .filter(([, schema]) => {
-        const declared = (schema as { type?: unknown; enum?: unknown[] }).type;
-        const values = (schema as { enum?: unknown[] }).enum;
-        return (
-          (Array.isArray(declared) && declared.includes("null")) ||
-          declared === "null" ||
-          (Array.isArray(values) && values.includes(null))
-        );
-      })
+      .filter(([, schema]) => admitsNull(schema))
       .map(([name]) => name);
     expect(Object.keys(components).length).toBeGreaterThan(20);
     expect(
@@ -255,8 +252,8 @@ describe("published OpenAPI spec", () => {
       "Carry the null at the position that has one, with `nullableRef`.",
     ).toEqual([]);
 
-    // The witness: the same shape, made nullable at one use, and what the
-    // generator then publishes.
+    // The witness: the same shape, made nullable at one use, is what the
+    // predicate above has to catch.
     const outcome = z.enum(["ok", "error"]).openapi("ProbeOutcome");
     const probe = new OpenAPIHono();
     probe.openapi(
@@ -283,7 +280,8 @@ describe("published OpenAPI spec", () => {
         info: { title: "probe", version: "1" },
       }).components as { schemas: Record<string, { enum?: unknown[] }> }
     ).schemas.ProbeOutcome;
-    expect(polluted?.enum).toContain(null);
+    expect(admitsNull(polluted), JSON.stringify(polluted)).toBe(true);
+    expect(admitsNull(components.ItemState)).toBe(false);
   });
 
   it("finds a shape written out twice", () => {

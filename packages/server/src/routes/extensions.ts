@@ -7,13 +7,8 @@
  * Additional access can be granted via extension_permissions on the key.
  *
  * **Reserved namespaces (core, marfa, system) are closed to every
- * credential.** They used to be fenced to the operator key, with the
- * extension permission map consulted after the flag, so a writer had to hold
- * both. Nothing can: the row constraint holds an operator key to no
- * permissions at all, so the map refused whatever the fence said. The fence went rather than staying
- * as a gate that could not answer. What writes these namespaces is the
- * platform's own machinery, through the storage layer, which is also what
- * writes a `system.*` row.
+ * credential.** What writes them is the platform's own machinery, through
+ * the storage layer, which is also what writes a `system.*` row.
  */
 
 import { createRoute, z } from "@hono/zod-openapi";

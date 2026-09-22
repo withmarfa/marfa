@@ -359,11 +359,9 @@ describe("export", () => {
 
   it("refuses a bound that is not an instant, on both output formats", async () => {
     // The streaming format flushes its 200 and its headers before the first
-    // page is fetched, so a bound the store refuses used to arrive after the
-    // response had begun: the caller was handed an empty body with a success
-    // status, which is an export narrowed by a filter nobody could read and
-    // written to a file they believe is a slice. The archive format of the
-    // same door, with the same query schema, refused it. The control is the
+    // page is fetched, so a bound the store refuses has to be refused before
+    // the response begins, or the caller is handed an empty body with a
+    // success status. The control is the
     // third assertion — a readable bound must still stream something, or
     // this case would pass against a door that refused every export.
     const stream = await client.exportItems({ occurred_after: "banana" });

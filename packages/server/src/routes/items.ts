@@ -399,14 +399,11 @@ const getItemStatsRoute = createRoute({
     403: {
       content: {
         "application/json": {
-          schema: makeErrorResponseSchema([
-            "type_not_permitted",
-            "edge_permission_denied",
-          ]),
+          schema: makeErrorResponseSchema(["type_not_permitted"]),
         },
       },
       description:
-        "The credential's type permissions reach no type, so there is nothing on the data plane it may read. A credential that reaches some types reads this door narrowed to them rather than being refused. Also `edge_permission_denied` where a filter term names an edge type the credential may not read, and `type_not_permitted` where a `backref` term is anchored on an item whose type it may not read: a term naming a relationship is a question, and it is refused rather than answered or dropped.",
+        "The credential's type permissions reach no type, so there is nothing on the data plane it may read. A credential that reaches some types reads this door narrowed to them rather than being refused.",
     },
   },
 });

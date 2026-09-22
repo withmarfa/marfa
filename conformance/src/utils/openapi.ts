@@ -14,7 +14,7 @@ import { requireApiUrl } from "./setup.js";
  * carrying a field the document never declared.
  */
 
-interface OpenApiDocument {
+export interface OpenApiDocument {
   paths: Record<string, Record<string, Operation>>;
   components?: Record<string, unknown>;
 }
@@ -26,7 +26,7 @@ type JsonSchema = Record<string, unknown>;
  * set. An unresolvable reference throws: read as an empty schema it would
  * make the body pass whatever it carried.
  */
-function inline(node: unknown, document: OpenApiDocument): unknown {
+export function inline(node: unknown, document: OpenApiDocument): unknown {
   if (Array.isArray(node)) return node.map((item) => inline(item, document));
   if (node === null || typeof node !== "object") return node;
 
@@ -63,11 +63,12 @@ function inline(node: unknown, document: OpenApiDocument): unknown {
  *
  * Left open: a property bag (no `properties`) and a declared record (its own
  * `additionalProperties`), both of which are shapes the type's schema governs
- * rather than the door's. Also left open are the immediate branches of an
- * `allOf`, where each branch describes part of one object and closing them
- * would leave a body that no branch alone admits.
+ * rather than the door's. The immediate branches of an `allOf` each describe
+ * part of one object, so closing any one would refuse the others' fields;
+ * the `allOf` itself is closed instead, with `unevaluatedProperties`, which
+ * sees every property a branch declared.
  */
-function closed(node: unknown, isAllOfBranch = false): unknown {
+export function closed(node: unknown, isAllOfBranch = false): unknown {
   if (Array.isArray(node)) return node.map((item) => closed(item));
   if (node === null || typeof node !== "object") return node;
 
@@ -79,11 +80,10 @@ function closed(node: unknown, isAllOfBranch = false): unknown {
         ? value.map((branch) => closed(branch, true))
         : closed(value);
   }
-  if (
-    !isAllOfBranch &&
-    typeof out.properties === "object" &&
-    out.additionalProperties === undefined
-  ) {
+  if (isAllOfBranch || out.additionalProperties !== undefined) return out;
+  if (Array.isArray(out.allOf)) {
+    out.unevaluatedProperties ??= false;
+  } else if (typeof out.properties === "object") {
     out.additionalProperties = false;
   }
   return out;
@@ -100,6 +100,14 @@ interface Operation {
 let cached: Promise<OpenApiDocument> | undefined;
 const compiled = new Map<string, ValidateFunction>();
 const ajv = new Ajv2020({ strict: false, allErrors: true });
+
+/** A closed validator for one schema read out of `document`. */
+export function validatorFor(
+  schema: unknown,
+  document: OpenApiDocument,
+): ValidateFunction {
+  return ajv.compile(closed(inline(schema, document)) as Record<string, unknown>);
+}
 
 function fetchOpenApi(): Promise<OpenApiDocument> {
   cached ??= (async () => {
@@ -179,9 +187,7 @@ export async function expectMatchesSchema(
   const key = `${method} ${path} ${String(status)}`;
   let validate = compiled.get(key);
   if (!validate) {
-    validate = ajv.compile(
-      closed(inline(schema, doc)) as Record<string, unknown>,
-    );
+    validate = validatorFor(schema, doc);
     compiled.set(key, validate);
   }
   if (!validate(body)) {
