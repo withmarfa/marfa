@@ -168,6 +168,19 @@ pub fn hydrated(conn: &Connection) -> Result<bool, CoreError> {
     if meta_get(conn, META_EVENT_CURSOR)?.is_none() {
         return Ok(false);
     }
+    holds_slice(conn)
+}
+
+/// Whether this store holds a slice at all, the cursor aside.
+///
+/// The half of `hydrated` a hydration writes once and nothing afterwards
+/// takes away. Split out because the two halves fail for different reasons
+/// and a caller is owed the difference: no slice is a store that has never
+/// hydrated, and a slice whose cursor has gone is one that hydrated and
+/// then aged out of the log. The guard needs both and still asks
+/// `hydrated`; the report asks this as well, so it can name the second case
+/// rather than calling it the first (`device.md` 5).
+pub fn holds_slice(conn: &Connection) -> Result<bool, CoreError> {
     if meta_get(conn, META_SLICE_TIER)?.is_none() {
         return Ok(false);
     }

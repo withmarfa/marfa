@@ -764,6 +764,10 @@ impl Core {
             Hydration::InProgress
         } else if store::hydrated(&conn)? {
             Hydration::Complete
+        } else if store::holds_slice(&conn)? {
+            // A slice and no cursor: hydrated once, and the log has moved
+            // past where it left off.
+            Hydration::Expired
         } else {
             Hydration::Never
         };
@@ -848,6 +852,29 @@ mod tests {
             store::meta_delete(&conn, store::META_HYDRATE_STATE).unwrap();
         }
         assert_eq!(core.status().unwrap().hydration, Hydration::Complete);
+        // And the fourth value: catch-up deletes the cursor when the log has
+        // aged past it, leaving the slice and the rows in place. A store in
+        // that state reads reads as refused, exactly as a store that never
+        // hydrated does, and says a different thing about itself, because it
+        // holds a copy and the other does not.
+        {
+            let conn = core.conn().unwrap();
+            store::meta_delete(&conn, store::META_EVENT_CURSOR).unwrap();
+        }
+        assert_eq!(core.status().unwrap().hydration, Hydration::Expired);
+        assert_eq!(
+            core.list(&ListFilters::default(), Sort::default()),
+            Err(CoreError::HydrationIncomplete)
+        );
+        // The witness for the word rather than for the refusal: with the
+        // slice gone too, the same store is back to never having hydrated,
+        // so `Expired` is a reading of what is there and not a flag the
+        // aging set.
+        {
+            let conn = core.conn().unwrap();
+            store::meta_delete(&conn, store::META_SLICE_TYPES).unwrap();
+        }
+        assert_eq!(core.status().unwrap().hydration, Hydration::Never);
     }
 
     #[test]

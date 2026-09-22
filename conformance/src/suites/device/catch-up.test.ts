@@ -610,13 +610,13 @@ describe("a cursor the log no longer holds", () => {
       ).toBe("hydration_incomplete");
     }
 
-    // What the report says about a store in this state, pinned rather than
-    // left to be discovered. It reads `never` while carrying the slice and
-    // the rows a hydration left, because the predicate behind it wants a
-    // cursor and the aging deleted one. The advice is right — a hydration is
-    // owed — and the fact is wrong, and a caller reading the two lines
-    // together is told a copy that holds three rows has never hydrated.
-    // Whether that wants a fourth value of its own is in the open questions.
+    // What the report says about a store in this state. `expired` and not
+    // `never`, which is a copy that holds nothing, nor `complete`, which is
+    // a copy that can still be kept current: this one holds its slice and
+    // its rows and can no longer follow the server. The advice a caller
+    // acts on is the same either way — hydrate — but `never` would have
+    // said the copy is empty, and a caller deciding whether to keep
+    // answering from it reads that and is wrong.
     const reported = await device.status();
     expect(
       reported.ok,
@@ -626,11 +626,18 @@ describe("a cursor the log no longer holds", () => {
       expect(
         reported.value.hydration,
         "the report for an aged-out store changed without the statement changing with it, so a caller learns something different about the same state",
-      ).toBe("never");
+      ).toBe("expired");
+      // The witness for the word. `expired` is only distinguishable from
+      // `never` on a store that has something in it: with the slice gone
+      // too, the two would describe the same store and either would do.
       expect(
         reported.value.slice_types,
-        "the report says the slice is empty as well, so `never` would be a plain description rather than the mismatch this pins",
+        "the report says the slice is empty as well, so `expired` is a guess rather than a reading of what the store holds",
       ).toContain("core.note");
+      expect(
+        reported.value.event_cursor,
+        "the store still holds a cursor, so `expired` is not about the aging at all",
+      ).toBeFalsy();
     }
 
     // And a hydration clears it, which is what makes the refusal a state to

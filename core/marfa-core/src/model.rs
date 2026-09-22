@@ -308,6 +308,15 @@ pub enum Hydration {
     Never,
     InProgress,
     Complete,
+    /// Hydrated, and the log has since moved past the cursor it kept.
+    ///
+    /// The copy is whole as of the moment it stopped and cannot be brought
+    /// forward, so reads are refused exactly as they are for `Never` and
+    /// the remedy is the same. It is a value of its own because the two
+    /// states are not the same fact about the copy: `Never` says there is
+    /// nothing in it, and a caller deciding whether what it holds is worth
+    /// anything reads that and is wrong.
+    Expired,
 }
 
 impl Hydration {
@@ -316,6 +325,7 @@ impl Hydration {
             Hydration::Never => "never",
             Hydration::InProgress => "in_progress",
             Hydration::Complete => "complete",
+            Hydration::Expired => "expired",
         }
     }
 }
