@@ -585,7 +585,7 @@ const getItemRoute = createRoute({
   tags: ["Items"],
   summary: "Get an item",
   description:
-    "Returns a single item with its metadata layer and outbound edges hydrated inline; extensions are not included. An item the caller cannot see returns 404 rather than 403, so the server never leaks existence.\n\n" +
+    "Returns a single item with its metadata layer and outbound edges hydrated inline; extensions are not included. A row that is not stored answers 404. A row whose type the credential's type map does not reach answers `403 type_not_permitted`, which is read after the row, so the two are distinguishable.\n\n" +
     "`?include=` widens the response with the item's 1-hop neighborhood in one round trip instead of a per-section fan-out: `backrefs` adds inbound edges grouped by type (same block shape as `edges`, capped + cursored per type); `neighbors` adds the far-end items of the item's edges (outbound targets, plus inbound sources when `backrefs` is also requested), each with its metadata and filtered to what the caller may read; `versions` adds the item's version snapshots newest-first. Tokens are comma-separated and compose.\n\n" +
     "Every edge carried on a response is held to the two permissions `GET /edges/{id}` asks for: read on the source item's type, and read on the edge type. A block whose edges all fail is left out rather than returned empty, so a response can carry fewer kinds of relationship than the item has.",
   security: [{ bearerAuth: [] }],
@@ -638,7 +638,7 @@ const getItemRoute = createRoute({
         },
       },
       description:
-        "The credential's type permissions do not reach the item's type. Distinct from the 404 above, which is what a caller that may not see the item at all is told.",
+        "The credential's type permissions do not reach the item's type.",
     },
   },
 });
