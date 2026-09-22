@@ -58,12 +58,14 @@ export function renderEnvFile(
   apiUrl: string,
   credentials: TargetCredentials,
   blobPath?: string,
+  statusLogs?: string,
 ): string {
   return [
     `MARFA_API_URL=${apiUrl}`,
     `MARFA_API_KEY=${credentials.apiKey}`,
     `MARFA_OPERATOR_KEY=${credentials.operatorKey}`,
     ...(blobPath === undefined ? [] : [`MARFA_BLOB_PATH=${blobPath}`]),
+    ...(statusLogs === undefined ? [] : [`MARFA_STATUS_LOGS=${statusLogs}`]),
     "",
   ].join("\n");
 }

@@ -90,8 +90,8 @@ function documentedDoors(): Set<string> {
     }),
   );
   return new Set([
-    ...operationDoors(registry.paths),
-    ...operationDoors(published.paths),
+    ...operationDoors(registry.paths ?? {}),
+    ...operationDoors(published.paths ?? {}),
   ]);
 }
 
@@ -114,7 +114,7 @@ function declaredDoors(): Set<string> {
     info: { title: "census", version: "0" },
   });
   const out = new Set<string>();
-  for (const [path, item] of Object.entries(doc.paths)) {
+  for (const [path, item] of Object.entries(doc.paths ?? {})) {
     for (const [method, operation] of Object.entries(
       item as Record<string, unknown>,
     )) {

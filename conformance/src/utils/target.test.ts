@@ -69,4 +69,16 @@ describe("env file", () => {
     );
     expect(parseEnvFile(text).MARFA_BLOB_PATH).toBe("/state/blobs");
   });
+
+  it("names where a fixture's own server leaves its log when given one", () => {
+    const text = renderEnvFile(
+      "http://127.0.0.1:8600",
+      { apiKey: "marfa_k1_working", operatorKey: "marfa_k1_operator" },
+      "/state/blobs",
+      "/state/fresh-server-logs",
+    );
+    expect(parseEnvFile(text).MARFA_STATUS_LOGS).toBe(
+      "/state/fresh-server-logs",
+    );
+  });
 });

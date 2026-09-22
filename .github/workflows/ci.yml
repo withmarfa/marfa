@@ -173,10 +173,12 @@ jobs:
 
       # Reads the log of the server the selection just drove, so it runs
       # here rather than as a job of its own and before the stop, which
-      # clears the state directory the log is in.
+      # clears the state directory the log is in. `--complete` because this
+      # selection reaches every door: a declared status nothing drew fails
+      # unless the checker lists why nothing can.
       - name: Hold every status observed to its declaration
         working-directory: conformance
-        run: pnpm check:statuses --state "$RUNNER_TEMP/marfa"
+        run: pnpm check:statuses --state "$RUNNER_TEMP/marfa" --complete
 
       # Before the stop, because `marfa:down` clears the state directory and
       # the log is in it. The server is still running here, which costs

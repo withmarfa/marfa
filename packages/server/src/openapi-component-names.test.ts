@@ -1,8 +1,9 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { getRefId } from "@asteasolutions/zod-to-openapi";
 import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
-import type { ZodType } from "zod";
 import { createTestContext, type TestContext } from "./test-utils.js";
+
+type ZodType = z.ZodType;
 
 /**
  * The generator binds a component name to the first shape it meets under that

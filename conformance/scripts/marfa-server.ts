@@ -99,6 +99,9 @@ function paths(state: string) {
     db: resolve(state, "marfa.db"),
     blobs: resolve(state, "blobs"),
     env: resolve(state, "env"),
+    // Where a fixture's own server leaves its request log on the way out,
+    // so `check:statuses` holds what those servers answered too.
+    statusLogs: resolve(state, "fresh-server-logs"),
   };
 }
 
@@ -307,6 +310,7 @@ export async function bootServer(args: BootOptions): Promise<void> {
           operatorKey: previous.MARFA_OPERATOR_KEY ?? "",
         },
         p.blobs,
+        p.statusLogs,
       ),
     );
     console.log(`[marfa-server] already bootstrapped; env file at ${p.env}`);
@@ -315,7 +319,7 @@ export async function bootServer(args: BootOptions): Promise<void> {
 
   const response = await mint(url, secret);
   const credentials = chooseCredentials(response);
-  writeFileSync(p.env, renderEnvFile(url, credentials, p.blobs));
+  writeFileSync(p.env, renderEnvFile(url, credentials, p.blobs, p.statusLogs));
   console.log(`[marfa-server] minted the first key; env file at ${p.env}`);
 }
 
@@ -386,6 +390,7 @@ function clearState(state: string): void {
     p.env,
     p.log,
     p.blobs,
+    p.statusLogs,
   ]) {
     rmSync(path, { recursive: true, force: true });
   }

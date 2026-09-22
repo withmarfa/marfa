@@ -160,7 +160,8 @@ const refusalSchemas = new Map<string, ReturnType<typeof buildRefusalSchema>>();
  * client branches on an enum rather than on a string. Every door declares
  * the codes it answers on each status through this; there is no open
  * spelling of the envelope, because a door that cannot say what it answers
- * is a door whose refusals nothing can be held to.
+ * is a door whose refusals nothing can be held to. `openapi-published.test.ts`
+ * refuses a document that declares one.
  *
  * The order a door writes its codes in does not reach the document: the
  * name and the enum are both sorted, so one set is one component.

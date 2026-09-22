@@ -8,12 +8,19 @@
  * asked to answer a status it has no code path for.
  */
 import { describe, it, expect } from "vitest";
+import { spawn } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { createServer } from "node:http";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   declaredStatuses,
   formatObserved,
   formatUndeclared,
   parseRequestLines,
   reportStatuses,
+  unreachedDebt,
 } from "./status-declarations.js";
 
 /** A document declaring one door, the way the server's does. */
@@ -107,21 +114,76 @@ describe("the status checker", () => {
     ]);
   });
 
-  it("counts a served route the document does not publish rather than refusing it", () => {
+  it("counts a served route the document does not publish, and reports one with no reason", () => {
     const report = reportStatuses(
       parseRequestLines(
-        logLine({
-          method: "GET",
-          path: "/health",
-          route: "/health",
-          status: 200,
-        }),
+        [
+          logLine({
+            method: "GET",
+            path: "/health",
+            route: "/health",
+            status: 200,
+          }),
+          logLine({
+            method: "GET",
+            path: "/unlisted",
+            route: "/unlisted",
+            status: 200,
+          }),
+        ].join("\n"),
       ),
       documentDeclaring([200]),
     );
 
     expect(report.undeclared).toEqual([]);
-    expect([...report.unpublished.keys()]).toEqual(["GET /health"]);
+    expect([...report.unpublished.keys()].sort()).toEqual([
+      "GET /health",
+      "GET /unlisted",
+    ]);
+    expect(report.unexplained).toEqual(["GET /unlisted"]);
+  });
+
+  it("holds a HEAD answer to its GET operation's declarations", () => {
+    const report = reportStatuses(
+      parseRequestLines(
+        logLine({
+          method: "HEAD",
+          path: "/items/x",
+          route: "/items/{id}",
+          status: 418,
+        }),
+      ),
+      documentDeclaring([200, 404]),
+    );
+
+    expect(report.unpublished.size).toBe(0);
+    expect(report.undeclared).toEqual([
+      {
+        operation: "GET /items/{id}",
+        status: 418,
+        codes: [],
+        declared: [200, 404],
+      },
+    ]);
+  });
+
+  it("reports a declared status no request drew, less the harness's own", () => {
+    const report = reportStatuses(
+      parseRequestLines(OBSERVED_200),
+      documentDeclaring([200, 404, 413, 429]),
+    );
+
+    expect(report.unanswered).toEqual(["GET /items/{id} 404"]);
+    expect(unreachedDebt(report, {})).toEqual({
+      unlisted: ["GET /items/{id} 404"],
+      stale: [],
+    });
+    expect(
+      unreachedDebt(report, {
+        "GET /items/{id} 404": "why",
+        "GET /items/{id} 200": "drawn after all",
+      }),
+    ).toEqual({ unlisted: [], stale: ["GET /items/{id} 200"] });
   });
 
   it("reads the request lines out of a log that carries everything else too", () => {
@@ -200,5 +262,57 @@ describe("the status checker", () => {
     expect(formatObserved(report)).toBe(
       "GET /items/{id}  ->  200  403 (type_not_permitted)",
     );
+  });
+
+  it("exits 1 end to end on a log naming an undeclared status, and 0 once declared", async () => {
+    // The script is the shell CI runs, so its exit path is what a red check
+    // rests on. Driven against a hand-written log and a server that serves
+    // only the document.
+    const script = resolve(
+      dirname(fileURLToPath(import.meta.url)),
+      "..",
+      "..",
+      "scripts",
+      "check-statuses.ts",
+    );
+    const state = mkdtempSync(join(tmpdir(), "check-statuses-"));
+    let statuses = [200, 401, 404];
+    const server = createServer((_req, res) => {
+      res.setHeader("Content-Type", "application/json");
+      res.end(JSON.stringify(documentDeclaring(statuses)));
+    });
+    await new Promise<void>((done) => server.listen(0, "127.0.0.1", done));
+    const address = server.address();
+    const url = `http://127.0.0.1:${String(typeof address === "object" && address ? address.port : 0)}`;
+    try {
+      writeFileSync(
+        join(state, "server.log"),
+        [OBSERVED_200, OBSERVED_403].join("\n"),
+      );
+      const run = () =>
+        new Promise<{ status: number | null; stderr: string }>((done) => {
+          const child = spawn(
+            "npx",
+            ["tsx", script, "--state", state, "--url", url],
+          );
+          let stderr = "";
+          child.stderr.on("data", (chunk: Buffer) => {
+            stderr += chunk.toString();
+          });
+          child.on("close", (status) => done({ status, stderr }));
+        });
+
+      const refused = await run();
+      expect(refused.stderr).toContain("GET /items/{id} answered 403");
+      expect(refused.status).toBe(1);
+
+      statuses = [200, 401, 403, 404];
+      const passed = await run();
+      expect(passed.stderr).toBe("");
+      expect(passed.status).toBe(0);
+    } finally {
+      server.close();
+      rmSync(state, { recursive: true, force: true });
+    }
   });
 });

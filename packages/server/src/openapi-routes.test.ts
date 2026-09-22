@@ -26,7 +26,7 @@ afterAll(async () => {
   await ctx.cleanup();
 });
 
-const HTTP_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE"];
+const HTTP_METHODS = ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"];
 
 /**
  * Every door the router would dispatch to, as `METHOD /path`.
@@ -185,7 +185,7 @@ describe("the document and the routes", () => {
       info: { title: "registry", version: "0" },
     });
     const stripped: string[] = [];
-    for (const [path, item] of Object.entries(registry.paths)) {
+    for (const [path, item] of Object.entries(registry.paths ?? {})) {
       for (const [method, operation] of Object.entries(
         item as Record<string, { operationId?: string }>,
       )) {

@@ -17,6 +17,7 @@ import type {
   BulkActionJob,
 } from "../../client/types.js";
 import {
+  createSecondClient,
   createTestContext,
   trackItem,
   trackKey,
@@ -732,6 +733,39 @@ describe("bulk_action async-job lifecycle", () => {
     expect(del.data.status).toBe("completed");
     expect(del.data.finished_at).toBe(final.finished_at);
     expect(del.data.succeeded).toBe(final.succeeded);
+  });
+
+  it("refuses another credential reading or canceling the job, 403 forbidden", async () => {
+    const tag = `ba-owner-${ctx.runId}`;
+    await seedTagged(1, tag);
+    const post = await client.bulkAction({
+      action: "transition",
+      state: "archived",
+      filter: { tags: [tag] },
+    });
+    expect(post.status).toBe(202);
+    const queued = post.data as BulkActionJob;
+    await client.pollBulkActionToTerminal(queued.id);
+
+    const other = await createSecondClient(ctx, "bulk-other");
+    const read = await other.bulkActionStatus(queued.id);
+    expect(read.status).toBe(403);
+    expect(read.error?.error.code).toBe("forbidden");
+    await expectMatchesSchema(
+      "GET",
+      "/items/bulk-actions/jobs/{id}",
+      403,
+      read.error,
+    );
+    const cancel = await other.bulkActionCancel(queued.id);
+    expect(cancel.status).toBe(403);
+    expect(cancel.error?.error.code).toBe("forbidden");
+    await expectMatchesSchema(
+      "DELETE",
+      "/items/bulk-actions/jobs/{id}",
+      403,
+      cancel.error,
+    );
   });
 
   it("DELETE on an unknown id returns 404 bulk_job_not_found", async () => {

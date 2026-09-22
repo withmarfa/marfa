@@ -20,6 +20,59 @@ function operationKeys(spec: Record<string, unknown>): Map<string, Operation> {
   return out;
 }
 
+/**
+ * Every refusal the document declares whose code is not a closed set.
+ *
+ * A refusal names its code under `error.code`, or, in the RFC shapes the
+ * OAuth doors answer, as a top-level `error`. Either position has to carry an
+ * `enum` or a `const`: an open string admits every code, so a generated client
+ * has nothing to branch on and no check can tell a new code from a declared
+ * one. A refusal with no code position at all is reported too.
+ */
+function openRefusals(document: Record<string, unknown>): string[] {
+  const out: string[] = [];
+  const closedCode = (schema: unknown): boolean => {
+    const record = (schema ?? {}) as { enum?: unknown[]; const?: unknown };
+    return Array.isArray(record.enum) || record.const !== undefined;
+  };
+  // Every schema a response admits, through the unions and compositions.
+  const branches = (schema: unknown): Record<string, unknown>[] => {
+    const record = (schema ?? {}) as Record<string, unknown>;
+    const nested = ["anyOf", "oneOf", "allOf"].flatMap((key) =>
+      Array.isArray(record[key])
+        ? (record[key] as unknown[]).flatMap(branches)
+        : [],
+    );
+    return [record, ...nested];
+  };
+  for (const [key, operation] of operationKeys(document)) {
+    const responses = (operation.responses ?? {}) as Record<
+      string,
+      { content?: Record<string, { schema?: unknown }> }
+    >;
+    for (const [status, response] of Object.entries(responses)) {
+      if (Number(status) < 400) continue;
+      for (const media of Object.values(response.content ?? {})) {
+        const schema = inlineOpenApiRefs(media.schema, document);
+        let positions = 0;
+        for (const branch of branches(schema)) {
+          const properties = (branch.properties ?? {}) as Record<
+            string,
+            { properties?: Record<string, unknown> }
+          >;
+          const error = properties.error;
+          if (error === undefined) continue;
+          const code = error.properties?.code ?? error;
+          positions += 1;
+          if (!closedCode(code)) out.push(`${key} ${status}`);
+        }
+        if (positions === 0) out.push(`${key} ${status} (no code)`);
+      }
+    }
+  }
+  return [...new Set(out)].sort();
+}
+
 describe("published OpenAPI spec", () => {
   let published: Map<string, Operation>;
   let document: Record<string, unknown>;
@@ -387,5 +440,37 @@ describe("published OpenAPI spec", () => {
       inlined.sort(),
       "Reference the component instead of writing the shape out again.",
     ).toEqual([]);
+  });
+
+  it("declares every refusal code as a closed set", () => {
+    expect(
+      openRefusals(document),
+      "Declare the codes this status answers with `makeErrorResponseSchema`.",
+    ).toEqual([]);
+
+    // The witness: one refusal component opened to any string, and a
+    // refusal declared with no code at all.
+    const opened = structuredClone(document) as {
+      components: { schemas: Record<string, Record<string, unknown>> };
+      paths: Record<string, Record<string, Operation>>;
+    };
+    const unauthorized = opened.components.schemas.UnauthorizedRefusal as {
+      properties: { error: { properties: { code: unknown } } };
+    };
+    unauthorized.properties.error.properties.code = { type: "string" };
+    const flagged = openRefusals(opened as unknown as Record<string, unknown>);
+    expect(flagged).toContain("GET /items 401");
+    expect(flagged.length).toBeGreaterThan(50);
+
+    const bare = structuredClone(document) as typeof opened;
+    (
+      bare.paths["/items"]?.get?.responses as Record<string, unknown>
+    )["401"] = {
+      description: "no code",
+      content: { "application/json": { schema: { type: "object" } } },
+    };
+    expect(openRefusals(bare as unknown as Record<string, unknown>)).toEqual([
+      "GET /items 401 (no code)",
+    ]);
   });
 });

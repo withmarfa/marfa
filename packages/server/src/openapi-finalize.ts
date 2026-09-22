@@ -21,6 +21,8 @@
 
 import { IDEMPOTENT_WRITE_DOORS } from "./middleware/idempotency.js";
 import { refusalComponentName } from "./openapi.js";
+import { toOpenApiPath } from "./openapi-path.js";
+import { bodyCapFor } from "./middleware/body-cap.js";
 
 // Loose typing — the document is a plain OpenAPI 3.1 object. `paths` is typed
 // `object` (not a precise Record) so the concrete `OpenAPIObject`, whose
@@ -185,11 +187,6 @@ const IDEMPOTENCY_HEADER_PARAM = {
     "A client-chosen key identifying this write. The server records the status and body it returns against the key and answers a repeat carrying the same key with that stored result, performing no second write. A conflict is recorded like any other outcome, so a retry is told its first attempt collided rather than left to re-derive it. Scoped to this instance; a key replayed with a different request is refused with `idempotency_key_reused`.",
 };
 
-/** `/items/:id/purge` as OpenAPI spells it: `/items/{id}/purge`. */
-function toOpenApiPath(honoPath: string): string {
-  return honoPath.replace(/:([A-Za-z0-9_]+)/g, "{$1}");
-}
-
 /** The doors, keyed the way the reflected document keys an operation. */
 const IDEMPOTENT_OPERATIONS = new Set(
   IDEMPOTENT_WRITE_DOORS.map((door) => {
@@ -333,11 +330,6 @@ export const CHAIN_REFUSALS = {
     "Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting.",
   ),
 } as const;
-
-/** The body-size guard's exemption, as `app.ts` spells it: these stream to disk. */
-function bodyIsCapped(path: string): boolean {
-  return !path.startsWith("/blobs") && path !== "/admin/restore-archive";
-}
 
 function declaresSecurity(operation: Record<string, unknown>): boolean {
   const security = operation.security;
@@ -743,7 +735,7 @@ export function finalizeOpenAPISpec<T extends OpenAPIDoc>(spec: T): T {
       if (declaresSecurity(operation)) {
         responses["401"] ??= CHAIN_REFUSALS.unauthorized.response;
       }
-      if (bodyIsCapped(pathKey)) {
+      if (bodyCapFor(pathKey) !== "none") {
         responses["413"] ??= CHAIN_REFUSALS.requestTooLarge.response;
       }
       responses["429"] ??= CHAIN_REFUSALS.rateLimited.response;
