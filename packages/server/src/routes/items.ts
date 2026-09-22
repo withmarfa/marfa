@@ -607,6 +607,14 @@ const getItemRoute = createRoute({
       },
       description: "Item with metadata, and any requested neighborhood blocks",
     },
+    400: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["invalid_id"]),
+        },
+      },
+      description: "The id is not a well-formed item id.",
+    },
     401: {
       content: {
         "application/json": {
@@ -622,6 +630,15 @@ const getItemRoute = createRoute({
         },
       },
       description: "Item not found",
+    },
+    403: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["type_not_permitted"]),
+        },
+      },
+      description:
+        "The credential's type permissions do not reach the item's type. Distinct from the 404 above, which is what a caller that may not see the item at all is told.",
     },
   },
 });
@@ -831,6 +848,23 @@ const deleteItemRoute = createRoute({
         },
       },
       description: "Unauthorized",
+    },
+    403: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["type_not_permitted"]),
+        },
+      },
+      description:
+        "The credential's type permissions do not reach the item's type with write.",
+    },
+    404: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["item_not_found"]),
+        },
+      },
+      description: "Item not found",
     },
   },
 });
@@ -1150,6 +1184,14 @@ const purgeItemRoute = createRoute({
       },
       description:
         "`items.purge` is missing, or the item is in a reserved namespace this credential may not write. The second is reached only by a credential that could not have trashed the row either: purging is trash-then-purge, and being told the item is not trashed would describe an ordering mistake the caller did not make.",
+    },
+    404: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["item_not_found"]),
+        },
+      },
+      description: "No such item, including one this door has already purged.",
     },
   },
 });

@@ -252,6 +252,18 @@ const createEdgeRoute = createRoute({
       },
       description: "Unauthorized",
     },
+    403: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema([
+            "edge_permission_denied",
+            "type_not_permitted",
+          ]),
+        },
+      },
+      description:
+        "The dual gate refused one of its halves: `edge_permission_denied` on the edge type, `type_not_permitted` on the source item's type.",
+    },
     404: {
       content: {
         "application/json": {
@@ -291,6 +303,15 @@ const getEdgeRoute = createRoute({
         "application/json": { schema: EdgeResponseSchema },
       },
       description: "The edge",
+    },
+    403: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["type_not_permitted"]),
+        },
+      },
+      description:
+        "The credential's type permissions do not reach an endpoint's type.",
     },
     404: {
       content: {
@@ -356,6 +377,18 @@ const updateEdgeRoute = createRoute({
       },
       description: "Attempted to change immutable field",
     },
+    403: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema([
+            "edge_permission_denied",
+            "type_not_permitted",
+          ]),
+        },
+      },
+      description:
+        "The dual gate refused one of its halves: `edge_permission_denied` on the edge type, `type_not_permitted` on the source item's type. A trashed source still gates on its type.",
+    },
     404: {
       content: {
         "application/json": {
@@ -381,6 +414,18 @@ const deleteEdgeRoute = createRoute({
     200: {
       content: { "application/json": { schema: OkResponseSchema } },
       description: "Deleted",
+    },
+    403: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema([
+            "edge_permission_denied",
+            "type_not_permitted",
+          ]),
+        },
+      },
+      description:
+        "The dual gate refused one of its halves: `edge_permission_denied` on the edge type, `type_not_permitted` on the source item's type. A trashed source still gates on its type.",
     },
     404: {
       content: {

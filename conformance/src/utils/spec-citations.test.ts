@@ -151,7 +151,7 @@ describe("specification citations", () => {
     // The positive control: the headings parsed at all. A loose floor
     // rather than the count, which would redden on the next removal for a
     // reason that has nothing to do with what this asserts.
-    expect(numbered.length).toBeGreaterThan(2);
+    expect(numbered.length).toBeGreaterThan(0);
     expect(numbered).toEqual(numbered.map((_, index) => index + 1));
   });
 

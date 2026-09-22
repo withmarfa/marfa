@@ -100,6 +100,14 @@ const listAuditRoute = createRoute({
       },
       description: "Caller does not hold `audit.read`",
     },
+    400: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["validation_error"]),
+        },
+      },
+      description: "A query parameter is outside what the door accepts.",
+    },
   },
 });
 

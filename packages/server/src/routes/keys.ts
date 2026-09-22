@@ -78,43 +78,46 @@ const EdgePermissionsSchema = z
   .record(z.string(), PermissionLevelEnum)
   .optional();
 
-const KeyListItemSchema = z.object({
-  id: z.string(),
-  label: z.string(),
-  source: z.string(),
-  permissions: z
-    .array(PermissionEnum)
-    .optional()
-    .describe(
-      "The permissions this credential holds, as the literals themselves. Omitted on a create request takes the creator's whole set; anything named is honored and clamped to what the creator holds.",
-    ),
-  oauth_client_id: z
-    .string()
-    .optional()
-    .describe(
-      "The registered client that minted this key, when a signed-in app did. Absent on a key a person or another key created directly.",
-    ),
-  default_tier: TierEnum,
-  is_operator: z.boolean(),
-  type_permissions: z.record(z.string(), TypePermissionLevelEnum),
-  extension_permissions: z.record(z.string(), PermissionLevelEnum).optional(),
-  edge_permissions: EdgePermissionsSchema,
-  metadata_permissions: z.record(z.string(), PermissionLevelEnum).optional(),
-  // Declared because the handler sends them: a listing returns stored rows
-  // whole, so a field a row can carry and the declaration omits is a field
-  // a generated client cannot read.
-  profile_permissions: z.record(z.string(), PermissionLevelEnum).optional(),
-  enforcement_override: EnforcementOverrideSchema.optional(),
-  created_at: z.string(),
-  expires_at: z
-    .string()
-    .nullable()
-    .optional()
-    .describe(
-      "Hard lifetime bound, and NULL on every key a door mints. A key past this instant is refused at the bearer gate exactly like a revoked one.",
-    ),
-  last_used_at: z.string().nullable(),
-});
+/** A stored key as every door that returns one returns it, plaintext aside. */
+const ApiKeySchema = z
+  .object({
+    id: z.string(),
+    label: z.string(),
+    source: z.string(),
+    permissions: z
+      .array(PermissionEnum)
+      .optional()
+      .describe(
+        "The permissions this credential holds, as the literals themselves. Omitted on a create request takes the creator's whole set; anything named is honored and clamped to what the creator holds.",
+      ),
+    oauth_client_id: z
+      .string()
+      .optional()
+      .describe(
+        "The registered client that minted this key, when a signed-in app did. Absent on a key a person or another key created directly.",
+      ),
+    default_tier: TierEnum,
+    is_operator: z.boolean(),
+    type_permissions: z.record(z.string(), TypePermissionLevelEnum),
+    extension_permissions: z.record(z.string(), PermissionLevelEnum).optional(),
+    edge_permissions: EdgePermissionsSchema,
+    metadata_permissions: z.record(z.string(), PermissionLevelEnum).optional(),
+    // Declared because the handler sends them: a listing returns stored rows
+    // whole, so a field a row can carry and the declaration omits is a field
+    // a generated client cannot read.
+    profile_permissions: z.record(z.string(), PermissionLevelEnum).optional(),
+    enforcement_override: EnforcementOverrideSchema.optional(),
+    created_at: z.string(),
+    expires_at: z
+      .string()
+      .nullable()
+      .optional()
+      .describe(
+        "Hard lifetime bound, and NULL on every key a door mints. A key past this instant is refused at the bearer gate exactly like a revoked one.",
+      ),
+    last_used_at: z.string().nullable(),
+  })
+  .openapi("ApiKey");
 
 // ---------------------------------------------------------------------------
 // Route definitions
@@ -206,6 +209,15 @@ const createKeyRoute = createRoute({
       description:
         "Caller does not hold `keys.mint`, asked for reach its own credential does not cover, asked to give reach to an operator key, or asked to mint an operator key without being one. A missing permission is named in `details.required_scope`.",
     },
+    409: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["conflict"]),
+        },
+      },
+      description:
+        "The `source` is already claimed by another key. One source, one key: the natural key `(source, source_id)` is what makes a second write from the same process the same row.",
+    },
   },
 });
 
@@ -223,7 +235,7 @@ const listKeysRoute = createRoute({
       content: {
         "application/json": {
           schema: z.object({
-            keys: z.array(KeyListItemSchema),
+            keys: z.array(ApiKeySchema),
           }),
         },
       },
@@ -236,6 +248,14 @@ const listKeysRoute = createRoute({
         },
       },
       description: "Unauthorized",
+    },
+    403: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["forbidden"]),
+        },
+      },
+      description: "Caller does not hold `keys.mint`",
     },
   },
 });
@@ -338,40 +358,6 @@ const UpdateKeyBodySchema = z.strictObject({
     ),
 });
 
-const KeyDetailSchema = z.object({
-  id: z.string(),
-  label: z.string(),
-  source: z.string(),
-  permissions: z
-    .array(PermissionEnum)
-    .optional()
-    .describe(
-      "The permissions this credential holds, as the literals themselves. Omitted on a create request takes the creator's whole set; anything named is honored and clamped to what the creator holds.",
-    ),
-  oauth_client_id: z
-    .string()
-    .optional()
-    .describe(
-      "The registered client that minted this key, when a signed-in app did. Absent on a key a person or another key created directly.",
-    ),
-  default_tier: TierEnum,
-  is_operator: z.boolean(),
-  type_permissions: z.record(z.string(), TypePermissionLevelEnum),
-  extension_permissions: z.record(z.string(), PermissionLevelEnum).optional(),
-  edge_permissions: EdgePermissionsSchema,
-  metadata_permissions: z.record(z.string(), PermissionLevelEnum).optional(),
-  created_at: z.string(),
-  expires_at: z
-    .string()
-    .nullable()
-    .optional()
-    .describe(
-      "Hard lifetime bound, and NULL on every key a door mints. A key past this instant is refused at the bearer gate exactly like a revoked one.",
-    ),
-  enforcement_override: EnforcementOverrideSchema.optional(),
-  last_used_at: z.string().nullable(),
-});
-
 const updateKeyRoute = createRoute({
   operationId: "updateKey",
   method: "patch",
@@ -395,7 +381,7 @@ const updateKeyRoute = createRoute({
   },
   responses: {
     200: {
-      content: { "application/json": { schema: KeyDetailSchema } },
+      content: { "application/json": { schema: ApiKeySchema } },
       description: "Key updated",
     },
     400: {

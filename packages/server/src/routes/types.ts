@@ -400,6 +400,21 @@ const registerTypeRoute = createRoute({
       },
       description: "Type registered",
     },
+    400: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema([
+            "inheritance_violation",
+            "invalid_schema",
+            "missing_required_field",
+            "property_shadows_field",
+            "validation_error",
+          ]),
+        },
+      },
+      description:
+        "`missing_required_field` when the body carries no `fields`; `invalid_schema` for any other shape the validator refuses; `validation_error` for a malformed identifier; `property_shadows_field` for a field name a first-class `Item` field already holds; `inheritance_violation` for a child changing a field it inherits.",
+    },
     401: {
       content: {
         "application/json": {
@@ -424,6 +439,15 @@ const registerTypeRoute = createRoute({
         },
       },
       description: "Type already exists",
+    },
+    422: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["compatible_with_violation"]),
+        },
+      },
+      description:
+        "`compatible_with` names a type this instance does not hold, or one whose shape the declaring type does not satisfy.",
     },
   },
 });
@@ -507,6 +531,15 @@ const updateTypeRoute = createRoute({
         },
       },
       description: "Type not found",
+    },
+    422: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["version_bump_mismatch"]),
+        },
+      },
+      description:
+        "The submitted `version` does not move as the change requires: a resubmission that changes nothing still has to name the version it replaces.",
     },
   },
 });
