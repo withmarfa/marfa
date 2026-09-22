@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { Hono } from "hono";
 import { createTestContext, type TestContext } from "../test-utils.js";
+import { ErrorCode, MarfaError } from "@withmarfa/shared";
 import { createErrorHandler } from "./error-handler.js";
 import * as logger from "./logger.js";
 import type { AppEnv } from "./auth.js";
@@ -117,5 +118,72 @@ describe("error handler — the unhandled-error log line", () => {
     } finally {
       logSpy.mockRestore();
     }
+  });
+});
+
+describe("error handler — an error the server threw, re-wrapped on the way out", () => {
+  /** A Hono app whose one route throws `thrown`. */
+  function appThrowing(thrown: unknown): Hono<AppEnv> {
+    const app = new Hono<AppEnv>();
+    app.get("/boom", () => {
+      throw thrown;
+    });
+    app.onError(createErrorHandler({ errorWebhookUrl: "" }));
+    return app;
+  }
+
+  it("answers the server's own code from inside a wrapper's cause", async () => {
+    // Drizzle catches what a statement threw and re-throws an error of
+    // its own carrying the original as `cause`. Without the walk the
+    // handler sees an error with no code and answers `500` — the
+    // instance reporting itself broken about a refusal it chose.
+    const wrapped = Object.assign(new Error("Failed query: insert into ..."), {
+      cause: new MarfaError(
+        ErrorCode.WRITE_CONTENTION,
+        "the lock did not free in time",
+        { budget_ms: 0 },
+      ),
+    });
+
+    const res = await appThrowing(wrapped).request("/boom");
+    expect(res.status).toBe(503);
+    const body = (await res.json()) as {
+      error: { code: string; details?: Record<string, unknown> };
+    };
+    expect(body.error.code).toBe("write_contention");
+    expect(body.error.details).toMatchObject({ budget_ms: 0 });
+  });
+
+  it("does not answer a foreign error's own code and status", async () => {
+    // The walk asks for the server's own class inside a chain, and this
+    // is why: a library error carrying a `code` and a `status` of its
+    // own would otherwise have its internals answered to a caller as
+    // though the server had chosen them. At the top level the
+    // structural test still stands, because that is what every throw
+    // site in this repository arrives as.
+    const foreign = Object.assign(new Error("upstream said no"), {
+      cause: Object.assign(new Error("the library's own failure"), {
+        code: "SOME_LIBRARY_CODE",
+        status: 418,
+        details: { connection_string: "a thing a caller must not read" },
+      }),
+    });
+
+    const res = await appThrowing(foreign).request("/boom");
+    expect(res.status).toBe(500);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("internal_error");
+  });
+
+  it("stops rather than following a cause chain back to itself", async () => {
+    // A `cause` chain is data, and a cycle in one must not hang the
+    // handler. The bound is what makes that true.
+    const a = new Error("a");
+    const b = new Error("b");
+    Object.assign(a, { cause: b });
+    Object.assign(b, { cause: a });
+
+    const res = await appThrowing(a).request("/boom");
+    expect(res.status).toBe(500);
   });
 });

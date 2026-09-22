@@ -277,6 +277,16 @@ export interface AppConfig {
   /** Shared secret for cookie signing. Required in production; falls back
    *  to a per-process ephemeral secret in dev. */
   authSecret: string;
+  /** How long a write refused with `SQLITE_BUSY` is retried before it
+   *  answers `503 write_contention`. Read from
+   *  `SQLITE_BUSY_BUDGET_MS` (default 5_000). Configurable so an
+   *  instance under a slow sidecar can wait longer, and so a fixture can
+   *  boot at `0` and provoke the refusal rather than racing a
+   *  five-second retry loop for it. Optional on the type, following
+   *  `rateLimitAggregateMultiplier`, so a test context constructing an
+   *  `AppConfig` literal need not supply it; the one default lives in
+   *  `storage/sqlite/connection.ts` and absence leaves it standing. */
+  sqliteBusyBudgetMs?: number;
   /** Default per-credential rate limit, requests per `rateLimitWindowMs`
    *  window. Read from `RATE_LIMIT_REQUESTS` (default 1000). Wired through
    *  the rate-limit middleware so there's a single env-read site. */
@@ -813,6 +823,7 @@ export function loadConfig(): AppConfig {
     authBaseUrl:
       process.env.MARFA_AUTH_BASE_URL ?? `http://localhost:${String(port)}`,
     authSecret,
+    sqliteBusyBudgetMs: envNumber(process.env.SQLITE_BUSY_BUDGET_MS, 5_000),
     rateLimitDefaultLimit: envNumber(process.env.RATE_LIMIT_REQUESTS, 1000),
     rateLimitWindowMs: envNumber(process.env.RATE_LIMIT_WINDOW_MS, 60_000),
     rateLimitAggregateMultiplier: envNumber(

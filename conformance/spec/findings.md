@@ -1,6 +1,6 @@
 # Findings
 
-Where the server contradicts its own OpenAPI document, where its document describes something a caller cannot observe, where it contradicts the device half of this specification, or where two doors that answer the same question answer it differently. Each entry names the operation, what the document says, what the server does, and the fixture that shows it. The fixtures assert what the server does; nothing here is fixed on the suite's side, and nothing is a proposal. This file is the channel to the server's maintainers. Two entries carry no fixture, and each says why.
+Where the server contradicts its own OpenAPI document, where its document describes something a caller cannot observe, where it contradicts the device half of this specification, or where two doors that answer the same question answer it differently. Each entry names the operation, what the document says, what the server does, and the fixture that shows it. The fixtures assert what the server does; nothing here is fixed on the suite's side, and nothing is a proposal. This file is the channel to the server's maintainers. One entry carries no fixture, and says why.
 
 **An entry goes when the behavior it recorded changes, never because the contract softened.** Once the server answers as the document says, or the document says what the server does, the entry has nothing left to record, and the fixtures that asserted the old answer assert the new one.
 
@@ -48,17 +48,7 @@ Nothing here is a contradiction of the OpenAPI document; it is the server contra
 
 Out of milestone one, which has one folder and one keyed process.
 
-## 8. Contention on one row answers `500`, which a device reads as a fault
-
-Several writers patching one edge at the same time are serialized by the driver, not queued: the store opens each write with `BEGIN IMMEDIATE` and a second one meets `SQLITE_BUSY` rather than waiting. The refusal surfaces as `500 internal_error`.
-
-Measured on this build: eight concurrent `PATCH /edges/{id}` naming one version answered one `200` and seven `500 internal_error`, and not one `409 version_conflict` — the version gate is never reached, because contention refuses first.
-
-Contention is not a fault. `device.md` says the server answers a `5xx` "only for a fault, and a fault it can be made to have is a defect rather than a fixture", and `queue-and-verdicts.md` has a device treat a `5xx` as retryable, so the current answer is at least honest about being retryable and dishonest about why. A `409` or a `503` would let a caller tell a contended row from a broken server.
-
-No fixture asserts it. One did, indirectly, until `version` became required on an update: it fired eight concurrent patches to prove the row lock never loses an accepted write, and the version gate now refuses seven of them before the lock is reached, so the case was removed rather than renamed into a claim it could no longer support. `packages/server/src/routes/edges-merge-rather-than-replace.test.ts` carries the reasoning and names the fixture that would reach the lock again: writers that each read the edge and then patch with what they read, rather than several sharing one version.
-
-## 9. `DELETE /edge-types/{id}` removes a registration out from under its edges
+## 8. `DELETE /edge-types/{id}` removes a registration out from under its edges
 
 The door looks at the core edge-type list and at whether the row exists, and at nothing else. Edges of the type are neither counted nor cascaded: the call answers `200`, the registration goes, and every edge of it stays, each still naming an edge type the instance no longer holds and `GET /edges/{id}` still serving it.
 

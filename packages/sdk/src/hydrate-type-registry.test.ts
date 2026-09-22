@@ -138,8 +138,9 @@ describe("hydrateTypeRegistry against a live type payload", () => {
     expect(result.cycles).toEqual([]);
 
     // One at a time: concurrent creates against the in-process SQLite
-    // database answer 500 on contention, which is a fact about the fixture
-    // rather than about the type, and would read here as a refusal.
+    // database can be refused for contention, which is a fact about the
+    // fixture rather than about the type, and would read here as the
+    // type having been rejected.
     const verdicts: { name: string; server: boolean; local: boolean }[] = [];
     for (const probe of PROBES) {
       verdicts.push({

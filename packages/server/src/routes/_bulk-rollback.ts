@@ -17,6 +17,28 @@ function isForbidden(code: string): boolean {
 }
 
 /**
+ * Whether this refusal is a verdict on the entry rather than on the
+ * server, and so belongs in that entry's own `errored` outcome.
+ *
+ * A bad type, a stale version, a permission the caller does not hold:
+ * each is a fact about the entry, the rest of the page is unaffected,
+ * and reporting it beside the entry is the whole point of a
+ * non-atomic page. A `5xx` is not that. `write_contention` says the
+ * server could not write *this time* and the next attempt would land,
+ * and folding it into a `200` tells a device — which retries a `5xx`
+ * without counting it (`queue-and-verdicts.md` 17) — that there is
+ * nothing to retry. Nothing was written and the page says it
+ * succeeded.
+ *
+ * Asked of the status rather than of a list of codes, for the reason
+ * `isForbidden` below is: a list is a judgement per code, and every
+ * judgement is a way for one door to disagree with its sibling.
+ */
+export function isEntryVerdict(err: unknown): err is MarfaError {
+  return err instanceof MarfaError && err.status < 500;
+}
+
+/**
  * The refusal an atomic page rolls back with, taking its status from the
  * entry that caused it.
  *

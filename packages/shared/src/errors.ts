@@ -201,6 +201,19 @@ export enum ErrorCode {
    */
   STREAM_CAPACITY_EXHAUSTED = "stream_capacity_exhausted",
   /**
+   * A write met the row lock and never got it inside the instance's busy
+   * budget. Transient by definition: the holder commits and the next
+   * attempt succeeds, so a client retries rather than changing anything
+   * about the request.
+   *
+   * `503` and not `409`. A conforming device retries a `5xx` without
+   * counting it against the write (`queue-and-verdicts.md` 17), while a
+   * `409` blocks that write outright (22, 23). Contention is the case
+   * the retry exists for, so a `409` would make every device give up on
+   * a write that would have landed on the next try.
+   */
+  WRITE_CONTENTION = "write_contention",
+  /**
    * `PATCH /items/:id` was called with a `source_id` that already belongs
    * to a different item under the caller's stamped `source`. The natural-key
    * uniqueness invariant `(source, source_id)` matches the create-time
@@ -341,6 +354,7 @@ const STATUS_MAP: Record<ErrorCode, number> = {
   [ErrorCode.HOUSEKEEPING_JOB_RUNNING]: 409,
   [ErrorCode.CONNECTOR_NOT_FOUND]: 404,
   [ErrorCode.STREAM_CAPACITY_EXHAUSTED]: 503,
+  [ErrorCode.WRITE_CONTENTION]: 503,
   [ErrorCode.SOURCE_ID_CONFLICT]: 409,
   [ErrorCode.TYPE_MISMATCH]: 409,
   // A genuine 409: the key is held by a request in flight, or contention

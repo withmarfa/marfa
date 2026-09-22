@@ -63,7 +63,7 @@ import { namesSystemNamespace } from "./_system-type-visibility.js";
 import type { BulkActionJobRow, Storage } from "../storage/interface.js";
 import { readInstanceConfig } from "../storage/instance-config.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
-import { bulkAtomicRollback } from "./_bulk-rollback.js";
+import { bulkAtomicRollback, isEntryVerdict } from "./_bulk-rollback.js";
 import { publish } from "../pubsub.js";
 import { applyInlineEdges, announceInlineEdges } from "./_edges-inline.js";
 import type { InlineEdgeChanges } from "./_edges-inline.js";
@@ -636,7 +636,7 @@ async function processBulkItem(
   try {
     checkWrite(raw);
   } catch (err) {
-    if (err instanceof MarfaError) {
+    if (isEntryVerdict(err)) {
       return {
         result: {
           index,
@@ -770,7 +770,7 @@ async function processBulkItem(
       // pins the outcome rather than this call site, so the guarantee
       // survives that gate moving.
     } catch (err) {
-      if (err instanceof MarfaError) {
+      if (isEntryVerdict(err)) {
         return {
           result: {
             index,
@@ -900,7 +900,7 @@ async function processBulkItem(
       try {
         await reconcileEdges(existing.id, raw.edges);
       } catch (err) {
-        if (err instanceof MarfaError) {
+        if (isEntryVerdict(err)) {
           return {
             result: {
               index,
@@ -977,7 +977,7 @@ async function processBulkItem(
       item: created,
     };
   } catch (err) {
-    if (err instanceof MarfaError) {
+    if (isEntryVerdict(err)) {
       return {
         result: {
           index,
@@ -1119,7 +1119,7 @@ export function bulkRoutes(storage: Storage) {
         try {
           checkWrite(raw);
         } catch (err) {
-          if (err instanceof MarfaError) {
+          if (isEntryVerdict(err)) {
             throw bulkAtomicRollback(i, {
               code: err.code,
               message: err.message,

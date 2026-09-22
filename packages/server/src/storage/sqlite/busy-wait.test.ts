@@ -137,7 +137,7 @@ describe("a write that meets the write lock", () => {
     await close();
   });
 
-  it("stops waiting once the budget is spent, and the refusal is the lock's", async () => {
+  it("stops waiting once the budget is spent, and names the contention", async () => {
     let attempts = 0;
     const started = Date.now();
     await expect(
@@ -145,10 +145,39 @@ describe("a write that meets the write lock", () => {
         attempts += 1;
         return Promise.reject(busy());
       }, 60),
-    ).rejects.toMatchObject({ code: "SQLITE_BUSY" });
+    ).rejects.toMatchObject({
+      // The server's own code, not the driver's `SQLITE_BUSY`: a
+      // refusal the handler has no code for is a `500`, which reports
+      // the instance as broken about a failure that clears itself.
+      code: "write_contention",
+      status: 503,
+      details: { budget_ms: 60 },
+    });
     // The whole budget, then one last try at the deadline.
     expect(Date.now() - started).toBeGreaterThanOrEqual(55);
     expect(attempts).toBeGreaterThan(2);
+  });
+
+  it("sees the lock through a wrapper that re-threw it", async () => {
+    // Drizzle wraps every statement's failure in a `DrizzleQueryError`
+    // carrying the original as `cause`, so most busy refusals reach the
+    // retry already wrapped. A check that read the top-level `code`
+    // alone would pass every other test in this file and still never
+    // retry a real write.
+    let attempts = 0;
+    await expect(
+      untilNotBusy(() => {
+        attempts += 1;
+        return Promise.reject(
+          Object.assign(new Error("Failed query: insert into ..."), {
+            cause: busy(),
+          }),
+        );
+      }, 60),
+    ).rejects.toMatchObject({ code: "write_contention" });
+    expect(attempts, "a wrapped busy refusal was not retried").toBeGreaterThan(
+      2,
+    );
   });
 
   it("does not retry a refusal that is not the lock", async () => {
