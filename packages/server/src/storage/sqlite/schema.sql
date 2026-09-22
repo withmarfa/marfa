@@ -518,6 +518,9 @@ CREATE TABLE IF NOT EXISTS `versions` (
 	`item_id` text NOT NULL,
 	`version` integer NOT NULL,
 	`properties` text NOT NULL,
+	`tier` text,
+	`occurred_at` text,
+	`source_id` text,
 	`created_at` text NOT NULL,
 	`device` text,
 	FOREIGN KEY (`item_id`) REFERENCES `items`(`id`) ON UPDATE no action ON DELETE cascade

@@ -715,7 +715,14 @@ const updateItemRoute = createRoute({
     body: {
       content: {
         "application/json": {
-          schema: z.object({
+          /** Strict, so a key this door does not declare is refused rather
+           *  than dropped. A dropped key is a request half-performed and
+           *  answered `200`, which is what a caller reads as the whole of
+           *  it having landed; the listing grammar refuses an undeclared
+           *  query key for the same reason. `.strict()` does not recurse,
+           *  and `properties` is deliberately open: its keys are the
+           *  type's, not this door's. */
+          schema: z.strictObject({
             properties: z.record(z.string(), z.unknown()).optional(),
             /** The item's own type, and only that. This route does not
              *  re-type the row it addresses, so the field exists to be
@@ -758,7 +765,6 @@ const updateItemRoute = createRoute({
               .describe(
                 "The version the caller read. Required: an update carries the version it is based on, or it is not an update but a blind overwrite of whatever arrived since.",
               ),
-            force_snapshot: z.boolean().optional(),
             /** Toggle the tier (`library` ↔ `feed`). Independent of the
              *  properties merge path — last-writer-wins. */
             tier: z.enum(["library", "feed"]).optional(),
@@ -1192,11 +1198,14 @@ const purgeItemRoute = createRoute({
     400: {
       content: {
         "application/json": {
-          schema: makeErrorResponseSchema(["validation_error"]),
+          schema: makeErrorResponseSchema([
+            "invalid_transition",
+            "validation_error",
+          ]),
         },
       },
       description:
-        "The item is a live `system.connection`. Revoke the app grant through `DELETE /auth/grants/{id}` first: removing the row here would leave the app's tokens and stored consent behind with nothing naming their owner.",
+        "`invalid_transition` when the item is not soft-deleted: purging is the hard delete behind a soft one, and the same code the restore door beside it answers for the same class of mistake. `validation_error` when the item is a live `system.connection` — revoke the app grant through `DELETE /auth/grants/{id}` first, because removing the row here would leave the app's tokens and stored consent behind with nothing naming their owner.",
     },
     401: {
       content: {
@@ -1213,7 +1222,7 @@ const purgeItemRoute = createRoute({
         },
       },
       description:
-        "`items.purge` is missing, or the item is in a reserved namespace this credential may not write. The second reads `type_not_permitted` and is the answer for an untrashed row: purging is trash-then-purge, and a credential refused at the trash door would otherwise be told only that the item is not trashed, which describes an ordering mistake it did not make.",
+        "`items.purge` is missing, or the item is in a reserved namespace this credential may not write. The second is reached only by a credential that could not have trashed the row either: purging is trash-then-purge, and being told the item is not trashed would describe an ordering mistake the caller did not make.",
     },
   },
 });
@@ -2644,7 +2653,6 @@ export function itemRoutes(storage: Storage) {
               ...(idempotencyKey !== null && {
                 idempotency_key: idempotencyKey,
               }),
-              force_snapshot: body.force_snapshot === true ? true : undefined,
               tier: hasTier ? body.tier : undefined,
               occurred_at: hasOccurredAt ? body.occurred_at : undefined,
               source_id: hasSourceId ? body.source_id : undefined,

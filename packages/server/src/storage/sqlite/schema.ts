@@ -144,6 +144,13 @@ export const versions = sqliteTable(
       .references(() => items.id, { onDelete: "cascade" }),
     version: integer("version").notNull(),
     properties: text("properties").notNull(),
+    // The three item fields an update may change that are not properties.
+    // A three-way merge needs the value at the version the client read, or
+    // it cannot tell the client having changed a field from somebody else
+    // having changed it, and has to take the client's value blind.
+    tier: text("tier"),
+    occurred_at: text("occurred_at"),
+    source_id: text("source_id"),
     created_at: text("created_at").notNull(),
     device: text("device"),
   },

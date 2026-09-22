@@ -89,7 +89,6 @@ export interface UpdateItemInput {
    * a fixture that omits it here is asserting that refusal by accident.
    */
   version: number;
-  force_snapshot?: boolean; // Force version snapshot creation
   /**
    * Replace-all-for-specified-types. Edges of types listed here are
    * replaced wholesale; edges of types NOT listed remain untouched.

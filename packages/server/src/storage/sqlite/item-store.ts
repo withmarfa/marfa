@@ -83,6 +83,7 @@ import {
   planAutoMerge,
   versionConflict,
 } from "../conflict.js";
+import type { ItemFieldValues } from "../conflict.js";
 import { edges, items, metadata } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
 import { isPrimaryKeyViolation } from "./pk-violation.js";
@@ -796,6 +797,14 @@ export class SqliteItemStore implements ItemStore {
       const now = new Date().toISOString();
       const deviceId = row.device ?? undefined;
 
+      // The row's own fields as they stand, which is what this version
+      // will have held once the update below moves past it.
+      const currentFields: ItemFieldValues = {
+        tier: row.tier,
+        occurred_at: row.occurred_at,
+        source_id: row.source_id,
+      };
+
       // The version store's own write, inside this transaction, so the
       // snapshot and the update it records land together or not at all.
       const writeVersion = async (
@@ -805,6 +814,11 @@ export class SqliteItemStore implements ItemStore {
           id,
           row.version,
           propertiesToSnapshot,
+          {
+            tier: row.tier,
+            occurred_at: row.occurred_at,
+            source_id: row.source_id,
+          },
           deviceId,
           tx,
         );
@@ -904,10 +918,24 @@ export class SqliteItemStore implements ItemStore {
         return ancestorUnavailable(row.version, currentProps, input.version);
       }
 
+      // Only the item fields this write names. A field it is silent about
+      // is not a change and cannot collide, which is what keeps a write
+      // that touches properties alone answering exactly as it did.
+      const clientFields: ItemFieldValues = {
+        ...(input.tier !== undefined && { tier: input.tier }),
+        ...(input.occurred_at !== undefined && {
+          occurred_at: input.occurred_at,
+        }),
+        ...(input.source_id !== undefined && { source_id: input.source_id }),
+      };
+
       const result = detectConflict({
         clientProperties: incomingProps ?? {},
         currentProperties: currentProps,
         ancestorProperties: ancestor.properties,
+        clientFields,
+        currentFields,
+        ancestorFields: ancestor.item_fields,
       });
 
       const policy = resolveMergePolicy(row.type, (id) => getTypeSchema(id));
@@ -916,6 +944,12 @@ export class SqliteItemStore implements ItemStore {
       // collided, the policy's resolution when something did and the caller
       // asked the server to resolve it.
       let resolvedProperties: Record<string, unknown>;
+      // The item fields this write ends up applying. On the merge path
+      // only the ones it genuinely changed, so an echoed value cannot
+      // revert one written since; under `conflict=auto` the ones it named,
+      // because the three carry no per-field merge strategy and the
+      // resolution for them is the later writer.
+      let resolvedFields: ItemFieldValues;
       let resolution: ConflictResolutionReport | undefined;
       // Null on the idempotent retry, where the row already existed.
       let sibling: Item | null = null;
@@ -960,6 +994,7 @@ export class SqliteItemStore implements ItemStore {
         }
 
         resolvedProperties = plan.merged;
+        resolvedFields = clientFields;
         resolution = {
           fields: result.conflicting_fields,
           strategy: plan.strategyByField,
@@ -967,25 +1002,26 @@ export class SqliteItemStore implements ItemStore {
         };
       } else {
         resolvedProperties = result.merged;
+        resolvedFields = result.mergedFields;
       }
 
       // Same invariant as the fast path above: the version being left behind
       // is snapshotted so a later stale write can merge against it.
       await writeVersion(currentProps);
       const newVersion = row.version + 1;
-      const newTier = input.tier ?? row.tier;
+      const newTier = resolvedFields.tier ?? row.tier;
 
       const mergeSet: Record<string, unknown> = {
         properties: sql`jsonb(${JSON.stringify(resolvedProperties)})`,
         ...instantColumnValues(resolvedProperties),
         version: newVersion,
         updated_at: now,
-        ...(input.tier !== undefined && { tier: input.tier }),
-        ...(input.occurred_at !== undefined && {
-          occurred_at: input.occurred_at,
+        ...(resolvedFields.tier !== undefined && { tier: resolvedFields.tier }),
+        ...(resolvedFields.occurred_at !== undefined && {
+          occurred_at: resolvedFields.occurred_at,
         }),
-        ...(input.source_id !== undefined && {
-          source_id: input.source_id,
+        ...(resolvedFields.source_id !== undefined && {
+          source_id: resolvedFields.source_id,
         }),
       };
 
@@ -1012,11 +1048,14 @@ export class SqliteItemStore implements ItemStore {
           version: newVersion,
           updated_at: now,
           tier: newTier,
-          ...(input.occurred_at !== undefined && {
-            occurred_at: input.occurred_at,
+          // An item's own time is never null on the row, so a resolved
+          // value of null is a field the write did not settle rather than
+          // one it cleared.
+          ...(resolvedFields.occurred_at != null && {
+            occurred_at: resolvedFields.occurred_at,
           }),
-          ...(input.source_id !== undefined && {
-            source_id: input.source_id,
+          ...(resolvedFields.source_id !== undefined && {
+            source_id: resolvedFields.source_id,
           }),
         }),
         resolution,
@@ -1073,8 +1112,12 @@ export class SqliteItemStore implements ItemStore {
     // unpurgeable.
     const target = softDeleteState(row.type);
     if (row.state !== target) {
+      // The code the restore door answers for the same class of mistake.
+      // Both doors are asking what may happen to a row in the state it is
+      // in, and a caller sorting refusals by code would otherwise sort
+      // these two apart on which door it asked.
       throw new MarfaError(
-        ErrorCode.VALIDATION_ERROR,
+        ErrorCode.INVALID_TRANSITION,
         `Only ${target} items can be purged`,
       );
     }
@@ -1310,6 +1353,11 @@ export class SqliteItemStore implements ItemStore {
       id,
       row.version,
       row.properties,
+      {
+        tier: row.tier ?? null,
+        occurred_at: row.occurred_at,
+        source_id: row.source_id ?? null,
+      },
       row.device ?? undefined,
     );
 

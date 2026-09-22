@@ -146,14 +146,12 @@ fn an_update_carries_the_version_and_asks_for_resolution_only_when_told() {
         replace: true,
         source_id: Some("notes/new.md".into()),
         conflict: Some(items::Conflict::Auto),
-        force_snapshot: true,
         ..Default::default()
     })
     .unwrap();
     assert_eq!(query(&resolved, "conflict").as_deref(), Some("auto"));
     assert_eq!(body(&resolved)["properties_mode"], "replace");
     assert_eq!(body(&resolved)["source_id"], "notes/new.md");
-    assert_eq!(body(&resolved)["force_snapshot"], true);
     // No properties were given, so none are sent: an empty object would be
     // a replace-with-nothing under `--replace`.
     assert!(body(&resolved).get("properties").is_none());

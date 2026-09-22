@@ -144,9 +144,6 @@ export interface UpdateItemInput {
    * arrived since.
    */
   version: number;
-  /** Force a version snapshot for this update, bypassing the
-   *  snapshot-interval throttle in version gating. */
-  force_snapshot?: boolean;
   /** Toggle the tier (`library` ↔ `feed`). Independent of the version-merge
    *  path for `properties`; flipping `tier` doesn't conflict (it's a single
    *  metadata-axis flag, last-writer-wins by design). */

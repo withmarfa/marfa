@@ -876,15 +876,43 @@ export interface MetadataStore {
   ): Promise<Record<string, Record<string, unknown>>>;
 }
 
+/**
+ * The item's own fields at a version, snapshotted beside its properties.
+ *
+ * The three fields an update may change that are not properties. Without
+ * the value at the version the client read, a three-way merge cannot tell
+ * the client having changed one from somebody else having changed it since,
+ * and the only thing left to do with the client's value is take it — which
+ * is a stale write overwriting a newer one with nothing refused.
+ *
+ * Not part of `Version`, which is what `GET /items/{id}/versions` answers:
+ * the history door publishes the properties at each version and nothing
+ * else, and this is read on the update path alone.
+ */
+export interface VersionedItemFields {
+  tier: string | null;
+  occurred_at: string | null;
+  source_id: string | null;
+}
+
+/** A version row as the update path reads it. */
+export interface VersionSnapshot extends Version {
+  item_fields: VersionedItemFields;
+}
+
 export interface VersionStore {
   create(
     itemId: string,
     version: number,
     properties: Record<string, unknown>,
+    itemFields: VersionedItemFields,
     deviceId?: string,
   ): Promise<Version>;
   list(itemId: string): Promise<Version[]>;
-  getByVersion(itemId: string, version: number): Promise<Version | null>;
+  getByVersion(
+    itemId: string,
+    version: number,
+  ): Promise<VersionSnapshot | null>;
   getLatestTimestamp(itemId: string): Promise<string | null>;
   deleteByIds(ids: string[]): Promise<number>;
   /**

@@ -157,4 +157,43 @@ describe("type identifier validation", () => {
     expect(r.status).toBe(400);
     expect(r.error?.error.code).toBe("unknown_type");
   });
+
+  it("orders properties by the type's fields, then by the order they were sent", async () => {
+    // Every client that renders an item as a document reads the key order,
+    // because a file's frontmatter has one and JSON's insertion order is
+    // where it comes from. `core.note` declares body, title, language and
+    // notes in that order; this write sends three of them backwards and an
+    // undeclared one in the middle, so a server that echoed the request
+    // would fail here and one that sorted alphabetically would too.
+    const r = await client.createItem({
+      type: "core.note",
+      source: ctx.source,
+      properties: {
+        notes: "declared last",
+        courier: "undeclared, sent first of its kind",
+        title: "declared second",
+        anchor: "undeclared, sent second of its kind",
+        body: "declared first",
+      },
+    });
+    expect(r.ok).toBe(true);
+    trackItem(ctx, r.data.item.id);
+    const declaredThenSent = ["body", "title", "notes", "courier", "anchor"];
+    expect(Object.keys(r.data.item.properties)).toEqual(declaredThenSent);
+
+    // Read back by id, because the create's answer is built on the write
+    // path and the read is built on the row.
+    const read = await client.getItem(r.data.item.id);
+    expect(read.ok).toBe(true);
+    expect(Object.keys(read.data.item.properties)).toEqual(declaredThenSent);
+
+    // And stable across a patch: a merge that appended the merged keys
+    // would move `title` to the end and reorder the person's document.
+    const patched = await client.updateItem(r.data.item.id, {
+      properties: { title: "still declared second" },
+      version: r.data.item.version,
+    });
+    expect(patched.ok).toBe(true);
+    expect(Object.keys(patched.data.item.properties)).toEqual(declaredThenSent);
+  });
 });

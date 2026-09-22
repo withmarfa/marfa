@@ -15,14 +15,47 @@ import { generateId } from "@withmarfa/shared";
 import type { ResolvedItem } from "./interface.js";
 import { sha256Hex } from "../utils/crypto.js";
 
+/**
+ * The three fields of an item an update may change that are not properties.
+ *
+ * They go through the same three-way comparison as properties and are kept
+ * apart from them because they are columns rather than schema-governed
+ * values: merging them into the properties object would write them into the
+ * item's own properties, where the type does not declare them.
+ */
+export const VERSIONED_ITEM_FIELDS = [
+  "tier",
+  "occurred_at",
+  "source_id",
+] as const;
+
+export type VersionedItemField = (typeof VERSIONED_ITEM_FIELDS)[number];
+
+/** A value per field, absent where the write did not name it. */
+export type ItemFieldValues = Partial<
+  Record<VersionedItemField, string | null>
+>;
+
 export interface ConflictInput {
   clientProperties: Record<string, unknown>;
   currentProperties: Record<string, unknown>;
   ancestorProperties: Record<string, unknown>;
+  /** The item fields the write names; a field it does not name is absent
+   *  and cannot collide. */
+  clientFields: ItemFieldValues;
+  currentFields: ItemFieldValues;
+  ancestorFields: ItemFieldValues;
 }
 
 export type ConflictResult =
-  | { type: "no_conflict"; merged: Record<string, unknown> }
+  | {
+      type: "no_conflict";
+      merged: Record<string, unknown>;
+      /** The item fields this write genuinely changes, to apply over the
+       *  current row. A field the client echoed back unchanged is not
+       *  here, so it cannot revert a value written since. */
+      mergedFields: ItemFieldValues;
+    }
   | { type: "conflict"; conflicting_fields: string[] };
 
 function deepEqual(a: unknown, b: unknown): boolean {
@@ -64,6 +97,13 @@ function deepEqual(a: unknown, b: unknown): boolean {
  *   server already holds for it — unless the server changed it, in which
  *   case the overlay must not revert that change (handled below).
  * - If conflicts: return the sorted list of conflicting field names.
+ *
+ * `tier`, `occurred_at` and `source_id` go through the same comparison and
+ * appear in the same list. They are not properties and are not merged into
+ * the properties object, but a device holding the version as its protection
+ * is protected on every field of the row or on none of them: a check that
+ * looked at properties alone let a stale write carrying a tier overwrite a
+ * newer one with nothing refused.
  */
 export function detectConflict(input: ConflictInput): ConflictResult {
   const { clientProperties, currentProperties, ancestorProperties } = input;
@@ -99,6 +139,22 @@ export function detectConflict(input: ConflictInput): ConflictResult {
     }
   }
 
+  // The item's own fields, on the same rule. A field the write does not
+  // name is absent from `clientFields` and cannot be a client change; one
+  // whose value equals the ancestor's is an echo and is not one either.
+  const mergedFields: ItemFieldValues = {};
+  for (const field of VERSIONED_ITEM_FIELDS) {
+    if (!(field in input.clientFields)) continue;
+    const client = input.clientFields[field] ?? null;
+    const ancestor = input.ancestorFields[field] ?? null;
+    if (client === ancestor) continue;
+    if ((input.currentFields[field] ?? null) !== ancestor) {
+      conflictingFields.push(field);
+      continue;
+    }
+    mergedFields[field] = client;
+  }
+
   if (conflictingFields.length > 0) {
     return {
       type: "conflict",
@@ -118,6 +174,7 @@ export function detectConflict(input: ConflictInput): ConflictResult {
   return {
     type: "no_conflict",
     merged,
+    mergedFields,
   };
 }
 
