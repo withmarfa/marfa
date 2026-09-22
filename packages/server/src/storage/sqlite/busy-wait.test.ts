@@ -146,10 +146,9 @@ describe("a write that meets the write lock", () => {
         return Promise.reject(busy());
       }, 60),
     ).rejects.toMatchObject({
-      // Not the driver's `SQLITE_BUSY`, which reached the error handler
-      // as something it had no code for and became a `500` — the one
-      // failure that clears itself, reported as the instance being
-      // broken.
+      // The server's own code, not the driver's `SQLITE_BUSY`: a
+      // refusal the handler has no code for is a `500`, which reports
+      // the instance as broken about a failure that clears itself.
       code: "write_contention",
       status: 503,
       details: { budget_ms: 60 },
@@ -161,11 +160,10 @@ describe("a write that meets the write lock", () => {
 
   it("sees the lock through a wrapper that re-threw it", async () => {
     // Drizzle wraps every statement's failure in a `DrizzleQueryError`
-    // carrying the original as `cause`, and the check used to read the
-    // top-level `code` alone — so a busy refusal arriving through a
-    // Drizzle call was never retried at all, and the loop looked like it
-    // worked because the refusals that did reach it came through the raw
-    // client.
+    // carrying the original as `cause`, so most busy refusals reach the
+    // retry already wrapped. A check that read the top-level `code`
+    // alone would pass every other test in this file and still never
+    // retry a real write.
     let attempts = 0;
     await expect(
       untilNotBusy(() => {

@@ -222,17 +222,13 @@ describe("an edge update merges over what the edge holds", () => {
   // read and its write lose one silently, and nothing else in this file
   // exercises that.
   //
-  // Requiring the version took its subject away. All eight now name the
-  // one version they read, and the driver opens each write with BEGIN
-  // IMMEDIATE, so seven meet SQLITE_BUSY and answer 500 before the version
-  // gate is reached — measured, not assumed: the seven refusals are
-  // `500 internal_error`, and not one is `409 version_conflict`. Counting
-  // acceptances instead would have passed identically on a build with no
-  // version gate at all, which is a test that proves nothing.
+  // Requiring the version took its subject away. Eight writers naming one
+  // version are refused by the version gate before the lock is reached,
+  // so counting acceptances would have passed identically on a build with
+  // no gate at all, which is a test that proves nothing.
   //
-  // The sequential case above proves the gate. What is now uncovered is the
-  // row lock under genuinely interleaved merges, and reaching it needs
-  // writers that each read the edge and then patch with what they read,
-  // rather than eight sharing one version. That is a fixture worth writing
-  // and it is not this change's to write.
+  // The sequential case above proves the gate. The lock itself is held by
+  // `compliance/write-contention.test.ts`, which arranges it rather than
+  // racing for it: the lock is taken from another process, so the
+  // server's next write meets it every time.
 });

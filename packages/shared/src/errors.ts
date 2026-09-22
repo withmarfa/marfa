@@ -206,12 +206,11 @@ export enum ErrorCode {
    * attempt succeeds, so a client retries rather than changing anything
    * about the request.
    *
-   * `503` and not `409`. A conforming device treats a `409` as a contract
-   * failure and refuses it on the first answer
-   * (`queue-and-verdicts.md` 18), while it retries a `5xx` without
-   * counting it against the row (17). Contention is the case the retry
-   * exists for, so a `409` would make every device give up on a write
-   * that would have landed on the next try.
+   * `503` and not `409`. A conforming device retries a `5xx` without
+   * counting it against the write (`queue-and-verdicts.md` 17), while a
+   * `409` blocks that write outright (22, 23). Contention is the case
+   * the retry exists for, so a `409` would make every device give up on
+   * a write that would have landed on the next try.
    */
   WRITE_CONTENTION = "write_contention",
   /**

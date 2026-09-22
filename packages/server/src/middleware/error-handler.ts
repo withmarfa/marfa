@@ -1,5 +1,6 @@
 import type { Context, ErrorHandler } from "hono";
 import { HTTPException } from "hono/http-exception";
+import { MarfaError } from "@withmarfa/shared";
 import { SpanStatusCode, trace } from "@opentelemetry/api";
 import type { AppEnv } from "./auth.js";
 import { log } from "./logger.js";
@@ -64,21 +65,30 @@ function isMarfaError(err: unknown): err is ShapedError {
  * The typed error inside whatever is wrapping it, if there is one.
  *
  * **A library between the throw and here re-wraps what it caught.**
- * Drizzle is the one that does it: every statement it runs is wrapped in
- * `DrizzleQueryError`, carrying the original as `cause`. So a code the
- * server chose deliberately — `write_contention`, thrown by the busy
- * retry inside the client Drizzle is calling — arrived as an error with
- * no `code` at all and became a `500`, which is the opposite of what
- * choosing the code was for.
+ * Drizzle does: every statement it runs is wrapped in
+ * `DrizzleQueryError` carrying the original as `cause`, so a code the
+ * server chose deliberately reaches this handler as an error with no
+ * `code` at all and becomes a `500` — the opposite of what choosing the
+ * code was for.
+ *
+ * **The two levels are tested differently, and the difference is the
+ * point.** At the top the structural test stands, because that is what
+ * every existing throw arrives as and narrowing it here would change
+ * unrelated doors. Inside a `cause` chain nothing is known about who
+ * built the wrapper, so only the server's own class counts: a library
+ * error that happens to carry a `code` and a `status` of its own would
+ * otherwise have its internals answered to a caller as though the
+ * server had chosen them.
  *
  * The walk is bounded, because a `cause` chain is data and a cycle in
  * one should not hang the error handler.
  */
 function shapedError(err: unknown): ShapedError | undefined {
+  if (isMarfaError(err)) return err;
   for (let step: unknown = err, depth = 0; depth < 8; depth++) {
-    if (isMarfaError(step)) return step;
     if (step === null || typeof step !== "object") return undefined;
     step = (step as { cause?: unknown }).cause;
+    if (step instanceof MarfaError) return step;
   }
   return undefined;
 }

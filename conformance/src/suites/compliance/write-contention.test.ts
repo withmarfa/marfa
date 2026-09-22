@@ -9,14 +9,14 @@ import { bootFreshServer, type FreshServer } from "../../utils/fresh-server.js";
  * **The lock is held from outside the process, deliberately.** Firing
  * concurrent writes at the server does not reach it: the client
  * serializes its own calls, so two of this process's transactions do not
- * overlap, and `findings.md` recorded the contention from the
- * housekeeping scheduler interleaving with the request path — a race a
- * fixture would have to win rather than arrange. A second connection
- * sitting in `BEGIN IMMEDIATE` on the same file holds exactly the lock
- * the server's next write asks for, every time, which makes the refusal
- * something to assert instead of something to hope for. It is also a
- * real case: `connection.ts` names a sidecar's checkpoint as the other
- * holder.
+ * overlap. What does reach it in ordinary running is the housekeeping
+ * scheduler's transaction interleaving with the request path, and that
+ * is a race a fixture would have to win rather than arrange. A second
+ * connection sitting in `BEGIN IMMEDIATE` on the same file holds exactly
+ * the lock the server's next write asks for, every time, which makes the
+ * refusal something to assert instead of something to hope for. It is
+ * also a real case: `connection.ts` names a sidecar's checkpoint as the
+ * other holder.
  *
  * Two servers, because the claim is about a setting. One booted with the
  * busy budget at zero, where the first `SQLITE_BUSY` is the answer; one
@@ -111,11 +111,11 @@ describe("contention on the write lock", () => {
         refused.ok,
         `the write was not refused while the lock was held: ${String(refused.status)}`,
       ).toBe(false);
-      // The point of the line. A `500` says the instance is broken about
-      // the one failure that clears itself, and `queue-and-verdicts.md`
-      // has a device retry a `5xx` without counting it against the row —
-      // so the status was right by accident while the code said the
-      // wrong thing.
+      // The point of the line. A `500` says the instance is broken
+      // about the one failure that clears itself, and a device retries a
+      // `5xx` without counting it against the write
+      // (`queue-and-verdicts.md` 17) — so a `500` would be retryable by
+      // accident while naming the wrong reason.
       expect(refused.status).toBe(503);
       expect(refused.error?.error.code).toBe("write_contention");
     } finally {

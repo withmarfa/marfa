@@ -145,12 +145,12 @@ const BUSY_RETRY_MAX_MS = 50;
 /**
  * Whether this refusal is the write lock, wherever in the chain it is.
  *
- * **The chain is the point.** Drizzle wraps what the driver threw in an
- * error of its own — `Failed query: update "api_keys" set ...` — whose
- * own `code` is nothing, so a check on the top-level error alone missed
- * every busy refusal that arrived through a Drizzle call and the retry
- * below never ran for one. The refusals that did reach it came through
- * the raw client, which is why the loop looked like it worked.
+ * **The chain, because most of these arrive wrapped.** Drizzle catches
+ * what the driver threw and re-throws an error of its own — `Failed
+ * query: update "api_keys" set ...` — carrying the original as `cause`
+ * and no `code` of its own. Reading the top level alone would therefore
+ * see the lock only on the statements that go through the raw client,
+ * and every write that goes through Drizzle is most of them.
  */
 function isBusy(err: unknown): boolean {
   for (let step: unknown = err, depth = 0; depth < 8; depth++) {
@@ -191,12 +191,13 @@ export async function untilNotBusy<T>(
       const remaining = deadline - Date.now();
       if (!isBusy(err)) throw err;
       if (remaining <= 0) {
-        // The budget is spent and the lock is still held. Raw, this
-        // reached the handler as something it had no code for and became
-        // a `500`, which tells a caller the instance is broken about the
-        // one failure that will clear itself. A device reads a `5xx` as
-        // retryable and a `500` as a fault, so the status was right by
-        // accident and the code said the wrong thing.
+        // The budget is spent and the lock is still held. Rethrowing
+        // the driver's own error hands the handler something with no
+        // code, which becomes a `500` — the instance reporting itself
+        // broken about the one failure that clears itself on its own.
+        // A device reads a `5xx` as retryable and a `500` as a fault, so
+        // the status would be right by accident while the code said the
+        // wrong thing.
         throw new MarfaError(
           ErrorCode.WRITE_CONTENTION,
           "The row is being written by something else and the lock did not free in time. Nothing was written; retry.",
