@@ -262,9 +262,10 @@ describe("the instance", () => {
     // `GET /metrics` is served and deliberately absent from the document
     // (`INTERNAL_OPERATION_IDS`), so nothing in the published reference
     // describes its body and `expectMatchesSchema` has nothing to check it
-    // against: a key renamed inside it turns nothing red anywhere else. The
-    // shape is asserted here instead, and `coverage.md` carries the
-    // unpublished row that records the absence as a decision.
+    // against. Every other route in this file is held to the document; this
+    // one is held to the keys written out below, which is the only place a
+    // black-box caller's view of the body is pinned. `coverage.md` carries
+    // the unpublished row that records the absence as a decision.
     const operator = getOperatorClient();
     const r = await operator.rawRequest<{
       items: { total: number; by_state: Record<string, number> };

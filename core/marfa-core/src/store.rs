@@ -1103,10 +1103,10 @@ mod tests {
         row("dependency", "refused", 1, "[]");
         row("dependant", "blocked", 1, "[\"dependency\"]");
         // And the same again where the waiter is the *third* releasable kind
-        // — refused without going out. Without this pair the protection
-        // clause added for that kind is unwitnessed: the `blocked` waiter
-        // above is matched by the clause that was already there, so the new
-        // one could be deleted and this test would still pass.
+        // — refused without going out. Without this pair that kind's clause
+        // in the waiter set is unwitnessed: the `blocked` waiter above is
+        // matched by the `blocked`/`dead` clause, so the refused-unsent one
+        // could be deleted and this test would still pass.
         row("kept-for-unsent", "accepted", 1, "[]");
         row("unsent-waiter", "refused", 0, "[\"kept-for-unsent\"]");
 
@@ -1539,9 +1539,9 @@ pub fn release(conn: &Connection, id: &str) -> Result<bool, CoreError> {
     // **`sent` is the test, not `depends_on`.** A row the *server* refused
     // can carry a dependency too — queue a create, edit before the drain
     // runs, and the update names the create — so releasing on a dependency
-    // alone cleared a terminal refusal and sent the write again. A refusal
-    // that later stops applying would then land content the caller had
-    // watched disappear from their copy.
+    // alone clears a terminal refusal and sends the write a second time. A
+    // refusal that later stops applying would then land content the caller
+    // had watched disappear from their copy.
     let refused_by_dependency = verdict.as_deref() == Some("refused") && !sent;
     if !matches!(verdict.as_deref(), Some("blocked") | Some("dead")) && !refused_by_dependency {
         return Ok(false);

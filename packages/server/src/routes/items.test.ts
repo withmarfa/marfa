@@ -2946,12 +2946,11 @@ describe("GET /items?include=system", () => {
     expect(ids).toContain(deviceId);
   });
 
-  // Every other case in this file and its sibling runs as `ctx.workingKey`,
-  // which holds `"*": "write"` — so `allowed_types` admits everything and
-  // says nothing in any of them. `exclude_system_types` and `allowed_types`
-  // are independent arguments to the same storage call, so how they compose
-  // is held here, and the published description advertises the token to
-  // every client.
+  // The cases above run as `ctx.workingKey`, which holds `"*": "write"`, so
+  // `allowed_types` admits everything and says nothing in any of them.
+  // `exclude_system_types` and `allowed_types` are independent arguments to
+  // the same storage call, so how they compose is held here, and the
+  // published description advertises the token to every client.
   //
   // The grant has to name the system type. A key holding only `core.note`
   // proves nothing: the device is absent whether the token was honored or

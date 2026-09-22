@@ -26,6 +26,19 @@ function forgetExpired(now: number): void {
   }
 }
 
+/**
+ * How many entries the debounce is holding.
+ *
+ * Exported for the case that pins the sweep. Dropping an entry changes
+ * nothing a caller can see — an entry past its window and an absent one
+ * both let the next error through — so a test with no way to read this
+ * number can assert that the sweep is called and never that it clears
+ * anything.
+ */
+export function debounceEntryCount(): number {
+  return debounceMap.size;
+}
+
 export interface ErrorNotification {
   timestamp: string;
   request_id: string;
