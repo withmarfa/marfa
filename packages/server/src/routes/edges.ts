@@ -853,8 +853,6 @@ export function itemEdgeListingRoutes(storage: Storage) {
   const router = createOpenAPIRouter<AppEnv>();
 
   router.openapi(listFromSourceRoute, async (c) => {
-    // The credential the gate returns rather than a re-read of the
-    // context, which loses the narrowing a session's grant applied.
     const key = requireAuth(c);
 
     // The listing's twin. A misspelled `edge_type` here widens the
@@ -922,8 +920,6 @@ export function itemEdgeListingRoutes(storage: Storage) {
   });
 
   router.openapi(listBackrefsRoute, async (c) => {
-    // The credential the gate returns rather than a re-read of the
-    // context, which loses the narrowing a session's grant applied.
     const key = requireAuth(c);
 
     // The listing's twin. A misspelled `edge_type` here widens the

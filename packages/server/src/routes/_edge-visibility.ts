@@ -30,8 +30,22 @@ export function edgeKindReadable(key: ApiKey, edge: Edge): boolean {
  * refuse: `GET /edges/{id}` reads a source it cannot find as a source
  * with no type to refuse, and a plural door that decided the other way
  * would disagree with the singular one about the same row — the
- * disagreement this whole reading exists to remove. Only the stream
- * actually reaches it, and `routes/events.ts` says there what that costs.
+ * disagreement this whole reading exists to remove.
+ *
+ * **On the collection doors the branch is unreachable**, because an edge
+ * row and the item it hangs off go together: a purge takes both, and a
+ * trash leaves the row to be found, which is why those doors read the
+ * trashed ones too. **On the event stream it is reachable and it
+ * discloses**: a purge announces each cascaded `edge.deleted` after the
+ * row has gone, so a credential holding the edge type and no read on the
+ * purged item's type learns that edge's endpoints and properties.
+ * Refusing there instead would withhold those frames from every
+ * subscriber, the one that could read the purged item included, because
+ * the type nobody can resolve is the same for all of them — so the
+ * choice is between disclosing to a few and breaking reconciliation for
+ * all. Closing it properly means carrying the source's type on the event
+ * where the publisher still knows it, which is a change to the event's
+ * shape and to the log, and a decision rather than a fix.
  */
 export function sourceTypeReadable(
   key: ApiKey,
@@ -51,11 +65,6 @@ export function sourceTypeReadable(
  * the pagination signals are the store's and are left alone, so paging
  * still walks the whole listing.
  *
- * Trashed sources are read too, for the reason the single door reads
- * them: a plain `items.get` answers null for a trashed source, and a null
- * source has no type to refuse, so trashing the source item would turn a
- * refusal into a disclosure.
- *
  * The source lookup runs even where the caller has already authorized the
  * anchor it is about to read edges off — `GET /items/{id}/edges`, whose
  * anchor is every row's source. Paid rather than threaded through,
@@ -70,13 +79,38 @@ export async function readableEdges(
 ): Promise<Edge[]> {
   const ofReadableKind = edges.filter((edge) => edgeKindReadable(key, edge));
   if (ofReadableKind.length === 0) return [];
-  const sources = await storage.items.getMany(
-    [...new Set(ofReadableKind.map((edge) => edge.source_id))],
-    { includeTrashed: true },
+  const types = await sourceTypesFor(
+    storage,
+    ofReadableKind.map((edge) => edge.source_id),
   );
   return ofReadableKind.filter((edge) =>
-    sourceTypeReadable(key, sources.get(edge.source_id)?.type),
+    sourceTypeReadable(key, types.get(edge.source_id)),
   );
+}
+
+/**
+ * The types of these source items, deduplicated and read in one query.
+ *
+ * Trashed sources are read too, for the reason the single door reads
+ * them: a plain `items.get` answers null for a trashed source, and a null
+ * source has no type to refuse, so trashing the source item would turn a
+ * refusal into a disclosure. An id with no row is simply absent from the
+ * answer, which `sourceTypeReadable` reads as a source with no type.
+ *
+ * Separate from `readableEdges` for the one caller that cannot use it:
+ * the event stream's replay, which holds a page of stored rows rather
+ * than a page of edges and has to decode them before it can ask anything.
+ */
+export async function sourceTypesFor(
+  storage: Storage,
+  sourceIds: string[],
+): Promise<Map<string, string>> {
+  const unique = [...new Set(sourceIds)];
+  if (unique.length === 0) return new Map();
+  const sources = await storage.items.getMany(unique, {
+    includeTrashed: true,
+  });
+  return new Map([...sources].map(([id, item]) => [id, item.type]));
 }
 
 /**

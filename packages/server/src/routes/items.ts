@@ -413,7 +413,7 @@ const listItemsRoute = createRoute({
   path: "/",
   tags: ["Items"],
   summary: "List items",
-  description: `Returns a paginated list of items, narrowed by the query parameters; a \`type\` filter matches subtypes via inheritance. Lists are lean by default — use \`include\` to hydrate edges, metadata, or extensions inline and avoid an N+1. That same parameter also takes \`system\`, which is not a hydration: it widens the rows returned to include \`system.*\` items, which this listing omits by default. ${UNKNOWN_PARAM_NOTE}`,
+  description: `Returns a paginated list of items, narrowed by the query parameters; a \`type\` filter matches subtypes via inheritance. Lists are lean by default — use \`include\` to hydrate edges, metadata, or extensions inline and avoid an N+1. That same parameter also takes \`system\`, which is not a hydration: it widens the rows returned to include \`system.*\` items, which this listing omits by default. Every edge carried on a response is held to the two permissions \`GET /edges/{id}\` asks for: read on the source item's type, and read on the edge type. A block whose edges all fail is left out rather than returned empty, so a response can carry fewer kinds of relationship than the item has. ${UNKNOWN_PARAM_NOTE}`,
   security: [{ bearerAuth: [] }],
   request: {
     query: z.object({
@@ -573,7 +573,8 @@ const getItemRoute = createRoute({
   summary: "Get an item",
   description:
     "Returns a single item with its metadata layer and outbound edges hydrated inline; extensions are not included. An item the caller cannot see returns 404 rather than 403, so the server never leaks existence.\n\n" +
-    "`?include=` widens the response with the item's 1-hop neighborhood in one round trip instead of a per-section fan-out: `backrefs` adds inbound edges grouped by type (same block shape as `edges`, capped + cursored per type); `neighbors` adds the far-end items of the item's edges (outbound targets, plus inbound sources when `backrefs` is also requested), each with its metadata and filtered to what the caller may read; `versions` adds the item's version snapshots newest-first. Tokens are comma-separated and compose.",
+    "`?include=` widens the response with the item's 1-hop neighborhood in one round trip instead of a per-section fan-out: `backrefs` adds inbound edges grouped by type (same block shape as `edges`, capped + cursored per type); `neighbors` adds the far-end items of the item's edges (outbound targets, plus inbound sources when `backrefs` is also requested), each with its metadata and filtered to what the caller may read; `versions` adds the item's version snapshots newest-first. Tokens are comma-separated and compose.\n\n" +
+    "Every edge carried on a response is held to the two permissions `GET /edges/{id}` asks for: read on the source item's type, and read on the edge type. A block whose edges all fail is left out rather than returned empty, so a response can carry fewer kinds of relationship than the item has.",
   security: [{ bearerAuth: [] }],
   request: {
     params: IdParam,
@@ -619,7 +620,7 @@ const updateItemRoute = createRoute({
   tags: ["Items"],
   summary: "Update an item",
   description:
-    "Updates an item's properties, tier, own time, edges, or natural key. Properties merge shallowly with existing values by default, or become the item's properties outright when `properties_mode` is `replace`, while tier and `occurred_at` always replace; `version` is required, a stale value returns 409 with the conflict context to resolve, and a write naming none is refused 400 `missing_required_field`. An item's `type` is not updatable here by default: sending one that matches the item is accepted and ignored, and sending a different one is refused with 409 `type_mismatch` rather than silently dropped. Passing `retype: true` alongside a different `type` moves the item to it — that requires write on the type being entered as well as the one being left, and the resulting properties are validated against the destination.",
+    "Updates an item's properties, tier, own time, edges, or natural key. Properties merge shallowly with existing values by default, or become the item's properties outright when `properties_mode` is `replace`, while tier and `occurred_at` always replace; `version` is required, a stale value returns 409 with the conflict context to resolve, and a write naming none is refused 400 `missing_required_field`. An item's `type` is not updatable here by default: sending one that matches the item is accepted and ignored, and sending a different one is refused with 409 `type_mismatch` rather than silently dropped. Passing `retype: true` alongside a different `type` moves the item to it — that requires write on the type being entered as well as the one being left, and the resulting properties are validated against the destination. Where the instance's strict-mode lever names the type, a property the type does not declare is refused `400 invalid_properties` with `details.code` `unknown_property`, judged on the properties this request carries.",
   security: [{ bearerAuth: [] }],
   request: {
     params: IdParam,
@@ -2022,8 +2023,9 @@ export function itemRoutes(storage: Storage) {
     }
 
     requireTypeAccess(c, item.type, "read");
-    // The credential the gate returns, which is what the edge blocks
-    // below are narrowed against.
+    // Non-optional, which `c.get("apiKey")` is not: the edge blocks
+    // below are narrowed against it, and the gate above has already
+    // refused a request carrying none.
     const callerKey = requireAuth(c);
 
     const includeSet = new Set(

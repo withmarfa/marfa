@@ -15,6 +15,7 @@ import {
   cleanup,
 } from "../../utils/setup.js";
 import { createNote, createBookmark } from "../../generators/items.js";
+import { readTarGzEntry } from "../../utils/archive.js";
 
 let client: MarfaClient;
 let ctx: TestContext;
@@ -293,8 +294,30 @@ describe("export", () => {
       "the export carried a kind of relationship this credential may not read",
     ).not.toContain(hidden.data.edge.id);
 
-    // The witness: the same export under a credential holding both kinds
-    // carries both rows, so the absence above is the edge map.
+    // The archive format of the same door, under the same query schema.
+    // One format honoring the gate while the other did not would be the
+    // disclosure moved rather than closed, and the archive is the copy a
+    // restore writes back.
+    const narrowArchive = await new MarfaClient({
+      baseUrl: apiUrl,
+      apiKey: narrowResp.data.key,
+    }).exportArchive({ source });
+    expect(narrowArchive.status).toBe(200);
+    const archivedIds = edgeIdsOf(
+      readTarGzEntry(narrowArchive.data, "edges.ndjson") ?? "",
+    );
+    expect(
+      archivedIds,
+      "the archive dropped an edge of a kind the credential holds",
+    ).toContain(visible.data.edge.id);
+    expect(
+      archivedIds,
+      "the archive carried a kind of relationship this credential may not read",
+    ).not.toContain(hidden.data.edge.id);
+
+    // The witness for both formats: the same export under a credential
+    // holding both kinds carries both rows, so the absences above are the
+    // edge map.
     const wideExport = await client.exportItems({ source });
     expect(wideExport.ok, JSON.stringify(wideExport.error)).toBe(true);
     const wideIds = edgeIdsOf(wideExport.data);

@@ -350,6 +350,69 @@ describe("strict_mode lever", () => {
     ).toBe("patched");
   });
 
+  it("takes a patch naming only declared properties, whatever else the type requires", async () => {
+    // The lever refuses an undeclared key and nothing else. A strict
+    // parse answers two questions at once — it also refuses a property
+    // set missing a field the type requires — and the doors that hand it
+    // a complete set never meet the second. A patch is not a complete
+    // set: `core.note` requires `body`, so a patch setting only `title`
+    // reads as a missing required field to a strict parse, and the update
+    // doors would refuse an ordinary request under a message naming a
+    // cause that is not the cause. The store still asks for the required
+    // fields, against the merged row, and answers in its own words.
+    await setConfig({
+      enforcement: { strict_mode: { types: ["core.note"] } },
+    });
+    const made = await client.createItem({
+      type: "core.note",
+      properties: { body: "the body the type requires", title: "first" },
+    });
+    expect(made.ok, JSON.stringify(made.error)).toBe(true);
+    trackItem(ctx, made.data.item.id);
+
+    const patched = await client.updateItem(made.data.item.id, {
+      version: made.data.item.version,
+      properties: { title: "second" },
+    });
+    expect(
+      patched.ok,
+      `a patch naming only declared properties was refused: ${JSON.stringify(patched.error)}`,
+    ).toBe(true);
+    const read = await client.getItem(made.data.item.id);
+    expect(read.data.item.properties.title).toBe("second");
+    expect(
+      read.data.item.properties.body,
+      "the patch was taken but the store did not keep the property it did not name",
+    ).toBe("the body the type requires");
+
+    // The same shape through the bulk door, which reaches this branch by
+    // resolving a row rather than by naming one.
+    const viaBulk = await client.bulkItems({
+      items: [
+        {
+          id: made.data.item.id,
+          type: "core.note",
+          properties: { title: "third" },
+        },
+      ],
+      atomic: false,
+    });
+    expect(viaBulk.ok, JSON.stringify(viaBulk.error)).toBe(true);
+    expect(
+      viaBulk.data.counts.updated,
+      `a bulk patch naming only declared properties was refused: ${JSON.stringify(viaBulk.data.results[0]?.error)}`,
+    ).toBe(1);
+
+    // The control: the same doors still refuse an undeclared key, so
+    // this case is not passing because the lever came off.
+    const stillRefused = await client.updateItem(made.data.item.id, {
+      version: (await client.getItem(made.data.item.id)).data.item.version,
+      properties: { not_a_real_field: "x" },
+    });
+    expect(stillRefused.status).toBe(400);
+    expect(stillRefused.error?.error.details?.code).toBe("unknown_property");
+  });
+
   it("default-off accepts through the bulk and update doors as it does through the create door", async () => {
     // The other half of the lever, and the reason the two cases above are
     // about the lever rather than about those doors: with nothing

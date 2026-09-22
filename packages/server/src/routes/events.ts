@@ -20,7 +20,12 @@ import type { EdgeEventWithId, ItemEventWithId } from "../pubsub.js";
 import type { Storage } from "../storage/interface.js";
 import type { ApiKey, Edge, Metadata } from "@withmarfa/shared";
 import { filterMetadataForCaller } from "./util.js";
-import { edgeReadable } from "./_edge-visibility.js";
+import {
+  edgeKindReadable,
+  edgeReadable,
+  sourceTypeReadable,
+  sourceTypesFor,
+} from "./_edge-visibility.js";
 
 const KEEPALIVE_INTERVAL_MS = 30_000;
 const REPLAY_BATCH_SIZE = 500;
@@ -315,6 +320,34 @@ function parseTypeFilter(raw: string | undefined): string[] | undefined {
   return parts;
 }
 
+/**
+ * The edge inside a stored event payload, or null if the row cannot be
+ * read as one.
+ *
+ * Null rather than a throw, and the caller withholds the row: a stored
+ * string's declared shape is a claim about it rather than a fact, and a
+ * row that cannot be measured against the permission maps cannot be
+ * proved readable by anyone. One line names it, because a payload that
+ * does not decode is a defect somebody has to find.
+ */
+function decodeStoredEdge(payload: string): Edge | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(payload);
+  } catch {
+    return null;
+  }
+  if (typeof parsed !== "object" || parsed === null) return null;
+  const edge: unknown = (parsed as { edge?: unknown }).edge;
+  if (typeof edge !== "object" || edge === null) return null;
+  const { edge_type: kind, source_id: source } = edge as {
+    edge_type?: unknown;
+    source_id?: unknown;
+  };
+  if (typeof kind !== "string" || typeof source !== "string") return null;
+  return edge as Edge;
+}
+
 function parseEdgeMode(raw: string | undefined): EdgeMode {
   if (raw === undefined) return "all";
   const found = EDGE_MODES.find((mode) => mode === raw);
@@ -565,28 +598,44 @@ export function eventRoutes(
           // asked here now, per subscriber, before the frame is written,
           // through the function the plural doors call.
           //
-          // **The lookup is per frame, and it is a decision rather than
-          // the only option.** A listing holds a page and batches its
-          // source reads; a stream holds one frame and has nothing to
-          // batch with. The alternative considered was a per-subscriber
-          // cache of source id to type, bounded and evicting: it saves a
-          // read only where consecutive edge frames share a source, which
-          // is the shape of one bulk write rather than of a stream, and it
-          // buys that with an eviction rule and a staleness argument on a
-          // connection that already outlives a key change. So: one keyed
-          // read per edge frame per subscriber, paid only after the edge
-          // type has passed, which is nothing at all for a subscriber that
-          // may not read the kind of relationship.
+          // **The lookup is per frame on the live path, and it is a
+          // decision rather than the only option.** Live frames arrive one
+          // at a time, so there is nothing to batch them with; the
+          // alternative considered was a per-subscriber cache of source id
+          // to type, bounded and evicting, which saves a read only where
+          // consecutive edge frames share a source — the shape of one bulk
+          // write rather than of a stream — and buys that with an eviction
+          // rule and a staleness argument on a connection that already
+          // outlives a key change. So: one keyed read per edge frame per
+          // subscriber, paid only after the edge type has passed, which is
+          // nothing at all for a subscriber that may not read the kind of
+          // relationship. **The replay is the other case and does batch**,
+          // because it holds a page of up to `REPLAY_BATCH_SIZE` rows; see
+          // `replay` below.
           //
-          // Async, which the item path is not, and the two call sites
-          // below carry the consequence: the pump awaits it, and the
-          // prologue's drain stays held for the whole release so a live
-          // frame cannot overtake a held one across the await.
+          // Async, which the item path is not, and three call sites carry
+          // the consequence. The pump awaits it. The prologue's drain
+          // stays held for the whole release, so a held frame cannot be
+          // overtaken across the await. And in steady state an edge frame
+          // now reaches a subscriber a round trip behind an item frame
+          // published beside it: the relative order of the two kinds is
+          // not a guarantee this stream makes — they travel through
+          // independent subscriptions — and the single held buffer exists
+          // against the prologue's *systematic* reordering, where two
+          // buffers drained in turn would put every held edge after every
+          // held item whatever the writer did. This widens a race rather
+          // than breaking a promise, and it is stated here because the
+          // buffer's own comment reads as though order were promised.
           const sendEdgeEvent = async (
             eventId: bigint | undefined,
             event: EdgeEventWithId,
           ): Promise<void> => {
+            // The cheap half first, and `holdFrame` asks the same
+            // question before it holds a frame at all, so a subscriber
+            // that reads no edge type neither buffers these nor pays a
+            // lookup for them.
             if (!edgesReachThisStream) return;
+            if (!edgeKindReadable(apiKey, event.edge)) return;
             if (!(await edgeReadable(storage, apiKey, event.edge))) return;
             const wireType = wireEventName(event.type);
             const sseData = { type: wireType, edge: event.edge };
@@ -746,14 +795,26 @@ export function eventRoutes(
            * release path is guaranteed to discard would let traffic a
            * subscriber had explicitly excluded exhaust its buffer and
            * terminate its stream: `?edges=none` killed by edge events,
-           * and a credential scoped to one type by events of another.
+           * and a credential scoped to one type by events of another, or
+           * one holding no edge type at all by edges of every kind.
            * Narrowing the subscription would then make it worse rather
            * than better, which is the opposite of what a filter is for,
            * and a subscriber that wants items only asks for exactly that
-           * configuration. Both questions are the ones the release path
-           * asks, asked here through the same two predicates so they
-           * cannot drift, and both are stable for the life of the
-           * connection so asking early cannot answer differently.
+           * configuration. Each question is one the release path asks,
+           * asked here through the same predicate so they cannot drift,
+           * and each is stable for the life of the connection so asking
+           * early cannot answer differently.
+           *
+           * **The edge frame's source-type half is the one question the
+           * release path asks and this does not**, and deliberately: it
+           * is a keyed read, and paying it per frame on the way into a
+           * buffer that may never be drained would put a round trip on
+           * the prologue for every frame a slow start accumulates. So a
+           * subscriber holding the edge type but not the source's can
+           * still fill this buffer with frames the release path will
+           * drop. What is asked here is the half that empties the buffer
+           * for the subscriber most likely to fill it: the one holding
+           * no edge type at all.
            *
            * The projection costs a `matchesTypeFilter` per held frame it
            * admits, paid again when that frame is released. Bounded by
@@ -780,7 +841,8 @@ export function eventRoutes(
           const holdFrame = (frame: HeldFrame): void => {
             const deliverable =
               frame.kind === "edge"
-                ? edgesReachThisStream
+                ? edgesReachThisStream &&
+                  edgeKindReadable(apiKey, frame.event.edge)
                 : itemPassesProjection(frame.event);
             if (!deliverable) return;
             if (heldFrames.length >= MAX_HELD_FRAMES) {
@@ -862,6 +924,33 @@ export function eventRoutes(
 
                 if (batch.length === 0) break;
 
+                // The batch's edge rows, decoded once and their source
+                // items read in one query.
+                //
+                // **The replay is the half that can batch, and it has
+                // to.** A page here is up to `REPLAY_BATCH_SIZE` rows
+                // and a catch-up walks page after page with no cap of
+                // its own, so a source read per edge row would be that
+                // many serial round trips — the defect the edge listing
+                // was corrected for, on the one path with no `limit` to
+                // bound it. The live pump is the other half and cannot
+                // batch, because it holds one frame; `sendEdgeEvent`
+                // says so there.
+                //
+                // The decode is kept rather than repeated below, so an
+                // edge payload is parsed once whichever question reads
+                // it.
+                const replayEdges = new Map<bigint, Edge>();
+                for (const row of batch) {
+                  if (row.edge_id === null || edgeMode === "none") continue;
+                  const edge = decodeStoredEdge(row.payload);
+                  if (edge) replayEdges.set(row.id, edge);
+                }
+                const replaySourceTypes = await sourceTypesFor(
+                  storage,
+                  [...replayEdges.values()].map((edge) => edge.source_id),
+                );
+
                 for (const event of batch) {
                   // False rather than true: the client is gone, so this
                   // catch-up did not finish and there is nobody to
@@ -878,30 +967,25 @@ export function eventRoutes(
                     continue;
                   }
                   // Decoded once for the whole row, shared by the type
-                  // checks and the narrowing below.
+                  // checks and the narrowing below. An edge frame
+                  // carries no item type and no metadata, and
                   // `typeFilter.allowed` is undefined for one caller
                   // only — one presenting no credential, which
                   // `requireAuth` has already refused before this route
-                  // reaches here — so an item row is always decoded here.
-                  // Nothing bypasses the maps. Typed as
+                  // reaches here — so neither needs the row decoded
+                  // here. An edge row's own decode happens once for the
+                  // whole batch above, where the query it feeds is one
+                  // query. Nothing bypasses the maps. Typed as
                   // unknown-valued rather than as an event: this is a
                   // stored string, so its declared shape is a claim
                   // about it rather than a fact, and the checks that
                   // keep a mis-shaped row from throwing would read as
                   // unnecessary against a declared type.
-                  //
-                  // **An edge row is decoded too, which it did not used
-                  // to be.** It carries no item type and no metadata, so
-                  // nothing here needed it while the only thing narrowing
-                  // an edge frame was `?edges=none`. The permission pair
-                  // needs the row's `edge_type` and its `source_id`, and
-                  // the stored payload is where a replayed frame's edge
-                  // lives.
                   let parsed: Record<string, unknown> | null = null;
                   if (
-                    isEdge ||
-                    typeParam !== undefined ||
-                    typeFilter.allowed !== undefined
+                    !isEdge &&
+                    (typeParam !== undefined ||
+                      typeFilter.allowed !== undefined)
                   ) {
                     try {
                       parsed = JSON.parse(event.payload) as Record<
@@ -927,9 +1011,10 @@ export function eventRoutes(
                     }
                   }
                   // Everything that classifies an item row lives inside
-                  // this branch. An edge row is decoded too but never
-                  // reaches it: it carries no item type and is never
-                  // asked to name one. Its own gate is below.
+                  // this branch, and `parsed !== null` is exactly the
+                  // condition under which it was decoded — an edge row
+                  // never reaches it and is never asked to name a type
+                  // it does not carry. Its own gate is below.
                   //
                   // **One decision about a row that cannot be
                   // classified, rather than two checks reaching
@@ -950,7 +1035,7 @@ export function eventRoutes(
                   // cannot be read cannot be proved readable by this
                   // subscriber, and a filter that cannot classify a row
                   // has no business handing it over.
-                  if (!isEdge && parsed !== null) {
+                  if (parsed !== null) {
                     const parsedItem: unknown = parsed.item;
                     const named: unknown =
                       typeof parsedItem === "object" && parsedItem !== null
@@ -997,20 +1082,17 @@ export function eventRoutes(
                   // cannot classify a row has no business handing it
                   // over.
                   if (isEdge) {
-                    const storedEdge: unknown = parsed?.edge;
-                    if (
-                      typeof storedEdge !== "object" ||
-                      storedEdge === null ||
-                      typeof (storedEdge as { edge_type?: unknown })
-                        .edge_type !== "string" ||
-                      typeof (storedEdge as { source_id?: unknown })
-                        .source_id !== "string"
-                    ) {
+                    const storedEdge = replayEdges.get(event.id);
+                    if (storedEdge === undefined) {
                       lastReplayedId = event.id;
                       continue;
                     }
                     if (
-                      !(await edgeReadable(storage, apiKey, storedEdge as Edge))
+                      !edgeKindReadable(apiKey, storedEdge) ||
+                      !sourceTypeReadable(
+                        apiKey,
+                        replaySourceTypes.get(storedEdge.source_id),
+                      )
                     ) {
                       lastReplayedId = event.id;
                       continue;
@@ -1028,8 +1110,9 @@ export function eventRoutes(
                   // stored frame carrying metadata, which is four
                   // event types besides `metadata.changed`. Only a
                   // payload that actually carries a metadata block is
-                  // re-serialized, so replaying an edge event pays
-                  // nothing.
+                  // re-serialized, so an edge frame pays nothing for
+                  // this narrowing in particular. Its own gate above is
+                  // what it pays for, and that is batched.
                   lastSentId = event.id;
                   send(
                     `id: ${String(event.id)}\nevent: ${replayWireType}\ndata: ${filterReplayPayload(event.payload, parsed, apiKey)}\n\n`,
@@ -1089,24 +1172,29 @@ export function eventRoutes(
            * gone.
            */
           const releaseHold = async (): Promise<void> => {
-            // **`holding` stays true for the whole drain**, which is what
-            // it did not have to do while every send was synchronous. An
-            // edge frame now awaits a source read, and a live item frame
+            // **`holding` stays true for the whole drain**, which it did
+            // not have to do while every send was synchronous. An edge
+            // frame now awaits a source read, and a live item frame
             // arriving across that await would be sent immediately and
-            // land in front of held frames that were published before it —
-            // reordering the stream, which is the failure the single
+            // land in front of held frames that were published before it
+            // — reordering the stream, which is the failure the single
             // buffer exists to prevent. Frames that arrive mid-drain are
-            // held as usual and picked up by this loop, because it reads
-            // the length each time round; nothing can be appended between
-            // the loop ending and the flag dropping, since no await
-            // separates them.
+            // held as usual and this loop keeps going until the buffer is
+            // empty, so nothing is stranded.
             //
-            // `for…of` reads the array's length each time round rather
-            // than taking a snapshot of it, which is what makes the
-            // paragraph above true of this loop.
+            // **Taken off the front rather than walked in place**, so the
+            // buffer's length is what is still undelivered and nothing
+            // else. `MAX_HELD_FRAMES` is measured against that length, and
+            // a walk that left the delivered prefix in place would let two
+            // frames arriving during one source read push a nearly full
+            // buffer past the cap and end a stream whose prologue had
+            // already finished — the buffer would be reported as
+            // overflowing while it was draining.
             try {
-              for (const frame of heldFrames) {
+              for (;;) {
                 if (state.closed) break;
+                const frame = heldFrames.shift();
+                if (frame === undefined) break;
                 const eventId = frame.event.eventId;
                 if (eventId !== undefined && replayedIds.has(eventId)) continue;
                 if (frame.kind === "item") sendEvent(eventId, frame.event);
@@ -1125,6 +1213,11 @@ export function eventRoutes(
               }
               return;
             }
+            // The buffer is already empty unless the stream closed
+            // mid-drain, in which case what is left goes unsent — the
+            // same decision `failStream` takes, and for the same reason.
+            // Nothing can be appended between the loop ending and the
+            // flag dropping, because no await separates them.
             holding = false;
             heldFrames.length = 0;
           };

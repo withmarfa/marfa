@@ -46,7 +46,13 @@ async function visibleEdgeIds(
  * **A block that empties is removed, not left standing empty.** The key
  * of a block is an edge type, so an empty block named `about` says this
  * item has `about` edges the caller may not see — the disclosure the
- * filter exists to close, in the shape of a map key.
+ * filter exists to close, in the shape of a map key. It takes the
+ * block's `has_more` and cursor with it: an item whose first fifty edges
+ * of a kind are all unreadable carries no block for that kind and no
+ * cursor into it, and the readable ones behind them are reached through
+ * `GET /items/{id}/edges?edge_type=X`, which pages the whole relation
+ * under the same gate. Nothing is unreachable; the inline block simply
+ * stops being the way to it.
  */
 function applyVisibility(
   blocks: HydratedEdges,

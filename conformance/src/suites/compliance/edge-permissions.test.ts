@@ -748,9 +748,14 @@ describe("the doors under an item answer only what the credential may read", () 
     const anchor = await scopedItem(client, "hydrate-anchor");
     const target = await scopedItem(client, "hydrate-target");
     const hiddenSource = await hiddenItem("hydrate-hidden-source");
+    const readableSource = await scopedItem(client, "hydrate-readable-source");
     const visibleEdge = await edge(anchor, target, seen);
     const hiddenKindEdge = await edge(anchor, target, unseen);
     const hiddenSourceEdge = await edge(hiddenSource, anchor, seen);
+    // The inbound witness. Without a backref the narrow credential may
+    // read, the block below is empty whatever the gate decides and the
+    // absence asserted against it is an absence from nothing.
+    const visibleBackref = await edge(readableSource, anchor, seen);
 
     const narrow = await makeKey("underitem-hydrate-narrow", {
       type_permissions: { "core.note": "read" },
@@ -781,9 +786,15 @@ describe("the doors under an item answer only what the credential may read", () 
     // whose rows are therefore readable only through their sources.
     const withBackrefs = await narrowClient.getItemWithBackrefs(anchor);
     expect(withBackrefs.ok, JSON.stringify(withBackrefs.error)).toBe(true);
-    const backBlocks = withBackrefs.data.backrefs ?? {};
+    const backIds = Object.values(withBackrefs.data.backrefs ?? {}).flatMap(
+      (b) => b.edges.map((e) => e.id),
+    );
     expect(
-      Object.values(backBlocks).flatMap((b) => b.edges.map((e) => e.id)),
+      backIds,
+      "the item read dropped a backref whose source the credential may read",
+    ).toContain(visibleBackref);
+    expect(
+      backIds,
       "the item read disclosed a backref whose source is a type this credential may not read",
     ).not.toContain(hiddenSourceEdge);
 
@@ -815,9 +826,9 @@ describe("the doors under an item answer only what the credential may read", () 
     );
     expect(wideOut.sort()).toEqual([visibleEdge, hiddenKindEdge].sort());
     expect(
-      Object.values(wideRead.data.backrefs ?? {}).flatMap((b) =>
-        b.edges.map((e) => e.id),
-      ),
-    ).toEqual([hiddenSourceEdge]);
+      Object.values(wideRead.data.backrefs ?? {})
+        .flatMap((b) => b.edges.map((e) => e.id))
+        .sort(),
+    ).toEqual([hiddenSourceEdge, visibleBackref].sort());
   });
 });

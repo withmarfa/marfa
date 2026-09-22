@@ -151,7 +151,7 @@ const bulkRoute = createRoute({
   tags: ["Items"],
   summary: "Bulk upsert items",
   description:
-    "Creates or upserts up to 5000 items in one call, matching existing rows on `(source, source_id)`. Atomic by default; `source` is server-stamped from the credential, so any caller-supplied value is overwritten. Requires write access to each item's type — the credential's own type permissions decide, and nothing bypasses them.\n\nAn entry that resolves a row of a different type is refused with `type_mismatch` — a write does not re-type the row it lands on. Passing `retype: true` for the batch moves those rows instead, which is how a corpus is brought onto a type a mapping now names. It is opt-in rather than inferred from a differing type, because a declared type accompanies nearly every write and inferring would move a corpus on an ordinary sync bug. Each move requires write on the type being entered as well as the one being left, and the resulting properties are validated against the destination: an item the destination type cannot accept is reported as an `errored` entry naming why, and the rest of the batch proceeds.\n\nAn ordinary update is validated too, against the row's own type and on the properties the write would leave on it rather than on the body alone, so a patch removing a required field is refused even though it names no invalid value. A refusal is an `errored` entry under `invalid_properties`; with the default `atomic` it rolls the page back instead, carrying that code in `details.code`. An entry may also carry the `version` it was based on, which makes its upsert conditional and is refused the same two ways.",
+    "Creates or upserts up to 5000 items in one call, matching existing rows on `(source, source_id)`. Atomic by default; `source` is server-stamped from the credential, so any caller-supplied value is overwritten. Requires write access to each item's type — the credential's own type permissions decide, and nothing bypasses them.\n\nAn entry that resolves a row of a different type is refused with `type_mismatch` — a write does not re-type the row it lands on. Passing `retype: true` for the batch moves those rows instead, which is how a corpus is brought onto a type a mapping now names. It is opt-in rather than inferred from a differing type, because a declared type accompanies nearly every write and inferring would move a corpus on an ordinary sync bug. Each move requires write on the type being entered as well as the one being left, and the resulting properties are validated against the destination: an item the destination type cannot accept is reported as an `errored` entry naming why, and the rest of the batch proceeds.\n\nAn ordinary update is validated too, against the row's own type and on the properties the write would leave on it rather than on the body alone, so a patch removing a required field is refused even though it names no invalid value. A refusal is an `errored` entry under `invalid_properties`; with the default `atomic` it rolls the page back instead, carrying that code in `details.code`. An entry may also carry the `version` it was based on, which makes its upsert conditional and is refused the same two ways.\n\nWhere the instance's strict-mode lever names the type, a property the type does not declare is refused `400 invalid_properties` with `details.code` `unknown_property`, judged on the properties this request carries. It is asked of every entry, on the rows this call creates and the rows it updates alike, and `details.index` names the entry it came from.",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -752,23 +752,6 @@ async function processBulkItem(
     const resultingType =
       retype && raw.type !== existing.type ? raw.type : existing.type;
     const isMove = resultingType !== existing.type;
-    // Both arms, not only the move. Without it on a same-type update this
-    // door stores the number 12345 into `core.note.body`, a required
-    // string, and reports the entry as `updated`, while
-    // `PATCH /items/{id}` refuses the identical payload. The row is then
-    // invalid against its own type for every reader that trusts the
-    // declared shape because the server enforced it, and this is the door
-    // built for volume.
-    //
-    // A move cannot go without it either, for its own reason: the
-    // destination may require fields the row has never carried, and its
-    // field types may not accept what the old properties hold.
-    //
-    // Judged on the properties the store is about to write, through the
-    // same helper it merges with, so this predicts the write rather than
-    // approximating it — and against the type the row ends up as, because
-    // judging a move against the type being left would admit one whose
-    // result the destination calls invalid.
     if (raw.properties !== undefined) {
       // The same lever the create branch asks a few lines down, asked of
       // the update half for the same reason: this is one door, and a
@@ -799,6 +782,23 @@ async function processBulkItem(
         };
       }
     }
+    // Both arms, not only the move. Without it on a same-type update this
+    // door stores the number 12345 into `core.note.body`, a required
+    // string, and reports the entry as `updated`, while
+    // `PATCH /items/{id}` refuses the identical payload. The row is then
+    // invalid against its own type for every reader that trusts the
+    // declared shape because the server enforced it, and this is the door
+    // built for volume.
+    //
+    // A move cannot go without it either, for its own reason: the
+    // destination may require fields the row has never carried, and its
+    // field types may not accept what the old properties hold.
+    //
+    // Judged on the properties the store is about to write, through the
+    // same helper it merges with, so this predicts the write rather than
+    // approximating it — and against the type the row ends up as, because
+    // judging a move against the type being left would admit one whose
+    // result the destination calls invalid.
     if (isMove || raw.properties !== undefined) {
       const merged = mergeUpdateProperties(
         existing.properties,
