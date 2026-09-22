@@ -54,15 +54,8 @@ pub struct WireEdge {
     pub updated_at: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
-pub struct WireEdgeBlock {
-    #[serde(default)]
-    pub edges: Vec<WireEdge>,
-    #[serde(default)]
-    pub has_more: bool,
-    #[serde(default)]
-    pub next_cursor: Option<String>,
-}
+/// The first page of one edge type's edges, inline on an item.
+pub type WireEdgeBlock = WirePage<WireEdge>;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct WireMetadata {
@@ -76,13 +69,13 @@ pub struct WireItemWithMetadata {
     pub metadata: WireMetadata,
 }
 
+/// One page of a list: `next_cursor` continues it and is `None` on the last.
+/// A page can be short or empty with a cursor still to follow, so a walk
+/// stops on `None` and never on a short page.
 #[derive(Debug, Clone, Deserialize)]
 pub struct WirePage<T> {
     pub data: Vec<T>,
-    #[serde(default)]
-    pub cursor: Option<String>,
-    #[serde(default)]
-    pub has_more: bool,
+    pub next_cursor: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]

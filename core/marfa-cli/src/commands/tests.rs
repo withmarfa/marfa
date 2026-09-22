@@ -316,8 +316,10 @@ fn a_search_sends_its_query_and_its_narrowing() {
         query: "zebra crossing".into(),
         state: Some(StateFilter::Archived),
         tier: Some(TierFilter::All),
-        limit: Some(3),
-        offset: Some(6),
+        page: PageArgs {
+            limit: Some(3),
+            cursor: Some("c6".into()),
+        },
         ..Default::default()
     });
     assert_eq!(request.path(), "/search");
@@ -325,7 +327,7 @@ fn a_search_sends_its_query_and_its_narrowing() {
     assert_eq!(query(&request, "state").as_deref(), Some("archived"));
     assert_eq!(query(&request, "tier").as_deref(), Some("all"));
     assert_eq!(query(&request, "limit").as_deref(), Some("3"));
-    assert_eq!(query(&request, "offset").as_deref(), Some("6"));
+    assert_eq!(query(&request, "cursor").as_deref(), Some("c6"));
 }
 
 #[test]

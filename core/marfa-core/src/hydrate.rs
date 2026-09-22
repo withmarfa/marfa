@@ -74,7 +74,7 @@ pub(crate) fn hydrate(
                 let title_field = catalog.title_field(&row.item.r#type);
                 store::upsert_item(&tx, &row.item, Some(&row.metadata.tags), title_field)?;
                 for block in row.item.edges.iter().flat_map(|blocks| blocks.values()) {
-                    for edge in &block.edges {
+                    for edge in &block.data {
                         store::upsert_edge(&tx, edge)?;
                         edges += 1;
                     }
@@ -85,20 +85,15 @@ pub(crate) fn hydrate(
                 edges += 1;
             }
             tx.commit()?;
-            if !page.has_more {
+            let Some(next) = page.next_cursor.clone() else {
                 break;
-            }
+            };
             // A cursor that does not move is a server saying there is more
             // and handing back the same place to look. Without this a
             // hydration spins forever before the store is usable at all,
             // which is worse than the same shape in a drain: there is no
             // copy to fall back on and nothing has been written yet.
-            let next = page.cursor.clone();
-            if next.is_none() {
-                return Err(CoreError::Decoding(
-                    "the server said has_more without a cursor".into(),
-                ));
-            }
+            let next = Some(next);
             if next == page_cursor {
                 return Err(CoreError::Decoding(
                     "the server kept answering with the same cursor while reporting more items"
@@ -164,26 +159,18 @@ fn fetch_overflow(
     block: &WireEdgeBlock,
 ) -> Result<Vec<WireEdge>> {
     let mut edges = Vec::new();
-    let mut has_more = block.has_more;
     let mut cursor = block.next_cursor.clone();
-    while has_more {
-        let Some(page_cursor) = cursor.as_deref() else {
-            return Err(CoreError::Decoding(
-                "the server said has_more without a cursor".into(),
-            ));
-        };
-        let asked_for = page_cursor.to_string();
-        let page = http.item_edges_page(item_id, edge_type, Some(page_cursor))?;
+    while let Some(asked_for) = cursor {
+        let page = http.item_edges_page(item_id, edge_type, Some(&asked_for))?;
         edges.extend(page.data);
         // Same reason as the item pages above: a repeated cursor is an
         // unbounded loop, and this one runs per item of the slice.
-        if page.has_more && page.cursor.as_deref() == Some(asked_for.as_str()) {
+        if page.next_cursor.as_deref() == Some(asked_for.as_str()) {
             return Err(CoreError::Decoding(
                 "the server kept answering with the same cursor while reporting more edges".into(),
             ));
         }
-        has_more = page.has_more;
-        cursor = page.cursor;
+        cursor = page.next_cursor;
     }
     Ok(edges)
 }

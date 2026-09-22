@@ -285,29 +285,12 @@ fn describe(value: &Value) -> Result<String, CliError> {
             if let Some(Value::Array(rows)) = map.get("data") {
                 return lines(rows, map);
             }
-            // A listing under its own noun: `keys`, `webhooks`, `versions`,
-            // `extensions`, `types`.
+            // A bulk write's per-entry outcomes, `{counts, results}`.
             if map.len() <= 2
                 && let Some((_, Value::Array(rows))) =
                     map.iter().find(|(_, value)| value.is_array())
             {
                 return lines(rows, map);
-            }
-            if let Some(Value::Array(hits)) = map.get("results") {
-                let mut text = Vec::new();
-                for hit in hits {
-                    let item = hit.get("item").unwrap_or(hit);
-                    let score = hit
-                        .get("score")
-                        .and_then(Value::as_f64)
-                        .map(|score| format!("{score:>7.3}  "))
-                        .unwrap_or_default();
-                    text.push(format!("{score}{}", record_line(item)));
-                }
-                if text.is_empty() {
-                    text.push("(no matches)".into());
-                }
-                return Ok(text.join("\n"));
             }
             if map.contains_key("id") && map.contains_key("type") {
                 let mut text = record_line(value);
@@ -349,6 +332,15 @@ fn lines(rows: &[Value], page: &serde_json::Map<String, Value>) -> Result<String
     for row in rows {
         if row.get("id").is_some() {
             text.push(record_line(row));
+        } else if let Some(item) = row.get("item") {
+            // A search hit or a listing row carrying its metadata; a hit
+            // leads with its score.
+            let score = row
+                .get("relevance_score")
+                .and_then(Value::as_f64)
+                .map(|score| format!("{score:>7.3}  "))
+                .unwrap_or_default();
+            text.push(format!("{score}{}", record_line(item)));
         } else {
             text.push(serde_json::to_string(row)?);
         }
@@ -356,7 +348,7 @@ fn lines(rows: &[Value], page: &serde_json::Map<String, Value>) -> Result<String
     if text.is_empty() {
         text.push("(none)".into());
     }
-    if let Some(cursor) = page.get("cursor").and_then(Value::as_str) {
+    if let Some(cursor) = page.get("next_cursor").and_then(Value::as_str) {
         text.push(format!("more: --cursor {cursor}"));
     }
     Ok(text.join("\n"))

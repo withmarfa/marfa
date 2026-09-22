@@ -70,11 +70,10 @@ export async function* paginate<T>(
   for (;;) {
     const page = await fetchPage(cursor);
     for (const row of page.data) yield row;
-    // Both conditions matter. `has_more` false ends the walk; a page that
-    // claims more but carries no cursor has nothing to resume from, and
-    // re-requesting the previous cursor would serve the same page forever.
-    if (!page.has_more || !page.cursor) return;
-    cursor = page.cursor;
+    // On `null`, never on a short or empty page: a page can be thinned by
+    // what the credential may read and still have a cursor to follow.
+    if (page.next_cursor === null) return;
+    cursor = page.next_cursor;
   }
 }
 
