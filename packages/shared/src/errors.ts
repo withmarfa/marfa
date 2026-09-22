@@ -37,10 +37,6 @@ export enum ErrorCode {
   ANCESTOR_UNAVAILABLE = "ancestor_unavailable",
   UNAUTHORIZED = "unauthorized",
   FORBIDDEN = "forbidden",
-  /**
-   * The row is a connector's copy of an external record; only the
-   * owning connector writes it. Promote it to edit your own copy.
-   */
   TYPE_NOT_PERMITTED = "type_not_permitted",
   /**
    * A credential that cannot read everything stored attempted an operation

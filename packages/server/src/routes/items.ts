@@ -1446,11 +1446,9 @@ export function itemRoutes(storage: Storage) {
         // below keeps authorizing the claim, because there the claim is
         // the row.
         requireTypeAccess(c, existing.type, "write");
-        // **No mirror check here, and its absence is the honest shape.**
-        // Every other door that resolves a row calls
-        // `requireMirrorProtection`; this one cannot be reached by a
-        // connector's mirror at all, so a call would be a guard that can
-        // never refuse — which reads as protection while making no claim.
+        // No ownership check here, because there is no longer one to
+        // make: a row's `source` records which credential wrote it and
+        // decides nothing about who may write it next — which reads as protection while making no claim.
         //
         // The lookup is what provides the property. `stampedSource` is the
         // credential's own `source` and `findBySourceIdIncludingTrashed`

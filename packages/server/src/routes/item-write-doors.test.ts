@@ -122,9 +122,8 @@ interface Door {
    *
    * That is not hypothetical. Changing these to `system.activity` — which
    * looked like the honest fix once a misdeclaration became refusable —
-   * left `requireTypeAccess`, both `requireActivityAttribution` calls and
-   * `requireMirrorProtection` deletable on two doors with the whole file
-   * still green.
+   * left `requireTypeAccess` and both `requireActivityAttribution` calls
+   * deletable on two doors with the whole file still green.
    */
   write(w: DoorWrite): Promise<Response>;
   /**
@@ -198,9 +197,8 @@ const CANNOT_MISDECLARE: Record<string, string> = {
  * upstream of the gates this file measures, every test here keeps passing
  * while the gates underneath can be deleted one by one. That is not
  * hypothetical: adding the type-claim guard did exactly that, and
- * `requireTypeAccess`, both `requireActivityAttribution` calls and
- * `requireMirrorProtection` were all individually deletable with the
- * whole file green.
+ * `requireTypeAccess` and both `requireActivityAttribution` calls were
+ * individually deletable with the whole file green.
  *
  * Unwraps `bulk_atomic_rollback`, which is the envelope the bulk door
  * puts a per-entry refusal in rather than a reason of its own.

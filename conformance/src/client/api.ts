@@ -807,20 +807,6 @@ export class MarfaClient {
     });
   }
 
-  /** `POST /items/{id}/promote`: an item that is a connector's copy becomes the caller's own. */
-  async promoteItem(id: string): Promise<ApiResponse<{ item: MarfaItem }>> {
-    return this.request<{ item: MarfaItem }>(`/items/${id}/promote`, {
-      method: "POST",
-    });
-  }
-
-  /** `GET /items/{id}/reconcile`: field-by-field comparison against each mirror. */
-  async reconcileItem(
-    id: string,
-  ): Promise<ApiResponse<{ mirrors: unknown[] }>> {
-    return this.request<{ mirrors: unknown[] }>(`/items/${id}/reconcile`);
-  }
-
   async addTags(
     id: string,
     tags: string[],
