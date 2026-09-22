@@ -307,8 +307,9 @@ describe("the instance from the terminal", () => {
     expect(refused.envelope.error.server?.status).toBe(403);
 
     // The stores, the orphan report and the housekeeping table are the
-    // operator's too; a job run by name answers what it did, and a name
-    // the server does not run is a refusal the envelope carries whole.
+    // operator's too; a housekeeping job run by name answers what it did,
+    // and a name the server does not run is a refusal the envelope carries
+    // whole.
     const stores = await c.operator.json<{
       data: { id: string; kind: string }[];
       min_copies: number;
