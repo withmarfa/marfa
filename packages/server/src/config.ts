@@ -305,12 +305,13 @@ export interface AppConfig {
   rateLimitWindowMs: number;
   /** The cap on `/keys` and `/keys/{id}`, requests per
    *  `rateLimitWindowMs` window. Read from `RATE_LIMIT_KEYS_REQUESTS`
-   *  (default `DEFAULT_KEYS_RATE_LIMIT`). The key doors are capped well
-   *  under the default because minting is how a caller widens its own
-   *  reach, and an instance whose callers legitimately mint more than
-   *  the default allows needs a lever rather than a fork. Optional on
-   *  the type, following `rateLimitAggregateMultiplier`, so a test
-   *  context constructing an `AppConfig` literal need not supply it. */
+   *  (default `DEFAULT_KEYS_RATE_LIMIT`); `app.ts` says why these doors
+   *  are capped apart from the rest. Bounded from above by the aggregate
+   *  window, `rateLimitDefaultLimit * rateLimitAggregateMultiplier`,
+   *  which keys on the credential alone: a number past that one cannot
+   *  be reached. Optional on the type, following
+   *  `rateLimitAggregateMultiplier`, so a test context constructing an
+   *  `AppConfig` literal need not supply it. */
   rateLimitKeysLimit?: number;
   /** Multiplier for the aggregate per-identifier rate-limit window. The
    *  aggregate cap is `rateLimitDefaultLimit * this`, keyed on the

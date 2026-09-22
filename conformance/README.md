@@ -93,9 +93,13 @@ remove.
 The server runs with enrichment, OCR and rate limiting switched off.
 Enrichment rewrites file items in the background, which would make
 exact-property assertions on blobs depend on timing. Rate limiting is off so
-that a run's own key minting and revocation, one of each per file, cannot meet
-the one fixed limit the server has — `/keys`, in `packages/server/src/app.ts`.
-Nothing in the fixtures asserts either. Two of the copy rules' settings are
+that a run's own key minting and revocation, one of each per file, cannot
+spend the allowance on the key doors — the tightest cap the server has, set
+in `packages/server/src/app.ts`. `marfa:up` says so outright rather than
+leaving it to the boot script's default, so an ambient variable cannot flip
+the instance every file shares. What that allowance is, and what a caller
+past it is told, is asserted in `compliance/key-rate-limit.test.ts` against a
+server booted for it; nothing in the fixtures asserts enrichment. Two of the copy rules' settings are
 set for the fixtures that drive them through the housekeeping door: the
 orphan sweep's grace is zero, so the run after a report purges, and
 replication's cadence is an hour, so nothing copies on a clock of its own

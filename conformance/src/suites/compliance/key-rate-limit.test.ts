@@ -38,16 +38,21 @@ afterAll(() => {
  * A credential with a window of its own.
  *
  * The limiter keys on the credential, so two cases sharing one key would
- * share one budget and the second would read the first's spending. The
- * mint costs the operator key a request from its own window, not from the
- * minted key's.
+ * share one budget and the second would read the first's spending.
+ *
+ * Minted by the working key rather than the operator key, because the
+ * boot has already spent one of the operator's `/keys` requests minting
+ * that working key and the cap this file sets is deliberately small.
+ * The working key's own window is untouched: it was minted, it has not
+ * minted. One request per case, so the budget bounds how many cases this
+ * file can hold.
  */
 async function freshKey(label: string): Promise<MarfaClient> {
-  const operator = new MarfaClient({
+  const minter = new MarfaClient({
     baseUrl: server!.apiUrl,
-    apiKey: server!.operatorKey,
+    apiKey: server!.workingKey,
   });
-  const minted = await operator.createKey({
+  const minted = await minter.createKey({
     label: `keys-rate-limit-${label}`,
     source: `keys-rate-limit-${label}`,
   });
@@ -101,12 +106,15 @@ describe("the key doors' rate limit", () => {
     expect(Number(retryAfter)).toBeGreaterThan(0);
   }, 120_000);
 
-  it("closes the key doors and no others, on the same credential", async () => {
+  it("closes the key doors while a data-plane read on the same credential is answered", async () => {
     // The witness for the case above. Without it, a limiter that had
     // simply stopped answering this credential would satisfy every
-    // assertion there, and what the statement claims — that the cap is
-    // the key doors' and the rest of the instance keeps its own — would
-    // be asserted against nothing.
+    // assertion there, and what the statement claims — that the cap
+    // belongs to the key doors rather than to the credential — would be
+    // asserted against nothing. One other door, not every other door:
+    // the aggregate window still bounds what a credential spends across
+    // all of them, so "refused at `/keys`, answered elsewhere" holds
+    // while the caller stops asking and not while it keeps hammering.
     const client = await freshKey("scope");
 
     for (let spent = 1; spent <= KEYS_LIMIT; spent++) {

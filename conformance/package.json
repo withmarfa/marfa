@@ -22,7 +22,7 @@
     "test:load:extreme": "MARFA_LOAD_PROFILE=extreme NODE_OPTIONS='--max-old-space-size=8192' vitest run --project load",
     "test:conformance": "vitest run --project correctness --project compliance --project sync --project device",
     "load:cleanup": "tsx src/suites/load/cleanup-cli.ts",
-    "marfa:up": "tsx scripts/marfa-server.ts up",
+    "marfa:up": "RATE_LIMIT_ENABLED=false tsx scripts/marfa-server.ts up",
     "marfa:down": "tsx scripts/marfa-server.ts down",
     "marfa:status": "tsx scripts/marfa-server.ts status",
     "garage:up": "tsx scripts/garage.ts up",
