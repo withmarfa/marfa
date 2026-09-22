@@ -102,14 +102,29 @@ export function createOpenAPIRouter<
  * taken from one door would be wrong on the rest. It is long where a door
  * answers many codes on one status, and that is the honest length: the name
  * says which refusal the shape is.
+ *
+ * Sorted, so two doors answering one set share one component however each
+ * wrote its list. Unsorted, `["forbidden", "core_type_immutable"]` and its
+ * reverse are two components for one refusal, and a generated client carries
+ * both types.
+ *
+ * `_or_` in a code would make the name ambiguous — two codes joined read the
+ * same as one code containing the joiner — so a code carrying it is refused
+ * here rather than silently sharing another set's component.
  */
-function refusalComponentName(codes: readonly string[]): string {
-  const pascal = (code: string) =>
-    code
+export function refusalComponentName(codes: readonly string[]): string {
+  const pascal = (code: string) => {
+    if (/(^|_)or(_|$)/.test(code)) {
+      throw new Error(
+        `Refusal code "${code}" carries an \`or\` segment, which the component name joins sets with.`,
+      );
+    }
+    return code
       .split("_")
       .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
       .join("");
-  return `${codes.map(pascal).join("Or")}Refusal`;
+  };
+  return `${[...codes].sort().map(pascal).join("Or")}Refusal`;
 }
 
 function buildRefusalSchema<const C extends readonly [string, ...string[]]>(
@@ -118,7 +133,9 @@ function buildRefusalSchema<const C extends readonly [string, ...string[]]>(
   return z
     .object({
       error: z.object({
-        code: z.enum(codes),
+        // Sorted with the name, so the enum a door publishes is the set it
+        // answers rather than the order it happened to write.
+        code: z.enum([...codes].sort() as unknown as C),
         message: z.string(),
         details: z.record(z.string(), z.unknown()).optional(),
       }),
@@ -146,9 +163,8 @@ const refusalSchemas = new Map<string, ReturnType<typeof buildRefusalSchema>>();
  * spelling of the envelope, because a door that cannot say what it answers
  * is a door whose refusals nothing can be held to.
  *
- * The codes keep the order the door wrote them in, in the name and in the
- * enum, so two doors share a component only when they answer the same set
- * written the same way.
+ * The order a door writes its codes in does not reach the document: the
+ * name and the enum are both sorted, so one set is one component.
  */
 export function makeErrorResponseSchema<
   const C extends readonly [string, ...string[]],

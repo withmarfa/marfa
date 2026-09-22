@@ -126,7 +126,7 @@ const DisplayHintsSchema = z
   .openapi("DisplayHints");
 
 const VersionPolicySchema = z
-  .object({
+  .looseObject({
     recent_days: z.number().optional(),
     daily_snapshot_days: z.number().optional(),
     weekly_snapshot_days: z.number().optional(),
@@ -137,9 +137,16 @@ const VersionPolicySchema = z
 /**
  * A type as the two authoring doors take it.
  *
- * The objects are loose, and `refuseAsTheValidatorWould` answers the shape
- * check with the codes `validateTypeSchema` answers, so a body the
- * declaration catches is refused as the validator would have refused it.
+ * The objects are loose, so a key the declaration does not name reaches the
+ * validator as it was sent, and `refuseAsTheValidatorWould` answers the
+ * shape check with this door's codes rather than a generic one.
+ *
+ * The declaration is the tighter of the two on three axes the validator
+ * leaves to normalization: a `description`, a `required` flag or an
+ * `items_type` of the wrong type is refused here where the validator
+ * dropped the value and carried on. That is the point of declaring a shape
+ * a client builds from — a value silently discarded is a field the caller
+ * believes it set.
  */
 const typeDefinitionBody = {
   fields: z.record(z.string(), FieldDefinitionSchema),
@@ -164,15 +171,15 @@ const typeDefinitionBody = {
     .describe(
       `Structural roles this type plays, drawn from the closed vocabulary ${TYPE_ROLES.join(", ")}. An entry outside it is refused \`400 invalid_schema\` naming \`roles\`.`,
     ),
-  // A bare string as well as a list: the validator takes both, so a
-  // declaration that took only the list would refuse a body the server
-  // accepts.
   required: z
     .array(z.string())
     .optional()
     .describe(
       "Field names this type requires, the alternative to `required: true` on each field. Both forms are taken and mean the same thing.",
     ),
+  // A bare string as well as a list: the validator takes both, so a
+  // declaration that took only the list would refuse a body the server
+  // accepts.
   compatible_with: z
     .union([z.string(), z.array(z.string())])
     .optional()
@@ -194,20 +201,13 @@ const TypeDefinitionInputSchema = z
 /**
  * The same body on the replacement door, where the path names the type.
  *
- * `id` is optional there and ignored when present: the handler composes the
- * schema from the path's identifier, so a body naming another type has never
- * moved anything.
+ * No `id`: the handler composes the schema from the path's identifier, and a
+ * body carrying one has never moved anything. Declaring it would refuse a
+ * body the door accepts, since a loose object passes an undeclared key
+ * through untouched.
  */
 const TypeDefinitionUpdateSchema = z
-  .looseObject({
-    id: z
-      .string()
-      .optional()
-      .describe(
-        "Ignored. The type replaced is the one the path names; a body carrying a different identifier does not move it.",
-      ),
-    ...typeDefinitionBody,
-  })
+  .looseObject(typeDefinitionBody)
   .openapi("TypeDefinitionUpdate");
 
 /**
@@ -224,34 +224,35 @@ const refuseAsTheValidatorWould = (
   result: { success: true } | { success: false; error: z.ZodError },
 ): undefined => {
   if (result.success) return;
-  // A `null` at `fields` counts as missing rather than as a shape failure,
-  // because a body whose only fields block is `null` carries no fields.
-  // Nowhere else: an optional field set to `null` is a shape the validator
-  // refuses as `invalid_schema`, and telling its sender the field is
-  // required would be false as well as different.
-  const missing = result.error.issues.find(
+  // `fields` alone answers `missing_required_field`, which is this door's
+  // answer for a body that does not carry it — `null` included, since a
+  // `null` fields block carries no fields. Every other absence is
+  // `invalid_schema`, as it was when the validator saw these bodies first.
+  const missingFields = result.error.issues.some(
     (issue) =>
       issue.code === "invalid_type" &&
+      issue.path.length === 1 &&
+      issue.path[0] === "fields" &&
       (issue.message.includes("received undefined") ||
-        (issue.message.includes("received null") &&
-          issue.path.length === 1 &&
-          issue.path[0] === "fields")),
+        issue.message.includes("received null")),
   );
-  if (missing) {
-    const field = missing.path.join(".");
+  if (missingFields) {
     throw new MarfaError(
       ErrorCode.MISSING_REQUIRED_FIELD,
-      `${field} is required`,
-      { field },
+      "fields is required",
+      { field: "fields" },
     );
   }
-  // `errors` names the position and says what is wrong with it, as the
-  // validator's own issues do. It carries no `hint`: the validator can
-  // suggest a fix because it knows what the field was for, and a shape
-  // check knows only that the shape is not the declared one.
+  // `errors` names the position, what was expected there and what arrived,
+  // as the validator's own issues do. Two of its keys are absent and cannot
+  // be produced here: `hint`, which the validator can write because it knows
+  // what the field is for, and `code`, which discriminates refusals like
+  // `property_shadows_field` that only the validator can reach.
   throw new MarfaError(ErrorCode.INVALID_SCHEMA, "Invalid type schema", {
     errors: result.error.issues.map((issue) => ({
-      field: issue.path.join("."),
+      field: issue.path.length === 0 ? "_root" : issue.path.join("."),
+      expected: "expected" in issue ? issue.expected : undefined,
+      actual: "received" in issue ? issue.received : undefined,
       message: issue.message,
     })),
   });

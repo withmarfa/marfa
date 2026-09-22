@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, it } from "vitest";
-import { OpenAPIHono, createRoute } from "@hono/zod-openapi";
+import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
 import { buildPublishedOpenAPISpec } from "./openapi-published.js";
 import {
   EXTRA_PATHS,
@@ -147,6 +147,12 @@ describe("published OpenAPI spec", () => {
    * are one entry whatever they are called. Schemas with no `properties`
    * are left out: a bare string or an integer is a shape that repeats for
    * the good reason that many fields are strings.
+   *
+   * Handed the operations and the components together, because a shape
+   * written out inside two components is the same defect as one written out
+   * on two doors and reaches a client the same way. A component's own top
+   * level is skipped by the caller below, since a registered shape is
+   * supposed to appear there once.
    */
   function inlineShapes(paths: unknown): Map<string, string[]> {
     const found = new Map<string, string[]>();
@@ -218,6 +224,63 @@ describe("published OpenAPI spec", () => {
     ).toEqual(reflected);
   });
 
+  it("registers no component that admits a null it cannot answer", () => {
+    // `.nullable()` on a registered shape does not wrap the reference: it
+    // folds the null into the component, so one door that answers `null`
+    // makes every door referencing that shape declare a null it never
+    // sends. `nullableRef` in `routes/_schemas.ts` is what carries a null
+    // at the one position that has one.
+    const components = (
+      document.components as { schemas: Record<string, unknown> }
+    ).schemas;
+    const admitting = Object.entries(components)
+      .filter(([, schema]) => {
+        const declared = (schema as { type?: unknown; enum?: unknown[] }).type;
+        const values = (schema as { enum?: unknown[] }).enum;
+        return (
+          (Array.isArray(declared) && declared.includes("null")) ||
+          declared === "null" ||
+          (Array.isArray(values) && values.includes(null))
+        );
+      })
+      .map(([name]) => name);
+    expect(Object.keys(components).length).toBeGreaterThan(20);
+    expect(
+      admitting.sort(),
+      "Carry the null at the position that has one, with `nullableRef`.",
+    ).toEqual([]);
+
+    // The witness: the same shape, made nullable at one use, and what the
+    // generator then publishes.
+    const outcome = z.enum(["ok", "error"]).openapi("ProbeOutcome");
+    const probe = new OpenAPIHono();
+    probe.openapi(
+      createRoute({
+        operationId: "probeNullable",
+        method: "get",
+        path: "/probe",
+        responses: {
+          200: {
+            content: {
+              "application/json": {
+                schema: z.object({ last: outcome.nullable(), now: outcome }),
+              },
+            },
+            description: "ok",
+          },
+        },
+      }),
+      (c) => c.json({ last: null, now: "ok" as const }, 200),
+    );
+    const polluted = (
+      probe.getOpenAPI31Document({
+        openapi: "3.1.0",
+        info: { title: "probe", version: "1" },
+      }).components as { schemas: Record<string, { enum?: unknown[] }> }
+    ).schemas.ProbeOutcome;
+    expect(polluted?.enum).toContain(null);
+  });
+
   it("finds a shape written out twice", () => {
     // The control for the two checks below, which both assert an absence.
     // A walk that reads nothing, or a key that stops matching equal
@@ -237,13 +300,37 @@ describe("published OpenAPI spec", () => {
     expect(repeats.flat()).toContain("//items/__probe_again/schema");
   });
 
+  /**
+   * The operations, plus what each component carries below its own top
+   * level.
+   */
+  function shapeSources(): Record<string, unknown> {
+    const components = (
+      document.components as { schemas?: Record<string, unknown> }
+    ).schemas;
+    const inner: Record<string, unknown> = {};
+    for (const [name, schema] of Object.entries(components ?? {})) {
+      const { properties, items, anyOf, allOf, oneOf, additionalProperties } =
+        schema as Record<string, unknown>;
+      inner[name] = {
+        properties,
+        items,
+        anyOf,
+        allOf,
+        oneOf,
+        additionalProperties,
+      };
+    }
+    return { paths: document.paths, components: inner };
+  }
+
   it("writes a shape once, as a component, wherever it appears twice", () => {
     // A shape written out twice is two types in every generated client,
     // and they drift the moment one door's schema is edited and the other
     // is not. The document is generated, so this is never a matter of
     // care: it is a shape declared somewhere other than where a component
     // would have come from.
-    const repeated = [...inlineShapes(document.paths).entries()]
+    const repeated = [...inlineShapes(shapeSources()).entries()]
       .filter(([, places]) => places.length > 1)
       .map(([shape, places]) => {
         const properties = Object.keys(
@@ -287,7 +374,7 @@ describe("published OpenAPI spec", () => {
       ]),
     );
     const inlined: string[] = [];
-    for (const [shape, places] of inlineShapes(document.paths)) {
+    for (const [shape, places] of inlineShapes(shapeSources())) {
       const named = byShape.get(shape);
       if (named !== undefined) {
         inlined.push(...places.map((place) => `${place} is ${named}`));

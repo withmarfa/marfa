@@ -33,7 +33,9 @@ describe("the committed OpenAPI spec", () => {
       ).sort();
     expect(pathsOf(committed)).toEqual(pathsOf(generated));
 
-    expect(committed).toEqual(generated);
+    expect(committed, "Run `pnpm generate` and commit the result.").toEqual(
+      generated,
+    );
   });
 
   it("is not empty, so the comparison above cannot pass on nothing", async () => {

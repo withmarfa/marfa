@@ -33,7 +33,13 @@ import type { BulkActionJob, BulkActionResult } from "./bulk-actions/types.js";
  * nothing of what it names.
  *
  * A cycle is left as the reference it is: the reference has already been
- * followed once on this path, so the caller has seen the shape.
+ * followed once on this path, so the caller has seen the shape. A reference
+ * the document does not define throws instead, because a check reading an
+ * unresolved one sees an operation that declares nothing — which is how a
+ * door escapes a census rather than failing it.
+ *
+ * Keys beside a `$ref` are dropped, as a 3.1 reader that does not merge
+ * them would drop them. Nothing in this document writes any.
  */
 export function inlineOpenApiRefs(
   node: unknown,
@@ -60,7 +66,9 @@ export function inlineOpenApiRefs(
               ],
         document,
       );
-    if (target === undefined) return node;
+    if (target === undefined) {
+      throw new Error(`The document has no ${ref} to resolve.`);
+    }
     return inlineOpenApiRefs(target, document, new Set([...seen, ref]));
   }
   const out: Record<string, unknown> = {};

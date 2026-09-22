@@ -19,7 +19,10 @@ type Row = typeof housekeeping.$inferSelect;
  * whatever the previous scheduler's jobs returned, which was anything at
  * all. A value that is not a flat object of scalars is dropped rather than
  * served, because the door declares scalars and a caller reading the
- * declaration would be handed something else.
+ * declaration would be handed something else. The whole report goes, not
+ * the one value: a report with a count removed reads as a run that did less
+ * than it did, and no report at all is what the door says for a name that
+ * has never run.
  */
 function toReport(raw: string): HousekeepingReport | null {
   const parsed: unknown = JSON.parse(raw);

@@ -206,7 +206,7 @@
           "extensions"
         ]
       },
-      "ValidationErrorOrMissingRequiredFieldOrUnknownTypeOrInvalidIdOrInvalidPropertiesOrEdgeConstraintViolationOrEdgeCycleRefusal": {
+      "EdgeConstraintViolationOrEdgeCycleOrInvalidIdOrInvalidPropertiesOrMissingRequiredFieldOrUnknownTypeOrValidationErrorRefusal": {
         "type": "object",
         "properties": {
           "error": {
@@ -215,13 +215,13 @@
               "code": {
                 "type": "string",
                 "enum": [
-                  "validation_error",
-                  "missing_required_field",
-                  "unknown_type",
+                  "edge_constraint_violation",
+                  "edge_cycle",
                   "invalid_id",
                   "invalid_properties",
-                  "edge_constraint_violation",
-                  "edge_cycle"
+                  "missing_required_field",
+                  "unknown_type",
+                  "validation_error"
                 ]
               },
               "message": {
@@ -272,7 +272,7 @@
           "error"
         ]
       },
-      "ForbiddenOrTypeNotPermittedOrEdgePermissionDeniedRefusal": {
+      "EdgePermissionDeniedOrForbiddenOrTypeNotPermittedRefusal": {
         "type": "object",
         "properties": {
           "error": {
@@ -281,9 +281,9 @@
               "code": {
                 "type": "string",
                 "enum": [
+                  "edge_permission_denied",
                   "forbidden",
-                  "type_not_permitted",
-                  "edge_permission_denied"
+                  "type_not_permitted"
                 ]
               },
               "message": {
@@ -402,7 +402,8 @@
           "default": {
             "$ref": "#/components/schemas/MergeStrategy"
           }
-        }
+        },
+        "additionalProperties": {}
       },
       "MergeStrategy": {
         "type": "string",
@@ -517,7 +518,7 @@
           "error"
         ]
       },
-      "ValidationErrorOrMissingRequiredFieldOrUnknownTypeRefusal": {
+      "MissingRequiredFieldOrUnknownTypeOrValidationErrorRefusal": {
         "type": "object",
         "properties": {
           "error": {
@@ -526,9 +527,9 @@
               "code": {
                 "type": "string",
                 "enum": [
-                  "validation_error",
                   "missing_required_field",
-                  "unknown_type"
+                  "unknown_type",
+                  "validation_error"
                 ]
               },
               "message": {
@@ -646,7 +647,7 @@
           "error"
         ]
       },
-      "ValidationErrorOrMissingRequiredFieldOrInvalidIdOrInvalidPropertiesOrEdgeConstraintViolationOrEdgeCycleRefusal": {
+      "EdgeConstraintViolationOrEdgeCycleOrInvalidIdOrInvalidPropertiesOrMissingRequiredFieldOrValidationErrorRefusal": {
         "type": "object",
         "properties": {
           "error": {
@@ -655,12 +656,12 @@
               "code": {
                 "type": "string",
                 "enum": [
-                  "validation_error",
-                  "missing_required_field",
+                  "edge_constraint_violation",
+                  "edge_cycle",
                   "invalid_id",
                   "invalid_properties",
-                  "edge_constraint_violation",
-                  "edge_cycle"
+                  "missing_required_field",
+                  "validation_error"
                 ]
               },
               "message": {
@@ -681,7 +682,7 @@
           "error"
         ]
       },
-      "ItemNotFoundOrEdgeTypeNotFoundRefusal": {
+      "EdgeTypeNotFoundOrItemNotFoundRefusal": {
         "type": "object",
         "properties": {
           "error": {
@@ -690,8 +691,8 @@
               "code": {
                 "type": "string",
                 "enum": [
-                  "item_not_found",
-                  "edge_type_not_found"
+                  "edge_type_not_found",
+                  "item_not_found"
                 ]
               },
               "message": {
@@ -811,7 +812,7 @@
           "error"
         ]
       },
-      "ValidationErrorOrMissingRequiredFieldOrInvalidIdOrInvalidTransitionRefusal": {
+      "InvalidIdOrInvalidTransitionOrMissingRequiredFieldOrValidationErrorRefusal": {
         "type": "object",
         "properties": {
           "error": {
@@ -820,10 +821,10 @@
               "code": {
                 "type": "string",
                 "enum": [
-                  "validation_error",
-                  "missing_required_field",
                   "invalid_id",
-                  "invalid_transition"
+                  "invalid_transition",
+                  "missing_required_field",
+                  "validation_error"
                 ]
               },
               "message": {
@@ -855,7 +856,7 @@
           "metadata"
         ]
       },
-      "ValidationErrorOrMissingRequiredFieldOrInvalidIdRefusal": {
+      "InvalidIdOrMissingRequiredFieldOrValidationErrorRefusal": {
         "type": "object",
         "properties": {
           "error": {
@@ -864,9 +865,9 @@
               "code": {
                 "type": "string",
                 "enum": [
-                  "validation_error",
+                  "invalid_id",
                   "missing_required_field",
-                  "invalid_id"
+                  "validation_error"
                 ]
               },
               "message": {
@@ -1042,7 +1043,7 @@
           "message"
         ]
       },
-      "ValidationErrorOrMissingRequiredFieldOrBulkAtomicRollbackRefusal": {
+      "BulkAtomicRollbackOrMissingRequiredFieldOrValidationErrorRefusal": {
         "type": "object",
         "properties": {
           "error": {
@@ -1051,9 +1052,9 @@
               "code": {
                 "type": "string",
                 "enum": [
-                  "validation_error",
+                  "bulk_atomic_rollback",
                   "missing_required_field",
-                  "bulk_atomic_rollback"
+                  "validation_error"
                 ]
               },
               "message": {
@@ -1224,7 +1225,7 @@
           "canceled"
         ]
       },
-      "ValidationErrorOrMissingRequiredFieldOrBulkConfirmationRequiredOrBulkCapExceededRefusal": {
+      "BulkCapExceededOrBulkConfirmationRequiredOrMissingRequiredFieldOrValidationErrorRefusal": {
         "type": "object",
         "properties": {
           "error": {
@@ -1233,10 +1234,10 @@
               "code": {
                 "type": "string",
                 "enum": [
-                  "validation_error",
-                  "missing_required_field",
+                  "bulk_cap_exceeded",
                   "bulk_confirmation_required",
-                  "bulk_cap_exceeded"
+                  "missing_required_field",
+                  "validation_error"
                 ]
               },
               "message": {
@@ -1358,7 +1359,7 @@
           "error"
         ]
       },
-      "ValidationErrorOrInvalidIdRefusal": {
+      "InvalidIdOrValidationErrorRefusal": {
         "type": "object",
         "properties": {
           "error": {
@@ -1367,8 +1368,8 @@
               "code": {
                 "type": "string",
                 "enum": [
-                  "validation_error",
-                  "invalid_id"
+                  "invalid_id",
+                  "validation_error"
                 ]
               },
               "message": {
@@ -1470,7 +1471,7 @@
           "edge"
         ]
       },
-      "ValidationErrorOrMissingRequiredFieldOrInvalidIdOrEdgeConstraintViolationOrEdgeCycleRefusal": {
+      "EdgeConstraintViolationOrEdgeCycleOrInvalidIdOrMissingRequiredFieldOrValidationErrorRefusal": {
         "type": "object",
         "properties": {
           "error": {
@@ -1479,11 +1480,11 @@
               "code": {
                 "type": "string",
                 "enum": [
-                  "validation_error",
-                  "missing_required_field",
-                  "invalid_id",
                   "edge_constraint_violation",
-                  "edge_cycle"
+                  "edge_cycle",
+                  "invalid_id",
+                  "missing_required_field",
+                  "validation_error"
                 ]
               },
               "message": {
@@ -1564,7 +1565,7 @@
           "error"
         ]
       },
-      "ValidationErrorOrMissingRequiredFieldRefusal": {
+      "MissingRequiredFieldOrValidationErrorRefusal": {
         "type": "object",
         "properties": {
           "error": {
@@ -1573,8 +1574,8 @@
               "code": {
                 "type": "string",
                 "enum": [
-                  "validation_error",
-                  "missing_required_field"
+                  "missing_required_field",
+                  "validation_error"
                 ]
               },
               "message": {
@@ -1610,7 +1611,7 @@
           "current"
         ]
       },
-      "ForbiddenOrTypeNotPermittedOrEdgePermissionDeniedOrBulkAtomicRollbackRefusal": {
+      "BulkAtomicRollbackOrEdgePermissionDeniedOrForbiddenOrTypeNotPermittedRefusal": {
         "type": "object",
         "properties": {
           "error": {
@@ -1619,10 +1620,10 @@
               "code": {
                 "type": "string",
                 "enum": [
-                  "forbidden",
-                  "type_not_permitted",
+                  "bulk_atomic_rollback",
                   "edge_permission_denied",
-                  "bulk_atomic_rollback"
+                  "forbidden",
+                  "type_not_permitted"
                 ]
               },
               "message": {
@@ -1949,7 +1950,8 @@
           "max_versions": {
             "type": "number"
           }
-        }
+        },
+        "additionalProperties": {}
       },
       "TypeNotFoundRefusal": {
         "type": "object",
@@ -2183,7 +2185,7 @@
         ],
         "additionalProperties": {}
       },
-      "ForbiddenOrCoreTypeImmutableRefusal": {
+      "CoreTypeImmutableOrForbiddenRefusal": {
         "type": "object",
         "properties": {
           "error": {
@@ -2192,8 +2194,8 @@
               "code": {
                 "type": "string",
                 "enum": [
-                  "forbidden",
-                  "core_type_immutable"
+                  "core_type_immutable",
+                  "forbidden"
                 ]
               },
               "message": {
@@ -2217,10 +2219,6 @@
       "TypeDefinitionUpdate": {
         "type": "object",
         "properties": {
-          "id": {
-            "type": "string",
-            "description": "Ignored. The type replaced is the one the path names; a body carrying a different identifier does not move it."
-          },
           "fields": {
             "type": "object",
             "additionalProperties": {
@@ -2284,7 +2282,7 @@
         ],
         "additionalProperties": {}
       },
-      "TypeInUseOrTypeHasSubtypesRefusal": {
+      "TypeHasSubtypesOrTypeInUseRefusal": {
         "type": "object",
         "properties": {
           "error": {
@@ -2293,8 +2291,8 @@
               "code": {
                 "type": "string",
                 "enum": [
-                  "type_in_use",
-                  "type_has_subtypes"
+                  "type_has_subtypes",
+                  "type_in_use"
                 ]
               },
               "message": {
@@ -2315,7 +2313,29 @@
           "error"
         ]
       },
-      "ValidationErrorOrUnknownTypeRefusal": {
+      "SearchResult": {
+        "type": "object",
+        "properties": {
+          "item": {
+            "$ref": "#/components/schemas/Item"
+          },
+          "metadata": {
+            "$ref": "#/components/schemas/Metadata"
+          },
+          "relevance_score": {
+            "type": "number"
+          },
+          "snippet_html": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "item",
+          "metadata",
+          "relevance_score"
+        ]
+      },
+      "UnknownTypeOrValidationErrorRefusal": {
         "type": "object",
         "properties": {
           "error": {
@@ -2324,8 +2344,8 @@
               "code": {
                 "type": "string",
                 "enum": [
-                  "validation_error",
-                  "unknown_type"
+                  "unknown_type",
+                  "validation_error"
                 ]
               },
               "message": {
@@ -2406,7 +2426,7 @@
           "error"
         ]
       },
-      "BlobNotFoundOrBlobLocationNotFoundRefusal": {
+      "BlobLocationNotFoundOrBlobNotFoundRefusal": {
         "type": "object",
         "properties": {
           "error": {
@@ -2415,8 +2435,8 @@
               "code": {
                 "type": "string",
                 "enum": [
-                  "blob_not_found",
-                  "blob_location_not_found"
+                  "blob_location_not_found",
+                  "blob_not_found"
                 ]
               },
               "message": {
@@ -3552,7 +3572,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ValidationErrorOrMissingRequiredFieldOrUnknownTypeOrInvalidIdOrInvalidPropertiesOrEdgeConstraintViolationOrEdgeCycleRefusal"
+                  "$ref": "#/components/schemas/EdgeConstraintViolationOrEdgeCycleOrInvalidIdOrInvalidPropertiesOrMissingRequiredFieldOrUnknownTypeOrValidationErrorRefusal"
                 }
               }
             },
@@ -3609,7 +3629,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ForbiddenOrTypeNotPermittedOrEdgePermissionDeniedRefusal"
+                  "$ref": "#/components/schemas/EdgePermissionDeniedOrForbiddenOrTypeNotPermittedRefusal"
                 }
               }
             },
@@ -3980,7 +4000,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ValidationErrorOrMissingRequiredFieldOrUnknownTypeRefusal"
+                  "$ref": "#/components/schemas/MissingRequiredFieldOrUnknownTypeOrValidationErrorRefusal"
                 }
               }
             },
@@ -4544,7 +4564,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ValidationErrorOrMissingRequiredFieldOrInvalidIdOrInvalidPropertiesOrEdgeConstraintViolationOrEdgeCycleRefusal"
+                  "$ref": "#/components/schemas/EdgeConstraintViolationOrEdgeCycleOrInvalidIdOrInvalidPropertiesOrMissingRequiredFieldOrValidationErrorRefusal"
                 }
               }
             },
@@ -4628,7 +4648,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ItemNotFoundOrEdgeTypeNotFoundRefusal"
+                  "$ref": "#/components/schemas/EdgeTypeNotFoundOrItemNotFoundRefusal"
                 }
               }
             },
@@ -5132,7 +5152,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ValidationErrorOrMissingRequiredFieldOrInvalidIdOrInvalidTransitionRefusal"
+                  "$ref": "#/components/schemas/InvalidIdOrInvalidTransitionOrMissingRequiredFieldOrValidationErrorRefusal"
                 }
               }
             },
@@ -5606,7 +5626,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ValidationErrorOrMissingRequiredFieldOrInvalidIdRefusal"
+                  "$ref": "#/components/schemas/InvalidIdOrMissingRequiredFieldOrValidationErrorRefusal"
                 }
               }
             },
@@ -5785,7 +5805,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ValidationErrorOrMissingRequiredFieldOrInvalidIdRefusal"
+                  "$ref": "#/components/schemas/InvalidIdOrMissingRequiredFieldOrValidationErrorRefusal"
                 }
               }
             },
@@ -5970,7 +5990,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ValidationErrorOrMissingRequiredFieldOrInvalidIdRefusal"
+                  "$ref": "#/components/schemas/InvalidIdOrMissingRequiredFieldOrValidationErrorRefusal"
                 }
               }
             },
@@ -6538,7 +6558,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ValidationErrorOrMissingRequiredFieldOrBulkAtomicRollbackRefusal"
+                  "$ref": "#/components/schemas/BulkAtomicRollbackOrMissingRequiredFieldOrValidationErrorRefusal"
                 }
               }
             },
@@ -6926,7 +6946,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ValidationErrorOrMissingRequiredFieldOrBulkConfirmationRequiredOrBulkCapExceededRefusal"
+                  "$ref": "#/components/schemas/BulkCapExceededOrBulkConfirmationRequiredOrMissingRequiredFieldOrValidationErrorRefusal"
                 }
               }
             },
@@ -7455,7 +7475,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ValidationErrorOrInvalidIdRefusal"
+                  "$ref": "#/components/schemas/InvalidIdOrValidationErrorRefusal"
                 }
               }
             },
@@ -8018,7 +8038,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ValidationErrorOrMissingRequiredFieldOrInvalidIdRefusal"
+                  "$ref": "#/components/schemas/InvalidIdOrMissingRequiredFieldOrValidationErrorRefusal"
                 }
               }
             },
@@ -9123,7 +9143,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ValidationErrorOrMissingRequiredFieldOrInvalidIdOrEdgeConstraintViolationOrEdgeCycleRefusal"
+                  "$ref": "#/components/schemas/EdgeConstraintViolationOrEdgeCycleOrInvalidIdOrMissingRequiredFieldOrValidationErrorRefusal"
                 }
               }
             },
@@ -9180,7 +9200,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ItemNotFoundOrEdgeTypeNotFoundRefusal"
+                  "$ref": "#/components/schemas/EdgeTypeNotFoundOrItemNotFoundRefusal"
                 }
               }
             },
@@ -9483,7 +9503,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ValidationErrorOrMissingRequiredFieldRefusal"
+                  "$ref": "#/components/schemas/MissingRequiredFieldOrValidationErrorRefusal"
                 }
               }
             },
@@ -9835,7 +9855,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ValidationErrorOrMissingRequiredFieldOrBulkAtomicRollbackRefusal"
+                  "$ref": "#/components/schemas/BulkAtomicRollbackOrMissingRequiredFieldOrValidationErrorRefusal"
                 }
               }
             },
@@ -9889,7 +9909,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ForbiddenOrTypeNotPermittedOrEdgePermissionDeniedOrBulkAtomicRollbackRefusal"
+                  "$ref": "#/components/schemas/BulkAtomicRollbackOrEdgePermissionDeniedOrForbiddenOrTypeNotPermittedRefusal"
                 }
               }
             },
@@ -10004,7 +10024,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ValidationErrorOrMissingRequiredFieldRefusal"
+                  "$ref": "#/components/schemas/MissingRequiredFieldOrValidationErrorRefusal"
                 }
               }
             },
@@ -10911,7 +10931,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ForbiddenOrCoreTypeImmutableRefusal"
+                  "$ref": "#/components/schemas/CoreTypeImmutableOrForbiddenRefusal"
                 }
               }
             },
@@ -11087,7 +11107,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ForbiddenOrCoreTypeImmutableRefusal"
+                  "$ref": "#/components/schemas/CoreTypeImmutableOrForbiddenRefusal"
                 }
               }
             },
@@ -11141,7 +11161,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/TypeInUseOrTypeHasSubtypesRefusal"
+                  "$ref": "#/components/schemas/TypeHasSubtypesOrTypeInUseRefusal"
                 }
               }
             },
@@ -11349,118 +11369,7 @@
                     "results": {
                       "type": "array",
                       "items": {
-                        "type": "object",
-                        "properties": {
-                          "item": {
-                            "type": "object",
-                            "properties": {
-                              "id": {
-                                "type": "string"
-                              },
-                              "type": {
-                                "type": "string"
-                              },
-                              "properties": {
-                                "type": "object",
-                                "additionalProperties": {}
-                              },
-                              "state": {
-                                "$ref": "#/components/schemas/ItemState"
-                              },
-                              "tier": {
-                                "$ref": "#/components/schemas/Tier"
-                              },
-                              "version": {
-                                "type": "number"
-                              },
-                              "schema_version": {
-                                "type": "integer"
-                              },
-                              "source": {
-                                "type": "string"
-                              },
-                              "source_id": {
-                                "type": "string"
-                              },
-                              "capture_latitude": {
-                                "type": "number"
-                              },
-                              "capture_longitude": {
-                                "type": "number"
-                              },
-                              "occurred_at": {
-                                "type": "string"
-                              },
-                              "created_at": {
-                                "type": "string"
-                              },
-                              "updated_at": {
-                                "type": "string"
-                              },
-                              "edges": {
-                                "type": "object",
-                                "additionalProperties": {
-                                  "$ref": "#/components/schemas/ItemEdgesBlock"
-                                }
-                              },
-                              "extensions": {
-                                "type": "object",
-                                "additionalProperties": {
-                                  "type": "object",
-                                  "additionalProperties": {}
-                                }
-                              }
-                            },
-                            "required": [
-                              "id",
-                              "type",
-                              "properties",
-                              "state",
-                              "version",
-                              "schema_version",
-                              "source",
-                              "occurred_at",
-                              "created_at",
-                              "updated_at"
-                            ],
-                            "additionalProperties": {}
-                          },
-                          "metadata": {
-                            "type": "object",
-                            "properties": {
-                              "item_id": {
-                                "type": "string"
-                              },
-                              "tags": {
-                                "type": "array",
-                                "items": {
-                                  "type": "string"
-                                }
-                              },
-                              "extensions": {
-                                "type": "object",
-                                "additionalProperties": {}
-                              }
-                            },
-                            "required": [
-                              "item_id",
-                              "tags",
-                              "extensions"
-                            ],
-                            "additionalProperties": {}
-                          },
-                          "relevance_score": {
-                            "type": "number"
-                          },
-                          "snippet_html": {
-                            "type": "string"
-                          }
-                        },
-                        "required": [
-                          "item",
-                          "metadata",
-                          "relevance_score"
-                        ]
+                        "$ref": "#/components/schemas/SearchResult"
                       }
                     }
                   },
@@ -11490,7 +11399,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ValidationErrorOrUnknownTypeRefusal"
+                  "$ref": "#/components/schemas/UnknownTypeOrValidationErrorRefusal"
                 }
               }
             },
@@ -13333,7 +13242,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BlobNotFoundOrBlobLocationNotFoundRefusal"
+                  "$ref": "#/components/schemas/BlobLocationNotFoundOrBlobNotFoundRefusal"
                 }
               }
             },
@@ -15771,7 +15680,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ValidationErrorOrMissingRequiredFieldRefusal"
+                  "$ref": "#/components/schemas/MissingRequiredFieldOrValidationErrorRefusal"
                 }
               }
             },
@@ -16120,7 +16029,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ValidationErrorOrMissingRequiredFieldRefusal"
+                  "$ref": "#/components/schemas/MissingRequiredFieldOrValidationErrorRefusal"
                 }
               }
             },
@@ -17050,7 +16959,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ValidationErrorOrMissingRequiredFieldRefusal"
+                  "$ref": "#/components/schemas/MissingRequiredFieldOrValidationErrorRefusal"
                 }
               }
             },
@@ -17295,7 +17204,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ValidationErrorOrUnknownTypeRefusal"
+                  "$ref": "#/components/schemas/UnknownTypeOrValidationErrorRefusal"
                 }
               }
             },
@@ -17494,7 +17403,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ValidationErrorOrMissingRequiredFieldRefusal"
+                  "$ref": "#/components/schemas/MissingRequiredFieldOrValidationErrorRefusal"
                 }
               }
             },
@@ -17996,7 +17905,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ValidationErrorOrMissingRequiredFieldRefusal"
+                  "$ref": "#/components/schemas/MissingRequiredFieldOrValidationErrorRefusal"
                 }
               }
             },

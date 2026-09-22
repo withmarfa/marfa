@@ -211,7 +211,7 @@ export const MergeStrategyEnum = z
 
 /** A type's merge policy: a strategy per field, and one for the rest. */
 export const MergePolicySchema = z
-  .object({
+  .looseObject({
     fields: z.record(z.string(), MergeStrategyEnum).optional(),
     default: MergeStrategyEnum.optional(),
   })
