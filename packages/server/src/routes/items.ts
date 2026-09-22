@@ -1282,7 +1282,7 @@ export function itemRoutes(storage: Storage) {
     // are rejected. Storage's own validateProperties runs in loose mode
     // regardless; this pre-check catches strict-mode violations before any
     // persistence work. Shared with the restore door, which writes through
-    // the store directly and was therefore the way around this one.
+    // the store and so cannot rely on the store to ask.
     const undeclared = undeclaredPropertyRefusal(enforcement, type, properties);
     if (undeclared) throw undeclared;
     // `system.*` items have no tier; reject explicit values on write, and

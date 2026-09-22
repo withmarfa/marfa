@@ -526,9 +526,9 @@ export function mayWriteReserved(key: ApiKey, type: string): boolean {
  * is dropped rather than turned into a refusal of the whole page.
  *
  * One reading rather than two, because a listing and a point check that
- * disagree is how `GET /edges` came to hand a credential every edge in
- * the instance while `GET /edges/{id}` refused it the same rows one at a
- * time.
+ * disagree about one credential is a disclosure: the plural door hands
+ * over what the singular one refuses, and nothing in either answer says
+ * they disagree.
  */
 export function mayReadType(key: ApiKey, type: string): boolean {
   return resolveTypePermission(type, key.type_permissions) !== "none";

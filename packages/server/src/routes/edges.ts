@@ -106,7 +106,7 @@ const listEdgesRoute = createRoute({
   summary: "List edges",
   description:
     "Returns a paginated list of edges the credential may read, optionally filtered by edge type. Pass `edge_type` as a comma-separated list (up to 10 entries) to scope, or omit it to list every edge this credential reaches.\n\n" +
-    "Each row is held to the two permissions `GET /edges/{id}` asks for: read on the source item's type, and read on the edge type. A row failing either is left out rather than refused, so a page can come back shorter than `limit` — the cursor and `has_more` describe the whole listing, so paging still walks it.\n\n" +
+    "Each row is held to the two permissions `GET /edges/{id}` asks for: read on the source item's type, and read on the edge type. A row failing either is left out rather than refused, so a page can come back shorter than `limit` and can come back empty while `has_more` is true. The cursor and `has_more` describe the whole listing rather than the page, so paging still walks it: stop on `has_more`, never on an empty page.\n\n" +
     "Edges carry no lifecycle state of their own and are never hidden by the state of the items they join, so this listing has no `state` parameter and needs none: an edge whose endpoints are in the bin is returned like any other. That is deliberate — a client reconciling its copy has to see those edges rather than watch them disappear.\n\n" +
     "Removals are a different question and this read cannot answer it. A deleted edge leaves no row and no tombstone, so nothing here distinguishes one that was removed from one that never existed. The event stream carries the deletions; a client that reconciles completely needs both channels.\n\n" +
     UNKNOWN_PARAM_NOTE +
@@ -437,9 +437,11 @@ export function edgeRoutes(storage: Storage) {
     //
     // Dropped rather than refused, because a page is a page of what the
     // caller may see, and a listing that refused would tell a caller a
-    // row it may not read exists. A page can therefore come back shorter
-    // than `limit`; the cursor and `has_more` are the store's and are
-    // untouched, so paging still walks the whole listing.
+    // row it may not read exists. A page can therefore come back short,
+    // and empty while `has_more` is true; the cursor and `has_more` are
+    // the store's and are untouched, so paging still walks the whole
+    // listing and a caller stops on `has_more` rather than on an empty
+    // page.
     //
     // `getIncludingTrashed` for the reason the point check uses it: a
     // plain `items.get` returns null for a trashed source, and a null
@@ -447,17 +449,21 @@ export function edgeRoutes(storage: Storage) {
     // source item would otherwise turn a refusal into a disclosure. A
     // source that is genuinely absent is left to the edge-type question
     // alone, which is what the point check does with it.
-    const key = c.get("apiKey");
-    const visible: typeof result.data = [];
-    for (const edge of result.data) {
-      if (!key) break;
-      if (!edgePermissionCovers(key.edge_permissions, edge.edge_type, "read")) {
-        continue;
-      }
-      const source = await storage.items.getIncludingTrashed(edge.source_id);
-      if (source && !mayReadType(key, source.type)) continue;
-      visible.push(edge);
-    }
+    const key = requireAuth(c);
+    const ofReadableKind = result.data.filter((edge) =>
+      edgePermissionCovers(key.edge_permissions, edge.edge_type, "read"),
+    );
+    // One query for the page's sources rather than one per row: the cap on
+    // `limit` is 500, and a walk of the whole listing would otherwise be
+    // that many serial round trips per page.
+    const sources = await storage.items.getMany(
+      [...new Set(ofReadableKind.map((edge) => edge.source_id))],
+      { includeTrashed: true },
+    );
+    const visible = ofReadableKind.filter((edge) => {
+      const source = sources.get(edge.source_id);
+      return source === undefined || mayReadType(key, source.type);
+    });
     return c.json({ ...result, data: visible }, 200);
   });
 

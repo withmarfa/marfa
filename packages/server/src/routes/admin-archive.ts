@@ -609,28 +609,6 @@ export function adminArchiveRoutes(storage: Storage, blobs: BlobLayer) {
       }
     }
 
-    // A row carrying a property no type declares is refused wherever the
-    // strict-mode lever names that type, which is the question
-    // `POST /items` asks of a caller. This door writes through the store,
-    // where validation runs loose, so without the same question an archive
-    // was the way around a control the create door enforces — and the
-    // property reads back, ever after, undeclared and unmarked under the
-    // type's current version. Refused whole and before anything is
-    // written, like the two checks above it.
-    const archiveEnforcement = resolveEnforcement(
-      await readInstanceConfig(storage.settings),
-      c.get("apiKey"),
-    );
-    for (const { item } of items) {
-      const refusal = undeclaredPropertyRefusal(
-        archiveEnforcement,
-        String(item.type),
-        (item.properties ?? {}) as Record<string, unknown>,
-        { item_id: item.id },
-      );
-      if (refusal) return refuse(refusal);
-    }
-
     const typeEntries: ArchiveTypeEntry[] = [];
     for (const line of typeLines) {
       try {
@@ -648,6 +626,30 @@ export function adminArchiveRoutes(storage: Storage, blobs: BlobLayer) {
       typeResult = await registerArchiveTypes(storage, typeEntries);
     } catch (err) {
       return refuse(err);
+    }
+
+    // A row carrying a property no type declares is refused wherever the
+    // strict-mode lever names that type, which is the question
+    // `POST /items` asks of a caller. This door writes through the store,
+    // where validation runs loose, so the question has to be asked here
+    // or not at all — and a property that lands reads back ever after
+    // undeclared and unmarked under the type's current version. Refused
+    // whole, and after the archive's own type registrations so a type
+    // this instance is learning from the archive is measured against the
+    // declaration it arrives with, but before any blob or row is
+    // written.
+    const archiveEnforcement = resolveEnforcement(
+      await readInstanceConfig(storage.settings),
+      c.get("apiKey"),
+    );
+    for (const { item } of items) {
+      const refusal = undeclaredPropertyRefusal(
+        archiveEnforcement,
+        String(item.type),
+        (item.properties ?? {}) as Record<string, unknown>,
+        { item_id: item.id },
+      );
+      if (refusal) return refuse(refusal);
     }
 
     // Blobs land only once every refusal above has passed, so an archive
