@@ -94,36 +94,91 @@ export function createOpenAPIRouter<
 // Reusable response schemas
 // ---------------------------------------------------------------------------
 
-export const ErrorResponseSchema = z.object({
-  error: z.object({
-    code: z.string(),
-    message: z.string(),
-    details: z.record(z.string(), z.unknown()).optional(),
-  }),
-});
+/**
+ * The component name for a refusal that answers exactly these codes.
+ *
+ * Derived from the codes rather than from the door, because the same set is
+ * answered by many doors — `unauthorized` alone by most of them — and a name
+ * taken from one door would be wrong on the rest. It is long where a door
+ * answers many codes on one status, and that is the honest length: the name
+ * says which refusal the shape is.
+ *
+ * Sorted, so two doors answering one set share one component however each
+ * wrote its list. Unsorted, `["forbidden", "core_type_immutable"]` and its
+ * reverse are two components for one refusal, and a generated client carries
+ * both types.
+ *
+ * `_or_` in a code would make the name ambiguous — two codes joined read the
+ * same as one code containing the joiner — so a code carrying it is refused
+ * here rather than silently sharing another set's component.
+ */
+export function refusalComponentName(codes: readonly string[]): string {
+  const pascal = (code: string) => {
+    if (/(^|_)or(_|$)/.test(code)) {
+      throw new Error(
+        `Refusal code "${code}" carries an \`or\` segment, which the component name joins sets with.`,
+      );
+    }
+    return code
+      .split("_")
+      .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+      .join("");
+  };
+  return `${[...codes].sort().map(pascal).join("Or")}Refusal`;
+}
+
+function buildRefusalSchema<const C extends readonly [string, ...string[]]>(
+  codes: C,
+) {
+  return z
+    .object({
+      error: z.object({
+        // Sorted with the name, so the enum a door publishes is the set it
+        // answers rather than the order it happened to write.
+        code: z.enum([...codes].sort() as unknown as C),
+        message: z.string(),
+        details: z.record(z.string(), z.unknown()).optional(),
+      }),
+    })
+    .openapi(refusalComponentName(codes));
+}
+
+/**
+ * One schema instance per code set, so a set answered by twenty doors is
+ * registered once and referenced twenty times.
+ *
+ * The cache is what makes that true, and the failure without it is silent:
+ * the registry is keyed by the component name and keeps whichever schema
+ * object reached it first, so two objects under one name publish the first
+ * one's codes as the meaning of both. Nothing errors.
+ */
+const refusalSchemas = new Map<string, ReturnType<typeof buildRefusalSchema>>();
 
 /**
  * Per-operation error response schema with a closed enum of `code` values.
  *
- * Renders as `error.code: "x" | "y" | "z"` in the OpenAPI spec so SDK codegen
- * and the API reference can show typed-enum branches instead of `string`.
- * Use this in `responses` maps to enumerate exactly which codes a given
- * handler can emit on a given status. The generic `ErrorResponseSchema`
- * remains for catch-all paths where the code set genuinely can't be
- * enumerated tightly.
+ * Renders as `error.code: "x" | "y" | "z"` in the document, so a generated
+ * client branches on an enum rather than on a string. Every door declares
+ * the codes it answers on each status through this; there is no open
+ * spelling of the envelope, because a door that cannot say what it answers
+ * is a door whose refusals nothing can be held to.
+ *
+ * The order a door writes its codes in does not reach the document: the
+ * name and the enum are both sorted, so one set is one component.
  */
 export function makeErrorResponseSchema<
   const C extends readonly [string, ...string[]],
 >(codes: C) {
-  return z.object({
-    error: z.object({
-      code: z.enum(codes),
-      message: z.string(),
-      details: z.record(z.string(), z.unknown()).optional(),
-    }),
-  });
+  const name = refusalComponentName(codes);
+  const cached = refusalSchemas.get(name);
+  if (cached) return cached as ReturnType<typeof buildRefusalSchema<C>>;
+  const schema = buildRefusalSchema(codes);
+  refusalSchemas.set(name, schema);
+  return schema;
 }
 
-export const OkResponseSchema = z.object({
-  ok: z.literal(true),
-});
+export const OkResponseSchema = z
+  .object({
+    ok: z.literal(true),
+  })
+  .openapi("Ok");

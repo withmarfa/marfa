@@ -30,7 +30,11 @@ import {
   LocationNotFound,
   dropBlobCopy,
 } from "../housekeeping/blob-delete.js";
-import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
+import {
+  createOpenAPIRouter,
+  makeErrorResponseSchema,
+  OkResponseSchema,
+} from "../openapi.js";
 import { refuseUnknownQueryParams } from "./_unknown-query-keys.js";
 
 // ---------------------------------------------------------------------------
@@ -113,14 +117,23 @@ const UNSATISFIABLE_HEADERS = {
   },
 };
 
+/**
+ * The bytes a blob door hands back or takes in.
+ *
+ * Declared as a binary string rather than left open: a generated client
+ * reading an open schema types the body as a JSON value, and the doors
+ * carrying this one answer a byte stream.
+ */
+const BINARY_BODY = { type: "string" as const, format: "binary" as const };
+
 const bytesResponses = {
   200: {
-    content: { "application/octet-stream": { schema: z.any() } },
+    content: { "application/octet-stream": { schema: BINARY_BODY } },
     headers: BYTES_HEADERS,
     description: "The bytes, with the content type they were uploaded under.",
   },
   206: {
-    content: { "application/octet-stream": { schema: z.any() } },
+    content: { "application/octet-stream": { schema: BINARY_BODY } },
     headers: RANGE_HEADERS,
     description: "The one range asked for.",
   },
@@ -160,7 +173,7 @@ const uploadBlobRoute = createRoute({
     body: {
       content: {
         "application/octet-stream": {
-          schema: z.any(),
+          schema: BINARY_BODY,
         },
       },
     },
@@ -431,7 +444,7 @@ const dropBlobLocationRoute = createRoute({
   responses: {
     200: {
       content: {
-        "application/json": { schema: z.object({ ok: z.literal(true) }) },
+        "application/json": { schema: OkResponseSchema },
       },
       description: "The copy is gone",
     },

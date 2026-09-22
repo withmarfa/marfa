@@ -3,12 +3,16 @@ import { collectBlobHashes } from "../storage/blob-utils.js";
 import { log } from "../middleware/logger.js";
 import { purgeBlob, type Stores } from "./blob-delete.js";
 
-export interface OrphanResult {
+// A type alias rather than an interface: an interface carries no index
+// signature, so it cannot satisfy the `HousekeepingReport` the scheduler
+// takes from a job's run.
+// eslint-disable-next-line @typescript-eslint/consistent-type-definitions
+export type OrphanResult = {
   /** Blobs nothing references that the report holds after this run. */
   reported: number;
   /** Blobs an earlier run reported longer ago than the grace, now gone. */
   purged: number;
-}
+};
 
 /** Page size for both corpus walks. Large enough that a big corpus is not a
  *  thousand round trips, small enough not to hold a whole page of

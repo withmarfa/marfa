@@ -4,19 +4,15 @@ Where the server contradicts its own OpenAPI document, where its document descri
 
 **An entry goes when the behavior it recorded changes, never because the contract softened.** Once the server answers as the document says, or the document says what the server does, the entry has nothing left to record, and the fixtures that asserted the old answer assert the new one.
 
-## 1. `nullable: true` inside a 3.1 document
-
-The document declares `openapi: "3.1.0"` and marks nullable positions with `nullable: true`, a 3.0 keyword that a 2020-12 schema reader ignores. Where a position also carries a type, a strict reader rejects the `null` the server sends. The suite's validator widens every such position to a null-admitting type before checking a body, which is the one place it reads the document more charitably than written. Shown by every fixture that calls `expectMatchesSchema`, for example `compliance/key-management.test.ts › lists keys and includes a newly created key`, where `POST /keys` declares `last_used_at` as `{ type: string, nullable: true }` and sends `null`.
-
-## 2. `POST /auth/oauth2/register`: the 400 has no declared content and is not the envelope
+## 1. `POST /auth/oauth2/register`: the 400 has no declared content and is not the envelope
 
 The document declares the 400 with no content schema. The server answers an RFC 7591 error object, `{ "error": "invalid_redirect_uri", "error_description": "..." }`, not the `{ "error": { "code", "message" } }` envelope every other door uses. `compliance/oauth.test.ts › refuses an unparseable redirect URI with an RFC 7591 error object`.
 
-## 3. `GET /events`: the 400 and 401 have no declared content
+## 2. `GET /events`: the 400 and 401 have no declared content
 
 The document declares both statuses with no content schema. The server answers the standard envelope, `validation_error` for a refused filter and `unauthorized` for a missing credential. `compliance/events-contract.test.ts › refuses a wildcard type filter, a type outside the grammar, an unknown edges value and more than ten types`, `compliance/unauthenticated.test.ts › answers 401 unauthorized on each of them`.
 
-## 4. Statuses the fixtures observe that the document does not declare
+## 3. Statuses the fixtures observe that the document does not declare
 
 Every entry is a status a fixture asserts on an operation whose served document lists no such response.
 
@@ -32,7 +28,7 @@ Every entry is a status a fixture asserts on an operation whose served document 
 - `POST /keys` declares `201 400 401 403 429`; the server answers `409 conflict` for a `source` already in use. `compliance/key-management.test.ts › refuses a second key claiming a source already in use`.
 - `GET /edge-types`, `POST /edge-types`, `DELETE /edge-types/{id}`, `GET /edges/{id}`, `PATCH /edges/{id}` and `DELETE /edges/{id}` declare no `401`; each answers `401 unauthorized` to a bare request. `compliance/unauthenticated.test.ts › answers 401 unauthorized on each of them`.
 
-## 5. The natural key is scoped by the credential, so two devices cannot share one
+## 4. The natural key is scoped by the credential, so two devices cannot share one
 
 `folders.md` 10 requires that the same file on two separately enrolled machines is one item. The natural key is `(source, source_id)` (`items.md` 5), `source` is stamped from the credential and a value in the body is ignored (`items.md` 4), and a second key naming a `source` already in use is refused `409 conflict` (`keys-and-oauth.md` 7). Two devices with their own keys therefore cannot present the same natural key, and the same file becomes two items on the same server with nothing recording that they are the same file.
 

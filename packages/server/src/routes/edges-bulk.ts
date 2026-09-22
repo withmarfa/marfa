@@ -27,6 +27,7 @@
 
 import { createRoute, z } from "@hono/zod-openapi";
 import { MarfaError, ErrorCode, isValidId } from "@withmarfa/shared";
+import { BulkResponseSchema } from "./_schemas.js";
 import type { Edge } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import {
@@ -71,41 +72,6 @@ const BulkEdgeInputItemSchema = z.object({
     ),
 });
 
-const BulkEdgeResultOutcomeSchema = z.enum([
-  "created",
-  "updated",
-  "skipped",
-  "errored",
-]);
-
-const BulkEdgeResultEntrySchema = z.object({
-  index: z.number().int(),
-  outcome: BulkEdgeResultOutcomeSchema,
-  id: z.string().optional(),
-  reason: z.string().optional(),
-  error: z
-    .object({
-      code: z.string(),
-      message: z.string(),
-      /** What the refusal carried beside its code, as on the item door:
-       *  a per-entry refusal is the same refusal a single-edge write
-       *  gives, and an `id_reused` entry naming no `differs` tells a
-       *  caller which mistake it made and not what to do about it. */
-      details: z.record(z.string(), z.unknown()).optional(),
-    })
-    .optional(),
-});
-
-const BulkEdgeResponseSchema = z.object({
-  counts: z.object({
-    created: z.number().int(),
-    updated: z.number().int(),
-    skipped: z.number().int(),
-    errored: z.number().int(),
-  }),
-  results: z.array(BulkEdgeResultEntrySchema),
-});
-
 // ---------------------------------------------------------------------------
 // Route definition
 // ---------------------------------------------------------------------------
@@ -136,7 +102,7 @@ const edgesBulkRoute = createRoute({
   responses: {
     200: {
       content: {
-        "application/json": { schema: BulkEdgeResponseSchema },
+        "application/json": { schema: BulkResponseSchema },
       },
       description: "Bulk edge result",
     },

@@ -12,8 +12,8 @@ import { readInstanceConfig } from "../storage/instance-config.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import {
   ALL_STATES,
-  ItemSchema as BaseItemSchema,
-  MetadataSchema as BaseMetadataSchema,
+  ItemSchema,
+  MetadataSchema,
   resolveStateFilter,
 } from "./_schemas.js";
 import { filterMetadataForCaller } from "./util.js";
@@ -23,18 +23,19 @@ import {
   UNKNOWN_PARAM_NOTE,
 } from "./_unknown-query-keys.js";
 
-// Search responses use loose() so the FTS5 ranker's extra columns
-// (e.g. relevance internals) don't trip strict validation. The
-// underlying field set is the canonical one in _schemas.ts.
-const ItemSchema = BaseItemSchema.loose();
-const MetadataSchema = BaseMetadataSchema.loose();
-
-const SearchResultSchema = z.object({
-  item: ItemSchema,
-  metadata: MetadataSchema,
-  relevance_score: z.number(),
-  snippet_html: z.string().optional(),
-});
+// A search row carries the shared shapes rather than a loosened copy of
+// them: `rowToItem` and `rowToMetadata` build both, the same two builders
+// every other door uses, so the ranker's columns never reach a row. A
+// loosened copy is also a second shape in the document, since loosening
+// drops the component name.
+const SearchResultSchema = z
+  .object({
+    item: ItemSchema,
+    metadata: MetadataSchema,
+    relevance_score: z.number(),
+    snippet_html: z.string().optional(),
+  })
+  .openapi("SearchResult");
 
 const searchRoute = createRoute({
   operationId: "searchItems",

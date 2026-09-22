@@ -255,7 +255,7 @@ A folder is a directory on a machine that holds a slice as files. It is a device
 
 **What a folder will not write.** A folder writes only inside itself. Every path component is a plain name, with no `..`, no separator leading out and no symlink on the way. A path that fails this is reported and not written. A link the file used to carry and no longer does takes its edge with it, where that edge is the folder's own kind. An edge the folder never wrote into the file stays, and so does one of a kind it could not have made. A body carrying a link that resolves to nothing cancels every removal for that file, and no edge is taken away. A pull does not write over a file the folder did not write. Such a file is reported and left alone, unless it is byte for byte what the item renders to, in which case the mapping takes it back. Otherwise the next scan pushes it as a new item. A rename sends the new natural key under the item's id and the version it read. Two files that exchange places exchange nothing else. The folder renames one file to a temporary name no file can have, moves the other into place, then moves the first back, as three ordered rows in one queue. A file left under the temporary name is taken back by the next scan. A link resolves against every file the scan holds, not only the ones it held before it started, so two files that arrive together naming each other make one edge each way.
 
-References: `folders.md` 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25; `findings.md` 5.
+References: `folders.md` 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25; `findings.md` 4.
 
 ## Housekeeping
 

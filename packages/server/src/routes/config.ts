@@ -9,15 +9,20 @@ import {
   readInstanceConfig,
   writeInstanceConfig,
 } from "../storage/instance-config.js";
-import { enforcementSchema } from "./_schemas.js";
+import { EnforcementReadSchema, EnforcementWriteSchema } from "./_schemas.js";
 
 /**
  * One shape, built twice: permissive for reads and strict for the write.
- * `enforcementSchema` in `_schemas.ts` carries the levers, because a key's
- * override is the same shape and the two must not drift.
+ * `_schemas.ts` carries the two levers blocks, because a key's override is
+ * the same shape and the two must not drift, and because building a second
+ * from the factory would register a second schema under the component names
+ * the first one took.
  */
 const instanceConfigShape = (strict: boolean) => ({
-  enforcement: enforcementSchema(strict).optional(),
+  enforcement: (strict
+    ? EnforcementWriteSchema
+    : EnforcementReadSchema
+  ).optional(),
   // Retention overrides for the cleanup jobs. Each falls back to the
   // instance env default when unset. `0` disables the job (matches
   // env-default semantics for `TRASH_RETENTION_DAYS=0`); negatives are
@@ -38,10 +43,12 @@ const instanceConfigShape = (strict: boolean) => ({
  * present, so it is required rather than optional: a caller that has to
  * handle its absence would be handling a state the door does not produce.
  */
-const InstanceConfigSchema = z.object({
-  instance_id: z.string(),
-  ...instanceConfigShape(false),
-});
+const InstanceConfigSchema = z
+  .object({
+    instance_id: z.string(),
+    ...instanceConfigShape(false),
+  })
+  .openapi("InstanceConfig");
 
 /**
  * The write shape, which refuses a key it does not know, at every level.

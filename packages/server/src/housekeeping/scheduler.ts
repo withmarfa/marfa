@@ -8,6 +8,65 @@ import { logJobTickFailure } from "../storage/job-tick.js";
 import { log } from "../middleware/logger.js";
 
 /**
+ * What one run reports: a flat object of scalars, named by the job.
+ *
+ * Mostly counts — `{ deleted: 12 }`, `{ verified: 40, struck: 1 }` — and the
+ * heartbeat reports whether its receiver answered, so booleans and a null
+ * status belong too. Flat and scalar rather than anything at all: the doors
+ * publish this, and a report a caller cannot read the type of is a report it
+ * has to guess at.
+ *
+ * A type alias rather than an interface wherever a job's own result is
+ * declared: an interface carries no index signature, so it cannot satisfy
+ * this and the job would not compile.
+ */
+export type HousekeepingReport = Record<
+  string,
+  number | boolean | string | null
+>;
+
+export interface HousekeepingJob {
+  /** Lowercase, hyphenated: the name in the table, the log and the door. */
+  name: string;
+  intervalMs: number;
+  /** The wait before the first run on an instance that has never run this
+   *  name, so boot, the busiest the process ever is, is not when every
+   *  sweep starts. */
+  firstRunDelayMs: number;
+  /** One run. What it resolves with is recorded as the run's result and
+   *  published on the housekeeping doors, so it is a count per name rather
+   *  than anything a job feels like returning: `{ deleted: 12 }`,
+   *  `{ verified: 40, struck: 1, bytes: 91_203 }`. A job with nothing to
+   *  report resolves with `null` and the doors answer `last_result: null`
+   *  for it. The compiler holding every registered job to this is what lets
+   *  the document declare the shape instead of typing it unknown. A throw
+   *  is recorded as the run's error. */
+  run: () => Promise<HousekeepingReport | null>;
+}
+
+export interface HousekeepingRun {
+  name: string;
+  started_at: string;
+  finished_at: string;
+  outcome: HousekeepingOutcome;
+  result: HousekeepingReport | null;
+  error: string | null;
+}
+
+export type RunNowResult =
+  | { kind: "ran"; run: HousekeepingRun }
+  | { kind: "running" }
+  | { kind: "unknown" };
+
+export interface HousekeepingOptions {
+  /** How often the table is asked what is due. */
+  pollIntervalMs: number;
+  nowFn?: () => Date;
+}
+
+const NAME = /^[a-z][a-z0-9-]*$/;
+
+/**
  * One scheduler for the server's own housekeeping, on a polling table.
  *
  * A housekeeping job is registered from code at boot with its cadence and
@@ -25,41 +84,6 @@ import { log } from "../middleware/logger.js";
  * finished, whether it died or stopped before the run could end, and is
  * cleared with a log line; the name is due whenever its row says.
  */
-export interface HousekeepingJob {
-  /** Lowercase, hyphenated: the name in the table, the log and the door. */
-  name: string;
-  intervalMs: number;
-  /** The wait before the first run on an instance that has never run this
-   *  name, so boot, the busiest the process ever is, is not when every
-   *  sweep starts. */
-  firstRunDelayMs: number;
-  /** One run. Whatever it resolves with is recorded as the run's result;
-   *  a throw is recorded as its error. */
-  run: () => Promise<unknown>;
-}
-
-export interface HousekeepingRun {
-  name: string;
-  started_at: string;
-  finished_at: string;
-  outcome: HousekeepingOutcome;
-  result: unknown;
-  error: string | null;
-}
-
-export type RunNowResult =
-  | { kind: "ran"; run: HousekeepingRun }
-  | { kind: "running" }
-  | { kind: "unknown" };
-
-export interface HousekeepingOptions {
-  /** How often the table is asked what is due. */
-  pollIntervalMs: number;
-  nowFn?: () => Date;
-}
-
-const NAME = /^[a-z][a-z0-9-]*$/;
-
 export class Housekeeping {
   private readonly jobs = new Map<string, HousekeepingJob>();
   private readonly nowFn: () => Date;
@@ -257,7 +281,7 @@ export class Housekeeping {
   ): Promise<HousekeepingRun> {
     const startedAt = claimed.running_since ?? this.nowFn().toISOString();
     let outcome: HousekeepingOutcome = "ok";
-    let result: unknown = null;
+    let result: HousekeepingReport | null = null;
     let error: string | null = null;
     try {
       result = (await job.run()) ?? null;

@@ -612,7 +612,7 @@ export function createApp(
   // client reading it at runtime needs. The committed spec is generated
   // from the same shaping and is what CI holds the source to.
   const openapiDocument = finalizeOpenAPISpec(
-    app.getOpenAPIDocument({
+    app.getOpenAPI31Document({
       openapi: "3.1.0",
       info: OPENAPI_DOCUMENT_INFO,
     }),

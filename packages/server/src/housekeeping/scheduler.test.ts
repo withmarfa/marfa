@@ -74,7 +74,7 @@ describe("Housekeeping", () => {
       const job = {
         intervalMs: 1_000,
         firstRunDelayMs: 0,
-        run: () => Promise.resolve(1),
+        run: () => Promise.resolve({ ran: 1 }),
       };
       hk.register({ name: "fine", ...job });
       expect(() => {
@@ -641,7 +641,7 @@ describe("Housekeeping", () => {
         name: "silent",
         intervalMs: 60_000,
         firstRunDelayMs: 0,
-        run: () => Promise.resolve(),
+        run: () => Promise.resolve(null),
       });
       await hk.start();
       const answered = await hk.runNow("silent");

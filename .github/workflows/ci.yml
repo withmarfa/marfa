@@ -386,9 +386,9 @@ jobs:
       - run: pnpm build
       - name: Regenerate and check for drift
         run: |
-          pnpm --silent --filter @withmarfa/server generate:openapi > openapi.json
+          pnpm generate
           if ! git diff --exit-code openapi.json; then
-            echo "openapi.json is out of date. Run 'pnpm --silent --filter @withmarfa/server generate:openapi > openapi.json' and commit."
+            echo "openapi.json is out of date. Run 'pnpm generate' and commit."
             exit 1
           fi
 

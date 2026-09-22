@@ -126,7 +126,8 @@ const restoreArchiveRoute = createRoute({
     body: {
       content: {
         "application/gzip": {
-          schema: z.any(),
+          // The archive is a gzipped tarball: bytes, as 3.1 spells them.
+          schema: { type: "string" as const, format: "binary" as const },
         },
       },
     },

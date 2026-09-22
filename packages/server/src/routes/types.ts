@@ -13,8 +13,11 @@ import {
   diffTypeSchemas,
   isValidVersionBump,
   TYPE_ROLES,
+  FIELD_TYPES,
+  FIELD_FORMATS,
   malformedTypeIdentifier,
 } from "@withmarfa/shared";
+import type { Context, Next } from "hono";
 import type { AppEnv } from "../middleware/auth.js";
 import {
   requireAuth,
@@ -30,6 +33,7 @@ import {
   makeErrorResponseSchema,
 } from "../openapi.js";
 import { assertParentChain } from "./_parent-chain.js";
+import { MergePolicySchema } from "./_schemas.js";
 
 // ---------------------------------------------------------------------------
 // Constants & helpers
@@ -88,44 +92,197 @@ function validateParentChain(
 // Schemas
 // ---------------------------------------------------------------------------
 
-const MergeStrategySchema = z.enum(["last_writer_wins", "keep_both_copies"]);
+/**
+ * One field of a type, as `validateTypeSchema` takes it.
+ *
+ * The vocabularies are the validator's own lists rather than literals
+ * repeated here, so a field type added there is declared here without
+ * anybody remembering to.
+ */
+const FieldDefinitionSchema = z
+  .looseObject({
+    type: z.enum(FIELD_TYPES as unknown as [string, ...string[]]),
+    description: z.string().optional(),
+    required: z.boolean().optional(),
+    enum_values: z.array(z.string()).optional(),
+    items_type: z.string().optional(),
+    format: z
+      .enum(FIELD_FORMATS as unknown as [string, ...string[]])
+      .optional()
+      .describe(
+        "Semantic refinement of a `string` field. Only the annotation-only formats reach the registry: the four with a field type of their own normalize into `type`.",
+      ),
+    searchable: z.boolean().optional(),
+    maxLength: z.number().int().optional(),
+    maxItems: z.number().int().optional(),
+  })
+  .openapi("FieldDefinition");
 
-const TypeSchemaResponse = z.object({
-  id: z.string(),
+const DisplayHintsSchema = z
+  .object({
+    title_field: z.string().optional(),
+    body_field: z.string().optional(),
+  })
+  .openapi("DisplayHints");
+
+const VersionPolicySchema = z
+  .looseObject({
+    recent_days: z.number().optional(),
+    daily_snapshot_days: z.number().optional(),
+    weekly_snapshot_days: z.number().optional(),
+    max_versions: z.number().optional(),
+  })
+  .openapi("VersionPolicy");
+
+/**
+ * A type as the two authoring doors take it.
+ *
+ * The objects are loose, so a key the declaration does not name reaches the
+ * validator as it was sent, and `refuseAsTheValidatorWould` answers the
+ * shape check with this door's codes rather than a generic one.
+ *
+ * The declaration is the tighter of the two on three axes the validator
+ * leaves to normalization: a `description`, a `required` flag or an
+ * `items_type` of the wrong type is refused here where the validator
+ * dropped the value and carried on. That is the point of declaring a shape
+ * a client builds from — a value silently discarded is a field the caller
+ * believes it set.
+ */
+const typeDefinitionBody = {
+  fields: z.record(z.string(), FieldDefinitionSchema),
+  version: z
+    .number()
+    .int()
+    .min(1)
+    .optional()
+    .describe(
+      "Omit it to default to 1. A replacement carries the version it moves to.",
+    ),
+  parent: z.string().optional(),
   label: z.string().optional(),
   description: z.string().optional(),
-  parent: z.string().optional(),
-  // Clients resolve a sibling type's read-as relationship from this field,
-  // so it must reach the generated spec — an omission here strips it from
-  // every generated client even though the runtime body carries it.
-  compatible_with: z.array(z.string()).optional(),
-  // Edges constrain on roles, so a client deciding whether an item may be
-  // pointed at a container reads this. Omitting it from the spec would strip
-  // it from every generated client while the runtime kept returning it.
-  roles: z.array(z.enum(TYPE_ROLES)).optional(),
-  fields: z.record(z.string(), z.unknown()),
-  version: z.number(),
-  display_hints: z
-    .object({
-      title_field: z.string().optional(),
-      body_field: z.string().optional(),
-    })
-    .optional(),
-  version_policy: z
-    .object({
-      recent_days: z.number().optional(),
-      daily_snapshot_days: z.number().optional(),
-      weekly_snapshot_days: z.number().optional(),
-      max_versions: z.number().optional(),
-    })
-    .optional(),
-  merge_policy: z
-    .object({
-      fields: z.record(z.string(), MergeStrategySchema).optional(),
-      default: MergeStrategySchema.optional(),
-    })
-    .optional(),
-});
+  // Strings rather than the role enum the response carries, because the
+  // validator is the one that refuses an unknown role and it names `roles`
+  // where a declared enum would name the entry. The vocabulary is closed
+  // all the same; what changes is only which check answers.
+  roles: z
+    .array(z.string())
+    .optional()
+    .describe(
+      `Structural roles this type plays, drawn from the closed vocabulary ${TYPE_ROLES.join(", ")}. An entry outside it is refused \`400 invalid_schema\` naming \`roles\`.`,
+    ),
+  required: z
+    .array(z.string())
+    .optional()
+    .describe(
+      "Field names this type requires, the alternative to `required: true` on each field. Both forms are taken and mean the same thing.",
+    ),
+  // A bare string as well as a list: the validator takes both, so a
+  // declaration that took only the list would refuse a body the server
+  // accepts.
+  compatible_with: z
+    .union([z.string(), z.array(z.string())])
+    .optional()
+    .describe(
+      "Sibling types this one asserts a structural superset of. A bare string names one.",
+    ),
+  display_hints: DisplayHintsSchema.optional(),
+  version_policy: VersionPolicySchema.optional(),
+  merge_policy: MergePolicySchema.optional(),
+};
+
+// `fields` leads the shape, and `id` follows it, because a refusal names
+// the first field the body does not carry and this door's canonical
+// refusal in `errors.md` is a body with no `fields`.
+const TypeDefinitionInputSchema = z
+  .looseObject({ ...typeDefinitionBody, id: z.string() })
+  .openapi("TypeDefinitionInput");
+
+/**
+ * The same body on the replacement door, where the path names the type.
+ *
+ * No `id`: the handler composes the schema from the path's identifier, and a
+ * body carrying one has never moved anything. Declaring it would refuse a
+ * body the door accepts, since a loose object passes an undeclared key
+ * through untouched.
+ */
+const TypeDefinitionUpdateSchema = z
+  .looseObject(typeDefinitionBody)
+  .openapi("TypeDefinitionUpdate");
+
+/**
+ * Refuse a body the declaration rejects the way the validator would have.
+ *
+ * These two doors answer `missing_required_field` for a field the body does
+ * not carry and `invalid_schema` for everything else they cannot read, and
+ * the chapters name both. A declared body is checked before the handler is
+ * reached, so without this the shape check would answer
+ * `validation_error` instead: the same request, the same status, a
+ * different code.
+ */
+const refuseAsTheValidatorWould = (
+  result: { success: true } | { success: false; error: z.ZodError },
+): undefined => {
+  if (result.success) return;
+  // `fields` alone answers `missing_required_field`, which is this door's
+  // answer for a body that does not carry it — `null` included, since a
+  // `null` fields block carries no fields. Every other absence is
+  // `invalid_schema`, as it was when the validator saw these bodies first.
+  const missingFields = result.error.issues.some(
+    (issue) =>
+      issue.code === "invalid_type" &&
+      issue.path.length === 1 &&
+      issue.path[0] === "fields" &&
+      (issue.message.includes("received undefined") ||
+        issue.message.includes("received null")),
+  );
+  if (missingFields) {
+    throw new MarfaError(
+      ErrorCode.MISSING_REQUIRED_FIELD,
+      "fields is required",
+      { field: "fields" },
+    );
+  }
+  // `errors` names the position, what was expected there and what arrived,
+  // as the validator's own issues do. Two of its keys are absent and cannot
+  // be produced here: `hint`, which the validator can write because it knows
+  // what the field is for, and `code`, which discriminates refusals like
+  // `property_shadows_field` that only the validator can reach.
+  throw new MarfaError(ErrorCode.INVALID_SCHEMA, "Invalid type schema", {
+    errors: result.error.issues.map((issue) => ({
+      field: issue.path.length === 0 ? "_root" : issue.path.join("."),
+      expected: "expected" in issue ? issue.expected : undefined,
+      actual: "received" in issue ? issue.received : undefined,
+      message: issue.message,
+    })),
+  });
+};
+
+const TypeSchemaResponse = z
+  .object({
+    id: z.string(),
+    label: z.string().optional(),
+    description: z.string().optional(),
+    parent: z.string().optional(),
+    // Clients resolve a sibling type's read-as relationship from this field,
+    // so it must reach the generated spec — an omission here strips it from
+    // every generated client even though the runtime body carries it.
+    compatible_with: z.array(z.string()).optional(),
+    // Edges constrain on roles, so a client deciding whether an item may be
+    // pointed at a container reads this. Omitting it from the spec would strip
+    // it from every generated client while the runtime kept returning it.
+    roles: z.array(z.enum(TYPE_ROLES).openapi("TypeRole")).optional(),
+    fields: z.record(z.string(), z.unknown()),
+    version: z.number(),
+    display_hints: DisplayHintsSchema.optional(),
+    version_policy: VersionPolicySchema.optional(),
+    merge_policy: MergePolicySchema.optional(),
+  })
+  .openapi("TypeDefinition");
+
+const TypeResponseSchema = z
+  .object({ type: TypeSchemaResponse })
+  .openapi("TypeResponse");
 
 // ---------------------------------------------------------------------------
 // Route definitions
@@ -214,6 +371,12 @@ const registerTypeRoute = createRoute({
   operationId: "registerType",
   method: "post",
   path: "/",
+  middleware: [
+    (c: Context<AppEnv>, next: Next) => {
+      requireMetadataPermission(c, "types", "write");
+      return next();
+    },
+  ] as const,
   tags: ["Types"],
   summary: "Register a type",
   description:
@@ -223,7 +386,7 @@ const registerTypeRoute = createRoute({
     body: {
       content: {
         "application/json": {
-          schema: z.record(z.string(), z.unknown()),
+          schema: TypeDefinitionInputSchema,
         },
       },
     },
@@ -232,7 +395,7 @@ const registerTypeRoute = createRoute({
     201: {
       content: {
         "application/json": {
-          schema: z.object({ type: TypeSchemaResponse }),
+          schema: TypeResponseSchema,
         },
       },
       description: "Type registered",
@@ -269,6 +432,31 @@ const updateTypeRoute = createRoute({
   operationId: "updateType",
   method: "put",
   path: "/{id}",
+  middleware: [
+    (c: Context<AppEnv>, next: Next) => {
+      requireAuth(c);
+      requirePermission(c, "schema.write");
+      // The path parameter, before the route's own validator has run: the
+      // router matched this route on it, so it is present.
+      const id = c.req.param("id") ?? "";
+      if (!isValidTypeIdentifier(id)) {
+        throw malformedTypeIdentifier("id", `Invalid type identifier: ${id}`);
+      }
+      if (isLockedPlatformType(id)) {
+        throw new MarfaError(
+          ErrorCode.CORE_TYPE_IMMUTABLE,
+          `Cannot modify platform-shipped types`,
+        );
+      }
+      if (!getTypeSchema(id)) {
+        throw new MarfaError(
+          ErrorCode.TYPE_NOT_FOUND,
+          `Type "${id}" not found`,
+        );
+      }
+      return next();
+    },
+  ] as const,
   tags: ["Types"],
   summary: "Update a registered type",
   description:
@@ -281,7 +469,7 @@ const updateTypeRoute = createRoute({
     body: {
       content: {
         "application/json": {
-          schema: z.record(z.string(), z.unknown()),
+          schema: TypeDefinitionUpdateSchema,
         },
       },
     },
@@ -290,7 +478,7 @@ const updateTypeRoute = createRoute({
     200: {
       content: {
         "application/json": {
-          schema: z.object({ type: TypeSchemaResponse }),
+          schema: TypeResponseSchema,
         },
       },
       description: "Type updated",
@@ -427,184 +615,174 @@ export function typeRoutes(storage: Storage) {
     return c.json(schema, 200);
   });
 
-  router.openapi(registerTypeRoute, async (c) => {
-    requireMetadataPermission(c, "types", "write");
-    const body = c.req.valid("json");
+  router.openapi(
+    registerTypeRoute,
+    async (c) => {
+      const body = c.req.valid("json");
 
-    if (typeof body.id === "string" && !isValidTypeIdentifier(body.id)) {
-      throw malformedTypeIdentifier(
-        "id",
-        "Invalid type identifier. Must follow the five-tier namespace grammar: core.<type>, system.<type>, app.<app-name>.<type>, user.<type>, or <publisher>.<type>. Forward slashes and reserved-root collisions are rejected.",
-      );
-    }
-    // Reserved namespaces are a property of the build, not of the request.
-    // `core.*`, `system.*` and `marfa.*` are authored as JSON in the type
-    // package and compiled into the registry; nothing legitimate mints one
-    // over HTTP, and the route's own published description already says so.
-    //
-    // This used to admit the operator key, which made registration and
-    // restore disagree: an archive carrying a reserved-namespace type is
-    // refused whatever credential restores it, precisely because a file is
-    // something an attacker can hand you. A registration is no more
-    // trustworthy for arriving over a socket. The asymmetry also let one
-    // credentialed mistake put a row in the exports that its own
-    // restore would then refuse, taking the whole archive down with it.
-    if (typeof body.id === "string") {
-      const tier = classifyNamespace(body.id);
-      if (tier === "core" || tier === "system" || tier === "marfa") {
-        throw new MarfaError(
-          ErrorCode.FORBIDDEN,
-          `Reserved namespace: ${tier}.* types are platform-shipped and cannot be registered at runtime`,
-          { namespace: tier },
+      if (typeof body.id === "string" && !isValidTypeIdentifier(body.id)) {
+        throw malformedTypeIdentifier(
+          "id",
+          "Invalid type identifier. Must follow the five-tier namespace grammar: core.<type>, system.<type>, app.<app-name>.<type>, user.<type>, or <publisher>.<type>. Forward slashes and reserved-root collisions are rejected.",
         );
       }
-    }
-    if (body.fields === undefined || body.fields === null) {
-      throw new MarfaError(
-        ErrorCode.MISSING_REQUIRED_FIELD,
-        "fields is required",
-      );
-    }
-
-    const result = validateTypeSchema(body);
-    if (!result.success) {
-      // Surface specific error codes so clients can disambiguate from generic schema failures.
-      const hasPropertyShadowsField = result.errors.some(
-        (e) => e.code === "property_shadows_field",
-      );
-      const hasInheritanceViolation = result.errors.some(
-        (e) => e.code === "inheritance_violation",
-      );
-      const hasCompatibleWithViolation = result.errors.some(
-        (e) => e.code === "compatible_with_violation",
-      );
-      let code: ErrorCode;
-      let message: string;
-      if (hasPropertyShadowsField) {
-        code = ErrorCode.PROPERTY_SHADOWS_FIELD;
-        message =
-          "Type schema declares a property whose name shadows a first-class Item field";
-      } else if (hasInheritanceViolation) {
-        code = ErrorCode.INHERITANCE_VIOLATION;
-        message = "Child type redefines a field declared by an ancestor";
-      } else if (hasCompatibleWithViolation) {
-        code = ErrorCode.COMPATIBLE_WITH_VIOLATION;
-        message =
-          "Type does not satisfy the structural-superset of its compatible_with target";
-      } else {
-        code = ErrorCode.INVALID_SCHEMA;
-        message = "Invalid type schema";
+      // Reserved namespaces are a property of the build, not of the request.
+      // `core.*`, `system.*` and `marfa.*` are authored as JSON in the type
+      // package and compiled into the registry; nothing legitimate mints one
+      // over HTTP, and the route's own published description already says so.
+      //
+      // No credential is excepted, the operator key included, because a
+      // restore refuses a reserved-namespace type whatever credential it
+      // runs under: a door that admitted one would put a row in the exports
+      // that its own restore then refuses, taking the archive with it.
+      if (typeof body.id === "string") {
+        const tier = classifyNamespace(body.id);
+        if (tier === "core" || tier === "system" || tier === "marfa") {
+          throw new MarfaError(
+            ErrorCode.FORBIDDEN,
+            `Reserved namespace: ${tier}.* types are platform-shipped and cannot be registered at runtime`,
+            { namespace: tier },
+          );
+        }
       }
-      throw new MarfaError(code, message, { errors: result.errors });
-    }
+      const result = validateTypeSchema(body);
+      if (!result.success) {
+        // Surface specific error codes so clients can disambiguate from generic schema failures.
+        const hasPropertyShadowsField = result.errors.some(
+          (e) => e.code === "property_shadows_field",
+        );
+        const hasInheritanceViolation = result.errors.some(
+          (e) => e.code === "inheritance_violation",
+        );
+        const hasCompatibleWithViolation = result.errors.some(
+          (e) => e.code === "compatible_with_violation",
+        );
+        let code: ErrorCode;
+        let message: string;
+        if (hasPropertyShadowsField) {
+          code = ErrorCode.PROPERTY_SHADOWS_FIELD;
+          message =
+            "Type schema declares a property whose name shadows a first-class Item field";
+        } else if (hasInheritanceViolation) {
+          code = ErrorCode.INHERITANCE_VIOLATION;
+          message = "Child type redefines a field declared by an ancestor";
+        } else if (hasCompatibleWithViolation) {
+          code = ErrorCode.COMPATIBLE_WITH_VIOLATION;
+          message =
+            "Type does not satisfy the structural-superset of its compatible_with target";
+        } else {
+          code = ErrorCode.INVALID_SCHEMA;
+          message = "Invalid type schema";
+        }
+        throw new MarfaError(code, message, { errors: result.errors });
+      }
 
-    const schema = result.data;
+      const schema = result.data;
 
-    if (!schema.label) {
-      const lastSegment = schema.id.split(".").pop() ?? schema.id;
-      schema.label = lastSegment
-        .replace(/[_-]/g, " ")
-        .replace(/\b\w/g, (ch) => ch.toUpperCase());
-    }
+      if (!schema.label) {
+        const lastSegment = schema.id.split(".").pop() ?? schema.id;
+        schema.label = lastSegment
+          .replace(/[_-]/g, " ")
+          .replace(/\b\w/g, (ch) => ch.toUpperCase());
+      }
 
-    if (schema.parent) {
-      validateParentChain(schema.id, schema.parent);
-    }
+      if (schema.parent) {
+        validateParentChain(schema.id, schema.parent);
+      }
 
-    if (getTypeSchema(schema.id)) {
-      throw new MarfaError(
-        ErrorCode.TYPE_ALREADY_EXISTS,
-        `Type "${schema.id}" already exists`,
-      );
-    }
+      if (getTypeSchema(schema.id)) {
+        throw new MarfaError(
+          ErrorCode.TYPE_ALREADY_EXISTS,
+          `Type "${schema.id}" already exists`,
+        );
+      }
 
-    const created = await storage.types.create(schema);
-    void storage.audit.log({
-      client_ip: c.get("clientIp") ?? null,
-      key_id: c.get("apiKey")?.id,
-      action: "type.register",
-      resource_type: "type",
-      resource_id: schema.id,
-    });
-    return c.json({ type: created }, 201);
-  });
-
-  router.openapi(updateTypeRoute, async (c) => {
-    requireAuth(c);
-    requirePermission(c, "schema.write");
-    const { id } = c.req.valid("param");
-
-    if (!isValidTypeIdentifier(id)) {
-      throw malformedTypeIdentifier("id", `Invalid type identifier: ${id}`);
-    }
-
-    if (isLockedPlatformType(id)) {
-      throw new MarfaError(
-        ErrorCode.CORE_TYPE_IMMUTABLE,
-        `Cannot modify platform-shipped types`,
-      );
-    }
-
-    const existing = getTypeSchema(id);
-    if (!existing) {
-      throw new MarfaError(ErrorCode.TYPE_NOT_FOUND, `Type "${id}" not found`);
-    }
-
-    const body = c.req.valid("json");
-    const result = validateTypeSchema({ ...body, id });
-    if (!result.success) {
-      throw new MarfaError(ErrorCode.INVALID_SCHEMA, "Invalid type schema", {
-        errors: result.errors,
+      const created = await storage.types.create(schema);
+      void storage.audit.log({
+        client_ip: c.get("clientIp") ?? null,
+        key_id: c.get("apiKey")?.id,
+        action: "type.register",
+        resource_type: "type",
+        resource_id: schema.id,
       });
-    }
+      return c.json({ type: created }, 201);
+    },
+    refuseAsTheValidatorWould,
+  );
 
-    const schema = result.data;
+  router.openapi(
+    updateTypeRoute,
+    async (c) => {
+      const { id } = c.req.valid("param");
+      const existing = getTypeSchema(id);
+      // The route's middleware refuses every reason the row could be
+      // missing before the body is read, so this is unreachable; it is here
+      // because the registry's lookup cannot say that, and a cast would
+      // hand the handler an undefined the moment it stops being true.
+      if (!existing) {
+        throw new MarfaError(
+          ErrorCode.TYPE_NOT_FOUND,
+          `Type "${id}" not found`,
+        );
+      }
 
-    if (schema.parent) {
-      // Measured on the type as it stands, before the update lands, which is
-      // the subtree that would move with it.
-      validateParentChain(
-        schema.id,
-        schema.parent,
-        maxDescendantDepth(schema.id),
-      );
-    }
+      const body = c.req.valid("json");
+      const result = validateTypeSchema({ ...body, id });
+      if (!result.success) {
+        throw new MarfaError(ErrorCode.INVALID_SCHEMA, "Invalid type schema", {
+          errors: result.errors,
+        });
+      }
 
-    // Server-side semver diff via a structural classifier: no-op
-    // submissions are rejected, descriptive-only changes accept the existing
-    // version, additive and breaking changes require an explicit bump. The
-    // classifier returns the diff class for telemetry / SDK error messages.
-    const diff = diffTypeSchemas(existing, schema);
-    if (diff === "noop") {
-      throw new MarfaError(
-        ErrorCode.VERSION_BUMP_MISMATCH,
-        "No structural or descriptive changes — re-submitting an identical schema is rejected",
-        { diff },
-      );
-    }
-    // A major diff (field removal) is permitted; the version-bump check below enforces
-    // that the caller explicitly incremented the version, and the diff class surfaces
-    // in audit so SDK telemetry can warn consumers.
-    if (!isValidVersionBump(diff, existing.version, schema.version)) {
-      throw new MarfaError(
-        ErrorCode.VERSION_BUMP_MISMATCH,
-        diff === "patch"
-          ? "Descriptive-only change accepts the existing version or higher"
-          : `${diff[0]?.toUpperCase() ?? ""}${diff.slice(1)} change requires version > ${String(existing.version)}`,
-        { diff, existing_version: existing.version },
-      );
-    }
+      const schema = result.data;
 
-    const updated = await storage.types.update(id, schema);
-    void storage.audit.log({
-      client_ip: c.get("clientIp") ?? null,
-      key_id: c.get("apiKey")?.id,
-      action: "type.update",
-      resource_type: "type",
-      resource_id: id,
-    });
-    return c.json({ type: updated }, 200);
-  });
+      if (schema.parent) {
+        // Measured on the type as it stands, before the update lands, which is
+        // the subtree that would move with it.
+        validateParentChain(
+          schema.id,
+          schema.parent,
+          maxDescendantDepth(schema.id),
+        );
+      }
+
+      // Server-side semver diff via a structural classifier: no-op
+      // submissions are rejected, descriptive-only changes accept the existing
+      // version, additive and breaking changes require an explicit bump. The
+      // classifier returns the diff class for telemetry / SDK error messages.
+      const diff = diffTypeSchemas(existing, schema);
+      if (diff === "noop") {
+        throw new MarfaError(
+          ErrorCode.VERSION_BUMP_MISMATCH,
+          "No structural or descriptive changes — re-submitting an identical schema is rejected",
+          { diff },
+        );
+      }
+      // A major diff (field removal) is permitted; the version-bump check below enforces
+      // that the caller explicitly incremented the version, and the diff class surfaces
+      // in audit so SDK telemetry can warn consumers.
+      if (!isValidVersionBump(diff, existing.version, schema.version)) {
+        throw new MarfaError(
+          ErrorCode.VERSION_BUMP_MISMATCH,
+          diff === "patch"
+            ? "Descriptive-only change accepts the existing version or higher"
+            : `${diff[0]?.toUpperCase() ?? ""}${diff.slice(1)} change requires version > ${String(existing.version)}`,
+          { diff, existing_version: existing.version },
+        );
+      }
+
+      const updated = await storage.types.update(id, schema);
+      void storage.audit.log({
+        client_ip: c.get("clientIp") ?? null,
+        key_id: c.get("apiKey")?.id,
+        action: "type.update",
+        resource_type: "type",
+        resource_id: id,
+      });
+      return c.json({ type: updated }, 200);
+    },
+    refuseAsTheValidatorWould,
+  );
 
   router.openapi(deleteTypeRoute, async (c) => {
     requireAuth(c);

@@ -29,6 +29,46 @@ afterEach(async () => {
 });
 
 describe("SqliteHousekeepingStore", () => {
+  it("serves a run's report as the door declares it, or not at all", async () => {
+    const hk = await store();
+    // The column holds whatever the build that wrote it reported, and a row
+    // outlives that build: the doors declare a flat object of scalars, so a
+    // row holding anything else is served as no report rather than as a
+    // shape no caller can read. All or nothing, because a report with half
+    // its counts removed reads as a run that did less than it did.
+    const report = async (value: unknown) => {
+      await hk.upsert("probe", 60_000, at(0));
+      await hk.claim("probe", at(0));
+      await hk.finish("probe", {
+        finishedAt: at(1),
+        outcome: "ok",
+        error: null,
+        result: value as Record<string, number> | null,
+        nextRunAt: at(60_000),
+      });
+      return (await hk.get("probe"))?.last_result;
+    };
+
+    expect(
+      await report({ deleted: 12, ok: true, status: null, note: "x" }),
+    ).toEqual({
+      deleted: 12,
+      ok: true,
+      status: null,
+      note: "x",
+    });
+    expect(await report({})).toEqual({});
+    expect(await report(null)).toBeNull();
+    // The witness for each refusal: the same write, with one value the
+    // declaration does not describe.
+    expect(await report({ deleted: { inner: 1 } })).toBeNull();
+    expect(await report({ good: 1, bad: { deep: true } })).toBeNull();
+    expect(await report({ deleted: [1, 2] })).toBeNull();
+    expect(await report(42)).toBeNull();
+    expect(await report([1, 2])).toBeNull();
+    expect(await report("swept")).toBeNull();
+  });
+
   it("keeps the earlier of an existing next_run_at and the boot's, and takes the new interval", async () => {
     const hk = await store();
     // A wake that arrived before a restart is earlier than the schedule the

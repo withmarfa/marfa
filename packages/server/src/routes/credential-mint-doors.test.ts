@@ -33,6 +33,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import {
   createTestContext,
+  inlineOpenApiRefs,
   request,
   seedOauthBearer,
   TEST_API_KEY_SALT,
@@ -410,7 +411,12 @@ describe("every way of asking for a credential is accounted for", () => {
   it("spec-visible secret-bearing operations each have a door row or a stated reason", async () => {
     const res = await request(ctx.app, "GET", "/openapi.json", {});
     expect(res.status).toBe(200);
-    const spec = (await res.json()) as {
+    // Resolved, because a response body carrying a secret reaches the
+    // document as a reference to a registered component: read unresolved,
+    // every operation looks as though it declares no properties at all and
+    // the sweep below finds nothing to classify.
+    const served = (await res.json()) as Record<string, unknown>;
+    const spec = inlineOpenApiRefs(served, served) as {
       paths: Record<
         string,
         Record<

@@ -26,12 +26,14 @@ import type {
   Storage,
 } from "../storage/interface.js";
 
-const OwnerSchema = z.object({
-  id: z.string(),
-  email: z.string(),
-  name: z.string(),
-  created_at: z.string().describe("ISO 8601 instant"),
-});
+const OwnerSchema = z
+  .object({
+    id: z.string(),
+    email: z.string(),
+    name: z.string(),
+    created_at: z.string().describe("ISO 8601 instant"),
+  })
+  .openapi("Owner");
 
 const CreateOwnerBodySchema = z.object({
   email: z.email().max(254),

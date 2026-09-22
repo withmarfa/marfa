@@ -1,18 +1,12 @@
 /**
  * The committed `openapi.json` is what the routes currently say.
  *
- * **Nothing checked this, and the drift it allows is silent in both
- * directions.** The spec is generated from the route definitions and committed
- * at the repository root, which is what an external consumer reads. A route
- * description edited without regenerating leaves the published file
- * describing a door that no longer behaves that way; a regeneration that does
- * not land leaves the same gap with the edit apparently done.
- *
- * The second half is not hypothetical. `generate:openapi` writes to **stdout**,
- * so regenerating means `... > openapi.json` and a run without the redirect
- * prints the whole spec and changes nothing — while exiting 0, which reads as
- * success, and the false claims that leaves are caught by eye or not at all
- * — which is what this file replaces.
+ * **The drift it catches is silent in both directions.** The document is
+ * generated from the route definitions and committed at the repository
+ * root, which is what an external consumer reads. A route description
+ * edited without regenerating leaves the published file describing a door
+ * that no longer behaves that way; a regeneration that does not land leaves
+ * the same gap with the edit apparently done.
  *
  * Compared as parsed JSON rather than as text, so the failure is about content
  * and not about a trailing newline. The generator is deterministic — a plain
@@ -39,7 +33,9 @@ describe("the committed OpenAPI spec", () => {
       ).sort();
     expect(pathsOf(committed)).toEqual(pathsOf(generated));
 
-    expect(committed).toEqual(generated);
+    expect(committed, "Run `pnpm generate` and commit the result.").toEqual(
+      generated,
+    );
   });
 
   it("is not empty, so the comparison above cannot pass on nothing", async () => {

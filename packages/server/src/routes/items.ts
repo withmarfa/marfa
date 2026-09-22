@@ -82,7 +82,11 @@ import {
   ItemSchema,
   ItemWithMetadataSchema,
   ItemDetailSchema,
-  MetadataSchema,
+  MetadataResponseSchema,
+  MergePolicySchema,
+  MergeStrategyEnum,
+  TierEnum,
+  VersionConflictErrorSchema,
   ALL_STATES,
   resolveStateFilter,
 } from "./_schemas.js";
@@ -112,36 +116,28 @@ const EDGE_SHORTHAND_KEY = /^(edge|backref)\[([^\]]+)\]$/;
 // no other route uses them.)
 // ---------------------------------------------------------------------------
 
-const ConflictSnapshotSchema = z.object({
-  version: z.number(),
-  properties: z.record(z.string(), z.unknown()),
-  // The version check covers these three beside the properties, so a
-  // collision can name one; without them here the refusal names a field
-  // the caller has no way to read either side of.
-  tier: z.enum(["library", "feed"]),
-  occurred_at: z.string(),
-  source_id: z.string().nullable(),
-});
+const ConflictSnapshotSchema = z
+  .object({
+    version: z.number(),
+    properties: z.record(z.string(), z.unknown()),
+    // The version check covers these three beside the properties, so a
+    // collision can name one; without them here the refusal names a field
+    // the caller has no way to read either side of.
+    tier: TierEnum,
+    occurred_at: z.string(),
+    source_id: z.string().nullable(),
+  })
+  .openapi("ConflictSnapshot");
 
-const MergeStrategySchema = z.enum(["last_writer_wins", "keep_both_copies"]);
-
-const MergePolicySchema = z.object({
-  fields: z.record(z.string(), MergeStrategySchema).optional(),
-  default: MergeStrategySchema.optional(),
-});
-
-const ConflictResponseSchema = z.object({
-  error: z.object({
-    code: z.literal("version_conflict"),
-    status: z.literal(409),
-    /** Prose for a person. Branch on `code`, never on this. */
-    message: z.string(),
-  }),
-  current: ConflictSnapshotSchema,
-  ancestor: ConflictSnapshotSchema,
-  conflicting_fields: z.array(z.string()),
-  merge_policy: MergePolicySchema,
-});
+const ConflictResponseSchema = z
+  .object({
+    error: VersionConflictErrorSchema,
+    current: ConflictSnapshotSchema,
+    ancestor: ConflictSnapshotSchema,
+    conflicting_fields: z.array(z.string()),
+    merge_policy: MergePolicySchema,
+  })
+  .openapi("ItemVersionConflict");
 
 /**
  * The refusal for a stale write that carried nothing to merge.
@@ -151,14 +147,12 @@ const ConflictResponseSchema = z.object({
  * absent is what a merge would need and this write has none of: there is no
  * ancestor to compare against and no field that could have collided.
  */
-const StaleVersionSchema = z.object({
-  error: z.object({
-    code: z.literal("version_conflict"),
-    status: z.literal(409),
-    message: z.string(),
-  }),
-  current: ConflictSnapshotSchema,
-});
+const StaleVersionSchema = z
+  .object({
+    error: VersionConflictErrorSchema,
+    current: ConflictSnapshotSchema,
+  })
+  .openapi("ItemStaleVersion");
 
 /**
  * The refusal for a write based on a version whose snapshot has been thinned
@@ -166,15 +160,19 @@ const StaleVersionSchema = z.object({
  * is no ancestor, so no field can be shown not to have collided, and a client
  * merging against an empty one spawns siblings holding text nobody typed.
  */
-const AncestorUnavailableSchema = z.object({
-  error: z.object({
-    code: z.literal("ancestor_unavailable"),
-    status: z.literal(409),
-    message: z.string(),
-  }),
-  current: ConflictSnapshotSchema,
-  requested_version: z.number(),
-});
+const AncestorUnavailableSchema = z
+  .object({
+    error: z
+      .object({
+        code: z.literal("ancestor_unavailable"),
+        status: z.literal(409),
+        message: z.string(),
+      })
+      .openapi("AncestorUnavailableError"),
+    current: ConflictSnapshotSchema,
+    requested_version: z.number(),
+  })
+  .openapi("ItemAncestorUnavailable");
 
 /**
  * Who resolves a collision on this write.
@@ -184,7 +182,9 @@ const AncestorUnavailableSchema = z.object({
  * to a request that asked for a resolution, which reads as "no conflict was
  * resolvable" rather than "nobody read your parameter".
  */
-const ConflictModeSchema = z.enum(["auto", "manual", "callback"]);
+const ConflictModeSchema = z
+  .enum(["auto", "manual", "callback"])
+  .openapi("ConflictMode");
 
 /**
  * The 200 for an update, widened by what the server did if it resolved a
@@ -194,7 +194,7 @@ const UpdatedItemSchema = ItemWithMetadataSchema.extend({
   conflict_resolution: z
     .object({
       fields: z.array(z.string()),
-      strategy: z.record(z.string(), MergeStrategySchema),
+      strategy: z.record(z.string(), MergeStrategyEnum),
       conflicted_copy_id: z.string().optional(),
     })
     .optional()
@@ -253,7 +253,7 @@ const createItemRoute = createRoute({
               .describe(
                 "Optional, and meaningful on one path: a `source_id` resolving a live row makes this write an upsert, and a version here makes that upsert conditional exactly as it is on the update door. Everywhere else it is ignored, because nothing is overwritten — a genuine create has no version to have read, and a repeated `id` or a natural key resolving a trashed row is acknowledged rather than written.",
               ),
-            tier: z.enum(["library", "feed"]).optional(),
+            tier: TierEnum.optional(),
             capture_latitude: z.number().optional(),
             capture_longitude: z.number().optional(),
             tags: z.array(z.string()).optional(),
@@ -689,7 +689,7 @@ const updateItemRoute = createRoute({
               ),
             /** Toggle the tier (`library` ↔ `feed`). Independent of the
              *  properties merge path — last-writer-wins. */
-            tier: z.enum(["library", "feed"]).optional(),
+            tier: TierEnum.optional(),
             /** Override the item's own time (ISO 8601).
              *  Last-writer-wins like `tier`. */
             occurred_at: z.string().optional(),
@@ -837,7 +837,7 @@ const getMetadataRoute = createRoute({
     200: {
       content: {
         "application/json": {
-          schema: z.object({ metadata: MetadataSchema }),
+          schema: MetadataResponseSchema,
         },
       },
       description: "Item metadata",
@@ -886,7 +886,7 @@ const putMetadataRoute = createRoute({
     200: {
       content: {
         "application/json": {
-          schema: z.object({ metadata: MetadataSchema }),
+          schema: MetadataResponseSchema,
         },
       },
       description: "Metadata replaced",
@@ -947,7 +947,7 @@ const patchMetadataRoute = createRoute({
     200: {
       content: {
         "application/json": {
-          schema: z.object({ metadata: MetadataSchema }),
+          schema: MetadataResponseSchema,
         },
       },
       description: "Metadata merged",
@@ -1010,7 +1010,7 @@ const addTagsRoute = createRoute({
     200: {
       content: {
         "application/json": {
-          schema: z.object({ metadata: MetadataSchema }),
+          schema: MetadataResponseSchema,
         },
       },
       description: "Tags added",
@@ -1065,7 +1065,7 @@ const removeTagRoute = createRoute({
     200: {
       content: {
         "application/json": {
-          schema: z.object({ metadata: MetadataSchema }),
+          schema: MetadataResponseSchema,
         },
       },
       description: "Tag removed",

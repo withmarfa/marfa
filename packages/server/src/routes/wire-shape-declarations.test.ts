@@ -33,11 +33,10 @@
  * larger gap and worth stating plainly because it is counter-intuitive: a
  * shape declared twice outside `_schemas.ts` is invisible to this guard,
  * which only sees a shape once somebody has already centralized it. What is
- * held here is the
- * *staying* centralized, not the *becoming* it. Three names are declared in
- * more than one route file today, and `_schemas.ts` records why each is left
- * where it is. Closing any of them is a change to those files rather than to
- * this one.
+ * held here is the *staying* centralized, not the *becoming* it. What
+ * catches a shape two route files describe identically is the document:
+ * `openapi-published.test.ts` refuses a shape written out twice, whether or
+ * not anybody has centralized it.
  */
 import { describe, it, expect } from "vitest";
 import { readdirSync, readFileSync } from "node:fs";
@@ -62,10 +61,16 @@ interface Declaration {
  * Formatting is Prettier's, which is what makes a line-oriented read of this
  * sound; the failure mode of a miss is a declaration this does not see,
  * never one it invents.
+ *
+ * A shape registered as a component reads `z\n  .object({ ... })\n
+ * .openapi("Name")` once Prettier has had it, so the whitespace between `z`
+ * and `.object` is part of the form rather than an oddity: without it the
+ * scan sees none of the shapes that carry a component name, which is most of
+ * them.
  */
 function declarationsIn(source: string): Declaration[] {
   const found: Declaration[] = [];
-  const opener = /(?:export )?const (\w+) = z\.object\(\{/g;
+  const opener = /(?:export )?const (\w+) = z\s*\.object\(\{/g;
   let match: RegExpExecArray | null;
   while ((match = opener.exec(source)) !== null) {
     const name = match[1];
@@ -113,6 +118,17 @@ describe("declarationsIn", () => {
     ).toEqual([{ name: "EdgeSchema", fields: ["id", "version"] }]);
   });
 
+  it("reads a declaration that carries a component name", () => {
+    // The form Prettier produces for `z.object({...}).openapi("Edge")`. A
+    // scan that misses it misses every centralized shape, and then has
+    // nothing to hold the route files against.
+    expect(
+      declarationsIn(
+        'const EdgeSchema = z\n  .object({\n    id: z.string(),\n  })\n  .openapi("Edge");',
+      ),
+    ).toEqual([{ name: "EdgeSchema", fields: ["id"] }]);
+  });
+
   it("does not count keys of a nested object as the schema's own", () => {
     // `EdgeConflictSchema` nests an `error` object. Counting `code` and
     // `status` as its fields would make it look like a different shape than
@@ -151,8 +167,8 @@ describe("each wire shape is declared once", () => {
     // The control. A scan that reads neither side passes every check below
     // while proving nothing, which reads exactly like a clean route layer.
     //
-    // **Counted in declarations, not in files.** A parser that opens all 86
-    // route files and returns nothing from each of them satisfies a count of
+    // **Counted in declarations, not in files.** A parser that opens every
+    // route file and returns nothing from each of them satisfies a count of
     // files completely, and every check below then holds over an empty list.
     // The unit tests above would catch a parser that broke on any input; they
     // would not catch one that works on the synthetic strings they pass it
