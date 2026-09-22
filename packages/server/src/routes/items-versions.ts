@@ -41,6 +41,14 @@ const listVersionsRoute = createRoute({
       },
       description: "Version history",
     },
+    400: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["invalid_id"]),
+        },
+      },
+      description: "The id is not a well-formed item id.",
+    },
     401: {
       content: {
         "application/json": {

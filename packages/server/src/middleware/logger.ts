@@ -1,7 +1,9 @@
 import { createMiddleware } from "hono/factory";
+import { matchedRoutes, routePath } from "hono/route";
 import { generateId } from "@withmarfa/shared";
 import { logs, SeverityNumber } from "@opentelemetry/api-logs";
 import type { AnyValue, AnyValueMap } from "@opentelemetry/api-logs";
+import type { Context } from "hono";
 import type { AppEnv } from "./auth.js";
 
 // ---------------------------------------------------------------------------
@@ -13,6 +15,13 @@ interface LogEntry {
   request_id: string;
   method: string;
   path: string;
+  /**
+   * The route template, in the document's spelling (`/items/{id}`), absent
+   * when the request was addressed to no route. `check:statuses` in the
+   * conformance suite reads it to find the operation a status belongs to,
+   * which the concrete path cannot name.
+   */
+  route?: string;
   status: number;
   duration_ms: number;
   key_id?: string;
@@ -521,6 +530,35 @@ export function serializeError(err: unknown, depth = 0): unknown {
 // Hono middleware — logs every request as JSON to stdout at completion
 // ---------------------------------------------------------------------------
 
+/** `/items/:id/purge` as the document spells it: `/items/{id}/purge`. */
+function toOpenApiPath(honoPath: string): string {
+  return honoPath.replace(/:([A-Za-z0-9_]+)/g, "{$1}");
+}
+
+/** The pattern every universal middleware is mounted on, which names no door. */
+function isUniversal(path: string): boolean {
+  return path === "" || path === "*" || path === "/*";
+}
+
+/**
+ * Read after `next()`, where `c.req.routeIndex` names the handler that
+ * answered. The last matched route would be wrong: for `/auth/sign-in` that
+ * is the `/auth/*` catch-all mounted after it.
+ *
+ * The fallback covers a universal middleware refusing without calling
+ * `next()` — the body cap's 413, the limiter's 429. The router matched the
+ * door, so the refusal belongs to it.
+ */
+function matchedRoute(c: Context<AppEnv>): string | undefined {
+  const answered = routePath(c);
+  if (!isUniversal(answered)) return toOpenApiPath(answered);
+  const addressed = matchedRoutes(c)
+    .map((route) => route.path)
+    .filter((path) => !isUniversal(path))
+    .at(-1);
+  return addressed === undefined ? undefined : toOpenApiPath(addressed);
+}
+
 export function loggerMiddleware() {
   return createMiddleware<AppEnv>(async (c, next) => {
     const requestId = resolveRequestId(c.req.header("X-Request-ID"));
@@ -531,11 +569,13 @@ export function loggerMiddleware() {
     await next();
     const duration = performance.now() - start;
 
+    const route = matchedRoute(c);
     const entry: LogEntry = {
       timestamp: new Date().toISOString(),
       request_id: requestId,
       method: c.req.method,
       path: c.req.path,
+      ...(route === undefined ? {} : { route }),
       status: c.res.status,
       duration_ms: Math.round(duration * 100) / 100,
     };

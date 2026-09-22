@@ -9,11 +9,84 @@ import { requireApiUrl } from "./setup.js";
  * The document is read exactly as written. Nothing here normalizes it: a
  * position the server means to be nullable has to say so in the dialect the
  * document declares, or the body that carries `null` there fails.
+ *
+ * Validation is closed: see {@link closed}. An open validator passes a body
+ * carrying a field the document never declared.
  */
 
 interface OpenApiDocument {
   paths: Record<string, Record<string, Operation>>;
   components?: Record<string, unknown>;
+}
+
+type JsonSchema = Record<string, unknown>;
+
+/**
+ * The document has no reference cycle, so this terminates without a seen
+ * set. An unresolvable reference throws: read as an empty schema it would
+ * make the body pass whatever it carried.
+ */
+function inline(node: unknown, document: OpenApiDocument): unknown {
+  if (Array.isArray(node)) return node.map((item) => inline(item, document));
+  if (node === null || typeof node !== "object") return node;
+
+  const record = node as JsonSchema;
+  const ref = record.$ref;
+  if (typeof ref === "string") {
+    const target = ref
+      .replace(/^#\//, "")
+      .split("/")
+      .reduce<unknown>(
+        (at, segment) =>
+          at === null || typeof at !== "object"
+            ? undefined
+            : (at as Record<string, unknown>)[
+                segment.replace(/~1/g, "/").replace(/~0/g, "~")
+              ],
+        document,
+      );
+    if (target === undefined) {
+      throw new Error(`the document has no ${ref} to resolve`);
+    }
+    return inline(target, document);
+  }
+
+  const out: JsonSchema = {};
+  for (const [key, value] of Object.entries(record)) {
+    out[key] = inline(value, document);
+  }
+  return out;
+}
+
+/**
+ * Refuse a property the schema does not declare.
+ *
+ * Left open: a property bag (no `properties`) and a declared record (its own
+ * `additionalProperties`), both of which are shapes the type's schema governs
+ * rather than the door's. Also left open are the immediate branches of an
+ * `allOf`, where each branch describes part of one object and closing them
+ * would leave a body that no branch alone admits.
+ */
+function closed(node: unknown, isAllOfBranch = false): unknown {
+  if (Array.isArray(node)) return node.map((item) => closed(item));
+  if (node === null || typeof node !== "object") return node;
+
+  const record = node as JsonSchema;
+  const out: JsonSchema = {};
+  for (const [key, value] of Object.entries(record)) {
+    out[key] =
+      key === "allOf" && Array.isArray(value)
+        ? value.map((branch) => closed(branch, true))
+        : closed(value);
+  }
+  if (
+    !isAllOfBranch &&
+    typeof out.properties === "object" &&
+    out.additionalProperties === undefined
+  ) {
+    out.additionalProperties = false;
+  }
+  return out;
 }
 
 interface Operation {
@@ -36,9 +109,7 @@ function fetchOpenApi(): Promise<OpenApiDocument> {
         `GET /openapi.json answered ${String(response.status)}; the served document is required`,
       );
     }
-    const doc = (await response.json()) as OpenApiDocument;
-    ajv.addSchema(doc as unknown as object, "openapi");
-    return doc;
+    return (await response.json()) as OpenApiDocument;
   })();
   return cached;
 }
@@ -67,10 +138,6 @@ export async function publishedOperations(): Promise<PublishedOperation[]> {
     }
   }
   return out;
-}
-
-function pointer(segment: string): string {
-  return segment.replace(/~/g, "~0").replace(/\//g, "~1");
 }
 
 /**
@@ -112,9 +179,9 @@ export async function expectMatchesSchema(
   const key = `${method} ${path} ${String(status)}`;
   let validate = compiled.get(key);
   if (!validate) {
-    validate = ajv.compile({
-      $ref: `openapi#/paths/${pointer(path)}/${method.toLowerCase()}/responses/${String(status)}/content/${pointer(contentType)}/schema`,
-    });
+    validate = ajv.compile(
+      closed(inline(schema, doc)) as Record<string, unknown>,
+    );
     compiled.set(key, validate);
   }
   if (!validate(body)) {

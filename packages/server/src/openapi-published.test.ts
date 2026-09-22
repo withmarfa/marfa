@@ -1,11 +1,7 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
 import { buildPublishedOpenAPISpec } from "./openapi-published.js";
-import {
-  EXTRA_PATHS,
-  RATE_LIMITED_REFUSAL_NAME,
-  RATE_LIMITED_REFUSAL_SCHEMA,
-} from "./openapi-finalize.js";
+import { EXTRA_PATHS, CHAIN_REFUSALS } from "./openapi-finalize.js";
 import { makeErrorResponseSchema } from "./openapi.js";
 import { createTestContext, inlineOpenApiRefs, request } from "./test-utils.js";
 
@@ -181,47 +177,56 @@ describe("published OpenAPI spec", () => {
     return found;
   }
 
-  it("declares the limiter's refusal as a reflected one would", () => {
-    // The limiter is middleware across every route, so no route declares
-    // the 429 and the refusal is written out by hand in the finalizer.
-    // What a reflected refusal looks like is not a matter of opinion: it is
-    // whatever `makeErrorResponseSchema` produces, so one is built here and
-    // the two are compared. Reflected through its own app rather than read
-    // out of the document, because no door answers this code.
-    const probe = new OpenAPIHono();
-    probe.openapi(
-      createRoute({
-        operationId: "probeRateLimited",
-        method: "get",
-        path: "/probe",
-        responses: {
-          429: {
-            content: {
-              "application/json": {
-                schema: makeErrorResponseSchema(["rate_limited"]),
+  it("declares the chain's own refusals as a reflected one would", () => {
+    // The credential gate, the body-size cap and the limiter are each
+    // middleware across a set of routes, so the operations that answer them
+    // are decided by where the middleware sits and the refusals are written
+    // out by hand in the finalizer. What a reflected refusal looks like is
+    // not a matter of opinion: it is whatever `makeErrorResponseSchema`
+    // produces, so one is built here and the two are compared. Reflected
+    // through its own app rather than read out of the document, because the
+    // point is the shape a route would have registered.
+    for (const refusal of Object.values(CHAIN_REFUSALS)) {
+      const probe = new OpenAPIHono();
+      probe.openapi(
+        createRoute({
+          operationId: `probe${refusal.name}`,
+          method: "get",
+          path: "/probe",
+          responses: {
+            400: {
+              content: {
+                "application/json": {
+                  schema: makeErrorResponseSchema(
+                    refusal.codes as unknown as [string, ...string[]],
+                  ),
+                },
               },
+              description: "Refused by the chain.",
             },
-            description: "Refused by the limiter.",
           },
-        },
-      }),
-      (c) =>
-        c.json({ error: { code: "rate_limited" as const, message: "" } }, 429),
-    );
-    const reflected = (
-      probe.getOpenAPI31Document({
-        openapi: "3.1.0",
-        info: { title: "probe", version: "1" },
-      }).components as { schemas: Record<string, unknown> }
-    ).schemas[RATE_LIMITED_REFUSAL_NAME];
+        }),
+        (c) => c.json({ error: { code: refusal.codes[0], message: "" } }, 400),
+      );
+      const reflected = (
+        probe.getOpenAPI31Document({
+          openapi: "3.1.0",
+          info: { title: "probe", version: "1" },
+        }).components as { schemas: Record<string, unknown> }
+      ).schemas[refusal.name];
 
-    expect(reflected, "the reflected refusal was not registered").toBeDefined();
-    expect(RATE_LIMITED_REFUSAL_SCHEMA).toEqual(reflected);
-    expect(
-      (document.components as { schemas: Record<string, unknown> }).schemas[
-        RATE_LIMITED_REFUSAL_NAME
-      ],
-    ).toEqual(reflected);
+      expect(
+        reflected,
+        `${refusal.name} was not registered by the probe`,
+      ).toBeDefined();
+      expect(refusal.schema, refusal.name).toEqual(reflected);
+      expect(
+        (document.components as { schemas: Record<string, unknown> }).schemas[
+          refusal.name
+        ],
+        refusal.name,
+      ).toEqual(reflected);
+    }
   });
 
   it("registers no component that admits a null it cannot answer", () => {

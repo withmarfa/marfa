@@ -20,6 +20,7 @@
  */
 
 import { IDEMPOTENT_WRITE_DOORS } from "./middleware/idempotency.js";
+import { refusalComponentName } from "./openapi.js";
 
 // Loose typing — the document is a plain OpenAPI 3.1 object. `paths` is typed
 // `object` (not a precise Record) so the concrete `OpenAPIObject`, whose
@@ -152,150 +153,13 @@ const PUBLIC_TAGS = [
  * platform-internal — they still serve, but app developers never call them.
  * A new internal route adds its operationId here.
  */
-const INTERNAL_OPERATION_IDS = new Set<string>([
+export const INTERNAL_OPERATION_IDS = new Set<string>([
   // metrics.ts — server metrics
   "getServerMetrics",
   // blobs.ts — the target of an instance-served link, which
   // `GET /blobs/{hash}/url` hands out; nothing calls it by name
   "fetchBlob",
 ]);
-
-/**
- * Consumer routes defined as plain Hono handlers, invisible to the
- * `createRoute` reflection. Documented here so the reference is complete.
- */
-export const EXTRA_PATHS: Record<string, Record<string, unknown>> = {
-  "/events": {
-    get: {
-      operationId: "streamEvents",
-      tags: ["Events"],
-      summary: "Stream change events",
-      description:
-        "Opens a Server-Sent Events stream of item and edge changes the caller can read. Send `Last-Event-ID` to replay events missed across a reconnect.\n\n" +
-        'The stream opens with a `stream_cursor` frame, carrying `{ "type": "stream_cursor", "cursor": "<event id>" }` — the log position the stream opened at. It does not wait for anything to happen, so a client that subscribes and then reads a snapshot holds a resume point from the first moment rather than waiting for an event to tell it where it is. The frame deliberately carries no SSE `id:` field: on a reconnect it precedes the backlog, and a client adopting it as its cursor there would discard exactly the events it reconnected for.\n\n' +
-        "Treat the frame as the first one delivered rather than as guaranteed. Reading the head is bounded, so a stream opened while the database is not answering carries no cursor instead of holding its events back, and a client that receives none proceeds as it would have before the frame existed. Do not gate hydration on its arrival.\n\n" +
-        "The cursor is a position in one ascending sequence, and `type` and `edges` select a subset of that sequence rather than reordering it, so a cursor taken under one filter can be replayed under another without skipping or repeating a row.\n\n" +
-        'A stream that can no longer deliver what it opened with sends a terminal `stream_incomplete` frame \u2014 `{ "type": "stream_incomplete", "reason": "\u2026", "cursor": "<event id>" | null }` \u2014 and closes. `reason` says which of a failed catch-up, an overflowing catch-up buffer, or a failed item or edge subscription ended it. Nothing after the gap is ever sent, so the last `id:` received is still the last event held and the recovery is to reconnect with it: the frame carries no `id:` of its own for that reason, and `cursor` repeats the position for a client that is not tracking one. That is the opposite of `catchup_too_old`, which says the log can no longer serve the cursor at all and the client has to re-read state instead.',
-      security: [{ bearerAuth: [] }],
-      parameters: [
-        {
-          name: "type",
-          in: "query",
-          required: false,
-          schema: { type: "string" },
-          description:
-            "Comma-separated item types, up to 10 entries, resolved exactly as the same parameter on `/items`, `/search` and `/export`. A named type covers its subtree, so `core.media` delivers `core.media.song`, and a type that declares `core.media` as its parent answers too even when its identifier sits in another namespace. The explicit `core.media.*` spelling means the same thing. The global `*` is rejected rather than accepted, as it is on those surfaces \u2014 to receive everything, omit the parameter \u2014 and so is any entry outside the type-identifier grammar. Edge events are unaffected: they carry no item type, so this parameter says nothing about them.",
-        },
-        {
-          name: "edges",
-          in: "query",
-          required: false,
-          schema: { type: "string", enum: ["all", "none"], default: "all" },
-          description:
-            "Whether edge lifecycle events reach this stream. Defaults to `all`, including under a `type` filter. Any other value is rejected rather than ignored. It is your own parameter and narrows nothing else: every edge frame is separately held to the two permissions `GET /edges/{id}` asks for, read on the edge type and read on the source item's type, on a replay exactly as on a live frame.",
-        },
-        {
-          name: "Last-Event-ID",
-          in: "header",
-          required: false,
-          schema: { type: "string" },
-          description:
-            "Resume from this event id, replaying events the client missed.",
-        },
-      ],
-      responses: {
-        "200": {
-          description: "A `text/event-stream` of item and edge change events.",
-          content: { "text/event-stream": { schema: { type: "string" } } },
-        },
-        "400": {
-          description:
-            "The filter cannot be honored: more than 10 types, a `type` entry that is the global `*` or is outside the type-identifier grammar, or an `edges` value outside the enum.",
-        },
-        "401": { description: "Unauthorized" },
-        "403": {
-          description:
-            "The credential's type permissions reach no type, so there is nothing on the data plane it may read. A credential that reaches some types opens a stream narrowed to them rather than being refused.",
-        },
-      },
-    },
-  },
-  "/auth/oauth2/register": {
-    post: {
-      operationId: "registerOAuthClient",
-      tags: ["Auth"],
-      summary: "Register an OAuth client",
-      description:
-        "Dynamic Client Registration (RFC 7591), served by the authorization server's provider. Registers an OAuth client and returns its issued `client_id`. Unauthenticated. A registration is a `web` client unless `application_type` says `native`: a web client's redirect URIs must be https off the loopback, a native client may use http on `localhost`, `127.0.0.1` or `[::1]`. A client is confidential and issued a `client_secret` unless `token_endpoint_auth_method` is `none`. A requested `scope` is validated against the server's allowlist, and the registered ceiling is that whole allowlist whatever was requested; the consent screen is where a grant is narrowed. The `client_credentials` grant is not supported: a machine caller uses an API key, which the keys surface can list, narrow and revoke.",
-      requestBody: {
-        required: true,
-        content: {
-          "application/json": {
-            schema: {
-              type: "object",
-              properties: {
-                redirect_uris: {
-                  type: "array",
-                  items: { type: "string" },
-                  description: "Required for the authorization_code grant.",
-                },
-                grant_types: {
-                  type: "array",
-                  items: { type: "string" },
-                  description: 'Defaults to ["authorization_code"].',
-                },
-                response_types: {
-                  type: "array",
-                  items: { type: "string" },
-                  description: 'Defaults to ["code"].',
-                },
-                client_name: { type: "string" },
-                application_type: {
-                  type: "string",
-                  description: 'Defaults to "web".',
-                },
-                scope: { type: "string" },
-                token_endpoint_auth_method: {
-                  type: "string",
-                  description: 'Defaults to "client_secret_basic".',
-                },
-              },
-            },
-          },
-        },
-      },
-      responses: {
-        "201": {
-          description: "The registered client, including the issued client_id.",
-          content: {
-            "application/json": {
-              schema: {
-                type: "object",
-                properties: {
-                  client_id: { type: "string" },
-                  client_secret: {
-                    type: "string",
-                    description: "Confidential clients only.",
-                  },
-                  client_id_issued_at: { type: "integer" },
-                  scope: { type: "string" },
-                  redirect_uris: { type: "array", items: { type: "string" } },
-                  grant_types: { type: "array", items: { type: "string" } },
-                  response_types: { type: "array", items: { type: "string" } },
-                  token_endpoint_auth_method: { type: "string" },
-                },
-              },
-            },
-          },
-        },
-        "400": {
-          description:
-            "An RFC 7591 error object (invalid_client_metadata, invalid_redirect_uri or invalid_scope).",
-        },
-      },
-    },
-  },
-};
 
 /**
  * The `Idempotency-Key` header, added to every door that honors it.
@@ -397,52 +261,164 @@ const UNIVERSAL_RESPONSE_HEADERS = [
 ];
 
 /**
- * The component name for the limiter's refusal, and the shape behind it.
+ * A refusal middleware answers on behalf of the doors it is mounted over.
  *
- * Every other refusal is reflected from the route that answers it and
- * registered by `makeErrorResponseSchema`. This one cannot be: the limiter
- * is middleware mounted across `*`, so every operation can answer 429 and no
- * route declares it. Written out here it has to say what a reflected
- * refusal says, and `openapi-published.test.ts` builds one from
- * `makeErrorResponseSchema(["rate_limited"])` and compares, rather than
- * leaving the two to agree by eye.
+ * No route declares these, so they are written out rather than reflected;
+ * `openapi-published.test.ts` compares each against a reflected
+ * `makeErrorResponseSchema(codes)` so the two cannot drift.
  */
-export const RATE_LIMITED_REFUSAL_NAME = "RateLimitedRefusal";
+export interface ChainRefusal {
+  codes: readonly [string, ...string[]];
+  name: string;
+  schema: Record<string, unknown>;
+  response: Record<string, unknown>;
+}
 
-export const RATE_LIMITED_REFUSAL_SCHEMA = {
-  type: "object",
-  properties: {
-    error: {
+const WRITTEN_REFUSALS: ChainRefusal[] = [];
+
+function chainRefusal(
+  codes: readonly [string, ...string[]],
+  description: string,
+): ChainRefusal {
+  const name = refusalComponentName(codes);
+  const refusal: ChainRefusal = {
+    codes,
+    name,
+    schema: {
       type: "object",
       properties: {
-        code: { type: "string", enum: ["rate_limited"] },
-        message: { type: "string" },
-        details: { type: "object", additionalProperties: {} },
+        error: {
+          type: "object",
+          properties: {
+            code: { type: "string", enum: [...codes].sort() },
+            message: { type: "string" },
+            details: { type: "object", additionalProperties: {} },
+          },
+          required: ["code", "message"],
+        },
       },
-      required: ["code", "message"],
+      required: ["error"],
     },
-  },
-  required: ["error"],
-};
+    response: {
+      description,
+      content: {
+        "application/json": {
+          schema: { $ref: `#/components/schemas/${name}` },
+        },
+      },
+    },
+  };
+  WRITTEN_REFUSALS.push(refusal);
+  return refusal;
+}
 
 /**
- * The rate limiter's refusal, added to every operation.
+ * Applied as floors: a route that declares the status itself keeps its own.
  *
- * Declared here rather than on each route for the same reason the
- * `Idempotency-Key` parameter is: the limiter is middleware mounted across
- * `*`, so every operation can answer 429 and not one of them said so.
- * Without this declaration, the `Retry-After` header has nowhere to hang —
- * a header is declared on a response, and the response was missing too.
+ * The 401 belongs here because it is the credential gate's answer, hung off
+ * the route's `security` by `createOpenAPIRouter` rather than raised by the
+ * handler. Six doors were missing the 401 they have always answered.
  */
-const RATE_LIMITED_RESPONSE = {
-  description:
+export const CHAIN_REFUSALS = {
+  unauthorized: chainRefusal(
+    ["unauthorized"],
+    "No credential, or one this server does not accept. Every operation that declares a security scheme answers this before it reads the path, the query or the body.",
+  ),
+  requestTooLarge: chainRefusal(
+    ["request_too_large"],
+    "The request body is over the cap this deployment sets. Refused by the body-size guard before the handler reads anything, from `Content-Length` when the request declares one and from a streaming counter when it does not.",
+  ),
+  rateLimited: chainRefusal(
+    ["rate_limited"],
     "Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting.",
-  content: {
-    "application/json": {
-      schema: { $ref: `#/components/schemas/${RATE_LIMITED_REFUSAL_NAME}` },
-    },
+  ),
+} as const;
+
+/** The body-size guard's exemption, as `app.ts` spells it: these stream to disk. */
+function bodyIsCapped(path: string): boolean {
+  return !path.startsWith("/blobs") && path !== "/admin/restore-archive";
+}
+
+function declaresSecurity(operation: Record<string, unknown>): boolean {
+  const security = operation.security;
+  return Array.isArray(security) && security.length > 0;
+}
+
+/**
+ * What the idempotency middleware answers on the doors that honor the header.
+ *
+ * Declared beside the `Idempotency-Key` parameter, and from the same table,
+ * so a door cannot advertise the header without declaring what sending it
+ * can be refused with.
+ */
+const IDEMPOTENCY_REFUSALS: {
+  status: string;
+  refusal: ChainRefusal;
+  /**
+   * `floor` where the code is already inside whatever the door declares for
+   * the status — `openapi-response-headers.test.ts` holds that — and
+   * `branch` where the door answers the status with a shape of its own.
+   */
+  merge: "floor" | "branch";
+}[] = [
+  {
+    status: "400",
+    merge: "floor",
+    refusal: chainRefusal(
+      ["validation_error"],
+      "`Idempotency-Key` is empty or longer than 255 characters.",
+    ),
   },
-};
+  {
+    status: "409",
+    merge: "branch",
+    refusal: chainRefusal(
+      ["idempotency_key_in_flight"],
+      "A request carrying this `Idempotency-Key` is still being processed. Nothing was written; retry.",
+    ),
+  },
+  {
+    status: "422",
+    merge: "floor",
+    refusal: chainRefusal(
+      ["idempotency_key_reused", "idempotency_result_not_retained"],
+      "The key names a different request from the one it was first used for, or the first attempt's response was too large to retain and cannot be replayed. Neither repeated the write.",
+    ),
+  },
+];
+
+/**
+ * Add a refusal to a status the operation already answers with something
+ * else, as a further branch rather than by rewriting what is there.
+ */
+function withExtraBranch(
+  response: unknown,
+  refusal: ChainRefusal,
+): Record<string, unknown> {
+  const existing = response as Record<string, unknown> & {
+    content?: Record<string, { schema?: Record<string, unknown> }>;
+  };
+  const media = existing.content?.["application/json"];
+  const schema = media?.schema;
+  if (media === undefined || schema === undefined) return existing;
+
+  const added = { $ref: `#/components/schemas/${refusal.name}` };
+  const branches: unknown[] = Array.isArray(schema.anyOf)
+    ? (schema.anyOf as unknown[])
+    : [schema];
+  if (
+    branches.some((branch) => (branch as { $ref?: string }).$ref === added.$ref)
+  ) {
+    return existing;
+  }
+  return {
+    ...existing,
+    content: {
+      ...existing.content,
+      "application/json": { ...media, schema: { anyOf: [...branches, added] } },
+    },
+  };
+}
 
 /**
  * Responses that answer with an error status without passing through the
@@ -530,6 +506,176 @@ function withResponseHeaders(
   return { ...operation, responses: next };
 }
 
+/**
+ * Consumer routes defined as plain Hono handlers, invisible to the
+ * `createRoute` reflection. Documented here so the reference is complete.
+ *
+ * Their refusals are written out for the same reason the route is: there is
+ * no `createRoute` to reflect one from.
+ */
+export const EXTRA_PATHS: Record<string, Record<string, unknown>> = {
+  "/events": {
+    get: {
+      operationId: "streamEvents",
+      tags: ["Events"],
+      summary: "Stream change events",
+      description:
+        "Opens a Server-Sent Events stream of item and edge changes the caller can read. Send `Last-Event-ID` to replay events missed across a reconnect.\n\n" +
+        'The stream opens with a `stream_cursor` frame, carrying `{ "type": "stream_cursor", "cursor": "<event id>" }` — the log position the stream opened at. It does not wait for anything to happen, so a client that subscribes and then reads a snapshot holds a resume point from the first moment rather than waiting for an event to tell it where it is. The frame deliberately carries no SSE `id:` field: on a reconnect it precedes the backlog, and a client adopting it as its cursor there would discard exactly the events it reconnected for.\n\n' +
+        "Treat the frame as the first one delivered rather than as guaranteed. Reading the head is bounded, so a stream opened while the database is not answering carries no cursor instead of holding its events back, and a client that receives none proceeds as it would have before the frame existed. Do not gate hydration on its arrival.\n\n" +
+        "The cursor is a position in one ascending sequence, and `type` and `edges` select a subset of that sequence rather than reordering it, so a cursor taken under one filter can be replayed under another without skipping or repeating a row.\n\n" +
+        'A stream that can no longer deliver what it opened with sends a terminal `stream_incomplete` frame \u2014 `{ "type": "stream_incomplete", "reason": "\u2026", "cursor": "<event id>" | null }` \u2014 and closes. `reason` says which of a failed catch-up, an overflowing catch-up buffer, or a failed item or edge subscription ended it. Nothing after the gap is ever sent, so the last `id:` received is still the last event held and the recovery is to reconnect with it: the frame carries no `id:` of its own for that reason, and `cursor` repeats the position for a client that is not tracking one. That is the opposite of `catchup_too_old`, which says the log can no longer serve the cursor at all and the client has to re-read state instead.',
+      security: [{ bearerAuth: [] }],
+      parameters: [
+        {
+          name: "type",
+          in: "query",
+          required: false,
+          schema: { type: "string" },
+          description:
+            "Comma-separated item types, up to 10 entries, resolved exactly as the same parameter on `/items`, `/search` and `/export`. A named type covers its subtree, so `core.media` delivers `core.media.song`, and a type that declares `core.media` as its parent answers too even when its identifier sits in another namespace. The explicit `core.media.*` spelling means the same thing. The global `*` is rejected rather than accepted, as it is on those surfaces \u2014 to receive everything, omit the parameter \u2014 and so is any entry outside the type-identifier grammar. Edge events are unaffected: they carry no item type, so this parameter says nothing about them.",
+        },
+        {
+          name: "edges",
+          in: "query",
+          required: false,
+          schema: { type: "string", enum: ["all", "none"], default: "all" },
+          description:
+            "Whether edge lifecycle events reach this stream. Defaults to `all`, including under a `type` filter. Any other value is rejected rather than ignored. It is your own parameter and narrows nothing else: every edge frame is separately held to the two permissions `GET /edges/{id}` asks for, read on the edge type and read on the source item's type, on a replay exactly as on a live frame.",
+        },
+        {
+          name: "Last-Event-ID",
+          in: "header",
+          required: false,
+          schema: { type: "string" },
+          description:
+            "Resume from this event id, replaying events the client missed.",
+        },
+      ],
+      responses: {
+        "200": {
+          description: "A `text/event-stream` of item and edge change events.",
+          content: { "text/event-stream": { schema: { type: "string" } } },
+        },
+        "400": chainRefusal(
+          ["validation_error"],
+          "The filter cannot be honored: more than 10 types, a `type` entry that is the global `*` or is outside the type-identifier grammar, or an `edges` value outside the enum.",
+        ).response,
+        "403": chainRefusal(
+          ["type_not_permitted"],
+          "The credential's type permissions reach no type, so there is nothing on the data plane it may read. A credential that reaches some types opens a stream narrowed to them rather than being refused.",
+        ).response,
+        "503": chainRefusal(
+          ["stream_capacity_exhausted"],
+          "This instance is already serving its maximum number of live viewers. Only a deployment that sets a viewer cap answers this.",
+        ).response,
+      },
+    },
+  },
+  "/auth/oauth2/register": {
+    post: {
+      operationId: "registerOAuthClient",
+      tags: ["Auth"],
+      summary: "Register an OAuth client",
+      description:
+        "Dynamic Client Registration (RFC 7591), served by the authorization server's provider. Registers an OAuth client and returns its issued `client_id`. Unauthenticated. A registration is a `web` client unless `application_type` says `native`: a web client's redirect URIs must be https off the loopback, a native client may use http on `localhost`, `127.0.0.1` or `[::1]`. A client is confidential and issued a `client_secret` unless `token_endpoint_auth_method` is `none`. A requested `scope` is validated against the server's allowlist, and the registered ceiling is that whole allowlist whatever was requested; the consent screen is where a grant is narrowed. The `client_credentials` grant is not supported: a machine caller uses an API key, which the keys surface can list, narrow and revoke.",
+      requestBody: {
+        required: true,
+        content: {
+          "application/json": {
+            schema: {
+              type: "object",
+              properties: {
+                redirect_uris: {
+                  type: "array",
+                  items: { type: "string" },
+                  description: "Required for the authorization_code grant.",
+                },
+                grant_types: {
+                  type: "array",
+                  items: { type: "string" },
+                  description: 'Defaults to ["authorization_code"].',
+                },
+                response_types: {
+                  type: "array",
+                  items: { type: "string" },
+                  description: 'Defaults to ["code"].',
+                },
+                client_name: { type: "string" },
+                application_type: {
+                  type: "string",
+                  description: 'Defaults to "web".',
+                },
+                scope: { type: "string" },
+                token_endpoint_auth_method: {
+                  type: "string",
+                  description: 'Defaults to "client_secret_basic".',
+                },
+              },
+            },
+          },
+        },
+      },
+      responses: {
+        "201": {
+          description: "The registered client, including the issued client_id.",
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                properties: {
+                  client_id: { type: "string" },
+                  client_secret: {
+                    type: "string",
+                    description: "Confidential clients only.",
+                  },
+                  client_id_issued_at: { type: "integer" },
+                  scope: { type: "string" },
+                  redirect_uris: { type: "array", items: { type: "string" } },
+                  grant_types: { type: "array", items: { type: "string" } },
+                  response_types: { type: "array", items: { type: "string" } },
+                  token_endpoint_auth_method: { type: "string" },
+                  client_secret_expires_at: {
+                    type: "integer",
+                    description: "0 for a secret that does not expire.",
+                  },
+                  client_name: { type: "string" },
+                  application_type: { type: "string" },
+                  disabled: { type: "boolean" },
+                  dpop_bound_access_tokens: { type: "boolean" },
+                },
+              },
+            },
+          },
+        },
+        "400": {
+          description:
+            "An RFC 7591 error object rather than this server's envelope, because the registration door answers the RFC's shape to clients written against it.",
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                properties: {
+                  error: {
+                    type: "string",
+                    enum: [
+                      "invalid_client_metadata",
+                      "invalid_redirect_uri",
+                      "invalid_scope",
+                    ],
+                  },
+                  error_description: { type: "string" },
+                },
+                required: ["error"],
+              },
+            },
+          },
+        },
+      },
+    },
+  },
+};
+
 /** Shape the reflected document into the published public reference. */
 export function finalizeOpenAPISpec<T extends OpenAPIDoc>(spec: T): T {
   spec.tags = PUBLIC_TAGS;
@@ -594,7 +740,22 @@ export function finalizeOpenAPISpec<T extends OpenAPIDoc>(spec: T): T {
       const responses = {
         ...((operation.responses as Record<string, unknown> | undefined) ?? {}),
       };
-      responses["429"] ??= RATE_LIMITED_RESPONSE;
+      if (declaresSecurity(operation)) {
+        responses["401"] ??= CHAIN_REFUSALS.unauthorized.response;
+      }
+      if (bodyIsCapped(pathKey)) {
+        responses["413"] ??= CHAIN_REFUSALS.requestTooLarge.response;
+      }
+      responses["429"] ??= CHAIN_REFUSALS.rateLimited.response;
+      if (IDEMPOTENT_OPERATIONS.has(`${method} ${pathKey}`)) {
+        for (const { status, refusal, merge } of IDEMPOTENCY_REFUSALS) {
+          if (responses[status] === undefined) {
+            responses[status] = refusal.response;
+          } else if (merge === "branch") {
+            responses[status] = withExtraBranch(responses[status], refusal);
+          }
+        }
+      }
       withHeaders[method] = withResponseHeaders(
         { ...operation, responses },
         IDEMPOTENT_OPERATIONS.has(`${method} ${pathKey}`),
@@ -604,14 +765,22 @@ export function finalizeOpenAPISpec<T extends OpenAPIDoc>(spec: T): T {
     nextPaths[pathKey] = withHeaders;
   }
 
+  // The chain's own refusals, added only where no route already registered
+  // the shape. `unauthorized` is registered by the seventy doors that
+  // declare it themselves, and a second object under one name is a
+  // component whose meaning is whichever arrived first.
+  const schemas: Record<string, unknown> = {
+    ...((spec.components as { schemas?: Record<string, unknown> } | undefined)
+      ?.schemas ?? {}),
+  };
+  for (const refusal of WRITTEN_REFUSALS) {
+    schemas[refusal.name] ??= refusal.schema;
+  }
+
   spec.components = {
     ...(spec.components ?? {}),
     headers: RESPONSE_HEADER_COMPONENTS,
-    schemas: {
-      ...((spec.components as { schemas?: Record<string, unknown> } | undefined)
-        ?.schemas ?? {}),
-      [RATE_LIMITED_REFUSAL_NAME]: RATE_LIMITED_REFUSAL_SCHEMA,
-    },
+    schemas,
   };
 
   spec.paths = nextPaths;

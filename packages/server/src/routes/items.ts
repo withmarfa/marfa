@@ -585,7 +585,7 @@ const getItemRoute = createRoute({
   tags: ["Items"],
   summary: "Get an item",
   description:
-    "Returns a single item with its metadata layer and outbound edges hydrated inline; extensions are not included. An item the caller cannot see returns 404 rather than 403, so the server never leaks existence.\n\n" +
+    "Returns a single item with its metadata layer and outbound edges hydrated inline; extensions are not included. A row that is not stored answers 404. A row whose type the credential's type map does not reach answers `403 type_not_permitted`, which is read after the row, so the two are distinguishable.\n\n" +
     "`?include=` widens the response with the item's 1-hop neighborhood in one round trip instead of a per-section fan-out: `backrefs` adds inbound edges grouped by type (same block shape as `edges`, capped + cursored per type); `neighbors` adds the far-end items of the item's edges (outbound targets, plus inbound sources when `backrefs` is also requested), each with its metadata and filtered to what the caller may read; `versions` adds the item's version snapshots newest-first. Tokens are comma-separated and compose.\n\n" +
     "Every edge carried on a response is held to the two permissions `GET /edges/{id}` asks for: read on the source item's type, and read on the edge type. A block whose edges all fail is left out rather than returned empty, so a response can carry fewer kinds of relationship than the item has.",
   security: [{ bearerAuth: [] }],
@@ -607,6 +607,14 @@ const getItemRoute = createRoute({
       },
       description: "Item with metadata, and any requested neighborhood blocks",
     },
+    400: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["invalid_id"]),
+        },
+      },
+      description: "The id is not a well-formed item id.",
+    },
     401: {
       content: {
         "application/json": {
@@ -622,6 +630,15 @@ const getItemRoute = createRoute({
         },
       },
       description: "Item not found",
+    },
+    403: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["type_not_permitted"]),
+        },
+      },
+      description:
+        "The credential's type permissions do not reach the item's type.",
     },
   },
 });
@@ -831,6 +848,23 @@ const deleteItemRoute = createRoute({
         },
       },
       description: "Unauthorized",
+    },
+    403: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["type_not_permitted"]),
+        },
+      },
+      description:
+        "The credential's type permissions do not reach the item's type with write.",
+    },
+    404: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["item_not_found"]),
+        },
+      },
+      description: "Item not found",
     },
   },
 });
@@ -1150,6 +1184,14 @@ const purgeItemRoute = createRoute({
       },
       description:
         "`items.purge` is missing, or the item is in a reserved namespace this credential may not write. The second is reached only by a credential that could not have trashed the row either: purging is trash-then-purge, and being told the item is not trashed would describe an ordering mistake the caller did not make.",
+    },
+    404: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["item_not_found"]),
+        },
+      },
+      description: "No such item, including one this door has already purged.",
     },
   },
 });
