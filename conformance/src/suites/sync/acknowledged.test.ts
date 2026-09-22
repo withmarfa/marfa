@@ -192,11 +192,10 @@ describe("a repeated create is acknowledged", () => {
       mismatched.status,
       "a repeat naming a different type was not refused, so a write can silently re-type the row it lands on",
     ).toBe(409);
-    // One code for a reused id, on this door and on the edge door, and
-    // `details` says what differed. The two used to answer the same
-    // question differently — `type_mismatch` here, a bare `conflict`
-    // there — so a client sorting refusals by code had to know which door
-    // it had asked.
+    // One code for a reused id, wherever it happens — this door, the edge
+    // door, and a bulk entry the id fallback resolved — and `details`
+    // says what differed. A client sorts a refusal by its code, and one
+    // that depended on which door was asked would not sort.
     expect(mismatched.error?.error.code).toBe("id_reused");
     expect(mismatched.error?.error.details?.differs).toEqual(["type"]);
 

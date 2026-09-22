@@ -484,9 +484,14 @@ export function edgeRoutes(storage: Storage) {
         existing.target_id === body.target_id ? null : "target_id",
         existing.edge_type === body.edge_type ? null : "edge_type",
       ].filter((field): field is string => field !== null);
+      const last = differs.at(-1) ?? "triple";
+      const named =
+        differs.length < 2
+          ? last
+          : `${differs.slice(0, -1).join(", ")} and ${last}`;
       throw new MarfaError(
         ErrorCode.ID_REUSED,
-        `Edge id ${body.id} already names a different ${differs.join(", ")}`,
+        `Edge id ${body.id} already names an edge with a different ${named}`,
         { existing_id: body.id, differs },
       );
     };

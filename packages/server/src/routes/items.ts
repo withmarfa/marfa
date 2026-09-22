@@ -1751,11 +1751,11 @@ export function itemRoutes(storage: Storage) {
       if (!existing) return null;
 
       // **No type gate of its own here, and its absence is the honest
-      // shape.** `requireDeclaredTypeMatches` below is exact, so a row
-      // that is acknowledged has the type the body named — and that type
-      // already cleared `requireTypeAccess` at the top of this route. A
-      // second call could therefore never refuse, and a gate that cannot
-      // refuse reads as a protection somebody is relying on.
+      // shape.** The comparison below is exact, so a row that is
+      // acknowledged has the type the body named — and that type already
+      // cleared `requireTypeAccess` at the top of this route. A second
+      // call could therefore never refuse, and a gate that cannot refuse
+      // reads as a protection somebody is relying on.
       //
       // The natural-key arms do carry one, and the difference is real:
       // they resolve by `(source, source_id)`, which says nothing about

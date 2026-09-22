@@ -7643,7 +7643,7 @@
             }
           },
           "400": {
-            "description": "Validation error, or an atomic rollback. `atomic` defaults to true, so a single refused entry aborts the whole page and the per-entry reason travels in `details.code` — `type_mismatch` among them, when an entry declares a `type` that is not the type of the row its natural key or id resolved. Send `atomic: false` to have each entry reported on its own instead.",
+            "description": "Validation error, or an atomic rollback. `atomic` defaults to true, so a single refused entry aborts the whole page and the per-entry reason travels in `details.code`. Two of them turn on an entry declaring a `type` that is not the type of the row it resolved: `type_mismatch` where the natural key resolved it, because the entry named no id and the declaration is the mistake, and `id_reused` where the entry's own `id` did, because the id is taken by a row the entry is not describing — the same code the single-item doors answer. Send `atomic: false` to have each entry reported on its own instead.",
             "content": {
               "application/json": {
                 "schema": {

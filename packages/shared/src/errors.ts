@@ -233,13 +233,12 @@ export enum ErrorCode {
   /**
    * A caller-minted id that already names something else.
    *
-   * One code on the item door and the edge door, because it is one
-   * mistake: a client picked an id, sent it, and the id is taken by a row
-   * that is not the one it is describing. The two doors used to answer it
-   * differently — `type_mismatch` on items, a bare `conflict` on edges —
-   * so a client sorting refusals by code had to know which door it had
-   * asked before it could tell a collision from anything else a `409`
-   * means.
+   * One code wherever it happens — `POST /items`, `POST /edges`, and a
+   * bulk entry the id fallback resolved — because it is one mistake: a
+   * client picked an id, sent it, and the id is taken by a row that is
+   * not the one it is describing. A client sorts a refusal by its code,
+   * and a code that depended on which door was asked, or on how many
+   * entries the caller batched, would not sort.
    *
    * `details.differs` names what differed: `type` on an item, and the
    * members of the triple that moved on an edge. A caller that minted the
@@ -247,11 +246,10 @@ export enum ErrorCode {
    * row disagrees, because that is what says whether it has a duplicate id
    * or a bug in how it derives one.
    *
-   * Not `type_mismatch`, which stays for the other question it answers on
-   * three doors — a body declaring a type that the row it resolved is not,
-   * on a natural-key upsert, an update, or a bulk entry. There the id is
-   * not in question and the declaration is; here it is the other way
-   * round.
+   * Not `type_mismatch`, which answers the other question: a body
+   * declaring a type that the row it resolved is not, where the row was
+   * resolved by its natural key or is the one the path names. The write
+   * named no id there, so the declaration is the mistake; here the id is.
    */
   ID_REUSED = "id_reused",
   /**

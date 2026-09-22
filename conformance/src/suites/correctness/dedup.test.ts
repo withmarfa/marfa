@@ -118,4 +118,42 @@ describe("deduplication", () => {
     expect(accepted.data.item.id).toBe(seed.data.item.id);
     expect(accepted.data.item.type).toBe("core.note");
   });
+
+  it("refuses an update declaring a type the item is not", async () => {
+    // The update door's half of the same rule, and the third place
+    // `type_mismatch` is answered. The path names the row, so the id was
+    // never the caller's to get wrong; what disagrees is the declaration.
+    const seed = await client.createItem(createNote({ source: ctx.source }));
+    expect(seed.ok).toBe(true);
+    trackItem(ctx, seed.data.item.id);
+
+    const mismatched = await client.rawRequest<unknown>(
+      `/items/${seed.data.item.id}`,
+      {
+        method: "PATCH",
+        body: {
+          type: "core.task",
+          properties: { body: "still a note" },
+          version: seed.data.item.version,
+        },
+      },
+    );
+    expect(mismatched.status).toBe(409);
+    expect(mismatched.error?.error.code).toBe("type_mismatch");
+
+    // The witness: the same update declaring the row's own type lands, so
+    // the refusal is the declaration rather than the shape of the write.
+    const accepted = await client.rawRequest<unknown>(
+      `/items/${seed.data.item.id}`,
+      {
+        method: "PATCH",
+        body: {
+          type: "core.note",
+          properties: { body: "still a note" },
+          version: seed.data.item.version,
+        },
+      },
+    );
+    expect(accepted.status).toBe(200);
+  });
 });
