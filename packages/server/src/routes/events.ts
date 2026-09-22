@@ -9,7 +9,7 @@ import {
 } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { withPreparedHeaders } from "../prepared-headers.js";
-import { requireAuth, computeTypeFilter } from "../middleware/auth.js";
+import { requireAuth, getTypeFilter } from "../middleware/auth.js";
 import {
   eventMatchesTypeFilter,
   subscribe,
@@ -343,7 +343,7 @@ export function eventRoutes(
     // predicate on, so it asks `matchesTypeFilter` — written over the same
     // ranking the SQL compilers use, so a streamed answer and a queried one
     // cannot disagree about the same grant.
-    const typeFilter = computeTypeFilter(apiKey);
+    const typeFilter = getTypeFilter(c);
 
     return (() => {
       const maxViewers = options.maxViewers ?? 0;

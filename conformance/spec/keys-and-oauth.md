@@ -2,7 +2,7 @@
 
 ## The keys a run holds
 
-1. The operator key holds no content permissions. On the data plane a read answers an empty set and a write is refused `403 type_not_permitted`; the operator doors take it and refuse a working key `403 forbidden`. `compliance/key-management.test.ts › the operator key reads an empty data plane and cannot write to it`, `compliance/platform-types.test.ts › lists no drift on an instance whose platform types match the build`, `› refuses the listing to a working key and to no credential`, `compliance/admin-archive.test.ts › requires the operator key`.
+1. The operator key holds no content permissions, so the data plane refuses it outright: a read is refused `403 type_not_permitted` exactly as a write is, on the listings as on a single row. A credential whose type map reaches no type is not a credential with nothing to see, and a `200` carrying an empty page said the wrong one of those. The operator doors take it and refuse a working key `403 forbidden`. `compliance/key-management.test.ts › the operator key is refused the data plane, reading as well as writing`, `compliance/platform-types.test.ts › lists no drift on an instance whose platform types match the build`, `› refuses the listing to a working key and to no credential`, `compliance/admin-archive.test.ts › requires the operator key`.
 2. The operator key is what the suite provisions with, and its own mint is not held to the widening rule below: a key it mints naming no maps carries every content family at `*: write` and every permission, though the operator key's own row holds none of them. Every fixture file gets its working key that way. `compliance/key-management.test.ts › the operator key mints past its own reach, which is how a run is provisioned`.
 
 ## Minting

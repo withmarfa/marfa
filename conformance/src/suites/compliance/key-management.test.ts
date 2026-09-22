@@ -274,13 +274,28 @@ describe("key management", () => {
     expect(second.error?.error.details?.source).toBe(source);
   });
 
-  it("the operator key reads an empty data plane and cannot write to it", async () => {
+  it("the operator key is refused the data plane, reading as well as writing", async () => {
     const operator = getOperatorClient();
 
-    const listed = await operator.listItems({ limit: 5 });
-    expect(listed.ok).toBe(true);
-    expect(listed.status).toBe(200);
-    expect(listed.data.data).toEqual([]);
+    // A listing used to answer `200` with an empty array, which says "there
+    // is nothing here" — and there is a great deal here; what is true is
+    // that this credential may not see it. The single-row doors already
+    // said so, refusing `type_not_permitted` through the same map, so one
+    // question was answered two ways depending on how many rows were asked
+    // for.
+    const refused = [
+      ["GET /items", await operator.listItems({ limit: 5 })],
+      ["GET /items/stats", await operator.itemStats()],
+      ["GET /search", await operator.search("a")],
+      ["GET /metadata/tags", await operator.listTags()],
+    ] as const;
+    for (const [door, answer] of refused) {
+      expect(answer.ok, `${door} was not refused`).toBe(false);
+      expect(answer.status, `${door} answered ${String(answer.status)}`).toBe(
+        403,
+      );
+      expect(answer.error?.error.code).toBe("type_not_permitted");
+    }
 
     const written = await operator.createItem({
       type: "core.note",
@@ -289,6 +304,25 @@ describe("key management", () => {
     expect(written.ok).toBe(false);
     expect(written.status).toBe(403);
     expect(written.error?.error.code).toBe("type_not_permitted");
+
+    // The witness. A key that reaches one type reads every one of those
+    // doors, so what closed is this credential's reach and not the doors.
+    const { client: reader } = await createClientWithoutPermissions(
+      `km-operator-witness-${ctx.runId}`,
+      { "core.note": "read" },
+    );
+    const served = [
+      ["GET /items", await reader.listItems({ limit: 5 })],
+      ["GET /items/stats", await reader.itemStats()],
+      ["GET /search", await reader.search("a")],
+      ["GET /metadata/tags", await reader.listTags()],
+    ] as const;
+    for (const [door, answer] of served) {
+      expect(answer.ok, `${door} was refused a key that reaches a type`).toBe(
+        true,
+      );
+      expect(answer.status).toBe(200);
+    }
   });
 
   it("the operator key mints past its own reach, which is how a run is provisioned", async () => {
