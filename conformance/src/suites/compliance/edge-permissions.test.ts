@@ -450,4 +450,145 @@ describe("the edge listing answers only what the credential may read", () => {
     expect(widePage.ok).toBe(true);
     expect(widePage.data.data.map((e) => e.id)).toContain(edge.data.edge.id);
   });
+
+  it("drops it still when the source is trashed, which is when a null source would read as no source at all", async () => {
+    // The door resolves the source including trashed rows on purpose. A
+    // plain read answers null for a trashed item, and a null source has
+    // no type to refuse — so trashing the source item would turn the
+    // refusal above into a disclosure, and nothing else here would say
+    // so. The single door reads the same way for the same reason.
+    const edgeType = `mock.disclosure.trashed.${ctx.runId}`;
+    const registered = await client.registerEdgeType({
+      id: edgeType,
+      cardinality: "many-to-many",
+    });
+    expect(registered.ok, JSON.stringify(registered.error)).toBe(true);
+    trackEdgeType(ctx, edgeType);
+
+    const target = await scopedItem(client, "trashed-target");
+    const hidden = await client.createItem(
+      createBookmark({ properties: { title: "ep-trashed-hidden" } }),
+    );
+    expect(hidden.ok, JSON.stringify(hidden.error)).toBe(true);
+    trackItem(ctx, hidden.data.item.id);
+    const edge = await client.createEdge({
+      source_id: hidden.data.item.id,
+      target_id: target,
+      edge_type: edgeType,
+    });
+    expect(edge.ok, JSON.stringify(edge.error)).toBe(true);
+    trackEdge(ctx, edge.data.edge.id);
+
+    const trashed = await client.deleteItem(hidden.data.item.id);
+    expect(trashed.ok, JSON.stringify(trashed.error)).toBe(true);
+
+    const narrow = await makeKey("trashed-narrow", {
+      type_permissions: { "core.note": "read" },
+      edge_permissions: { "*": "read" },
+    });
+    const narrowClient = new MarfaClient({
+      baseUrl: apiUrl,
+      apiKey: narrow.key,
+    });
+    expect(
+      (await narrowClient.listEdges({ edge_type: edgeType, limit: 100 })).data
+        .data,
+      "trashing the source item turned the refusal into a disclosure",
+    ).toEqual([]);
+    // And the door this one is meant to agree with still refuses it, so
+    // the two read a trashed source the same way.
+    expect((await narrowClient.getEdge(edge.data.edge.id)).status).toBe(403);
+  });
+
+  it("pages to the end of the listing though whole pages are dropped", async () => {
+    // What "shorter than the limit" turns into at a page boundary: a
+    // page of nothing, with `has_more` still true. The cursor and
+    // `has_more` are the store's reading of the whole listing rather
+    // than of what survived the gate, which is what makes the walk
+    // terminate — and a client that stopped on an empty page would
+    // truncate its copy silently and never learn it had.
+    const edgeType = `mock.disclosure.paged.${ctx.runId}`;
+    const registered = await client.registerEdgeType({
+      id: edgeType,
+      cardinality: "many-to-many",
+    });
+    expect(registered.ok, JSON.stringify(registered.error)).toBe(true);
+    trackEdgeType(ctx, edgeType);
+
+    const target = await scopedItem(client, "paged-target");
+    const readable: string[] = [];
+    // Readable at both ends and four hidden rows between them, so a walk
+    // at two a page meets at least one page with nothing on it.
+    for (const [index, kind] of [
+      "note",
+      "bookmark",
+      "bookmark",
+      "bookmark",
+      "bookmark",
+      "note",
+    ].entries()) {
+      const source =
+        kind === "note"
+          ? await scopedItem(client, `paged-src-${String(index)}`)
+          : await (async () => {
+              const r = await client.createItem(
+                createBookmark({
+                  properties: { title: `ep-paged-${String(index)}` },
+                }),
+              );
+              expect(r.ok, JSON.stringify(r.error)).toBe(true);
+              trackItem(ctx, r.data.item.id);
+              return r.data.item.id;
+            })();
+      const edge = await client.createEdge({
+        source_id: source,
+        target_id: target,
+        edge_type: edgeType,
+      });
+      expect(edge.ok, JSON.stringify(edge.error)).toBe(true);
+      trackEdge(ctx, edge.data.edge.id);
+      if (kind === "note") readable.push(edge.data.edge.id);
+    }
+
+    const narrow = await makeKey("paged-narrow", {
+      type_permissions: { "core.note": "read" },
+      edge_permissions: { "*": "read" },
+    });
+    const narrowClient = new MarfaClient({
+      baseUrl: apiUrl,
+      apiKey: narrow.key,
+    });
+
+    const seen: string[] = [];
+    let emptyPages = 0;
+    let cursor: string | undefined;
+    for (let page = 0; page < 12; page++) {
+      const answer = await narrowClient.listEdges({
+        edge_type: edgeType,
+        limit: 2,
+        cursor,
+      });
+      expect(answer.ok, JSON.stringify(answer.error)).toBe(true);
+      seen.push(...answer.data.data.map((e) => e.id));
+      if (answer.data.data.length === 0 && answer.data.has_more) emptyPages++;
+      if (!answer.data.has_more) {
+        cursor = undefined;
+        break;
+      }
+      cursor = answer.data.cursor ?? undefined;
+      expect(
+        cursor,
+        "the listing says there is more and names no cursor",
+      ).toBeDefined();
+    }
+    expect(
+      cursor,
+      "the walk ran out of pages before the listing ran out of rows",
+    ).toBeUndefined();
+    expect(
+      emptyPages,
+      "no page came back empty, so this case is not about the thing it claims",
+    ).toBeGreaterThan(0);
+    expect(seen.sort()).toEqual([...readable].sort());
+  });
 });

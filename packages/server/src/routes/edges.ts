@@ -443,12 +443,18 @@ export function edgeRoutes(storage: Storage) {
     // listing and a caller stops on `has_more` rather than on an empty
     // page.
     //
-    // `getIncludingTrashed` for the reason the point check uses it: a
-    // plain `items.get` returns null for a trashed source, and a null
-    // source skips the type question rather than failing it. Trashing the
-    // source item would otherwise turn a refusal into a disclosure. A
-    // source that is genuinely absent is left to the edge-type question
-    // alone, which is what the point check does with it.
+    // Trashed sources are read too, for the reason the point check reads
+    // them: a plain `items.get` answers null for a trashed source, and a
+    // null source has no type to refuse, so trashing the source item
+    // would turn a refusal into a disclosure.
+    //
+    // **This door and not its siblings.** `GET /items/{id}/edges`,
+    // `GET /items/{id}/backrefs` and the edges carried on an item read
+    // check the anchor item's type and neither the edge type nor, on the
+    // backref side, the source's — so they still answer rows this one
+    // leaves out. They are open questions rather than oversights; the
+    // note is here so the next reader does not take this door's gate for
+    // the whole of it.
     const key = requireAuth(c);
     const ofReadableKind = result.data.filter((edge) =>
       edgePermissionCovers(key.edge_permissions, edge.edge_type, "read"),

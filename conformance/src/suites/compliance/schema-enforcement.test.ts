@@ -250,7 +250,12 @@ describe("strict_mode lever", () => {
     );
     expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
     trackItem(ctx, id);
-    expect((await client.getItem(id)).status).toBe(200);
+    const read = await client.getItem(id);
+    expect(read.status).toBe(200);
+    expect(
+      read.data.item.properties.not_a_real_field,
+      "the restore took the row and dropped the property, so the case above refuses something this door never writes",
+    ).toBe("x");
   });
 });
 
