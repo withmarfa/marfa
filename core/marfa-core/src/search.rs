@@ -1,11 +1,15 @@
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, params_from_iter};
+use serde_json::Value;
 
 use crate::Result;
+use crate::catalog::Catalog;
 use crate::model::{SearchFilters, SearchHit};
+use crate::query;
 use crate::store;
 
 pub(crate) fn search(
     conn: &Connection,
+    catalog: &Catalog,
     query: &str,
     filters: &SearchFilters,
     limit: usize,
@@ -13,24 +17,42 @@ pub(crate) fn search(
     let Some(expression) = fts_expression(query) else {
         return Ok(Vec::new());
     };
+    let mut clauses: Vec<String> = Vec::new();
+    let mut values: Vec<Value> = vec![Value::String(expression)];
     // The same three-way rule the list takes: a named state wins, the
     // widening suppresses the narrowing, and a caller who said neither is
     // answered the active state.
-    let state_clause = match filters.state {
-        Some(state) => format!("AND items.state = '{}'", state.as_str()),
-        None if !filters.all_states => "AND items.state = 'active'".to_string(),
-        None => String::new(),
-    };
+    match filters.state {
+        Some(state) => {
+            clauses.push("items.state = ?".into());
+            values.push(Value::String(state.as_str().into()));
+        }
+        None if !filters.all_states => clauses.push("items.state = 'active'".into()),
+        None => {}
+    }
+    query::narrow_by_type(
+        catalog,
+        filters.r#type.as_deref(),
+        &mut clauses,
+        &mut values,
+    );
+    query::narrow_by_tags(&filters.tags, &mut clauses, &mut values);
+    let narrowing: String = clauses
+        .iter()
+        .map(|clause| format!(" AND {clause}"))
+        .collect();
+    values.push(Value::from(limit as i64));
     let mut statement = conn.prepare(&format!(
         "SELECT items.id, bm25(items_fts, 5.0, 1.0, 2.0), snippet(items_fts, 1, '<mark>', '</mark>', '…', 12)
          FROM items_fts
          JOIN items ON items.seq = items_fts.rowid
-         WHERE items_fts MATCH ?1 {state_clause}
+         WHERE items_fts MATCH ?{narrowing}
          ORDER BY bm25(items_fts, 5.0, 1.0, 2.0)
-         LIMIT ?2"
+         LIMIT ?"
     ))?;
+    let params: Vec<rusqlite::types::Value> = values.iter().map(store::sql_value).collect();
     let ranked = statement
-        .query_map(params![expression, limit as i64], |row| {
+        .query_map(params_from_iter(params.iter()), |row| {
             Ok((
                 row.get::<_, String>(0)?,
                 row.get::<_, f64>(1)?,
@@ -75,6 +97,7 @@ mod tests {
     use crate::model::ItemState;
     use crate::store;
     use crate::store::testing::*;
+    use serde_json::json;
 
     #[test]
     fn titles_outrank_bodies_and_only_the_active_state_answers() {
@@ -116,17 +139,32 @@ mod tests {
         store::upsert_item(&conn, &archived, None, Some("title")).unwrap();
 
         let default = SearchFilters::default();
-        let hits = search(&conn, "zeb", &default, 10).unwrap();
+        let hits = search(&conn, &Catalog::load(&conn).unwrap(), "zeb", &default, 10).unwrap();
         let ids: Vec<&str> = hits.iter().map(|hit| hit.item.id.as_str()).collect();
         assert_eq!(ids, vec!["title", "tag", "body"]);
-        assert_eq!(search(&conn, "zeb", &default, 2).unwrap().len(), 2);
+        assert_eq!(
+            search(&conn, &Catalog::load(&conn).unwrap(), "zeb", &default, 2)
+                .unwrap()
+                .len(),
+            2
+        );
         assert!(hits[0].score > hits[2].score);
         assert!(hits[2].snippet.contains("<mark>zebra</mark>"));
-        assert!(search(&conn, "", &default, 10).unwrap().is_empty());
         assert!(
-            search(&conn, "nothing crossing", &default, 10)
+            search(&conn, &Catalog::load(&conn).unwrap(), "", &default, 10)
                 .unwrap()
                 .is_empty()
+        );
+        assert!(
+            search(
+                &conn,
+                &Catalog::load(&conn).unwrap(),
+                "nothing crossing",
+                &default,
+                10
+            )
+            .unwrap()
+            .is_empty()
         );
 
         // A caller who names a state is answered it, and the widening
@@ -137,7 +175,7 @@ mod tests {
             state: Some(ItemState::Archived),
             ..Default::default()
         };
-        let ids: Vec<String> = search(&conn, "zeb", &filed, 10)
+        let ids: Vec<String> = search(&conn, &Catalog::load(&conn).unwrap(), "zeb", &filed, 10)
             .unwrap()
             .into_iter()
             .map(|hit| hit.item.id)
@@ -148,16 +186,91 @@ mod tests {
             all_states: true,
             ..Default::default()
         };
-        let mut ids: Vec<String> = search(&conn, "zeb", &everything, 10)
-            .unwrap()
-            .into_iter()
-            .map(|hit| hit.item.id)
-            .collect();
+        let mut ids: Vec<String> = search(
+            &conn,
+            &Catalog::load(&conn).unwrap(),
+            "zeb",
+            &everything,
+            10,
+        )
+        .unwrap()
+        .into_iter()
+        .map(|hit| hit.item.id)
+        .collect();
         ids.sort();
         // The archive joins the widening and the bin does not: a trashed
         // row leaves the index on the write that trashes it, here as on
         // the server, so no state value reaches it through a search.
         assert_eq!(ids, vec!["body", "filed", "tag", "title"]);
+    }
+
+    /// A type narrows by its subtree and tags narrow by every tag given,
+    /// exactly as a list narrows. The control is the unnarrowed search
+    /// matching all four, so each absence below is the narrowing.
+    #[test]
+    fn a_type_and_tags_narrow_a_search_as_they_narrow_a_list() {
+        let conn = conn();
+        store::replace_types(
+            &conn,
+            &[
+                wire_type("core.note", None, Some("title")),
+                wire_type("core.file", None, Some("title")),
+                wire_type("core.file.image", Some("core.file"), Some("title")),
+                wire_type("core.bookmark", None, Some("title")),
+            ],
+        )
+        .unwrap();
+        let row = |id: &str, type_: &str, tags: &[&str]| {
+            let item = wire_item(
+                id,
+                type_,
+                "active",
+                "2026-01-01T00:00:00Z",
+                json!({ "title": format!("heron {id}") }),
+            );
+            let tags: Vec<String> = tags.iter().map(|tag| tag.to_string()).collect();
+            store::upsert_item(&conn, &item, Some(&tags), Some("title")).unwrap();
+        };
+        row("note", "core.note", &["garden", "birds"]);
+        row("image", "core.file.image", &["birds"]);
+        row("file", "core.file", &[]);
+        row("bookmark", "core.bookmark", &["birds"]);
+        let catalog = Catalog::load(&conn).unwrap();
+        let ids = |filters: SearchFilters| {
+            let mut ids: Vec<String> = search(&conn, &catalog, "heron", &filters, 10)
+                .unwrap()
+                .into_iter()
+                .map(|hit| hit.item.id)
+                .collect();
+            ids.sort();
+            ids
+        };
+        assert_eq!(
+            ids(SearchFilters::default()),
+            vec!["bookmark", "file", "image", "note"]
+        );
+        assert_eq!(
+            ids(SearchFilters {
+                r#type: Some("core.file".into()),
+                ..Default::default()
+            }),
+            vec!["file", "image"]
+        );
+        assert_eq!(
+            ids(SearchFilters {
+                tags: vec!["birds".into()],
+                ..Default::default()
+            }),
+            vec!["bookmark", "image", "note"]
+        );
+        assert_eq!(
+            ids(SearchFilters {
+                r#type: Some("core.note".into()),
+                tags: vec!["birds".into(), "garden".into()],
+                ..Default::default()
+            }),
+            vec!["note"]
+        );
     }
 
     #[test]

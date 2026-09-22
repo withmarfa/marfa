@@ -6,7 +6,7 @@ use serde_json::{Map, Value};
 use uuid::Uuid;
 
 use crate::error::CoreError;
-use crate::model::{Edge, Item, ItemState, QueuedWrite, Tier};
+use crate::model::{BlockedReason, Edge, Item, ItemState, QueuedWrite, Tier, Verdict, WriteKind};
 use crate::wire::{WireEdge, WireItem, WireType};
 
 pub const SCHEMA: &str = include_str!("schema.sql");
@@ -221,12 +221,8 @@ const QUEUE_COLUMNS: &str = "id, kind, item_id, target_id, edge_id, namespace, t
      conflicted_copy_id, refusals, queued_at, answered_at";
 
 /// What a caller is asking the server to do, before it has been asked.
-///
-/// The kind is one of the closed set (`queue-and-verdicts.md` 32) and is
-/// checked before a row is written, because the set is the contract's and a
-/// store carrying a kind outside it is one no drain can send.
 pub struct NewWrite<'a> {
-    pub kind: &'a str,
+    pub kind: WriteKind,
     pub item_id: Option<&'a str>,
     pub target_id: Option<&'a str>,
     pub edge_id: Option<&'a str>,
@@ -237,29 +233,6 @@ pub struct NewWrite<'a> {
     pub depends_on: &'a [String],
 }
 
-/// The kinds a queue holds (`queue-and-verdicts.md` 32).
-///
-/// A purge is not among them (`device.md` 25), and neither is a bulk door or
-/// a bulk action: those are the server's way of doing many things in one
-/// request rather than a thing a device holds a write for.
-pub const WRITE_KINDS: &[&str] = &[
-    "create_item",
-    "update_item",
-    "delete_item",
-    "restore_item",
-    "transition_item",
-    "create_edge",
-    "update_edge",
-    "delete_edge",
-    "replace_metadata",
-    "merge_metadata",
-    "add_tag",
-    "remove_tag",
-    "write_extension",
-    "delete_extension",
-    "upload_blob",
-];
-
 /// Queues a write and returns the row as the queue will report it.
 ///
 /// The idempotency key is minted at enqueue, not at send, because
@@ -269,12 +242,6 @@ pub const WRITE_KINDS: &[&str] = &[
 /// mints deliberately — a released row is a new attempt under a fresh key
 /// (`queue-and-verdicts.md` 27), with the spent one kept beside it.
 pub fn enqueue(conn: &Connection, write: &NewWrite<'_>) -> Result<QueuedWrite, CoreError> {
-    if !WRITE_KINDS.contains(&write.kind) {
-        return Err(CoreError::Invalid(format!(
-            "{:?} is not a kind a queue holds",
-            write.kind
-        )));
-    }
     let id = Uuid::now_v7().to_string();
     let key = Uuid::now_v7().to_string();
     let depends_on = if write.depends_on.is_empty() {
@@ -289,7 +256,7 @@ pub fn enqueue(conn: &Connection, write: &NewWrite<'_>) -> Result<QueuedWrite, C
          ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
         params![
             id,
-            write.kind,
+            write.kind.as_str(),
             write.item_id,
             write.target_id,
             write.edge_id,
@@ -338,7 +305,7 @@ pub fn unanswered_creates_for_item(
 ) -> Result<Vec<String>, CoreError> {
     Ok(unanswered_for_item(conn, item_id)?
         .into_iter()
-        .filter(|row| row.kind == "create_item")
+        .filter(|row| row.kind == WriteKind::CreateItem)
         .map(|row| row.id)
         .collect())
 }
@@ -394,46 +361,105 @@ pub fn queued_writes(conn: &Connection) -> Result<Vec<QueuedWrite>, CoreError> {
     // because a row whose dependencies cannot be read is a refusal rather
     // than a row with none. Reading it as none would tell a drain that
     // nothing holds the write, which is precisely the write it must not send.
+    //
+    // The kind and the verdict are read as text and parsed outside it too,
+    // and a value outside its closed set is refused rather than carried: a
+    // store holding one is a store this build cannot read correctly, and the
+    // `CHECK`s in `schema.sql` are what keep one from being written.
     let rows = statement.query_map([], |row| {
-        Ok((
-            QueuedWrite {
-                id: row.get(0)?,
-                kind: row.get(1)?,
-                item_id: row.get(2)?,
-                target_id: row.get(3)?,
-                edge_id: row.get(4)?,
-                namespace: row.get(5)?,
-                tag: row.get(6)?,
-                base_version: row.get(7)?,
-                idempotency_key: row.get(8)?,
-                depends_on: Vec::new(),
-                verdict: row.get(10)?,
-                reason: row.get(11)?,
-                answer: row.get(12)?,
-                conflicted_copy_id: row.get(13)?,
-                refusals: row.get(14)?,
-                queued_at: row.get(15)?,
-                answered_at: row.get(16)?,
-            },
-            row.get::<_, Option<String>>(9)?,
-        ))
+        Ok(RawWrite {
+            id: row.get(0)?,
+            kind: row.get(1)?,
+            item_id: row.get(2)?,
+            target_id: row.get(3)?,
+            edge_id: row.get(4)?,
+            namespace: row.get(5)?,
+            tag: row.get(6)?,
+            base_version: row.get(7)?,
+            idempotency_key: row.get(8)?,
+            depends_on: row.get(9)?,
+            verdict: row.get(10)?,
+            reason: row.get(11)?,
+            answer: row.get(12)?,
+            conflicted_copy_id: row.get(13)?,
+            refusals: row.get(14)?,
+            queued_at: row.get(15)?,
+            answered_at: row.get(16)?,
+        })
     })?;
 
     let mut writes = Vec::new();
     for row in rows {
-        let (mut write, depends_on) = row?;
-        if let Some(json) = depends_on {
-            write.depends_on = serde_json::from_str(&json).map_err(|error| {
+        let raw = row?;
+        let depends_on = match raw.depends_on {
+            Some(json) => serde_json::from_str(&json).map_err(|error| {
                 CoreError::Store(format!(
                     "queued write {} holds dependencies this build cannot read ({error}); \
                      the store was written by another build and has no upgrade path",
-                    write.id
+                    raw.id
                 ))
-            })?;
+            })?,
+            None => Vec::new(),
+        };
+        let verdict = raw
+            .verdict
+            .as_deref()
+            .map(str::parse::<Verdict>)
+            .transpose()?;
+        if verdict == Some(Verdict::Blocked) {
+            raw.reason
+                .as_deref()
+                .unwrap_or_default()
+                .parse::<BlockedReason>()
+                .map_err(|_| {
+                    CoreError::Store(format!(
+                        "queued write {} is blocked for a reason outside the five: {:?}",
+                        raw.id, raw.reason
+                    ))
+                })?;
         }
-        writes.push(write);
+        writes.push(QueuedWrite {
+            kind: raw.kind.parse()?,
+            id: raw.id,
+            item_id: raw.item_id,
+            target_id: raw.target_id,
+            edge_id: raw.edge_id,
+            namespace: raw.namespace,
+            tag: raw.tag,
+            base_version: raw.base_version,
+            idempotency_key: raw.idempotency_key,
+            depends_on,
+            verdict,
+            reason: raw.reason,
+            answer: raw.answer,
+            conflicted_copy_id: raw.conflicted_copy_id,
+            refusals: raw.refusals,
+            queued_at: raw.queued_at,
+            answered_at: raw.answered_at,
+        });
     }
     Ok(writes)
+}
+
+/// A queue row as SQLite hands it back, before its closed sets are read.
+struct RawWrite {
+    id: String,
+    kind: String,
+    item_id: Option<String>,
+    target_id: Option<String>,
+    edge_id: Option<String>,
+    namespace: Option<String>,
+    tag: Option<String>,
+    base_version: Option<i64>,
+    idempotency_key: String,
+    depends_on: Option<String>,
+    verdict: Option<String>,
+    reason: Option<String>,
+    answer: Option<String>,
+    conflicted_copy_id: Option<String>,
+    refusals: i64,
+    queued_at: String,
+    answered_at: Option<String>,
 }
 
 pub fn replace_types(conn: &Connection, types: &[WireType]) -> Result<(), CoreError> {
@@ -652,7 +678,7 @@ pub fn count(conn: &Connection, table: &str) -> Result<u64, CoreError> {
     Ok(conn.query_row(&sql, [], |row| row.get::<_, i64>(0))? as u64)
 }
 
-fn sql_value(value: &Value) -> rusqlite::types::Value {
+pub(crate) fn sql_value(value: &Value) -> rusqlite::types::Value {
     match value {
         Value::Null => rusqlite::types::Value::Null,
         Value::Bool(flag) => rusqlite::types::Value::Integer(i64::from(*flag)),
@@ -1228,7 +1254,7 @@ mod tests {
         assert_eq!(writes.len(), 1);
         let write = &writes[0];
         assert_eq!(write.id, "q-id");
-        assert_eq!(write.kind, "update_item");
+        assert_eq!(write.kind, WriteKind::UpdateItem);
         assert_eq!(write.item_id.as_deref(), Some("the-item"));
         assert_eq!(write.target_id.as_deref(), Some("the-target"));
         assert_eq!(write.edge_id.as_deref(), Some("the-edge"));
@@ -1237,7 +1263,7 @@ mod tests {
         assert_eq!(write.base_version, Some(7));
         assert_eq!(write.idempotency_key, "the-key");
         assert_eq!(write.depends_on, vec!["first", "second"]);
-        assert_eq!(write.verdict.as_deref(), Some("blocked"));
+        assert_eq!(write.verdict, Some(Verdict::Blocked));
         assert_eq!(write.reason.as_deref(), Some("key_spent"));
         assert_eq!(write.answer.as_deref(), Some("{\"error\":\"as sent\"}"));
         assert_eq!(write.conflicted_copy_id.as_deref(), Some("the-sibling"));
@@ -1246,47 +1272,15 @@ mod tests {
         assert_eq!(write.answered_at.as_deref(), Some("2026-01-02T00:00:00Z"));
     }
 
-    /// The closed set of kinds refuses one outside it.
+    /// The three closed sets, held to the schema and to the reader.
     ///
-    /// Its effect, not its contents. A test comparing `WRITE_KINDS` to a
-    /// literal goes red when the list is edited and stays green when the
-    /// list stops being consulted, which is the failure mode it exists to
-    /// prevent: the guard passes review because the constant is checked.
+    /// The enums are the sets the code speaks, and `schema.sql`'s `CHECK`s
+    /// are the sets the file keeps; this holds the two to each other in both
+    /// directions, and holds the reader to refusing a value outside them.
     #[test]
-    fn a_kind_outside_the_closed_set_is_refused() {
+    fn the_closed_sets_agree_with_the_schema_and_the_reader_refuses_the_rest() {
         let conn = conn();
-        let write = |kind: &str| {
-            enqueue(
-                &conn,
-                &NewWrite {
-                    kind,
-                    item_id: Some("an-item"),
-                    target_id: None,
-                    edge_id: None,
-                    namespace: None,
-                    tag: None,
-                    base_version: None,
-                    payload: "{}",
-                    depends_on: &[],
-                },
-            )
-        };
-
-        // The control first: a kind the contract names goes in, so the
-        // refusals below are the guard rather than a queue that takes
-        // nothing at all.
-        assert!(write("create_item").is_ok());
-
-        // A purge is the one worth naming, because it is not an oversight:
-        // `device.md` 25 says a device never purges, so the kind must not be
-        // holdable rather than merely unimplemented.
-        assert!(matches!(write("purge_item"), Err(CoreError::Invalid(_))));
-        assert!(matches!(write("bulk_action"), Err(CoreError::Invalid(_))));
-        assert!(matches!(write(""), Err(CoreError::Invalid(_))));
-
-        // And every kind the contract does name is accepted, so the guard
-        // cannot be satisfied by a list that has quietly lost entries.
-        for kind in WRITE_KINDS {
+        for kind in WriteKind::ALL {
             let queued = enqueue(
                 &conn,
                 &NewWrite {
@@ -1300,9 +1294,133 @@ mod tests {
                     payload: "{}",
                     depends_on: &[],
                 },
-            );
-            assert!(queued.is_ok(), "{kind} is in the set and was refused");
+            )
+            .unwrap_or_else(|error| {
+                panic!("{kind} is in the set and the schema refused it: {error}")
+            });
+            assert_eq!(queued.kind, kind);
         }
+        // A purge is the one worth naming, because it is not an oversight:
+        // `device.md` 25 says a device never purges, so the kind must not be
+        // holdable rather than merely unimplemented.
+        assert!("purge_item".parse::<WriteKind>().is_err());
+        assert!(
+            conn.execute(
+                "INSERT INTO queue (id, kind, idempotency_key, payload, queued_at)
+                 VALUES ('purge', 'purge_item', 'purge-key', '{}', '2026-01-01T00:00:00Z')",
+                [],
+            )
+            .is_err(),
+            "the schema holds a purge"
+        );
+
+        let verdict_row = |id: &str, verdict: &str, reason: Option<&str>| {
+            conn.execute(
+                "INSERT INTO queue (id, kind, idempotency_key, payload, verdict, reason, queued_at)
+                 VALUES (?1, 'update_item', ?1, '{}', ?2, ?3, '2026-01-01T00:00:00Z')",
+                params![id, verdict, reason],
+            )
+        };
+        for verdict in Verdict::ALL {
+            let reason = (verdict == Verdict::Blocked).then_some("key_spent");
+            verdict_row(verdict.as_str(), verdict.as_str(), reason).unwrap_or_else(|error| {
+                panic!("{verdict} is in the set and the schema refused it: {error}")
+            });
+        }
+        let read = queued_writes(&conn).unwrap();
+        for verdict in Verdict::ALL {
+            let row = read.iter().find(|row| row.id == verdict.as_str()).unwrap();
+            assert_eq!(row.verdict, Some(verdict));
+        }
+        let blocked = read.iter().find(|row| row.id == "blocked").unwrap();
+        assert_eq!(blocked.blocked_reason(), Some(BlockedReason::KeySpent));
+
+        // A blocked row whose reason is not one of the five is a store this
+        // build cannot read correctly. The schema cannot refuse it, because
+        // the same column carries the server's codes under `refused`, so the
+        // reader does.
+        verdict_row("stray", "blocked", Some("resolver_missing")).unwrap();
+        assert!(matches!(queued_writes(&conn), Err(CoreError::Store(_))));
+    }
+
+    /// Every kind that changes an item's row, laid back over the server's
+    /// row in queue order. The device fixtures reach an edit, a tag and a
+    /// delete; this reaches the rest, and the order: a transition and then
+    /// a restore end active, a replace and then a merge end with both sets'
+    /// last word.
+    #[test]
+    fn waiting_writes_are_laid_back_over_the_row_in_queue_order() {
+        let conn = conn();
+        replace_types(&conn, &[wire_type("core.note", None, Some("title"))]).unwrap();
+        let server_row = note(
+            "n1",
+            "from the server",
+            "server body",
+            "2026-01-01T00:00:00Z",
+        );
+        upsert_item(&conn, &server_row, Some(&["kept".into()]), Some("title")).unwrap();
+        let queue = |kind: WriteKind, payload: &str, tag: Option<&str>| {
+            enqueue(
+                &conn,
+                &NewWrite {
+                    kind,
+                    item_id: Some("n1"),
+                    target_id: None,
+                    edge_id: None,
+                    namespace: None,
+                    tag,
+                    base_version: None,
+                    payload,
+                    depends_on: &[],
+                },
+            )
+            .unwrap()
+        };
+        queue(
+            WriteKind::UpdateItem,
+            r#"{"properties":{"title":"edited"},"version":1,"source_id":"moved.md"}"#,
+            None,
+        );
+        queue(WriteKind::TransitionItem, r#"{"state":"archived"}"#, None);
+        queue(WriteKind::RestoreItem, "{}", None);
+        queue(WriteKind::ReplaceMetadata, r#"{"tags":["a","b"]}"#, None);
+        queue(WriteKind::MergeMetadata, r#"{"tags":["c"]}"#, None);
+        queue(WriteKind::RemoveTag, "{}", Some("a"));
+        // An answered write is not laid back: its answer is already the row.
+        let answered = queue(
+            WriteKind::AddTag,
+            r#"{"tags":["answered"]}"#,
+            Some("answered"),
+        );
+        record_verdict(
+            &conn,
+            &answered.id,
+            &Answered {
+                verdict: Verdict::Accepted,
+                reason: None,
+                answer: None,
+                conflicted_copy_id: None,
+            },
+        )
+        .unwrap();
+
+        lay_waiting_writes_over(&conn, "n1", Some("title")).unwrap();
+        let item = items_by_ids(&conn, &["n1".into()]).unwrap().pop().unwrap();
+        assert_eq!(item.title(Some("title")), Some("edited"));
+        assert_eq!(
+            item.properties.get("body").and_then(Value::as_str),
+            Some("server body"),
+            "a field no waiting write names keeps the server's value"
+        );
+        assert_eq!(item.source_id.as_deref(), Some("moved.md"));
+        assert_eq!(item.state, ItemState::Active);
+        assert_eq!(item.tags, vec!["b", "c"]);
+
+        // A delete waiting after all of them leaves the row in the bin.
+        queue(WriteKind::DeleteItem, "{}", None);
+        lay_waiting_writes_over(&conn, "n1", Some("title")).unwrap();
+        let item = items_by_ids(&conn, &["n1".into()]).unwrap().pop().unwrap();
+        assert_eq!(item.state, ItemState::Trashed);
     }
 
     #[test]
@@ -1390,21 +1508,6 @@ mod tests {
     }
 }
 
-/// The six (`queue-and-verdicts.md` 7).
-///
-/// Here for the reason `WRITE_KINDS` and `BLOCKED_REASONS` are: the set is
-/// closed, and a set closed only by a `CHECK` in the schema is one a typo
-/// reaches at run time, when SQLite refuses the row and the write the server
-/// already took has no verdict.
-pub const VERDICTS: &[&str] = &[
-    "accepted",
-    "merged",
-    "conflicted",
-    "refused",
-    "blocked",
-    "dead",
-];
-
 /// The ceiling (`queue-and-verdicts.md` 25).
 ///
 /// Written in three places, and deliberately: this constant is what the drain
@@ -1416,25 +1519,6 @@ pub const VERDICTS: &[&str] = &[
 /// ceiling on the fifth refusal`, which counts the attempts rather than
 /// trusting either number.
 pub const CEILING: i64 = 5;
-
-/// The five reasons a row can be blocked (`queue-and-verdicts.md` 26).
-pub const BLOCKED_REASONS: &[&str] = &[
-    "credential_refused",
-    "key_spent",
-    "ancestor_unavailable",
-    "conflict_unresolved",
-    "awaiting_dependency",
-];
-
-/// The two blocked reasons that clear without a caller
-/// (`queue-and-verdicts.md` 24 and 27).
-///
-/// A drain returns these rows to unanswered before it starts, so the block is
-/// the last drain's finding rather than a state that sticks: a dependency
-/// answered since then releases its dependent, and a replaced credential is
-/// proved by one request rather than by a caller remembering to release
-/// every row a single 401 parked.
-pub const SELF_CLEARING_REASONS: &[&str] = &["awaiting_dependency", "credential_refused"];
 
 /// The body a queued write will send. Not on `QueuedWrite`, which is the
 /// shape a caller is shown: the payload is the wire's, and a queue report
@@ -1450,42 +1534,34 @@ pub fn payload_of(conn: &Connection, id: &str) -> Result<String, CoreError> {
 
 /// What the server said, as the queue records it.
 pub struct Answered<'a> {
-    pub verdict: &'a str,
+    pub verdict: Verdict,
     pub reason: Option<&'a str>,
     pub answer: Option<&'a str>,
     pub conflicted_copy_id: Option<&'a str>,
 }
 
-/// Writes a verdict onto a queued row.
-///
-/// The verdict set is the schema's `CHECK`; the blocked reasons are checked
-/// here, because `reason` also carries the server's own refusal codes under
-/// `refused` and the schema cannot hold a copy of the server's error
-/// vocabulary without going stale.
 /// Records that a write has gone out on the wire.
 pub fn mark_sent(conn: &Connection, id: &str) -> Result<(), CoreError> {
     conn.execute("UPDATE queue SET sent = 1 WHERE id = ?1", [id])?;
     Ok(())
 }
 
+/// Writes a verdict onto a queued row.
+///
+/// The blocked reasons are checked here rather than by the schema, because
+/// `reason` also carries the server's own refusal codes under `refused`, and
+/// the schema cannot hold a copy of the server's error vocabulary without
+/// going stale.
 pub fn record_verdict(
     conn: &Connection,
     id: &str,
     answered: &Answered<'_>,
 ) -> Result<(), CoreError> {
-    if !VERDICTS.contains(&answered.verdict) {
-        return Err(CoreError::Invalid(format!(
-            "{:?} is not one of the six verdicts a write is answered with",
-            answered.verdict
-        )));
-    }
-    if answered.verdict == "blocked" {
-        let reason = answered.reason.unwrap_or_default();
-        if !BLOCKED_REASONS.contains(&reason) {
-            return Err(CoreError::Invalid(format!(
-                "{reason:?} is not one of the five reasons a write is blocked"
-            )));
-        }
+    if answered.verdict == Verdict::Blocked {
+        answered
+            .reason
+            .unwrap_or_default()
+            .parse::<BlockedReason>()?;
     }
     let changed = conn.execute(
         "UPDATE queue
@@ -1494,7 +1570,7 @@ pub fn record_verdict(
           WHERE id = ?1",
         params![
             id,
-            answered.verdict,
+            answered.verdict.as_str(),
             answered.reason,
             answered.answer,
             answered.conflicted_copy_id,
@@ -1531,36 +1607,28 @@ pub fn count_refusal(conn: &Connection, id: &str) -> Result<i64, CoreError> {
 /// the same credential, so a credential the server refused refuses all of
 /// them, and working through the rest of the queue would be spending requests
 /// to be told the same thing once per row.
-pub fn block_unanswered(conn: &Connection, reason: &str) -> Result<usize, CoreError> {
-    if !BLOCKED_REASONS.contains(&reason) {
-        return Err(CoreError::Invalid(format!(
-            "{reason:?} is not one of the five reasons a write is blocked"
-        )));
-    }
+pub fn block_unanswered(conn: &Connection, reason: BlockedReason) -> Result<usize, CoreError> {
     Ok(conn.execute(
         "UPDATE queue SET verdict = 'blocked', reason = ?1, answered_at = ?2
           WHERE verdict IS NULL",
-        params![reason, now_iso()],
+        params![reason.as_str(), now_iso()],
     )?)
 }
 
 /// Returns the rows blocked for a reason that clears on its own to unanswered.
 pub fn unblock_self_clearing(conn: &Connection) -> Result<usize, CoreError> {
-    let places = SELF_CLEARING_REASONS
-        .iter()
-        .map(|_| "?")
-        .collect::<Vec<_>>()
-        .join(", ");
-    let reasons: Vec<&dyn rusqlite::ToSql> = SELF_CLEARING_REASONS
-        .iter()
-        .map(|reason| reason as &dyn rusqlite::ToSql)
+    let clearing: Vec<&str> = BlockedReason::ALL
+        .into_iter()
+        .filter(|reason| reason.clears_itself())
+        .map(BlockedReason::as_str)
         .collect();
+    let places = vec!["?"; clearing.len()].join(", ");
     Ok(conn.execute(
         &format!(
             "UPDATE queue SET verdict = NULL, reason = NULL, answered_at = NULL
               WHERE verdict = 'blocked' AND reason IN ({places})"
         ),
-        reasons.as_slice(),
+        params_from_iter(clearing),
     )?)
 }
 
@@ -1603,8 +1671,9 @@ pub fn release(conn: &Connection, id: &str) -> Result<bool, CoreError> {
     // alone clears a terminal refusal and sends the write a second time. A
     // refusal that later stops applying would then land content the caller
     // had watched disappear from their copy.
-    let refused_by_dependency = verdict.as_deref() == Some("refused") && !sent;
-    if !matches!(verdict.as_deref(), Some("blocked") | Some("dead")) && !refused_by_dependency {
+    let verdict = verdict.as_deref().map(str::parse::<Verdict>).transpose()?;
+    let refused_by_dependency = verdict == Some(Verdict::Refused) && !sent;
+    if !matches!(verdict, Some(Verdict::Blocked | Verdict::Dead)) && !refused_by_dependency {
         return Ok(false);
     }
     let mut keys: Vec<String> = match spent {
@@ -1646,8 +1715,7 @@ fn dependants_refused_with(conn: &Connection, id: &str) -> Result<Vec<String>, C
     Ok(queued_writes(conn)?
         .into_iter()
         .filter(|row| {
-            row.verdict.as_deref() == Some("refused")
-                && row.depends_on.iter().any(|held| held == id)
+            row.verdict == Some(Verdict::Refused) && row.depends_on.iter().any(|held| held == id)
         })
         .map(|row| row.id)
         .collect())
@@ -1709,6 +1777,132 @@ pub fn forget_item(conn: &Connection, id: &str) -> Result<(), CoreError> {
     conn.execute(
         "DELETE FROM edges WHERE source_id = ?1 OR target_id = ?1",
         [id],
+    )?;
+    Ok(())
+}
+
+/// Whether a queued row still stands to be sent: unanswered, or parked for
+/// a reason that may yet clear.
+fn still_waiting(row: &QueuedWrite) -> bool {
+    matches!(row.verdict, None | Some(Verdict::Blocked))
+}
+
+/// Lays every write to an item that is still waiting back over the row as
+/// the server last sent it (`queue-and-verdicts.md` 35), whole fields in the
+/// order they were queued. Called after anything puts the server's row into
+/// the copy: an answer the drain adopts, a reconcile, an event.
+pub fn lay_waiting_writes_over(
+    conn: &Connection,
+    item_id: &str,
+    title_field: Option<&str>,
+) -> Result<(), CoreError> {
+    let waiting: Vec<QueuedWrite> = queued_writes(conn)?
+        .into_iter()
+        .filter(|row| row.item_id.as_deref() == Some(item_id) && still_waiting(row))
+        .collect();
+    if waiting.is_empty() {
+        return Ok(());
+    }
+    let Some(mut item) = items_by_ids(conn, std::slice::from_ref(&item_id.to_string()))?.pop()
+    else {
+        return Ok(());
+    };
+    let mut tags = item.tags.clone();
+    for row in waiting {
+        let payload: Value = serde_json::from_str(&payload_of(conn, &row.id)?)?;
+        let named_tags = || -> Vec<String> {
+            payload
+                .get("tags")
+                .and_then(Value::as_array)
+                .map(|tags| {
+                    tags.iter()
+                        .filter_map(|tag| tag.as_str().map(str::to_string))
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        match row.kind {
+            WriteKind::UpdateItem => {
+                if let Some(Value::Object(properties)) = payload.get("properties") {
+                    for (key, value) in properties {
+                        item.properties.insert(key.clone(), value.clone());
+                    }
+                }
+                if let Some(Value::String(key)) = payload.get("source_id") {
+                    item.source_id = Some(key.clone());
+                }
+            }
+            WriteKind::TransitionItem => {
+                if let Some(state) = payload.get("state").and_then(Value::as_str) {
+                    item.state = state.parse()?;
+                }
+            }
+            WriteKind::DeleteItem => item.state = ItemState::Trashed,
+            WriteKind::RestoreItem => item.state = ItemState::Active,
+            WriteKind::AddTag | WriteKind::MergeMetadata => {
+                for tag in named_tags() {
+                    if !tags.contains(&tag) {
+                        tags.push(tag);
+                    }
+                }
+            }
+            WriteKind::RemoveTag => tags.retain(|tag| Some(tag) != row.tag.as_ref()),
+            WriteKind::ReplaceMetadata => tags = named_tags(),
+            WriteKind::CreateItem
+            | WriteKind::CreateEdge
+            | WriteKind::UpdateEdge
+            | WriteKind::DeleteEdge
+            | WriteKind::WriteExtension
+            | WriteKind::DeleteExtension
+            | WriteKind::UploadBlob => {}
+        }
+    }
+    tags.sort();
+    upsert_item(conn, &item.as_wire(), Some(&tags), title_field)
+}
+
+/// The same for an edge: an edit still waiting is laid back over the
+/// server's properties, and a delete still waiting takes the edge out again.
+pub fn lay_waiting_edge_writes_over(conn: &Connection, edge_id: &str) -> Result<(), CoreError> {
+    let waiting: Vec<QueuedWrite> = queued_writes(conn)?
+        .into_iter()
+        .filter(|row| row.edge_id.as_deref() == Some(edge_id) && still_waiting(row))
+        .collect();
+    let Some(mut edge) = edge_by_id(conn, edge_id)? else {
+        return Ok(());
+    };
+    for row in waiting {
+        match row.kind {
+            WriteKind::UpdateEdge => {
+                let payload: Value = serde_json::from_str(&payload_of(conn, &row.id)?)?;
+                if let Some(Value::Object(properties)) = payload.get("properties") {
+                    for (key, value) in properties {
+                        edge.properties.insert(key.clone(), value.clone());
+                    }
+                }
+            }
+            WriteKind::DeleteEdge => {
+                delete_edge(conn, edge_id)?;
+                return Ok(());
+            }
+            _ => {}
+        }
+    }
+    upsert_edge(conn, &edge.as_wire_keeping_time())
+}
+
+/// Moves a queued write onto the version the server gave the row it was
+/// based on, where that row was this device's own create
+/// (`queue-and-verdicts.md` 36). The payload and the column both move, so
+/// the queue reports what was sent.
+pub fn rebase(conn: &Connection, id: &str, version: i64) -> Result<(), CoreError> {
+    let mut payload: Value = serde_json::from_str(&payload_of(conn, id)?)?;
+    if let Some(body) = payload.as_object_mut() {
+        body.insert("version".into(), Value::from(version));
+    }
+    conn.execute(
+        "UPDATE queue SET payload = ?2, base_version = ?3 WHERE id = ?1",
+        params![id, payload.to_string(), version],
     )?;
     Ok(())
 }

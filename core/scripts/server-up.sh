@@ -13,6 +13,12 @@
 # MARFA_SERVER_REPO points at the monorepo checkout to boot; the default is
 # the checkout this script lives in.
 #
+# MARFA_SERVER_STATE names a directory to keep the instance in. The first
+# boot there records its port, its secrets and the working key beside the
+# database, and a later boot on the same directory reuses all four: the same
+# origin, the same data, the same key. That is how a proof stops a server and
+# brings it back. `server-down.sh` leaves a named directory in place.
+#
 # PORT defaults to one the kernel says is free, because a fixed default
 # cannot be right for both callers: the runner pool runs on a developer's own
 # Mac, so a local boot and a CI job would take the same port and whichever
@@ -30,9 +36,26 @@ s.bind(("127.0.0.1", 0))
 print(s.getsockname()[1])
 s.close()'
 }
+keep=""
+if [[ -n "${MARFA_SERVER_STATE:-}" ]]; then
+  state="${MARFA_SERVER_STATE}"
+  keep=1
+  mkdir -p "${state}"
+else
+  state="$(mktemp -d "${TMPDIR:-/tmp}/marfa-core-server.XXXXXX")"
+fi
+boot="${state}/boot.env"
+kept_key=""
+if [[ -f "${boot}" ]]; then
+  # shellcheck disable=SC1090
+  source "${boot}"
+  PORT="${BOOT_PORT}"
+  MARFA_AUTH_SECRET="${BOOT_AUTH_SECRET}"
+  API_KEY_SALT="${BOOT_KEY_SALT}"
+  kept_key="${BOOT_KEY}"
+fi
 port="${PORT:-$(free_port)}"
 url="http://127.0.0.1:${port}"
-state="$(mktemp -d "${TMPDIR:-/tmp}/marfa-core-server.XXXXXX")"
 log="${state}/server.log"
 
 export SQLITE_PATH="${state}/marfa.db"
@@ -86,6 +109,7 @@ write_env() {
     echo "export MARFA_SERVER_ENV='${env_file}'"
     echo "export MARFA_SERVER_PID='${pid}'"
     echo "export MARFA_SERVER_STATE='${state}'"
+    echo "export MARFA_SERVER_KEEP='${keep}'"
   } >"${env_file}"
 }
 write_env ""
@@ -108,6 +132,12 @@ for _ in $(seq 1 120); do
   sleep 0.5
 done
 curl -fsS "${url}/health" >/dev/null 2>&1 || fail "no answer from ${url}/health"
+
+if [[ -n "${kept_key}" ]]; then
+  write_env "${kept_key}"
+  cat "${env_file}"
+  exit 0
+fi
 
 secret=""
 for _ in $(seq 1 40); do
@@ -142,4 +172,12 @@ key="$(read_key <<<"${working}")"
 [[ -n "${key}" ]] || fail "the operator key could not mint a working key: ${working}"
 
 write_env "${key}"
+if [[ -n "${keep}" ]]; then
+  {
+    echo "BOOT_PORT='${port}'"
+    echo "BOOT_AUTH_SECRET='${MARFA_AUTH_SECRET}'"
+    echo "BOOT_KEY_SALT='${API_KEY_SALT}'"
+    echo "BOOT_KEY='${key}'"
+  } >"${boot}"
+fi
 cat "${env_file}"

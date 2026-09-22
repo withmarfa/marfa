@@ -750,6 +750,69 @@ describe("a local read answers the active state unless asked otherwise", () => {
   });
 });
 
+describe("a local search narrows as a list does", () => {
+  it("narrows a local search by type and tags as a list does", async () => {
+    harness = await startHarness("search-narrowing");
+    scriptHydration(harness.server, {
+      head: "10",
+      rows: {
+        "core.note": [
+          {
+            item: { id: "note", properties: { title: "heron note" } },
+            tags: ["garden", "birds"],
+          },
+        ],
+        "core.file": [
+          {
+            item: {
+              id: "image",
+              type: "core.file.image",
+              properties: { title: "heron image" },
+            },
+            tags: ["birds"],
+          },
+          {
+            item: {
+              id: "file",
+              type: "core.file",
+              properties: { title: "heron file" },
+            },
+          },
+        ],
+      },
+    });
+    expect(
+      (await harness.device.hydrate(["core.note", "core.file"], "library")).ok,
+    ).toBe(true);
+    const ids = async (filters: {
+      type?: string;
+      tags?: string[];
+    }): Promise<string[]> => {
+      const hits = await harness!.device.search("heron", filters);
+      expect(
+        hits.ok,
+        `a narrowed local search was refused: ${JSON.stringify(hits)}`,
+      ).toBe(true);
+      return hits.ok ? hits.value.map((hit) => hit.item.id).sort() : [];
+    };
+    // The control: unnarrowed, the search finds all three, so every absence
+    // below is the narrowing.
+    expect(await ids({})).toEqual(["file", "image", "note"]);
+    expect(
+      await ids({ type: "core.file" }),
+      "a search narrowed to a type answered another type, or dropped the subtype a list would answer",
+    ).toEqual(["file", "image"]);
+    expect(
+      await ids({ tags: ["birds"] }),
+      "a search narrowed to a tag answered a row without it",
+    ).toEqual(["image", "note"]);
+    expect(
+      await ids({ type: "core.note", tags: ["birds", "garden"] }),
+      "a search narrowed by a type and two tags answered a row lacking one of them",
+    ).toEqual(["note"]);
+  });
+});
+
 describe("a local list narrows on the item's own time", () => {
   /**
    * Both bounds are exclusive, which is one rule across the whole API

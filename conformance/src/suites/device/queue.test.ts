@@ -953,3 +953,161 @@ describe("offline, reconnect and re-hydration", () => {
     expect(settled.value.properties.title).toBe("as the server took it");
   });
 });
+
+describe("an answer the device applies keeps what it has not had answered", () => {
+  /** A create door that takes whatever it is sent, at version 1. */
+  function acceptCreates(harnessUnderTest: Harness): void {
+    scriptWrites(harnessUnderTest.server, {
+      create: [
+        (request) => {
+          const sent = JSON.parse(request.body) as {
+            id: string;
+            properties: Record<string, unknown>;
+          };
+          return answers.created(
+            wireItem({ id: sent.id, version: 1, properties: sent.properties }),
+          );
+        },
+      ],
+    });
+  }
+
+  it("keeps the writes it has not had answered through the answer to an earlier one", async () => {
+    harness = await hydratedHarness("queue-overlay-answer", { rows: held() });
+    const { device, server } = harness;
+    const note = await device.create({
+      type: "core.note",
+      properties: { title: "as created", body: "the body" },
+    });
+    const binned = await device.create({
+      type: "core.note",
+      properties: { title: "to be binned", body: "going" },
+    });
+    expect(note.ok && binned.ok).toBe(true);
+    if (!note.ok || !binned.ok) return;
+    const id = note.value.item_id ?? "a";
+    const binnedId = binned.value.item_id ?? "b";
+    expect(
+      (
+        await device.update(id, {
+          properties: { title: "edited before any answer" },
+          version: 0,
+        })
+      ).ok,
+    ).toBe(true);
+    expect((await device.addTag(id, "favourite")).ok).toBe(true);
+    expect((await device.deleteItem(binnedId)).ok).toBe(true);
+
+    // The creates are answered and nothing after them is: every later door
+    // fails the way an environment fails, so those writes are still
+    // unanswered when the drain returns.
+    acceptCreates(harness);
+    scriptWrites(server, {
+      update: [answers.serverFault()],
+      tags: [answers.serverFault()],
+    });
+    server.answer("DELETE", /^\/items\/[^/]+$/, answers.serverFault());
+    expect((await device.drain()).ok).toBe(true);
+
+    const read = await device.get(id);
+    expect(read.ok).toBe(true);
+    if (!read.ok) return;
+    // The witness: the create's answer was adopted, so what follows is about
+    // a row that took the server's fields and not one nothing touched.
+    expect(
+      read.value.version,
+      "the create's answer was not adopted, so nothing here is about an answer laid over waiting writes",
+    ).toBe(1);
+    expect(
+      read.value.properties.title,
+      "the answer to the create erased the edit queued after it, so the copy shows the write as undone while the queue still sends it",
+    ).toBe("edited before any answer");
+    expect(
+      read.value.tags,
+      "the answer to the create erased the tag queued after it, and a tag's own answer carries no row to put it back",
+    ).toEqual(["favourite"]);
+
+    const listed = await device.list();
+    expect(listed.ok).toBe(true);
+    expect(
+      listed.ok ? listed.value.map((item) => item.id) : [],
+      "the answer to a create brought back a row the device had already put in the bin, and a delete's own answer carries no row to take it away again",
+    ).not.toContain(binnedId);
+
+    const waiting = (await queueOf(device)).filter(
+      (row) => row.verdict === null,
+    );
+    expect(
+      waiting.map((row) => row.kind).sort(),
+      "the writes after the creates were not left waiting, so the absences above are not about unanswered writes",
+    ).toEqual(["add_tag", "delete_item", "update_item"]);
+  });
+
+  it("sends an edit of its own unanswered create based on the version that create was answered with", async () => {
+    harness = await hydratedHarness("queue-rebase-own-create", {
+      rows: held(),
+    });
+    const { device, server } = harness;
+    const note = await device.create({
+      type: "core.note",
+      properties: { title: "made here", body: "the body" },
+    });
+    expect(note.ok).toBe(true);
+    if (!note.ok) return;
+    const id = note.value.item_id ?? "a";
+    expect(
+      (await device.update(id, { properties: { title: "edited here" }, version: 0 }))
+        .ok,
+    ).toBe(true);
+    // The control: an edit based on a version the server issued.
+    expect(
+      (
+        await device.update(HELD.id, {
+          properties: { title: "held, edited" },
+          version: HELD.version,
+        })
+      ).ok,
+    ).toBe(true);
+
+    acceptCreates(harness);
+    scriptWrites(server, {
+      update: [
+        (request) => {
+          const sent = JSON.parse(request.body) as {
+            version: number;
+            properties: Record<string, unknown>;
+          };
+          const target = request.pathname.split("/").at(-1) ?? "";
+          return answers.updated(
+            wireItem({
+              id: target,
+              version: sent.version + 1,
+              properties: sent.properties,
+            }),
+          );
+        },
+      ],
+    });
+    const drained = await device.drain();
+    expect(drained.ok).toBe(true);
+
+    const sentVersion = (target: string): unknown =>
+      (
+        JSON.parse(
+          server.requests.find(
+            (request) =>
+              request.method === "PATCH" && request.pathname === `/items/${target}`,
+          )?.body ?? "{}",
+        ) as { version?: unknown }
+      ).version;
+    expect(
+      sentVersion(id),
+      "an edit of the device's own create went out based on the placeholder the copy held, a version the server never mints and holds no snapshot of, so it is blocked though everything it was based on was the device's own",
+    ).toBe(1);
+    expect(
+      sentVersion(HELD.id),
+      "an edit based on a version the server issued was sent on some other version",
+    ).toBe(HELD.version);
+  });
+});
+

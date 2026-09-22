@@ -229,7 +229,9 @@ fn apply(
                     .metadata
                     .as_ref()
                     .map(|metadata| metadata.tags.as_slice());
-                store::upsert_item(tx, item, tags, catalog.title_field(&item.r#type))?;
+                let title_field = catalog.title_field(&item.r#type);
+                store::upsert_item(tx, item, tags, title_field)?;
+                store::lay_waiting_writes_over(tx, &item.id, title_field)?;
                 Ok(true)
             } else {
                 store::delete_item(tx, &item.id)
@@ -241,6 +243,7 @@ fn apply(
             };
             if store::item_held(tx, &edge.source_id)? {
                 store::upsert_edge(tx, edge)?;
+                store::lay_waiting_edge_writes_over(tx, &edge.id)?;
                 Ok(true)
             } else {
                 Ok(false)

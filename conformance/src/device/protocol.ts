@@ -157,11 +157,13 @@ export interface EdgeDraft {
   id?: string;
 }
 
-/** Narrowing for a local search: the state axis the list takes, and only
- *  that, because the rest of the grammar is answered by a list. */
+/** Narrowing for a local search: the state axis, a type with its subtree,
+ *  and tags, each read as the list reads it. */
 export interface SearchFilters {
   state?: string;
   allStates?: boolean;
+  type?: string;
+  tags?: string[];
 }
 
 export interface ListFilters {

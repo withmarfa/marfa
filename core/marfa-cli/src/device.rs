@@ -58,6 +58,12 @@ pub enum DeviceCommand {
         /// Every state, not just the active one.
         #[arg(long)]
         all_states: bool,
+        /// A type identifier; its subtypes are included.
+        #[arg(long = "type", value_name = "TYPE")]
+        type_: Option<String>,
+        /// Hits must carry every tag given.
+        #[arg(long = "tag", value_name = "TAG")]
+        tags: Vec<String>,
         /// How many hits at most.
         #[arg(long, default_value_t = 20)]
         limit: usize,
@@ -421,11 +427,15 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<(), CliError> 
             query,
             state,
             all_states,
+            type_,
+            tags,
             limit,
         } => {
             let filters = SearchFilters {
                 state: state.map(Into::into),
                 all_states,
+                r#type: type_,
+                tags,
             };
             output::hits(
                 &open(&args.db, None)?.search(&query, &filters, limit)?,
@@ -515,7 +525,7 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<(), CliError> 
         DeviceCommand::Release { id, reason } => {
             let core = open(&args.db, None)?;
             let released = match (&id, &reason) {
-                (_, Some(reason)) => core.release_reason(reason)?,
+                (_, Some(reason)) => core.release_reason(reason.parse()?)?,
                 (Some(id), None) => usize::from(core.release(id)?),
                 // clap refuses this combination, so reaching it means the
                 // argument rules and this branch have drifted apart.

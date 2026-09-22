@@ -882,13 +882,16 @@ describe("files and items", () => {
 
     // Naming the declined link again by hand lifts the record. The body
     // now carries the line itself, so the lift shows only once the server
-    // rewrites the body without it: the catch-up applies that edit, and
-    // the pull renders the edge again.
+    // rewrites the body without it: the drain lands the person's edit, the
+    // catch-up applies the server's later one over it, and the pull renders
+    // the edge again. Without the drain the person's edit is still waiting,
+    // and an event never erases a waiting write (`queue-and-verdicts.md` 35).
     writeFileSync(
       join(harness.dir, "source.md"),
       read(harness, "source.md") + "[[other]]\n",
     );
     expect((await harness.folder.scan()).ok).toBe(true);
+    expect((await device.drain()).ok).toBe(true);
     const caught = await device.catchUp();
     expect(caught.ok ? caught.value.applied : 0, JSON.stringify(caught)).toBe(
       1,

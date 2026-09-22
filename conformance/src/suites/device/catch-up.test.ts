@@ -324,6 +324,69 @@ describe("catch-up replays from the cursor", () => {
     }
   });
 
+  it("applies an event beneath a write it has not had answered", async () => {
+    harness = await startHarness("event-beneath-write");
+    const { server, device } = harness;
+    scriptHydration(server, {
+      head: "10",
+      rows: {
+        "core.note": [
+          {
+            item: {
+              id: "row",
+              version: 1,
+              properties: { title: "as hydrated", body: "as hydrated" },
+            },
+          },
+        ],
+      },
+    });
+    server.answer(
+      "GET",
+      "/events",
+      replay("11", [
+        // Another device changed the body. This one has a title edit queued
+        // and unanswered.
+        itemEvent(
+          "11",
+          "item.updated",
+          wireItem({
+            id: "row",
+            version: 2,
+            properties: { title: "as hydrated", body: "changed elsewhere" },
+          }),
+          { tags: ["from elsewhere"] },
+        ),
+      ]),
+    );
+
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    expect(
+      (
+        await device.update("row", {
+          properties: { title: "edited here, not yet sent" },
+          version: 1,
+        })
+      ).ok,
+    ).toBe(true);
+    expect((await device.catchUp()).ok).toBe(true);
+
+    const held = await device.get("row");
+    expect(held.ok).toBe(true);
+    if (!held.ok) return;
+    // The witness: the event was applied, so the title below is the edit
+    // surviving an applied event rather than an event that never landed.
+    expect(
+      held.value.properties.body,
+      "the event was not applied at all, so nothing here is about applying one beneath a waiting write",
+    ).toBe("changed elsewhere");
+    expect(held.value.version).toBe(2);
+    expect(
+      held.value.properties.title,
+      "the event erased an edit the device has not had answered, so the copy shows the write as undone while the queue still sends it",
+    ).toBe("edited here, not yet sent");
+  });
+
   it("leaves the cursor at the last applied event when the stream ends early", async () => {
     harness = await startHarness("short-stream");
     const { server, device } = harness;

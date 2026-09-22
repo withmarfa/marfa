@@ -132,6 +132,8 @@ export class CliDevice implements DeviceUnderTest {
     const args = ["search", query];
     if (filters.state !== undefined) args.push("--state", filters.state);
     if (filters.allStates === true) args.push("--all-states");
+    if (filters.type !== undefined) args.push("--type", filters.type);
+    for (const tag of filters.tags ?? []) args.push("--tag", tag);
     if (limit !== undefined) args.push("--limit", String(limit));
     return this.json<SearchHit[]>(args);
   }

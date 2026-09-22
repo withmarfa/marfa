@@ -59,7 +59,9 @@ cargo build -p marfa-cli
 
 ## Bindings
 
-Swift: `bindings/swift/build.sh` packages the FFI crate with cargo-swift into `bindings/swift/MarfaCore`; then `swift run` in `bindings/swift/Example`.
+Both reach everything `marfa_core::Core` does: the reads, hydrate and catch-up, every queued write, the queue, drain, release, forget, and the six verdicts as a typed value carrying what each one says.
+
+Swift: `bindings/swift/build.sh` packages the FFI crate with cargo-swift into `bindings/swift/MarfaCore`, with macOS, iOS and simulator slices; the example in `bindings/swift/Example` runs with `swift run`.
 
 Node: the package sits outside the pnpm workspace, so every pnpm call carries the flag:
 
@@ -67,5 +69,9 @@ Node: the package sits outside the pnpm workspace, so every pnpm call carries th
 cd bindings/node
 pnpm install --ignore-workspace
 pnpm --ignore-workspace run build
-pnpm --ignore-workspace run proof
+pnpm --ignore-workspace run check
 ```
+
+`check` holds the proof script to the `index.d.ts` the build generates.
+
+`scripts/binding-proof.sh` drives both, after both are built, through a write made offline and its verdict once the server returns: each hydrates, the server stops, each queues writes and drains into nothing, the server comes back on the same origin with the same data, and each drains again.
