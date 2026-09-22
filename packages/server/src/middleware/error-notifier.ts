@@ -13,11 +13,12 @@ const debounceMap = new Map<string, number>();
 const DEFAULT_WEBHOOK_TIMEOUT_MS = 5_000;
 
 /**
- * Drops the entries the debounce no longer needs, on the write that adds
- * one. The map holds one entry per distinct error seen inside one window,
- * and every write that walks it has already decided to send a webhook,
- * which dwarfs the walk; so the sweep needs no timer, and the scheduler
- * stays the one place a periodic task lives.
+ * Drops the debounce entries whose window has passed, on the write that
+ * adds one. Sweeping here rather than on a timer leaves the scheduler the
+ * one place a periodic task lives, and the walk rides on a path already
+ * committed to sending a webhook, which dwarfs it. An entry whose window
+ * has passed survives until the next send sweeps it, so the map is bounded
+ * by what one window admits plus whatever the last send left behind.
  */
 function forgetExpired(now: number): void {
   for (const [key, ts] of debounceMap) {

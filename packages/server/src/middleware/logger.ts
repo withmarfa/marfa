@@ -95,7 +95,7 @@ export interface LogOptions {
    * reasoning, and there is exactly one: the bootstrap secret, which has to
    * be readable by whoever runs the instance and by nobody further. Exporting
    * it would make "can read the log" mean "can read the observability
-   * backend", which is a much larger set than "runs this server".
+   * stack", which is a much larger set than "runs this server".
    *
    * Not a general-purpose escape hatch. A line that needs this is a line
    * carrying a secret, and the answer for anything else is a redacted

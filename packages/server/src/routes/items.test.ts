@@ -2874,6 +2874,7 @@ describe("POST /items — inline-edge hydration parity past the cap", () => {
 
 /**
  * The `include` token that widens the row set rather than hydrating an extra.
+ *
  * The conformance suite covers the default exclusion and the explicit-type
  * path and never the token, so this file is where it is held. A client that
  * lists everything it can see and prunes what the listing did not carry
@@ -2948,15 +2949,14 @@ describe("GET /items?include=system", () => {
   // Every other case in this file and its sibling runs as `ctx.workingKey`,
   // which holds `"*": "write"` — so `allowed_types` admits everything and
   // says nothing in any of them. `exclude_system_types` and `allowed_types`
-  // are independent arguments to the same storage call, and nothing asserted
-  // how they compose, which matters now the published description advertises
-  // the token to every client.
+  // are independent arguments to the same storage call, so how they compose
+  // is held here, and the published description advertises the token to
+  // every client.
   //
   // The grant has to name the system type. A key holding only `core.note`
   // proves nothing: the device is absent whether the token was honored or
-  // ignored, so the test would pass against a handler that dropped `system`
-  // entirely. That was the first version of this test, and it is the guard
-  // that cannot fail for the reason it exists.
+  // ignored, so the case would pass against a handler that dropped `system`
+  // entirely — a guard that cannot fail for the reason it exists.
   //
   // Reads to `system.*` pass the reserved-namespace fence, which gates
   // writes only, so the permission map is the one thing fencing them.
@@ -3027,9 +3027,9 @@ describe("GET /items?include=system", () => {
     );
     expect(res.status).toBe(200);
     // `metadata` changes the envelope: each row becomes `{ item, metadata }`
-    // rather than a bare item. That is itself a second way this parameter does
-    // more than hydrate inline, and the first draft of this test read `r.id`
-    // and got two `undefined`s back.
+    // rather than a bare item. That is itself a second way this parameter
+    // does more than hydrate inline, and a case reading `r.id` off these
+    // rows gets `undefined` back rather than a failure naming the envelope.
     const body = (await res.json()) as {
       data: { item: { id: string }; metadata: { tags: string[] } }[];
     };

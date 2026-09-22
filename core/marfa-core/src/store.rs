@@ -1080,10 +1080,10 @@ mod tests {
 
     /// What `forget_answered` may and may not clear.
     ///
-    /// The predicate had no test at all, and was twice rewritten from a
-    /// reading of which verdicts look final rather than from which rows a
-    /// caller can still act on. Both mistakes end the same way: a write the
-    /// person made, gone with no verdict, no report and no row.
+    /// The predicate is easy to write from a reading of which verdicts look
+    /// final rather than from which rows a caller can still act on, and
+    /// every such reading ends the same way: a write the person made, gone
+    /// with no verdict, no report and no row.
     #[test]
     fn forgetting_spares_every_row_a_caller_can_still_release() {
         let conn = conn();
@@ -1603,18 +1603,19 @@ fn dependants_refused_with(conn: &Connection, id: &str) -> Result<Vec<String>, C
 /// Only the four terminal verdicts. A `blocked` or `dead` row is one a
 /// caller may still release, and clearing it would take that away.
 ///
-/// **Releasable is the test, on both sides of it.** A row is releasable when
-/// it is `blocked`, `dead`, or `refused` without having been sent — the three
-/// `release` takes — and a releasable row is neither cleared itself nor
-/// allowed to lose the dependency it names.
+/// **Whether a caller can still act on the row is the test, on both sides of
+/// it.** A row is releasable when it is `blocked`, `dead`, or `refused`
+/// without having been sent — the three `release` takes — and a releasable
+/// row is never cleared. The dependency side is wider by one: a row is also
+/// kept while anything still unanswered names it, because an unanswered row
+/// has a verdict coming and may yet become one of those three.
 ///
-/// The set is the question of whether a caller can still act on the row,
-/// never a list of verdicts, because a list gets both halves wrong the same
-/// way: a refused-unsent row cleared although `release` accepts it, and a
-/// blocked row's create left unprotected, so that the release the caller is
-/// told to perform produces a row whose dependency cannot be found, which
-/// `readiness` reads as unanswered and holds forever against a write that
-/// no longer exists.
+/// Both halves go wrong the same way if the set is written as a list of
+/// verdicts instead: a refused-unsent row cleared although `release` accepts
+/// it, and a blocked row's create left unprotected, so that the release the
+/// caller is told to perform produces a row whose dependency cannot be
+/// found, which `readiness` reads as unanswered and holds forever against a
+/// write that no longer exists.
 pub fn forget_answered(conn: &Connection) -> Result<usize, CoreError> {
     Ok(conn.execute(
         "DELETE FROM queue

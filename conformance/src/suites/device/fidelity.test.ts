@@ -127,11 +127,11 @@ function keyPaths(value: unknown, prefix = ""): string[] {
  * value of every field a device decides something by, and on the presence and
  * kind of every field a run mints for itself.
  *
- * Comparing kinds alone is not enough and was the first thing wrong with this
- * file: a scripted `error.code` of "nope" is a string, so is the server's, and
- * the code is the one field the device classifies a refusal by. Comparing
- * values alone is not possible either, because an id, a version and an instant
- * differ every run — hence the two lists.
+ * Comparing kinds alone is not enough: a scripted `error.code` of "nope" is a
+ * string, so is the server's, and the code is the one field the device
+ * classifies a refusal by. Comparing values alone is not possible either,
+ * because an id, a version and an instant differ every run — hence the two
+ * lists.
  */
 function expectFidelity(
   name: string,

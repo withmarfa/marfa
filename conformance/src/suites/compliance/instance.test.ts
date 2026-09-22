@@ -262,8 +262,8 @@ describe("the instance", () => {
     // `GET /metrics` is served and deliberately absent from the document
     // (`INTERNAL_OPERATION_IDS`), so nothing in the published reference
     // describes its body and `expectMatchesSchema` has nothing to check it
-    // against. A key inside it was renamed twice with nothing anywhere going
-    // red. The shape is asserted here instead, and `coverage.md` carries the
+    // against: a key renamed inside it turns nothing red anywhere else. The
+    // shape is asserted here instead, and `coverage.md` carries the
     // unpublished row that records the absence as a decision.
     const operator = getOperatorClient();
     const r = await operator.rawRequest<{

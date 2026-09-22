@@ -183,7 +183,7 @@ describe("GET /events?type= on the Last-Event-ID replay", () => {
     //
     // Asked of a filtering subscriber and of one carrying no `?type=`,
     // because the replay decodes the payload for both and reaches the same
-    // answer. There is no longer a subscriber it decodes nothing for: every
+    // answer. There is no subscriber it decodes nothing for: every
     // credential is held to its permission maps, so `typeFilter.allowed` is
     // never absent and the row is classified for all of them.
     //
@@ -360,12 +360,12 @@ describe("GET /events?type= answers the spellings /items answers", () => {
  * A stored row the replay cannot classify is withheld by both checks that
  * look at it, not by one of them.
  *
- * The type filter and the permission narrowing sit three lines apart and
- * read the same value. One treated a missing item type as "does not
- * match" and skipped the row; the other guarded on the value being
- * present, so a missing one skipped the NARROWING and the row went out
- * unfiltered. The check that failed open was the permission check, which
- * is the wrong one of the two to be wrong.
+ * The type filter and the permission narrowing sit one after the other and
+ * read the same value, so they can disagree about a row that names no item
+ * type: the filter reads it as "does not match" and skips the row, while
+ * the narrowing, guarding on the value being present, skips ITSELF and
+ * sends the row out unfiltered. The check that fails open that way is the
+ * permission check, which is the wrong one of the two to be wrong.
  *
  * Pinned on a narrow credential and a request carrying no `?type=`, so the
  * permission narrowing is the only check with anything to say about the row.
