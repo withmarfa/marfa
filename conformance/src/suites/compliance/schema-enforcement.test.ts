@@ -1,12 +1,15 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { v7 as uuidv7 } from "uuid";
 import { MarfaClient } from "../../client/api.js";
 import type { TestContext } from "../../client/types.js";
 import {
   createTestContext,
+  getOperatorClient,
   trackKey,
   trackItem,
   cleanup,
 } from "../../utils/setup.js";
+import { itemsArchive } from "../../utils/archive.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
 
 let client: MarfaClient;
@@ -174,6 +177,80 @@ describe("strict_mode lever", () => {
     expect(r.ok).toBe(false);
     expect(r.status).toBe(400);
     expect(r.error?.error.code).toBe("invalid_properties");
+  });
+
+  it("strict-on rejects the same unknown property arriving through the restore door", async () => {
+    // The lever is a property of the type, not of the door. The restore
+    // writes through the store directly, where validation runs loose, so
+    // an archive was the way around a lever the create door enforces —
+    // and a read afterwards serves the property back, undeclared and
+    // unmarked, under the type's current version.
+    await setConfig({
+      enforcement: {
+        strict_mode: { types: ["core.note"] },
+      },
+    });
+    const planted = uuidv7();
+    const operator = getOperatorClient();
+    const refused = await operator.restoreArchive(
+      itemsArchive([
+        {
+          id: planted,
+          type: "core.note",
+          source: ctx.source,
+          properties: { body: "with extras", not_a_real_field: "x" },
+        },
+      ]),
+    );
+    expect(refused.status).toBe(400);
+    expect(refused.error?.error.code).toBe("invalid_properties");
+    expect(
+      refused.error?.error.details?.code,
+      "the restore refused for some reason of its own rather than the one the create door gives",
+    ).toBe("unknown_property");
+    expect(
+      (await client.getItem(planted)).status,
+      "the refused archive wrote its row anyway",
+    ).toBe(404);
+
+    // The witness. The same archive without the property restores, so what
+    // was refused is the property and not the archive, the type or the door.
+    const fine = uuidv7();
+    const restored = await operator.restoreArchive(
+      itemsArchive([
+        {
+          id: fine,
+          type: "core.note",
+          source: ctx.source,
+          properties: { body: "with extras" },
+        },
+      ]),
+    );
+    expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
+    trackItem(ctx, fine);
+    expect((await client.getItem(fine)).status).toBe(200);
+  });
+
+  it("default-off accepts through the restore door as it does through the create door", async () => {
+    // The other half of the lever, and the reason the case above is about
+    // the lever rather than about archives: with nothing configured, both
+    // doors take the property. A restore that refused it regardless would
+    // be a second rule wearing the first one's name.
+    await setConfig({});
+    const id = uuidv7();
+    const restored = await getOperatorClient().restoreArchive(
+      itemsArchive([
+        {
+          id,
+          type: "core.note",
+          source: ctx.source,
+          properties: { body: "with extras", not_a_real_field: "x" },
+        },
+      ]),
+    );
+    expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
+    trackItem(ctx, id);
+    expect((await client.getItem(id)).status).toBe(200);
   });
 });
 

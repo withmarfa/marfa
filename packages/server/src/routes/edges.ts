@@ -1,9 +1,15 @@
 import { createRoute, z } from "@hono/zod-openapi";
-import { ErrorCode, MarfaError, isValidId } from "@withmarfa/shared";
+import {
+  ErrorCode,
+  MarfaError,
+  edgePermissionCovers,
+  isValidId,
+} from "@withmarfa/shared";
 import type { Edge } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import {
   getTypeFilter,
+  mayReadType,
   requireAuth,
   requireEdgePermission,
   requireTypeAccess,
@@ -99,7 +105,8 @@ const listEdgesRoute = createRoute({
   tags: ["Edges"],
   summary: "List edges",
   description:
-    "Returns a paginated list of edges, optionally filtered by edge type. Pass `edge_type` as a comma-separated list (up to 10 entries) to scope, or omit it to list every edge.\n\n" +
+    "Returns a paginated list of edges the credential may read, optionally filtered by edge type. Pass `edge_type` as a comma-separated list (up to 10 entries) to scope, or omit it to list every edge this credential reaches.\n\n" +
+    "Each row is held to the two permissions `GET /edges/{id}` asks for: read on the source item's type, and read on the edge type. A row failing either is left out rather than refused, so a page can come back shorter than `limit` — the cursor and `has_more` describe the whole listing, so paging still walks it.\n\n" +
     "Edges carry no lifecycle state of their own and are never hidden by the state of the items they join, so this listing has no `state` parameter and needs none: an edge whose endpoints are in the bin is returned like any other. That is deliberate — a client reconciling its copy has to see those edges rather than watch them disappear.\n\n" +
     "Removals are a different question and this read cannot answer it. A deleted edge leaves no row and no tombstone, so nothing here distinguishes one that was removed from one that never existed. The event stream carries the deletions; a client that reconciles completely needs both channels.\n\n" +
     UNKNOWN_PARAM_NOTE +
@@ -401,18 +408,11 @@ export function edgeRoutes(storage: Storage) {
   router.openapi(listEdgesRoute, async (c) => {
     requireAuth(c);
 
-    // The same question every other data-plane listing asks, and the one
-    // this door did not. Its answer is discarded: the listing is not
-    // narrowed by type, because an edge's readability is its source
-    // item's and this door does not resolve one per row. What the call
-    // does is refuse a credential whose map reaches no type at all —
-    // which `GET /edges/{id}` beside it already refuses, so without this
-    // the same credential was told no for one edge and handed every edge
-    // in the instance for the plural.
-    //
-    // A credential that reaches *some* type still reads every edge here,
-    // which is a narrower version of the same defect and is not this
-    // change's to fix; it is recorded as an open question.
+    // The same question every other data-plane listing asks. Its answer
+    // is not a store filter here, because an edge's readability is its
+    // source item's rather than its own and no column carries that; the
+    // call refuses a credential whose map reaches no type at all, which
+    // `GET /edges/{id}` beside it already refuses.
     getTypeFilter(c);
 
     // An edge has no time of its own, so this door carries only the
@@ -428,7 +428,37 @@ export function edgeRoutes(storage: Storage) {
       limit: q.limit,
       cursor: q.cursor,
     });
-    return c.json(result, 200);
+
+    // The two questions `GET /edges/{id}` asks, asked of every row: may
+    // this credential read the source item's type, and may it read the
+    // edge type. Reading an edge discloses both endpoints, the kind of
+    // relationship and the properties on it, so a credential refused one
+    // edge cannot be handed the same edge inside a page.
+    //
+    // Dropped rather than refused, because a page is a page of what the
+    // caller may see, and a listing that refused would tell a caller a
+    // row it may not read exists. A page can therefore come back shorter
+    // than `limit`; the cursor and `has_more` are the store's and are
+    // untouched, so paging still walks the whole listing.
+    //
+    // `getIncludingTrashed` for the reason the point check uses it: a
+    // plain `items.get` returns null for a trashed source, and a null
+    // source skips the type question rather than failing it. Trashing the
+    // source item would otherwise turn a refusal into a disclosure. A
+    // source that is genuinely absent is left to the edge-type question
+    // alone, which is what the point check does with it.
+    const key = c.get("apiKey");
+    const visible: typeof result.data = [];
+    for (const edge of result.data) {
+      if (!key) break;
+      if (!edgePermissionCovers(key.edge_permissions, edge.edge_type, "read")) {
+        continue;
+      }
+      const source = await storage.items.getIncludingTrashed(edge.source_id);
+      if (source && !mayReadType(key, source.type)) continue;
+      visible.push(edge);
+    }
+    return c.json({ ...result, data: visible }, 200);
   });
 
   router.openapi(createEdgeRoute, async (c) => {
