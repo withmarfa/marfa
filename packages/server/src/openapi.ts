@@ -94,14 +94,6 @@ export function createOpenAPIRouter<
 // Reusable response schemas
 // ---------------------------------------------------------------------------
 
-export const ErrorResponseSchema = z.object({
-  error: z.object({
-    code: z.string(),
-    message: z.string(),
-    details: z.record(z.string(), z.unknown()).optional(),
-  }),
-});
-
 /**
  * The component name for a refusal that answers exactly these codes.
  *
@@ -138,22 +130,21 @@ function buildRefusalSchema<const C extends readonly [string, ...string[]]>(
  * One schema instance per code set, so a set answered by twenty doors is
  * registered once and referenced twenty times.
  *
- * The cache is what makes that true: registration is keyed by the component
- * name, and handing the registry two schema objects under one name is a
- * conflict, so a set has to resolve to the same instance wherever it is
- * asked for.
+ * The cache is what makes that true, and the failure without it is silent:
+ * the registry is keyed by the component name and keeps whichever schema
+ * object reached it first, so two objects under one name publish the first
+ * one's codes as the meaning of both. Nothing errors.
  */
 const refusalSchemas = new Map<string, ReturnType<typeof buildRefusalSchema>>();
 
 /**
  * Per-operation error response schema with a closed enum of `code` values.
  *
- * Renders as `error.code: "x" | "y" | "z"` in the OpenAPI spec so SDK codegen
- * and the API reference can show typed-enum branches instead of `string`.
- * Use this in `responses` maps to enumerate exactly which codes a given
- * handler can emit on a given status. The generic `ErrorResponseSchema`
- * remains for catch-all paths where the code set genuinely can't be
- * enumerated tightly.
+ * Renders as `error.code: "x" | "y" | "z"` in the document, so a generated
+ * client branches on an enum rather than on a string. Every door declares
+ * the codes it answers on each status through this; there is no open
+ * spelling of the envelope, because a door that cannot say what it answers
+ * is a door whose refusals nothing can be held to.
  *
  * The codes keep the order the door wrote them in, in the name and in the
  * enum, so two doors share a component only when they answer the same set
@@ -170,6 +161,8 @@ export function makeErrorResponseSchema<
   return schema;
 }
 
-export const OkResponseSchema = z.object({
-  ok: z.literal(true),
-});
+export const OkResponseSchema = z
+  .object({
+    ok: z.literal(true),
+  })
+  .openapi("Ok");

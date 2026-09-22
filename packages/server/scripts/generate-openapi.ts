@@ -1,8 +1,9 @@
 /**
  * Write `openapi.json` at the repository root from the route definitions.
  *
- * Run through the root's `pnpm generate`, which is the one command that
- * produces every generated artifact.
+ * Run through the root's `pnpm generate`, which is the command that writes
+ * what the document generates. It grows a leg per generated client as those
+ * land.
  *
  * The file is written here rather than printed for a redirect to catch: a
  * redirect is a hand step, and a hand step is a way for the committed

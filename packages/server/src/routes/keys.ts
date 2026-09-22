@@ -34,6 +34,7 @@ import type { Storage } from "../storage/interface.js";
 import {
   EnforcementOverrideSchema,
   KeyResponseSchema,
+  nullableRef,
   PermissionEnum,
   PermissionLevelEnum,
   TierEnum,
@@ -100,8 +101,8 @@ const KeyListItemSchema = z.object({
   edge_permissions: EdgePermissionsSchema,
   metadata_permissions: z.record(z.string(), PermissionLevelEnum).optional(),
   // Declared because the handler sends them: a listing returns stored rows
-  // whole, and the published shape was short of two fields every row can
-  // carry.
+  // whole, so a field a row can carry and the declaration omits is a field
+  // a generated client cannot read.
   profile_permissions: z.record(z.string(), PermissionLevelEnum).optional(),
   enforcement_override: EnforcementOverrideSchema.optional(),
   created_at: z.string(),
@@ -326,14 +327,14 @@ const UpdateKeyBodySchema = z.strictObject({
   metadata_permissions: z.record(z.string(), PermissionLevelEnum).optional(),
   profile_permissions: z.record(z.string(), PermissionLevelEnum).optional(),
   permissions: z.array(PermissionEnum).optional(),
-  enforcement_override: EnforcementOverrideSchema.nullable()
+  enforcement_override: nullableRef(EnforcementOverrideSchema)
     .optional()
     .describe("`null` clears the override; an object replaces it whole."),
   source: z
     .string()
     .optional()
     .describe(
-      "A key's source is immutable. A body carrying this field is refused `400 validation_error` whatever its value; revoke the key and mint another to change it.",
+      "A key's source is immutable: a body carrying this field is refused `400 validation_error`. Revoke the key and mint another to change it.",
     ),
 });
 

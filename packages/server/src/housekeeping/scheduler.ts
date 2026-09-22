@@ -8,24 +8,6 @@ import { logJobTickFailure } from "../storage/job-tick.js";
 import { log } from "../middleware/logger.js";
 
 /**
- * One scheduler for the server's own housekeeping, on a polling table.
- *
- * A housekeeping job is registered from code at boot with its cadence and
- * the function that runs it; the table holds when each is next due and
- * what its last run did. The scheduler polls the table, claims each name
- * that is due with one conditional update (exclusive per name under
- * SQLite's single writer), runs it, and writes the outcome back. Runs are
- * concurrent across names and never overlap on one name: one enrichment
- * run can legitimately take minutes, and nothing else should wait behind
- * it.
- *
- * Because the schedule is in the table, a restart keeps it: a daily sweep
- * that ran two hours before a deploy runs in twenty-two, not at boot. A
- * `running_since` found at boot was left by a run the last process never
- * finished, whether it died or stopped before the run could end, and is
- * cleared with a log line; the name is due whenever its row says.
- */
-/**
  * What one run reports: a flat object of scalars, named by the job.
  *
  * Mostly counts — `{ deleted: 12 }`, `{ verified: 40, struck: 1 }` — and the
@@ -84,6 +66,24 @@ export interface HousekeepingOptions {
 
 const NAME = /^[a-z][a-z0-9-]*$/;
 
+/**
+ * One scheduler for the server's own housekeeping, on a polling table.
+ *
+ * A housekeeping job is registered from code at boot with its cadence and
+ * the function that runs it; the table holds when each is next due and
+ * what its last run did. The scheduler polls the table, claims each name
+ * that is due with one conditional update (exclusive per name under
+ * SQLite's single writer), runs it, and writes the outcome back. Runs are
+ * concurrent across names and never overlap on one name: one enrichment
+ * run can legitimately take minutes, and nothing else should wait behind
+ * it.
+ *
+ * Because the schedule is in the table, a restart keeps it: a daily sweep
+ * that ran two hours before a deploy runs in twenty-two, not at boot. A
+ * `running_since` found at boot was left by a run the last process never
+ * finished, whether it died or stopped before the run could end, and is
+ * cleared with a log line; the name is due whenever its row says.
+ */
 export class Housekeeping {
   private readonly jobs = new Map<string, HousekeepingJob>();
   private readonly nowFn: () => Date;

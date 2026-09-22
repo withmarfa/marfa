@@ -66,13 +66,7 @@ import { publish } from "../pubsub.js";
 import { applyInlineEdges, announceInlineEdges } from "./_edges-inline.js";
 import type { InlineEdgeChanges } from "./_edges-inline.js";
 import { assertTierApplicable } from "./_tier-rules.js";
-import {
-  BulkCountsSchema,
-  BulkEntryErrorSchema,
-  BulkResultOutcomeEnum,
-  ItemStateEnum,
-  TierEnum,
-} from "./_schemas.js";
+import { BulkResponseSchema, ItemStateEnum, TierEnum } from "./_schemas.js";
 import { notifyBulkJobEnqueued } from "../bulk-actions/enqueue-signal.js";
 import {
   BULK_ACTION_SHAPES,
@@ -138,23 +132,6 @@ const BulkInputItemSchema = z.object({
    *  untouched. */
   edges: z.record(z.string(), z.array(z.string())).optional(),
 });
-
-const BulkResultEntrySchema = z
-  .object({
-    index: z.number().int(),
-    outcome: BulkResultOutcomeEnum,
-    id: z.string().optional(),
-    reason: z.string().optional(),
-    error: BulkEntryErrorSchema.optional(),
-  })
-  .openapi("BulkResultEntry");
-
-const BulkResponseSchema = z
-  .object({
-    counts: BulkCountsSchema,
-    results: z.array(BulkResultEntrySchema),
-  })
-  .openapi("BulkResponse");
 
 // The request shape is `BulkActionInputSchema`, declared once in the
 // bulk-action module and imported here. The filter half was deduped

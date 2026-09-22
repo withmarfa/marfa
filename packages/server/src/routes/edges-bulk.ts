@@ -27,11 +27,7 @@
 
 import { createRoute, z } from "@hono/zod-openapi";
 import { MarfaError, ErrorCode, isValidId } from "@withmarfa/shared";
-import {
-  BulkCountsSchema,
-  BulkEntryErrorSchema,
-  BulkResultOutcomeEnum,
-} from "./_schemas.js";
+import { BulkResponseSchema } from "./_schemas.js";
 import type { Edge } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import {
@@ -76,23 +72,6 @@ const BulkEdgeInputItemSchema = z.object({
     ),
 });
 
-const BulkEdgeResultEntrySchema = z
-  .object({
-    index: z.number().int(),
-    outcome: BulkResultOutcomeEnum,
-    id: z.string().optional(),
-    reason: z.string().optional(),
-    error: BulkEntryErrorSchema.optional(),
-  })
-  .openapi("BulkEdgeResultEntry");
-
-const BulkEdgeResponseSchema = z
-  .object({
-    counts: BulkCountsSchema,
-    results: z.array(BulkEdgeResultEntrySchema),
-  })
-  .openapi("BulkEdgeResponse");
-
 // ---------------------------------------------------------------------------
 // Route definition
 // ---------------------------------------------------------------------------
@@ -123,7 +102,7 @@ const edgesBulkRoute = createRoute({
   responses: {
     200: {
       content: {
-        "application/json": { schema: BulkEdgeResponseSchema },
+        "application/json": { schema: BulkResponseSchema },
       },
       description: "Bulk edge result",
     },

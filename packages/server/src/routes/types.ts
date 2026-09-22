@@ -17,6 +17,7 @@ import {
   FIELD_FORMATS,
   malformedTypeIdentifier,
 } from "@withmarfa/shared";
+import type { Context, Next } from "hono";
 import type { AppEnv } from "../middleware/auth.js";
 import {
   requireAuth,
@@ -99,7 +100,7 @@ function validateParentChain(
  * anybody remembering to.
  */
 const FieldDefinitionSchema = z
-  .object({
+  .looseObject({
     type: z.enum(FIELD_TYPES as unknown as [string, ...string[]]),
     description: z.string().optional(),
     required: z.boolean().optional(),
@@ -136,13 +137,12 @@ const VersionPolicySchema = z
 /**
  * A type as the two authoring doors take it.
  *
- * Declared, where it used to be an open record, so a generated client can
- * build one. The objects are loose and every refusal still belongs to
- * `validateTypeSchema`: see `refuseAsTheValidatorWould`, which is what
- * keeps a body the shape check catches from being refused under a code the
- * validator would not have used.
+ * The objects are loose, and `refuseAsTheValidatorWould` answers the shape
+ * check with the codes `validateTypeSchema` answers, so a body the
+ * declaration catches is refused as the validator would have refused it.
  */
 const typeDefinitionBody = {
+  fields: z.record(z.string(), FieldDefinitionSchema),
   version: z
     .number()
     .int()
@@ -154,7 +154,6 @@ const typeDefinitionBody = {
   parent: z.string().optional(),
   label: z.string().optional(),
   description: z.string().optional(),
-  fields: z.record(z.string(), FieldDefinitionSchema),
   // Strings rather than the role enum the response carries, because the
   // validator is the one that refuses an unknown role and it names `roles`
   // where a declared enum would name the entry. The vocabulary is closed
@@ -168,6 +167,12 @@ const typeDefinitionBody = {
   // A bare string as well as a list: the validator takes both, so a
   // declaration that took only the list would refuse a body the server
   // accepts.
+  required: z
+    .array(z.string())
+    .optional()
+    .describe(
+      "Field names this type requires, the alternative to `required: true` on each field. Both forms are taken and mean the same thing.",
+    ),
   compatible_with: z
     .union([z.string(), z.array(z.string())])
     .optional()
@@ -179,8 +184,11 @@ const typeDefinitionBody = {
   merge_policy: MergePolicySchema.optional(),
 };
 
+// `fields` leads the shape, and `id` follows it, because a refusal names
+// the first field the body does not carry and this door's canonical
+// refusal in `errors.md` is a body with no `fields`.
 const TypeDefinitionInputSchema = z
-  .looseObject({ id: z.string(), ...typeDefinitionBody })
+  .looseObject({ ...typeDefinitionBody, id: z.string() })
   .openapi("TypeDefinitionInput");
 
 /**
@@ -205,27 +213,29 @@ const TypeDefinitionUpdateSchema = z
 /**
  * Refuse a body the declaration rejects the way the validator would have.
  *
- * The two doors declared their body as an open record until it was written
- * out above, so every refusal on them came from `validateTypeSchema` and
- * carried its codes: `missing_required_field` for a field the body does not
- * have, and `invalid_schema` for everything else it cannot read. A declared
- * body is checked before the handler is reached, so without this the same
- * bodies would start being refused `validation_error` — the same request,
- * the same status, a different code, on a door whose codes the chapters
- * name.
+ * These two doors answer `missing_required_field` for a field the body does
+ * not carry and `invalid_schema` for everything else they cannot read, and
+ * the chapters name both. A declared body is checked before the handler is
+ * reached, so without this the shape check would answer
+ * `validation_error` instead: the same request, the same status, a
+ * different code.
  */
 const refuseAsTheValidatorWould = (
   result: { success: true } | { success: false; error: z.ZodError },
 ): undefined => {
   if (result.success) return;
-  // A `null` counts as missing, not as a shape failure: `fields: null` is a
-  // body that does not carry the field, and the door answered
-  // `missing_required_field` for it before the body was declared.
+  // A `null` at `fields` counts as missing rather than as a shape failure,
+  // because a body whose only fields block is `null` carries no fields.
+  // Nowhere else: an optional field set to `null` is a shape the validator
+  // refuses as `invalid_schema`, and telling its sender the field is
+  // required would be false as well as different.
   const missing = result.error.issues.find(
     (issue) =>
       issue.code === "invalid_type" &&
       (issue.message.includes("received undefined") ||
-        issue.message.includes("received null")),
+        (issue.message.includes("received null") &&
+          issue.path.length === 1 &&
+          issue.path[0] === "fields")),
   );
   if (missing) {
     const field = missing.path.join(".");
@@ -235,6 +245,10 @@ const refuseAsTheValidatorWould = (
       { field },
     );
   }
+  // `errors` names the position and says what is wrong with it, as the
+  // validator's own issues do. It carries no `hint`: the validator can
+  // suggest a fix because it knows what the field was for, and a shape
+  // check knows only that the shape is not the declared one.
   throw new MarfaError(ErrorCode.INVALID_SCHEMA, "Invalid type schema", {
     errors: result.error.issues.map((issue) => ({
       field: issue.path.join("."),
@@ -264,6 +278,10 @@ const TypeSchemaResponse = z
     merge_policy: MergePolicySchema.optional(),
   })
   .openapi("TypeDefinition");
+
+const TypeResponseSchema = z
+  .object({ type: TypeSchemaResponse })
+  .openapi("TypeResponse");
 
 // ---------------------------------------------------------------------------
 // Route definitions
@@ -352,6 +370,12 @@ const registerTypeRoute = createRoute({
   operationId: "registerType",
   method: "post",
   path: "/",
+  middleware: [
+    (c: Context<AppEnv>, next: Next) => {
+      requireMetadataPermission(c, "types", "write");
+      return next();
+    },
+  ] as const,
   tags: ["Types"],
   summary: "Register a type",
   description:
@@ -370,7 +394,7 @@ const registerTypeRoute = createRoute({
     201: {
       content: {
         "application/json": {
-          schema: z.object({ type: TypeSchemaResponse }),
+          schema: TypeResponseSchema,
         },
       },
       description: "Type registered",
@@ -407,6 +431,31 @@ const updateTypeRoute = createRoute({
   operationId: "updateType",
   method: "put",
   path: "/{id}",
+  middleware: [
+    (c: Context<AppEnv>, next: Next) => {
+      requireAuth(c);
+      requirePermission(c, "schema.write");
+      // The path parameter, before the route's own validator has run: the
+      // router matched this route on it, so it is present.
+      const id = c.req.param("id") ?? "";
+      if (!isValidTypeIdentifier(id)) {
+        throw malformedTypeIdentifier("id", `Invalid type identifier: ${id}`);
+      }
+      if (isLockedPlatformType(id)) {
+        throw new MarfaError(
+          ErrorCode.CORE_TYPE_IMMUTABLE,
+          `Cannot modify platform-shipped types`,
+        );
+      }
+      if (!getTypeSchema(id)) {
+        throw new MarfaError(
+          ErrorCode.TYPE_NOT_FOUND,
+          `Type "${id}" not found`,
+        );
+      }
+      return next();
+    },
+  ] as const,
   tags: ["Types"],
   summary: "Update a registered type",
   description:
@@ -428,7 +477,7 @@ const updateTypeRoute = createRoute({
     200: {
       content: {
         "application/json": {
-          schema: z.object({ type: TypeSchemaResponse }),
+          schema: TypeResponseSchema,
         },
       },
       description: "Type updated",
@@ -568,7 +617,6 @@ export function typeRoutes(storage: Storage) {
   router.openapi(
     registerTypeRoute,
     async (c) => {
-      requireMetadataPermission(c, "types", "write");
       const body = c.req.valid("json");
 
       if (typeof body.id === "string" && !isValidTypeIdentifier(body.id)) {
@@ -582,13 +630,10 @@ export function typeRoutes(storage: Storage) {
       // package and compiled into the registry; nothing legitimate mints one
       // over HTTP, and the route's own published description already says so.
       //
-      // This used to admit the operator key, which made registration and
-      // restore disagree: an archive carrying a reserved-namespace type is
-      // refused whatever credential restores it, precisely because a file is
-      // something an attacker can hand you. A registration is no more
-      // trustworthy for arriving over a socket. The asymmetry also let one
-      // credentialed mistake put a row in the exports that its own
-      // restore would then refuse, taking the whole archive down with it.
+      // No credential is excepted, the operator key included, because a
+      // restore refuses a reserved-namespace type whatever credential it
+      // runs under: a door that admitted one would put a row in the exports
+      // that its own restore then refuses, taking the archive with it.
       if (typeof body.id === "string") {
         const tier = classifyNamespace(body.id);
         if (tier === "core" || tier === "system" || tier === "marfa") {
@@ -667,22 +712,12 @@ export function typeRoutes(storage: Storage) {
   router.openapi(
     updateTypeRoute,
     async (c) => {
-      requireAuth(c);
-      requirePermission(c, "schema.write");
       const { id } = c.req.valid("param");
-
-      if (!isValidTypeIdentifier(id)) {
-        throw malformedTypeIdentifier("id", `Invalid type identifier: ${id}`);
-      }
-
-      if (isLockedPlatformType(id)) {
-        throw new MarfaError(
-          ErrorCode.CORE_TYPE_IMMUTABLE,
-          `Cannot modify platform-shipped types`,
-        );
-      }
-
       const existing = getTypeSchema(id);
+      // The route's middleware refuses every reason the row could be
+      // missing before the body is read, so this is unreachable; it is here
+      // because the registry's lookup cannot say that, and a cast would
+      // hand the handler an undefined the moment it stops being true.
       if (!existing) {
         throw new MarfaError(
           ErrorCode.TYPE_NOT_FOUND,

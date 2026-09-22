@@ -1,13 +1,12 @@
 /**
  * The committed `openapi.json` is what the routes currently say.
  *
- * **Nothing checked this, and the drift it allows is silent in both
- * directions.** The document is generated from the route definitions and
- * committed at the repository root, which is what an external consumer
- * reads. A route description edited without regenerating leaves the
- * published file describing a door that no longer behaves that way; a
- * regeneration that does not land leaves the same gap with the edit
- * apparently done.
+ * **The drift it catches is silent in both directions.** The document is
+ * generated from the route definitions and committed at the repository
+ * root, which is what an external consumer reads. A route description
+ * edited without regenerating leaves the published file describing a door
+ * that no longer behaves that way; a regeneration that does not land leaves
+ * the same gap with the edit apparently done.
  *
  * Compared as parsed JSON rather than as text, so the failure is about content
  * and not about a trailing newline. The generator is deterministic — a plain

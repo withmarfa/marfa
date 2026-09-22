@@ -402,14 +402,14 @@ const UNIVERSAL_RESPONSE_HEADERS = [
  * Every other refusal is reflected from the route that answers it and
  * registered by `makeErrorResponseSchema`. This one cannot be: the limiter
  * is middleware mounted across `*`, so every operation can answer 429 and no
- * route declares it. Written out here, it has to say the same thing the
- * reflected ones say, and `openapi-published.test.ts` holds it to a
- * reflected `rate_limited` refusal rather than leaving the two to agree by
- * eye.
+ * route declares it. Written out here it has to say what a reflected
+ * refusal says, and `openapi-published.test.ts` builds one from
+ * `makeErrorResponseSchema(["rate_limited"])` and compares, rather than
+ * leaving the two to agree by eye.
  */
-const RATE_LIMITED_REFUSAL_NAME = "RateLimitedRefusal";
+export const RATE_LIMITED_REFUSAL_NAME = "RateLimitedRefusal";
 
-const RATE_LIMITED_REFUSAL_SCHEMA = {
+export const RATE_LIMITED_REFUSAL_SCHEMA = {
   type: "object",
   properties: {
     error: {
@@ -417,11 +417,7 @@ const RATE_LIMITED_REFUSAL_SCHEMA = {
       properties: {
         code: { type: "string", enum: ["rate_limited"] },
         message: { type: "string" },
-        details: {
-          type: "object",
-          propertyNames: { type: "string" },
-          additionalProperties: {},
-        },
+        details: { type: "object", additionalProperties: {} },
       },
       required: ["code", "message"],
     },

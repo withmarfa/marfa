@@ -33,11 +33,10 @@
  * larger gap and worth stating plainly because it is counter-intuitive: a
  * shape declared twice outside `_schemas.ts` is invisible to this guard,
  * which only sees a shape once somebody has already centralized it. What is
- * held here is the
- * *staying* centralized, not the *becoming* it. Three names are declared in
- * more than one route file today, and `_schemas.ts` records why each is left
- * where it is. Closing any of them is a change to those files rather than to
- * this one.
+ * held here is the *staying* centralized, not the *becoming* it. What
+ * catches a shape two route files describe identically is the document:
+ * `openapi-published.test.ts` refuses a shape written out twice, whether or
+ * not anybody has centralized it.
  */
 import { describe, it, expect } from "vitest";
 import { readdirSync, readFileSync } from "node:fs";
@@ -168,8 +167,8 @@ describe("each wire shape is declared once", () => {
     // The control. A scan that reads neither side passes every check below
     // while proving nothing, which reads exactly like a clean route layer.
     //
-    // **Counted in declarations, not in files.** A parser that opens all 86
-    // route files and returns nothing from each of them satisfies a count of
+    // **Counted in declarations, not in files.** A parser that opens every
+    // route file and returns nothing from each of them satisfies a count of
     // files completely, and every check below then holds over an empty list.
     // The unit tests above would catch a parser that broke on any input; they
     // would not catch one that works on the synthetic strings they pass it

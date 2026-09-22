@@ -1,6 +1,12 @@
 import { beforeAll, describe, expect, it } from "vitest";
+import { OpenAPIHono, createRoute } from "@hono/zod-openapi";
 import { buildPublishedOpenAPISpec } from "./openapi-published.js";
-import { EXTRA_PATHS } from "./openapi-finalize.js";
+import {
+  EXTRA_PATHS,
+  RATE_LIMITED_REFUSAL_NAME,
+  RATE_LIMITED_REFUSAL_SCHEMA,
+} from "./openapi-finalize.js";
+import { makeErrorResponseSchema } from "./openapi.js";
 import { createTestContext, inlineOpenApiRefs, request } from "./test-utils.js";
 
 type Operation = Record<string, unknown>;
@@ -43,12 +49,10 @@ describe("published OpenAPI spec", () => {
 
   it("serves every hand-declared path at the path it is published under", async () => {
     // The reflection cannot see these routes, so their paths are typed by
-    // hand, and a typed path is one nothing checks. The registration
-    // operation was published at `/oauth2/register` for months while the
-    // route lived under `/auth`, and a carve-out excused the phantom from
-    // the header declarations rather than correcting it. Anything other
-    // than the router's 404 says the path is served: an unauthenticated
-    // stream request is refused as 401 and a bodyless registration as 400.
+    // hand, and a typed path is one nothing else checks: the document can
+    // publish an operation at a path no router serves. Anything other than
+    // the router's 404 says the path is served: an unauthenticated stream
+    // request is refused as 401 and a bodyless registration as 400.
     const ctx = await createTestContext();
     try {
       for (const [path, methods] of Object.entries(EXTRA_PATHS)) {
@@ -110,16 +114,14 @@ describe("published OpenAPI spec", () => {
   });
 
   it("serves compatible_with on every type-resource response", () => {
-    // Clients resolve a sibling type's read-as relationship from this field,
-    // and generated clients only see what the spec declares — it went missing
-    // once and every generated client silently lost type-compatibility
-    // resolution while the runtime bodies kept carrying it. This pins the
-    // generated surface so the field cannot rot off the wire again.
+    // A client resolves a sibling type's read-as relationship from this
+    // field, and a generated client sees only what the document declares,
+    // so a field the runtime bodies carry and the document omits is a
+    // relationship no generated client can resolve.
     //
-    // Scoped to `responses`, deliberately: stringifying the whole operation
-    // also matches a request body, so a field present only in what clients
-    // SEND would satisfy a check about what they RECEIVE. It held before
-    // only because the type-route request bodies happened to be untyped.
+    // Scoped to `responses`, deliberately: the type-authoring bodies carry
+    // the field too, and a check over the whole operation would be
+    // satisfied by what a client sends when it is about what it receives.
     const typeOperations = [...published.entries()].filter(([key]) =>
       /^(GET|POST|PUT) \/types/.test(key),
     );
@@ -138,27 +140,16 @@ describe("published OpenAPI spec", () => {
     expect(missing.sort()).toEqual([]);
   });
 
-  it("writes a registered shape as a reference wherever it appears", () => {
-    // A component exists so one shape is described once. A copy of it
-    // written out on an operation is a second description of the same
-    // thing: it generates a second type in every client, and the two drift
-    // the moment one door's schema is edited and the other is not. The
-    // document is generated, so this cannot be a matter of care — it is a
-    // shape that was declared somewhere other than where the component
-    // came from.
-    const components = (
-      (document.components ?? {}) as {
-        schemas?: Record<string, unknown>;
-      }
-    ).schemas;
-    expect(components, "the document registers no components").toBeDefined();
-    const byShape = new Map<string, string>();
-    for (const [name, schema] of Object.entries(components ?? {})) {
-      byShape.set(JSON.stringify(schema), name);
-    }
-    expect(byShape.size).toBeGreaterThan(20);
-
-    const inlined: string[] = [];
+  /**
+   * Every object shape the document writes out, and where.
+   *
+   * Keyed by the shape itself, so two positions carrying the same fields
+   * are one entry whatever they are called. Schemas with no `properties`
+   * are left out: a bare string or an integer is a shape that repeats for
+   * the good reason that many fields are strings.
+   */
+  function inlineShapes(paths: unknown): Map<string, string[]> {
+    const found = new Map<string, string[]>();
     const walk = (node: unknown, where: string): void => {
       if (Array.isArray(node)) {
         node.forEach((child, index) => {
@@ -167,20 +158,144 @@ describe("published OpenAPI spec", () => {
         return;
       }
       if (node === null || typeof node !== "object") return;
-      const named = byShape.get(JSON.stringify(node));
-      if (named !== undefined) inlined.push(`${where} is ${named}`);
-      for (const [key, value] of Object.entries(
-        node as Record<string, unknown>,
-      )) {
-        walk(value, `${where}/${key}`);
+      const record = node as Record<string, unknown>;
+      if (
+        record.properties !== null &&
+        typeof record.properties === "object" &&
+        Object.keys(record.properties).length > 0
+      ) {
+        const key = JSON.stringify(record);
+        found.set(key, [...(found.get(key) ?? []), where]);
+      }
+      for (const [field, value] of Object.entries(record)) {
+        walk(value, `${where}/${field}`);
       }
     };
-    walk(document.paths, "");
+    walk(paths, "");
+    return found;
+  }
 
+  it("declares the limiter's refusal as a reflected one would", () => {
+    // The limiter is middleware across every route, so no route declares
+    // the 429 and the refusal is written out by hand in the finalizer.
+    // What a reflected refusal looks like is not a matter of opinion: it is
+    // whatever `makeErrorResponseSchema` produces, so one is built here and
+    // the two are compared. Reflected through its own app rather than read
+    // out of the document, because no door answers this code.
+    const probe = new OpenAPIHono();
+    probe.openapi(
+      createRoute({
+        operationId: "probeRateLimited",
+        method: "get",
+        path: "/probe",
+        responses: {
+          429: {
+            content: {
+              "application/json": {
+                schema: makeErrorResponseSchema(["rate_limited"]),
+              },
+            },
+            description: "Refused by the limiter.",
+          },
+        },
+      }),
+      (c) =>
+        c.json({ error: { code: "rate_limited" as const, message: "" } }, 429),
+    );
+    const reflected = (
+      probe.getOpenAPI31Document({
+        openapi: "3.1.0",
+        info: { title: "probe", version: "1" },
+      }).components as { schemas: Record<string, unknown> }
+    ).schemas[RATE_LIMITED_REFUSAL_NAME];
+
+    expect(reflected, "the reflected refusal was not registered").toBeDefined();
+    expect(RATE_LIMITED_REFUSAL_SCHEMA).toEqual(reflected);
+    expect(
+      (document.components as { schemas: Record<string, unknown> }).schemas[
+        RATE_LIMITED_REFUSAL_NAME
+      ],
+    ).toEqual(reflected);
+  });
+
+  it("finds a shape written out twice", () => {
+    // The control for the two checks below, which both assert an absence.
+    // A walk that reads nothing, or a key that stops matching equal
+    // shapes, reports no repeats and no inlined components — which reads
+    // exactly like a clean document.
+    const copy = structuredClone(document.paths) as Record<string, unknown>;
+    const item = (document.components as { schemas: Record<string, unknown> })
+      .schemas.Item;
+    (copy["/items"] as Record<string, unknown>).__probe = { schema: item };
+    (copy["/items"] as Record<string, unknown>).__probe_again = {
+      schema: structuredClone(item),
+    };
+    const repeats = [...inlineShapes(copy).values()].filter(
+      (places) => places.length > 1,
+    );
+    expect(repeats.flat()).toContain("//items/__probe/schema");
+    expect(repeats.flat()).toContain("//items/__probe_again/schema");
+  });
+
+  it("writes a shape once, as a component, wherever it appears twice", () => {
+    // A shape written out twice is two types in every generated client,
+    // and they drift the moment one door's schema is edited and the other
+    // is not. The document is generated, so this is never a matter of
+    // care: it is a shape declared somewhere other than where a component
+    // would have come from.
+    const repeated = [...inlineShapes(document.paths).entries()]
+      .filter(([, places]) => places.length > 1)
+      .map(([shape, places]) => {
+        const properties = Object.keys(
+          (JSON.parse(shape) as { properties: object }).properties,
+        ).join(",");
+        return `${properties} at ${places.join(" and ")}`;
+      });
+    expect(
+      repeated.sort(),
+      'Declare the shape once and register it with `.openapi("Name")`.',
+    ).toEqual([]);
+  });
+
+  it("registers each shape under one name, and writes none of them out", () => {
+    const components = (
+      (document.components ?? {}) as { schemas?: Record<string, unknown> }
+    ).schemas;
+    expect(components, "the document registers no components").toBeDefined();
+
+    // Two names for one shape is the same defect as one shape written out
+    // twice, a level up: the client gets both types, and a door referencing
+    // one of them reads as though it answered something else.
+    const namesByShape = new Map<string, string[]>();
+    for (const [name, schema] of Object.entries(components ?? {})) {
+      const key = JSON.stringify(schema);
+      namesByShape.set(key, [...(namesByShape.get(key) ?? []), name]);
+    }
+    expect(namesByShape.size).toBeGreaterThan(20);
+    expect(
+      [...namesByShape.values()]
+        .filter((names) => names.length > 1)
+        .map((names) => names.join(" = "))
+        .sort(),
+    ).toEqual([]);
+
+    // And a component written out on an operation rather than referenced.
+    const byShape = new Map(
+      Object.entries(components ?? {}).map(([name, schema]) => [
+        JSON.stringify(schema),
+        name,
+      ]),
+    );
+    const inlined: string[] = [];
+    for (const [shape, places] of inlineShapes(document.paths)) {
+      const named = byShape.get(shape);
+      if (named !== undefined) {
+        inlined.push(...places.map((place) => `${place} is ${named}`));
+      }
+    }
     expect(
       inlined.sort(),
-      'Register the shape once with `.openapi("Name")` where it is ' +
-        "declared, and let every door reference it.",
+      "Reference the component instead of writing the shape out again.",
     ).toEqual([]);
   });
 });

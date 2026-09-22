@@ -1,10 +1,9 @@
 /**
- * Server-internal types for the bulk_action job queue.
+ * The bulk_action job queue's wire shapes, declared once.
  *
- * Mirrors the public SDK shapes in `@withmarfa/sdk` (`BulkActionInput`,
- * `BulkActionResult`, `BulkActionJob`) so the server can carry them
- * without depending on the SDK package. Wire-shape compatibility is
- * enforced by the openapi-freshness CI gate.
+ * The route answers them and the queue stores them, so they live here
+ * rather than in either: a copy in the route would be a second description
+ * of one shape, and the document would carry both.
  */
 import { z } from "@hono/zod-openapi";
 import { ItemStateEnum, TierEnum } from "../routes/_schemas.js";
@@ -17,14 +16,10 @@ import type { DeclaresKeys } from "../routes/_unknown-query-keys.js";
  * JSON object so bulk_action callers don't have to shove a filter
  * expression through query-string encoding.
  *
- * `POST /items/bulk-actions` used to declare this shape a second time in
- * its own route file, field for field, with nothing holding the two in
- * step: the openapi-freshness gate compares the generated specification
- * against the routes, so it watched the route copy and not this one. Two
- * renames and a missing lifecycle state later, the route imports this
- * instead. Keeping the declaration here rather than in the route is what
- * lets the server hold the shape without depending on the published
- * client package, which is why the copy existed at all.
+ * Declared here rather than in the route, so the queue and the door read
+ * one shape: a second declaration in the route file is what let `dry_run`
+ * and a lifecycle state drift out of step with the copy the document is
+ * generated from.
  */
 export const BulkActionFilterShape = z
   .object({
@@ -141,8 +136,9 @@ export const BulkActionResultSchema = z
     ids: z.array(z.string()).optional(),
     errors: z.array(BulkActionErrorEntrySchema).optional(),
     /** Unique blob hashes referenced by the items that were purged. Not a
-     *  strict orphan count — callers that need a true reference scan should
-     *  consult the blob GC job once it lands. Omitted for non-purge actions. */
+     *  strict orphan count: what a blob is still referenced by is the
+     *  `blob-orphans` housekeeping job's answer, on its own schedule.
+     *  Omitted for non-purge actions. */
     blob_hashes_referenced: z.number().int().optional(),
   })
   .openapi("BulkActionResult");

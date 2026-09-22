@@ -29,10 +29,8 @@ import type { BulkActionJob, BulkActionResult } from "./bulk-actions/types.js";
  * it.
  *
  * A shape the document registers as a component reaches an operation as a
- * reference, and a check that walks the operation alone sees `$ref` and
- * nothing else. Two of them held only because the shapes they read happened
- * to be inlined, which is a property of how the document was generated
- * rather than of what it says.
+ * reference, so a check that walks the operation alone sees `$ref` and
+ * nothing of what it names.
  *
  * A cycle is left as the reference it is: the reference has already been
  * followed once on this path, so the caller has seen the shape.

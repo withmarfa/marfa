@@ -30,7 +30,11 @@ import {
   LocationNotFound,
   dropBlobCopy,
 } from "../housekeeping/blob-delete.js";
-import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
+import {
+  createOpenAPIRouter,
+  makeErrorResponseSchema,
+  OkResponseSchema,
+} from "../openapi.js";
 import { refuseUnknownQueryParams } from "./_unknown-query-keys.js";
 
 // ---------------------------------------------------------------------------
@@ -440,7 +444,7 @@ const dropBlobLocationRoute = createRoute({
   responses: {
     200: {
       content: {
-        "application/json": { schema: z.object({ ok: z.literal(true) }) },
+        "application/json": { schema: OkResponseSchema },
       },
       description: "The copy is gone",
     },

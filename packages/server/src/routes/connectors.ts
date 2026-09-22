@@ -10,8 +10,13 @@ import { MarfaError, ErrorCode, isValidTimestamp } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { requireAuth } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
-import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
+import {
+  createOpenAPIRouter,
+  makeErrorResponseSchema,
+  OkResponseSchema,
+} from "../openapi.js";
 import { DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT } from "../page-limits.js";
+import { nullableRef } from "./_schemas.js";
 
 // ---------------------------------------------------------------------------
 // Schemas
@@ -43,7 +48,7 @@ const ConnectorSchema = z
     registered_at: z.string(),
     updated_at: z.string(),
     last_heartbeat_at: z.string().nullable(),
-    last_run: ConnectorRunSchema.nullable(),
+    last_run: nullableRef(ConnectorRunSchema),
   })
   .openapi("Connector");
 
@@ -191,7 +196,7 @@ const deleteConnectorRoute = createRoute({
   responses: {
     200: {
       content: {
-        "application/json": { schema: z.object({ ok: z.literal(true) }) },
+        "application/json": { schema: OkResponseSchema },
       },
       description: "Removed",
     },

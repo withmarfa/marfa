@@ -39,9 +39,11 @@ import { itemAfterMetadataWrite } from "./_metadata-publish.js";
 // Schemas
 // ---------------------------------------------------------------------------
 
-const ExtensionsResponseSchema = z.object({
-  extensions: z.record(z.string(), z.record(z.string(), z.unknown())),
-});
+const ExtensionsResponseSchema = z
+  .object({
+    extensions: z.record(z.string(), z.record(z.string(), z.unknown())),
+  })
+  .openapi("ExtensionsResponse");
 
 const SingleExtensionResponseSchema = z.object({
   namespace: z.string(),

@@ -4,6 +4,7 @@ import type { AppEnv } from "../middleware/auth.js";
 import { requireOperatorKey } from "../middleware/auth.js";
 import type { Housekeeping } from "../housekeeping/scheduler.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
+import { nullableRef } from "./_schemas.js";
 
 // ---------------------------------------------------------------------------
 // Schemas
@@ -32,9 +33,9 @@ const HousekeepingJobSchema = z
     running_since: z.string().nullable(),
     last_started_at: z.string().nullable(),
     last_finished_at: z.string().nullable(),
-    last_outcome: OutcomeSchema.nullable(),
+    last_outcome: nullableRef(OutcomeSchema),
     last_error: z.string().nullable(),
-    last_result: HousekeepingReportSchema.nullable(),
+    last_result: nullableRef(HousekeepingReportSchema),
   })
   .openapi("HousekeepingJob");
 
@@ -44,7 +45,7 @@ const HousekeepingRunSchema = z
     started_at: z.string(),
     finished_at: z.string(),
     outcome: OutcomeSchema,
-    result: HousekeepingReportSchema.nullable(),
+    result: nullableRef(HousekeepingReportSchema),
     error: z.string().nullable(),
   })
   .openapi("HousekeepingRun");

@@ -20,7 +20,11 @@ import {
   OkResponseSchema,
   makeErrorResponseSchema,
 } from "../openapi.js";
-import { EdgeSchema, VersionConflictErrorSchema } from "./_schemas.js";
+import {
+  EdgeResponseSchema,
+  EdgeSchema,
+  VersionConflictErrorSchema,
+} from "./_schemas.js";
 import { refuseReusedEdgeId } from "./_reused-edge-id.js";
 import { assertEdgeCanBeCreated } from "../storage/edge-constraints.js";
 import { publishEdge } from "../pubsub.js";
@@ -57,11 +61,13 @@ const EdgeConflictSchema = z
   })
   .openapi("EdgeVersionConflict");
 
-const EdgeListSchema = z.object({
-  data: z.array(EdgeSchema),
-  cursor: z.string().nullable(),
-  has_more: z.boolean(),
-});
+const EdgeListSchema = z
+  .object({
+    data: z.array(EdgeSchema),
+    cursor: z.string().nullable(),
+    has_more: z.boolean(),
+  })
+  .openapi("EdgePage");
 
 const MAX_EDGE_TYPE_FILTER = 10;
 
@@ -225,7 +231,7 @@ const createEdgeRoute = createRoute({
     },
     201: {
       content: {
-        "application/json": { schema: z.object({ edge: EdgeSchema }) },
+        "application/json": { schema: EdgeResponseSchema },
       },
       description: "Edge created",
     },
@@ -287,7 +293,7 @@ const getEdgeRoute = createRoute({
   responses: {
     200: {
       content: {
-        "application/json": { schema: z.object({ edge: EdgeSchema }) },
+        "application/json": { schema: EdgeResponseSchema },
       },
       description: "The edge",
     },
@@ -333,7 +339,7 @@ const updateEdgeRoute = createRoute({
   responses: {
     200: {
       content: {
-        "application/json": { schema: z.object({ edge: EdgeSchema }) },
+        "application/json": { schema: EdgeResponseSchema },
       },
       description: "Edge updated",
     },

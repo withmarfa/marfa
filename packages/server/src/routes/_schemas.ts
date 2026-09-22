@@ -2,30 +2,19 @@
  * Reusable Zod schemas shared across route files. Centralized so each wire
  * shape is declared once.
  *
- * The consumers are not listed here on purpose. That list was three route
- * files and went stale without anything noticing, and a header naming its
- * importers is a second place to update whenever one is added. What holds
- * the claim is `wire-shape-declarations.test.ts`, which fails if a route
- * file declares a shape this file already exports.
+ * The consumers are not listed here on purpose: a header naming its
+ * importers is a second place to update whenever one is added, and nothing
+ * fails when it is not. What holds the claim is
+ * `wire-shape-declarations.test.ts`, which fails if a route file declares a
+ * shape this file already exports.
  *
  * Nothing here imports from a route file, so any of them can import this.
  *
  * **Sharing a name with another route file is not by itself a reason to move
- * a shape here.** Three names are declared in more than one route file and
- * are left where they are, for two different reasons.
- *
- * The two id parameters differ in more than their names suggest. Most copies
- * are a bare string with a description written for their own route; one adds
- * `.min(1)`, which reaches the published specification as a `minLength` on
- * three operations and on no others. So consolidating them is not a move but
- * a choice — one validation and one description for every route that shares
- * the name — and that choice would silently add a constraint to some routes
- * or drop it from others. Worth doing deliberately; not worth doing as
- * tidying.
- *
- * The two key shapes differ outright, the administrative one carrying a
- * status the user-facing one does not, so folding them is a surface change in
- * one direction or a regression in the other.
+ * a shape here.** `IdParam` is declared in four of them, each a bare string
+ * with the description its own door needs: consolidating it would be a
+ * choice to give every one of those doors one description, not a move, and
+ * the descriptions are what a reader of the reference sees.
  *
  * What belongs here is a shape two doors are trying to describe identically
  * and failing to.
@@ -266,6 +255,27 @@ export const BulkEntryErrorSchema = z
   })
   .openapi("BulkEntryError");
 
+/** An item's metadata document, as the five metadata doors answer it. */
+export const MetadataResponseSchema = z
+  .object({ metadata: MetadataSchema })
+  .openapi("MetadataResponse");
+
+/** One edge, as the three single-edge doors answer it. */
+export const EdgeResponseSchema = z
+  .object({ edge: EdgeSchema })
+  .openapi("EdgeResponse");
+
+/** What one entry of a bulk page came out as, on either bulk door. */
+export const BulkResultEntrySchema = z
+  .object({
+    index: z.number().int(),
+    outcome: BulkResultOutcomeEnum,
+    id: z.string().optional(),
+    reason: z.string().optional(),
+    error: BulkEntryErrorSchema.optional(),
+  })
+  .openapi("BulkResultEntry");
+
 /** How a bulk page's entries came out, counted by outcome. */
 export const BulkCountsSchema = z
   .object({
@@ -275,6 +285,26 @@ export const BulkCountsSchema = z
     errored: z.number().int(),
   })
   .openapi("BulkCounts");
+
+/** What a bulk page did, on either bulk door. */
+export const BulkResponseSchema = z
+  .object({
+    counts: BulkCountsSchema,
+    results: z.array(BulkResultEntrySchema),
+  })
+  .openapi("BulkResponse");
+
+/**
+ * `null` at one position, without widening the shape that admits it.
+ *
+ * `.nullable()` on a registered shape mutates the registered component:
+ * the null is folded into the component and every door referencing it
+ * inherits a null it cannot answer. A union carries the null at the
+ * position that has one.
+ */
+export function nullableRef<T extends z.ZodType>(schema: T) {
+  return z.union([schema, z.null()]);
+}
 
 export const VersionSchema = z
   .object({
@@ -338,42 +368,49 @@ export const enforcementSchema = (strict: boolean) => {
   // The component names carry the strictness, because the two shapes are not
   // the same shape: the strict one refuses a key the permissive one keeps,
   // and one name over both would publish whichever was registered first as
-  // the meaning of the other.
+  // the meaning of the other. The allowlist and the filter share one name
+  // for the opposite reason: they are the same shape, and which lever a
+  // block sits under is the property's job to say.
   const suffix = strict ? "Strict" : "";
+  const typesOnly = obj({ types: typeList })
+    .optional()
+    .openapi(`TypeLever${suffix}`);
+  const typesAndSourcesLever = obj(typesAndSources)
+    .optional()
+    .openapi(`TypeAndSourceLever${suffix}`);
   return obj({
-    strict_mode: obj({ types: typeList })
-      .optional()
-      .openapi(`StrictModeLever${suffix}`),
-    source_allowlist: obj(typesAndSources)
-      .optional()
-      .openapi(`SourceAllowlistLever${suffix}`),
-    source_filter: obj(typesAndSources)
-      .optional()
-      .openapi(`SourceFilterLever${suffix}`),
+    strict_mode: typesOnly,
+    source_allowlist: typesAndSourcesLever,
+    source_filter: typesAndSourcesLever,
   });
 };
 
+/**
+ * The permissive block, built once.
+ *
+ * Every door that reads the levers, and the key override, share this one
+ * object: building a second from the same factory registers a second
+ * schema under the same component names, and the registry keeps whichever
+ * reached it first without saying so.
+ */
+export const EnforcementReadSchema = enforcementSchema(false);
+
+/** The strict block the instance config's write takes, built once. */
+export const EnforcementWriteSchema = enforcementSchema(true);
+
 /** A key's per-credential override: the same levers, permissive. */
-export const EnforcementOverrideSchema = enforcementSchema(false)
-  .describe(
-    "Per-credential schema-enforcement override. A lever set here wins over the instance config for this credential, lever by lever; absent, the key inherits the instance config.",
-  )
-  .openapi("EnforcementOverride");
+export const EnforcementOverrideSchema = EnforcementReadSchema.describe(
+  "Per-credential schema-enforcement override. A lever set here wins over the instance config for this credential, lever by lever; absent, the key inherits the instance config.",
+).openapi("EnforcementOverride");
 
 /**
- * An API key as a create route answers it.
+ * An API key as a create route answers it, on both doors that mint one.
  *
- * Two doors mint a key — a working caller's own and the operator one — and
- * they answered with two declarations that had drifted apart. One carried `expires_at` and the other did not.
- *
- * **The one without it was right.** `CreateKeyInput` cannot carry an expiry
- * and nothing on either door sets one, so every key either door can mint has
- * none. Declaring the field on a create response promised generated clients a
- * property that could never arrive.
- *
- * It stays real on the read side: `GET /keys` returns stored rows, so a
- * stamped row's expiry does reach a caller listing keys, and the list schema
- * keeps the field. The expiry belongs to the read, not to the creates.
+ * No `expires_at`: `CreateKeyInput` cannot carry an expiry and neither door
+ * sets one, so every key either mints has none, and declaring the field
+ * would promise a generated client a property that cannot arrive. It is
+ * real on the read side, where `GET /keys` returns stored rows and a
+ * stamped expiry does reach the caller, so the list schema keeps it.
  */
 export const KeyResponseSchema = z
   .object({

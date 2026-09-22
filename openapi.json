@@ -767,6 +767,20 @@
         ],
         "description": "Who resolves a version conflict. `auto` resolves it here, in this write's transaction, by the type's merge policy: a `last_writer_wins` field takes this write's value, a `keep_both_copies` field leaves the server's value on the item and the losing value lands on a sibling tagged `conflicted-copy`. `manual` and `callback` return the 409 envelope for the caller to resolve. Omitted means `manual`."
       },
+      "Ok": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
+          }
+        },
+        "required": [
+          "ok"
+        ]
+      },
       "ValidationErrorRefusal": {
         "type": "object",
         "properties": {
@@ -828,6 +842,17 @@
         },
         "required": [
           "error"
+        ]
+      },
+      "MetadataResponse": {
+        "type": "object",
+        "properties": {
+          "metadata": {
+            "$ref": "#/components/schemas/Metadata"
+          }
+        },
+        "required": [
+          "metadata"
         ]
       },
       "ValidationErrorOrMissingRequiredFieldOrInvalidIdRefusal": {
@@ -1364,6 +1389,21 @@
           "error"
         ]
       },
+      "ExtensionsResponse": {
+        "type": "object",
+        "properties": {
+          "extensions": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "object",
+              "additionalProperties": {}
+            }
+          }
+        },
+        "required": [
+          "extensions"
+        ]
+      },
       "InvalidIdRefusal": {
         "type": "object",
         "properties": {
@@ -1392,6 +1432,42 @@
         },
         "required": [
           "error"
+        ]
+      },
+      "EdgePage": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Edge"
+            }
+          },
+          "cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "has_more": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "data",
+          "cursor",
+          "has_more"
+        ]
+      },
+      "EdgeResponse": {
+        "type": "object",
+        "properties": {
+          "edge": {
+            "$ref": "#/components/schemas/Edge"
+          }
+        },
+        "required": [
+          "edge"
         ]
       },
       "ValidationErrorOrMissingRequiredFieldOrInvalidIdOrEdgeConstraintViolationOrEdgeCycleRefusal": {
@@ -1532,48 +1608,6 @@
         "required": [
           "error",
           "current"
-        ]
-      },
-      "BulkEdgeResponse": {
-        "type": "object",
-        "properties": {
-          "counts": {
-            "$ref": "#/components/schemas/BulkCounts"
-          },
-          "results": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/BulkEdgeResultEntry"
-            }
-          }
-        },
-        "required": [
-          "counts",
-          "results"
-        ]
-      },
-      "BulkEdgeResultEntry": {
-        "type": "object",
-        "properties": {
-          "index": {
-            "type": "integer"
-          },
-          "outcome": {
-            "$ref": "#/components/schemas/BulkResultOutcome"
-          },
-          "id": {
-            "type": "string"
-          },
-          "reason": {
-            "type": "string"
-          },
-          "error": {
-            "$ref": "#/components/schemas/BulkEntryError"
-          }
-        },
-        "required": [
-          "index",
-          "outcome"
         ]
       },
       "ForbiddenOrTypeNotPermittedOrEdgePermissionDeniedOrBulkAtomicRollbackRefusal": {
@@ -1977,6 +2011,17 @@
           "error"
         ]
       },
+      "TypeResponse": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "$ref": "#/components/schemas/TypeDefinition"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
       "TypeAlreadyExistsRefusal": {
         "type": "object",
         "properties": {
@@ -2010,8 +2055,11 @@
       "TypeDefinitionInput": {
         "type": "object",
         "properties": {
-          "id": {
-            "type": "string"
+          "fields": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/FieldDefinition"
+            }
           },
           "version": {
             "type": "integer",
@@ -2027,18 +2075,19 @@
           "description": {
             "type": "string"
           },
-          "fields": {
-            "type": "object",
-            "additionalProperties": {
-              "$ref": "#/components/schemas/FieldDefinition"
-            }
-          },
           "roles": {
             "type": "array",
             "items": {
               "type": "string"
             },
             "description": "Structural roles this type plays, drawn from the closed vocabulary container. An entry outside it is refused `400 invalid_schema` naming `roles`."
+          },
+          "required": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Field names this type requires, the alternative to `required: true` on each field. Both forms are taken and mean the same thing."
           },
           "compatible_with": {
             "anyOf": [
@@ -2062,11 +2111,14 @@
           },
           "merge_policy": {
             "$ref": "#/components/schemas/MergePolicy"
+          },
+          "id": {
+            "type": "string"
           }
         },
         "required": [
-          "id",
-          "fields"
+          "fields",
+          "id"
         ],
         "additionalProperties": {}
       },
@@ -2128,7 +2180,8 @@
         },
         "required": [
           "type"
-        ]
+        ],
+        "additionalProperties": {}
       },
       "ForbiddenOrCoreTypeImmutableRefusal": {
         "type": "object",
@@ -2168,6 +2221,12 @@
             "type": "string",
             "description": "Ignored. The type replaced is the one the path names; a body carrying a different identifier does not move it."
           },
+          "fields": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/FieldDefinition"
+            }
+          },
           "version": {
             "type": "integer",
             "minimum": 1,
@@ -2182,18 +2241,19 @@
           "description": {
             "type": "string"
           },
-          "fields": {
-            "type": "object",
-            "additionalProperties": {
-              "$ref": "#/components/schemas/FieldDefinition"
-            }
-          },
           "roles": {
             "type": "array",
             "items": {
               "type": "string"
             },
             "description": "Structural roles this type plays, drawn from the closed vocabulary container. An entry outside it is refused `400 invalid_schema` naming `roles`."
+          },
+          "required": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Field names this type requires, the alternative to `required: true` on each field. Both forms are taken and mean the same thing."
           },
           "compatible_with": {
             "anyOf": [
@@ -2438,7 +2498,14 @@
             ]
           },
           "last_outcome": {
-            "$ref": "#/components/schemas/HousekeepingOutcome"
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/HousekeepingOutcome"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "last_error": {
             "type": [
@@ -2447,7 +2514,14 @@
             ]
           },
           "last_result": {
-            "$ref": "#/components/schemas/HousekeepingReport"
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/HousekeepingReport"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
@@ -2463,21 +2537,14 @@
         ]
       },
       "HousekeepingOutcome": {
-        "type": [
-          "string",
-          "null"
-        ],
+        "type": "string",
         "enum": [
           "ok",
-          "error",
-          null
+          "error"
         ]
       },
       "HousekeepingReport": {
-        "type": [
-          "object",
-          "null"
-        ],
+        "type": "object",
         "additionalProperties": {
           "anyOf": [
             {
@@ -2511,7 +2578,14 @@
             "$ref": "#/components/schemas/HousekeepingOutcome"
           },
           "result": {
-            "$ref": "#/components/schemas/HousekeepingReport"
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/HousekeepingReport"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "error": {
             "type": [
@@ -2623,7 +2697,14 @@
             ]
           },
           "last_run": {
-            "$ref": "#/components/schemas/ConnectorRun"
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ConnectorRun"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
@@ -2639,10 +2720,7 @@
         ]
       },
       "ConnectorRun": {
-        "type": [
-          "object",
-          "null"
-        ],
+        "type": "object",
         "properties": {
           "id": {
             "type": "string"
@@ -2836,18 +2914,18 @@
         "type": "object",
         "properties": {
           "strict_mode": {
-            "$ref": "#/components/schemas/StrictModeLever"
+            "$ref": "#/components/schemas/TypeLever"
           },
           "source_allowlist": {
-            "$ref": "#/components/schemas/SourceAllowlistLever"
+            "$ref": "#/components/schemas/TypeAndSourceLever"
           },
           "source_filter": {
-            "$ref": "#/components/schemas/SourceFilterLever"
+            "$ref": "#/components/schemas/TypeAndSourceLever"
           }
         },
         "description": "Per-credential schema-enforcement override. A lever set here wins over the instance config for this credential, lever by lever; absent, the key inherits the instance config."
       },
-      "StrictModeLever": {
+      "TypeLever": {
         "type": "object",
         "properties": {
           "types": {
@@ -2861,28 +2939,7 @@
           "types"
         ]
       },
-      "SourceAllowlistLever": {
-        "type": "object",
-        "properties": {
-          "types": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "sources": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          }
-        },
-        "required": [
-          "types",
-          "sources"
-        ]
-      },
-      "SourceFilterLever": {
+      "TypeAndSourceLever": {
         "type": "object",
         "properties": {
           "types": {
@@ -2943,13 +3000,13 @@
             "type": "object",
             "properties": {
               "strict_mode": {
-                "$ref": "#/components/schemas/StrictModeLever"
+                "$ref": "#/components/schemas/TypeLever"
               },
               "source_allowlist": {
-                "$ref": "#/components/schemas/SourceAllowlistLever"
+                "$ref": "#/components/schemas/TypeAndSourceLever"
               },
               "source_filter": {
-                "$ref": "#/components/schemas/SourceFilterLever"
+                "$ref": "#/components/schemas/TypeAndSourceLever"
               }
             }
           },
@@ -2974,7 +3031,7 @@
           "instance_id"
         ]
       },
-      "StrictModeLeverStrict": {
+      "TypeLeverStrict": {
         "type": "object",
         "properties": {
           "types": {
@@ -2989,29 +3046,7 @@
         ],
         "additionalProperties": false
       },
-      "SourceAllowlistLeverStrict": {
-        "type": "object",
-        "properties": {
-          "types": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "sources": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          }
-        },
-        "required": [
-          "types",
-          "sources"
-        ],
-        "additionalProperties": false
-      },
-      "SourceFilterLeverStrict": {
+      "TypeAndSourceLeverStrict": {
         "type": "object",
         "properties": {
           "types": {
@@ -3315,9 +3350,6 @@
               },
               "details": {
                 "type": "object",
-                "propertyNames": {
-                  "type": "string"
-                },
                 "additionalProperties": {}
               }
             },
@@ -4739,18 +4771,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "properties": {
-                    "ok": {
-                      "type": "boolean",
-                      "enum": [
-                        true
-                      ]
-                    }
-                  },
-                  "required": [
-                    "ok"
-                  ]
+                  "$ref": "#/components/schemas/Ok"
                 }
               }
             },
@@ -5408,15 +5429,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "properties": {
-                    "metadata": {
-                      "$ref": "#/components/schemas/Metadata"
-                    }
-                  },
-                  "required": [
-                    "metadata"
-                  ]
+                  "$ref": "#/components/schemas/MetadataResponse"
                 }
               }
             },
@@ -5569,15 +5582,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "properties": {
-                    "metadata": {
-                      "$ref": "#/components/schemas/Metadata"
-                    }
-                  },
-                  "required": [
-                    "metadata"
-                  ]
+                  "$ref": "#/components/schemas/MetadataResponse"
                 }
               }
             },
@@ -5756,15 +5761,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "properties": {
-                    "metadata": {
-                      "$ref": "#/components/schemas/Metadata"
-                    }
-                  },
-                  "required": [
-                    "metadata"
-                  ]
+                  "$ref": "#/components/schemas/MetadataResponse"
                 }
               }
             },
@@ -5949,15 +5946,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "properties": {
-                    "metadata": {
-                      "$ref": "#/components/schemas/Metadata"
-                    }
-                  },
-                  "required": [
-                    "metadata"
-                  ]
+                  "$ref": "#/components/schemas/MetadataResponse"
                 }
               }
             },
@@ -6131,18 +6120,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "properties": {
-                    "ok": {
-                      "type": "boolean",
-                      "enum": [
-                        true
-                      ]
-                    }
-                  },
-                  "required": [
-                    "ok"
-                  ]
+                  "$ref": "#/components/schemas/Ok"
                 }
               }
             },
@@ -6325,15 +6303,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "properties": {
-                    "metadata": {
-                      "$ref": "#/components/schemas/Metadata"
-                    }
-                  },
-                  "required": [
-                    "metadata"
-                  ]
+                  "$ref": "#/components/schemas/MetadataResponse"
                 }
               }
             },
@@ -7625,19 +7595,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "properties": {
-                    "extensions": {
-                      "type": "object",
-                      "additionalProperties": {
-                        "type": "object",
-                        "additionalProperties": {}
-                      }
-                    }
-                  },
-                  "required": [
-                    "extensions"
-                  ]
+                  "$ref": "#/components/schemas/ExtensionsResponse"
                 }
               }
             },
@@ -8036,19 +7994,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "properties": {
-                    "extensions": {
-                      "type": "object",
-                      "additionalProperties": {
-                        "type": "object",
-                        "additionalProperties": {}
-                      }
-                    }
-                  },
-                  "required": [
-                    "extensions"
-                  ]
+                  "$ref": "#/components/schemas/ExtensionsResponse"
                 }
               }
             },
@@ -8247,19 +8193,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "properties": {
-                    "extensions": {
-                      "type": "object",
-                      "additionalProperties": {
-                        "type": "object",
-                        "additionalProperties": {}
-                      }
-                    }
-                  },
-                  "required": [
-                    "extensions"
-                  ]
+                  "$ref": "#/components/schemas/ExtensionsResponse"
                 }
               }
             },
@@ -8482,29 +8416,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "properties": {
-                    "data": {
-                      "type": "array",
-                      "items": {
-                        "$ref": "#/components/schemas/Edge"
-                      }
-                    },
-                    "cursor": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
-                    "has_more": {
-                      "type": "boolean"
-                    }
-                  },
-                  "required": [
-                    "data",
-                    "cursor",
-                    "has_more"
-                  ]
+                  "$ref": "#/components/schemas/EdgePage"
                 }
               }
             },
@@ -8727,29 +8639,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "properties": {
-                    "data": {
-                      "type": "array",
-                      "items": {
-                        "$ref": "#/components/schemas/Edge"
-                      }
-                    },
-                    "cursor": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
-                    "has_more": {
-                      "type": "boolean"
-                    }
-                  },
-                  "required": [
-                    "data",
-                    "cursor",
-                    "has_more"
-                  ]
+                  "$ref": "#/components/schemas/EdgePage"
                 }
               }
             },
@@ -8984,29 +8874,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "properties": {
-                    "data": {
-                      "type": "array",
-                      "items": {
-                        "$ref": "#/components/schemas/Edge"
-                      }
-                    },
-                    "cursor": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
-                    "has_more": {
-                      "type": "boolean"
-                    }
-                  },
-                  "required": [
-                    "data",
-                    "cursor",
-                    "has_more"
-                  ]
+                  "$ref": "#/components/schemas/EdgePage"
                 }
               }
             },
@@ -9228,15 +9096,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "properties": {
-                    "edge": {
-                      "$ref": "#/components/schemas/Edge"
-                    }
-                  },
-                  "required": [
-                    "edge"
-                  ]
+                  "$ref": "#/components/schemas/EdgeResponse"
                 }
               }
             },
@@ -9454,15 +9314,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "properties": {
-                    "edge": {
-                      "$ref": "#/components/schemas/Edge"
-                    }
-                  },
-                  "required": [
-                    "edge"
-                  ]
+                  "$ref": "#/components/schemas/EdgeResponse"
                 }
               }
             },
@@ -9604,15 +9456,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "properties": {
-                    "edge": {
-                      "$ref": "#/components/schemas/Edge"
-                    }
-                  },
-                  "required": [
-                    "edge"
-                  ]
+                  "$ref": "#/components/schemas/EdgeResponse"
                 }
               }
             },
@@ -9799,18 +9643,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "properties": {
-                    "ok": {
-                      "type": "boolean",
-                      "enum": [
-                        true
-                      ]
-                    }
-                  },
-                  "required": [
-                    "ok"
-                  ]
+                  "$ref": "#/components/schemas/Ok"
                 }
               }
             },
@@ -9978,7 +9811,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BulkEdgeResponse"
+                  "$ref": "#/components/schemas/BulkResponse"
                 }
               }
             },
@@ -10405,18 +10238,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "properties": {
-                    "ok": {
-                      "type": "boolean",
-                      "enum": [
-                        true
-                      ]
-                    }
-                  },
-                  "required": [
-                    "ok"
-                  ]
+                  "$ref": "#/components/schemas/Ok"
                 }
               }
             },
@@ -10703,15 +10525,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "properties": {
-                    "type": {
-                      "$ref": "#/components/schemas/TypeDefinition"
-                    }
-                  },
-                  "required": [
-                    "type"
-                  ]
+                  "$ref": "#/components/schemas/TypeResponse"
                 }
               }
             },
@@ -11046,15 +10860,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "properties": {
-                    "type": {
-                      "$ref": "#/components/schemas/TypeDefinition"
-                    }
-                  },
-                  "required": [
-                    "type"
-                  ]
+                  "$ref": "#/components/schemas/TypeResponse"
                 }
               }
             },
@@ -11230,18 +11036,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "properties": {
-                    "ok": {
-                      "type": "boolean",
-                      "enum": [
-                        true
-                      ]
-                    }
-                  },
-                  "required": [
-                    "ok"
-                  ]
+                  "$ref": "#/components/schemas/Ok"
                 }
               }
             },
@@ -13433,18 +13228,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "properties": {
-                    "ok": {
-                      "type": "boolean",
-                      "enum": [
-                        true
-                      ]
-                    }
-                  },
-                  "required": [
-                    "ok"
-                  ]
+                  "$ref": "#/components/schemas/Ok"
                 }
               }
             },
@@ -14457,18 +14241,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "properties": {
-                    "ok": {
-                      "type": "boolean",
-                      "enum": [
-                        true
-                      ]
-                    }
-                  },
-                  "required": [
-                    "ok"
-                  ]
+                  "$ref": "#/components/schemas/Ok"
                 }
               }
             },
@@ -15634,18 +15407,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "properties": {
-                    "ok": {
-                      "type": "boolean",
-                      "enum": [
-                        true
-                      ]
-                    }
-                  },
-                  "required": [
-                    "ok"
-                  ]
+                  "$ref": "#/components/schemas/Ok"
                 }
               }
             },
@@ -15878,26 +15640,19 @@
                     }
                   },
                   "enforcement_override": {
-                    "type": [
-                      "object",
-                      "null"
-                    ],
-                    "properties": {
-                      "strict_mode": {
-                        "$ref": "#/components/schemas/StrictModeLever"
+                    "anyOf": [
+                      {
+                        "$ref": "#/components/schemas/EnforcementOverride"
                       },
-                      "source_allowlist": {
-                        "$ref": "#/components/schemas/SourceAllowlistLever"
-                      },
-                      "source_filter": {
-                        "$ref": "#/components/schemas/SourceFilterLever"
+                      {
+                        "type": "null"
                       }
-                    },
+                    ],
                     "description": "`null` clears the override; an object replaces it whole."
                   },
                   "source": {
                     "type": "string",
-                    "description": "A key's source is immutable. A body carrying this field is refused `400 validation_error` whatever its value; revoke the key and mint another to change it."
+                    "description": "A key's source is immutable: a body carrying this field is refused `400 validation_error`. Revoke the key and mint another to change it."
                   }
                 },
                 "additionalProperties": false
@@ -16302,13 +16057,13 @@
                     "type": "object",
                     "properties": {
                       "strict_mode": {
-                        "$ref": "#/components/schemas/StrictModeLeverStrict"
+                        "$ref": "#/components/schemas/TypeLeverStrict"
                       },
                       "source_allowlist": {
-                        "$ref": "#/components/schemas/SourceAllowlistLeverStrict"
+                        "$ref": "#/components/schemas/TypeAndSourceLeverStrict"
                       },
                       "source_filter": {
-                        "$ref": "#/components/schemas/SourceFilterLeverStrict"
+                        "$ref": "#/components/schemas/TypeAndSourceLeverStrict"
                       }
                     },
                     "additionalProperties": false
@@ -18406,18 +18161,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "properties": {
-                    "ok": {
-                      "type": "boolean",
-                      "enum": [
-                        true
-                      ]
-                    }
-                  },
-                  "required": [
-                    "ok"
-                  ]
+                  "$ref": "#/components/schemas/Ok"
                 }
               }
             },

@@ -82,7 +82,7 @@ import {
   ItemSchema,
   ItemWithMetadataSchema,
   ItemDetailSchema,
-  MetadataSchema,
+  MetadataResponseSchema,
   MergePolicySchema,
   MergeStrategyEnum,
   TierEnum,
@@ -837,7 +837,7 @@ const getMetadataRoute = createRoute({
     200: {
       content: {
         "application/json": {
-          schema: z.object({ metadata: MetadataSchema }),
+          schema: MetadataResponseSchema,
         },
       },
       description: "Item metadata",
@@ -886,7 +886,7 @@ const putMetadataRoute = createRoute({
     200: {
       content: {
         "application/json": {
-          schema: z.object({ metadata: MetadataSchema }),
+          schema: MetadataResponseSchema,
         },
       },
       description: "Metadata replaced",
@@ -947,7 +947,7 @@ const patchMetadataRoute = createRoute({
     200: {
       content: {
         "application/json": {
-          schema: z.object({ metadata: MetadataSchema }),
+          schema: MetadataResponseSchema,
         },
       },
       description: "Metadata merged",
@@ -1010,7 +1010,7 @@ const addTagsRoute = createRoute({
     200: {
       content: {
         "application/json": {
-          schema: z.object({ metadata: MetadataSchema }),
+          schema: MetadataResponseSchema,
         },
       },
       description: "Tags added",
@@ -1065,7 +1065,7 @@ const removeTagRoute = createRoute({
     200: {
       content: {
         "application/json": {
-          schema: z.object({ metadata: MetadataSchema }),
+          schema: MetadataResponseSchema,
         },
       },
       description: "Tag removed",
