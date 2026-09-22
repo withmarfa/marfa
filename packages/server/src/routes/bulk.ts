@@ -1092,7 +1092,16 @@ export function bulkRoutes(storage: Storage) {
         // the same request would answer `403` on this door and `400` on
         // the other, which is the caller-facing disagreement the table
         // exists to stop.
-        if (raw.state && raw.state !== SYSTEM_DEFAULT_STATE) {
+        //
+        // **Only for an entry that can be nothing but a create**, which is
+        // one naming neither an `id` nor a `source_id`. An entry carrying
+        // either may resolve a row, and the update path does not read
+        // `state` at all: refusing it here would roll a page back over a
+        // field the write it describes was going to ignore. Where the
+        // entry does create, the per-entry path asks the same question of
+        // the same function, so nothing is checked in one place only.
+        const mustCreate = raw.id === undefined && raw.source_id === undefined;
+        if (mustCreate && raw.state && raw.state !== SYSTEM_DEFAULT_STATE) {
           const stateError = validateTransition(
             raw.type,
             SYSTEM_DEFAULT_STATE,

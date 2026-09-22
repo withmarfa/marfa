@@ -287,7 +287,11 @@ async function processBulkEdge(
         result: {
           index,
           outcome: "errored",
-          error: { code: err.code, message: err.message },
+          error: {
+            code: err.code,
+            message: err.message,
+            ...(err.details && { details: err.details }),
+          },
         },
       };
     }
@@ -366,7 +370,11 @@ async function processBulkEdge(
           result: {
             index,
             outcome: "errored",
-            error: { code: err.code, message: err.message },
+            error: {
+              code: err.code,
+              message: err.message,
+              ...(err.details && { details: err.details }),
+            },
           },
         };
       }
@@ -421,7 +429,11 @@ async function processBulkEdge(
         result: {
           index,
           outcome: "errored",
-          error: { code: err.code, message: err.message },
+          error: {
+            code: err.code,
+            message: err.message,
+            ...(err.details && { details: err.details }),
+          },
         },
       };
     }
