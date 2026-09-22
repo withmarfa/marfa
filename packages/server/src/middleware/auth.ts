@@ -517,6 +517,23 @@ export function mayWriteReserved(key: ApiKey, type: string): boolean {
   return tier !== "system" && tier !== "marfa";
 }
 
+/**
+ * Whether this credential may read this type.
+ *
+ * The decision `checkTypeAccess` throws over at `read`, as a question a
+ * caller can ask without being refused for asking. A listing needs it:
+ * a page is a page of what the caller may see, so a row it may not read
+ * is dropped rather than turned into a refusal of the whole page.
+ *
+ * One reading rather than two, because a listing and a point check that
+ * disagree about one credential is a disclosure: the plural door hands
+ * over what the singular one refuses, and nothing in either answer says
+ * they disagree.
+ */
+export function mayReadType(key: ApiKey, type: string): boolean {
+  return resolveTypePermission(type, key.type_permissions) !== "none";
+}
+
 export function checkTypeAccess(
   apiKey: ApiKey | undefined,
   type: string,
@@ -561,13 +578,13 @@ export function checkTypeAccess(
     }
   }
 
-  const resolved = resolveTypePermission(type, key.type_permissions);
-  if (resolved === "none") {
+  if (!mayReadType(key, type)) {
     throw new MarfaError(
       ErrorCode.TYPE_NOT_PERMITTED,
       `No access to type "${type}"`,
     );
   }
+  const resolved = resolveTypePermission(type, key.type_permissions);
   if (level === "write" && resolved === "read") {
     throw new MarfaError(
       ErrorCode.TYPE_NOT_PERMITTED,

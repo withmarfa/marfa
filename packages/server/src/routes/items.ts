@@ -18,7 +18,6 @@ import {
   hasBoundedLifecycle,
   softDeleteState,
   resolveEnforcement,
-  isTypeInStrictMode,
   getSourceAllowlist,
   malformedTypeIdentifier,
 } from "@withmarfa/shared";
@@ -70,6 +69,7 @@ import {
 } from "./_edges-hydrate.js";
 import { applyInlineEdges, announceInlineEdges } from "./_edges-inline.js";
 import { itemAfterMetadataWrite } from "./_metadata-publish.js";
+import { undeclaredPropertyRefusal } from "./_undeclared-property.js";
 import type { InlineEdgeChanges } from "./_edges-inline.js";
 import { assertTierApplicable } from "./_tier-rules.js";
 import { hydrateExtensionsForItems } from "./_extensions-hydrate.js";
@@ -1281,25 +1281,10 @@ export function itemRoutes(storage: Storage) {
     // Strict-mode lever: when configured for this type, unknown properties
     // are rejected. Storage's own validateProperties runs in loose mode
     // regardless; this pre-check catches strict-mode violations before any
-    // persistence work.
-    if (
-      isTypeInStrictMode(enforcement, type) &&
-      getTypeSchema(type) !== undefined
-    ) {
-      const strictResult = validateProperties(type, properties, {
-        strict: true,
-      });
-      if (!strictResult.success) {
-        throw new MarfaError(
-          ErrorCode.INVALID_PROPERTIES,
-          "Unknown property: strict mode rejects properties not declared in the type schema",
-          {
-            errors: strictResult.errors,
-            code: "unknown_property",
-          },
-        );
-      }
-    }
+    // persistence work. Shared with the restore door, which writes through
+    // the store and so cannot rely on the store to ask.
+    const undeclared = undeclaredPropertyRefusal(enforcement, type, properties);
+    if (undeclared) throw undeclared;
     // `system.*` items have no tier; reject explicit values on write, and
     // stamp `undefined` rather than the library default.
     //

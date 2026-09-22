@@ -5,10 +5,11 @@ import {
   createTestContext,
   trackItem,
   trackEdge,
+  trackEdgeType,
   trackKey,
   cleanup,
 } from "../../utils/setup.js";
-import { createNote } from "../../generators/items.js";
+import { createBookmark, createNote } from "../../generators/items.js";
 
 let client: MarfaClient;
 let ctx: TestContext;
@@ -303,5 +304,291 @@ describe("per-edge-type permissions", () => {
     expect(write.ok).toBe(false);
     expect(write.status).toBe(403);
     expect(write.error?.error.code).toBe("edge_permission_denied");
+  });
+});
+
+/**
+ * What the plural door discloses, against what the singular one does.
+ *
+ * `GET /edges/{id}` resolves the row's source item and asks two questions
+ * before it answers: may this credential read the source's type, and may it
+ * read the edge type. A listing that asked neither handed the same
+ * credential every edge in the instance — both endpoints, the properties on
+ * them and the type of the relationship — for the rows it was refused one
+ * at a time. The listing drops what it may not disclose rather than
+ * refusing the page, because a page is a page of what the caller may see.
+ *
+ * Each case names its own edge type and filters on it, so the assertions
+ * are about the two rows the case made and not about whatever else the
+ * run's shared instance holds.
+ */
+describe("the edge listing answers only what the credential may read", () => {
+  it("drops an edge whose source is a type the credential cannot read", async () => {
+    const edgeType = `mock.disclosure.src.${ctx.runId}`;
+    const registered = await client.registerEdgeType({
+      id: edgeType,
+      cardinality: "many-to-many",
+    });
+    expect(registered.ok, JSON.stringify(registered.error)).toBe(true);
+    trackEdgeType(ctx, edgeType);
+
+    const target = await scopedItem(client, "disclosure-target");
+    const readableSource = await scopedItem(client, "disclosure-readable");
+    const hidden = await client.createItem(
+      createBookmark({ properties: { title: "ep-disclosure-hidden" } }),
+    );
+    expect(hidden.ok, JSON.stringify(hidden.error)).toBe(true);
+    trackItem(ctx, hidden.data.item.id);
+
+    const readableEdge = await client.createEdge({
+      source_id: readableSource,
+      target_id: target,
+      edge_type: edgeType,
+    });
+    expect(readableEdge.ok, JSON.stringify(readableEdge.error)).toBe(true);
+    trackEdge(ctx, readableEdge.data.edge.id);
+    const hiddenEdge = await client.createEdge({
+      source_id: hidden.data.item.id,
+      target_id: target,
+      edge_type: edgeType,
+    });
+    expect(hiddenEdge.ok, JSON.stringify(hiddenEdge.error)).toBe(true);
+    trackEdge(ctx, hiddenEdge.data.edge.id);
+
+    // Reads notes and not bookmarks, and holds every edge type, so what
+    // the listing drops can only be the source item's type.
+    const narrow = await makeKey("disclosure-narrow", {
+      type_permissions: { "core.note": "read" },
+      edge_permissions: { "*": "read" },
+    });
+    const narrowClient = new MarfaClient({
+      baseUrl: apiUrl,
+      apiKey: narrow.key,
+    });
+
+    const page = await narrowClient.listEdges({
+      edge_type: edgeType,
+      limit: 100,
+    });
+    expect(page.ok, JSON.stringify(page.error)).toBe(true);
+    const ids = page.data.data.map((e) => e.id);
+    // The witness sits beside the absence rather than after it: the same
+    // page carries the edge this credential may read, so the row that is
+    // missing is missing because of the gate and not because the filter,
+    // the page size or the edge type kept everything out.
+    expect(
+      ids,
+      "the credential could not see an edge whose source it may read, so the listing refused more than the gate asks",
+    ).toContain(readableEdge.data.edge.id);
+    expect(
+      ids,
+      "the listing disclosed an edge whose source is a type this credential may not read",
+    ).not.toContain(hiddenEdge.data.edge.id);
+
+    // And the row is really there: a credential that may read both types
+    // sees both, so what changed is the credential's reach and not the
+    // instance's contents.
+    const wide = await makeKey("disclosure-wide", {
+      type_permissions: { "*": "read" },
+      edge_permissions: { "*": "read" },
+    });
+    const widePage = await new MarfaClient({
+      baseUrl: apiUrl,
+      apiKey: wide.key,
+    }).listEdges({ edge_type: edgeType, limit: 100 });
+    expect(widePage.ok).toBe(true);
+    expect(widePage.data.data.map((e) => e.id).sort()).toEqual(
+      [readableEdge.data.edge.id, hiddenEdge.data.edge.id].sort(),
+    );
+  });
+
+  it("drops an edge of an edge type the credential cannot read", async () => {
+    const edgeType = `mock.disclosure.kind.${ctx.runId}`;
+    const registered = await client.registerEdgeType({
+      id: edgeType,
+      cardinality: "many-to-many",
+    });
+    expect(registered.ok, JSON.stringify(registered.error)).toBe(true);
+    trackEdgeType(ctx, edgeType);
+
+    const source = await scopedItem(client, "kind-src");
+    const target = await scopedItem(client, "kind-tgt");
+    const edge = await client.createEdge({
+      source_id: source,
+      target_id: target,
+      edge_type: edgeType,
+    });
+    expect(edge.ok, JSON.stringify(edge.error)).toBe(true);
+    trackEdge(ctx, edge.data.edge.id);
+
+    // Reads every item type, and holds one edge type that is not this one,
+    // so what the listing drops can only be the edge type.
+    const narrow = await makeKey("kind-narrow", {
+      type_permissions: { "*": "read" },
+      edge_permissions: { about: "read" },
+    });
+    const page = await new MarfaClient({
+      baseUrl: apiUrl,
+      apiKey: narrow.key,
+    }).listEdges({ edge_type: edgeType, limit: 100 });
+    expect(page.ok, JSON.stringify(page.error)).toBe(true);
+    expect(
+      page.data.data.map((e) => e.id),
+      "the listing disclosed an edge of a kind this credential may not read",
+    ).not.toContain(edge.data.edge.id);
+
+    // The same page under a credential holding the edge type carries it,
+    // so the row exists and the filter is the credential's.
+    const wide = await makeKey("kind-wide", {
+      type_permissions: { "*": "read" },
+      edge_permissions: { "*": "read" },
+    });
+    const widePage = await new MarfaClient({
+      baseUrl: apiUrl,
+      apiKey: wide.key,
+    }).listEdges({ edge_type: edgeType, limit: 100 });
+    expect(widePage.ok).toBe(true);
+    expect(widePage.data.data.map((e) => e.id)).toContain(edge.data.edge.id);
+  });
+
+  it("drops it still when the source is trashed, which is when a null source would read as no source at all", async () => {
+    // The door resolves the source including trashed rows on purpose. A
+    // plain read answers null for a trashed item, and a null source has
+    // no type to refuse — so trashing the source item would turn the
+    // refusal above into a disclosure, and nothing else here would say
+    // so. The single door reads the same way for the same reason.
+    const edgeType = `mock.disclosure.trashed.${ctx.runId}`;
+    const registered = await client.registerEdgeType({
+      id: edgeType,
+      cardinality: "many-to-many",
+    });
+    expect(registered.ok, JSON.stringify(registered.error)).toBe(true);
+    trackEdgeType(ctx, edgeType);
+
+    const target = await scopedItem(client, "trashed-target");
+    const hidden = await client.createItem(
+      createBookmark({ properties: { title: "ep-trashed-hidden" } }),
+    );
+    expect(hidden.ok, JSON.stringify(hidden.error)).toBe(true);
+    trackItem(ctx, hidden.data.item.id);
+    const edge = await client.createEdge({
+      source_id: hidden.data.item.id,
+      target_id: target,
+      edge_type: edgeType,
+    });
+    expect(edge.ok, JSON.stringify(edge.error)).toBe(true);
+    trackEdge(ctx, edge.data.edge.id);
+
+    const trashed = await client.deleteItem(hidden.data.item.id);
+    expect(trashed.ok, JSON.stringify(trashed.error)).toBe(true);
+
+    const narrow = await makeKey("trashed-narrow", {
+      type_permissions: { "core.note": "read" },
+      edge_permissions: { "*": "read" },
+    });
+    const narrowClient = new MarfaClient({
+      baseUrl: apiUrl,
+      apiKey: narrow.key,
+    });
+    expect(
+      (await narrowClient.listEdges({ edge_type: edgeType, limit: 100 })).data
+        .data,
+      "trashing the source item turned the refusal into a disclosure",
+    ).toEqual([]);
+    // And the door this one is meant to agree with still refuses it, so
+    // the two read a trashed source the same way.
+    expect((await narrowClient.getEdge(edge.data.edge.id)).status).toBe(403);
+  });
+
+  it("pages to the end of the listing though whole pages are dropped", async () => {
+    // What "shorter than the limit" turns into at a page boundary: a
+    // page of nothing, with `has_more` still true. The cursor and
+    // `has_more` are the store's reading of the whole listing rather
+    // than of what survived the gate, which is what makes the walk
+    // terminate — and a client that stopped on an empty page would
+    // truncate its copy silently and never learn it had.
+    const edgeType = `mock.disclosure.paged.${ctx.runId}`;
+    const registered = await client.registerEdgeType({
+      id: edgeType,
+      cardinality: "many-to-many",
+    });
+    expect(registered.ok, JSON.stringify(registered.error)).toBe(true);
+    trackEdgeType(ctx, edgeType);
+
+    const target = await scopedItem(client, "paged-target");
+    const readable: string[] = [];
+    // Readable at both ends and four hidden rows between them, so a walk
+    // at two a page meets at least one page with nothing on it.
+    for (const [index, kind] of [
+      "note",
+      "bookmark",
+      "bookmark",
+      "bookmark",
+      "bookmark",
+      "note",
+    ].entries()) {
+      const source =
+        kind === "note"
+          ? await scopedItem(client, `paged-src-${String(index)}`)
+          : await (async () => {
+              const r = await client.createItem(
+                createBookmark({
+                  properties: { title: `ep-paged-${String(index)}` },
+                }),
+              );
+              expect(r.ok, JSON.stringify(r.error)).toBe(true);
+              trackItem(ctx, r.data.item.id);
+              return r.data.item.id;
+            })();
+      const edge = await client.createEdge({
+        source_id: source,
+        target_id: target,
+        edge_type: edgeType,
+      });
+      expect(edge.ok, JSON.stringify(edge.error)).toBe(true);
+      trackEdge(ctx, edge.data.edge.id);
+      if (kind === "note") readable.push(edge.data.edge.id);
+    }
+
+    const narrow = await makeKey("paged-narrow", {
+      type_permissions: { "core.note": "read" },
+      edge_permissions: { "*": "read" },
+    });
+    const narrowClient = new MarfaClient({
+      baseUrl: apiUrl,
+      apiKey: narrow.key,
+    });
+
+    const seen: string[] = [];
+    let emptyPages = 0;
+    let cursor: string | undefined;
+    for (let page = 0; page < 12; page++) {
+      const answer = await narrowClient.listEdges({
+        edge_type: edgeType,
+        limit: 2,
+        cursor,
+      });
+      expect(answer.ok, JSON.stringify(answer.error)).toBe(true);
+      seen.push(...answer.data.data.map((e) => e.id));
+      if (answer.data.data.length === 0 && answer.data.has_more) emptyPages++;
+      if (!answer.data.has_more) {
+        cursor = undefined;
+        break;
+      }
+      cursor = answer.data.cursor ?? undefined;
+      expect(
+        cursor,
+        "the listing says there is more and names no cursor",
+      ).toBeDefined();
+    }
+    expect(
+      cursor,
+      "the walk ran out of pages before the listing ran out of rows",
+    ).toBeUndefined();
+    expect(
+      emptyPages,
+      "no page came back empty, so this case is not about the thing it claims",
+    ).toBeGreaterThan(0);
+    expect(seen.sort()).toEqual([...readable].sort());
   });
 });

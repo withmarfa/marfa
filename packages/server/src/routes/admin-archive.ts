@@ -30,6 +30,7 @@ import {
   MarfaError,
   ErrorCode,
   isValidBlobHash,
+  resolveEnforcement,
   validateTransition,
   SYSTEM_DEFAULT_STATE,
 } from "@withmarfa/shared";
@@ -47,6 +48,8 @@ import { HashingTransform } from "../storage/blob-store.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import { constantTimeEqual } from "../utils/crypto.js";
 import { registerArchiveTypes } from "./admin-archive-types.js";
+import { undeclaredPropertyRefusal } from "./_undeclared-property.js";
+import { readInstanceConfig } from "../storage/instance-config.js";
 import { assertEdgesCanBeCreated } from "../storage/edge-constraints.js";
 import { withBlobUploadLock } from "../storage/blob-upload-lock.js";
 import { log } from "../middleware/logger.js";
@@ -623,6 +626,30 @@ export function adminArchiveRoutes(storage: Storage, blobs: BlobLayer) {
       typeResult = await registerArchiveTypes(storage, typeEntries);
     } catch (err) {
       return refuse(err);
+    }
+
+    // A row carrying a property no type declares is refused wherever the
+    // strict-mode lever names that type, which is the question
+    // `POST /items` asks of a caller. This door writes through the store,
+    // where validation runs loose, so the question has to be asked here
+    // or not at all — and a property that lands reads back ever after
+    // undeclared and unmarked under the type's current version. Refused
+    // whole, and after the archive's own type registrations so a type
+    // this instance is learning from the archive is measured against the
+    // declaration it arrives with, but before any blob or row is
+    // written.
+    const archiveEnforcement = resolveEnforcement(
+      await readInstanceConfig(storage.settings),
+      c.get("apiKey"),
+    );
+    for (const { item } of items) {
+      const refusal = undeclaredPropertyRefusal(
+        archiveEnforcement,
+        String(item.type),
+        (item.properties ?? {}) as Record<string, unknown>,
+        { item_id: item.id },
+      );
+      if (refusal) return refuse(refusal);
     }
 
     // Blobs land only once every refusal above has passed, so an archive
