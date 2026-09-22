@@ -233,6 +233,36 @@ describe("the status checker", () => {
     });
   });
 
+  it("reports an undeclared status findings.md records as recorded, and holds the record to a draw", () => {
+    const drawn = reportStatuses(
+      parseRequestLines(
+        logLine({
+          method: "POST",
+          path: "/auth/oauth2/register",
+          route: "/auth/*",
+          status: 500,
+        }),
+      ),
+      {
+        paths: {
+          "/auth/oauth2/register": {
+            post: { responses: { "201": { description: "" } } },
+          },
+        },
+      },
+    );
+    expect(drawn.undeclared).toEqual([]);
+    expect(drawn.recorded).toEqual(["POST /auth/oauth2/register 500"]);
+
+    const undrawn = reportStatuses(
+      parseRequestLines(OBSERVED_200),
+      documentDeclaring([200]),
+    );
+    expect(unreachedDebt(undrawn, {}).stale).toContain(
+      "recorded POST /auth/oauth2/register 500",
+    );
+  });
+
   it("names an exempt code the document no longer declares", () => {
     const report = reportStatuses(
       parseRequestLines(OBSERVED_200),

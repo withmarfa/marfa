@@ -112,6 +112,13 @@ if (report.undeclared.length > 0) {
   );
 }
 
+if (report.recorded.length > 0) {
+  console.log(
+    "\nAnswered and not declared, as findings.md records:\n" +
+      report.recorded.join("\n"),
+  );
+}
+
 if (report.unexplained.length > 0) {
   console.error(
     "\nServed routes the document does not publish, with no reason in UNPUBLISHED_ROUTES:\n" +

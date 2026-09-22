@@ -54,6 +54,8 @@ export interface StatusReport {
   unanswered: string[];
   /** Exempt codes the document no longer declares anywhere. */
   staleCodes: string[];
+  /** Undeclared statuses this run drew that `findings.md` records. */
+  recorded: string[];
   /** Request lines read, so an empty log cannot read as a clean run. */
   lines: number;
 }
@@ -122,6 +124,17 @@ export const UNREACHED: Readonly<Record<string, string>> = {
     "a platform row this build does not ship, which only an earlier build writes; drawing it means writing that row into the store and restarting the server, which this suite does not arrange",
   "GET /types/{id} 409":
     "a stored inheritance chain with a cycle or past the resolution depth, which the type doors refuse to write; drawing it means writing the chain into the store and restarting the server, which this suite does not arrange",
+};
+
+/**
+ * Undeclared statuses the server answers that `findings.md` records, keyed
+ * `METHOD /path status`, each naming its entry. The fixture that shows one
+ * asserts what the server does, so the run draws it; recorded here it is
+ * reported as recorded rather than as a new contradiction, and an entry no
+ * run draws any more is stale, since the server stopped answering it.
+ */
+export const RECORDED: Readonly<Record<string, string>> = {
+  "POST /auth/oauth2/register 500": "`findings.md` 2",
 };
 
 /**
@@ -317,10 +330,16 @@ export function reportStatuses(
   }
 
   const undeclared: UndeclaredStatus[] = [];
+  const recorded: string[] = [];
   for (const [operation, byStatus] of observed) {
     const allowed = declared.get(operation) ?? new Set<number>();
     for (const [status, codes] of byStatus) {
       if (allowed.has(status)) continue;
+      const key = `${operation} ${String(status)}`;
+      if (RECORDED[key] !== undefined) {
+        recorded.push(key);
+        continue;
+      }
       undeclared.push({
         operation,
         status,
@@ -365,6 +384,7 @@ export function reportStatuses(
     undeclared,
     unanswered,
     staleCodes,
+    recorded: recorded.sort(),
     lines: lines.length,
   };
 }
@@ -385,6 +405,9 @@ export function unreachedDebt(
         .filter((key) => !unanswered.has(key))
         .sort(),
       ...report.staleCodes.map((code) => `code ${code}`),
+      ...Object.keys(RECORDED)
+        .filter((key) => !report.recorded.includes(key))
+        .map((key) => `recorded ${key}`),
     ],
   };
 }
