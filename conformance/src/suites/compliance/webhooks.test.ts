@@ -194,6 +194,72 @@ describe("outbound webhooks", () => {
     expect(accepted.data.events).toEqual(["item.updated"]);
   });
 
+  it("calls out for a bulk write only when the call asks for fan-out", async () => {
+    // What `enable_fanout` governs is the outbound call and nothing else.
+    // It is off unless the caller says otherwise, because one bulk call
+    // writes thousands of rows and a delivery per row per subscriber is
+    // not what the caller asked for. The event log is not conditional on
+    // it — `items.md` 32 cites `sync/replay.test.ts` for that half, which
+    // is the half a client rebuilding its state depends on.
+    const created = await client.createWebhook({
+      url: receiver.hookUrl("fanout"),
+      events: ["item.created"],
+    });
+    expect(created.status).toBe(201);
+    trackWebhook(ctx, created.data.id, client);
+
+    // Silent, because the call named no flag.
+    const quiet = await client.bulkItems({
+      items: [
+        createNote({ source: ctx.source, properties: { body: "quiet" } }),
+      ],
+    });
+    expect(quiet.ok).toBe(true);
+    const quietId = String(quiet.data.results[0]?.id);
+    expect(quietId).not.toBe("undefined");
+    trackItem(ctx, quietId);
+
+    // Delivered, because this one asked. Sent second on purpose: its
+    // arrival is what bounds the wait for the other, which by then has had
+    // every moment this one took to produce a delivery of its own.
+    const loud = await client.bulkItems({
+      items: [createNote({ source: ctx.source, properties: { body: "loud" } })],
+      enable_fanout: true,
+    });
+    expect(loud.ok).toBe(true);
+    const loudId = String(loud.data.results[0]?.id);
+    expect(loudId).not.toBe("undefined");
+    trackItem(ctx, loudId);
+
+    const delivery = await receiver.waitFor(
+      (r) => r.path === "/hook/fanout" && r.body.includes(loudId),
+    );
+    expect(delivery.headers["x-marfa-event-type"]).toBe("item.created");
+
+    // The absence, and the arrival above is its witness: one subscription,
+    // one door, one run, and one of the two writes called out. The silence
+    // is the flag's doing rather than a subscription that was never going
+    // to fire.
+    expect(
+      receiver.received.filter(
+        (r) => r.path === "/hook/fanout" && r.body.includes(quietId),
+      ),
+    ).toEqual([]);
+
+    // One attempt recorded, not two, so nothing was delivered out of sight
+    // of the receiver either.
+    const deliveries = await client.listWebhookDeliveries(created.data.id);
+    expect(deliveries.ok).toBe(true);
+    expect(
+      deliveries.data.deliveries.filter((d) => d.event_type === "item.created")
+        .length,
+    ).toBe(1);
+
+    // And the silent write is a write: the row is there to be read.
+    const read = await client.getItem(quietId);
+    expect(read.ok).toBe(true);
+  });
+
   it("does not deliver an event outside the subscription", async () => {
     const created = await client.createWebhook({
       url: receiver.hookUrl("deleted-only"),

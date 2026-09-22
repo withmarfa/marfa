@@ -186,6 +186,48 @@ describe("the rules that keep a blob's bytes", () => {
     );
   });
 
+  it("answers a dead store link with the store's own status, not the instance's", async () => {
+    // `blobs.md` 13 names the status a dead link gets, and there are two
+    // signers to name: the instance, which answers its own refusal, and
+    // the object store once it holds the blob, whose link the instance
+    // never sees fetched. This is the store's half, taken here because
+    // this is the file that provably holds a store-signed link — in
+    // `correctness/blob-correctness.test.ts` the replication scheduler
+    // decides which signer answered, within a second of the upload, so
+    // which status that case measures is a race.
+    const hash = await uploadText("a link that dies");
+    await replicateToZero();
+    const link = await client.getBlobUrl(hash);
+    expect(link.status).toBe(200);
+    const url = new URL(link.data.url);
+    expect(url.host).toBe(new URL(bootEnv("S3_ENDPOINT")).host);
+
+    // The witness: the link works before it is altered, so the refusal
+    // below is about the alteration and not about a link that was never
+    // going to fetch.
+    const before = await fetch(url);
+    expect(before.status).toBe(200);
+    expect(new Uint8Array(await before.arrayBuffer())).toEqual(
+      new TextEncoder().encode(text("a link that dies")),
+    );
+
+    const altered = new URL(url);
+    const signature = altered.searchParams.get("X-Amz-Signature");
+    expect(
+      signature,
+      "the store's link carries no SigV4 signature to alter",
+    ).toBeTruthy();
+    altered.searchParams.set(
+      "X-Amz-Signature",
+      `${(signature ?? "").slice(0, -1)}${(signature ?? "").endsWith("0") ? "1" : "0"}`,
+    );
+    const dead = await fetch(altered);
+    expect(dead.status).toBe(403);
+    expect(new Uint8Array(await dead.arrayBuffer())).not.toEqual(
+      new TextEncoder().encode(text("a link that dies")),
+    );
+  });
+
   it("drops a copy while the minimum holds and refuses the drop that would break it", async () => {
     const hash = await uploadText("two copies, then one");
     await replicateToZero();

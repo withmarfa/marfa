@@ -289,6 +289,50 @@ describe("the instance from the terminal", () => {
     expect(tar.toString("latin1")).toContain(title);
   });
 
+  it("takes an archive back under the operator key and is refused it under a working key", async () => {
+    // The other half of the archive round trip, reachable from the client
+    // now that the door is published: a published door the reference
+    // client cannot call is a hole, which is what the binary's own
+    // coverage gate is for.
+    const title = unique("cli-restore");
+    const created = await c.cli.json<ItemEnvelope>([
+      "items",
+      "create",
+      "--type",
+      "core.note",
+      "--properties",
+      JSON.stringify({ title, body: "b" }),
+    ]);
+    trackItem(c.ctx, created.item.id);
+
+    const archive = join(dir, "restore.tar.gz");
+    const written = await c.cli.json<{ size_bytes: number }>([
+      "export",
+      "--format",
+      "archive",
+      "--output",
+      archive,
+    ]);
+    expect(written.size_bytes).toBeGreaterThan(0);
+
+    // Every row in it is already here, so the restore counts duplicates
+    // rather than imports. That the counts come back at all is what says
+    // the archive reached the door and was read.
+    const report = await c.operator.json<{
+      imported: number;
+      duplicates: number;
+      edges_imported: number;
+    }>(["restore", archive]);
+    expect(report.duplicates).toBeGreaterThanOrEqual(1);
+    expect(report.imported).toBeGreaterThanOrEqual(0);
+
+    // The witness that the operator key is what carried it: the same
+    // archive under a working key is refused by the door, not by the
+    // client, and the refusal is the door's own.
+    const refused = await c.cli.refused(["restore", archive]);
+    expect(refused.envelope.error.server?.status).toBe(403);
+  });
+
   it("reaches the operator doors under the operator key and is refused them under a working key", async () => {
     const drift = await c.operator.json<{
       types: Array<{ id: string; item_count: number; removable: boolean }>;

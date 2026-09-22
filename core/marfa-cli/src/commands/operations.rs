@@ -78,6 +78,7 @@ pub const OPERATIONS: &[Operation] = &[
     reached("adminListPlatformTypeDrift", "types drift"),
     reached("adminRemovePlatformType", "types prune"),
     reached("exportData", "export"),
+    reached("adminRestoreArchive", "restore"),
     reached("createWebhook", "webhooks create"),
     reached("listWebhooks", "webhooks list"),
     reached("getWebhook", "webhooks get"),

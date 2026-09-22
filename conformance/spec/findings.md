@@ -16,15 +16,7 @@ The document declares the 400 with no content schema. The server answers an RFC 
 
 The document declares both statuses with no content schema. The server answers the standard envelope, `validation_error` for a refused filter and `unauthorized` for a missing credential. `compliance/events-contract.test.ts › refuses a wildcard type filter, a type outside the grammar, an unknown edges value and more than ten types`, `compliance/unauthenticated.test.ts › answers 401 unauthorized on each of them`.
 
-## 4. `POST /admin/restore-archive` is served and unpublished
-
-The route is stripped from the document as an internal operation, yet it is the only way an archive produced by `GET /export?format=archive` comes back, and it is covered here as an operator maintenance door. A caller reading the document cannot find it. `compliance/admin-archive.test.ts › round-trips: archive export then restore accepts the same payload`, `compliance/export-roundtrip.test.ts › reconstructs items with their ids, tags, and extensions`.
-
-## 5. `DELETE /items/bulk-actions/jobs/{id}`: the queued transition is unobservable
-
-The document says a queued job flips to `canceled` immediately and an in-progress one flips between chunks. The worker takes a job as soon as it is queued and finishes before a second request can reach the door, so no caller over the wire can observe either transition. `compliance/bulk.test.ts › DELETE on a terminal job answers 200 with its final state unchanged`.
-
-## 6. Statuses the fixtures observe that the document does not declare
+## 4. Statuses the fixtures observe that the document does not declare
 
 Every entry is a status a fixture asserts on an operation whose served document lists no such response.
 
@@ -40,7 +32,7 @@ Every entry is a status a fixture asserts on an operation whose served document 
 - `POST /keys` declares `201 400 401 403 429`; the server answers `409 conflict` for a `source` already in use. `compliance/key-management.test.ts › refuses a second key claiming a source already in use`.
 - `GET /edge-types`, `POST /edge-types`, `DELETE /edge-types/{id}`, `GET /edges/{id}`, `PATCH /edges/{id}` and `DELETE /edges/{id}` declare no `401`; each answers `401 unauthorized` to a bare request. `compliance/unauthenticated.test.ts › answers 401 unauthorized on each of them`.
 
-## 7. The natural key is scoped by the credential, so two devices cannot share one
+## 5. The natural key is scoped by the credential, so two devices cannot share one
 
 `folders.md` 10 requires that the same file on two separately enrolled machines is one item. The natural key is `(source, source_id)` (`items.md` 5), `source` is stamped from the credential and a value in the body is ignored (`items.md` 4), and a second key naming a `source` already in use is refused `409 conflict` (`keys-and-oauth.md` 7). Two devices with their own keys therefore cannot present the same natural key, and the same file becomes two items on the same server with nothing recording that they are the same file.
 

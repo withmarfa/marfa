@@ -388,11 +388,12 @@ const bulkActionStatusRoute = createRoute({
   },
 });
 
-// Request cancellation. Idempotent — already-terminal rows return
-// their final state without mutation. The worker observes the
-// `canceled` flag between chunks and stops; the response from this
-// endpoint surfaces the row as-of-now, which may still show
-// `in_progress` if the worker hasn't yet observed the flag.
+// Request cancellation. Idempotent — already-terminal rows return their
+// final state without mutation. The answer is the row as of now, which is
+// all the door promises: the worker takes a job the moment it is queued,
+// so no caller can hold one still long enough to watch it stop, and a
+// description naming a state only a test with the worker in hand can see
+// would be a promise the contract cannot keep.
 const bulkActionCancelRoute = createRoute({
   method: "delete",
   path: "/bulk-actions/jobs/{id}",
@@ -400,7 +401,7 @@ const bulkActionCancelRoute = createRoute({
   tags: ["Items"],
   summary: "Cancel a bulk-action job",
   description:
-    "Signals cancellation of a bulk-action job. Queued jobs flip to `canceled` immediately and in-progress jobs flip when the worker next checks between chunks; already-terminal jobs return their final state unchanged.",
+    "Signals cancellation of a bulk-action job and answers the row as of now. A job already terminal answers its final state unchanged; one still running answers the state it is in, because the worker stops between chunks rather than at the moment of the request.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({

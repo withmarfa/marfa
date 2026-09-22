@@ -25,7 +25,7 @@ interface Citation {
  * The statement numbers a spec file defines: its ordered-list items, and the
  * `## N.` headings `findings.md` uses instead.
  *
- * The files cite each other by bare integer — "`findings.md` 7",
+ * The files cite each other by bare integer — "`findings.md` 1",
  * "`items.md` 5" — so nothing in a citation ties it to what it names.
  * Renumber a file, which the last sweep did to eight entries of
  * `findings.md`, and every citation still reads as a sentence while pointing
@@ -150,7 +150,7 @@ describe("specification citations", () => {
     // statement about them that does not need to know what they say.
     const numbered = [...statementNumbers("findings.md")].sort((a, b) => a - b);
     // The positive control: the headings parsed at all.
-    expect(numbered.length).toBeGreaterThan(5);
+    expect(numbered.length).toBeGreaterThan(1);
     expect(numbered).toEqual(numbered.map((_, index) => index + 1));
   });
 

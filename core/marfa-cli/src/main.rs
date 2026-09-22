@@ -17,8 +17,8 @@ use clap::{Parser, Subcommand};
 
 use crate::commands::{
     audit, blobs, config, connectors, edge_types, edges, events, export, extensions, housekeeping,
-    items, keys, login, logout, metadata, operations, owner, search, status, types, webhooks,
-    whoami,
+    items, keys, login, logout, metadata, operations, owner, restore, search, status, types,
+    webhooks, whoami,
 };
 use crate::device::DeviceArgs;
 use crate::error::{CliError, EXIT_CODES_HELP};
@@ -115,6 +115,8 @@ enum Command {
     },
     /// Export the instance's data.
     Export(export::ExportArgs),
+    /// Take an archive back. Operator key only.
+    Restore(restore::RestoreArgs),
     /// Outbound subscriptions that send events out. Every command needs `webhooks.manage`.
     Webhooks {
         #[command(subcommand)]
@@ -196,6 +198,7 @@ fn run(cli: Cli) -> Result<(), CliError> {
         Command::Keys { command } => keys::run(command, &remote()?, &out),
         Command::Config { command } => config::run(command, &remote()?, &out),
         Command::Export(args) => export::run(args, &remote()?, &out),
+        Command::Restore(args) => restore::run(args, &remote()?, &out),
         Command::Webhooks { command } => webhooks::run(command, &remote()?, &out),
         Command::Audit(args) => audit::run(args, &remote()?, &out),
         Command::Events(args) => events::run(args, &remote()?, &out),

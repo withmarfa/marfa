@@ -129,6 +129,11 @@ const PUBLIC_TAGS = [
       "The housekeeping jobs the server runs on itself: what runs, when, and what the last run did.",
   },
   {
+    name: "Admin",
+    description:
+      "Maintenance the operator key alone may perform on the instance itself.",
+  },
+  {
     name: "Events",
     description: "The server-sent events stream of item and edge changes.",
   },
@@ -149,8 +154,6 @@ const PUBLIC_TAGS = [
  * A new internal route adds its operationId here.
  */
 const INTERNAL_OPERATION_IDS = new Set<string>([
-  // admin-archive.ts
-  "adminRestoreArchive",
   // metrics.ts — server metrics
   "getServerMetrics",
   // blobs.ts — the target of an instance-served link, which
