@@ -906,7 +906,6 @@ export interface VersionStore {
     version: number,
     properties: Record<string, unknown>,
     itemFields: VersionedItemFields,
-    deviceId?: string,
   ): Promise<Version>;
   list(itemId: string): Promise<Version[]>;
   getByVersion(

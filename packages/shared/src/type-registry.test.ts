@@ -795,7 +795,6 @@ describe("RESERVED_ITEM_FIELDS — freshness against Item interface", () => {
       source_id: "",
       version: 1,
       schema_version: 1,
-      device: "",
       capture_latitude: 0,
       capture_longitude: 0,
     };
@@ -814,11 +813,11 @@ describe("RESERVED_ITEM_FIELDS — freshness against Item interface", () => {
 describe("validateTypeSchema — property shadow rule", () => {
   it("rejects a schema declaring a field that shadows a first-class Item field", () => {
     const result = validateTypeSchema({
-      id: "test.shadow_device",
-      label: "Shadow Device",
+      id: "test.shadow_capture",
+      label: "Shadow Capture",
       version: 1,
       fields: {
-        device: { type: "string" },
+        capture_latitude: { type: "number" },
       },
     });
     expect(result.success).toBe(false);
@@ -827,7 +826,7 @@ describe("validateTypeSchema — property shadow rule", () => {
       (e) => e.code === "property_shadows_field",
     );
     expect(collision).toBeTruthy();
-    expect(collision?.field).toBe("fields.device");
+    expect(collision?.field).toBe("fields.capture_latitude");
   });
 
   it("reports every shadowing field at once, not just the first", () => {
@@ -836,7 +835,7 @@ describe("validateTypeSchema — property shadow rule", () => {
       label: "Shadow Many",
       version: 1,
       fields: {
-        device: { type: "string" },
+        capture_latitude: { type: "number" },
         source_id: { type: "string" },
         occurred_at: { type: "datetime" },
       },
@@ -846,7 +845,7 @@ describe("validateTypeSchema — property shadow rule", () => {
     const fields = result.errors
       .filter((e) => e.code === "property_shadows_field")
       .map((e) => e.field);
-    expect(fields).toContain("fields.device");
+    expect(fields).toContain("fields.capture_latitude");
     expect(fields).toContain("fields.source_id");
     expect(fields).toContain("fields.occurred_at");
   });

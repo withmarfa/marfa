@@ -202,7 +202,7 @@ export class SqliteSearchStore implements SearchStore {
         i.id, i.type, i.state, json(i.properties) AS properties,
         i.created_at, i.updated_at,
         i.occurred_at, i.source, i.source_id, i.version,
-        i.schema_version, i.device, i.tier,
+        i.schema_version, i.tier,
         i.capture_latitude, i.capture_longitude,
         m.item_id AS meta_item_id, m.tags, m.extensions
       FROM items_fts fts

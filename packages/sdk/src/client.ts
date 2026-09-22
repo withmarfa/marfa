@@ -354,7 +354,6 @@ export interface BulkItemInput {
   source?: string;
   source_id?: string;
   origin?: "user" | "ai" | "worker";
-  device?: string;
   tags?: string[];
   /** Outbound edges to reconcile in the same transaction as the item
    *  write. Replace-all semantics per edge_type. Absent = untouched. */

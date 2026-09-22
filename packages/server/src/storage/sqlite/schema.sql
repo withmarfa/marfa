@@ -435,7 +435,6 @@ CREATE TABLE IF NOT EXISTS `items` (
 	`source_id` text,
 	`version` integer DEFAULT 1 NOT NULL,
 	`schema_version` integer,
-	`device` text,
 	`capture_latitude` real,
 	`capture_longitude` real,
 	`starts_at` text,
@@ -522,7 +521,6 @@ CREATE TABLE IF NOT EXISTS `versions` (
 	`occurred_at` text,
 	`source_id` text,
 	`created_at` text NOT NULL,
-	`device` text,
 	FOREIGN KEY (`item_id`) REFERENCES `items`(`id`) ON UPDATE no action ON DELETE cascade
 );
 

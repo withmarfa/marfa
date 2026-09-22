@@ -555,11 +555,7 @@ describe("parseFilter", () => {
       });
     });
 
-    it("parses device, version, id as system fields", () => {
-      expect(parseFilter('device eq "MacBook"').conditions[0]?.field).toEqual({
-        kind: "system",
-        column: "device",
-      });
+    it("parses version and id as system fields", () => {
       expect(parseFilter("version eq 3").conditions[0]?.field).toEqual({
         kind: "system",
         column: "version",

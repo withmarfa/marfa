@@ -126,18 +126,18 @@ describe("type registration and listing", () => {
   });
 
   // Custom-type schemas may not declare property names that collide with
-  // first-class Item wire fields (`device`, `source_id`, `occurred_at`,
-  // `version`, `schema_version`, `tier`, `state`, `capture_latitude`,
+  // first-class Item wire fields (`source_id`, `occurred_at`, `version`,
+  // `schema_version`, `tier`, `state`, `capture_latitude`,
   // `capture_longitude`, plus the structural keys). Letting a property
   // shadow a first-class field name produces ambiguous data: two values
   // under the same key, with nothing telling downstream consumers which is
   // authoritative. The server returns 400 `property_shadows_field`.
   it("rejects type registration whose property name shadows a first-class Item field", async () => {
-    const id = `user.shadow-device-${ctx.runId}`;
+    const id = `user.shadow-capture-${ctx.runId}`;
     const r = await client.registerType({
       id,
       fields: {
-        device: { type: "string" },
+        capture_latitude: { type: "number" },
       },
     });
     expect(r.ok).toBe(false);

@@ -39,7 +39,6 @@ export function rowToItem(row: ItemRow): Item {
     source: row.source ?? "unknown",
     ...(row.source_id != null && { source_id: row.source_id }),
     schema_version: row.schema_version ?? 1,
-    ...(row.device != null && { device: row.device }),
     ...(row.capture_latitude != null && {
       capture_latitude: row.capture_latitude,
     }),
@@ -72,6 +71,5 @@ export function rowToVersion(row: VersionRow): Version {
       `version ${row.id} properties`,
     ),
     created_at: row.created_at,
-    ...(row.device != null && { device: row.device }),
   };
 }

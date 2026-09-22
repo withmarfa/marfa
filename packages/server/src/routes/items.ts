@@ -254,7 +254,6 @@ const createItemRoute = createRoute({
                 "Optional, and meaningful on one path: a `source_id` resolving a live row makes this write an upsert, and a version here makes that upsert conditional exactly as it is on the update door. Everywhere else it is ignored, because nothing is overwritten — a genuine create has no version to have read, and a repeated `id` or a natural key resolving a trashed row is acknowledged rather than written.",
               ),
             tier: z.enum(["library", "feed"]).optional(),
-            device: z.string().optional(),
             capture_latitude: z.number().optional(),
             capture_longitude: z.number().optional(),
             tags: z.array(z.string()).optional(),
@@ -1373,7 +1372,7 @@ export function itemRoutes(storage: Storage) {
     // Update semantics: properties / tier / occurred_at via `ItemStore.update`
     // (shallow-merge); tags via `metadata.set`; edges via `applyInlineEdges`
     // (replace-by-edge-type). Fields only meaningful at create time (id,
-    // state, device, capture_*) are ignored — the existing row's id wins.
+    // state, capture_*) are ignored — the existing row's id wins.
     if (stampedSource && body.source_id) {
       // Including trashed rows, deliberately. `findBySourceId` hides them,
       // which would send a re-sync of a mirror the user had deleted into
@@ -1713,7 +1712,6 @@ export function itemRoutes(storage: Storage) {
           occurred_at: body.occurred_at,
           source: stampedSource,
           source_id: body.source_id,
-          device: body.device,
           capture_latitude: body.capture_latitude,
           capture_longitude: body.capture_longitude,
           tags: body.tags,

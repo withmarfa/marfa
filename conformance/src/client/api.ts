@@ -67,7 +67,6 @@ export interface CreateItemInput {
   version?: number;
   tier?: "library" | "feed"; // Items are curated library content or transient feed content; system.* items have no tier
   occurred_at?: string;
-  device?: string;
   capture_latitude?: number;
   capture_longitude?: number;
   tags?: string[];

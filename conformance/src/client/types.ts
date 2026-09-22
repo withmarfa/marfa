@@ -12,7 +12,6 @@ export interface MarfaItem {
   tier?: "library" | "feed"; // Items are either curated library content or transient feed content. Optional — system.* items have no tier.
   version: number; // Revision number, starts at 1, increments on update
   schema_version: number; // Type schema version this item was validated against
-  device: string | null;
   capture_latitude: number | null;
   capture_longitude: number | null;
   /**
@@ -44,7 +43,6 @@ export interface MarfaVersion {
   version: number;
   properties: Record<string, unknown>;
   created_at: string;
-  device: string | null;
 }
 
 export type EdgeCardinality =

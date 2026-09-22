@@ -68,7 +68,6 @@ export interface Item {
   source_id?: string;
   version: number;
   schema_version: number;
-  device?: string;
   capture_latitude?: number;
   capture_longitude?: number;
 }
@@ -92,7 +91,6 @@ export interface CreateItemInput {
   /** Ignored on the wire — server always stamps source from the credential. */
   source?: string;
   source_id?: string;
-  device?: string;
   capture_latitude?: number;
   capture_longitude?: number;
   tags?: string[];
@@ -187,7 +185,6 @@ export interface Version {
   version: number;
   properties: Record<string, unknown>;
   created_at: string;
-  device?: string;
 }
 
 /**

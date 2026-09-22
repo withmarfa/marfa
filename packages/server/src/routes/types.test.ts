@@ -321,7 +321,6 @@ describe("first-class field shadow rejection", () => {
     "source_id",
     "version",
     "schema_version",
-    "device",
     "capture_latitude",
     "capture_longitude",
   ] as const;
@@ -379,7 +378,7 @@ describe("first-class field shadow rejection", () => {
         label: "Shadow Many",
         version: 1,
         fields: {
-          device: { type: "string" },
+          capture_latitude: { type: "number" },
           source_id: { type: "string" },
           occurred_at: { type: "datetime" },
         },
@@ -394,7 +393,7 @@ describe("first-class field shadow rejection", () => {
     };
     expect(payload.error.code).toBe("property_shadows_field");
     const fields = (payload.error.details?.errors ?? []).map((e) => e.field);
-    expect(fields).toContain("fields.device");
+    expect(fields).toContain("fields.capture_latitude");
     expect(fields).toContain("fields.source_id");
     expect(fields).toContain("fields.occurred_at");
   });

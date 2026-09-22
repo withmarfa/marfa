@@ -25,7 +25,6 @@ export class SqliteVersionStore implements VersionStore {
     version: number,
     properties: Record<string, unknown>,
     itemFields: VersionedItemFields,
-    deviceId?: string,
     db: TxOrDb = this.db,
   ): Promise<Version> {
     const now = new Date().toISOString();
@@ -38,7 +37,6 @@ export class SqliteVersionStore implements VersionStore {
       occurred_at: itemFields.occurred_at,
       source_id: itemFields.source_id,
       created_at: now,
-      device: deviceId ?? null,
     };
     await db.insert(versions).values(row).run();
     return {
@@ -47,7 +45,6 @@ export class SqliteVersionStore implements VersionStore {
       version,
       properties,
       created_at: now,
-      ...(deviceId != null && { device: deviceId }),
     };
   }
 

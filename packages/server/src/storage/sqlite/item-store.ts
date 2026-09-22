@@ -349,7 +349,6 @@ export class SqliteItemStore implements ItemStore {
             // starts at 1.
             version: input.version ?? 1,
             schema_version: schemaVersion,
-            device: input.device,
             capture_latitude: input.capture_latitude,
             capture_longitude: input.capture_longitude,
             // Ordinary text columns beside the JSONB blob, not part of it.
@@ -402,7 +401,6 @@ export class SqliteItemStore implements ItemStore {
         schema_version: schemaVersion,
         source: input.source ?? "unknown",
         ...(input.source_id != null && { source_id: input.source_id }),
-        ...(input.device != null && { device: input.device }),
         ...(input.capture_latitude != null && {
           capture_latitude: input.capture_latitude,
         }),
@@ -795,7 +793,6 @@ export class SqliteItemStore implements ItemStore {
         input.null_clears === true,
       );
       const now = new Date().toISOString();
-      const deviceId = row.device ?? undefined;
 
       // The row's own fields as they stand, which is what this version
       // will have held once the update below moves past it.
@@ -826,7 +823,6 @@ export class SqliteItemStore implements ItemStore {
             occurred_at: row.occurred_at,
             source_id: row.source_id,
           },
-          deviceId,
           tx,
         );
       };
@@ -1375,17 +1371,11 @@ export class SqliteItemStore implements ItemStore {
     }
 
     // State transitions always snapshot current properties.
-    await this.versionStore.create(
-      id,
-      row.version,
-      row.properties,
-      {
-        tier: row.tier ?? null,
-        occurred_at: row.occurred_at,
-        source_id: row.source_id ?? null,
-      },
-      row.device ?? undefined,
-    );
+    await this.versionStore.create(id, row.version, row.properties, {
+      tier: row.tier ?? null,
+      occurred_at: row.occurred_at,
+      source_id: row.source_id ?? null,
+    });
 
     const now = new Date().toISOString();
     await this.db

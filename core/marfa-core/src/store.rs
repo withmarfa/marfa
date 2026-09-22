@@ -18,7 +18,7 @@ pub const META_SLICE_TIER: &str = "slice_tier";
 pub const META_EVENT_CURSOR: &str = "event_cursor";
 pub const META_HYDRATE_STATE: &str = "hydrate_state";
 pub const HYDRATE_IN_PROGRESS: &str = "in_progress";
-pub const SCHEMA_VERSION: &str = "5";
+pub const SCHEMA_VERSION: &str = "6";
 
 /// The schema the version above names, hashed as the folder mapping hashes
 /// bytes. A change to `schema.sql` without a new version would open a store
@@ -31,9 +31,9 @@ pub const SCHEMA_VERSION: &str = "5";
 /// on one would price every edit to the prose at a version bump that refuses
 /// every working copy on disk.
 #[cfg(test)]
-const SCHEMA_HASH: &str = "a501f36fb9ad593a";
+const SCHEMA_HASH: &str = "f73a05f772245511";
 
-const ITEM_COLUMNS: &str = "id, type, state, tier, version, schema_version, source, source_id, device, occurred_at, created_at, updated_at, properties";
+const ITEM_COLUMNS: &str = "id, type, state, tier, version, schema_version, source, source_id, occurred_at, created_at, updated_at, properties";
 const EDGE_COLUMNS: &str =
     "id, source_id, target_id, edge_type, properties, version, created_at, updated_at";
 
@@ -468,12 +468,12 @@ pub fn upsert_item(
 ) -> Result<(), CoreError> {
     ItemState::from_str_checked(&item.state)?;
     conn.execute(
-        "INSERT INTO items (id, type, state, tier, version, schema_version, source, source_id, device, occurred_at, created_at, updated_at, properties)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+        "INSERT INTO items (id, type, state, tier, version, schema_version, source, source_id, occurred_at, created_at, updated_at, properties)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
          ON CONFLICT (id) DO UPDATE SET
            type = excluded.type, state = excluded.state, tier = excluded.tier,
            version = excluded.version, schema_version = excluded.schema_version,
-           source = excluded.source, source_id = excluded.source_id, device = excluded.device,
+           source = excluded.source, source_id = excluded.source_id,
            occurred_at = excluded.occurred_at, created_at = excluded.created_at,
            updated_at = excluded.updated_at, properties = excluded.properties",
         params![
@@ -485,7 +485,6 @@ pub fn upsert_item(
             item.schema_version,
             item.source,
             item.source_id,
-            item.device,
             item.occurred_at,
             item.created_at,
             item.updated_at,
@@ -680,7 +679,7 @@ fn tags_for(conn: &Connection, ids: &[String]) -> Result<HashMap<String, Vec<Str
 fn row_to_item(row: &rusqlite::Row<'_>) -> rusqlite::Result<Item> {
     let state: String = row.get(2)?;
     let tier: Option<String> = row.get(3)?;
-    let properties: String = row.get(12)?;
+    let properties: String = row.get(11)?;
     Ok(Item {
         id: row.get(0)?,
         r#type: row.get(1)?,
@@ -693,11 +692,10 @@ fn row_to_item(row: &rusqlite::Row<'_>) -> rusqlite::Result<Item> {
         schema_version: row.get(5)?,
         source: row.get(6)?,
         source_id: row.get(7)?,
-        device: row.get(8)?,
-        occurred_at: row.get(9)?,
-        created_at: row.get(10)?,
-        updated_at: row.get(11)?,
-        properties: parse_object(&properties).map_err(|_| invalid_row(12, &properties))?,
+        occurred_at: row.get(8)?,
+        created_at: row.get(9)?,
+        updated_at: row.get(10)?,
+        properties: parse_object(&properties).map_err(|_| invalid_row(11, &properties))?,
         tags: Vec::new(),
     })
 }
@@ -821,7 +819,6 @@ pub(crate) mod testing {
             schema_version: 1,
             source: "test".into(),
             source_id: None,
-            device: None,
             occurred_at: occurred_at.into(),
             created_at: occurred_at.into(),
             updated_at: occurred_at.into(),
@@ -905,6 +902,55 @@ mod tests {
         // And the strip is about prose alone: SQLite runs what is left.
         let conn = Connection::open_in_memory().unwrap();
         conn.execute_batch(&statements).unwrap();
+    }
+
+    /// Every column read by position, with every value distinct.
+    ///
+    /// `row_to_item` indexes `ITEM_COLUMNS` by number, so a column added or
+    /// removed in the middle shifts everything after it and one field
+    /// silently takes another's value. The helpers give an item the same
+    /// string for all three timestamps and no `source_id`, which makes a
+    /// shift of one indistinguishable from a correct read, so this builds a
+    /// row where no two values are equal.
+    #[test]
+    fn every_column_lands_in_its_own_field() {
+        let conn = conn();
+        let row = WireItem {
+            id: "positional-1".into(),
+            r#type: "core.bookmark".into(),
+            properties: json!({ "title": "T", "url": "https://example.invalid" })
+                .as_object()
+                .unwrap()
+                .clone(),
+            state: "archived".into(),
+            tier: Some("feed".into()),
+            version: 7,
+            schema_version: 3,
+            source: "source-value".into(),
+            source_id: Some("source-id-value".into()),
+            occurred_at: "1999-12-31T23:59:58Z".into(),
+            created_at: "2020-02-02T02:02:02Z".into(),
+            updated_at: "2031-03-03T03:03:03Z".into(),
+            edges: None,
+        };
+        upsert_item(&conn, &row, None, Some("title")).unwrap();
+
+        let item = item_by_id(&conn, "positional-1").unwrap().unwrap();
+        assert_eq!(item.id, "positional-1");
+        assert_eq!(item.r#type, "core.bookmark");
+        assert_eq!(item.state, ItemState::Archived);
+        assert_eq!(item.tier, Some(Tier::Feed));
+        assert_eq!(item.version, 7);
+        assert_eq!(item.schema_version, 3);
+        assert_eq!(item.source, "source-value");
+        assert_eq!(item.source_id.as_deref(), Some("source-id-value"));
+        assert_eq!(item.occurred_at, "1999-12-31T23:59:58Z");
+        assert_eq!(item.created_at, "2020-02-02T02:02:02Z");
+        assert_eq!(item.updated_at, "2031-03-03T03:03:03Z");
+        assert_eq!(
+            item.properties.get("title").and_then(Value::as_str),
+            Some("T")
+        );
     }
 
     #[test]
