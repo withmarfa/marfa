@@ -1,6 +1,12 @@
-import { edgePermissionCovers } from "@withmarfa/shared";
+import { edgePermissionCovers, parseFilter } from "@withmarfa/shared";
 import type { ApiKey, Edge } from "@withmarfa/shared";
-import { mayReadType } from "../middleware/auth.js";
+import type { Context } from "hono";
+import type { AppEnv } from "../middleware/auth.js";
+import {
+  mayReadType,
+  requireEdgePermission,
+  requireTypeAccess,
+} from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 
 /**
@@ -128,4 +134,53 @@ export async function edgeReadable(
   edge: Edge,
 ): Promise<boolean> {
   return (await readableEdges(storage, key, [edge])).length === 1;
+}
+
+/**
+ * Refuse a filter term naming a relationship this credential may not read.
+ *
+ * The query grammar takes `edge[<type>]` and `backref[<type>]`, on
+ * `GET /items` through the shorthand or the full `filter=` form and on
+ * `GET /search` through `filter=` alone. A term naming one is a question
+ * about a relationship and it is answered: `edge[X]=<id>` returns the
+ * items that point at that one, `backref[X]=<id>` the items it points at.
+ * So a caller refused an edge at `GET /edges/{id}` could ask whether that
+ * edge exists and be told, with itself supplying one end and the page
+ * naming the other.
+ *
+ * **Refused rather than dropped, which is the opposite of what the doors
+ * answering with edges do.** Those narrow a page of rows, and a row that
+ * is gone is evidence of nothing. This narrows on a term the caller
+ * wrote: honoring it answers the question, and dropping it answers a
+ * different question under the same status — the unfiltered page the
+ * unknown-parameter refusal exists to prevent.
+ *
+ * **Both directions, and the backref direction needs its anchor too.** An
+ * edge's readability is its source item's. On `edge[X]` the sources are
+ * the rows the door returns, and they are already held to the type map.
+ * On `backref[X]` the source is the item the caller named, which nothing
+ * else here would read — the same asymmetry that made
+ * `GET /items/{id}/backrefs` the wider of the two per-item doors.
+ *
+ * Parsed here as well as in the store: the expression is bounded at
+ * `MAX_FILTER_INPUT_LENGTH`, and a second pass over two kilobytes is
+ * cheaper than threading a parsed form through a store interface that
+ * takes the string. One function for both doors, because a listing and a
+ * search that disagree about one term is the same disclosure reached
+ * through the other one.
+ */
+export async function assertFilterEdgeTermsReadable(
+  c: Context<AppEnv>,
+  storage: Storage,
+  filter: string | undefined,
+): Promise<void> {
+  if (filter === undefined) return;
+  for (const condition of parseFilter(filter).conditions) {
+    if (condition.field.kind !== "edge") continue;
+    requireEdgePermission(c, condition.field.edge_type, "read");
+    if (condition.field.direction !== "backref") continue;
+    if (typeof condition.value !== "string") continue;
+    const anchor = await storage.items.getIncludingTrashed(condition.value);
+    if (anchor) requireTypeAccess(c, anchor.type, "read");
+  }
 }

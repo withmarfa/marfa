@@ -1004,5 +1004,28 @@ describe("the doors under an item answer only what the credential may read", () 
     });
     expect(allowedSource.ok, JSON.stringify(allowedSource.error)).toBe(true);
     expect(allowedSource.data.data.map((i) => i.id)).toContain(target);
+
+    // `GET /search` takes the same grammar and compiles the same term, so
+    // it answers the same way. A door that refused the term while its
+    // sibling answered it would be the disclosure moved rather than
+    // closed, which is how the listing and the point check came to
+    // disagree in the first place.
+    const searchWitness = await narrowClient.search("ep-filter-source", {
+      filter: `edge[${seen}] eq "${target}"`,
+    });
+    expect(searchWitness.ok, JSON.stringify(searchWitness.error)).toBe(true);
+    expect(
+      searchWitness.data.results.map((r) => r.item.id),
+      "search dropped a row matching a term the credential may read",
+    ).toContain(source);
+
+    const searchRefused = await narrowClient.search("ep-filter-source", {
+      filter: `edge[${unseen}] eq "${target}"`,
+    });
+    expect(
+      searchRefused.status,
+      `search answered a filter naming an unreadable edge type: ${JSON.stringify(searchRefused.data)}`,
+    ).toBe(403);
+    expect(searchRefused.error?.error.code).toBe("edge_permission_denied");
   });
 });

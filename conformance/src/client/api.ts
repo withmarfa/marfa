@@ -278,7 +278,14 @@ export class MarfaClient {
 
   async search(
     query: string,
-    filters: { type?: string; state?: string; limit?: number } = {},
+    filters: {
+      type?: string;
+      state?: string;
+      limit?: number;
+      /** Structured filter expression, the same grammar `GET /items`
+       *  takes — edge terms included. */
+      filter?: string;
+    } = {},
   ): Promise<ApiResponse<{ results: SearchResult[] }>> {
     const params = new URLSearchParams({ q: query });
     for (const [key, value] of Object.entries(filters)) {

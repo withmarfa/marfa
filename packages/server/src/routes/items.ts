@@ -20,7 +20,6 @@ import {
   resolveEnforcement,
   getSourceAllowlist,
   malformedTypeIdentifier,
-  parseFilter,
 } from "@withmarfa/shared";
 import type {
   AncestorUnavailableResponse,
@@ -71,6 +70,7 @@ import {
 import { applyInlineEdges, announceInlineEdges } from "./_edges-inline.js";
 import { itemAfterMetadataWrite } from "./_metadata-publish.js";
 import { undeclaredPropertyRefusal } from "./_undeclared-property.js";
+import { assertFilterEdgeTermsReadable } from "./_edge-visibility.js";
 import type { InlineEdgeChanges } from "./_edges-inline.js";
 import { assertTierApplicable } from "./_tier-rules.js";
 import { hydrateExtensionsForItems } from "./_extensions-hydrate.js";
@@ -399,11 +399,14 @@ const getItemStatsRoute = createRoute({
     403: {
       content: {
         "application/json": {
-          schema: makeErrorResponseSchema(["type_not_permitted"]),
+          schema: makeErrorResponseSchema([
+            "type_not_permitted",
+            "edge_permission_denied",
+          ]),
         },
       },
       description:
-        "The credential's type permissions reach no type, so there is nothing on the data plane it may read. A credential that reaches some types reads this door narrowed to them rather than being refused.",
+        "The credential's type permissions reach no type, so there is nothing on the data plane it may read. A credential that reaches some types reads this door narrowed to them rather than being refused. Also `edge_permission_denied` where a filter term names an edge type the credential may not read, and `type_not_permitted` where a `backref` term is anchored on an item whose type it may not read: a term naming a relationship is a question, and it is refused rather than answered or dropped.",
     },
   },
 });
@@ -1911,46 +1914,9 @@ export function itemRoutes(storage: Storage) {
         ? `${filter} AND ${edgeClauses.join(" AND ")}`
         : edgeClauses.join(" AND ");
     }
-    // A filter term naming an edge type is a question about a
-    // relationship, and it is answered: `edge[X]=<id>` returns the items
-    // that point at that one, `backref[X]=<id>` the items it points at.
-    // So the shorthand and the full `filter=` form reach the same fact
-    // every edge door withholds — that an edge of this kind joins these
-    // two items — with the caller supplying one end and the page naming
-    // the other.
-    //
-    // Refused rather than dropped, which is the opposite of what the
-    // doors that answer with edges do, and for a reason: those narrow a
-    // page of rows, and a row a caller may not read is not evidence of
-    // anything once it is gone. This narrows on a term the caller wrote.
-    // Honoring it against a kind of relationship the credential may not
-    // read would answer the question; dropping the term would answer a
-    // different question under the same status, which is the unfiltered
-    // page the unknown-parameter refusal exists to prevent. So the term
-    // is refused the way `GET /edges/{id}` refuses the edge.
-    //
-    // Parsed here as well as in the store: the expression is bounded at
-    // `MAX_FILTER_INPUT_LENGTH` and a second pass over two kilobytes is
-    // cheaper than threading a parsed form through a store interface
-    // that takes the string.
-    //
-    // **Both directions, and the backref direction needs its anchor
-    // too.** An edge's readability is its source item's. On `edge[X]` the
-    // sources are the rows this listing returns, and they are already
-    // held to the type map. On `backref[X]` the source is the item the
-    // caller named, which nothing here would otherwise read — the same
-    // asymmetry that made `GET /items/{id}/backrefs` the wider of the two
-    // per-item doors.
-    if (filter !== undefined) {
-      for (const condition of parseFilter(filter).conditions) {
-        if (condition.field.kind !== "edge") continue;
-        requireEdgePermission(c, condition.field.edge_type, "read");
-        if (condition.field.direction !== "backref") continue;
-        if (typeof condition.value !== "string") continue;
-        const anchor = await storage.items.getIncludingTrashed(condition.value);
-        if (anchor) requireTypeAccess(c, anchor.type, "read");
-      }
-    }
+    // The shorthand and the full form are one expression by this point,
+    // so one pass over it covers both. `GET /search` makes the same call.
+    await assertFilterEdgeTermsReadable(c, storage, filter);
     // Read tier from the raw query string — zod-openapi occasionally drops enum strings.
     const rawTier = c.req.query("tier");
     const tier: "library" | "feed" | undefined =
