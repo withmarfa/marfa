@@ -32,13 +32,15 @@ Every request carries a key, or it is refused with `401 unauthorized`. Among the
 
 **Who may manage keys.** Listing, minting, updating and revoking all take `keys.mint`. A key without it is refused with `403 forbidden` and `details.required_scope` says `keys.mint`.
 
+**How often.** On an instance with the limiter on, `/keys` and `/keys/{id}` share one allowance per credential, set by the instance and defaulting to 200 requests per window. `X-RateLimit-Limit` names the cap each answer was judged against, and the request past it is refused with `429 rate_limited` and a `Retry-After` in seconds. The allowance is the key doors' own: a credential refused there is still answered everywhere else. The key doors are held well under the rest because minting is how a caller widens its reach.
+
 **What a permission is.** A permission is named by what it permits. There are seven: `schema.write`, `keys.mint`, `items.purge`, `webhooks.manage`, `config.manage`, `audit.read` and `grants.manage`. Beside them sit the maps. The type map says which item types a key may read or write. The edge map says which edge types. The extension map says which extension namespaces. The metadata map holds `types:write` and `edge_types:write`, which are what registering a type and an edge type take. Each refusal for a missing permission is `403 forbidden` with `details.required_scope`, and a refused registration names `details.metadata_subresource` instead.
 
 **Where the gates are.** Registering a type takes `metadata.types:write`, registering an edge type takes `metadata.edge_types:write`, and replacing or deleting a type or an edge type takes `schema.write`. Every webhook door takes `webhooks.manage`. The audit log takes `audit.read`. The configuration doors take `config.manage`. A purge, of one row or many, takes `items.purge`. Writing an edge takes write on the source item's type and on the edge type. Every extension door takes the path's namespace in the key's extension map. A write to any `system.*` type is refused for every key the server can mint.
 
 **What a key sees.** A key's type map narrows every listing and every search to the types it can read. A type held at `none` is hidden from a listing as well as refused on a write. A type not in the map is denied unless a wildcard covers it: `*` covers every type and `core.*` every type in that namespace. A key without reach on an item's type is refused the item, its edges and its backrefs with `403 type_not_permitted`. Once the item is trashed, the same key is answered `404 item_not_found`, as if the row were not there.
 
-References: `keys-and-oauth.md` 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 18, 19, 20, 21, 22; `search-and-filters.md` 11, 14; `items.md` 15, 16, 36; `types.md` 4, 13, 14; `edges.md` 18, 20, 21; `events.md` 17, 18.
+References: `keys-and-oauth.md` 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 18, 19, 20, 21, 22, 33; `search-and-filters.md` 11, 14; `items.md` 15, 16, 36; `types.md` 4, 13, 14; `edges.md` 18, 20, 21; `events.md` 17, 18.
 
 ## The owner, signing in, and the OAuth provider
 
@@ -302,7 +304,7 @@ References: `errors.md` 1, 2, 3, 4, 5, 6, 7 and the code table; `keys-and-oauth.
 A reader should not take silence here for absence. These are behaviors the server has, or may have, that no statement covers, so this account can only name them.
 
 - **Enrichment and OCR** are switched off for a run. What the sweeper does to a file item after the fact is not stated anywhere.
-- **Rate limiting** is switched off for a run and on otherwise. `/keys` and `/keys/{id}` share a fixed limit of 200 requests a minute per key that no configuration raises, and nothing is asserted about `429 rate_limited`.
+- **Rate limiting** is switched off for a run and on otherwise. The cap on the key doors is stated and asserted (see **Keys** above); the caps on every other path group are the server's own numbers, which no statement covers and no setting names.
 - **The boot mint.** A fresh instance mints its first key through `POST /keys` with the one-time secret from its boot log as the bearer token. The answer is the operator key. No fixture repeats it, because the secret is consumed by the first mint.
 - **One process.** The event stream and webhook dispatch are process-local. Whether an instance may run as more than one process against one database is not stated, and the rate-limit counters are kept where several processes could share them, while the event stream and webhook dispatch are not shared.
 - **`GET /metrics`** is served to the operator key and appears in no document.

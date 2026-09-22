@@ -9,7 +9,7 @@ import { bodyLimit } from "hono/body-limit";
 import { createMiddleware } from "hono/factory";
 import { ErrorCode, MarfaError } from "@withmarfa/shared";
 import type { AppConfig } from "./config.js";
-import { getPermissionBundles } from "./config.js";
+import { DEFAULT_KEYS_RATE_LIMIT, getPermissionBundles } from "./config.js";
 import type { AppEnv } from "./middleware/auth.js";
 import { authMiddleware } from "./middleware/auth.js";
 import { createErrorHandler } from "./middleware/error-handler.js";
@@ -317,8 +317,9 @@ export function createApp(
   // still fall through to IP-based limiting inside rateLimitMiddleware.
   app.use("*", authMiddleware(storage, config.apiKeySalt));
 
-  // Rate limiting (defaults: 1000 req/min, configurable via RATE_LIMIT_REQUESTS
-  // and RATE_LIMIT_WINDOW_MS). Protects all endpoints. Configuration flows
+  // Rate limiting (defaults: 1000 req/min, configurable via RATE_LIMIT_REQUESTS,
+  // RATE_LIMIT_WINDOW_MS and RATE_LIMIT_KEYS_REQUESTS). Protects all
+  // endpoints. Configuration flows
   // through AppConfig — the rate-limit middleware reads its settings from
   // there rather than from `process.env`, so a deployment's limits are
   // whatever `loadConfig` resolved at boot.
@@ -329,7 +330,12 @@ export function createApp(
         defaultLimit: config.rateLimitDefaultLimit,
         windowMs: config.rateLimitWindowMs,
         pathLimits: {
-          "/keys": 200,
+          // The one cap an instance can name for itself
+          // (`RATE_LIMIT_KEYS_REQUESTS`): minting is how a caller widens
+          // its own reach, so the doors that do it are held well under
+          // the default, and a deployment whose callers legitimately
+          // mint more needs a number rather than a fork.
+          "/keys": config.rateLimitKeysLimit ?? DEFAULT_KEYS_RATE_LIMIT,
           // Insertion order matters: the middleware iterates and
           // takes the FIRST `path.startsWith(prefix)` match, so
           // place more-specific prefixes ahead of broader siblings

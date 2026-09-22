@@ -25,6 +25,15 @@ export function envNumber(raw: string | undefined, fallback: number): number {
   return raw !== undefined && raw !== "" ? Number(raw) : fallback;
 }
 
+/**
+ * The `/keys` and `/keys/{id}` cap when the instance names none.
+ *
+ * Written down once and read in both places that need it: `loadConfig`
+ * below, and the path table in `app.ts` that a test context's `AppConfig`
+ * literal leaves unset.
+ */
+export const DEFAULT_KEYS_RATE_LIMIT = 200;
+
 export interface AppConfig {
   /** True when `NODE_ENV === "production"`. Gates production-only
    *  hardenings (e.g. CORS localhost auto-reflection is dev-only).
@@ -294,6 +303,15 @@ export interface AppConfig {
   /** Rate-limit window size in ms. Read from `RATE_LIMIT_WINDOW_MS`
    *  (default 60_000) — configurable, not hard-coded. */
   rateLimitWindowMs: number;
+  /** The cap on `/keys` and `/keys/{id}`, requests per
+   *  `rateLimitWindowMs` window. Read from `RATE_LIMIT_KEYS_REQUESTS`
+   *  (default `DEFAULT_KEYS_RATE_LIMIT`). The key doors are capped well
+   *  under the default because minting is how a caller widens its own
+   *  reach, and an instance whose callers legitimately mint more than
+   *  the default allows needs a lever rather than a fork. Optional on
+   *  the type, following `rateLimitAggregateMultiplier`, so a test
+   *  context constructing an `AppConfig` literal need not supply it. */
+  rateLimitKeysLimit?: number;
   /** Multiplier for the aggregate per-identifier rate-limit window. The
    *  aggregate cap is `rateLimitDefaultLimit * this`, keyed on the
    *  identifier alone (no path split) so a caller's budget can't
@@ -826,6 +844,10 @@ export function loadConfig(): AppConfig {
     sqliteBusyBudgetMs: envNumber(process.env.SQLITE_BUSY_BUDGET_MS, 5_000),
     rateLimitDefaultLimit: envNumber(process.env.RATE_LIMIT_REQUESTS, 1000),
     rateLimitWindowMs: envNumber(process.env.RATE_LIMIT_WINDOW_MS, 60_000),
+    rateLimitKeysLimit: envNumber(
+      process.env.RATE_LIMIT_KEYS_REQUESTS,
+      DEFAULT_KEYS_RATE_LIMIT,
+    ),
     rateLimitAggregateMultiplier: envNumber(
       process.env.RATE_LIMIT_AGGREGATE_MULTIPLIER,
       4,

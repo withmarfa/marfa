@@ -251,9 +251,13 @@ export async function bootServer(args: BootOptions): Promise<void> {
     // wake and the fixture's runs nothing copies on a clock of its own.
     MARFA_BLOB_CLEANUP_GRACE_MS: "0",
     MARFA_BLOB_REPLICATE_INTERVAL_MS: "3600000",
-    // The suite mints and revokes a key per file through /keys, whose fixed
-    // limit of 200 requests a minute per credential a local run exceeds.
-    RATE_LIMIT_ENABLED: "false",
+    // The suite mints and revokes a key per file through /keys, whose
+    // default cap of 200 requests a minute per credential a local run
+    // exceeds. Off unless the caller says otherwise, because a fixture
+    // about the limiter has to boot a server of its own with it on, and
+    // this literal sits after the spread — pinned, it would overwrite
+    // what such a fixture asked for and leave it asserting nothing.
+    RATE_LIMIT_ENABLED: process.env.RATE_LIMIT_ENABLED ?? "false",
   };
   delete env.NODE_ENV;
 
