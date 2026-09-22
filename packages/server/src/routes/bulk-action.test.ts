@@ -461,6 +461,44 @@ describe("GET + DELETE /items/bulk-actions/jobs/:id", () => {
     expect(canceled.status).toBe("canceled");
   });
 
+  it("DELETE sets a running job to canceled, which the door does itself", async () => {
+    // The half of the door's description no caller can reach and so no
+    // conformance fixture can hold: the worker takes a job the moment it
+    // is queued, so only a test that claims the row by hand can present
+    // the door with one that is running. What stops between chunks is the
+    // work, not the write.
+    const tag = `cancel-running-${Math.random().toString(36).slice(2, 8)}`;
+    await seed("core.note", 2, { tags: [tag] });
+
+    const postRes = await request(ctx.app, "POST", "/items/bulk-actions", {
+      key: ctx.workingKey,
+      body: {
+        action: "transition",
+        state: "archived",
+        filter: { tags: [tag] },
+      },
+    });
+    expect(postRes.status).toBe(202);
+    const queued = (await postRes.json()) as { id: string; status: string };
+
+    const claimed = await ctx.storage.bulkActionJobs.claimNext(
+      "test-worker",
+      new Date().toISOString(),
+    );
+    expect(claimed?.id).toBe(queued.id);
+    expect(claimed?.status).toBe("in_progress");
+
+    const delRes = await request(
+      ctx.app,
+      "DELETE",
+      `/items/bulk-actions/jobs/${queued.id}`,
+      { key: ctx.workingKey },
+    );
+    expect(delRes.status).toBe(200);
+    const answered = (await delRes.json()) as { status: string };
+    expect(answered.status).toBe("canceled");
+  });
+
   it("DELETE 404s for an unknown job id", async () => {
     const res = await request(
       ctx.app,

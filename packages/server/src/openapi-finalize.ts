@@ -7,9 +7,9 @@
  * a deliberate, consumer-facing shape:
  *
  *   1. Sets an ordered, described top-level `tags` list (resources first).
- *   2. Strips platform-internal operations (archive restore, server
- *      metrics, the blob link target). They still
- *      serve — they are simply not part of the public reference.
+ *   2. Strips platform-internal operations (server metrics, the blob
+ *      link target). They still serve — they are simply not part of the
+ *      public reference.
  *   3. Injects the two consumer routes defined as plain Hono handlers
  *      (the SSE stream and OAuth dynamic client registration), which the
  *      reflection cannot see.
@@ -116,7 +116,11 @@ const PUBLIC_TAGS = [
     name: "Webhooks",
     description: "Outbound webhook subscriptions and their deliveries.",
   },
-  { name: "Export", description: "Bulk export of the instance's data." },
+  {
+    name: "Export",
+    description:
+      "Bulk export of the instance's data, and the door that takes an archive back.",
+  },
   { name: "Audit", description: "The instance's audit log." },
   {
     name: "Connectors",
@@ -127,11 +131,6 @@ const PUBLIC_TAGS = [
     name: "Housekeeping",
     description:
       "The housekeeping jobs the server runs on itself: what runs, when, and what the last run did.",
-  },
-  {
-    name: "Admin",
-    description:
-      "Maintenance the operator key alone may perform on the instance itself.",
   },
   {
     name: "Events",

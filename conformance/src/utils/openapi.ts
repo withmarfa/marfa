@@ -20,7 +20,6 @@ interface OpenApiDocument {
 
 interface Operation {
   operationId?: string;
-  description?: string;
   responses?: Record<
     string,
     { content?: Record<string, { schema?: unknown }> }
@@ -67,12 +66,6 @@ export interface PublishedOperation {
   operationId: string | undefined;
   /** The statuses the document declares for the operation. */
   statuses: number[];
-  /**
-   * What the document says the operation does. Published prose is part of
-   * what the server claims about itself, so a sentence naming behavior is
-   * held to a fixture the same way a status is.
-   */
-  description: string;
 }
 
 /** Every published method and path in the served document. */
@@ -87,7 +80,6 @@ export async function publishedOperations(): Promise<PublishedOperation[]> {
         path,
         operationId: op.operationId,
         statuses: Object.keys(op.responses ?? {}).map(Number),
-        description: op.description ?? "",
       });
     }
   }

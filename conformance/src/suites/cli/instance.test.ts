@@ -291,9 +291,9 @@ describe("the instance from the terminal", () => {
 
   it("takes an archive back under the operator key and is refused it under a working key", async () => {
     // The other half of the archive round trip, reachable from the client
-    // now that the door is published: a published door the reference
-    // client cannot call is a hole, which is what the binary's own
-    // coverage gate is for.
+    // because the door is published: a published door the reference client
+    // cannot call is a hole, which is what the binary's own coverage gate
+    // is for.
     const title = unique("cli-restore");
     const created = await c.cli.json<ItemEnvelope>([
       "items",

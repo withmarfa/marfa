@@ -23,10 +23,7 @@ import {
   cleanup,
 } from "../../utils/setup.js";
 import { createNote } from "../../generators/items.js";
-import {
-  expectMatchesSchema,
-  publishedOperations,
-} from "../../utils/openapi.js";
+import { expectMatchesSchema } from "../../utils/openapi.js";
 
 let client: MarfaClient;
 let ctx: TestContext;
@@ -735,33 +732,6 @@ describe("bulk_action async-job lifecycle", () => {
     expect(del.data.status).toBe("completed");
     expect(del.data.finished_at).toBe(final.finished_at);
     expect(del.data.succeeded).toBe(final.succeeded);
-  });
-
-  it("says of the cancel door only what a caller can reach", async () => {
-    // The door's own prose is published, so a sentence naming behavior is
-    // a claim the server makes about itself. This one named a flip to
-    // `canceled` on a queued job, which the case above explains no caller
-    // can arrange: the worker takes a job the moment it is queued. A state
-    // reachable only by holding the worker still, which a server unit test
-    // can do and a caller cannot, is not something the contract should
-    // describe as an answer this door gives.
-    const ops = await publishedOperations();
-    const cancel = ops.find(
-      (op) =>
-        op.method === "DELETE" && op.path === "/items/bulk-actions/jobs/{id}",
-    );
-    expect(
-      cancel,
-      "the cancel door is not in the published document",
-    ).toBeDefined();
-    const description = cancel?.description ?? "";
-    expect(description).not.toContain("canceled");
-    expect(description).not.toContain("Queued jobs");
-
-    // The witness. The description still describes the answer the case
-    // above asserts, so the absences are about the unreachable claim and
-    // not about a description that went empty.
-    expect(description).toContain("terminal");
   });
 
   it("DELETE on an unknown id returns 404 bulk_job_not_found", async () => {

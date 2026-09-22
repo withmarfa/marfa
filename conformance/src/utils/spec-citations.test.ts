@@ -27,8 +27,7 @@ interface Citation {
  *
  * The files cite each other by bare integer — "`findings.md` 1",
  * "`items.md` 5" — so nothing in a citation ties it to what it names.
- * Renumber a file, which the last sweep did to eight entries of
- * `findings.md`, and every citation still reads as a sentence while pointing
+ * Renumber a file and every citation still reads as a sentence while pointing
  * somewhere else, or nowhere at all. Neither the fixture checks in this file
  * nor any suite can see it: those resolve to fixture files and test titles,
  * and this is a reference between two documents.
@@ -150,7 +149,7 @@ describe("specification citations", () => {
     // statement about them that does not need to know what they say.
     const numbered = [...statementNumbers("findings.md")].sort((a, b) => a - b);
     // The positive control: the headings parsed at all.
-    expect(numbered.length).toBeGreaterThan(1);
+    expect(numbered.length).toBeGreaterThan(4);
     expect(numbered).toEqual(numbered.map((_, index) => index + 1));
   });
 
@@ -187,8 +186,7 @@ describe("specification citations", () => {
    * them somewhere else entirely.
    *
    * This catches a number that does not exist. It cannot catch a number
-   * that exists and is the wrong one; that needs a reader, and one was how
-   * `device.md` 21's citation of `queue-and-verdicts.md` 14 was found.
+   * that exists and is the wrong one; that needs a reader.
    */
   it("every citation in the code names a statement that exists", () => {
     const sources = [
