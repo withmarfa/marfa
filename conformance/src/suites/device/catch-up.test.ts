@@ -610,13 +610,13 @@ describe("a cursor the log no longer holds", () => {
       ).toBe("hydration_incomplete");
     }
 
-    // What the report says about a store in this state, pinned rather than
-    // left to be discovered. It reads `never` while carrying the slice and
-    // the rows a hydration left, because the predicate behind it wants a
-    // cursor and the aging deleted one. The advice is right — a hydration is
-    // owed — and the fact is wrong, and a caller reading the two lines
-    // together is told a copy that holds three rows has never hydrated.
-    // Whether that wants a fourth value of its own is in the open questions.
+    // What the report says about a store in this state. `expired` and not
+    // `never`, which is a copy that holds nothing, nor `complete`, which is
+    // a copy that can still be kept current: this one holds its slice and
+    // its rows and can no longer follow the server. The advice a caller
+    // acts on is the same either way — hydrate — but `never` would have
+    // said the copy is empty, and a caller deciding whether to keep
+    // answering from it reads that and is wrong.
     const reported = await device.status();
     expect(
       reported.ok,
@@ -625,12 +625,26 @@ describe("a cursor the log no longer holds", () => {
     if (reported.ok) {
       expect(
         reported.value.hydration,
-        "the report for an aged-out store changed without the statement changing with it, so a caller learns something different about the same state",
-      ).toBe("never");
+        "an aged-out store did not report itself as expired, so a caller weighing whether the copy in hand is worth anything is told the wrong thing about it",
+      ).toBe("expired");
+      // The witness for the word. `expired` is only worth having on a
+      // store that has something in it: with the slice and the rows gone,
+      // the two words would describe the same store and either would do.
+      // The rows, not only the declaration — the declaration survives a
+      // store with nothing in it, and what the word promises a caller is
+      // that the copy in hand is still worth something.
       expect(
         reported.value.slice_types,
-        "the report says the slice is empty as well, so `never` would be a plain description rather than the mismatch this pins",
+        "the report says the slice is empty as well, so `expired` is a guess rather than a reading of what the store holds",
       ).toContain("core.note");
+      expect(
+        reported.value.items,
+        "the aging took the rows with it, so `expired` describes an empty store and promises a caller a copy that is not there",
+      ).toBe(1);
+      expect(
+        reported.value.event_cursor ?? null,
+        "the store still holds a cursor, so `expired` is not about the aging at all",
+      ).toBeNull();
     }
 
     // And a hydration clears it, which is what makes the refusal a state to

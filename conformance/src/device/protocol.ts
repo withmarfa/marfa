@@ -57,7 +57,7 @@ export interface Status {
   slice_types: string[];
   slice_tier?: Tier | null;
   event_cursor?: string | null;
-  hydration: "never" | "in_progress" | "complete";
+  hydration: "never" | "in_progress" | "complete" | "expired";
   items: number;
   edges: number;
 }

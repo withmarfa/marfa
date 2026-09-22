@@ -40,6 +40,7 @@ pub enum Hydration {
     Never,
     InProgress,
     Complete,
+    Expired,
 }
 
 #[napi(object)]
@@ -189,6 +190,7 @@ impl From<marfa_core::Hydration> for Hydration {
             marfa_core::Hydration::Never => Hydration::Never,
             marfa_core::Hydration::InProgress => Hydration::InProgress,
             marfa_core::Hydration::Complete => Hydration::Complete,
+            marfa_core::Hydration::Expired => Hydration::Expired,
         }
     }
 }
