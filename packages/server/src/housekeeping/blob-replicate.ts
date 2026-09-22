@@ -12,13 +12,17 @@ export interface ReplicationBounds {
   maxBytes: number;
 }
 
-export interface ReplicationResult {
+// A type alias rather than an interface: an interface carries no index
+// signature, so it cannot satisfy the `HousekeepingReport` the scheduler
+// takes from a job's run.
+// eslint-disable-next-line @typescript-eslint/consistent-type-definitions
+export type ReplicationResult = {
   copied: number;
   bytes: number;
   /** Copies some attached store still lacks after this run. The caller
    *  wakes the sweep again while this is above zero. */
   remaining: number;
-}
+};
 
 /**
  * The policy made true: every attached store gets a copy of every blob some

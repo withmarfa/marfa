@@ -397,6 +397,39 @@ const UNIVERSAL_RESPONSE_HEADERS = [
 ];
 
 /**
+ * The component name for the limiter's refusal, and the shape behind it.
+ *
+ * Every other refusal is reflected from the route that answers it and
+ * registered by `makeErrorResponseSchema`. This one cannot be: the limiter
+ * is middleware mounted across `*`, so every operation can answer 429 and no
+ * route declares it. Written out here, it has to say the same thing the
+ * reflected ones say, and `openapi-published.test.ts` holds it to a
+ * reflected `rate_limited` refusal rather than leaving the two to agree by
+ * eye.
+ */
+const RATE_LIMITED_REFUSAL_NAME = "RateLimitedRefusal";
+
+const RATE_LIMITED_REFUSAL_SCHEMA = {
+  type: "object",
+  properties: {
+    error: {
+      type: "object",
+      properties: {
+        code: { type: "string", enum: ["rate_limited"] },
+        message: { type: "string" },
+        details: {
+          type: "object",
+          propertyNames: { type: "string" },
+          additionalProperties: {},
+        },
+      },
+      required: ["code", "message"],
+    },
+  },
+  required: ["error"],
+};
+
+/**
  * The rate limiter's refusal, added to every operation.
  *
  * Declared here rather than on each route for the same reason the
@@ -410,20 +443,7 @@ const RATE_LIMITED_RESPONSE = {
     "Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting.",
   content: {
     "application/json": {
-      schema: {
-        type: "object",
-        properties: {
-          error: {
-            type: "object",
-            properties: {
-              code: { type: "string", enum: ["rate_limited"] },
-              message: { type: "string" },
-            },
-            required: ["code", "message"],
-          },
-        },
-        required: ["error"],
-      },
+      schema: { $ref: `#/components/schemas/${RATE_LIMITED_REFUSAL_NAME}` },
     },
   },
 };
@@ -591,6 +611,11 @@ export function finalizeOpenAPISpec<T extends OpenAPIDoc>(spec: T): T {
   spec.components = {
     ...(spec.components ?? {}),
     headers: RESPONSE_HEADER_COMPONENTS,
+    schemas: {
+      ...((spec.components as { schemas?: Record<string, unknown> } | undefined)
+        ?.schemas ?? {}),
+      [RATE_LIMITED_REFUSAL_NAME]: RATE_LIMITED_REFUSAL_SCHEMA,
+    },
   };
 
   spec.paths = nextPaths;

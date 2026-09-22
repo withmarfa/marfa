@@ -6,11 +6,9 @@ import { requireApiUrl } from "./setup.js";
  * so a body that contradicts the server's own declaration fails the fixture
  * that observed it rather than passing on a status code alone.
  *
- * `nullable: true` is a 3.0 keyword the server emits inside a 3.1 document,
- * where it means nothing; it is widened here to the null-admitting type it
- * intends. That single normalization is the one place the validator reads the
- * document more charitably than a strict 3.1 reader would, and it is recorded
- * as a finding in `spec/findings.md`.
+ * The document is read exactly as written. Nothing here normalizes it: a
+ * position the server means to be nullable has to say so in the dialect the
+ * document declares, or the body that carries `null` there fails.
  */
 
 interface OpenApiDocument {
@@ -39,25 +37,10 @@ function fetchOpenApi(): Promise<OpenApiDocument> {
       );
     }
     const doc = (await response.json()) as OpenApiDocument;
-    widenNullable(doc);
     ajv.addSchema(doc as unknown as object, "openapi");
     return doc;
   })();
   return cached;
-}
-
-function widenNullable(node: unknown): void {
-  if (Array.isArray(node)) {
-    for (const child of node) widenNullable(child);
-    return;
-  }
-  if (node === null || typeof node !== "object") return;
-  const record = node as Record<string, unknown>;
-  if (record.nullable === true) {
-    if (typeof record.type === "string") record.type = [record.type, "null"];
-    delete record.nullable;
-  }
-  for (const value of Object.values(record)) widenNullable(value);
 }
 
 export interface PublishedOperation {

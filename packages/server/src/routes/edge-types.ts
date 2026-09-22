@@ -55,48 +55,52 @@ const TypeConstraintSchema = z
 /** Exported so the archive restore validates a carried edge type through
  *  exactly the shape this route accepts, rather than a second reading of
  *  the same rules that can drift from it. */
-export const EdgeTypeRequestSchema = z.object({
-  id: z.string().min(1),
-  label: z.string().optional(),
-  description: z.string().optional(),
-  cardinality: z.enum([
-    "one-to-one",
-    "one-to-many",
-    "many-to-one",
-    "many-to-many",
-  ]),
-  source_type_constraints: z.array(TypeConstraintSchema).optional(),
-  target_type_constraints: z.array(TypeConstraintSchema).optional(),
-  cascade_on_delete: z.enum(["cascade", "orphan", "block"]).optional(),
-  property_schema: z
-    .record(
-      z.string(),
-      z.object({
-        type: z.string(),
-        description: z.string().optional(),
-        required: z.boolean().optional(),
-        enum_values: z.array(z.string()).optional(),
-        items_type: z.string().optional(),
-      }),
-    )
-    .optional(),
-});
+export const EdgeTypeRequestSchema = z
+  .object({
+    id: z.string().min(1),
+    label: z.string().optional(),
+    description: z.string().optional(),
+    cardinality: z.enum([
+      "one-to-one",
+      "one-to-many",
+      "many-to-one",
+      "many-to-many",
+    ]),
+    source_type_constraints: z.array(TypeConstraintSchema).optional(),
+    target_type_constraints: z.array(TypeConstraintSchema).optional(),
+    cascade_on_delete: z.enum(["cascade", "orphan", "block"]).optional(),
+    property_schema: z
+      .record(
+        z.string(),
+        z.object({
+          type: z.string(),
+          description: z.string().optional(),
+          required: z.boolean().optional(),
+          enum_values: z.array(z.string()).optional(),
+          items_type: z.string().optional(),
+        }),
+      )
+      .optional(),
+  })
+  .openapi("EdgeTypeRequest");
 
-const EdgeTypeResponseSchema = z.object({
-  id: z.string(),
-  label: z.string().optional(),
-  description: z.string().optional(),
-  cardinality: z.enum([
-    "one-to-one",
-    "one-to-many",
-    "many-to-one",
-    "many-to-many",
-  ]),
-  source_type_constraints: z.array(z.string()),
-  target_type_constraints: z.array(z.string()),
-  cascade_on_delete: z.enum(["cascade", "orphan", "block"]),
-  property_schema: z.record(z.string(), z.unknown()),
-});
+const EdgeTypeResponseSchema = z
+  .object({
+    id: z.string(),
+    label: z.string().optional(),
+    description: z.string().optional(),
+    cardinality: z.enum([
+      "one-to-one",
+      "one-to-many",
+      "many-to-one",
+      "many-to-many",
+    ]),
+    source_type_constraints: z.array(z.string()),
+    target_type_constraints: z.array(z.string()),
+    cascade_on_delete: z.enum(["cascade", "orphan", "block"]),
+    property_schema: z.record(z.string(), z.unknown()),
+  })
+  .openapi("EdgeType");
 
 // ---------------------------------------------------------------------------
 // Routes

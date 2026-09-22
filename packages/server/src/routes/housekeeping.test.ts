@@ -24,7 +24,7 @@ beforeAll(async () => {
     name: "silent",
     intervalMs: 3_600_000,
     firstRunDelayMs: 3_600_000,
-    run: () => Promise.resolve(),
+    run: () => Promise.resolve(null),
   });
   ctx.housekeeping.register({
     name: "faulty",

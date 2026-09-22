@@ -75,34 +75,38 @@ const EventNameSchema = z.enum(WEBHOOK_EVENTS);
 // Schemas
 // ---------------------------------------------------------------------------
 
-const WebhookSchema = z.object({
-  id: z.string(),
-  url: z.string(),
-  // Deliberately `string`, where the request side is the enum.
-  //
-  // A stored row holds whatever was valid when it was written, and typing
-  // the read side to today's vocabulary would assert something the database
-  // cannot guarantee: retire an event and every row that subscribed to it
-  // becomes a response the specification says is impossible. The constraint
-  // belongs on the way in, which is where it is enforced.
-  events: z.array(z.string()),
-  type_filter: z.string().nullable().optional(),
-  secret: z.string(),
-  active: z.boolean(),
-  created_at: z.string(),
-  updated_at: z.string(),
-});
+const WebhookSchema = z
+  .object({
+    id: z.string(),
+    url: z.string(),
+    // Deliberately `string`, where the request side is the enum.
+    //
+    // A stored row holds whatever was valid when it was written, and typing
+    // the read side to today's vocabulary would assert something the database
+    // cannot guarantee: retire an event and every row that subscribed to it
+    // becomes a response the specification says is impossible. The constraint
+    // belongs on the way in, which is where it is enforced.
+    events: z.array(z.string()),
+    type_filter: z.string().nullable().optional(),
+    secret: z.string(),
+    active: z.boolean(),
+    created_at: z.string(),
+    updated_at: z.string(),
+  })
+  .openapi("Webhook");
 
-const DeliverySchema = z.object({
-  id: z.string(),
-  webhook_id: z.string(),
-  event_type: z.string(),
-  status_code: z.number().nullable(),
-  attempt: z.number(),
-  succeeded: z.boolean(),
-  error: z.string().nullable(),
-  created_at: z.string(),
-});
+const DeliverySchema = z
+  .object({
+    id: z.string(),
+    webhook_id: z.string(),
+    event_type: z.string(),
+    status_code: z.number().nullable(),
+    attempt: z.number(),
+    succeeded: z.boolean(),
+    error: z.string().nullable(),
+    created_at: z.string(),
+  })
+  .openapi("WebhookDelivery");
 
 // ---------------------------------------------------------------------------
 // Route definitions

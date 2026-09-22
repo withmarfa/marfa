@@ -62,10 +62,16 @@ interface Declaration {
  * Formatting is Prettier's, which is what makes a line-oriented read of this
  * sound; the failure mode of a miss is a declaration this does not see,
  * never one it invents.
+ *
+ * A shape registered as a component reads `z\n  .object({ ... })\n
+ * .openapi("Name")` once Prettier has had it, so the whitespace between `z`
+ * and `.object` is part of the form rather than an oddity: without it the
+ * scan sees none of the shapes that carry a component name, which is most of
+ * them.
  */
 function declarationsIn(source: string): Declaration[] {
   const found: Declaration[] = [];
-  const opener = /(?:export )?const (\w+) = z\.object\(\{/g;
+  const opener = /(?:export )?const (\w+) = z\s*\.object\(\{/g;
   let match: RegExpExecArray | null;
   while ((match = opener.exec(source)) !== null) {
     const name = match[1];
@@ -111,6 +117,17 @@ describe("declarationsIn", () => {
         "const EdgeSchema = z.object({\n  id: z.string(),\n  version: z.number(),\n});",
       ),
     ).toEqual([{ name: "EdgeSchema", fields: ["id", "version"] }]);
+  });
+
+  it("reads a declaration that carries a component name", () => {
+    // The form Prettier produces for `z.object({...}).openapi("Edge")`. A
+    // scan that misses it misses every centralized shape, and then has
+    // nothing to hold the route files against.
+    expect(
+      declarationsIn(
+        'const EdgeSchema = z\n  .object({\n    id: z.string(),\n  })\n  .openapi("Edge");',
+      ),
+    ).toEqual([{ name: "EdgeSchema", fields: ["id"] }]);
   });
 
   it("does not count keys of a nested object as the schema's own", () => {

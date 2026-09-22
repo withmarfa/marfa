@@ -2647,15 +2647,16 @@ export interface HousekeepingRow {
   last_finished_at: string | null;
   last_outcome: HousekeepingOutcome | null;
   last_error: string | null;
-  /** Whatever the last run reported, as it was given. */
-  last_result: unknown;
+  /** What the last run reported, as it was given: the flat object of
+   *  scalars `HousekeepingReport` describes. */
+  last_result: Record<string, number | boolean | string | null> | null;
 }
 
 export interface HousekeepingFinish {
   finishedAt: string;
   outcome: HousekeepingOutcome;
   error: string | null;
-  result: unknown;
+  result: Record<string, number | boolean | string | null> | null;
   /** When the name is next due. A `next_run_at` already past the run's
    *  start (a wake during the run, or the schedule of a run started ahead
    *  of it) holds instead when it is the earlier of the two. */

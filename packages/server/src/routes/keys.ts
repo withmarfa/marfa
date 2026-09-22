@@ -31,7 +31,14 @@ import {
   consumeBootstrapSecret,
 } from "../auth/bootstrap-secret.js";
 import type { Storage } from "../storage/interface.js";
-import { EnforcementOverrideSchema, KeyResponseSchema } from "./_schemas.js";
+import {
+  EnforcementOverrideSchema,
+  KeyResponseSchema,
+  PermissionEnum,
+  PermissionLevelEnum,
+  TierEnum,
+  TypePermissionLevelEnum,
+} from "./_schemas.js";
 import {
   createOpenAPIRouter,
   OkResponseSchema,
@@ -67,7 +74,7 @@ export function assertUnreservedSource(source: string): void {
 // ---------------------------------------------------------------------------
 
 const EdgePermissionsSchema = z
-  .record(z.string(), z.enum(["read", "write"]))
+  .record(z.string(), PermissionLevelEnum)
   .optional();
 
 const KeyListItemSchema = z.object({
@@ -75,7 +82,7 @@ const KeyListItemSchema = z.object({
   label: z.string(),
   source: z.string(),
   permissions: z
-    .array(z.enum(PERMISSIONS as unknown as [string, ...string[]]))
+    .array(PermissionEnum)
     .optional()
     .describe(
       "The permissions this credential holds, as the literals themselves. Omitted on a create request takes the creator's whole set; anything named is honored and clamped to what the creator holds.",
@@ -86,22 +93,16 @@ const KeyListItemSchema = z.object({
     .describe(
       "The registered client that minted this key, when a signed-in app did. Absent on a key a person or another key created directly.",
     ),
-  default_tier: z.enum(["library", "feed"]),
+  default_tier: TierEnum,
   is_operator: z.boolean(),
-  type_permissions: z.record(z.string(), z.enum(["read", "write", "none"])),
-  extension_permissions: z
-    .record(z.string(), z.enum(["read", "write"]))
-    .optional(),
+  type_permissions: z.record(z.string(), TypePermissionLevelEnum),
+  extension_permissions: z.record(z.string(), PermissionLevelEnum).optional(),
   edge_permissions: EdgePermissionsSchema,
-  metadata_permissions: z
-    .record(z.string(), z.enum(["read", "write"]))
-    .optional(),
+  metadata_permissions: z.record(z.string(), PermissionLevelEnum).optional(),
   // Declared because the handler sends them: a listing returns stored rows
   // whole, and the published shape was short of two fields every row can
   // carry.
-  profile_permissions: z
-    .record(z.string(), z.enum(["read", "write"]))
-    .optional(),
+  profile_permissions: z.record(z.string(), PermissionLevelEnum).optional(),
   enforcement_override: EnforcementOverrideSchema.optional(),
   created_at: z.string(),
   expires_at: z
@@ -145,25 +146,23 @@ const createKeyRoute = createRoute({
               .string()
               .min(1, "source display name is required")
               .max(200),
-            permissions: z
-              .array(z.enum(PERMISSIONS as unknown as [string, ...string[]]))
-              .optional(),
-            default_tier: z.enum(["library", "feed"]).optional(),
+            permissions: z.array(PermissionEnum).optional(),
+            default_tier: TierEnum.optional(),
             is_operator: z.boolean().optional(),
             type_permissions: z
-              .record(z.string(), z.enum(["read", "write", "none"]))
+              .record(z.string(), TypePermissionLevelEnum)
               .optional(),
             extension_permissions: z
-              .record(z.string(), z.enum(["read", "write"]))
+              .record(z.string(), PermissionLevelEnum)
               .optional(),
             edge_permissions: z
-              .record(z.string(), z.enum(["read", "write"]))
+              .record(z.string(), PermissionLevelEnum)
               .optional(),
             metadata_permissions: z
-              .record(z.string(), z.enum(["read", "write"]))
+              .record(z.string(), PermissionLevelEnum)
               .optional(),
             profile_permissions: z
-              .record(z.string(), z.enum(["read", "write"]))
+              .record(z.string(), PermissionLevelEnum)
               .optional(),
             enforcement_override: EnforcementOverrideSchema.optional(),
           }),
@@ -314,31 +313,28 @@ function requireKeysMintOrOperator(c: Context<AppEnv>): void {
   requirePermission(c, "keys.mint");
 }
 
-// Passthrough — `source` is immutable and rejected explicitly in the handler
-// with a readable error instead of a generic "unrecognized keys".
+// `source` is declared, and immutable. It is listed here rather than left
+// out so the handler refuses a body naming it with a readable error rather
+// than the strict object's generic "unrecognized keys"; a caller is told
+// which field it may not change.
 const UpdateKeyBodySchema = z.strictObject({
   label: z.string().min(1).optional(),
-  default_tier: z.enum(["library", "feed"]).optional(),
-  type_permissions: z
-    .record(z.string(), z.enum(["read", "write", "none"]))
-    .optional(),
-  extension_permissions: z
-    .record(z.string(), z.enum(["read", "write"]))
-    .optional(),
-  edge_permissions: z.record(z.string(), z.enum(["read", "write"])).optional(),
-  metadata_permissions: z
-    .record(z.string(), z.enum(["read", "write"]))
-    .optional(),
-  profile_permissions: z
-    .record(z.string(), z.enum(["read", "write"]))
-    .optional(),
-  permissions: z
-    .array(z.enum(PERMISSIONS as unknown as [string, ...string[]]))
-    .optional(),
+  default_tier: TierEnum.optional(),
+  type_permissions: z.record(z.string(), TypePermissionLevelEnum).optional(),
+  extension_permissions: z.record(z.string(), PermissionLevelEnum).optional(),
+  edge_permissions: z.record(z.string(), PermissionLevelEnum).optional(),
+  metadata_permissions: z.record(z.string(), PermissionLevelEnum).optional(),
+  profile_permissions: z.record(z.string(), PermissionLevelEnum).optional(),
+  permissions: z.array(PermissionEnum).optional(),
   enforcement_override: EnforcementOverrideSchema.nullable()
     .optional()
     .describe("`null` clears the override; an object replaces it whole."),
-  source: z.unknown().optional(),
+  source: z
+    .string()
+    .optional()
+    .describe(
+      "A key's source is immutable. A body carrying this field is refused `400 validation_error` whatever its value; revoke the key and mint another to change it.",
+    ),
 });
 
 const KeyDetailSchema = z.object({
@@ -346,7 +342,7 @@ const KeyDetailSchema = z.object({
   label: z.string(),
   source: z.string(),
   permissions: z
-    .array(z.enum(PERMISSIONS as unknown as [string, ...string[]]))
+    .array(PermissionEnum)
     .optional()
     .describe(
       "The permissions this credential holds, as the literals themselves. Omitted on a create request takes the creator's whole set; anything named is honored and clamped to what the creator holds.",
@@ -357,16 +353,12 @@ const KeyDetailSchema = z.object({
     .describe(
       "The registered client that minted this key, when a signed-in app did. Absent on a key a person or another key created directly.",
     ),
-  default_tier: z.enum(["library", "feed"]),
+  default_tier: TierEnum,
   is_operator: z.boolean(),
-  type_permissions: z.record(z.string(), z.enum(["read", "write", "none"])),
-  extension_permissions: z
-    .record(z.string(), z.enum(["read", "write"]))
-    .optional(),
+  type_permissions: z.record(z.string(), TypePermissionLevelEnum),
+  extension_permissions: z.record(z.string(), PermissionLevelEnum).optional(),
   edge_permissions: EdgePermissionsSchema,
-  metadata_permissions: z
-    .record(z.string(), z.enum(["read", "write"]))
-    .optional(),
+  metadata_permissions: z.record(z.string(), PermissionLevelEnum).optional(),
   created_at: z.string(),
   expires_at: z
     .string()

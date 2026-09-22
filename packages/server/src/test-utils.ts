@@ -23,6 +23,55 @@ import type { EdgeEventWithId, ItemEventWithId } from "./pubsub.js";
 import { BulkActionWorker } from "./bulk-actions/index.js";
 import type { BulkActionJob, BulkActionResult } from "./bulk-actions/types.js";
 
+/**
+ * Replace every `$ref` in a slice of the OpenAPI document with the schema it
+ * names, so a check that reads what an operation declares reads the whole of
+ * it.
+ *
+ * A shape the document registers as a component reaches an operation as a
+ * reference, and a check that walks the operation alone sees `$ref` and
+ * nothing else. Two of them held only because the shapes they read happened
+ * to be inlined, which is a property of how the document was generated
+ * rather than of what it says.
+ *
+ * A cycle is left as the reference it is: the reference has already been
+ * followed once on this path, so the caller has seen the shape.
+ */
+export function inlineOpenApiRefs(
+  node: unknown,
+  document: Record<string, unknown>,
+  seen: ReadonlySet<string> = new Set(),
+): unknown {
+  if (Array.isArray(node)) {
+    return node.map((child) => inlineOpenApiRefs(child, document, seen));
+  }
+  if (node === null || typeof node !== "object") return node;
+  const record = node as Record<string, unknown>;
+  const ref = record.$ref;
+  if (typeof ref === "string") {
+    if (seen.has(ref)) return node;
+    const target = ref
+      .replace(/^#\//, "")
+      .split("/")
+      .reduce<unknown>(
+        (carry, segment) =>
+          carry === null || typeof carry !== "object"
+            ? undefined
+            : (carry as Record<string, unknown>)[
+                segment.replace(/~1/g, "/").replace(/~0/g, "~")
+              ],
+        document,
+      );
+    if (target === undefined) return node;
+    return inlineOpenApiRefs(target, document, new Set([...seen, ref]));
+  }
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(record)) {
+    out[key] = inlineOpenApiRefs(value, document, seen);
+  }
+  return out;
+}
+
 /** Salt used by `createTestContext` for `hashApiKey`. Exposed so tests
  *  that mint additional api keys (e.g. for administrative coverage)
  *  hash with the same value the route auth resolver expects. */

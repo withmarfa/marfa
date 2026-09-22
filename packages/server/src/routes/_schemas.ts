@@ -53,9 +53,37 @@ import type { ItemState } from "@withmarfa/shared";
  * separately on the doors that take one, because which states a type can
  * move to is the lifecycle graph's answer and differs per type.
  */
-export const ItemStateEnum = z.enum(
-  ITEM_STATES as unknown as [ItemState, ...ItemState[]],
-);
+export const ItemStateEnum = z
+  .enum(ITEM_STATES as unknown as [ItemState, ...ItemState[]])
+  .openapi("ItemState");
+
+/**
+ * The two tiers an item can be written to, and a key's default.
+ *
+ * Named and shared for the same reason as the states: spelled inline it
+ * reaches the document as a fresh anonymous enum on every door that takes
+ * one, and a generated client then carries one type per door for one
+ * vocabulary.
+ */
+export const TierEnum = z.enum(["library", "feed"]).openapi("Tier");
+
+/** The instance-wide permissions a credential can hold. */
+export const PermissionEnum = z
+  .enum(PERMISSIONS as unknown as [string, ...string[]])
+  .openapi("Permission");
+
+/** What a credential may do with one type: read it, write it, or neither. */
+export const TypePermissionLevelEnum = z
+  .enum(["read", "write", "none"])
+  .openapi("TypePermissionLevel");
+
+/**
+ * What a credential may do with one extension, edge type, metadata family or
+ * profile. Absence is the refusal on these, so there is no `none` member.
+ */
+export const PermissionLevelEnum = z
+  .enum(["read", "write"])
+  .openapi("PermissionLevel");
 
 /**
  * The `?state=` value that means "every state", on every door that reads
@@ -95,89 +123,168 @@ export function resolveStateFilter(raw: string | undefined): {
   return { state: raw as ItemState | undefined, all_states: false };
 }
 
-export const EdgeSchema = z.object({
-  id: z.string(),
-  source_id: z.string(),
-  target_id: z.string(),
-  edge_type: z.string(),
-  properties: z.record(z.string(), z.unknown()),
-  created_at: z.string(),
-  updated_at: z.string(),
-  version: z.number(),
-});
+export const EdgeSchema = z
+  .object({
+    id: z.string(),
+    source_id: z.string(),
+    target_id: z.string(),
+    edge_type: z.string(),
+    properties: z.record(z.string(), z.unknown()),
+    created_at: z.string(),
+    updated_at: z.string(),
+    version: z.number(),
+  })
+  .openapi("Edge");
 
 /**
  * A single edge type's hydrated block on an item response. Per-type cap is
  * 50 by default; has_more + next_cursor signal that more edges exist and the
  * caller should paginate via GET /items/:id/edges?edge_type=X&cursor=...
  */
-export const ItemEdgesBlockSchema = z.object({
-  edges: z.array(EdgeSchema),
-  has_more: z.boolean(),
-  next_cursor: z.string().optional(),
-});
+export const ItemEdgesBlockSchema = z
+  .object({
+    edges: z.array(EdgeSchema),
+    has_more: z.boolean(),
+    next_cursor: z.string().optional(),
+  })
+  .openapi("ItemEdgesBlock");
 
-export const ItemSchema = z.object({
-  id: z.string(),
-  type: z.string(),
-  properties: z.record(z.string(), z.unknown()),
-  state: ItemStateEnum,
-  /** Optional — `system.*` items have no tier. */
-  tier: z.enum(["library", "feed"]).optional(),
-  version: z.number(),
-  schema_version: z.number().int(),
-  source: z.string(),
-  source_id: z.string().optional(),
-  capture_latitude: z.number().optional(),
-  capture_longitude: z.number().optional(),
-  occurred_at: z.string(),
-  created_at: z.string(),
-  updated_at: z.string(),
-  /**
-   * Hydrated outbound edges per type. Always populated on single-item GETs;
-   * opt-in on list GETs via ?include=edges. An empty object means no edges
-   * or hydration was skipped.
-   */
-  edges: z.record(z.string(), ItemEdgesBlockSchema).optional(),
-  /**
-   * Hydrated extension namespaces. Opt-in on list GETs via
-   * ?include=extensions; filtered by caller permissions (same rule as
-   * GET /items/:id/extensions). An empty object means no extensions or
-   * hydration was skipped. Absent when the caller did not opt in.
-   */
-  extensions: z
-    .record(z.string(), z.record(z.string(), z.unknown()))
-    .optional(),
-});
+export const ItemSchema = z
+  .object({
+    id: z.string(),
+    type: z.string(),
+    properties: z.record(z.string(), z.unknown()),
+    state: ItemStateEnum,
+    /** Optional — `system.*` items have no tier. */
+    tier: TierEnum.optional(),
+    version: z.number(),
+    schema_version: z.number().int(),
+    source: z.string(),
+    source_id: z.string().optional(),
+    capture_latitude: z.number().optional(),
+    capture_longitude: z.number().optional(),
+    occurred_at: z.string(),
+    created_at: z.string(),
+    updated_at: z.string(),
+    /**
+     * Hydrated outbound edges per type. Always populated on single-item GETs;
+     * opt-in on list GETs via ?include=edges. An empty object means no edges
+     * or hydration was skipped.
+     */
+    edges: z.record(z.string(), ItemEdgesBlockSchema).optional(),
+    /**
+     * Hydrated extension namespaces. Opt-in on list GETs via
+     * ?include=extensions; filtered by caller permissions (same rule as
+     * GET /items/:id/extensions). An empty object means no extensions or
+     * hydration was skipped. Absent when the caller did not opt in.
+     */
+    extensions: z
+      .record(z.string(), z.record(z.string(), z.unknown()))
+      .optional(),
+  })
+  .openapi("Item");
 
 // MetadataSchema does not include `about` — entity references are carried
 // as first-class `about` edges.
-export const MetadataSchema = z.object({
-  item_id: z.string(),
-  tags: z.array(z.string()),
-  extensions: z.record(z.string(), z.unknown()),
-});
+export const MetadataSchema = z
+  .object({
+    item_id: z.string(),
+    tags: z.array(z.string()),
+    extensions: z.record(z.string(), z.unknown()),
+  })
+  .openapi("Metadata");
 
-export const ItemWithMetadataSchema = z.object({
-  item: ItemSchema,
-  metadata: MetadataSchema,
-  /** Present when the request was accepted and deliberately wrote
-   *  nothing. Two paths produce it, and they answer the same question —
-   *  a create the server has already performed, arriving again: the
-   *  natural-key re-sync of an item the user has trashed, and a create
-   *  repeating an `id` the caller already created. Absent everywhere
-   *  else, so a caller reading it as a boolean sees the distinction
-   *  rather than having to infer it from the state. */
-  acknowledged: z.boolean().optional(),
-});
+export const ItemWithMetadataSchema = z
+  .object({
+    item: ItemSchema,
+    metadata: MetadataSchema,
+    /** Present when the request was accepted and deliberately wrote
+     *  nothing. Two paths produce it, and they answer the same question —
+     *  a create the server has already performed, arriving again: the
+     *  natural-key re-sync of an item the user has trashed, and a create
+     *  repeating an `id` the caller already created. Absent everywhere
+     *  else, so a caller reading it as a boolean sees the distinction
+     *  rather than having to infer it from the state. */
+    acknowledged: z.boolean().optional(),
+  })
+  .openapi("ItemWithMetadata");
 
-export const VersionSchema = z.object({
-  id: z.string(),
-  item_id: z.string(),
-  version: z.number(),
-  properties: z.record(z.string(), z.unknown()),
-  created_at: z.string(),
-});
+/**
+ * How a collision on one field is resolved.
+ *
+ * Shared because a type declares the policy and an item write reports what
+ * it applied: two doors describing one vocabulary, which is what belongs
+ * here.
+ */
+export const MergeStrategyEnum = z
+  .enum(["last_writer_wins", "keep_both_copies"])
+  .openapi("MergeStrategy");
+
+/** A type's merge policy: a strategy per field, and one for the rest. */
+export const MergePolicySchema = z
+  .object({
+    fields: z.record(z.string(), MergeStrategyEnum).optional(),
+    default: MergeStrategyEnum.optional(),
+  })
+  .openapi("MergePolicy");
+
+/**
+ * The refusal block every single-write `version_conflict` carries.
+ *
+ * The item doors and the edge doors answer envelopes that differ in what
+ * they hand back beside it — an edge has no ancestor and no field-level
+ * merge — but the refusal itself is the same three fields on both, and a
+ * client branches on `code` without knowing which door answered.
+ */
+export const VersionConflictErrorSchema = z
+  .object({
+    code: z.literal("version_conflict"),
+    status: z.literal(409),
+    /** Prose for a person. Branch on `code`, never on this. */
+    message: z.string(),
+  })
+  .openapi("VersionConflictError");
+
+/** What a bulk page did with one entry. */
+export const BulkResultOutcomeEnum = z
+  .enum(["created", "updated", "skipped", "errored"])
+  .openapi("BulkResultOutcome");
+
+/**
+ * A per-entry refusal inside a bulk page.
+ *
+ * The same refusal a single write gives, carried per entry: `details` is
+ * here because flattening it to a code and a message dropped the half a
+ * caller acts on — an `id_reused` entry naming no `differs` tells a caller
+ * which mistake it made and not what to do about it.
+ */
+export const BulkEntryErrorSchema = z
+  .object({
+    code: z.string(),
+    message: z.string(),
+    details: z.record(z.string(), z.unknown()).optional(),
+  })
+  .openapi("BulkEntryError");
+
+/** How a bulk page's entries came out, counted by outcome. */
+export const BulkCountsSchema = z
+  .object({
+    created: z.number().int(),
+    updated: z.number().int(),
+    skipped: z.number().int(),
+    errored: z.number().int(),
+  })
+  .openapi("BulkCounts");
+
+export const VersionSchema = z
+  .object({
+    id: z.string(),
+    item_id: z.string(),
+    version: z.number(),
+    properties: z.record(z.string(), z.unknown()),
+    created_at: z.string(),
+  })
+  .openapi("Version");
 
 /**
  * The single-item read response. The base shape (`item` with outbound `edges`
@@ -203,15 +310,17 @@ export const VersionSchema = z.object({
  * - `versions` — the item's version snapshots, newest-first. Opt in with
  *   `include=versions`.
  */
-export const ItemDetailSchema = z.object({
-  item: ItemSchema,
-  metadata: MetadataSchema,
-  backrefs: z.record(z.string(), ItemEdgesBlockSchema).optional(),
-  neighbors: z.array(ItemWithMetadataSchema).optional(),
-  neighbors_truncated: z.boolean().optional(),
-  neighbors_omitted: z.number().int().optional(),
-  versions: z.array(VersionSchema).optional(),
-});
+export const ItemDetailSchema = z
+  .object({
+    item: ItemSchema,
+    metadata: MetadataSchema,
+    backrefs: z.record(z.string(), ItemEdgesBlockSchema).optional(),
+    neighbors: z.array(ItemWithMetadataSchema).optional(),
+    neighbors_truncated: z.boolean().optional(),
+    neighbors_omitted: z.number().int().optional(),
+    versions: z.array(VersionSchema).optional(),
+  })
+  .openapi("ItemDetail");
 
 /**
  * The three schema-enforcement levers, one shape built twice: permissive for
@@ -226,17 +335,30 @@ export const enforcementSchema = (strict: boolean) => {
   const obj = strict ? z.strictObject : z.object;
   const typeList = z.array(z.string());
   const typesAndSources = { types: typeList, sources: z.array(z.string()) };
+  // The component names carry the strictness, because the two shapes are not
+  // the same shape: the strict one refuses a key the permissive one keeps,
+  // and one name over both would publish whichever was registered first as
+  // the meaning of the other.
+  const suffix = strict ? "Strict" : "";
   return obj({
-    strict_mode: obj({ types: typeList }).optional(),
-    source_allowlist: obj(typesAndSources).optional(),
-    source_filter: obj(typesAndSources).optional(),
+    strict_mode: obj({ types: typeList })
+      .optional()
+      .openapi(`StrictModeLever${suffix}`),
+    source_allowlist: obj(typesAndSources)
+      .optional()
+      .openapi(`SourceAllowlistLever${suffix}`),
+    source_filter: obj(typesAndSources)
+      .optional()
+      .openapi(`SourceFilterLever${suffix}`),
   });
 };
 
 /** A key's per-credential override: the same levers, permissive. */
-export const EnforcementOverrideSchema = enforcementSchema(false).describe(
-  "Per-credential schema-enforcement override. A lever set here wins over the instance config for this credential, lever by lever; absent, the key inherits the instance config.",
-);
+export const EnforcementOverrideSchema = enforcementSchema(false)
+  .describe(
+    "Per-credential schema-enforcement override. A lever set here wins over the instance config for this credential, lever by lever; absent, the key inherits the instance config.",
+  )
+  .openapi("EnforcementOverride");
 
 /**
  * An API key as a create route answers it.
@@ -253,32 +375,26 @@ export const EnforcementOverrideSchema = enforcementSchema(false).describe(
  * stamped row's expiry does reach a caller listing keys, and the list schema
  * keeps the field. The expiry belongs to the read, not to the creates.
  */
-export const KeyResponseSchema = z.object({
-  id: z.string(),
-  key: z.string(),
-  label: z.string(),
-  source: z.string(),
-  permissions: z
-    .array(z.enum(PERMISSIONS as unknown as [string, ...string[]]))
-    .optional(),
-  oauth_client_id: z.string().optional(),
-  default_tier: z.enum(["library", "feed"]),
-  is_operator: z.boolean(),
-  type_permissions: z.record(z.string(), z.enum(["read", "write", "none"])),
-  extension_permissions: z
-    .record(z.string(), z.enum(["read", "write"]))
-    .optional(),
-  edge_permissions: z.record(z.string(), z.enum(["read", "write"])).optional(),
-  metadata_permissions: z
-    .record(z.string(), z.enum(["read", "write"]))
-    .optional(),
-  // Declared because the handler already sends it. The fifth family arrived
-  // with the permission model and this schema did not follow, so the published
-  // shape was short of a field every mint returns.
-  profile_permissions: z
-    .record(z.string(), z.enum(["read", "write"]))
-    .optional(),
-  enforcement_override: EnforcementOverrideSchema.optional(),
-  created_at: z.string(),
-  last_used_at: z.string().nullable(),
-});
+export const KeyResponseSchema = z
+  .object({
+    id: z.string(),
+    key: z.string(),
+    label: z.string(),
+    source: z.string(),
+    permissions: z.array(PermissionEnum).optional(),
+    oauth_client_id: z.string().optional(),
+    default_tier: TierEnum,
+    is_operator: z.boolean(),
+    type_permissions: z.record(z.string(), TypePermissionLevelEnum),
+    extension_permissions: z.record(z.string(), PermissionLevelEnum).optional(),
+    edge_permissions: z.record(z.string(), PermissionLevelEnum).optional(),
+    metadata_permissions: z.record(z.string(), PermissionLevelEnum).optional(),
+    // Declared because the handler already sends it. The fifth family arrived
+    // with the permission model and this schema did not follow, so the published
+    // shape was short of a field every mint returns.
+    profile_permissions: z.record(z.string(), PermissionLevelEnum).optional(),
+    enforcement_override: EnforcementOverrideSchema.optional(),
+    created_at: z.string(),
+    last_used_at: z.string().nullable(),
+  })
+  .openapi("KeyResponse");

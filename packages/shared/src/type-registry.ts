@@ -4,6 +4,8 @@ import {
   ALL_CONNECTOR_TYPES,
   ALL_SYSTEM_TYPES,
   ALL_TYPE_IDS,
+  FIELD_FORMATS,
+  FIELD_TYPES,
   RESERVED_ITEM_FIELDS,
   ROLE_CONSTRAINT_PREFIX,
   TYPE_ROLES,
@@ -61,6 +63,11 @@ export {
   isRoleConstraint,
   roleFromConstraint,
 };
+
+// The field vocabularies the validator enforces, re-exported for the same
+// reason: the door that declares what a field definition looks like reads
+// the validator's own lists rather than restating them.
+export { FIELD_TYPES, FIELD_FORMATS };
 
 // ---------------------------------------------------------------------------
 // Universal fields (available on every type)

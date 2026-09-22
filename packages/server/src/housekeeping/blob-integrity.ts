@@ -11,11 +11,15 @@ export interface IntegrityBounds {
   maxBytes: number;
 }
 
-export interface IntegrityResult {
+// A type alias rather than an interface: an interface carries no index
+// signature, so it cannot satisfy the `HousekeepingReport` the scheduler
+// takes from a job's run.
+// eslint-disable-next-line @typescript-eslint/consistent-type-definitions
+export type IntegrityResult = {
   verified: number;
   struck: number;
   bytes: number;
-}
+};
 
 /**
  * Every copy the log claims is checked on a schedule, least recently

@@ -1,7 +1,7 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { buildPublishedOpenAPISpec } from "./openapi-published.js";
 import { EXTRA_PATHS } from "./openapi-finalize.js";
-import { createTestContext, request } from "./test-utils.js";
+import { createTestContext, inlineOpenApiRefs, request } from "./test-utils.js";
 
 type Operation = Record<string, unknown>;
 type Paths = Record<string, Record<string, Operation>>;
@@ -20,9 +20,11 @@ function operationKeys(spec: Record<string, unknown>): Map<string, Operation> {
 
 describe("published OpenAPI spec", () => {
   let published: Map<string, Operation>;
+  let document: Record<string, unknown>;
 
   beforeAll(async () => {
-    published = operationKeys(await buildPublishedOpenAPISpec());
+    document = await buildPublishedOpenAPISpec();
+    published = operationKeys(document);
   }, 60_000);
 
   it("is the document the server itself serves at /openapi.json", async () => {
@@ -127,9 +129,58 @@ describe("published OpenAPI spec", () => {
     for (const [key, operation] of typeOperations) {
       const responses = (operation as { responses?: unknown }).responses;
       expect(responses, `${key} has no responses object`).toBeDefined();
-      const text = JSON.stringify(responses);
+      // Followed through the registered components: the type shape is one
+      // of them now, so the field this pins is a reference away rather than
+      // written out on each operation.
+      const text = JSON.stringify(inlineOpenApiRefs(responses, document));
       if (!text.includes('"compatible_with"')) missing.push(key);
     }
     expect(missing.sort()).toEqual([]);
+  });
+
+  it("writes a registered shape as a reference wherever it appears", () => {
+    // A component exists so one shape is described once. A copy of it
+    // written out on an operation is a second description of the same
+    // thing: it generates a second type in every client, and the two drift
+    // the moment one door's schema is edited and the other is not. The
+    // document is generated, so this cannot be a matter of care — it is a
+    // shape that was declared somewhere other than where the component
+    // came from.
+    const components = (
+      (document.components ?? {}) as {
+        schemas?: Record<string, unknown>;
+      }
+    ).schemas;
+    expect(components, "the document registers no components").toBeDefined();
+    const byShape = new Map<string, string>();
+    for (const [name, schema] of Object.entries(components ?? {})) {
+      byShape.set(JSON.stringify(schema), name);
+    }
+    expect(byShape.size).toBeGreaterThan(20);
+
+    const inlined: string[] = [];
+    const walk = (node: unknown, where: string): void => {
+      if (Array.isArray(node)) {
+        node.forEach((child, index) => {
+          walk(child, `${where}/${String(index)}`);
+        });
+        return;
+      }
+      if (node === null || typeof node !== "object") return;
+      const named = byShape.get(JSON.stringify(node));
+      if (named !== undefined) inlined.push(`${where} is ${named}`);
+      for (const [key, value] of Object.entries(
+        node as Record<string, unknown>,
+      )) {
+        walk(value, `${where}/${key}`);
+      }
+    };
+    walk(document.paths, "");
+
+    expect(
+      inlined.sort(),
+      'Register the shape once with `.openapi("Name")` where it is ' +
+        "declared, and let every door reference it.",
+    ).toEqual([]);
   });
 });

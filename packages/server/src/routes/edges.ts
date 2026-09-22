@@ -20,7 +20,7 @@ import {
   OkResponseSchema,
   makeErrorResponseSchema,
 } from "../openapi.js";
-import { EdgeSchema } from "./_schemas.js";
+import { EdgeSchema, VersionConflictErrorSchema } from "./_schemas.js";
 import { refuseReusedEdgeId } from "./_reused-edge-id.js";
 import { assertEdgeCanBeCreated } from "../storage/edge-constraints.js";
 import { publishEdge } from "../pubsub.js";
@@ -50,18 +50,12 @@ import {
  * have no per-version history and no field-level merge, so three of those
  * four slots would be invented.
  */
-const EdgeConflictSchema = z.object({
-  error: z.object({
-    code: z.literal("version_conflict"),
-    status: z.literal(409),
-    /** Prose for a person, as on the item door. Branch on `code`, never on
-     *  this text. It is here because an envelope that describes itself on
-     *  one door and not its sibling is the disagreement a client discovers
-     *  the hard way. */
-    message: z.string(),
-  }),
-  current: EdgeSchema,
-});
+const EdgeConflictSchema = z
+  .object({
+    error: VersionConflictErrorSchema,
+    current: EdgeSchema,
+  })
+  .openapi("EdgeVersionConflict");
 
 const EdgeListSchema = z.object({
   data: z.array(EdgeSchema),

@@ -9,28 +9,45 @@ import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 // Schemas
 // ---------------------------------------------------------------------------
 
-const OutcomeSchema = z.enum(["ok", "error"]);
+const OutcomeSchema = z.enum(["ok", "error"]).openapi("HousekeepingOutcome");
 
-const HousekeepingJobSchema = z.object({
-  name: z.string(),
-  interval_ms: z.number().int(),
-  next_run_at: z.string(),
-  running_since: z.string().nullable(),
-  last_started_at: z.string().nullable(),
-  last_finished_at: z.string().nullable(),
-  last_outcome: OutcomeSchema.nullable(),
-  last_error: z.string().nullable(),
-  last_result: z.unknown().nullable(),
-});
+/**
+ * What a run reports.
+ *
+ * The names differ per job — `deleted`, `purged_records`, `copied`, `bytes`,
+ * the heartbeat's `ok` and `status` — so the keys are open; the values are
+ * scalars because the scheduler's job contract says so and the compiler
+ * holds every registered job to it. Declared rather than left unknown: a
+ * report a caller cannot read the type of is one it has to guess at.
+ */
+const HousekeepingReportSchema = z
+  .record(z.string(), z.union([z.number(), z.boolean(), z.string(), z.null()]))
+  .openapi("HousekeepingReport");
 
-const HousekeepingRunSchema = z.object({
-  name: z.string(),
-  started_at: z.string(),
-  finished_at: z.string(),
-  outcome: OutcomeSchema,
-  result: z.unknown().nullable(),
-  error: z.string().nullable(),
-});
+const HousekeepingJobSchema = z
+  .object({
+    name: z.string(),
+    interval_ms: z.number().int(),
+    next_run_at: z.string(),
+    running_since: z.string().nullable(),
+    last_started_at: z.string().nullable(),
+    last_finished_at: z.string().nullable(),
+    last_outcome: OutcomeSchema.nullable(),
+    last_error: z.string().nullable(),
+    last_result: HousekeepingReportSchema.nullable(),
+  })
+  .openapi("HousekeepingJob");
+
+const HousekeepingRunSchema = z
+  .object({
+    name: z.string(),
+    started_at: z.string(),
+    finished_at: z.string(),
+    outcome: OutcomeSchema,
+    result: HousekeepingReportSchema.nullable(),
+    error: z.string().nullable(),
+  })
+  .openapi("HousekeepingRun");
 
 const NameParam = z.object({
   name: z

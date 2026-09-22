@@ -66,13 +66,20 @@ import { publish } from "../pubsub.js";
 import { applyInlineEdges, announceInlineEdges } from "./_edges-inline.js";
 import type { InlineEdgeChanges } from "./_edges-inline.js";
 import { assertTierApplicable } from "./_tier-rules.js";
-import { ItemStateEnum } from "./_schemas.js";
+import {
+  BulkCountsSchema,
+  BulkEntryErrorSchema,
+  BulkResultOutcomeEnum,
+  ItemStateEnum,
+  TierEnum,
+} from "./_schemas.js";
 import { notifyBulkJobEnqueued } from "../bulk-actions/enqueue-signal.js";
 import {
   BULK_ACTION_SHAPES,
   BulkActionFilterShape,
   BulkActionInputSchema,
   BulkActionJobSchema,
+  BulkActionResultSchema,
   type BulkActionResult as BulkActionResultType,
 } from "../bulk-actions/types.js";
 import {
@@ -105,7 +112,7 @@ const BulkInputItemSchema = z.object({
    *  enum here refused it before the graph was consulted, so the two
    *  create doors disagreed. */
   state: ItemStateEnum.optional(),
-  tier: z.enum(["library", "feed"]).optional(),
+  tier: TierEnum.optional(),
   occurred_at: z.string().optional(),
   /** Ignored on the wire — server stamps `source` from the credential. */
   source: z.string().optional(),
@@ -132,67 +139,28 @@ const BulkInputItemSchema = z.object({
   edges: z.record(z.string(), z.array(z.string())).optional(),
 });
 
-const BulkResultOutcomeSchema = z.enum([
-  "created",
-  "updated",
-  "skipped",
-  "errored",
-]);
+const BulkResultEntrySchema = z
+  .object({
+    index: z.number().int(),
+    outcome: BulkResultOutcomeEnum,
+    id: z.string().optional(),
+    reason: z.string().optional(),
+    error: BulkEntryErrorSchema.optional(),
+  })
+  .openapi("BulkResultEntry");
 
-const BulkResultEntrySchema = z.object({
-  index: z.number().int(),
-  outcome: BulkResultOutcomeSchema,
-  id: z.string().optional(),
-  reason: z.string().optional(),
-  error: z
-    .object({
-      code: z.string(),
-      message: z.string(),
-      /** What the refusal carried beside its code. A per-entry refusal is
-       *  the same refusal a single-item door gives, and flattening it to a
-       *  code and a message dropped the half a caller acts on — an
-       *  `id_reused` entry naming no `differs` tells a caller which
-       *  mistake it made and not what to do about it. */
-      details: z.record(z.string(), z.unknown()).optional(),
-    })
-    .optional(),
-});
-
-const BulkResponseSchema = z.object({
-  counts: z.object({
-    created: z.number().int(),
-    updated: z.number().int(),
-    skipped: z.number().int(),
-    errored: z.number().int(),
-  }),
-  results: z.array(BulkResultEntrySchema),
-});
+const BulkResponseSchema = z
+  .object({
+    counts: BulkCountsSchema,
+    results: z.array(BulkResultEntrySchema),
+  })
+  .openapi("BulkResponse");
 
 // The request shape is `BulkActionInputSchema`, declared once in the
 // bulk-action module and imported here. The filter half was deduped
 // first and the envelope around it was left behind, which is the same
 // two-declarations-of-one-thing that let `dry_run` and `max_items` drift
 // out of step with the copy the specification is generated from.
-
-const BulkActionErrorSchema = z.object({
-  id: z.string(),
-  code: z.string(),
-  message: z.string(),
-});
-
-const BulkActionResponseSchema = z.object({
-  action: z.string(),
-  matched: z.number().int(),
-  succeeded: z.number().int(),
-  errored: z.number().int(),
-  dry_run: z.boolean(),
-  ids: z.array(z.string()).optional(),
-  errors: z.array(BulkActionErrorSchema).optional(),
-  /** Unique blob hashes referenced by the items that were purged. Not a
-   *  strict orphan count — callers that need a true reference scan should
-   *  consult the blob GC job once it lands. Omitted for non-purge actions. */
-  blob_hashes_referenced: z.number().int().optional(),
-});
 
 // ---------------------------------------------------------------------------
 // Route definitions
@@ -297,7 +265,7 @@ const bulkActionRoute = createRoute({
   responses: {
     200: {
       content: {
-        "application/json": { schema: BulkActionResponseSchema },
+        "application/json": { schema: BulkActionResultSchema },
       },
       description: "Dry-run result (synchronous; non-dry-run goes async)",
     },

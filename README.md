@@ -41,4 +41,4 @@ The server's behavior is the specification, and `conformance/` is where that beh
 - The contract: [`conformance/spec/`](./conformance/spec), with [`coverage.md`](./conformance/spec/coverage.md) naming the fixture behind every published operation.
 - The vocabulary: [`GLOSSARY.md`](./GLOSSARY.md).
 - Conventions and workflow: [`CONTRIBUTING.md`](./CONTRIBUTING.md) and [`AGENTS.md`](./AGENTS.md).
-- The published HTTP surface: [`openapi.json`](./openapi.json), generated from the routes and checked against them in CI.
+- The published HTTP surface: [`openapi.json`](./openapi.json), written by `pnpm generate` from the routes and checked against them in CI.

@@ -103,6 +103,49 @@ export const ErrorResponseSchema = z.object({
 });
 
 /**
+ * The component name for a refusal that answers exactly these codes.
+ *
+ * Derived from the codes rather than from the door, because the same set is
+ * answered by many doors — `unauthorized` alone by most of them — and a name
+ * taken from one door would be wrong on the rest. It is long where a door
+ * answers many codes on one status, and that is the honest length: the name
+ * says which refusal the shape is.
+ */
+function refusalComponentName(codes: readonly string[]): string {
+  const pascal = (code: string) =>
+    code
+      .split("_")
+      .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+      .join("");
+  return `${codes.map(pascal).join("Or")}Refusal`;
+}
+
+function buildRefusalSchema<const C extends readonly [string, ...string[]]>(
+  codes: C,
+) {
+  return z
+    .object({
+      error: z.object({
+        code: z.enum(codes),
+        message: z.string(),
+        details: z.record(z.string(), z.unknown()).optional(),
+      }),
+    })
+    .openapi(refusalComponentName(codes));
+}
+
+/**
+ * One schema instance per code set, so a set answered by twenty doors is
+ * registered once and referenced twenty times.
+ *
+ * The cache is what makes that true: registration is keyed by the component
+ * name, and handing the registry two schema objects under one name is a
+ * conflict, so a set has to resolve to the same instance wherever it is
+ * asked for.
+ */
+const refusalSchemas = new Map<string, ReturnType<typeof buildRefusalSchema>>();
+
+/**
  * Per-operation error response schema with a closed enum of `code` values.
  *
  * Renders as `error.code: "x" | "y" | "z"` in the OpenAPI spec so SDK codegen
@@ -111,17 +154,20 @@ export const ErrorResponseSchema = z.object({
  * handler can emit on a given status. The generic `ErrorResponseSchema`
  * remains for catch-all paths where the code set genuinely can't be
  * enumerated tightly.
+ *
+ * The codes keep the order the door wrote them in, in the name and in the
+ * enum, so two doors share a component only when they answer the same set
+ * written the same way.
  */
 export function makeErrorResponseSchema<
   const C extends readonly [string, ...string[]],
 >(codes: C) {
-  return z.object({
-    error: z.object({
-      code: z.enum(codes),
-      message: z.string(),
-      details: z.record(z.string(), z.unknown()).optional(),
-    }),
-  });
+  const name = refusalComponentName(codes);
+  const cached = refusalSchemas.get(name);
+  if (cached) return cached as ReturnType<typeof buildRefusalSchema<C>>;
+  const schema = buildRefusalSchema(codes);
+  refusalSchemas.set(name, schema);
+  return schema;
 }
 
 export const OkResponseSchema = z.object({

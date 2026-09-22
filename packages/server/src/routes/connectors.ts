@@ -19,29 +19,33 @@ import { DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT } from "../page-limits.js";
 
 const OutcomeSchema = z.enum(["succeeded", "failed"]);
 
-const ConnectorRunSchema = z.object({
-  id: z.string(),
-  connector_id: z.string(),
-  outcome: OutcomeSchema,
-  started_at: z.string(),
-  finished_at: z.string(),
-  summary: z.string().nullable(),
-  error: z.string().nullable(),
-  reported_at: z.string(),
-});
+const ConnectorRunSchema = z
+  .object({
+    id: z.string(),
+    connector_id: z.string(),
+    outcome: OutcomeSchema,
+    started_at: z.string(),
+    finished_at: z.string(),
+    summary: z.string().nullable(),
+    error: z.string().nullable(),
+    reported_at: z.string(),
+  })
+  .openapi("ConnectorRun");
 
-const ConnectorSchema = z.object({
-  id: z.string(),
-  key_id: z.string(),
-  /** The key's source, the name its writes carry. */
-  source: z.string(),
-  name: z.string(),
-  description: z.string().nullable(),
-  registered_at: z.string(),
-  updated_at: z.string(),
-  last_heartbeat_at: z.string().nullable(),
-  last_run: ConnectorRunSchema.nullable(),
-});
+const ConnectorSchema = z
+  .object({
+    id: z.string(),
+    key_id: z.string(),
+    /** The key's source, the name its writes carry. */
+    source: z.string(),
+    name: z.string(),
+    description: z.string().nullable(),
+    registered_at: z.string(),
+    updated_at: z.string(),
+    last_heartbeat_at: z.string().nullable(),
+    last_run: ConnectorRunSchema.nullable(),
+  })
+  .openapi("Connector");
 
 const RegisterSchema = z.object({
   name: z.string().min(1).max(200),

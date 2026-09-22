@@ -23,7 +23,10 @@ function toRow(row: Row): HousekeepingRow {
     last_result:
       row.last_result === null
         ? null
-        : (JSON.parse(row.last_result) as unknown),
+        : (JSON.parse(row.last_result) as Record<
+            string,
+            number | boolean | string | null
+          >),
   };
 }
 
@@ -125,7 +128,7 @@ export class SqliteHousekeepingStore implements HousekeepingStore {
         last_outcome: outcome.outcome,
         last_error: outcome.error,
         last_result:
-          outcome.result === undefined ? null : JSON.stringify(outcome.result),
+          outcome.result === null ? null : JSON.stringify(outcome.result),
         // A `next_run_at` past the run's start is either a wake that arrived
         // during the run or the schedule of a run started ahead of it, and
         // either holds unless the interval falls earlier; a run started on

@@ -38,10 +38,12 @@ const instanceConfigShape = (strict: boolean) => ({
  * present, so it is required rather than optional: a caller that has to
  * handle its absence would be handling a state the door does not produce.
  */
-const InstanceConfigSchema = z.object({
-  instance_id: z.string(),
-  ...instanceConfigShape(false),
-});
+const InstanceConfigSchema = z
+  .object({
+    instance_id: z.string(),
+    ...instanceConfigShape(false),
+  })
+  .openapi("InstanceConfig");
 
 /**
  * The write shape, which refuses a key it does not know, at every level.

@@ -86,7 +86,7 @@ export async function buildPublishedOpenAPISpec(): Promise<
       SPEC_GENERATION_INSTANCE_ID,
     );
     return finalizeOpenAPISpec(
-      app.getOpenAPIDocument({
+      app.getOpenAPI31Document({
         openapi: "3.1.0",
         info: OPENAPI_DOCUMENT_INFO,
       }),
