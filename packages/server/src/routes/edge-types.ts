@@ -187,9 +187,19 @@ const deleteEdgeTypeRoute = createRoute({
   tags: ["Edge Types"],
   summary: "Delete an edge type",
   description:
-    "Removes a registered edge type. Requires `schema.write`; core edge types are rejected, and an edge type this instance does not hold resolves as not-found. Existing edges are not consulted and not touched: the registration goes, the rows stay, and they keep naming an edge type the instance no longer holds. Delete or migrate them first if that is not what you want.",
+    "Removes a registered edge type. Requires `schema.write`; core edge types are rejected, and an edge type this instance does not hold resolves as not-found. Refused `409 edge_type_in_use` while any edge of the type is stored, the shape the sibling `DELETE /types/{id}` has for items. `?force=true` deletes the registration anyway and leaves those edges in place, still naming a type the instance no longer holds \u2014 it orphans rather than cascades, because deleting rows nobody asked to delete is the worse of the two surprises.",
   security: [{ bearerAuth: [] }],
-  request: { params: z.object({ id: z.string().describe("Edge type id.") }) },
+  request: {
+    params: z.object({ id: z.string().describe("Edge type id.") }),
+    query: z.object({
+      force: z
+        .enum(["true", "false"])
+        .optional()
+        .describe(
+          "Delete the registration even though edges of the type exist, leaving them naming it.",
+        ),
+    }),
+  },
   responses: {
     200: {
       content: { "application/json": { schema: OkResponseSchema } },
@@ -218,6 +228,15 @@ const deleteEdgeTypeRoute = createRoute({
         },
       },
       description: "Edge type not found",
+    },
+    409: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["edge_type_in_use"]),
+        },
+      },
+      description:
+        "Edges of this type are stored. `details.edge_type` names it. Pass `?force=true` to delete the registration anyway and leave them.",
     },
   },
 });
@@ -320,6 +339,21 @@ export function edgeTypeRoutes(storage: Storage) {
         `Edge type ${id} not found`,
       );
     }
+
+    // The sibling's shape, asked the same way: one row of the type is
+    // enough to know, so the query is bounded rather than a count.
+    const { force } = c.req.valid("query");
+    if (force !== "true") {
+      const inUse = await storage.edges.list({ edge_type: id, limit: 1 });
+      if (inUse.data.length > 0) {
+        throw new MarfaError(
+          ErrorCode.EDGE_TYPE_IN_USE,
+          `Edge type "${id}" has existing edges. Use ?force=true to delete anyway, which leaves them naming it.`,
+          { edge_type: id },
+        );
+      }
+    }
+
     await storage.edgeTypes.delete(id);
     unregisterEdgeTypeSchema(id);
     void storage.audit.log({

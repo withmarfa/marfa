@@ -15039,7 +15039,7 @@
           "Edge Types"
         ],
         "summary": "Delete an edge type",
-        "description": "Removes a registered edge type. Requires `schema.write`; core edge types are rejected, and an edge type this instance does not hold resolves as not-found. Existing edges are not consulted and not touched: the registration goes, the rows stay, and they keep naming an edge type the instance no longer holds. Delete or migrate them first if that is not what you want.",
+        "description": "Removes a registered edge type. Requires `schema.write`; core edge types are rejected, and an edge type this instance does not hold resolves as not-found. Refused `409 edge_type_in_use` while any edge of the type is stored, the shape the sibling `DELETE /types/{id}` has for items. `?force=true` deletes the registration anyway and leaves those edges in place, still naming a type the instance no longer holds — it orphans rather than cascades, because deleting rows nobody asked to delete is the worse of the two surprises.",
         "security": [
           {
             "bearerAuth": []
@@ -15055,6 +15055,20 @@
             "description": "Edge type id.",
             "name": "id",
             "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "true",
+                "false"
+              ],
+              "description": "Delete the registration even though edges of the type exist, leaving them naming it."
+            },
+            "required": false,
+            "description": "Delete the registration even though edges of the type exist, leaving them naming it.",
+            "name": "force",
+            "in": "query"
           }
         ],
         "responses": {
@@ -15219,6 +15233,62 @@
                           "type": "string",
                           "enum": [
                             "edge_type_not_found"
+                          ]
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "nullable": true
+                          }
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            },
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/X-RateLimit-Reset"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "409": {
+            "description": "Edges of this type are stored. `details.edge_type` names it. Pass `?force=true` to delete the registration anyway and leave them.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "enum": [
+                            "edge_type_in_use"
                           ]
                         },
                         "message": {
