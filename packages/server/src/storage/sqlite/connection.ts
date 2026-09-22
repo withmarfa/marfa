@@ -7,6 +7,7 @@ import {
   type InStatement,
   type TransactionMode,
 } from "@libsql/client";
+import { ErrorCode, MarfaError } from "@withmarfa/shared";
 import { drizzle } from "drizzle-orm/libsql";
 import { sql } from "drizzle-orm";
 import * as schema from "./schema.js";
@@ -118,16 +119,47 @@ const RETIRED_COLUMNS: readonly (readonly [string, string, string])[] = [
  * stuck process holds surfaces as an error rather than a hang.
  */
 const BUSY_BUDGET_MS = 5_000;
+/**
+ * The budget this process actually uses, which an instance may set.
+ *
+ * A module constant could not be provoked: a fixture that wants to see
+ * the refusal would have to win a race against a five-second retry loop,
+ * and a test that races is a test that passes for the wrong reason.
+ * Booted at zero, the first `SQLITE_BUSY` is the answer, so the refusal
+ * is asserted rather than hoped for.
+ */
+let busyBudgetMs = BUSY_BUDGET_MS;
+
+export function setBusyBudgetMs(ms: number | undefined): void {
+  // `undefined` leaves the default standing rather than overwriting it
+  // with a second copy of the same number, so `BUSY_BUDGET_MS` above is
+  // the only place the value is written down.
+  if (ms !== undefined) busyBudgetMs = ms;
+}
 /** The first wait between tries, doubled up to the cap: a lock held for a
  *  millisecond costs a millisecond, and one held for seconds is not asked
  *  about a thousand times. */
 const BUSY_RETRY_MIN_MS = 1;
 const BUSY_RETRY_MAX_MS = 50;
 
+/**
+ * Whether this refusal is the write lock, wherever in the chain it is.
+ *
+ * **The chain is the point.** Drizzle wraps what the driver threw in an
+ * error of its own — `Failed query: update "api_keys" set ...` — whose
+ * own `code` is nothing, so a check on the top-level error alone missed
+ * every busy refusal that arrived through a Drizzle call and the retry
+ * below never ran for one. The refusals that did reach it came through
+ * the raw client, which is why the loop looked like it worked.
+ */
 function isBusy(err: unknown): boolean {
-  if (err === null || typeof err !== "object") return false;
-  const code = (err as { code?: unknown }).code;
-  return typeof code === "string" && code.startsWith("SQLITE_BUSY");
+  for (let step: unknown = err, depth = 0; depth < 8; depth++) {
+    if (step === null || typeof step !== "object") return false;
+    const code = (step as { code?: unknown }).code;
+    if (typeof code === "string" && code.startsWith("SQLITE_BUSY")) return true;
+    step = (step as { cause?: unknown }).cause;
+  }
+  return false;
 }
 
 /**
@@ -148,7 +180,7 @@ function isBusy(err: unknown): boolean {
  */
 export async function untilNotBusy<T>(
   attempt: () => Promise<T>,
-  budgetMs = BUSY_BUDGET_MS,
+  budgetMs = busyBudgetMs,
 ): Promise<T> {
   const deadline = Date.now() + budgetMs;
   let wait = BUSY_RETRY_MIN_MS;
@@ -157,7 +189,20 @@ export async function untilNotBusy<T>(
       return await attempt();
     } catch (err) {
       const remaining = deadline - Date.now();
-      if (!isBusy(err) || remaining <= 0) throw err;
+      if (!isBusy(err)) throw err;
+      if (remaining <= 0) {
+        // The budget is spent and the lock is still held. Raw, this
+        // reached the handler as something it had no code for and became
+        // a `500`, which tells a caller the instance is broken about the
+        // one failure that will clear itself. A device reads a `5xx` as
+        // retryable and a `500` as a fault, so the status was right by
+        // accident and the code said the wrong thing.
+        throw new MarfaError(
+          ErrorCode.WRITE_CONTENTION,
+          "The row is being written by something else and the lock did not free in time. Nothing was written; retry.",
+          { budget_ms: budgetMs },
+        );
+      }
       await new Promise((resolve) => {
         setTimeout(resolve, Math.min(wait, remaining));
       });

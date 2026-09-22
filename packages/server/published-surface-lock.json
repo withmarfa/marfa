@@ -5,8 +5,8 @@
     "exports": 97
   },
   "@withmarfa/shared": {
-    "version": "8.19.0",
-    "hash": "2ef6315d5a790bf85158df0c1d8c1d8e96bf9289a24572655277645730f4382f",
+    "version": "8.20.0",
+    "hash": "02b17d4afc487ba6b48039ea6a4f83d3f41f94efc8690954d063015830b3874b",
     "exports": 214
   }
 }

@@ -137,7 +137,7 @@ describe("a write that meets the write lock", () => {
     await close();
   });
 
-  it("stops waiting once the budget is spent, and the refusal is the lock's", async () => {
+  it("stops waiting once the budget is spent, and names the contention", async () => {
     let attempts = 0;
     const started = Date.now();
     await expect(
@@ -145,10 +145,41 @@ describe("a write that meets the write lock", () => {
         attempts += 1;
         return Promise.reject(busy());
       }, 60),
-    ).rejects.toMatchObject({ code: "SQLITE_BUSY" });
+    ).rejects.toMatchObject({
+      // Not the driver's `SQLITE_BUSY`, which reached the error handler
+      // as something it had no code for and became a `500` — the one
+      // failure that clears itself, reported as the instance being
+      // broken.
+      code: "write_contention",
+      status: 503,
+      details: { budget_ms: 60 },
+    });
     // The whole budget, then one last try at the deadline.
     expect(Date.now() - started).toBeGreaterThanOrEqual(55);
     expect(attempts).toBeGreaterThan(2);
+  });
+
+  it("sees the lock through a wrapper that re-threw it", async () => {
+    // Drizzle wraps every statement's failure in a `DrizzleQueryError`
+    // carrying the original as `cause`, and the check used to read the
+    // top-level `code` alone — so a busy refusal arriving through a
+    // Drizzle call was never retried at all, and the loop looked like it
+    // worked because the refusals that did reach it came through the raw
+    // client.
+    let attempts = 0;
+    await expect(
+      untilNotBusy(() => {
+        attempts += 1;
+        return Promise.reject(
+          Object.assign(new Error("Failed query: insert into ..."), {
+            cause: busy(),
+          }),
+        );
+      }, 60),
+    ).rejects.toMatchObject({ code: "write_contention" });
+    expect(attempts, "a wrapped busy refusal was not retried").toBeGreaterThan(
+      2,
+    );
   });
 
   it("does not retry a refusal that is not the lock", async () => {

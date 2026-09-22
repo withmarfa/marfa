@@ -122,7 +122,7 @@ describe("custom edge-type registration", () => {
     // The assertion is the state afterwards, not the status alone: an
     // implementation that refused would redden on the 200, and one that
     // cascaded the edges away would redden on the read below. Recorded as
-    // `findings.md` 9, and the door's description says so.
+    // `findings.md` 8, and the door's description says so.
     const etId = `mock.dangling.${ctx.runId}`;
     const reg = await client.registerEdgeType({
       id: etId,

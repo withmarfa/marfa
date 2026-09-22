@@ -284,6 +284,7 @@ The codes group by what they ask of you.
 - **Something is already there.** `409 conflict`, `409 id_reused`, `409 type_mismatch`, `409 type_already_exists`, `409 type_in_use`, `409 type_has_subtypes`, `409 owner_exists`.
 - **Read the envelope, then decide.** `409 version_conflict` and `409 ancestor_unavailable`, described under Versions.
 - **The batch was rolled back.** `bulk_atomic_rollback`, with the inner code in `details.code`, at the status that refusal would have had on its own: `403` for a permission, `400` otherwise.
+- **Try again in a moment.** `503 write_contention`, a write that met the database's write lock and did not get it inside the busy budget. Nothing was written, and nothing about the request needs changing.
 
 A code whose precondition cannot be arranged over the wire has no row in the code table, and `coverage.md` names the doors.
 
@@ -296,7 +297,6 @@ A reader should not take silence here for absence. These are behaviors the serve
 - **Enrichment and OCR** are switched off for a run. What the sweeper does to a file item after the fact is not stated anywhere.
 - **Rate limiting** is switched off for a run and on otherwise. `/keys` and `/keys/{id}` share a fixed limit of 200 requests a minute per key that no configuration raises, and nothing is asserted about `429 rate_limited`.
 - **The boot mint.** A fresh instance mints its first key through `POST /keys` with the one-time secret from its boot log as the bearer token. The answer is the operator key. No fixture repeats it, because the secret is consumed by the first mint.
-- **Contention.** Several writers patching one edge at the same moment can be answered `500 internal_error` rather than `409`, which a device reads as a fault; the losing writes are not applied. The findings chapter records it.
 - **One process.** The event stream and webhook dispatch are process-local. Whether an instance may run as more than one process against one database is not stated, and the rate-limit counters are kept where several processes could share them, while the event stream and webhook dispatch are not shared.
 - **`GET /metrics`** is served to the operator key and appears in no document.
 - **Numbers and shapes no statement fixes.** Configuration: how long a trashed row waits for the trash purge, how long the event log keeps an event, and the request body cap. The OpenAPI document's: the default and maximum `limit`, the default sort, and the body of each bulk action. Unasserted: how a failed webhook delivery is retried, which key may read a blob, whether a link can be ended before it expires, and the grace before a folder sends a delete.

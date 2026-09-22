@@ -24,6 +24,9 @@ export interface FreshServer {
   /** A key the operator key minted naming no maps, so it holds every
    *  content family and every permission (`keys-and-oauth.md` 2). */
   workingKey: string;
+  /** The SQLite file this server writes to, so a fixture about the write
+   *  lock can hold it from outside the process. */
+  sqlitePath: string;
   /** Stops the server and removes its state. Safe to call twice. */
   stop(): void;
 }
@@ -60,7 +63,18 @@ async function mintWorkingKey(
   return body.key;
 }
 
-export async function bootFreshServer(label: string): Promise<FreshServer> {
+export async function bootFreshServer(
+  label: string,
+  /**
+   * Extra environment for the server this boots, merged over the
+   * script's own.
+   *
+   * A behaviour that only appears under a setting cannot be asserted
+   * against the shared server, and a fixture that tries either races the
+   * default or changes it for every other file on the same instance.
+   */
+  extraEnv: Record<string, string> = {},
+): Promise<FreshServer> {
   const tsx = resolve(conformanceRoot, "node_modules/.bin/tsx");
   if (!existsSync(tsx)) {
     throw new Error("no tsx binary in this checkout; run pnpm install first");
@@ -73,7 +87,7 @@ export async function bootFreshServer(label: string): Promise<FreshServer> {
       encoding: "utf8",
       // The script pins the port to `PORT` when one is set, and the run's
       // own server may already hold it.
-      env: { ...process.env, PORT: "" },
+      env: { ...process.env, PORT: "", ...extraEnv },
       // Bounded, because the call blocks the worker and vitest's own hook
       // timeout cannot fire while it does.
       timeout: BOOT_BUDGET_MS,
@@ -119,5 +133,11 @@ export async function bootFreshServer(label: string): Promise<FreshServer> {
     stop();
     throw err;
   }
-  return { apiUrl, operatorKey, workingKey, stop };
+  return {
+    apiUrl,
+    operatorKey,
+    workingKey,
+    sqlitePath: join(state, "marfa.db"),
+    stop,
+  };
 }

@@ -19,6 +19,7 @@ import { setRuntimeNamespaceRoots } from "./auth/oauth-provider.js";
 import { createApp } from "./app.js";
 import { ensureInstanceId } from "./storage/instance-id.js";
 import { createSqliteStorage } from "./storage/sqlite/index.js";
+import { setBusyBudgetMs } from "./storage/sqlite/connection.js";
 import { createBlobLayer } from "./storage/blob-layer.js";
 import type { Storage } from "./storage/interface.js";
 import { WebhookConsumer } from "./webhooks/delivery.js";
@@ -55,6 +56,10 @@ async function main() {
     log("info", "Server version", { sha: "dev" });
   }
 
+  // Before the first connection opens, because the wrapper reads it on
+  // every statement and a budget set afterwards would leave the boot's
+  // own writes on the default.
+  setBusyBudgetMs(config.sqliteBusyBudgetMs);
   const storage: Storage = await createSqliteStorage(config.sqlitePath);
 
   const blobs = await createBlobLayer(storage, config);
