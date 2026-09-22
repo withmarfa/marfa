@@ -25,8 +25,13 @@ pub const SCHEMA_VERSION: &str = "5";
 /// from the earlier build and fail on its first read of a column that build
 /// never wrote; the test that holds this hash is what makes the version move
 /// with the schema.
+///
+/// Over the statements SQLite executes, not the file: a comment cannot make
+/// one build read a column another build never wrote, and a hash that moved
+/// on one would price every edit to the prose at a version bump that refuses
+/// every working copy on disk.
 #[cfg(test)]
-const SCHEMA_HASH: &str = "47eee38026c40172";
+const SCHEMA_HASH: &str = "a501f36fb9ad593a";
 
 const ITEM_COLUMNS: &str = "id, type, state, tier, version, schema_version, source, source_id, device, occurred_at, created_at, updated_at, properties";
 const EDGE_COLUMNS: &str =
@@ -855,15 +860,51 @@ mod tests {
     use super::testing::*;
     use super::*;
 
-    /// The version names this schema and no other: a change to the file
-    /// moves both, or this says so.
+    /// The version names this schema and no other: a change to the
+    /// statements moves both, or this says so.
     #[test]
     fn the_schema_version_names_the_schema_as_it_is() {
         assert_eq!(
-            crate::folder::state::hash(SCHEMA.as_bytes()),
+            crate::folder::state::hash(schema_statements().as_bytes()),
             SCHEMA_HASH,
-            "schema.sql changed: move SCHEMA_VERSION on and set SCHEMA_HASH to the new value"
+            "schema.sql's statements changed: move SCHEMA_VERSION on and set SCHEMA_HASH to the new value"
         );
+    }
+
+    /// `schema.sql` with the prose taken out. Every `--` in the file opens a
+    /// comment that runs to the end of its own line and none follows a
+    /// statement on one, so dropping those lines and the blank ones leaves
+    /// every statement `execute_batch` runs and nothing else. Production
+    /// still hands it the whole file, comments and all; this is the text the
+    /// version is held against, not the text SQLite is given.
+    fn schema_statements() -> String {
+        let mut kept = String::new();
+        for line in SCHEMA.lines() {
+            let line = line.trim_end();
+            if line.trim_start().starts_with("--") || line.trim().is_empty() {
+                continue;
+            }
+            kept.push_str(line);
+            kept.push('\n');
+        }
+        kept
+    }
+
+    /// The witness for the line above: the file does carry comments, and
+    /// taking them out leaves statements behind rather than nothing.
+    #[test]
+    fn the_hashed_schema_is_the_statements_without_the_prose() {
+        let statements = schema_statements();
+        assert!(SCHEMA.contains("\n  --"), "schema.sql carries no comments");
+        assert!(!statements.contains("--"), "a comment survived the strip");
+        // The strip reads `--` alone, so a block comment would ride through
+        // it and price prose at a version bump again, silently.
+        assert!(!SCHEMA.contains("/*"), "schema.sql grew a block comment");
+        assert!(statements.contains("CREATE TABLE IF NOT EXISTS queue ("));
+        assert!(statements.len() < SCHEMA.len());
+        // And the strip is about prose alone: SQLite runs what is left.
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(&statements).unwrap();
     }
 
     #[test]
