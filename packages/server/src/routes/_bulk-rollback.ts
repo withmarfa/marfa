@@ -1,19 +1,20 @@
-import { ErrorCode, MarfaError } from "@withmarfa/shared";
+import { ErrorCode, MarfaError, httpStatus } from "@withmarfa/shared";
 
 /**
- * The codes that make a rolled-back page a permission refusal.
+ * Whether the refusal that rolled the page back is one the caller cannot
+ * fix by changing the request.
  *
- * Named rather than derived from the status a code maps to, because two
- * other `403`s are not this: `core_type_immutable` and `connector_owned`
- * are facts about the row, and a caller told to ask for a permission it
- * would not be given either is sent somewhere there is nothing to get.
+ * Asked of the code's own status rather than of a list of codes, and the
+ * list is what the first draft had. Enumerating "the permission ones"
+ * means judging each `403` — is `connector_owned` a permission, or a fact
+ * about the row? — and every judgement is a way for one door to answer
+ * `403` where its sibling answers `400` for the same mistake, which is
+ * the disagreement this whole change exists to remove. A `403` is a
+ * `403`, and `STATUS_MAP` already says which codes are.
  */
-const PERMISSION_REFUSALS: ReadonlySet<string> = new Set([
-  ErrorCode.FORBIDDEN,
-  ErrorCode.TYPE_NOT_PERMITTED,
-  ErrorCode.EDGE_PERMISSION_DENIED,
-  ErrorCode.SCOPED_CREDENTIAL_NOT_PERMITTED,
-]);
+function isForbidden(code: string): boolean {
+  return httpStatus(code as ErrorCode) === 403;
+}
 
 /**
  * The refusal an atomic page rolls back with, taking its status from the
@@ -46,8 +47,6 @@ export function bulkAtomicRollback(
       message: inner.message,
       ...(inner.details && { details: inner.details }),
     },
-    inner.code !== undefined && PERMISSION_REFUSALS.has(inner.code)
-      ? 403
-      : undefined,
+    inner.code !== undefined && isForbidden(inner.code) ? 403 : undefined,
   );
 }

@@ -1142,6 +1142,7 @@ export function bulkRoutes(storage: Storage) {
           throw bulkAtomicRollback(i, {
             code: processed.result.error?.code,
             message: processed.result.error?.message,
+            details: processed.result.error?.details,
           });
         }
         out.push(processed);
