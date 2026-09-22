@@ -127,11 +127,11 @@ describe("fields the wire no longer declares", () => {
   });
 
   it("device: the filter grammar no longer knows the name", async () => {
-    // The one thing that ever consulted the field. It was a system field
-    // in the query grammar, so `filter=device eq "X"` filtered the column
-    // it sat in. With the column gone the name is unknown, and the
-    // grammar says so rather than degrading to a property lookup that
-    // quietly matches nothing.
+    // A name the grammar does not hold is refused rather than resolved
+    // as a property, which is the half worth a case of its own: a filter
+    // that resolved to a property nothing carries would answer an empty
+    // page, and an empty page reads as a narrowing that matched nothing
+    // rather than as a question the door could not ask.
     const refused = await client.listItems({ filter: 'device eq "anything"' });
     expect(refused.status).toBe(400);
     expect(refused.error?.error.code).toBe("validation_error");
