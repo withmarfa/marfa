@@ -314,7 +314,8 @@ function chainRefusal(
  *
  * The 401 belongs here because it is the credential gate's answer, hung off
  * the route's `security` by `createOpenAPIRouter` rather than raised by the
- * handler. Six doors were missing the 401 they have always answered.
+ * handler. The 503 is the storage layer's, which runs every statement under
+ * one busy budget whichever door issued it.
  */
 export const CHAIN_REFUSALS = {
   unauthorized: chainRefusal(
@@ -329,7 +330,29 @@ export const CHAIN_REFUSALS = {
     ["rate_limited"],
     "Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting.",
   ),
+  writeContention: chainRefusal(
+    ["write_contention"],
+    "The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it.",
+  ),
 } as const;
+
+/**
+ * The operations that write but cannot meet the write lock on this server's
+ * account. `bulk-get` reads through a POST because its id list outgrows a
+ * query string; client registration is written by the sign-in library, which
+ * answers its own RFC 7591 shapes rather than this server's refusals.
+ */
+const WRITES_NOTHING = new Set([
+  "post /items/bulk-get",
+  "post /auth/oauth2/register",
+]);
+
+function writes(method: string, pathKey: string): boolean {
+  return (
+    ["post", "put", "patch", "delete"].includes(method) &&
+    !WRITES_NOTHING.has(`${method} ${pathKey}`)
+  );
+}
 
 function declaresSecurity(operation: Record<string, unknown>): boolean {
   const security = operation.security;
@@ -739,6 +762,9 @@ export function finalizeOpenAPISpec<T extends OpenAPIDoc>(spec: T): T {
         responses["413"] ??= CHAIN_REFUSALS.requestTooLarge.response;
       }
       responses["429"] ??= CHAIN_REFUSALS.rateLimited.response;
+      if (writes(method, pathKey)) {
+        responses["503"] ??= CHAIN_REFUSALS.writeContention.response;
+      }
       if (IDEMPOTENT_OPERATIONS.has(`${method} ${pathKey}`)) {
         for (const { status, refusal, merge } of IDEMPOTENCY_REFUSALS) {
           if (responses[status] === undefined) {

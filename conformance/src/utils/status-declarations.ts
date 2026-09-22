@@ -94,14 +94,14 @@ export const UNPUBLISHED_ROUTES: Readonly<Record<string, string>> = {
 };
 
 /**
- * Statuses every door declares that no fixture can draw from the harness's
- * server. `429` is the limiter, which `marfa:up` boots with rate limiting
- * off so a full suite does not throttle itself. `413` is the body cap, which
- * each capped door declares from the chain; a fixture draws it on the doors
- * whose own chapter says what it means there.
+ * The chain's floors, which every door declares and a fixture draws only on
+ * the doors whose own chapter says what they mean there. `429` is the
+ * limiter, which `marfa:up` boots with rate limiting off so a full suite does
+ * not throttle itself. `413` is the body cap. `503` is write contention,
+ * drawn by holding the database's lock from outside the server.
  */
 export const HARNESS_UNREACHABLE_STATUSES: ReadonlySet<number> = new Set([
-  413, 429,
+  413, 429, 503,
 ]);
 
 /**
@@ -110,7 +110,8 @@ export const HARNESS_UNREACHABLE_STATUSES: ReadonlySet<number> = new Set([
  * a run that draws one of these reports the entry as stale, and a run that
  * leaves a declaration undrawn and unlisted fails.
  */
-const IN_FLIGHT = "a second request under a key whose first is still being written; a local write finishes before a second request can land, so only a race draws it";
+const IN_FLIGHT =
+  "a second request under a key whose first is still being written; a local write finishes before a second request can land, so only a race draws it";
 
 export const UNREACHED: Readonly<Record<string, string>> = {
   "DELETE /admin/platform-types/{id} 200":

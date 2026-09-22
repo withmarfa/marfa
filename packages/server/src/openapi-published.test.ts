@@ -458,14 +458,12 @@ describe("published OpenAPI spec", () => {
       properties: { error: { properties: { code: unknown } } };
     };
     unauthorized.properties.error.properties.code = { type: "string" };
-    const flagged = openRefusals(opened as unknown as Record<string, unknown>);
+    const flagged = openRefusals(opened);
     expect(flagged).toContain("GET /items 401");
     expect(flagged.length).toBeGreaterThan(50);
 
     const bare = structuredClone(document) as typeof opened;
-    (
-      bare.paths["/items"]?.get?.responses as Record<string, unknown>
-    )["401"] = {
+    (bare.paths["/items"]?.get?.responses as Record<string, unknown>)["401"] = {
       description: "no code",
       content: { "application/json": { schema: { type: "object" } } },
     };

@@ -2,11 +2,22 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { closed, inline, validatorFor, type OpenApiDocument } from "./openapi.js";
+import {
+  closed,
+  inline,
+  validatorFor,
+  type OpenApiDocument,
+} from "./openapi.js";
 
 const committed = JSON.parse(
   readFileSync(
-    resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "openapi.json"),
+    resolve(
+      dirname(fileURLToPath(import.meta.url)),
+      "..",
+      "..",
+      "..",
+      "openapi.json",
+    ),
     "utf8",
   ),
 ) as OpenApiDocument & {
@@ -14,7 +25,12 @@ const committed = JSON.parse(
     string,
     Record<
       string,
-      { responses: Record<string, { content: Record<string, { schema: unknown }> }> }
+      {
+        responses: Record<
+          string,
+          { content: Record<string, { schema: unknown }> }
+        >;
+      }
     >
   >;
 };
@@ -90,7 +106,10 @@ describe("the closed validator", () => {
     expect(validate({ undeclared: true })).toBe(false);
     const refused = (validate.errors ?? [])
       .filter((e) => e.keyword === "unevaluatedProperties")
-      .map((e) => (e.params as { unevaluatedProperty: string }).unevaluatedProperty);
+      .map(
+        (e) =>
+          (e.params as { unevaluatedProperty: string }).unevaluatedProperty,
+      );
     expect(refused).toEqual(["undeclared"]);
   });
 });

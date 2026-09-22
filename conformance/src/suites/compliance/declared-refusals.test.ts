@@ -44,7 +44,11 @@ afterAll(async () => {
 async function call(
   method: string,
   path: string,
-  options: { body?: unknown; key?: string; headers?: Record<string, string> } = {},
+  options: {
+    body?: unknown;
+    key?: string;
+    headers?: Record<string, string>;
+  } = {},
 ): Promise<{ status: number; body: unknown }> {
   const response = await fetch(`${apiUrl}${path}`, {
     method,
@@ -58,7 +62,10 @@ async function call(
     body: options.body === undefined ? undefined : JSON.stringify(options.body),
   });
   const text = await response.text();
-  return { status: response.status, body: text === "" ? null : JSON.parse(text) };
+  return {
+    status: response.status,
+    body: text === "" ? null : JSON.parse(text),
+  };
 }
 
 /** Assert the status and code, and hold the body to the declaration. */
@@ -208,7 +215,9 @@ describe("a key names one request", () => {
         body: first.body,
         headers,
       });
-      expect(accepted.status, `${door.method} ${door.template}`).toBeLessThan(300);
+      expect(accepted.status, `${door.method} ${door.template}`).toBeLessThan(
+        300,
+      );
       const second = await door.second();
       const refused = await call(door.method, second.path, {
         body: second.body,
@@ -229,7 +238,13 @@ describe("a key names one request", () => {
     const refused = await call("DELETE", `/edges/${edge.id}`, {
       headers: { "Idempotency-Key": "" },
     });
-    await expectRefusal("DELETE", "/edges/{id}", refused, 400, "validation_error");
+    await expectRefusal(
+      "DELETE",
+      "/edges/{id}",
+      refused,
+      400,
+      "validation_error",
+    );
   });
 });
 

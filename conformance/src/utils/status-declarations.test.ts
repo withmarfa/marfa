@@ -275,6 +275,7 @@ describe("the status checker", () => {
       "scripts",
       "check-statuses.ts",
     );
+    const tsx = resolve(script, "..", "..", "node_modules", ".bin", "tsx");
     const state = mkdtempSync(join(tmpdir(), "check-statuses-"));
     let statuses = [200, 401, 404];
     const server = createServer((_req, res) => {
@@ -291,10 +292,7 @@ describe("the status checker", () => {
       );
       const run = () =>
         new Promise<{ status: number | null; stderr: string }>((done) => {
-          const child = spawn(
-            "npx",
-            ["tsx", script, "--state", state, "--url", url],
-          );
+          const child = spawn(tsx, [script, "--state", state, "--url", url]);
           let stderr = "";
           child.stderr.on("data", (chunk: Buffer) => {
             stderr += chunk.toString();

@@ -106,7 +106,9 @@ export function validatorFor(
   schema: unknown,
   document: OpenApiDocument,
 ): ValidateFunction {
-  return ajv.compile(closed(inline(schema, document)) as Record<string, unknown>);
+  return ajv.compile(
+    closed(inline(schema, document)) as Record<string, unknown>,
+  );
 }
 
 function fetchOpenApi(): Promise<OpenApiDocument> {

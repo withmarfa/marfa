@@ -83,7 +83,8 @@ function publishedAlone(name: string, schema: ZodType): string {
   }).components?.schemas as Record<string, Record<string, unknown>>;
   // A description added at one use is metadata over the same shape, which
   // the generator publishes as a sibling of the reference, not a collision.
-  const { description: _description, ...shape } = components[name] ?? {};
+  const shape = { ...components[name] };
+  delete shape.description;
   return JSON.stringify(shape);
 }
 
