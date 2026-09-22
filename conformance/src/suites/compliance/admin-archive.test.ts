@@ -162,6 +162,37 @@ describe("admin/restore-archive", () => {
     expect((await client.getItem(fine)).status).toBe(404);
     expect((await client.getItem(planted)).status).toBe(404);
 
+    // **Before anything is written, and the blob is what proves it.**
+    // The items are the last thing a restore writes: its blobs and its
+    // type registrations land first, so a check that ran late would
+    // still answer `400` while leaving both behind. A refused archive
+    // that has already put bytes in the store is a refusal in name.
+    const bytes = new TextEncoder().encode(
+      `a blob no refused archive should land ${ctx.runId}`,
+    );
+    const hash = blobHash(bytes);
+    expect((await client.downloadBlob(hash)).status).toBe(404);
+
+    const withBlob = await operator.restoreArchive(
+      itemsArchive(
+        [
+          {
+            id: uuidv7(),
+            type: "core.note",
+            source: "connector:readwise",
+            properties: { body: "a row claiming a connector wrote it" },
+          },
+        ],
+        [{ data: bytes, mime_type: "text/plain" }],
+      ),
+    );
+    expect(withBlob.status).toBe(400);
+    expect(withBlob.error?.error.code).toBe("validation_error");
+    expect(
+      (await client.downloadBlob(hash)).status,
+      "a refused archive left its blob bytes in the store",
+    ).toBe(404);
+
     // The witness. The same two rows with an ordinary source restore, so
     // what was refused is the source and not the archive.
     const okFine = uuidv7();

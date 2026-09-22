@@ -1446,20 +1446,14 @@ export function itemRoutes(storage: Storage) {
         // below keeps authorizing the claim, because there the claim is
         // the row.
         requireTypeAccess(c, existing.type, "write");
-        // No ownership check here, because there is no longer one to
-        // make: a row's `source` records which credential wrote it and
-        // decides nothing about who may write it next — which reads as protection while making no claim.
+        // No check on the row's own `source` here, and none is owed: a
+        // source records which credential wrote a row and decides
+        // nothing about who may write it next.
         //
-        // The lookup is what provides the property. `stampedSource` is the
-        // credential's own `source` and `findBySourceIdIncludingTrashed`
-        // keys on it, so a row resolved here carries this credential's own
-        // source by construction, and `isReservedCredentialSource` refuses
-        // a `connector:` source at every mint. The answer is decided
-        // before the row is read.
-        //
-        // **A lookup that ever resolves a row by something other than the
-        // caller's own stamp owes a mirror check here.** That is the change
-        // this note is for.
+        // The lookup could not reach another credential's row in any
+        // case. `stampedSource` is the caller's own `source` and
+        // `findBySourceIdIncludingTrashed` keys on it, so a row resolved
+        // here carries this credential's source by construction.
 
         // If the caller explicitly supplied `id` but it doesn't match the row
         // resolved by (source, source_id), reject rather than silently winning
