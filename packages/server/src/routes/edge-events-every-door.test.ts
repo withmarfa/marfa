@@ -386,43 +386,6 @@ describe("edge events on every door", () => {
 });
 
 describe("the remaining doors that write an edge", () => {
-  it("a promotion announces the join back to the mirror", async () => {
-    // The `derived-from` edge is the whole point of a promotion: a device
-    // told about the new item and not about the edge holds an item that
-    // appears to have come from nowhere.
-    const mirror = await ctx.storage.items.create({
-      type: "core.note",
-      properties: { body: "an upstream record" },
-      source: "connector:acme.promotefixture",
-      source_id: `mirror-${Math.random().toString(36).slice(2, 8)}`,
-    });
-
-    let promotedId = "";
-    const heard = await edgeEventsDuring(async () => {
-      const res = await request(
-        ctx.app,
-        "POST",
-        `/items/${mirror.id}/promote`,
-        { key: ctx.workingKey },
-      );
-      expect(res.status).toBe(201);
-      promotedId = ((await res.json()) as { item: { id: string } }).item.id;
-    });
-
-    const created = heard.filter((e) => e.type === "edge_created");
-    expect(created).toHaveLength(1);
-    // And it is the edge joining the two, not some other write.
-    const listed = await request(ctx.app, "GET", `/items/${promotedId}/edges`, {
-      key: ctx.workingKey,
-    });
-    const rows = (await listed.json()) as {
-      data: { id: string; edge_type: string; target_id: string }[];
-    };
-    expect(rows.data[0]?.edge_type).toBe("derived-from");
-    expect(rows.data[0]?.target_id).toBe(mirror.id);
-    expect(created[0]?.edge.id).toBe(rows.data[0]?.id);
-  });
-
   it("a natural-key re-sync announces the edges it replaces", async () => {
     // The upsert short-circuit reaches `applyInlineEdges`, the same helper
     // the bulk and patch doors use — so its silence was one silence in

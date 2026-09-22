@@ -128,9 +128,9 @@ describe("POST /keys — connector source prefixes are not mintable", () => {
 
   it("refuses the connector prefix itself", async () => {
     // A minted credential must not be able to claim connector provenance:
-    // `itemProvenanceSource` stamps a credential's source onto its rows and
-    // `permitsMirrorWrite` reads the prefix as ownership, so a key sourced
-    // this way plants rows that read as a connector's mirror.
+    // `itemProvenanceSource` stamps a credential's source onto every row
+    // it writes, so a key minted with this source would put the mark of
+    // the connector registry on rows a caller wrote by hand.
     //
     // This is the door-level cover the family lacked. The `oauth:` case above
     // was the only one, so removing `connector:` from the reserved list

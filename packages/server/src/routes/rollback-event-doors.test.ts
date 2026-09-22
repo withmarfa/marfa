@@ -610,47 +610,6 @@ const doors: Door[] = [
     survivesBreakage: false,
   },
   {
-    name: "POST /items/{id}/promote copies a connector's row",
-    family: "item",
-    transactions: 1,
-    setup: async () => {
-      // Promotion is defined against a row a connector wrote, and no
-      // route stamps that source, so the mirror is planted through storage.
-      const mirror = await ctx.storage.items.create({
-        type: "core.note",
-        properties: { body: "upstream copy" },
-        source: "connector:promote-fixture",
-        source_id: uniq("mirror"),
-      });
-      return { item: mirror.id };
-    },
-    act: async (s) => {
-      const res = await request(ctx.app, "POST", `/items/${s.item}/promote`, {
-        key: ctx.workingKey,
-      });
-      return res.status === 201;
-    },
-    // Both halves. The item is announced first and the edge behind it, so
-    // guarding one would leave the other free to move inside the
-    // transaction and describe a promotion that rolled back.
-    //
-    // The copy is identified by elimination rather than by its id, because
-    // its id only exists on the successful run — the response carries it and
-    // the broken run has no response. Reading it from there left the broken
-    // run comparing against an empty string, so a phantom item event was
-    // heard and attributed to nothing, and the guard passed while the defect
-    // it names was present. Within `act`'s window this door writes exactly
-    // one item and never touches the mirror, so an item event that is not
-    // the mirror's is the copy's.
-    attributable: (h, s) => [
-      ...h.items.filter((e) => e.item.id !== s.item),
-      ...edgeEventsTouching(h, [s.item]),
-    ],
-    landed: async (s) =>
-      (await ctx.storage.edges.listToTarget(s.item)).data.length > 0,
-    survivesBreakage: false,
-  },
-  {
     name: "DELETE /items/{id}/purge removes an item and its edges",
     family: "item",
     transactions: 1,
@@ -1228,8 +1187,8 @@ interface PublishingFile {
 /** Files whose publishes are driven by a door in the table above. */
 const PUBLISHES_UNDER_GUARD: Record<string, PublishingFile> = {
   "routes/items.ts": {
-    sites: 16,
-    why: "create, upsert, patch, the conflicted copy a resolving patch spawns, delete, the two promote emits, the two the purge door emits, and the four tag and metadata doors",
+    sites: 14,
+    why: "create, upsert, patch, the conflicted copy a resolving patch spawns, delete, the two the purge door emits, and the four tag and metadata doors",
   },
   "routes/items-lifecycle.ts": { sites: 2, why: "transition and restore" },
   "routes/edges.ts": { sites: 3, why: "edge create, update and delete" },

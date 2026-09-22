@@ -78,10 +78,6 @@ async function readUpdatedAt(itemId: string): Promise<string | undefined> {
   return rows[0]?.updated_at;
 }
 
-let seq = 0;
-const uniq = (p: string): string =>
-  `${p}-${String(++seq)}-${String(Date.now())}`;
-
 /** Seeded through storage rather than through a door, because the doors
  *  below are what is under test. */
 async function makeNote(body: string): Promise<string> {
@@ -92,26 +88,6 @@ async function makeNote(body: string): Promise<string> {
   return item.id;
 }
 
-/**
- * Plant the mirror a promotion is defined against, carrying a body no other
- * row shares. Promotion copies the properties, so counting rows with that
- * body counts the mirror plus every copy of it that survived.
- */
-async function plantMirror(body: string): Promise<string> {
-  const mirror = await ctx.storage.items.create({
-    type: "core.note",
-    properties: { body },
-    source: "connector:promote-atomicity",
-    source_id: uniq("mirror"),
-  });
-  return mirror.id;
-}
-
-async function countNotesWithBody(body: string): Promise<number> {
-  const page = await ctx.storage.items.list({ type: "core.note", limit: 500 });
-  return page.data.filter((i) => i.properties.body === body).length;
-}
-
 async function makeEdge(source: string, target: string): Promise<string> {
   const res = await request(ctx.app, "POST", "/edges", {
     key: ctx.workingKey,
@@ -120,52 +96,6 @@ async function makeEdge(source: string, target: string): Promise<string> {
   expect(res.status).toBe(201);
   return ((await res.json()) as { edge: { id: string } }).edge.id;
 }
-
-// ---------------------------------------------------------------------------
-// promote: the item and the edge joining it back to its mirror
-// ---------------------------------------------------------------------------
-
-describe("POST /items/{id}/promote", () => {
-  it("leaves no promoted item behind when the edge cannot be written", async () => {
-    const body = uniq("promote-broken-body");
-    const mirror = await plantMirror(body);
-    expect(await countNotesWithBody(body)).toBe(1);
-
-    const broken = breakWrite(ctx.storage.edges, "createRaw");
-    let status: number;
-    try {
-      const res = await request(ctx.app, "POST", `/items/${mirror}/promote`, {
-        key: ctx.workingKey,
-      });
-      status = res.status;
-    } finally {
-      broken.restore();
-    }
-
-    expect(broken.fired()).toBe(1);
-    expect(status).toBe(500);
-
-    // The promoted copy's whole purpose is the join back to the mirror.
-    // Without the edge it is an untraceable duplicate that no query relates
-    // to its origin, so the copy must not survive the edge's failure.
-    expect(await countNotesWithBody(body)).toBe(1);
-  });
-
-  it("writes both the copy and its edge when nothing fails", async () => {
-    const body = uniq("promote-ok-body");
-    const mirror = await plantMirror(body);
-
-    const res = await request(ctx.app, "POST", `/items/${mirror}/promote`, {
-      key: ctx.workingKey,
-    });
-    expect(res.status).toBe(201);
-    const promoted = (await res.json()) as { item: { id: string } };
-
-    expect(await ctx.storage.items.get(promoted.item.id)).not.toBeNull();
-    const joined = await ctx.storage.edges.listToTarget(mirror);
-    expect(joined.data.map((e) => e.source_id)).toContain(promoted.item.id);
-  });
-});
 
 // ---------------------------------------------------------------------------
 // purge: the outbound edges, the inbound edges, and the row

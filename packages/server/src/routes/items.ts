@@ -43,14 +43,11 @@ import {
   requirePermission,
   requireTypeAccess,
   itemProvenanceSource,
-  requireMirrorProtection,
   requireDeclaredTypeMatches,
   checkTypeAccess,
   requireEdgePermission,
   getTypeFilter,
-  CONNECTOR_SOURCE_PREFIX,
 } from "../middleware/auth.js";
-import { compareProperties } from "./mirror-reconcile.js";
 import type {
   Storage,
   ItemSortField,
@@ -361,108 +358,6 @@ const createItemRoute = createRoute({
         "`source_id` resolved a live row: that upsert is conditional and " +
         "answers exactly what the update door answers. A repeated `id` is " +
         "acknowledged rather than written, so it has no precondition to fail.",
-    },
-  },
-});
-
-const promoteItemRoute = createRoute({
-  operationId: "promoteItem",
-  method: "post",
-  path: "/{id}/promote",
-  tags: ["Items"],
-  summary: "Promote a connector's copy into your own item",
-  description:
-    "Mints a new item you own from a connector's mirror of an external record, joined back to the mirror by a `derived-from` edge. The mirror stays a faithful copy the connector keeps re-syncing; the promoted item is yours to edit and is never touched by a re-sync. Only items a connector owns can be promoted.",
-  security: [{ bearerAuth: [] }],
-  request: { params: IdParam },
-  responses: {
-    201: {
-      content: {
-        "application/json": {
-          schema: z.object({ item: z.record(z.string(), z.unknown()) }),
-        },
-      },
-      description: "Promoted item created",
-    },
-    400: {
-      content: {
-        "application/json": {
-          schema: makeErrorResponseSchema([
-            "validation_error",
-            // Reachable, though not from anything the caller sends: the copy
-            // takes the mirror's properties verbatim and they are validated
-            // on write, so a type whose required list tightened after the
-            // mirror was stored refuses the copy it would once have
-            // accepted.
-            "invalid_properties",
-          ]),
-        },
-      },
-      description:
-        "The item is not a connector's copy, or its properties no longer satisfy its type",
-    },
-    404: {
-      content: {
-        "application/json": {
-          schema: makeErrorResponseSchema(["item_not_found"]),
-        },
-      },
-      description: "Item not found",
-    },
-  },
-});
-
-const ReconcileFieldSchema = z.object({
-  key: z.string(),
-  state: z.enum(["same", "diverged", "only_yours", "only_mirror"]),
-  yours: z.unknown().optional(),
-  mirror: z.unknown().optional(),
-});
-
-const ReconcileResponseSchema = z.object({
-  mirrors: z.array(
-    z.object({
-      mirror_id: z.string(),
-      mirror_type: z.string(),
-      mirror_source: z.string(),
-      mirror_updated_at: z.string(),
-      fields: z.array(ReconcileFieldSchema),
-    }),
-  ),
-});
-
-const reconcileItemRoute = createRoute({
-  operationId: "reconcileItem",
-  method: "get",
-  path: "/{id}/reconcile",
-  tags: ["Items"],
-  summary: "Compare your item against the mirror it was promoted from",
-  description:
-    "Reports, field by field, where your item and the connector's mirror now differ. Promotion forks a copy; the mirror keeps re-syncing, so this is how you see what moved upstream since. Accepting a field is an ordinary `PATCH` on your own item, so nothing here writes. Reports against every mirror the item is joined to by `derived-from`.",
-  security: [{ bearerAuth: [] }],
-  request: { params: IdParam },
-  responses: {
-    200: {
-      content: {
-        "application/json": { schema: ReconcileResponseSchema },
-      },
-      description: "Field-by-field comparison against each mirror",
-    },
-    400: {
-      content: {
-        "application/json": {
-          schema: makeErrorResponseSchema(["validation_error"]),
-        },
-      },
-      description: "The item was not promoted from a connector's copy",
-    },
-    404: {
-      content: {
-        "application/json": {
-          schema: makeErrorResponseSchema(["item_not_found"]),
-        },
-      },
-      description: "Item not found",
     },
   },
 });
@@ -849,22 +744,13 @@ const updateItemRoute = createRoute({
       },
       description: "Unauthorized",
     },
-    // `connector_owned` was reachable here and declared by no operation in
-    // the document at all. A caller can arrange it: `POST
-    // /admin/restore-archive` writes `item.source` through verbatim, so an
-    // archive carrying the connector prefix mints a row this door then
-    // refuses.
     403: {
       content: {
         "application/json": {
-          schema: makeErrorResponseSchema([
-            "type_not_permitted",
-            "connector_owned",
-          ]),
+          schema: makeErrorResponseSchema(["type_not_permitted"]),
         },
       },
-      description:
-        "`type_not_permitted`: the credential does not hold write on the item's type. `connector_owned`: the row is a connector's copy of an external record, which only the owning connector writes — promote it first and edit your own copy.",
+      description: "The credential does not hold write on the item's type.",
     },
     404: {
       content: {
@@ -1560,22 +1446,14 @@ export function itemRoutes(storage: Storage) {
         // below keeps authorizing the claim, because there the claim is
         // the row.
         requireTypeAccess(c, existing.type, "write");
-        // **No mirror check here, and its absence is the honest shape.**
-        // Every other door that resolves a row calls
-        // `requireMirrorProtection`; this one cannot be reached by a
-        // connector's mirror at all, so a call would be a guard that can
-        // never refuse — which reads as protection while making no claim.
+        // No check on the row's own `source` here, and none is owed: a
+        // source records which credential wrote a row and decides
+        // nothing about who may write it next.
         //
-        // The lookup is what provides the property. `stampedSource` is the
-        // credential's own `source` and `findBySourceIdIncludingTrashed`
-        // keys on it, so a row resolved here carries this credential's own
-        // source by construction, and `isReservedCredentialSource` refuses
-        // a `connector:` source at every mint. The answer is decided
-        // before the row is read.
-        //
-        // **A lookup that ever resolves a row by something other than the
-        // caller's own stamp owes a mirror check here.** That is the change
-        // this note is for.
+        // The lookup could not reach another credential's row in any
+        // case. `stampedSource` is the caller's own `source` and
+        // `findBySourceIdIncludingTrashed` keys on it, so a row resolved
+        // here carries this credential's source by construction.
 
         // If the caller explicitly supplied `id` but it doesn't match the row
         // resolved by (source, source_id), reject rather than silently winning
@@ -1946,152 +1824,6 @@ export function itemRoutes(storage: Storage) {
       },
       201,
     );
-  });
-
-  router.openapi(promoteItemRoute, async (c) => {
-    requireAuth(c);
-    const credential = c.get("apiKey");
-    const { id } = c.req.valid("param");
-
-    const mirror = await storage.items.get(id);
-    if (!mirror) {
-      throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`);
-    }
-    if (!mirror.source.startsWith("connector:")) {
-      throw new MarfaError(
-        ErrorCode.VALIDATION_ERROR,
-        "Only a connector's copy can be promoted; this item is already yours",
-        { item_id: id, source: mirror.source },
-      );
-    }
-    requireTypeAccess(c, mirror.type, "write");
-    requireEdgePermission(c, "derived-from", "write");
-
-    // One transaction, because the copy without its edge is not a partial
-    // promotion — it is an untraceable duplicate that no query relates to
-    // its origin, and nothing stored says where it came from. The
-    // caller is told the promotion failed either way, so a copy that
-    // outlives the failure is a row nobody asked for and nobody is looking
-    // for. The wrapper the request already runs inside is not a rollback
-    // boundary: a handler that throws still commits, because the error is
-    // caught inside the composed chain and the transaction closes normally.
-    const { promoted, promotionEdge } = await storage.runInTransaction(
-      async () => {
-        // The copy is yours: caller-stamped provenance, no natural key (the
-        // upstream record's identity stays with the mirror), library tier.
-        const created = await storage.items.create({
-          type: mirror.type,
-          properties: { ...mirror.properties },
-          tier: "library",
-          ...(itemProvenanceSource(credential) !== undefined
-            ? { source: itemProvenanceSource(credential) }
-            : {}),
-        });
-        // derived-from is many-to-many with orphan cascade and the source is
-        // a freshly minted node, so the raw write cannot violate cardinality
-        // or create a cycle.
-        const edge = await storage.edges.createRaw({
-          source_id: created.id,
-          target_id: mirror.id,
-          edge_type: "derived-from",
-          properties: {},
-        });
-        return { promoted: created, promotionEdge: edge };
-      },
-    );
-    // The item first, then the edge that joins it back to the mirror, which
-    // is the ordering `POST /items` states for the same pair: an edge
-    // arrives behind the item it belongs to, so a subscriber resolving an
-    // edge's endpoints has already been told the new one exists.
-    //
-    // Announcing the edge alone would hand a subscriber an `edge_created`
-    // naming a `source_id` it had never heard of and could not resolve,
-    // and a durable client persisting the stream would never learn the
-    // row existed at all, short of a full re-import. The promoted copy is
-    // a new row written by an ordinary write door, and every other such
-    // door announces one.
-    //
-    // `metadata` is the literal the create door builds for the same reason:
-    // a fresh row's metadata layer is exactly what the write put there, and
-    // a promotion writes no tags. Carrying it is not tidiness. `publish`
-    // omits the key entirely when it is absent, so the webhook sends
-    // `metadata: null` and the connector envelope sends nothing at all —
-    // a handler reading `payload.metadata.tags`, which is safe on every
-    // other `item.created`, would throw on this one alone.
-    //
-    // `enableFanout: false`, which is the one thing a promotion must not do.
-    // The mirror is a connector's reflection of an upstream record;
-    // pushing the copy back out makes that connector create a SECOND
-    // upstream record for the thing the mirror already reflects, which is
-    // the duplication the mirror-and-promote split exists to prevent.
-    // Dispatch has nothing left to suppress a write on, so nothing else
-    // would stop it. Declining costs
-    // this announcement nothing: fan-out governs neither the event log nor
-    // the stream, and those are what the announcement is for.
-    await publish({
-      type: "created",
-      item: promoted,
-      metadata: { item_id: promoted.id, tags: [], extensions: {} },
-      enableFanout: false,
-    });
-    await publishEdge({
-      type: "edge_created",
-      edge: promotionEdge,
-    });
-
-    void storage.audit.log({
-      client_ip: c.get("clientIp") ?? null,
-      key_id: credential?.id,
-      action: "item.promote",
-      resource_type: "item",
-      resource_id: promoted.id,
-      details: { mirror_id: mirror.id, type: mirror.type },
-    });
-    return c.json(
-      {
-        item: promoted,
-      },
-      201,
-    );
-  });
-
-  router.openapi(reconcileItemRoute, async (c) => {
-    requireAuth(c);
-    const { id } = c.req.valid("param");
-
-    const yours = await storage.items.get(id);
-    if (!yours) {
-      throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`);
-    }
-    requireTypeAccess(c, yours.type, "read");
-
-    const joined = await storage.edges.listFromSource(id, {
-      edge_type: "derived-from",
-    });
-    const mirrors = [];
-    for (const edge of joined.data) {
-      const mirror = await storage.items.get(edge.target_id);
-      // A derived-from edge can join any two items; only the ones a
-      // connector owns are mirrors, and only those have anything to
-      // reconcile against.
-      if (!mirror?.source.startsWith(CONNECTOR_SOURCE_PREFIX)) continue;
-      requireTypeAccess(c, mirror.type, "read");
-      mirrors.push({
-        mirror_id: mirror.id,
-        mirror_type: mirror.type,
-        mirror_source: mirror.source,
-        mirror_updated_at: mirror.updated_at,
-        fields: compareProperties(yours.properties, mirror.properties),
-      });
-    }
-    if (mirrors.length === 0) {
-      throw new MarfaError(
-        ErrorCode.VALIDATION_ERROR,
-        "This item was not promoted from a connector's copy, so there is nothing to reconcile against",
-        { item_id: id },
-      );
-    }
-    return c.json({ mirrors }, 200);
   });
 
   router.openapi(getItemStatsRoute, async (c) => {
@@ -2513,8 +2245,6 @@ export function itemRoutes(storage: Storage) {
     // type. The claim above is held to that type rather than replacing
     // it: nothing below reads a caller-supplied type.
     assertTierApplicable(item.type, body.tier);
-
-    requireMirrorProtection(item);
 
     // Natural-key uniqueness check. The `(source, source_id)` tuple is
     // unique — the same constraint enforced at create time.

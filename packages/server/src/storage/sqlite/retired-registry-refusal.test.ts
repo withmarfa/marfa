@@ -342,8 +342,9 @@ describe("a retired registry table is refused on open", () => {
     // row that the next boot refused, permanently, with the refusal
     // advising the operator to discard the database. Every other check in
     // this file refuses a shape no request can create. What the prefix
-    // costs instead is bounded: mirror protection knows one spelling, so a
-    // row carrying this one is an ordinary row.
+    // costs instead is bounded: a row's source decides nothing about who
+    // may write it, so a row carrying a retired prefix is an ordinary
+    // row.
     //
     // The row goes into a database this build wrote, so the open that
     // follows fails for nothing else and the resolve means what it says.

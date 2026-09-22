@@ -51,10 +51,8 @@ import {
   requireAuth,
   requireTypeAccess,
   requireEdgePermission,
-  requireMirrorProtection,
   mayWriteReserved,
   requireDeclaredTypeMatches,
-  permitsMirrorWrite,
   itemProvenanceSource,
   getTypeFilter,
 } from "../middleware/auth.js";
@@ -1013,10 +1011,9 @@ export function bulkRoutes(storage: Storage) {
     // The update half of an upsert, judged on the target row. Mirrors
     // `PATCH /items/{id}` gate for gate, because the two are the same
     // operation reached through different doors: the row's real type
-    // decides the type gate, and the mirror rule answers to the row.
+    // decides the type gate.
     const checkUpdate = (existing: Item): void => {
       requireTypeAccess(c, existing.type, "write");
-      requireMirrorProtection(existing);
     };
     // The edge half of the dual gate. Same call the direct routes make,
     // so the three doors that accept an inline `edges` payload agree.
@@ -1366,19 +1363,6 @@ export function bulkRoutes(storage: Storage) {
       callerKey,
     );
 
-    // The type axis is not the only one a caller can be narrower than: a
-    // row a connector owns is not this caller's to patch. Narrowing
-    // rather than refusing, because that is the answer this route already
-    // gives on the type axis: a row the caller cannot write leaves the match
-    // set, instead of failing an action over thousands of rows it
-    // legitimately can.
-
-    const patch = body.action === "update_properties" ? body.patch : undefined;
-    // Property patches answer to the mirror rule; transitions and retiers
-    // stay user gestures on rows a connector owns.
-    const mayAct = (item: Item): boolean =>
-      patch === undefined || permitsMirrorWrite(item);
-
     // Paginate through matches up to cap+1. The +1 lets us distinguish
     // "exactly at cap" from "over the cap" without a second COUNT query.
     const matched: Item[] = [];
@@ -1439,7 +1423,6 @@ export function bulkRoutes(storage: Storage) {
         cursor,
       });
       for (const item of page.data) {
-        if (!mayAct(item)) continue;
         matched.push(item);
         if (matched.length > cap) break;
       }

@@ -79,7 +79,7 @@ const WRITE_METHODS: readonly string[] = [
 const WRITERS: Record<string, string> = {
   // --- Behind an idempotent door ---
   "routes/items.ts":
-    "POST /items, PATCH /items/{id}, DELETE /items/{id}, DELETE /items/{id}/purge and POST /items/{id}/promote, all in IDEMPOTENT_WRITE_DOORS",
+    "POST /items, PATCH /items/{id}, DELETE /items/{id} and DELETE /items/{id}/purge, all in IDEMPOTENT_WRITE_DOORS",
   "routes/items-lifecycle.ts":
     "POST /items/{id}/restore and POST /items/{id}/transition, both in IDEMPOTENT_WRITE_DOORS",
   "routes/edges.ts":
