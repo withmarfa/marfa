@@ -854,7 +854,7 @@ mod tests {
         assert_eq!(core.status().unwrap().hydration, Hydration::Complete);
         // And the fourth value: catch-up deletes the cursor when the log has
         // aged past it, leaving the slice and the rows in place. A store in
-        // that state reads reads as refused, exactly as a store that never
+        // that state has its reads refused, exactly as a store that never
         // hydrated does, and says a different thing about itself, because it
         // holds a copy and the other does not.
         {

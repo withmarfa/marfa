@@ -625,7 +625,7 @@ describe("a cursor the log no longer holds", () => {
     if (reported.ok) {
       expect(
         reported.value.hydration,
-        "the report for an aged-out store changed without the statement changing with it, so a caller learns something different about the same state",
+        "an aged-out store did not report itself as expired, so a caller weighing whether the copy in hand is worth anything is told the wrong thing about it",
       ).toBe("expired");
       // The witness for the word. `expired` is only distinguishable from
       // `never` on a store that has something in it: with the slice gone
@@ -635,9 +635,9 @@ describe("a cursor the log no longer holds", () => {
         "the report says the slice is empty as well, so `expired` is a guess rather than a reading of what the store holds",
       ).toContain("core.note");
       expect(
-        reported.value.event_cursor,
+        reported.value.event_cursor ?? null,
         "the store still holds a cursor, so `expired` is not about the aging at all",
-      ).toBeFalsy();
+      ).toBeNull();
     }
 
     // And a hydration clears it, which is what makes the refusal a state to

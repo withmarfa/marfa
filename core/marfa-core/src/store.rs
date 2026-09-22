@@ -147,19 +147,18 @@ pub fn hydration_complete(conn: &Connection) -> Result<bool, CoreError> {
 /// Reading the in-progress marker alone cannot answer it: a store that has
 /// never hydrated carries no marker either, so it looks exactly like one
 /// whose hydration finished. What a hydration leaves behind is the slice and
-/// the cursor, and all three are tested here because all three are what a
-/// read and a catch-up need.
+/// the cursor, and a read and a catch-up need both.
 ///
 /// The cursor is the one that moves afterwards: catch-up advances it on
 /// every applied event and deletes it when the log has aged past it. A store
 /// whose cursor has gone cannot be kept current, so it refuses reads until
 /// it is hydrated again (`device.md` 4).
 ///
-/// **One predicate, read by the guard and by the status report alike**, and
-/// one rather than two because a second implementation would have to agree
-/// with this on parts that are easy to read differently: whether an empty
-/// type list counts as hydrated, and whether the tier counts at all when
-/// catch-up requires it. A pair that disagreed would let a store report
+/// **The slice half is `holds_slice` and this composes it**, rather than
+/// testing the same keys a second time, because a second reading would have
+/// to agree with that one on parts that are easy to read differently:
+/// whether an empty type list counts, and whether the tier counts at all
+/// when catch-up requires it. A pair that disagreed would let a store report
 /// that it had never hydrated and answer a listing in the same breath.
 pub fn hydrated(conn: &Connection) -> Result<bool, CoreError> {
     if !hydration_complete(conn)? {
@@ -173,7 +172,7 @@ pub fn hydrated(conn: &Connection) -> Result<bool, CoreError> {
 
 /// Whether this store holds a slice at all, the cursor aside.
 ///
-/// The half of `hydrated` a hydration writes once and nothing afterwards
+/// The part of `hydrated` a hydration writes once and nothing afterwards
 /// takes away. Split out because the two halves fail for different reasons
 /// and a caller is owed the difference: no slice is a store that has never
 /// hydrated, and a slice whose cursor has gone is one that hydrated and
@@ -191,12 +190,16 @@ pub fn holds_slice(conn: &Connection) -> Result<bool, CoreError> {
     Ok(!types.is_empty())
 }
 
-/// Refuses a read on a store that holds no slice yet.
+/// Refuses a read on a store that cannot answer one.
 ///
-/// A device that answered a listing here would hand a caller an empty page
-/// for a question it never asked the server, and nothing in the answer would
-/// say so: an empty slice and a slice that was never pulled read the same
-/// (`device.md` 4).
+/// Three stores cannot: one that has never hydrated, one whose hydration was
+/// interrupted, and one whose cursor has aged out. A device that answered a
+/// listing from the first would hand a caller an empty page for a question
+/// it never asked the server, and nothing in the answer would say so: an
+/// empty slice and a slice that was never pulled read the same. The third
+/// holds a whole copy and refuses anyway, because it has silently stopped
+/// tracking (`device.md` 4). What the three are told apart by is the report,
+/// not this (`device.md` 5).
 pub fn refuse_unless_hydrated(conn: &Connection) -> Result<(), CoreError> {
     if hydrated(conn)? {
         Ok(())
