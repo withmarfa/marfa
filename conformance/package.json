@@ -27,7 +27,7 @@
     "marfa:status": "tsx scripts/marfa-server.ts status",
     "garage:up": "tsx scripts/garage.ts up",
     "garage:down": "tsx scripts/garage.ts down",
-    "drill:restore": "tsx scripts/restore-drill.ts"
+    "drill:restore": "RATE_LIMIT_ENABLED=false tsx scripts/restore-drill.ts"
   },
   "dependencies": {
     "ofetch": "^1.5.1",

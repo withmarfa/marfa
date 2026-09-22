@@ -258,7 +258,7 @@ export async function bootServer(args: BootOptions): Promise<void> {
     // with no limiter at all. The run's own server does not rely on the
     // default here: `marfa:up` says `false` outright, so an ambient
     // variable cannot flip the instance every other file shares.
-    RATE_LIMIT_ENABLED: process.env.RATE_LIMIT_ENABLED ?? "false",
+    RATE_LIMIT_ENABLED: process.env.RATE_LIMIT_ENABLED || "false",
   };
   delete env.NODE_ENV;
 

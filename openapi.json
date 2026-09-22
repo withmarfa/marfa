@@ -30,13 +30,13 @@
         }
       },
       "X-RateLimit-Limit": {
-        "description": "How many requests this credential may make in the current window. Sent on every response, not only refusals, so a client can pace itself before it is refused. Absent entirely on a deployment that does not enable rate limiting, along with the rest of the `X-RateLimit-*` trio.",
+        "description": "How many requests this credential may make against this path group in the current window. Sent on every response, not only refusals, so a client can pace itself before it is refused. A second window bounds what one credential spends across every path group together, and a refusal from that one carries this trio unchanged — so a 429 may arrive with requests apparently left. Absent entirely on a deployment that does not enable rate limiting, along with the rest of the `X-RateLimit-*` trio.",
         "schema": {
           "type": "integer"
         }
       },
       "X-RateLimit-Remaining": {
-        "description": "Requests left in the current window for this credential, floored at 0. The request that is refused with 429 is the one that reads 0.",
+        "description": "Requests left in this path group's window for this credential, floored at 0. A 429 from that window is the one that reads 0; a 429 from the credential-wide window described above can read more.",
         "schema": {
           "type": "integer"
         }

@@ -19,19 +19,34 @@ import { bootFreshServer, type FreshServer } from "../../utils/fresh-server.js";
  * magnitude higher.
  */
 let server: FreshServer | undefined;
+/** The same, booted with the limiter on and nothing else said. */
+let unset: FreshServer | undefined;
 
 /** Low enough to reach, and nothing else in the server names it. */
 const KEYS_LIMIT = 5;
+
+/**
+ * What the doors answer when the instance names no number.
+ *
+ * Written here rather than read from the server's own constant, because
+ * the number is in the chapter and a reader takes it from there: if the
+ * two ever part company this file is where it shows.
+ */
+const DEFAULT_KEYS_LIMIT = 200;
 
 beforeAll(async () => {
   server = await bootFreshServer("keys-rate-limit", {
     RATE_LIMIT_ENABLED: "true",
     RATE_LIMIT_KEYS_REQUESTS: String(KEYS_LIMIT),
   });
-}, 180_000);
+  unset = await bootFreshServer("keys-rate-limit-default", {
+    RATE_LIMIT_ENABLED: "true",
+  });
+}, 300_000);
 
 afterAll(() => {
   server?.stop();
+  unset?.stop();
 });
 
 /**
@@ -132,5 +147,22 @@ describe("the key doors' rate limit", () => {
       items.status,
       `a data-plane read was refused too: ${JSON.stringify(items.error)}`,
     ).toBe(200);
+  }, 120_000);
+
+  it("falls back to 200 when the instance names no number", async () => {
+    // The number the chapter gives a reader who sets nothing. Asserted
+    // rather than described: the case above deliberately sets a cap no
+    // default names, so on its own it would stay green through a change
+    // to the default and leave the documents saying a number the server
+    // had stopped using.
+    const client = new MarfaClient({
+      baseUrl: unset!.apiUrl,
+      apiKey: unset!.workingKey,
+    });
+    const answer = await client.listKeys();
+    expect(answer.status).toBe(200);
+    expect(answer.headers.get("X-RateLimit-Limit")).toBe(
+      String(DEFAULT_KEYS_LIMIT),
+    );
   }, 120_000);
 });
