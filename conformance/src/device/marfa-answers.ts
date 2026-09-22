@@ -250,6 +250,23 @@ export function replay(head: string, frames: SseFrame[]): Answer {
 }
 
 /**
+ * A snapshot inside a 409 envelope, as the real server writes one.
+ *
+ * The three item fields are here because the version check covers them
+ * (`versions.md` 8) and a collision can name one, so the envelope carries
+ * both sides' values. `fidelity.test.ts` is what makes that a requirement
+ * rather than a nicety: a field the real server sends and the scripted one
+ * does not is a device read that goes green here and meets nothing there.
+ */
+export interface ConflictSnapshotBody {
+  version: number;
+  properties: Record<string, unknown>;
+  tier: "library" | "feed";
+  occurred_at: string;
+  source_id: string | null;
+}
+
+/**
  * The two 409 envelopes, the refusals and the failures a device has to
  * classify. Named here rather than inline in a fixture so `fidelity.test.ts`
  * can hold every one of them against the real server's answer for the same
@@ -294,8 +311,8 @@ export const answers = {
     },
   }),
   versionConflict: (
-    current: { version: number; properties: Record<string, unknown> },
-    ancestor: { version: number; properties: Record<string, unknown> },
+    current: ConflictSnapshotBody,
+    ancestor: ConflictSnapshotBody,
     conflictingFields: string[],
     mergePolicy: { fields: Record<string, string>; default: string },
   ): Answer => ({
@@ -314,7 +331,7 @@ export const answers = {
     },
   }),
   ancestorUnavailable: (
-    current: { version: number; properties: Record<string, unknown> },
+    current: ConflictSnapshotBody,
     requestedVersion: number,
   ): Answer => ({
     kind: "json",

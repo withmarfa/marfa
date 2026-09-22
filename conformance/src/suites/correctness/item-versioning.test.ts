@@ -302,6 +302,14 @@ describe("item versioning", () => {
       );
       expect(r.ok, field).toBe(true);
       trackItem(ctx, r.data.item.id);
+      // The three as they stand at the version the stale write will name,
+      // so the envelope's `ancestor` can be held to them rather than to
+      // whatever it happens to carry.
+      const atBase = {
+        tier: r.data.item.tier,
+        occurred_at: r.data.item.occurred_at,
+        source_id: r.data.item.source_id ?? null,
+      };
 
       const advanced = await client.updateItem(r.data.item.id, {
         ...server,
@@ -318,6 +326,18 @@ describe("item versioning", () => {
       expect(stale.error?.error.code, field).toBe("version_conflict");
       const body = stale.error as unknown as ConflictResponse;
       expect(body.conflicting_fields, field).toEqual([field]);
+
+      // Both sides of the field the refusal names. Without them the
+      // caller is told which field collided and has no way to read
+      // either value, so the one thing it needs to resolve is the one
+      // thing the envelope withholds.
+      const snapshotField = field as "tier" | "occurred_at" | "source_id";
+      expect(body.current[snapshotField], field).toEqual(
+        server[snapshotField as keyof typeof server],
+      );
+      expect(body.ancestor[snapshotField], field).toEqual(
+        atBase[snapshotField],
+      );
 
       // The row is the one the first writer left, not the stale writer's.
       const after = await client.getItem(r.data.item.id);

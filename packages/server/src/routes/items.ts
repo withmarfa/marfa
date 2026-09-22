@@ -118,6 +118,12 @@ const EDGE_SHORTHAND_KEY = /^(edge|backref)\[([^\]]+)\]$/;
 const ConflictSnapshotSchema = z.object({
   version: z.number(),
   properties: z.record(z.string(), z.unknown()),
+  // The version check covers these three beside the properties, so a
+  // collision can name one; without them here the refusal names a field
+  // the caller has no way to read either side of.
+  tier: z.enum(["library", "feed"]),
+  occurred_at: z.string(),
+  source_id: z.string().nullable(),
 });
 
 const MergeStrategySchema = z.enum(["last_writer_wins", "keep_both_copies"]);
@@ -2626,6 +2632,11 @@ export function itemRoutes(storage: Storage) {
             current.version,
             current.properties,
             body.version,
+            {
+              tier: current.tier ?? "library",
+              occurred_at: current.occurred_at,
+              source_id: current.source_id ?? null,
+            },
           );
         }
       }

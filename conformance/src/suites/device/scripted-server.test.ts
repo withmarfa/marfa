@@ -39,13 +39,31 @@ describe("the answers a device has to classify", () => {
       "PATCH",
       "/items/a",
       answers.versionConflict(
-        { version: 3, properties: { title: "current", body: "current" } },
-        { version: 1, properties: { title: "base", body: "base" } },
+        {
+          version: 3,
+          properties: { title: "current", body: "current" },
+          tier: "library",
+          occurred_at: "2026-01-01T00:00:00.000Z",
+          source_id: null,
+        },
+        {
+          version: 1,
+          properties: { title: "base", body: "base" },
+          tier: "library",
+          occurred_at: "2026-01-01T00:00:00.000Z",
+          source_id: null,
+        },
         ["body", "title"],
         { fields: { body: "keep_both_copies" }, default: "last_writer_wins" },
       ),
       answers.ancestorUnavailable(
-        { version: 9, properties: { title: "current" } },
+        {
+          version: 9,
+          properties: { title: "current" },
+          tier: "library",
+          occurred_at: "2026-01-01T00:00:00.000Z",
+          source_id: null,
+        },
         1,
       ),
     );

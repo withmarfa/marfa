@@ -36,6 +36,14 @@ export type ItemFieldValues = Partial<
   Record<VersionedItemField, string | null>
 >;
 
+/** The same three as a snapshot carries them: every one present, because a
+ *  row always has a tier and an own time and either holds a natural-key
+ *  identifier or does not. */
+export type SnapshotItemFields = Pick<
+  ConflictSnapshot,
+  "tier" | "occurred_at" | "source_id"
+>;
+
 export interface ConflictInput {
   clientProperties: Record<string, unknown>;
   currentProperties: Record<string, unknown>;
@@ -384,6 +392,7 @@ export function versionConflict(
   ancestorProperties: Record<string, unknown>,
   conflictingFields: string[],
   policy: MergePolicy,
+  fields: { current: SnapshotItemFields; ancestor: SnapshotItemFields },
 ): ConflictResponse {
   return {
     error: {
@@ -394,8 +403,16 @@ export function versionConflict(
         `${String(currentVersion)}. Conflicting fields: ` +
         `${conflictingFields.length > 0 ? conflictingFields.join(", ") : "none"}.`,
     },
-    current: { version: currentVersion, properties: currentProperties },
-    ancestor: { version: requestedVersion, properties: ancestorProperties },
+    current: {
+      version: currentVersion,
+      properties: currentProperties,
+      ...fields.current,
+    },
+    ancestor: {
+      version: requestedVersion,
+      properties: ancestorProperties,
+      ...fields.ancestor,
+    },
     conflicting_fields: conflictingFields,
     merge_policy: policy,
   };
@@ -422,6 +439,7 @@ export function staleVersion(
   currentVersion: number,
   currentProperties: Record<string, unknown>,
   requestedVersion: number,
+  currentFields: SnapshotItemFields,
 ): StaleVersionResponse {
   return {
     error: {
@@ -432,7 +450,11 @@ export function staleVersion(
         `${String(currentVersion)}. This write carried nothing to merge, so ` +
         `re-read the item and send again at version ${String(currentVersion)}.`,
     },
-    current: { version: currentVersion, properties: currentProperties },
+    current: {
+      version: currentVersion,
+      properties: currentProperties,
+      ...currentFields,
+    },
   };
 }
 
@@ -441,6 +463,7 @@ export function ancestorUnavailable(
   currentVersion: number,
   currentProperties: Record<string, unknown>,
   requestedVersion: number,
+  currentFields: SnapshotItemFields,
 ): AncestorUnavailableResponse {
   return {
     error: {
@@ -451,7 +474,11 @@ export function ancestorUnavailable(
         `retained, so this write cannot be merged. Re-read the item at ` +
         `version ${String(currentVersion)} and re-apply the change.`,
     },
-    current: { version: currentVersion, properties: currentProperties },
+    current: {
+      version: currentVersion,
+      properties: currentProperties,
+      ...currentFields,
+    },
     requested_version: requestedVersion,
   };
 }

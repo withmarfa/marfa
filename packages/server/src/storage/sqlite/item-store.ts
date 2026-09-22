@@ -83,7 +83,7 @@ import {
   planAutoMerge,
   versionConflict,
 } from "../conflict.js";
-import type { ItemFieldValues } from "../conflict.js";
+import type { ItemFieldValues, SnapshotItemFields } from "../conflict.js";
 import { edges, items, metadata } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
 import { isPrimaryKeyViolation } from "./pk-violation.js";
@@ -804,6 +804,13 @@ export class SqliteItemStore implements ItemStore {
         occurred_at: row.occurred_at,
         source_id: row.source_id,
       };
+      // The same three as a refusal's envelope carries them, so a caller
+      // told that one of them collided can read both sides.
+      const snapshotFields: SnapshotItemFields = {
+        tier: row.tier as Tier,
+        occurred_at: row.occurred_at,
+        source_id: row.source_id,
+      };
 
       // The version store's own write, inside this transaction, so the
       // snapshot and the update it records land together or not at all.
@@ -915,7 +922,12 @@ export class SqliteItemStore implements ItemStore {
         // `ErrorCode.ANCESTOR_UNAVAILABLE`: there is nothing to merge
         // against, and a resolution invented here loses an edit quietly.
         // Never auto-resolved, whatever the request asked for.
-        return ancestorUnavailable(row.version, currentProps, input.version);
+        return ancestorUnavailable(
+          row.version,
+          currentProps,
+          input.version,
+          snapshotFields,
+        );
       }
 
       // Only the item fields this write names. A field it is silent about
@@ -963,6 +975,15 @@ export class SqliteItemStore implements ItemStore {
             ancestor.properties,
             result.conflicting_fields,
             policy,
+            {
+              current: snapshotFields,
+              ancestor: {
+                tier: (ancestor.item_fields.tier ?? row.tier) as Tier,
+                occurred_at:
+                  ancestor.item_fields.occurred_at ?? row.occurred_at,
+                source_id: ancestor.item_fields.source_id,
+              },
+            },
           );
         }
 

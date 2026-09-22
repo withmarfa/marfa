@@ -793,11 +793,28 @@
                               "additionalProperties": {
                                 "nullable": true
                               }
+                            },
+                            "tier": {
+                              "type": "string",
+                              "enum": [
+                                "library",
+                                "feed"
+                              ]
+                            },
+                            "occurred_at": {
+                              "type": "string"
+                            },
+                            "source_id": {
+                              "type": "string",
+                              "nullable": true
                             }
                           },
                           "required": [
                             "version",
-                            "properties"
+                            "properties",
+                            "tier",
+                            "occurred_at",
+                            "source_id"
                           ]
                         },
                         "ancestor": {
@@ -811,11 +828,28 @@
                               "additionalProperties": {
                                 "nullable": true
                               }
+                            },
+                            "tier": {
+                              "type": "string",
+                              "enum": [
+                                "library",
+                                "feed"
+                              ]
+                            },
+                            "occurred_at": {
+                              "type": "string"
+                            },
+                            "source_id": {
+                              "type": "string",
+                              "nullable": true
                             }
                           },
                           "required": [
                             "version",
-                            "properties"
+                            "properties",
+                            "tier",
+                            "occurred_at",
+                            "source_id"
                           ]
                         },
                         "conflicting_fields": {
@@ -894,11 +928,28 @@
                               "additionalProperties": {
                                 "nullable": true
                               }
+                            },
+                            "tier": {
+                              "type": "string",
+                              "enum": [
+                                "library",
+                                "feed"
+                              ]
+                            },
+                            "occurred_at": {
+                              "type": "string"
+                            },
+                            "source_id": {
+                              "type": "string",
+                              "nullable": true
                             }
                           },
                           "required": [
                             "version",
-                            "properties"
+                            "properties",
+                            "tier",
+                            "occurred_at",
+                            "source_id"
                           ]
                         },
                         "requested_version": {
@@ -3815,11 +3866,28 @@
                               "additionalProperties": {
                                 "nullable": true
                               }
+                            },
+                            "tier": {
+                              "type": "string",
+                              "enum": [
+                                "library",
+                                "feed"
+                              ]
+                            },
+                            "occurred_at": {
+                              "type": "string"
+                            },
+                            "source_id": {
+                              "type": "string",
+                              "nullable": true
                             }
                           },
                           "required": [
                             "version",
-                            "properties"
+                            "properties",
+                            "tier",
+                            "occurred_at",
+                            "source_id"
                           ]
                         },
                         "ancestor": {
@@ -3833,11 +3901,28 @@
                               "additionalProperties": {
                                 "nullable": true
                               }
+                            },
+                            "tier": {
+                              "type": "string",
+                              "enum": [
+                                "library",
+                                "feed"
+                              ]
+                            },
+                            "occurred_at": {
+                              "type": "string"
+                            },
+                            "source_id": {
+                              "type": "string",
+                              "nullable": true
                             }
                           },
                           "required": [
                             "version",
-                            "properties"
+                            "properties",
+                            "tier",
+                            "occurred_at",
+                            "source_id"
                           ]
                         },
                         "conflicting_fields": {
@@ -3916,11 +4001,28 @@
                               "additionalProperties": {
                                 "nullable": true
                               }
+                            },
+                            "tier": {
+                              "type": "string",
+                              "enum": [
+                                "library",
+                                "feed"
+                              ]
+                            },
+                            "occurred_at": {
+                              "type": "string"
+                            },
+                            "source_id": {
+                              "type": "string",
+                              "nullable": true
                             }
                           },
                           "required": [
                             "version",
-                            "properties"
+                            "properties",
+                            "tier",
+                            "occurred_at",
+                            "source_id"
                           ]
                         }
                       },
@@ -3968,11 +4070,28 @@
                               "additionalProperties": {
                                 "nullable": true
                               }
+                            },
+                            "tier": {
+                              "type": "string",
+                              "enum": [
+                                "library",
+                                "feed"
+                              ]
+                            },
+                            "occurred_at": {
+                              "type": "string"
+                            },
+                            "source_id": {
+                              "type": "string",
+                              "nullable": true
                             }
                           },
                           "required": [
                             "version",
-                            "properties"
+                            "properties",
+                            "tier",
+                            "occurred_at",
+                            "source_id"
                           ]
                         },
                         "requested_version": {

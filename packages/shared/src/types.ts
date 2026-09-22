@@ -440,10 +440,20 @@ export interface ErrorResponse {
 // Conflict resolution types (enriched 409 response)
 // ---------------------------------------------------------------------------
 
-/** A snapshot of an item's version and properties, used in conflict responses. */
+/**
+ * A snapshot of an item at one version, used in conflict responses.
+ *
+ * The three item fields ride beside the properties because the version
+ * check covers them and `conflicting_fields` can name one: a client told
+ * that `tier` collided and shown neither side's value has been named a
+ * reason it cannot act on.
+ */
 export interface ConflictSnapshot {
   version: number;
   properties: Record<string, unknown>;
+  tier: Tier;
+  occurred_at: string;
+  source_id: string | null;
 }
 
 /** Enriched 409 conflict response — the server produces this, the SDK consumes it. */
