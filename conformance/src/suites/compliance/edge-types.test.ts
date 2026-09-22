@@ -111,18 +111,22 @@ describe("custom edge-type registration", () => {
     expect(again.error?.error.code).toBe("edge_type_not_found");
   });
 
-  it("deletes an edge type while edges of it exist, and leaves them naming it", async () => {
-    // The door published a refusal it does not make: "the request fails
-    // while any edges of this type still exist, so delete or migrate them
-    // first". It answers 200 and looks at nothing but the core list and the
-    // row. Its sibling `DELETE /types/{id}` really does refuse, `409
-    // type_in_use`, which is what makes this an asymmetry rather than a
-    // house style.
+  it("refuses to delete an edge type while edges of it exist, and orphans them on force", async () => {
+    // The two registries answer one question one way. `DELETE
+    // /types/{id}` refuses `409 type_in_use` while rows of the type
+    // exist and takes `?force=true`; this door does the same for edges,
+    // so a caller does not have to learn which registry it is talking to
+    // before it can predict the answer.
     //
-    // The assertion is the state afterwards, not the status alone: an
-    // implementation that refused would redden on the 200, and one that
-    // cascaded the edges away would redden on the read below. Recorded as
-    // `findings.md` 8, and the door's description says so.
+    // **Force orphans rather than cascades.** The edges stay and keep
+    // naming a type the instance no longer holds, which is untidy and
+    // recoverable; deleting rows nobody asked to delete is neither.
+    //
+    // A new code rather than `type_in_use`, matching the
+    // `edge_type_not_found` that already sits beside `type_not_found`:
+    // the doors agree in shape and differ in vocabulary, because an edge
+    // type is not a type and a caller branching on the code should be
+    // able to tell which registry refused it.
     const etId = `mock.dangling.${ctx.runId}`;
     const reg = await client.registerEdgeType({
       id: etId,
@@ -146,17 +150,49 @@ describe("custom edge-type registration", () => {
     expect(edge.ok).toBe(true);
     trackEdge(ctx, edge.data.edge.id);
 
-    const removed = await client.deleteEdgeType(etId);
-    expect(removed.status).toBe(200);
+    const refused = await client.deleteEdgeType(etId);
+    expect(refused.ok).toBe(false);
+    expect(refused.status).toBe(409);
+    expect(refused.error?.error.code).toBe("edge_type_in_use");
+    expect(refused.error?.error.details).toMatchObject({ edge_type: etId });
 
-    // The registration is gone.
+    // The refusal changed nothing: the registration is still there, so a
+    // caller that fixes the edges can try again.
+    const stillListed = await client.listEdgeTypes();
+    expect(stillListed.data.edge_types.map((t) => t.id)).toContain(etId);
+
+    // `force` is the way through, and it orphans rather than cascades:
+    // the edges are the caller's to deal with, and deleting rows nobody
+    // asked to delete is the worse of the two surprises.
+    const forced = await client.deleteEdgeType(etId, true);
+    expect(forced.ok, JSON.stringify(forced.error)).toBe(true);
+    expect(forced.status).toBe(200);
+
     const listed = await client.listEdgeTypes();
     expect(listed.data.edge_types.map((t) => t.id)).not.toContain(etId);
 
-    // The edge is not, and still names it.
     const orphan = await client.getEdge(edge.data.edge.id);
     expect(orphan.status).toBe(200);
     expect(orphan.data.edge.edge_type).toBe(etId);
+  });
+
+  it("deletes an edge type no edge names, without force", async () => {
+    // The witness. The refusal above is the edges and not the door
+    // having closed: a registration nothing uses goes on the first ask.
+    const etId = `mock.unused.${ctx.runId}`;
+    const reg = await client.registerEdgeType({
+      id: etId,
+      cardinality: "many-to-many",
+    });
+    expect(reg.ok).toBe(true);
+    trackEdgeType(ctx, etId);
+
+    const removed = await client.deleteEdgeType(etId);
+    expect(removed.ok, JSON.stringify(removed.error)).toBe(true);
+    expect(removed.status).toBe(200);
+
+    const listed = await client.listEdgeTypes();
+    expect(listed.data.edge_types.map((t) => t.id)).not.toContain(etId);
   });
 
   it("refuses a delete to a key without schema.write, and declares the refusal", async () => {

@@ -65,6 +65,18 @@ export enum ErrorCode {
   TYPE_ALREADY_EXISTS = "type_already_exists",
   TYPE_IN_USE = "type_in_use",
   /**
+   * `DELETE /edge-types/{id}` with edges of the type still stored.
+   * `?force=true` deletes anyway and leaves those edges naming a type
+   * the instance no longer holds.
+   *
+   * Its own code rather than `TYPE_IN_USE`, matching the
+   * `EDGE_TYPE_NOT_FOUND` that already sits beside `TYPE_NOT_FOUND`: the
+   * two doors should agree in shape, which they now do, and an edge
+   * type is not a type. A caller branching on the code can tell which
+   * registry refused it without reading the message.
+   */
+  EDGE_TYPE_IN_USE = "edge_type_in_use",
+  /**
    * A type cannot be deleted while another type declares it as a parent.
    * Details carry `subtype_ids`.
    *
@@ -322,6 +334,7 @@ const STATUS_MAP: Record<ErrorCode, number> = {
   [ErrorCode.CONFLICT]: 409,
   [ErrorCode.TYPE_ALREADY_EXISTS]: 409,
   [ErrorCode.TYPE_IN_USE]: 409,
+  [ErrorCode.EDGE_TYPE_IN_USE]: 409,
   [ErrorCode.TYPE_HAS_SUBTYPES]: 409,
   [ErrorCode.TYPE_CHAIN_UNRESOLVABLE]: 409,
   [ErrorCode.CORE_TYPE_IMMUTABLE]: 403,

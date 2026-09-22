@@ -47,11 +47,3 @@ Every entry is a status a fixture asserts on an operation whose served document 
 Nothing here is a contradiction of the OpenAPI document; it is the server contradicting the device half of the contract. The recommended fix is to let a folder, or any caller writing on behalf of one, name the `source` its rows are keyed by, bounded by what the credential is allowed to claim, so that the key identifies the folder rather than the credential. Until then a folder carries the item id in the file as its own identity record (`folders.md` 11), which binds a second device only for files that already have one.
 
 Out of milestone one, which has one folder and one keyed process.
-
-## 8. `DELETE /edge-types/{id}` removes a registration out from under its edges
-
-The door looks at the core edge-type list and at whether the row exists, and at nothing else. Edges of the type are neither counted nor cascaded: the call answers `200`, the registration goes, and every edge of it stays, each still naming an edge type the instance no longer holds and `GET /edges/{id}` still serving it.
-
-Its sibling `DELETE /types/{id}` asks the question and refuses, `409 type_in_use`, unless `?force=true` is passed to orphan the rows deliberately. So the registry has two doors that disagree about whether a definition may be removed while rows depend on it, and only one of them offers the caller the choice.
-
-The published description claimed the refusal — "the request fails while any edges of this type still exist, so delete or migrate them first" — and has been corrected to say what happens instead. Implementing the refusal is a behavior change and is the server's to make; the entry goes when it does. `compliance/edge-types.test.ts › deletes an edge type while edges of it exist, and leaves them naming it`.

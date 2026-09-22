@@ -625,8 +625,12 @@ export class MarfaClient {
     return this.request<{ edge_types: EdgeTypeDefinition[] }>("/edge-types");
   }
 
-  async deleteEdgeType(id: string): Promise<ApiResponse<{ ok: boolean }>> {
-    return this.request<{ ok: boolean }>(`/edge-types/${id}`, {
+  async deleteEdgeType(
+    id: string,
+    force?: boolean,
+  ): Promise<ApiResponse<{ ok: boolean }>> {
+    const query = force === true ? "?force=true" : "";
+    return this.request<{ ok: boolean }>(`/edge-types/${id}${query}`, {
       method: "DELETE",
     });
   }

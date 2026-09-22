@@ -14,10 +14,8 @@ import { ErrorCode, MarfaError, hasBoundedLifecycle } from "@withmarfa/shared";
  * closed. One rule, called from all of them.
  *
  * `system.activity` is not an exception to this, and nothing else is
- * either. The toggle that was to key a feed stamp on it,
- * `system.connection.feed_activity`, is read by no server path in this
- * build, so no `system.*` row is ever stamped `feed` and every door refuses
- * a client that asks for one.
+ * either. No server path stamps a `feed` tier on a `system.*` row, and
+ * every door refuses a client that asks for one.
  *
  * **Which types this applies to is `hasBoundedLifecycle`, not the seeded set
  * alone.** The set and the `system.` name test answer differently for a type
