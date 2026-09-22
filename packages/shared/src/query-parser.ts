@@ -80,7 +80,6 @@ const SYSTEM_FIELDS = new Set([
   // membership are carried as edges, not as generic-query-language filters;
   // use edge[<type>]= clauses for those.
   "tier",
-  "device",
   "version",
   "id",
   // The provenance path a client stored the item under. Filterable so a

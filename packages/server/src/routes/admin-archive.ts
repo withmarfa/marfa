@@ -676,7 +676,6 @@ export function adminArchiveRoutes(storage: Storage, blobs: BlobLayer) {
               occurred_at: item.occurred_at as string | undefined,
               source: item.source as string | undefined,
               source_id: item.source_id as string | undefined,
-              device: item.device as string | undefined,
               capture_latitude: item.capture_latitude as number | undefined,
               capture_longitude: item.capture_longitude as number | undefined,
               tags: archiveTags(meta),

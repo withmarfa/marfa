@@ -57,7 +57,6 @@ interface ItemsTableRef {
   created_at: unknown;
   updated_at: unknown;
   tier: unknown;
-  device: unknown;
   version: unknown;
   properties: unknown;
 }
@@ -81,7 +80,6 @@ function getSystemColumn(table: ItemsTableRef, column: string): unknown {
     created_at: table.created_at,
     updated_at: table.updated_at,
     tier: table.tier,
-    device: table.device,
     version: table.version,
     id: table.id,
   };

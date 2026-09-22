@@ -128,7 +128,6 @@ export const ItemSchema = z.object({
   schema_version: z.number().int(),
   source: z.string(),
   source_id: z.string().optional(),
-  device: z.string().optional(),
   capture_latitude: z.number().optional(),
   capture_longitude: z.number().optional(),
   occurred_at: z.string(),
@@ -178,7 +177,6 @@ export const VersionSchema = z.object({
   version: z.number(),
   properties: z.record(z.string(), z.unknown()),
   created_at: z.string(),
-  device: z.string().optional(),
 });
 
 /**

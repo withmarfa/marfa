@@ -27,7 +27,6 @@ CREATE TABLE IF NOT EXISTS items (
   schema_version INTEGER NOT NULL,
   source TEXT NOT NULL,
   source_id TEXT,
-  device TEXT,
   occurred_at TEXT NOT NULL,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,

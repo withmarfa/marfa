@@ -112,7 +112,6 @@ export const RESERVED_ITEM_FIELDS: ReadonlySet<string> = new Set([
   "source_id",
   "version",
   "schema_version",
-  "device",
   "capture_latitude",
   "capture_longitude",
 ]);

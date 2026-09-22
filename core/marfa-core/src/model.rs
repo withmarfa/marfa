@@ -94,7 +94,6 @@ pub struct Item {
     pub schema_version: i64,
     pub source: String,
     pub source_id: Option<String>,
-    pub device: Option<String>,
     /// When the item's content happened, as opposed to when the row was
     /// written. The server defaults it to `created_at`.
     pub occurred_at: String,
@@ -120,7 +119,6 @@ impl Item {
             schema_version: self.schema_version,
             source: self.source.clone(),
             source_id: self.source_id.clone(),
-            device: self.device.clone(),
             occurred_at: self.occurred_at.clone(),
             created_at: self.created_at.clone(),
             updated_at: self.updated_at.clone(),
@@ -431,7 +429,6 @@ impl Draft {
             schema_version: 1,
             source: self.source.clone().unwrap_or_else(|| "device".into()),
             source_id: self.source_id.clone(),
-            device: None,
             occurred_at: at.clone(),
             created_at: at.clone(),
             updated_at: at,

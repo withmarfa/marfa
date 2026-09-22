@@ -128,7 +128,7 @@ export enum ErrorCode {
   INHERITANCE_VIOLATION = "inheritance_violation",
   /**
    * A type registration declared a `fields.<name>` whose key collides
-   * with a first-class field on the `Item` wire shape (e.g. `device`,
+   * with a first-class field on the `Item` wire shape (e.g. `source_id`,
    * `source_id`, `occurred_at`, `version`, `schema_version`,
    * `capture_latitude`, `capture_longitude`). Letting a custom type
    * redefine a first-class field name means every row carries two

@@ -125,7 +125,6 @@ const BulkInputItemSchema = z.object({
     .describe(
       "The version this entry was based on, where it resolves a row that already exists. Optional, as on `POST /items`: an entry creating a row it has never read has no version to name. A stale one is refused like every other per-entry refusal here — the page rolls back under the default `atomic`, carrying `version_conflict` in `details.code`, or it is that entry's own `errored` outcome when `atomic` is false.",
     ),
-  device: z.string().optional(),
   tags: z.array(z.string()).optional(),
   /** Inline edges (replace-all semantics per edge_type) applied after
    *  create/update in the same transaction. Absent means leave edges
@@ -963,7 +962,6 @@ async function processBulkItem(
       ...(raw.occurred_at !== undefined && { occurred_at: raw.occurred_at }),
       ...(stampedSource !== undefined && { source: stampedSource }),
       ...(sourceId !== undefined && { source_id: sourceId }),
-      ...(raw.device !== undefined && { device: raw.device }),
       ...(raw.tags !== undefined && { tags: raw.tags }),
     };
     const created = await storage.items.create(createInput);

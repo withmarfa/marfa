@@ -39,7 +39,6 @@ export const items = sqliteTable(
     source_id: text("source_id"),
     version: integer("version").notNull().default(1),
     schema_version: integer("schema_version"),
-    device: text("device"),
     capture_latitude: real("capture_latitude"),
     capture_longitude: real("capture_longitude"),
     // The `starts_at` / `ends_at` properties as normalized UTC instants,
@@ -152,7 +151,6 @@ export const versions = sqliteTable(
     occurred_at: text("occurred_at"),
     source_id: text("source_id"),
     created_at: text("created_at").notNull(),
-    device: text("device"),
   },
   (table) => [index("idx_versions_item_id").on(table.item_id)],
 );

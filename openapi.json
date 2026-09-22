@@ -120,9 +120,6 @@
                       "feed"
                     ]
                   },
-                  "device": {
-                    "type": "string"
-                  },
                   "capture_latitude": {
                     "type": "number"
                   },
@@ -201,9 +198,6 @@
                           "type": "string"
                         },
                         "source_id": {
-                          "type": "string"
-                        },
-                        "device": {
                           "type": "string"
                         },
                         "capture_latitude": {
@@ -409,9 +403,6 @@
                           "type": "string"
                         },
                         "source_id": {
-                          "type": "string"
-                        },
-                        "device": {
                           "type": "string"
                         },
                         "capture_latitude": {
@@ -1327,9 +1318,6 @@
                               "source_id": {
                                 "type": "string"
                               },
-                              "device": {
-                                "type": "string"
-                              },
                               "capture_latitude": {
                                 "type": "number"
                               },
@@ -1495,9 +1483,6 @@
                                     "type": "string"
                                   },
                                   "source_id": {
-                                    "type": "string"
-                                  },
-                                  "device": {
                                     "type": "string"
                                   },
                                   "capture_latitude": {
@@ -2206,9 +2191,6 @@
                         "source_id": {
                           "type": "string"
                         },
-                        "device": {
-                          "type": "string"
-                        },
                         "capture_latitude": {
                           "type": "number"
                         },
@@ -2446,9 +2428,6 @@
                               "source_id": {
                                 "type": "string"
                               },
-                              "device": {
-                                "type": "string"
-                              },
                               "capture_latitude": {
                                 "type": "number"
                               },
@@ -2612,9 +2591,6 @@
                             }
                           },
                           "created_at": {
-                            "type": "string"
-                          },
-                          "device": {
                             "type": "string"
                           }
                         },
@@ -2976,9 +2952,6 @@
                           "type": "string"
                         },
                         "source_id": {
-                          "type": "string"
-                        },
-                        "device": {
                           "type": "string"
                         },
                         "capture_latitude": {
@@ -4133,9 +4106,6 @@
                         "source_id": {
                           "type": "string"
                         },
-                        "device": {
-                          "type": "string"
-                        },
                         "capture_latitude": {
                           "type": "number"
                         },
@@ -4571,9 +4541,6 @@
                           "type": "string"
                         },
                         "source_id": {
-                          "type": "string"
-                        },
-                        "device": {
                           "type": "string"
                         },
                         "capture_latitude": {
@@ -5021,9 +4988,6 @@
                             }
                           },
                           "created_at": {
-                            "type": "string"
-                          },
-                          "device": {
                             "type": "string"
                           }
                         },
@@ -7073,9 +7037,6 @@
                           "type": "integer",
                           "minimum": 0,
                           "description": "The version this entry was based on, where it resolves a row that already exists. Optional, as on `POST /items`: an entry creating a row it has never read has no version to name. A stale one is refused like every other per-entry refusal here — the page rolls back under the default `atomic`, carrying `version_conflict` in `details.code`, or it is that entry's own `errored` outcome when `atomic` is false."
-                        },
-                        "device": {
-                          "type": "string"
                         },
                         "tags": {
                           "type": "array",
@@ -9237,9 +9198,6 @@
                             "type": "string"
                           },
                           "source_id": {
-                            "type": "string"
-                          },
-                          "device": {
                             "type": "string"
                           },
                           "capture_latitude": {
@@ -16777,9 +16735,6 @@
                               "source_id": {
                                 "type": "string"
                               },
-                              "device": {
-                                "type": "string"
-                              },
                               "capture_latitude": {
                                 "type": "number"
                               },
@@ -17278,9 +17233,6 @@
                                 "type": "string"
                               },
                               "source_id": {
-                                "type": "string"
-                              },
-                              "device": {
                                 "type": "string"
                               },
                               "capture_latitude": {
