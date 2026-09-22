@@ -155,11 +155,10 @@ pub fn hydration_complete(conn: &Connection) -> Result<bool, CoreError> {
 /// it is hydrated again (`device.md` 4).
 ///
 /// **The slice half is `holds_slice` and this composes it**, rather than
-/// testing the same keys a second time, because a second reading would have
-/// to agree with that one on parts that are easy to read differently:
-/// whether an empty type list counts, and whether the tier counts at all
-/// when catch-up requires it. A pair that disagreed would let a store report
-/// that it had never hydrated and answer a listing in the same breath.
+/// testing the same keys a second time, because the guard and the status
+/// report both ask it and a pair that read an empty type list differently
+/// would let one store report that it had never hydrated and answer a
+/// listing in the same breath.
 pub fn hydrated(conn: &Connection) -> Result<bool, CoreError> {
     if !hydration_complete(conn)? {
         return Ok(false);

@@ -627,13 +627,20 @@ describe("a cursor the log no longer holds", () => {
         reported.value.hydration,
         "an aged-out store did not report itself as expired, so a caller weighing whether the copy in hand is worth anything is told the wrong thing about it",
       ).toBe("expired");
-      // The witness for the word. `expired` is only distinguishable from
-      // `never` on a store that has something in it: with the slice gone
-      // too, the two would describe the same store and either would do.
+      // The witness for the word. `expired` is only worth having on a
+      // store that has something in it: with the slice and the rows gone,
+      // the two words would describe the same store and either would do.
+      // The rows, not only the declaration — the declaration survives a
+      // store with nothing in it, and what the word promises a caller is
+      // that the copy in hand is still worth something.
       expect(
         reported.value.slice_types,
         "the report says the slice is empty as well, so `expired` is a guess rather than a reading of what the store holds",
       ).toContain("core.note");
+      expect(
+        reported.value.items,
+        "the aging took the rows with it, so `expired` describes an empty store and promises a caller a copy that is not there",
+      ).toBe(1);
       expect(
         reported.value.event_cursor ?? null,
         "the store still holds a cursor, so `expired` is not about the aging at all",

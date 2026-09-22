@@ -468,6 +468,60 @@ describe("the working copy says what it is", () => {
       ).toBe("hydration_incomplete");
     }
   });
+
+  it("reports an interrupted re-hydration as in progress, not as a copy that aged out", async () => {
+    // The state the other three words are defined against. A hydration
+    // clears the cursor before it reads a page and leaves the previous
+    // slice declared, so a re-hydration that dies partway leaves a store
+    // that declares a slice and holds no cursor — which is the shape of a
+    // copy whose cursor aged out. The two are told apart by the marker, and
+    // which of them wins is a claim `device.md` 5 makes in words.
+    harness = await startHarness("interrupted-rehydration");
+    const { server, device } = harness;
+    scriptHydration(server, {
+      head: "10",
+      rows: { "core.note": [{ item: { id: "first" } }] },
+    });
+    // Queued behind the snapshot the first hydration takes: the server
+    // hands out its answers in order, so the second hydration is the one
+    // that dies partway.
+    server.answer("GET", "/items", { kind: "drop" });
+
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    const before = await device.status();
+    expect(
+      before.ok ? before.value.hydration : null,
+      "the first hydration did not leave a complete copy, so what the second one leaves is not a statement about an interruption",
+    ).toBe("complete");
+
+    const second = await device.hydrate(["core.note"], "library");
+    expect(
+      second.ok,
+      "the interrupted re-hydration reported success, so nothing below is a statement about an interrupted store",
+    ).toBe(false);
+
+    const after = await device.status();
+    expect(
+      after.ok,
+      `the status door was refused after an interrupted re-hydration: ${JSON.stringify(after)}`,
+    ).toBe(true);
+    if (!after.ok) return;
+    expect(
+      after.value.hydration,
+      "an interrupted re-hydration reported itself as a copy that aged out, so a caller is told to wait for a log it will never catch rather than to run the hydration again",
+    ).toBe("in_progress");
+    // The witness that this store really is the shape `expired` describes:
+    // the slice is still declared and the cursor is gone, so the two words
+    // are separated by the marker and not by the store being different.
+    expect(
+      after.value.slice_types,
+      "the interrupted re-hydration cleared the slice too, so this store is not the one the two words compete over",
+    ).toContain("core.note");
+    expect(
+      after.value.event_cursor ?? null,
+      "the interrupted re-hydration left a cursor, so the same",
+    ).toBeNull();
+  });
 });
 
 describe("a local read answers the active state unless asked otherwise", () => {

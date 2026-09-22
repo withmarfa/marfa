@@ -308,14 +308,17 @@ pub enum Hydration {
     Never,
     InProgress,
     Complete,
-    /// Hydrated, and the log has since moved past the cursor it kept.
+    /// A catch-up was told the log has moved past the cursor this store
+    /// kept, and the cursor was dropped.
     ///
-    /// The copy is whole as of the moment it stopped and cannot be brought
-    /// forward, so reads are refused exactly as they are for `Never` and
-    /// the remedy is the same. It is a value of its own because the two
-    /// states are not the same fact about the copy: `Never` says there is
-    /// nothing in it, and a caller deciding whether what it holds is worth
-    /// anything reads that and is wrong.
+    /// A record of an answer rather than a reading of the log: a store
+    /// whose cursor aged out and has not asked since reports `Complete`,
+    /// because nothing has told it. The copy is whole as of the moment it
+    /// stopped and cannot be brought forward, so reads are refused exactly
+    /// as they are for `Never` and the remedy is the same. It is a value of
+    /// its own because the two are not the same fact about the copy:
+    /// `Never` says there is nothing in it, and a caller deciding whether
+    /// what it holds is worth anything reads that and is wrong.
     Expired,
 }
 
