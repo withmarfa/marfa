@@ -497,6 +497,12 @@ describe("GET + DELETE /items/bulk-actions/jobs/:id", () => {
     expect(delRes.status).toBe(200);
     const answered = (await delRes.json()) as { status: string };
     expect(answered.status).toBe("canceled");
+
+    // And the row, not only the answer. A door that answered `canceled`
+    // optimistically and wrote nothing would satisfy the line above, which
+    // is the opposite of what this case claims: that the door does it.
+    const stored = await ctx.storage.bulkActionJobs.getById(queued.id);
+    expect(stored?.status).toBe("canceled");
   });
 
   it("DELETE 404s for an unknown job id", async () => {

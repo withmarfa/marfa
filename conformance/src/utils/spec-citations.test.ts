@@ -148,8 +148,10 @@ describe("specification citations", () => {
     // see it. The headings are the file's own numbering, and this is the one
     // statement about them that does not need to know what they say.
     const numbered = [...statementNumbers("findings.md")].sort((a, b) => a - b);
-    // The positive control: the headings parsed at all.
-    expect(numbered.length).toBeGreaterThan(4);
+    // The positive control: the headings parsed at all. A loose floor
+    // rather than the count, which would redden on the next removal for a
+    // reason that has nothing to do with what this asserts.
+    expect(numbered.length).toBeGreaterThan(2);
     expect(numbered).toEqual(numbered.map((_, index) => index + 1));
   });
 

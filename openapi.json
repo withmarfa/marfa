@@ -8727,7 +8727,7 @@
           "Items"
         ],
         "summary": "Cancel a bulk-action job",
-        "description": "Cancels a bulk-action job. A job still queued or running is set to `canceled` and the answer carries that state; a job already terminal is left as it is and answers its final state unchanged. The work stops between chunks rather than at the moment of the request, so a chunk already under way finishes after the answer.",
+        "description": "Cancels a bulk-action job. A job still queued or running is set to `canceled` and the answer carries that state; a job already terminal is left as it is and answers its final state unchanged.",
         "security": [
           {
             "bearerAuth": []

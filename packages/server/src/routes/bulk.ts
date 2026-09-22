@@ -390,9 +390,14 @@ const bulkActionStatusRoute = createRoute({
 
 // Request cancellation. The door sets the row itself, whether it is
 // queued or running, and answers what it wrote; a row already terminal is
-// left alone and answered as it stands. What happens between chunks is
-// that the worker finds the row canceled and stops, so a chunk already
-// under way finishes — the work ends after the answer, not with it.
+// left alone and answered as it stands.
+//
+// The description says that and no more. The worker reads the row at the
+// top of each chunk and stops when it finds it canceled, but there is no
+// read after the last chunk and `complete()` carries no status guard, so
+// a cancel landing in the final chunk is overwritten. Describing what
+// happens to the work afterwards would be the same unkeepable promise
+// this door's prose was rewritten to drop.
 const bulkActionCancelRoute = createRoute({
   method: "delete",
   path: "/bulk-actions/jobs/{id}",
@@ -400,7 +405,7 @@ const bulkActionCancelRoute = createRoute({
   tags: ["Items"],
   summary: "Cancel a bulk-action job",
   description:
-    "Cancels a bulk-action job. A job still queued or running is set to `canceled` and the answer carries that state; a job already terminal is left as it is and answers its final state unchanged. The work stops between chunks rather than at the moment of the request, so a chunk already under way finishes after the answer.",
+    "Cancels a bulk-action job. A job still queued or running is set to `canceled` and the answer carries that state; a job already terminal is left as it is and answers its final state unchanged.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({
