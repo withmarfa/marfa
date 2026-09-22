@@ -220,7 +220,7 @@ export function bulkGetRoutes(storage: Storage) {
     const visibleIds = visible.map((item) => item.id);
 
     const edgesMap = includeEdges
-      ? await hydrateEdgesForItems(storage, visibleIds)
+      ? await hydrateEdgesForItems(storage, apiKey, visibleIds)
       : null;
     const extensionsMap = includeExtensions
       ? await hydrateExtensionsForItems(storage, visibleIds, apiKey)

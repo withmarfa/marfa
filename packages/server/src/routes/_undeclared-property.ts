@@ -8,21 +8,27 @@ import {
 import type { EnforcementSettings } from "@withmarfa/shared";
 
 /**
- * The strict-mode lever, as `POST /items` and `POST /admin/restore-archive`
- * both ask it.
+ * The strict-mode lever, as every door that writes caller-supplied
+ * properties asks it: `POST /items`, `POST /items/bulk` on both halves of
+ * an upsert, `PATCH /items/{id}` and `POST /admin/restore-archive`.
  *
  * **One reading, because the lever belongs to the type and not to the
  * door.** The store's own `validateProperties` runs loose whatever the
  * configuration says, so a door that writes through the store has to ask
  * above it or not at all, and two doors asking separately are two doors
- * free to drift. Not every write path asks yet — `POST /items/bulk` and
- * `PATCH /items/{id}` still go to the store without it, which is recorded
- * as an open question rather than claimed here.
+ * free to drift.
  *
- * Returns the refusal rather than throwing it, because the two callers
- * answer differently: the create door throws into the error handler, and
- * the restore hands it to its own `refuse`, which clears the request's
- * spool files before answering.
+ * **The properties the caller sent, not the merge they land in.** An
+ * update measured against the merged result would refuse every write to a
+ * row that already carries an undeclared property from before the lever
+ * was set, which is a different rule from the one the create door
+ * enforces. What the lever refuses is a caller introducing one.
+ *
+ * Returns the refusal rather than throwing it, because the callers answer
+ * differently: the create doors throw into the error handler, the restore
+ * hands it to its own `refuse`, which clears the request's spool files
+ * before answering, and the bulk door's update half returns it as that
+ * entry's `errored` outcome.
  *
  * A type with no shipped schema is left alone: there is nothing to
  * measure "undeclared" against, and a lever naming such a type would

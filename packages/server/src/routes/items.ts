@@ -1553,6 +1553,7 @@ export function itemRoutes(storage: Storage) {
 
         const hydratedExisting = await hydrateEdgesForItem(
           storage,
+          requireAuth(c),
           updatedItem.id,
         );
         const itemWithEdges = { ...updatedItem, edges: hydratedExisting };
@@ -1960,7 +1961,7 @@ export function itemRoutes(storage: Storage) {
     const ids = result.data.map((item) => item.id);
     const apiKey = c.get("apiKey");
     const edgesMap = includeEdges
-      ? await hydrateEdgesForItems(storage, ids)
+      ? await hydrateEdgesForItems(storage, requireAuth(c), ids)
       : null;
     const extensionsMap = includeExtensions
       ? await hydrateExtensionsForItems(storage, ids, apiKey)
@@ -2021,6 +2022,9 @@ export function itemRoutes(storage: Storage) {
     }
 
     requireTypeAccess(c, item.type, "read");
+    // The credential the gate returns, which is what the edge blocks
+    // below are narrowed against.
+    const callerKey = requireAuth(c);
 
     const includeSet = new Set(
       (c.req.query("include") ?? "")
@@ -2037,9 +2041,9 @@ export function itemRoutes(storage: Storage) {
     // blocks are additive and default-off so the lean read stays lean.
     const [metadata, edges, backrefs, versions] = await Promise.all([
       storage.metadata.get(id),
-      hydrateEdgesForItem(storage, id),
+      hydrateEdgesForItem(storage, callerKey, id),
       includeBackrefs
-        ? hydrateBackrefsForItem(storage, id)
+        ? hydrateBackrefsForItem(storage, callerKey, id)
         : Promise.resolve(null),
       includeVersions ? storage.versions.list(id) : Promise.resolve(null),
     ]);
@@ -2286,6 +2290,14 @@ export function itemRoutes(storage: Storage) {
     }
 
     if (body.properties) {
+      // The levers this door has to ask before it writes. Read here
+      // rather than at the top of the handler because this is the only
+      // branch that needs them: a body carrying no `properties` changes
+      // nothing a schema has an opinion about.
+      const enforcementForUpdate = resolveEnforcement(
+        await readInstanceConfig(storage.settings),
+        c.get("apiKey"),
+      );
       // Through the shared helper rather than a shallow spread of its own,
       // because this has to predict exactly what the store will write: a
       // copy that validated the merged set while the store wrote the
@@ -2296,6 +2308,29 @@ export function itemRoutes(storage: Storage) {
       // would admit a move whose result the destination calls invalid,
       // which is the whole hazard of moving a corpus.
       const resultingType = retypeTo ?? item.type;
+      // The strict-mode lever, which this door went past. `POST /items`
+      // asks it of the properties the caller sent, and so does the
+      // restore door; asked of the same input here, through the same
+      // function, so the three cannot drift. A caller could otherwise
+      // write a property no type declares through the update door that
+      // the create door beside it refuses, on a type the lever names —
+      // and the property reads back ever after undeclared and unmarked
+      // under the type's current version.
+      //
+      // Against the payload rather than the merged result, because that
+      // is the reading the other two callers take: the lever refuses a
+      // caller introducing an undeclared property, and measuring the
+      // merge would instead freeze every row that already carries one
+      // from before the lever was set.
+      //
+      // Against the type the row ends up as, for the reason the
+      // validation below uses it: a move is judged by the destination.
+      const undeclared = undeclaredPropertyRefusal(
+        enforcementForUpdate,
+        resultingType,
+        body.properties,
+      );
+      if (undeclared) throw undeclared;
       const merged = mergeUpdateProperties(
         item.properties,
         resolveIncomingProperties(resultingType, body.properties, false),
@@ -2498,7 +2533,7 @@ export function itemRoutes(storage: Storage) {
       resource_type: "item",
       resource_id: id,
     });
-    const hydrated = await hydrateEdgesForItem(storage, id);
+    const hydrated = await hydrateEdgesForItem(storage, requireAuth(c), id);
     return c.json(
       {
         item: { ...resolvedItem, edges: hydrated },

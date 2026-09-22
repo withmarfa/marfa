@@ -7,6 +7,7 @@ import { resolveEnforcement } from "@withmarfa/shared";
 import * as tar from "tar-stream";
 import type { AppEnv } from "../middleware/auth.js";
 import { assertTypeFilter } from "./_type-filter.js";
+import { edgeKindReadable } from "./_edge-visibility.js";
 import { withPreparedHeaders } from "../prepared-headers.js";
 import { requireAuth, getTypeFilter } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
@@ -140,7 +141,9 @@ export function exportRoutes(
   const router = createOpenAPIRouter<AppEnv>();
 
   router.openapi(exportRoute, async (c) => {
-    requireAuth(c);
+    // The credential the gate returns rather than a re-read of the
+    // context, which loses the narrowing a session's grant applied.
+    const callerKey = requireAuth(c);
 
     // One check for both output formats: `format=archive` is handled by a
     // separate function further down but arrives through this handler and
@@ -260,9 +263,20 @@ export function exportRoutes(
                 cursor: edgeCursor,
               });
               for (const edge of page.data) {
+              // Both halves of the edge read gate, answered differently
+              // because this door has already answered one of them.
+              // `exportedIds` is the set of items this credential may
+              // read, so requiring both endpoints in it settles the
+              // source half more strictly than the gate asks. The edge
+              // type is this door's own gap: an export carried every
+              // kind of relationship among those items whatever the
+              // credential's edge map said, which is the same disclosure
+              // `GET /edges` closed, reached through a copy instead of a
+              // page.
                 if (
                   exportedIds.has(edge.source_id) &&
-                  exportedIds.has(edge.target_id)
+                  exportedIds.has(edge.target_id) &&
+                  edgeKindReadable(callerKey, edge)
                 ) {
                   controller.enqueue(
                     encoder.encode(JSON.stringify({ edge }) + "\n"),
@@ -360,6 +374,7 @@ async function handleArchiveExport(
   const occurredBefore = c.req.query("occurred_before");
   const source = c.req.query("source");
   const { allowed: allowedTypes, excluded: excludedTypes } = getTypeFilter(c);
+  const callerKey = requireAuth(c);
 
   const lines: string[] = [];
   const edgeLines: string[] = [];
@@ -414,9 +429,13 @@ async function handleArchiveExport(
         cursor: edgeCursor,
       });
       for (const edge of page.data) {
+        // The NDJSON path's twin, and the same two halves: the endpoint
+        // rule settles the source, and the edge map has to be asked for
+        // the kind of relationship.
         if (
           exportedIds.has(edge.source_id) &&
-          exportedIds.has(edge.target_id)
+          exportedIds.has(edge.target_id) &&
+          edgeKindReadable(callerKey, edge)
         ) {
           edgeLines.push(JSON.stringify({ edge }));
         }

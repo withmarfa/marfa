@@ -1,10 +1,11 @@
-import type { Edge } from "@withmarfa/shared";
+import type { ApiKey, Edge } from "@withmarfa/shared";
 import type { CursorSortKey, Storage } from "../storage/interface.js";
 import {
   ITEM_BACKREFS_CURSOR_KEY,
   ITEM_EDGES_CURSOR_KEY,
   encodeKeyedCursor,
 } from "../storage/interface.js";
+import { readableEdges } from "./_edge-visibility.js";
 
 /** The most edges of one type an item response carries inline; a block
  *  cut here says so with `has_more` and a cursor for the rest. */
@@ -18,44 +19,125 @@ export interface HydratedEdgeBlock {
 
 export type HydratedEdges = Record<string, HydratedEdgeBlock>;
 
+/**
+ * The ids of these edges the credential may read, in one query for the
+ * whole set however many items it spans.
+ */
+async function visibleEdgeIds(
+  storage: Storage,
+  key: ApiKey,
+  edges: Edge[],
+): Promise<Set<string>> {
+  if (edges.length === 0) return new Set();
+  return new Set((await readableEdges(storage, key, edges)).map((e) => e.id));
+}
+
+/**
+ * Drop from every block what the credential may not read, and drop a
+ * block that empties.
+ *
+ * **After the cut rather than before it**, matching `GET /edges`: the cap
+ * and the cursor come from the store's own window and are left alone, so
+ * a block can come back shorter than the cap while `has_more` still says
+ * there is more to page for. Filtering first would move `has_more` onto
+ * the readable rows of one window, and a client would stop on a block
+ * that had simply been thinned.
+ *
+ * **A block that empties is removed, not left standing empty.** The key
+ * of a block is an edge type, so an empty block named `about` says this
+ * item has `about` edges the caller may not see — the disclosure the
+ * filter exists to close, in the shape of a map key.
+ */
+function applyVisibility(
+  blocks: HydratedEdges,
+  visible: Set<string>,
+): HydratedEdges {
+  const out: HydratedEdges = {};
+  for (const [type, block] of Object.entries(blocks)) {
+    const edges = block.edges.filter((edge) => visible.has(edge.id));
+    if (edges.length === 0) continue;
+    out[type] = { ...block, edges };
+  }
+  return out;
+}
+
 /** An item's outbound edges grouped by type, each block cut at the cap
- *  with a cursor `GET /items/{id}/edges?edge_type=X` continues. */
+ *  with a cursor `GET /items/{id}/edges?edge_type=X` continues, and held
+ *  to the same two permissions the edge doors ask for. */
 export async function hydrateEdgesForItem(
   storage: Storage,
+  key: ApiKey,
   itemId: string,
   cap = HYDRATE_PER_TYPE_CAP,
 ): Promise<HydratedEdges> {
   const batched = await storage.edges.listFromSourcesBatched([itemId], cap + 1);
-  const edges = batched.get(itemId) ?? [];
-  return groupAndCap(edges, cap, ITEM_EDGES_CURSOR_KEY);
+  const blocks = groupAndCap(
+    batched.get(itemId) ?? [],
+    cap,
+    ITEM_EDGES_CURSOR_KEY,
+  );
+  const visible = await visibleEdgeIds(
+    storage,
+    key,
+    Object.values(blocks).flatMap((b) => b.edges),
+  );
+  return applyVisibility(blocks, visible);
 }
 
-/** The same for every item of a listing, from one query. */
+/** The same for every item of a listing, from one query — and one
+ *  visibility query for the whole page rather than one per item, which on
+ *  a page of five hundred would be five hundred serial round trips. */
 export async function hydrateEdgesForItems(
   storage: Storage,
+  key: ApiKey,
   itemIds: string[],
   cap = HYDRATE_PER_TYPE_CAP,
 ): Promise<Map<string, HydratedEdges>> {
   if (itemIds.length === 0) return new Map();
   const batched = await storage.edges.listFromSourcesBatched(itemIds, cap + 1);
-  const out = new Map<string, HydratedEdges>();
+  const capped = new Map<string, HydratedEdges>();
+  const all: Edge[] = [];
   for (const id of itemIds) {
-    const edges = batched.get(id) ?? [];
-    out.set(id, groupAndCap(edges, cap, ITEM_EDGES_CURSOR_KEY));
+    const blocks = groupAndCap(
+      batched.get(id) ?? [],
+      cap,
+      ITEM_EDGES_CURSOR_KEY,
+    );
+    capped.set(id, blocks);
+    for (const block of Object.values(blocks)) all.push(...block.edges);
+  }
+  const visible = await visibleEdgeIds(storage, key, all);
+  const out = new Map<string, HydratedEdges>();
+  for (const [id, blocks] of capped) {
+    out.set(id, applyVisibility(blocks, visible));
   }
   return out;
 }
 
 /** An item's inbound edges grouped by type, each block cut at the cap
- *  with a cursor `GET /items/{id}/backrefs?edge_type=X` continues. */
+ *  with a cursor `GET /items/{id}/backrefs?edge_type=X` continues.
+ *
+ *  The direction that needs both questions rather than one: the anchor
+ *  here is the **target**, and an edge's readability is its source
+ *  item's — a row the caller of this hydration never authorized. */
 export async function hydrateBackrefsForItem(
   storage: Storage,
+  key: ApiKey,
   itemId: string,
   cap = HYDRATE_PER_TYPE_CAP,
 ): Promise<HydratedEdges> {
   const batched = await storage.edges.listToTargetsBatched([itemId], cap + 1);
-  const edges = batched.get(itemId) ?? [];
-  return groupAndCap(edges, cap, ITEM_BACKREFS_CURSOR_KEY);
+  const blocks = groupAndCap(
+    batched.get(itemId) ?? [],
+    cap,
+    ITEM_BACKREFS_CURSOR_KEY,
+  );
+  const visible = await visibleEdgeIds(
+    storage,
+    key,
+    Object.values(blocks).flatMap((b) => b.edges),
+  );
+  return applyVisibility(blocks, visible);
 }
 
 /**

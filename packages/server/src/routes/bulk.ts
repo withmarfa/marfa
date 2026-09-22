@@ -40,7 +40,11 @@ import {
   resolveEnforcement,
   malformedTypeIdentifier,
 } from "@withmarfa/shared";
-import type { Item, Metadata } from "@withmarfa/shared";
+import type {
+  EnforcementSettings,
+  Item,
+  Metadata,
+} from "@withmarfa/shared";
 import {
   mergeUpdateProperties,
   resolveIncomingProperties,
@@ -60,6 +64,7 @@ import { MAX_TAGS_PER_ITEM } from "../tag-limits.js";
 import { namesSystemNamespace } from "./_system-type-visibility.js";
 import type { BulkActionJobRow, Storage } from "../storage/interface.js";
 import { readInstanceConfig } from "../storage/instance-config.js";
+import { undeclaredPropertyRefusal } from "./_undeclared-property.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import { bulkAtomicRollback, isEntryVerdict } from "./_bulk-rollback.js";
 import { publish } from "../pubsub.js";
@@ -532,6 +537,14 @@ async function processBulkItem(
      * below the result this function reports.
      */
     recordEdgeChanges: (changes: InlineEdgeChanges) => void;
+    /**
+     * The instance's enforcement levers, resolved once for the batch.
+     *
+     * Read by the caller rather than per entry: the configuration is one
+     * row, a page carries up to five thousand entries, and the answer
+     * cannot change inside a batch.
+     */
+    enforcement: EnforcementSettings;
   },
 ): Promise<ProcessedBulkItem> {
   if (!isValidTypeIdentifier(raw.type)) {
@@ -760,6 +773,36 @@ async function processBulkItem(
     // approximating it — and against the type the row ends up as, because
     // judging a move against the type being left would admit one whose
     // result the destination calls invalid.
+    if (raw.properties !== undefined) {
+      // The same lever the create branch asks a few lines down, asked of
+      // the update half for the same reason: this is one door, and a
+      // door that refused an undeclared property on the rows it creates
+      // and accepted it on the rows it updates would be the defect
+      // restated rather than closed. `PATCH /items/{id}`, which is this
+      // branch reached singly, asks it of the same input.
+      const undeclaredOnUpdate = undeclaredPropertyRefusal(
+        options.enforcement,
+        resultingType,
+        raw.properties,
+        { index, item_id: existing.id },
+      );
+      if (undeclaredOnUpdate) {
+        return {
+          result: {
+            index,
+            outcome: "errored",
+            id: existing.id,
+            error: {
+              code: undeclaredOnUpdate.code,
+              message: undeclaredOnUpdate.message,
+              ...(undeclaredOnUpdate.details && {
+                details: undeclaredOnUpdate.details,
+              }),
+            },
+          },
+        };
+      }
+    }
     if (isMove || raw.properties !== undefined) {
       const merged = mergeUpdateProperties(
         existing.properties,
@@ -903,6 +946,30 @@ async function processBulkItem(
         throw new MarfaError(ErrorCode.VALIDATION_ERROR, stateError);
       }
     }
+    // The strict-mode lever, which this door went past on its way to the
+    // store. `storage.items.create` validates loosely whatever the
+    // configuration says, so a door writing through it asks above the
+    // store or not at all — and this is the door built for volume,
+    // reachable by any working key, where `POST /items` beside it refuses
+    // the identical body. A property that lands reads back ever after
+    // undeclared and unmarked under the type's current version.
+    //
+    // The same function the create and restore doors call, given the
+    // entry's index so a caller reading a refused batch can tell which
+    // row it came from — the details bag that helper carries exists for
+    // exactly this.
+    //
+    // Thrown rather than returned, inside the `try` that turns an entry
+    // verdict into this row's `errored` outcome: in best-effort mode the
+    // page reports it beside the entry, and in atomic mode it rolls the
+    // batch back with the refusal's own status.
+    const undeclaredOnCreate = undeclaredPropertyRefusal(
+      options.enforcement,
+      raw.type,
+      raw.properties ?? {},
+      { index },
+    );
+    if (undeclaredOnCreate) throw undeclaredOnCreate;
     const createInput: CreateInput = {
       type: raw.type,
       properties: raw.properties ?? {},
@@ -993,6 +1060,14 @@ export function bulkRoutes(storage: Storage) {
     }
 
     const stampedSource = itemProvenanceSource(c.get("apiKey"));
+
+    // The instance's enforcement levers, read once for the page. The
+    // strict-mode half is what each entry is held to below; the read is
+    // one row and the answer cannot change inside a batch.
+    const enforcement = resolveEnforcement(
+      await readInstanceConfig(storage.settings),
+      c.get("apiKey"),
+    );
 
     if (items.length === 0) {
       return c.json(
@@ -1088,6 +1163,7 @@ export function bulkRoutes(storage: Storage) {
           checkUpdate,
           checkEdgeWrite,
           recordEdgeChanges: (changes) => inlineEdgeChanges.push(changes),
+          enforcement,
         });
         if (atomic && processed.result.outcome === "errored") {
           // In atomic mode a single failure aborts the whole batch. Throw
