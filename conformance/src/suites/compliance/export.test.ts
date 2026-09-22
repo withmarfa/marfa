@@ -10,6 +10,7 @@ import {
   createTestContext,
   trackItem,
   trackEdge,
+  trackEdgeType,
   trackKey,
   cleanup,
 } from "../../utils/setup.js";
@@ -200,6 +201,105 @@ describe("export", () => {
     );
     expect(lastItemIndex).not.toBe(-1);
     expect(edgeIndex).toBeGreaterThan(lastItemIndex);
+  });
+
+  it("carries only the kinds of relationship the credential may read", async () => {
+    // An export is a copy of what the credential may read, and its items
+    // already are: they go through the same type map every listing does.
+    // Its edges did not — every kind of relationship among those items
+    // came out whatever the edge map said, which is the disclosure
+    // `GET /edges` closed, reached through a copy instead of a page.
+    const seenKind = `mock.export.seen.${ctx.runId}`;
+    const unseenKind = `mock.export.unseen.${ctx.runId}`;
+    for (const id of [seenKind, unseenKind]) {
+      const registered = await client.registerEdgeType({
+        id,
+        cardinality: "many-to-many",
+      });
+      expect(registered.ok, JSON.stringify(registered.error)).toBe(true);
+      trackEdgeType(ctx, id);
+    }
+
+    const source = `${ctx.source}-edge-scope`;
+    const writerResp = await client.createKey({
+      label: "export-edge-scope-writer",
+      source,
+      permissions: [],
+      type_permissions: { "*": "write" },
+      edge_permissions: { "*": "write" },
+    });
+    expect(writerResp.ok, JSON.stringify(writerResp.error)).toBe(true);
+    trackKey(ctx, writerResp.data.id);
+    const writer = new MarfaClient({
+      baseUrl: apiUrl,
+      apiKey: writerResp.data.key,
+    });
+
+    const a = await writer.createItem(createNote({ source }));
+    expect(a.ok, JSON.stringify(a.error)).toBe(true);
+    trackItem(ctx, a.data.item.id);
+    const b = await writer.createItem(createNote({ source }));
+    expect(b.ok, JSON.stringify(b.error)).toBe(true);
+    trackItem(ctx, b.data.item.id);
+
+    const visible = await writer.createEdge({
+      source_id: a.data.item.id,
+      target_id: b.data.item.id,
+      edge_type: seenKind,
+    });
+    expect(visible.ok, JSON.stringify(visible.error)).toBe(true);
+    trackEdge(ctx, visible.data.edge.id);
+    const hidden = await writer.createEdge({
+      source_id: a.data.item.id,
+      target_id: b.data.item.id,
+      edge_type: unseenKind,
+    });
+    expect(hidden.ok, JSON.stringify(hidden.error)).toBe(true);
+    trackEdge(ctx, hidden.data.edge.id);
+
+    const edgeIdsOf = (raw: string): string[] =>
+      raw
+        .split("\n")
+        .filter((line) => line.trim() !== "")
+        .map((line) => JSON.parse(line) as { edge?: MarfaEdge })
+        .flatMap((line) => (line.edge ? [line.edge.id] : []));
+
+    // Both endpoints are the same two readable items in both rows, so
+    // what the export leaves out can only be the kind of relationship.
+    const narrowResp = await client.createKey({
+      label: "export-edge-scope-narrow",
+      // Its own source, not the writer's: a display name belongs to one
+      // credential, and what this key exports is chosen by the `source`
+      // filter rather than by the source it writes under.
+      source: `${source}-reader`,
+      permissions: [],
+      type_permissions: { "*": "read" },
+      edge_permissions: { [seenKind]: "read" },
+    });
+    expect(narrowResp.ok, JSON.stringify(narrowResp.error)).toBe(true);
+    trackKey(ctx, narrowResp.data.id);
+    const narrowExport = await new MarfaClient({
+      baseUrl: apiUrl,
+      apiKey: narrowResp.data.key,
+    }).exportItems({ source });
+    expect(narrowExport.ok, JSON.stringify(narrowExport.error)).toBe(true);
+    const narrowIds = edgeIdsOf(narrowExport.data);
+    expect(
+      narrowIds,
+      "the export dropped an edge of a kind the credential holds, so it refuses more than the gate asks",
+    ).toContain(visible.data.edge.id);
+    expect(
+      narrowIds,
+      "the export carried a kind of relationship this credential may not read",
+    ).not.toContain(hidden.data.edge.id);
+
+    // The witness: the same export under a credential holding both kinds
+    // carries both rows, so the absence above is the edge map.
+    const wideExport = await client.exportItems({ source });
+    expect(wideExport.ok, JSON.stringify(wideExport.error)).toBe(true);
+    const wideIds = edgeIdsOf(wideExport.data);
+    expect(wideIds).toContain(visible.data.edge.id);
+    expect(wideIds).toContain(hidden.data.edge.id);
   });
 
   it("refuses a format outside the two it offers", async () => {

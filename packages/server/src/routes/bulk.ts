@@ -40,11 +40,7 @@ import {
   resolveEnforcement,
   malformedTypeIdentifier,
 } from "@withmarfa/shared";
-import type {
-  EnforcementSettings,
-  Item,
-  Metadata,
-} from "@withmarfa/shared";
+import type { EnforcementSettings, Item, Metadata } from "@withmarfa/shared";
 import {
   mergeUpdateProperties,
   resolveIncomingProperties,

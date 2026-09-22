@@ -231,6 +231,163 @@ describe("strict_mode lever", () => {
     expect((await client.getItem(fine)).status).toBe(200);
   });
 
+  it("strict-on rejects the same unknown property through the bulk door, on both halves of an upsert", async () => {
+    // The door built for volume, reachable by any working key, and it
+    // reached `storage.items.create` and `storage.items.update` directly
+    // — where validation runs loose whatever the lever says. So the
+    // control `POST /items` enforces was a different door away, on both
+    // the rows this page creates and the rows it updates.
+    await setConfig({
+      enforcement: { strict_mode: { types: ["core.note"] } },
+    });
+
+    const created = uuidv7();
+    const refusedCreate = await client.bulkItems({
+      items: [
+        {
+          id: created,
+          type: "core.note",
+          properties: { body: "bulk create", not_a_real_field: "x" },
+        },
+      ],
+      atomic: false,
+    });
+    expect(refusedCreate.ok, JSON.stringify(refusedCreate.error)).toBe(true);
+    expect(refusedCreate.data.counts.errored).toBe(1);
+    expect(refusedCreate.data.results[0]?.error?.code).toBe(
+      "invalid_properties",
+    );
+    expect(
+      (await client.getItem(created)).status,
+      "the refused entry wrote its row anyway",
+    ).toBe(404);
+
+    // The witness for the create half: the same body without the
+    // property lands, so what was refused is the property and not the
+    // door, the type or the id.
+    const acceptedCreate = await client.bulkItems({
+      items: [
+        { id: created, type: "core.note", properties: { body: "bulk create" } },
+      ],
+      atomic: false,
+    });
+    expect(acceptedCreate.ok, JSON.stringify(acceptedCreate.error)).toBe(true);
+    expect(acceptedCreate.data.counts.created).toBe(1);
+    trackItem(ctx, created);
+
+    // And the update half of the same door, against the row just
+    // written. A door that refused an undeclared property on the rows it
+    // creates and took it on the rows it updates would be the defect
+    // restated rather than closed.
+    const refusedUpdate = await client.bulkItems({
+      items: [
+        {
+          id: created,
+          type: "core.note",
+          properties: { body: "bulk update", not_a_real_field: "x" },
+        },
+      ],
+      atomic: false,
+    });
+    expect(refusedUpdate.ok, JSON.stringify(refusedUpdate.error)).toBe(true);
+    expect(refusedUpdate.data.counts.errored).toBe(1);
+    expect(refusedUpdate.data.results[0]?.error?.code).toBe(
+      "invalid_properties",
+    );
+    expect(
+      (await client.getItem(created)).data.item.properties.body,
+      "the refused entry wrote its properties anyway",
+    ).toBe("bulk create");
+
+    const acceptedUpdate = await client.bulkItems({
+      items: [
+        { id: created, type: "core.note", properties: { body: "bulk update" } },
+      ],
+      atomic: false,
+    });
+    expect(acceptedUpdate.ok, JSON.stringify(acceptedUpdate.error)).toBe(true);
+    expect(acceptedUpdate.data.counts.updated).toBe(1);
+    expect((await client.getItem(created)).data.item.properties.body).toBe(
+      "bulk update",
+    );
+  });
+
+  it("strict-on rejects the same unknown property through the update door", async () => {
+    // `PATCH /items/{id}` validated loosely too, so a row created under
+    // the lever could be given the property it was refused at creation,
+    // one request later.
+    await setConfig({
+      enforcement: { strict_mode: { types: ["core.note"] } },
+    });
+    const made = await client.createItem({
+      type: "core.note",
+      properties: { body: "patch base" },
+    });
+    expect(made.ok, JSON.stringify(made.error)).toBe(true);
+    trackItem(ctx, made.data.item.id);
+
+    const refused = await client.updateItem(made.data.item.id, {
+      version: made.data.item.version,
+      properties: { body: "patched", not_a_real_field: "x" },
+    });
+    expect(refused.status).toBe(400);
+    expect(refused.error?.error.code).toBe("invalid_properties");
+    expect(refused.error?.error.details?.code).toBe("unknown_property");
+    const afterRefusal = await client.getItem(made.data.item.id);
+    expect(
+      afterRefusal.data.item.properties.body,
+      "the refused update wrote its properties anyway",
+    ).toBe("patch base");
+
+    // The witness: the same body minus the property is taken.
+    const accepted = await client.updateItem(made.data.item.id, {
+      version: made.data.item.version,
+      properties: { body: "patched" },
+    });
+    expect(accepted.ok, JSON.stringify(accepted.error)).toBe(true);
+    expect(
+      (await client.getItem(made.data.item.id)).data.item.properties.body,
+    ).toBe("patched");
+  });
+
+  it("default-off accepts through the bulk and update doors as it does through the create door", async () => {
+    // The other half of the lever, and the reason the two cases above are
+    // about the lever rather than about those doors: with nothing
+    // configured, both take the property and serve it back. A door that
+    // refused it regardless would be a second rule wearing the first
+    // one's name.
+    await setConfig({});
+    const id = uuidv7();
+    const bulk = await client.bulkItems({
+      items: [
+        {
+          id,
+          type: "core.note",
+          properties: { body: "off", not_a_real_field: "x" },
+        },
+      ],
+      atomic: false,
+    });
+    expect(bulk.ok, JSON.stringify(bulk.error)).toBe(true);
+    expect(bulk.data.counts.created).toBe(1);
+    trackItem(ctx, id);
+    expect(
+      (await client.getItem(id)).data.item.properties.not_a_real_field,
+      "the bulk door took the row and dropped the property, so the case above refuses something it never writes",
+    ).toBe("x");
+
+    const written = await client.getItem(id);
+    const patched = await client.updateItem(id, {
+      version: written.data.item.version,
+      properties: { another_unreal_field: "y" },
+    });
+    expect(patched.ok, JSON.stringify(patched.error)).toBe(true);
+    expect(
+      (await client.getItem(id)).data.item.properties.another_unreal_field,
+      "the update door took the row and dropped the property",
+    ).toBe("y");
+  });
+
   it("default-off accepts through the restore door as it does through the create door", async () => {
     // The other half of the lever, and the reason the case above is about
     // the lever rather than about archives: with nothing configured, both

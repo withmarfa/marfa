@@ -592,3 +592,232 @@ describe("the edge listing answers only what the credential may read", () => {
     expect(seen.sort()).toEqual([...readable].sort());
   });
 });
+
+/**
+ * The doors under an item, against the same single read.
+ *
+ * Each checked the anchor item's type and stopped. On the outbound side
+ * that settles the source — the anchor is every row's source — and leaves
+ * the edge type unasked, so a credential holding read on one kind of
+ * relationship was handed every kind the item has. On the inbound side it
+ * settles neither: the anchor is the **target**, and an edge's
+ * readability is its source item's, a row the door never read.
+ *
+ * Every case names its own edge types and filters on them, so what it
+ * asserts is about the rows it made rather than about whatever else the
+ * run's shared instance holds. And every case carries its witness in the
+ * same answer: a row the credential does see, so an absence is the gate
+ * rather than an empty fixture.
+ */
+describe("the doors under an item answer only what the credential may read", () => {
+  /** A registered edge type of this run's own, many-to-many so a case can
+   *  hang several edges off one item. */
+  async function kind(label: string): Promise<string> {
+    const id = `mock.underitem.${label}.${ctx.runId}`;
+    const registered = await client.registerEdgeType({
+      id,
+      cardinality: "many-to-many",
+    });
+    expect(registered.ok, JSON.stringify(registered.error)).toBe(true);
+    trackEdgeType(ctx, id);
+    return id;
+  }
+
+  /** A bookmark, which the narrow credentials below cannot read. */
+  async function hiddenItem(label: string): Promise<string> {
+    const r = await client.createItem(
+      createBookmark({ properties: { title: `ep-${label}` } }),
+    );
+    expect(r.ok, JSON.stringify(r.error)).toBe(true);
+    trackItem(ctx, r.data.item.id);
+    return r.data.item.id;
+  }
+
+  async function edge(
+    source: string,
+    target: string,
+    edgeType: string,
+  ): Promise<string> {
+    const r = await client.createEdge({
+      source_id: source,
+      target_id: target,
+      edge_type: edgeType,
+    });
+    expect(r.ok, JSON.stringify(r.error)).toBe(true);
+    trackEdge(ctx, r.data.edge.id);
+    return r.data.edge.id;
+  }
+
+  it("leaves an edge of an unreadable kind out of GET /items/{id}/edges", async () => {
+    const seen = await kind("out-seen");
+    const unseen = await kind("out-unseen");
+    const anchor = await scopedItem(client, "outbound-anchor");
+    const target = await scopedItem(client, "outbound-target");
+    const visibleEdge = await edge(anchor, target, seen);
+    const hiddenEdge = await edge(anchor, target, unseen);
+
+    // Reads the anchor's type, so the door's own gate passes, and holds
+    // one of the two edge types. What it cannot see can only be the kind
+    // of relationship.
+    const narrow = await makeKey("underitem-out-narrow", {
+      type_permissions: { "core.note": "read" },
+      edge_permissions: { [seen]: "read" },
+    });
+    const narrowClient = new MarfaClient({
+      baseUrl: apiUrl,
+      apiKey: narrow.key,
+    });
+
+    const page = await narrowClient.listItemEdges(anchor, { limit: 100 });
+    expect(page.ok, JSON.stringify(page.error)).toBe(true);
+    const ids = page.data.data.map((e) => e.id);
+    expect(
+      ids,
+      "the credential could not see an edge of a kind it holds, so the door refuses more than the gate asks",
+    ).toContain(visibleEdge);
+    expect(
+      ids,
+      "the door disclosed an edge of a kind this credential may not read",
+    ).not.toContain(hiddenEdge);
+
+    // And the row is really there, so what changed is the credential's
+    // reach and not the item's edges.
+    const wide = await makeKey("underitem-out-wide", {
+      type_permissions: { "*": "read" },
+      edge_permissions: { "*": "read" },
+    });
+    const widePage = await new MarfaClient({
+      baseUrl: apiUrl,
+      apiKey: wide.key,
+    }).listItemEdges(anchor, { limit: 100 });
+    expect(widePage.ok, JSON.stringify(widePage.error)).toBe(true);
+    expect(widePage.data.data.map((e) => e.id).sort()).toEqual(
+      [visibleEdge, hiddenEdge].sort(),
+    );
+  });
+
+  it("leaves an edge with an unreadable source out of GET /items/{id}/backrefs", async () => {
+    const edgeType = await kind("back");
+    const anchor = await scopedItem(client, "backref-anchor");
+    const readableSource = await scopedItem(client, "backref-readable");
+    const hiddenSource = await hiddenItem("backref-hidden");
+    const visibleEdge = await edge(readableSource, anchor, edgeType);
+    const hiddenEdge = await edge(hiddenSource, anchor, edgeType);
+
+    // Holds every edge type, so what the door leaves out can only be the
+    // source item's type — which this door never looked at, because its
+    // anchor is the target.
+    const narrow = await makeKey("underitem-back-narrow", {
+      type_permissions: { "core.note": "read" },
+      edge_permissions: { "*": "read" },
+    });
+    const narrowClient = new MarfaClient({
+      baseUrl: apiUrl,
+      apiKey: narrow.key,
+    });
+
+    const page = await narrowClient.listItemBackrefs(anchor, { limit: 100 });
+    expect(page.ok, JSON.stringify(page.error)).toBe(true);
+    const ids = page.data.data.map((e) => e.id);
+    expect(
+      ids,
+      "the credential could not see a backref whose source it may read, so the door refuses more than the gate asks",
+    ).toContain(visibleEdge);
+    expect(
+      ids,
+      "the door disclosed a relationship whose source is a type this credential may not read",
+    ).not.toContain(hiddenEdge);
+
+    const wide = await makeKey("underitem-back-wide", {
+      type_permissions: { "*": "read" },
+      edge_permissions: { "*": "read" },
+    });
+    const widePage = await new MarfaClient({
+      baseUrl: apiUrl,
+      apiKey: wide.key,
+    }).listItemBackrefs(anchor, { limit: 100 });
+    expect(widePage.ok, JSON.stringify(widePage.error)).toBe(true);
+    expect(widePage.data.data.map((e) => e.id).sort()).toEqual(
+      [visibleEdge, hiddenEdge].sort(),
+    );
+  });
+
+  it("narrows the edges carried on an item read and on a bulk read", async () => {
+    const seen = await kind("hydrate-seen");
+    const unseen = await kind("hydrate-unseen");
+    const anchor = await scopedItem(client, "hydrate-anchor");
+    const target = await scopedItem(client, "hydrate-target");
+    const hiddenSource = await hiddenItem("hydrate-hidden-source");
+    const visibleEdge = await edge(anchor, target, seen);
+    const hiddenKindEdge = await edge(anchor, target, unseen);
+    const hiddenSourceEdge = await edge(hiddenSource, anchor, seen);
+
+    const narrow = await makeKey("underitem-hydrate-narrow", {
+      type_permissions: { "core.note": "read" },
+      edge_permissions: { [seen]: "read" },
+    });
+    const narrowClient = new MarfaClient({
+      baseUrl: apiUrl,
+      apiKey: narrow.key,
+    });
+
+    // The blocks are keyed by edge type, so a block that emptied has to
+    // go rather than stand empty: an `unseen` key on the response says
+    // this item has edges of that kind, which is the disclosure in the
+    // shape of a map key.
+    const read = await narrowClient.getItem(anchor);
+    expect(read.ok, JSON.stringify(read.error)).toBe(true);
+    const blocks = read.data.item.edges ?? {};
+    expect(
+      blocks[seen]?.edges.map((e) => e.id),
+      "the item read dropped an edge of a kind the credential holds",
+    ).toContain(visibleEdge);
+    expect(
+      Object.keys(blocks),
+      "the item read named an edge type this credential may not read",
+    ).not.toContain(unseen);
+
+    // The inbound half of the same read, whose anchor is the target and
+    // whose rows are therefore readable only through their sources.
+    const withBackrefs = await narrowClient.getItemWithBackrefs(anchor);
+    expect(withBackrefs.ok, JSON.stringify(withBackrefs.error)).toBe(true);
+    const backBlocks = withBackrefs.data.backrefs ?? {};
+    expect(
+      Object.values(backBlocks).flatMap((b) => b.edges.map((e) => e.id)),
+      "the item read disclosed a backref whose source is a type this credential may not read",
+    ).not.toContain(hiddenSourceEdge);
+
+    // The batched door through the same hydration, which an item listing
+    // also goes through.
+    const bulk = await narrowClient.bulkGet([anchor], ["edges"]);
+    expect(bulk.ok, JSON.stringify(bulk.error)).toBe(true);
+    const bulkBlocks = bulk.data.items[0]?.edges ?? {};
+    expect(
+      bulkBlocks[seen]?.edges.map((e) => e.id),
+      "the bulk read dropped an edge of a kind the credential holds",
+    ).toContain(visibleEdge);
+    expect(
+      Object.keys(bulkBlocks),
+      "the bulk read named an edge type this credential may not read",
+    ).not.toContain(unseen);
+
+    // The witness for all three: a credential that may read both types
+    // and both kinds sees every row, so the absences above are the gate.
+    const wide = await makeKey("underitem-hydrate-wide", {
+      type_permissions: { "*": "read" },
+      edge_permissions: { "*": "read" },
+    });
+    const wideClient = new MarfaClient({ baseUrl: apiUrl, apiKey: wide.key });
+    const wideRead = await wideClient.getItemWithBackrefs(anchor);
+    expect(wideRead.ok, JSON.stringify(wideRead.error)).toBe(true);
+    const wideOut = Object.values(wideRead.data.item.edges ?? {}).flatMap((b) =>
+      b.edges.map((e) => e.id),
+    );
+    expect(wideOut.sort()).toEqual([visibleEdge, hiddenKindEdge].sort());
+    expect(
+      Object.values(wideRead.data.backrefs ?? {}).flatMap((b) =>
+        b.edges.map((e) => e.id),
+      ),
+    ).toEqual([hiddenSourceEdge]);
+  });
+});

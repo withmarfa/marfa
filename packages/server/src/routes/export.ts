@@ -263,16 +263,16 @@ export function exportRoutes(
                 cursor: edgeCursor,
               });
               for (const edge of page.data) {
-              // Both halves of the edge read gate, answered differently
-              // because this door has already answered one of them.
-              // `exportedIds` is the set of items this credential may
-              // read, so requiring both endpoints in it settles the
-              // source half more strictly than the gate asks. The edge
-              // type is this door's own gap: an export carried every
-              // kind of relationship among those items whatever the
-              // credential's edge map said, which is the same disclosure
-              // `GET /edges` closed, reached through a copy instead of a
-              // page.
+                // Both halves of the edge read gate, answered differently
+                // because this door has already answered one of them.
+                // `exportedIds` is the set of items this credential may
+                // read, so requiring both endpoints in it settles the
+                // source half more strictly than the gate asks. The edge
+                // type is this door's own gap: an export carried every
+                // kind of relationship among those items whatever the
+                // credential's edge map said, which is the same disclosure
+                // `GET /edges` closed, reached through a copy instead of a
+                // page.
                 if (
                   exportedIds.has(edge.source_id) &&
                   exportedIds.has(edge.target_id) &&

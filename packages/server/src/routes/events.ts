@@ -1010,11 +1010,7 @@ export function eventRoutes(
                       continue;
                     }
                     if (
-                      !(await edgeReadable(
-                        storage,
-                        apiKey,
-                        storedEdge as Edge,
-                      ))
+                      !(await edgeReadable(storage, apiKey, storedEdge as Edge))
                     ) {
                       lastReplayedId = event.id;
                       continue;
@@ -1105,14 +1101,12 @@ export function eventRoutes(
             // the loop ending and the flag dropping, since no await
             // separates them.
             //
-            // Indexed rather than `for…of` for exactly that reason: a
-            // snapshot of the buffer would leave a mid-drain frame behind
-            // it, delivered after the clear or not at all.
+            // `for…of` reads the array's length each time round rather
+            // than taking a snapshot of it, which is what makes the
+            // paragraph above true of this loop.
             try {
-              for (let i = 0; i < heldFrames.length; i += 1) {
+              for (const frame of heldFrames) {
                 if (state.closed) break;
-                const frame = heldFrames[i];
-                if (frame === undefined) break;
                 const eventId = frame.event.eventId;
                 if (eventId !== undefined && replayedIds.has(eventId)) continue;
                 if (frame.kind === "item") sendEvent(eventId, frame.event);
