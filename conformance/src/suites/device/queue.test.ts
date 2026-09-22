@@ -1056,8 +1056,12 @@ describe("an answer the device applies keeps what it has not had answered", () =
     if (!note.ok) return;
     const id = note.value.item_id ?? "a";
     expect(
-      (await device.update(id, { properties: { title: "edited here" }, version: 0 }))
-        .ok,
+      (
+        await device.update(id, {
+          properties: { title: "edited here" },
+          version: 0,
+        })
+      ).ok,
     ).toBe(true);
     // The control: an edit based on a version the server issued.
     expect(
@@ -1096,7 +1100,8 @@ describe("an answer the device applies keeps what it has not had answered", () =
         JSON.parse(
           server.requests.find(
             (request) =>
-              request.method === "PATCH" && request.pathname === `/items/${target}`,
+              request.method === "PATCH" &&
+              request.pathname === `/items/${target}`,
           )?.body ?? "{}",
         ) as { version?: unknown }
       ).version;
@@ -1110,4 +1115,3 @@ describe("an answer the device applies keeps what it has not had answered", () =
     ).toBe(HELD.version);
   });
 });
-
