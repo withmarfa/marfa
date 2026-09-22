@@ -88,11 +88,25 @@ describe("the cursor a catch-up resumes from", () => {
     // seeded item's own event, or at the refusal that would end the stream
     // before it. Closed whatever the read did, so a read that ran out of
     // time does not leave the subscription open into the next file.
+    //
+    // **The predicate parses rather than searching the text.** A chunk
+    // boundary can fall inside the frame that carries the id, and
+    // `t.includes(seededId)` is then true of a frame `parseSse` drops as
+    // incomplete — so the read stopped one chunk early and the assertion
+    // below looked for an event that had not arrived whole. It is a race
+    // against the log's length, which is why it surfaced on a busy host
+    // and not on a quiet one. Asking the predicate the same question the
+    // assertion asks removes the gap between them.
     let text: string;
     try {
       ({ text } = await readUntil(
         stream.response,
-        (t) => t.includes(seededId) || t.includes("event: catchup_too_old"),
+        (t) =>
+          parseSse(t).some(
+            (e) =>
+              e.event === "item.created" &&
+              (e.data as { item?: { id?: string } }).item?.id === seededId,
+          ) || t.includes("event: catchup_too_old"),
       ));
     } finally {
       await stream.close();
