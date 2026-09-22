@@ -41,6 +41,7 @@ export {
   ALL_CONNECTOR_TYPES,
   ALL_SYSTEM_TYPES,
   ALL_TYPE_IDS,
+  SHIPPED_ENUM_VALUES,
 } from "../generated/type-registry.js";
 export type { PlatformTypeId } from "../generated/type-registry.js";
 export { ALL_EDGE_TYPES } from "../generated/edge-type-registry.js";

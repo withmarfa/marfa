@@ -321,10 +321,8 @@ lines.push("];");
 lines.push("");
 
 // The identifier set as literal types, so a consumer that keys a map or a
-// switch by type id can be checked by the compiler rather than by whoever
-// remembers to look. Four sibling repositories carried maps naming types
-// this package had already deleted; nothing failed, because a plain
-// `Record<string, …>` cannot tell a live identifier from a dead one.
+// switch by type id is checked by the compiler: a plain `Record<string, …>`
+// cannot tell a live identifier from a dead one.
 const allTypeIds = [...coreTypes, ...connectorTypes, ...systemTypes]
   .map((schema) => schema.id)
   .sort();
@@ -333,6 +331,31 @@ for (const id of allTypeIds) lines.push(`  ${quote(id)},`);
 lines.push("] as const;");
 lines.push("");
 lines.push("export type PlatformTypeId = (typeof ALL_TYPE_IDS)[number];");
+lines.push("");
+
+// Every shipped enum field's values as literal types, keyed by type and
+// field. The schemas above are annotated `TypeSchema`, whose `enum_values` is
+// `string[]`, so a changed value never reaches a declaration; this does, and
+// is what the published-surface lock sees move when a vocabulary changes.
+const enumLines: string[] = [];
+for (const schema of [...coreTypes, ...connectorTypes, ...systemTypes].sort(
+  (a, b) => a.id.localeCompare(b.id),
+)) {
+  const fields = Object.entries(schema.fields)
+    .filter(([, def]) => def.enum_values !== undefined)
+    .sort(([a], [b]) => a.localeCompare(b));
+  if (fields.length === 0) continue;
+  enumLines.push(`  ${quote(schema.id)}: {`);
+  for (const [name, def] of fields) {
+    enumLines.push(
+      `    ${quote(name)}: [${(def.enum_values ?? []).map(quote).join(", ")}],`,
+    );
+  }
+  enumLines.push("  },");
+}
+lines.push("export const SHIPPED_ENUM_VALUES = {");
+lines.push(...enumLines);
+lines.push("} as const;");
 lines.push("");
 
 mkdirSync(outDir, { recursive: true });

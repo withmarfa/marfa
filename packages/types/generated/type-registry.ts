@@ -1120,3 +1120,76 @@ export const ALL_TYPE_IDS = [
 
 export type PlatformTypeId = (typeof ALL_TYPE_IDS)[number];
 
+export const SHIPPED_ENUM_VALUES = {
+  "core.event": {
+    "precision": ["year", "month", "day", "time"],
+  },
+  "core.highlight": {
+    "color": ["yellow", "blue", "green", "pink", "orange", "purple"],
+    "locator_type": ["offset", "page", "time", "cfi", "order", "none"],
+  },
+  "core.media.episode": {
+    "medium": ["tv", "podcast", "radio", "video", "mixed"],
+  },
+  "core.media.series": {
+    "medium": ["tv", "podcast", "radio", "video", "mixed"],
+    "status": ["ongoing", "ended", "canceled"],
+  },
+  "core.task": {
+    "precision": ["year", "month", "day", "time"],
+    "priority": ["low", "medium", "high", "urgent"],
+  },
+  "google.calendar.event": {
+    "status": ["confirmed", "tentative", "cancelled"],
+    "transparency": ["opaque", "transparent"],
+    "visibility": ["default", "public", "private", "confidential"],
+  },
+  "google.tasks.task": {
+    "status": ["needsAction", "completed"],
+  },
+  "google.youtube.playlist": {
+    "privacy_status": ["public", "unlisted", "private"],
+  },
+  "marfa.podcast.episode": {
+    "episode_type": ["full", "trailer", "bonus"],
+    "explicit": ["true", "false", "clean"],
+  },
+  "marfa.podcast.show": {
+    "explicit": ["true", "false", "clean"],
+    "itunes_type": ["episodic", "serial"],
+  },
+  "raindrop.collection": {
+    "view": ["list", "simple", "grid", "masonry"],
+  },
+  "raindrop.raindrop": {
+    "raindrop_type": ["link", "article", "image", "video", "document", "audio"],
+  },
+  "readwise.book": {
+    "category": ["books", "articles", "tweets", "podcasts"],
+  },
+  "readwise.document": {
+    "category": ["article", "email", "epub", "highlight", "note", "pdf", "podcast", "rss", "tweet", "video"],
+    "location": ["new", "later", "shortlist", "archive", "feed"],
+  },
+  "readwise.highlight": {
+    "location_type": ["page", "location", "offset", "order", "time_offset", "none"],
+  },
+  "system.activity": {
+    "severity": ["info", "warning", "error", "action_required"],
+  },
+  "system.connection": {
+    "direction": ["read", "write", "both"],
+    "kind": ["app", "connector"],
+    "status": ["active", "revoked"],
+  },
+  "system.connector": {
+    "direction": ["read", "write", "both"],
+  },
+  "system.credential": {
+    "kind": ["api_key", "oauth_token", "api_token"],
+  },
+  "system.device": {
+    "kind": ["phone", "tablet", "laptop", "desktop", "watch", "sync-agent", "other"],
+  },
+} as const;
+

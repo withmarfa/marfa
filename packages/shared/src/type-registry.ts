@@ -4,6 +4,7 @@ import {
   ALL_CONNECTOR_TYPES,
   ALL_SYSTEM_TYPES,
   ALL_TYPE_IDS,
+  SHIPPED_ENUM_VALUES,
   FIELD_FORMATS,
   FIELD_TYPES,
   RESERVED_ITEM_FIELDS,
@@ -53,7 +54,13 @@ export type {
 // registry: a consumer that keys a map or a switch by type id declares it
 // `satisfies Partial<Record<PlatformTypeId, …>>` and a deleted identifier
 // becomes a type error in that repository's own typecheck.
-export { ALL_TYPES, ALL_CONNECTOR_TYPES, ALL_SYSTEM_TYPES, ALL_TYPE_IDS };
+export {
+  ALL_TYPES,
+  ALL_CONNECTOR_TYPES,
+  ALL_SYSTEM_TYPES,
+  ALL_TYPE_IDS,
+  SHIPPED_ENUM_VALUES,
+};
 // The closed role vocabulary and the constraint-entry grammar, re-exported so
 // a consumer validating or rendering roles reads the same list and the same
 // parser the validator enforces.
