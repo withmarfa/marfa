@@ -52,6 +52,8 @@ export interface StatusReport {
    * reaches every door; see {@link unreachedDebt}.
    */
   unanswered: string[];
+  /** Exempt codes the document no longer declares anywhere. */
+  staleCodes: string[];
   /** Request lines read, so an empty log cannot read as a clean run. */
   lines: number;
 }
@@ -83,44 +85,43 @@ export const UNPUBLISHED_ROUTES: Readonly<Record<string, string>> = {
 };
 
 /**
- * The chain's floors, which every door declares and a fixture draws only on
- * the doors whose own chapter says what they mean there. `429` is the
- * limiter, which `marfa:up` boots with rate limiting off so a full suite does
- * not throttle itself. `413` is the body cap. `503` is write contention,
- * drawn by holding the database's lock from outside the server.
+ * Refusals the harness's server cannot be made to answer on most doors, by
+ * code. A declared status is exempt from being drawn only when every code
+ * the document declares on it is here or in {@link RACE_CODES}, so a door's
+ * own refusal on the same status is still held to a fixture.
  */
-export const HARNESS_UNREACHABLE_STATUSES: ReadonlySet<number> = new Set([
-  413, 429, 503,
-]);
+export const HARNESS_CODES: Readonly<Record<string, string>> = {
+  rate_limited:
+    "the limiter, which `marfa:up` boots with rate limiting off so a full suite does not throttle itself",
+  request_too_large:
+    "the body cap, drawn on the doors whose own chapter says what it means there",
+  write_contention:
+    "the database's write lock, drawn by holding it from outside the server on the doors `errors.md` 10 names",
+};
 
 /**
- * Declared statuses on a door's own account that no fixture can draw, each
- * with why. The list is the size of what the document says and nothing
- * asserts: a run that draws one of these reports the entry as stale, and a
- * run that leaves a declaration undrawn and unlisted fails.
+ * Refusals a run draws only when two requests race, so one run draws them
+ * and the next does not, by code.
+ */
+export const RACE_CODES: Readonly<Record<string, string>> = {
+  idempotency_key_in_flight:
+    "a second request under a key whose first is still being written, which two concurrent requests draw when they interleave",
+  housekeeping_job_running:
+    "a run already holding the job, which a request draws when the scheduler has started one, as an upload does",
+};
+
+/**
+ * Declared statuses on a door's own account that no fixture draws, each
+ * with what drawing one would take. The list is the size of what the
+ * document says and nothing asserts: a run that draws one of these reports
+ * the entry as stale, and a run that leaves a declaration undrawn and
+ * unlisted fails.
  */
 export const UNREACHED: Readonly<Record<string, string>> = {
   "DELETE /admin/platform-types/{id} 200":
-    "removes a row an earlier build shipped and this one does not; the harness boots one build, so no such row exists",
+    "a platform row this build does not ship, which only an earlier build writes; drawing it means writing that row into the store and restarting the server, which this suite does not arrange",
   "GET /types/{id} 409":
-    "a stored inheritance chain with a cycle or past the resolution depth, which the type doors refuse to write; only a store written outside the server carries one",
-};
-
-const IN_FLIGHT =
-  "a second request under a key whose first is still being written, which two concurrent requests draw when they interleave";
-
-/**
- * Declared statuses a run draws only when two requests race, so one run
- * draws them and the next does not. Neither required nor held stale.
- */
-export const RACES: Readonly<Record<string, string>> = {
-  "DELETE /edges/{id} 409": IN_FLIGHT,
-  "DELETE /items/{id} 409": IN_FLIGHT,
-  "DELETE /items/{id}/purge 409": IN_FLIGHT,
-  "POST /items/{id}/restore 409": IN_FLIGHT,
-  "POST /items/{id}/transition 409": IN_FLIGHT,
-  "POST /housekeeping/{name}/run 409":
-    "a run already holding the job, which a request draws when the scheduler has started one, as an upload does",
+    "a stored inheritance chain with a cycle or past the resolution depth, which the type doors refuse to write; drawing it means writing the chain into the store and restarting the server, which this suite does not arrange",
 };
 
 /**
@@ -162,6 +163,90 @@ export function parseRequestLines(log: string): RequestLine[] {
 
 export interface OpenApiLike {
   paths?: Record<string, Record<string, unknown>>;
+  components?: Record<string, unknown>;
+}
+
+/** Follow `$ref`s through the document. The document has no cycle. */
+function resolveRefs(node: unknown, document: OpenApiLike): unknown {
+  if (Array.isArray(node)) return node.map((n) => resolveRefs(n, document));
+  if (node === null || typeof node !== "object") return node;
+  const ref = (node as { $ref?: unknown }).$ref;
+  if (typeof ref === "string") {
+    const target = ref
+      .replace(/^#\//, "")
+      .split("/")
+      .reduce<unknown>(
+        (at, segment) =>
+          at === null || typeof at !== "object"
+            ? undefined
+            : (at as Record<string, unknown>)[segment],
+        document,
+      );
+    return resolveRefs(target, document);
+  }
+  return Object.fromEntries(
+    Object.entries(node).map(([k, v]) => [k, resolveRefs(v, document)]),
+  );
+}
+
+/** The refusal codes a response schema declares, under `error.code` or as
+ *  an RFC shape's top-level `error`. */
+function codesIn(schema: unknown): string[] {
+  const record = (schema ?? {}) as Record<string, unknown>;
+  const out: string[] = [];
+  for (const key of ["anyOf", "oneOf", "allOf"]) {
+    const branches = record[key];
+    if (Array.isArray(branches)) out.push(...branches.flatMap(codesIn));
+  }
+  const error = (record.properties as Record<string, unknown> | undefined)
+    ?.error as { properties?: { code?: unknown }; enum?: unknown } | undefined;
+  const code = (error?.properties?.code ?? error) as
+    { enum?: unknown } | undefined;
+  if (Array.isArray(code?.enum)) {
+    out.push(...code.enum.filter((c): c is string => typeof c === "string"));
+  }
+  return out;
+}
+
+/** `METHOD /path` to each declared status's refusal codes. */
+export function declaredCodes(
+  document: OpenApiLike,
+): Map<string, Map<number, Set<string>>> {
+  const out = new Map<string, Map<number, Set<string>>>();
+  for (const [path, item] of Object.entries(document.paths ?? {})) {
+    for (const [method, operation] of Object.entries(item)) {
+      if (!HTTP_METHODS.includes(method)) continue;
+      const responses = (operation as { responses?: Record<string, unknown> })
+        .responses;
+      const byStatus = new Map<number, Set<string>>();
+      for (const [key, response] of Object.entries(responses ?? {})) {
+        const status = Number.parseInt(key, 10);
+        if (!Number.isInteger(status)) continue;
+        const content = (
+          response as { content?: Record<string, { schema?: unknown }> }
+        ).content;
+        const codes = new Set<string>();
+        for (const media of Object.values(content ?? {})) {
+          for (const code of codesIn(resolveRefs(media.schema, document))) {
+            codes.add(code);
+          }
+        }
+        byStatus.set(status, codes);
+      }
+      out.set(`${method.toUpperCase()} ${path}`, byStatus);
+    }
+  }
+  return out;
+}
+
+/** Whether a declared status is exempt from being drawn: every code it
+ *  declares is the harness's or a race's. */
+function exempt(codes: ReadonlySet<string> | undefined): boolean {
+  if (codes === undefined || codes.size === 0) return false;
+  return [...codes].every(
+    (code) =>
+      HARNESS_CODES[code] !== undefined || RACE_CODES[code] !== undefined,
+  );
 }
 
 /** `METHOD /path` to the statuses the document declares for it. */
@@ -248,12 +333,12 @@ export function reportStatuses(
     (a, b) => a.operation.localeCompare(b.operation) || a.status - b.status,
   );
 
+  const codes = declaredCodes(document);
   const unanswered: string[] = [];
   for (const [operation, statuses] of declared) {
     const drawn = observed.get(operation);
     for (const status of statuses) {
-      if (HARNESS_UNREACHABLE_STATUSES.has(status)) continue;
-      if (RACES[`${operation} ${String(status)}`] !== undefined) continue;
+      if (exempt(codes.get(operation)?.get(status))) continue;
       if (drawn?.has(status)) continue;
       unanswered.push(`${operation} ${String(status)}`);
     }
@@ -264,12 +349,22 @@ export function reportStatuses(
     .filter((route) => UNPUBLISHED_ROUTES[route] === undefined)
     .sort();
 
+  const everyCode = new Set(
+    [...codes.values()].flatMap((byStatus) =>
+      [...byStatus.values()].flatMap((set) => [...set]),
+    ),
+  );
+  const staleCodes = [...Object.keys(HARNESS_CODES), ...Object.keys(RACE_CODES)]
+    .filter((code) => !everyCode.has(code))
+    .sort();
+
   return {
     observed,
     unpublished,
     unexplained,
     undeclared,
     unanswered,
+    staleCodes,
     lines: lines.length,
   };
 }
@@ -285,9 +380,12 @@ export function unreachedDebt(
   const unanswered = new Set(report.unanswered);
   return {
     unlisted: report.unanswered.filter((key) => listed[key] === undefined),
-    stale: Object.keys(listed)
-      .filter((key) => !unanswered.has(key))
-      .sort(),
+    stale: [
+      ...Object.keys(listed)
+        .filter((key) => !unanswered.has(key))
+        .sort(),
+      ...report.staleCodes.map((code) => `code ${code}`),
+    ],
   };
 }
 

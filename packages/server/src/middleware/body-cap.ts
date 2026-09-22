@@ -1,8 +1,10 @@
 /**
  * Which body-size cap a path is held to.
  *
- * The blob doors and the archive restore stream their bodies to disk, so
- * they take no cap. The bulk write doors carry up to 5000 rows in one body,
+ * The blob doors and the archive restore stream their bodies to disk as they
+ * arrive, so a body's size costs disk rather than memory, and a file, or an
+ * archive of files, is as large as it is: they take no cap. The bulk write
+ * doors carry up to 5000 rows in one body,
  * so they take the larger bulk cap; the per-request cap would refuse a
  * legitimate batch, and the doors still bound the row count and the per-field
  * sizes themselves.

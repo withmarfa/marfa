@@ -189,7 +189,9 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: marfa-server-log
-          path: ${{ runner.temp }}/marfa/server.log
+          path: |
+            ${{ runner.temp }}/marfa/server.log
+            ${{ runner.temp }}/marfa/fresh-server-logs/
           if-no-files-found: ignore
 
       # Always, including when the selection failed: the server was spawned
@@ -273,7 +275,9 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: marfa-cli-server-log
-          path: ${{ runner.temp }}/marfa-cli/server.log
+          path: |
+            ${{ runner.temp }}/marfa-cli/server.log
+            ${{ runner.temp }}/marfa-cli/fresh-server-logs/
           if-no-files-found: ignore
 
       # Always, including when a scenario failed: the server was spawned

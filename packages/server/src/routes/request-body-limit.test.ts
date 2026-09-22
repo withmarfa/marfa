@@ -180,4 +180,27 @@ describe("global request-body size cap", () => {
     // The body-size cap must not fire on bulk; the request reaches the handler.
     expect(res.status).not.toBe(413);
   });
+
+  it("holds a single edge write to the request cap and the edge bulk door to the bulk cap", async () => {
+    // One body, two doors: the bulk door carries many rows and takes the
+    // larger cap, and the single-write door beside it does not.
+    const body = JSON.stringify({
+      edges: [],
+      source_id: "x",
+      target_id: "y",
+      edge_type: "about",
+      properties: { note: "x".repeat(REQUEST_CAP * 2) },
+    });
+    const send = (path: string) =>
+      ctx.app.request(path, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${ctx.workingKey}`,
+          "Content-Type": "application/json",
+        },
+        body,
+      });
+    expect((await send("/edges")).status).toBe(413);
+    expect((await send("/edges/bulk")).status).not.toBe(413);
+  });
 });

@@ -211,11 +211,7 @@ export function createApp(
   // typed 413 `request_too_large` (thrown so the global error handler
   // emits the correct code + status). Mounted after `secureHeaders` and
   // before auth so an oversized unauthenticated body is rejected cheaply.
-  //
-  // The blob upload route (`/blobs`) and the archive restore
-  // (`/admin/restore-archive`) are exempt and have no cap of their own:
-  // each body streams to disk as it arrives, so its size costs disk rather
-  // than memory, and a file, or an archive of files, is as large as it is.
+  // Which doors take which cap is `bodyCapFor`'s.
   const tooLarge = () => {
     throw new MarfaError(ErrorCode.REQUEST_TOO_LARGE, "Request body too large");
   };

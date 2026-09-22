@@ -40,6 +40,43 @@ function documentDeclaring(statuses: number[]) {
   };
 }
 
+/** The same door, each status declaring the refusal codes given. */
+function documentRefusing(byStatus: Record<number, string[]>) {
+  return {
+    paths: {
+      "/items/{id}": {
+        get: {
+          responses: Object.fromEntries(
+            Object.entries(byStatus).map(([status, codes]) => [
+              status,
+              codes.length === 0
+                ? { description: "" }
+                : {
+                    description: "",
+                    content: {
+                      "application/json": {
+                        schema: {
+                          type: "object",
+                          properties: {
+                            error: {
+                              type: "object",
+                              properties: {
+                                code: { type: "string", enum: codes },
+                              },
+                            },
+                          },
+                        },
+                      },
+                    },
+                  },
+            ]),
+          ),
+        },
+      },
+    },
+  };
+}
+
 function logLine(fields: Record<string, unknown>): string {
   return JSON.stringify({
     timestamp: "2026-09-22T00:00:00.000Z",
@@ -168,23 +205,46 @@ describe("the status checker", () => {
     ]);
   });
 
-  it("reports a declared status no request drew, less the harness's own", () => {
-    const report = reportStatuses(
-      parseRequestLines(OBSERVED_200),
-      documentDeclaring([200, 404, 413, 429]),
-    );
-
-    expect(report.unanswered).toEqual(["GET /items/{id} 404"]);
-    expect(unreachedDebt(report, {})).toEqual({
-      unlisted: ["GET /items/{id} 404"],
-      stale: [],
+  it("reports a declared status no request drew, less the harness's own codes", () => {
+    const document = documentRefusing({
+      200: [],
+      404: ["item_not_found"],
+      413: ["request_too_large"],
+      429: ["rate_limited"],
+      503: ["write_contention", "stream_capacity_exhausted"],
     });
+    const report = reportStatuses(parseRequestLines(OBSERVED_200), document);
+
+    // The 503 also declares a door's own code, so it is not the harness's.
+    expect(report.unanswered).toEqual([
+      "GET /items/{id} 404",
+      "GET /items/{id} 503",
+    ]);
+    expect(unreachedDebt(report, {}).unlisted).toEqual(report.unanswered);
     expect(
       unreachedDebt(report, {
         "GET /items/{id} 404": "why",
+        "GET /items/{id} 503": "why",
         "GET /items/{id} 200": "drawn after all",
       }),
-    ).toEqual({ unlisted: [], stale: ["GET /items/{id} 200"] });
+    ).toMatchObject({
+      unlisted: [],
+      stale: expect.arrayContaining(["GET /items/{id} 200"]),
+    });
+  });
+
+  it("names an exempt code the document no longer declares", () => {
+    const report = reportStatuses(
+      parseRequestLines(OBSERVED_200),
+      documentRefusing({ 200: [], 413: ["request_too_large"] }),
+    );
+    expect(report.staleCodes).toEqual([
+      "housekeeping_job_running",
+      "idempotency_key_in_flight",
+      "rate_limited",
+      "write_contention",
+    ]);
+    expect(unreachedDebt(report, {}).stale).toContain("code rate_limited");
   });
 
   it("reads the request lines out of a log that carries everything else too", () => {
@@ -266,25 +326,50 @@ describe("the status checker", () => {
   });
 
   it("neither requires nor holds stale a status only a race draws", () => {
-    const document = {
-      paths: {
-        "/items/{id}": {
-          delete: { responses: { "200": {}, "409": {} } },
-        },
-      },
-    };
+    const race = reportStatuses(
+      parseRequestLines(OBSERVED_200),
+      documentRefusing({ 200: [], 409: ["idempotency_key_in_flight"] }),
+    );
+    expect(race.unanswered).toEqual([]);
+
+    // A door's own code beside the race's is still held to a fixture.
+    const mixed = reportStatuses(
+      parseRequestLines(OBSERVED_200),
+      documentRefusing({
+        200: [],
+        409: ["idempotency_key_in_flight", "version_conflict"],
+      }),
+    );
+    expect(mixed.unanswered).toEqual(["GET /items/{id} 409"]);
+  });
+
+  it("holds a HEAD answer to a HEAD operation when the document declares one", () => {
     const report = reportStatuses(
       parseRequestLines(
         logLine({
-          method: "DELETE",
+          method: "HEAD",
           path: "/items/x",
           route: "/items/{id}",
-          status: 200,
+          status: 404,
         }),
       ),
-      document,
+      {
+        paths: {
+          "/items/{id}": {
+            get: { responses: { "200": {}, "404": {} } },
+            head: { responses: { "200": {} } },
+          },
+        },
+      },
     );
-    expect(report.unanswered).toEqual([]);
+    expect(report.undeclared).toEqual([
+      {
+        operation: "HEAD /items/{id}",
+        status: 404,
+        codes: [],
+        declared: [200],
+      },
+    ]);
   });
 
   it("exits end to end on each thing it refuses, and 0 on a clean run", async () => {

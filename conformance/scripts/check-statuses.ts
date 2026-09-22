@@ -134,7 +134,7 @@ if (args.complete) {
   }
   if (stale.length > 0) {
     console.error(
-      "\nUNREACHED lists statuses this run drew; remove them:\n" +
+      "\nUNREACHED lists statuses this run drew, or an exempt code the document no longer declares; remove them:\n" +
         stale.join("\n"),
     );
     process.exitCode = 1;

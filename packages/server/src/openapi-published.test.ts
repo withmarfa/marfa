@@ -35,15 +35,28 @@ function openRefusals(document: Record<string, unknown>): string[] {
     const record = (schema ?? {}) as { enum?: unknown[]; const?: unknown };
     return Array.isArray(record.enum) || record.const !== undefined;
   };
-  // Every schema a response admits, through the unions and compositions.
-  const branches = (schema: unknown): Record<string, unknown>[] => {
+  // What a body this schema admits can fail to say: every branch of a union
+  // is a body of its own, and the branches of an `allOf` are one body.
+  const problem = (schema: unknown): string | undefined => {
     const record = (schema ?? {}) as Record<string, unknown>;
-    const nested = ["anyOf", "oneOf", "allOf"].flatMap((key) =>
-      Array.isArray(record[key])
-        ? (record[key] as unknown[]).flatMap(branches)
-        : [],
-    );
-    return [record, ...nested];
+    for (const key of ["anyOf", "oneOf"]) {
+      const branches = record[key];
+      if (Array.isArray(branches)) {
+        return branches.map(problem).find((p) => p !== undefined);
+      }
+    }
+    if (Array.isArray(record.allOf)) {
+      const found = (record.allOf as unknown[]).map(problem);
+      return found.some((p) => p === undefined) ? undefined : found[0];
+    }
+    const error = (
+      (record.properties ?? {}) as Record<
+        string,
+        { properties?: Record<string, unknown> }
+      >
+    ).error;
+    if (error === undefined) return "no code";
+    return closedCode(error.properties?.code ?? error) ? undefined : "open";
   };
   for (const [key, operation] of operationKeys(document)) {
     const responses = (operation.responses ?? {}) as Record<
@@ -52,21 +65,12 @@ function openRefusals(document: Record<string, unknown>): string[] {
     >;
     for (const [status, response] of Object.entries(responses)) {
       if (Number(status) < 400) continue;
-      for (const media of Object.values(response.content ?? {})) {
-        const schema = inlineOpenApiRefs(media.schema, document);
-        let positions = 0;
-        for (const branch of branches(schema)) {
-          const properties = (branch.properties ?? {}) as Record<
-            string,
-            { properties?: Record<string, unknown> }
-          >;
-          const error = properties.error;
-          if (error === undefined) continue;
-          const code = error.properties?.code ?? error;
-          positions += 1;
-          if (!closedCode(code)) out.push(`${key} ${status}`);
-        }
-        if (positions === 0) out.push(`${key} ${status} (no code)`);
+      const media = Object.values(response.content ?? {});
+      if (media.length === 0) out.push(`${key} ${status} (no content)`);
+      for (const { schema } of media) {
+        const found = problem(inlineOpenApiRefs(schema, document));
+        if (found === "open") out.push(`${key} ${status}`);
+        else if (found !== undefined) out.push(`${key} ${status} (${found})`);
       }
     }
   }
@@ -467,6 +471,32 @@ describe("published OpenAPI spec", () => {
       content: { "application/json": { schema: { type: "object" } } },
     };
     expect(openRefusals(bare as unknown as Record<string, unknown>)).toEqual([
+      "GET /items 401 (no code)",
+    ]);
+
+    // A union whose one branch says nothing about its code, and a refusal
+    // with no content at all.
+    const union = structuredClone(document) as typeof opened;
+    const itemsGet = union.paths["/items"]?.get?.responses as Record<
+      string,
+      unknown
+    >;
+    itemsGet["401"] = {
+      description: "one branch open",
+      content: {
+        "application/json": {
+          schema: {
+            anyOf: [
+              { $ref: "#/components/schemas/UnauthorizedRefusal" },
+              { type: "object", properties: { message: { type: "string" } } },
+            ],
+          },
+        },
+      },
+    };
+    itemsGet["400"] = { description: "no content" };
+    expect(openRefusals(union as unknown as Record<string, unknown>)).toEqual([
+      "GET /items 400 (no content)",
       "GET /items 401 (no code)",
     ]);
   });
