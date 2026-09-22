@@ -971,6 +971,7 @@ export class SqliteItemStore implements ItemStore {
           currentProperties: currentProps,
           ancestorProperties: ancestor.properties,
           conflictingFields: result.conflicting_fields,
+          collidingItemFields: result.collidingItemFields,
           policy,
         });
 
@@ -994,7 +995,11 @@ export class SqliteItemStore implements ItemStore {
         }
 
         resolvedProperties = plan.merged;
-        resolvedFields = clientFields;
+        // The genuine changes, not everything the write named: a field
+        // echoed back at the value the caller read is not a change, and
+        // applying it would revert a value written since — the same
+        // revert the properties overlay refuses to make.
+        resolvedFields = result.changedFields;
         resolution = {
           fields: result.conflicting_fields,
           strategy: plan.strategyByField,
@@ -1002,7 +1007,7 @@ export class SqliteItemStore implements ItemStore {
         };
       } else {
         resolvedProperties = result.merged;
-        resolvedFields = result.mergedFields;
+        resolvedFields = result.changedFields;
       }
 
       // Same invariant as the fast path above: the version being left behind

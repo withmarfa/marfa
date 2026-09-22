@@ -36,7 +36,7 @@ describe("detectConflict", () => {
     expect(result).toEqual({
       type: "no_conflict",
       merged: { title: "new title", body: "edited elsewhere" },
-      mergedFields: {},
+      changedFields: {},
     });
   });
 
@@ -52,6 +52,8 @@ describe("detectConflict", () => {
     expect(result).toEqual({
       type: "conflict",
       conflicting_fields: ["body"],
+      changedFields: {},
+      collidingItemFields: [],
     });
   });
 
@@ -67,7 +69,7 @@ describe("detectConflict", () => {
     expect(result).toEqual({
       type: "no_conflict",
       merged: { title: "client title", body: "server body" },
-      mergedFields: {},
+      changedFields: {},
     });
   });
 
@@ -83,7 +85,7 @@ describe("detectConflict", () => {
     expect(result).toEqual({
       type: "no_conflict",
       merged: { title: "same", body: "server moved on" },
-      mergedFields: {},
+      changedFields: {},
     });
   });
 
@@ -99,7 +101,7 @@ describe("detectConflict", () => {
     expect(result).toEqual({
       type: "no_conflict",
       merged: { tags: ["a", "b", "c"] },
-      mergedFields: {},
+      changedFields: {},
     });
   });
 
@@ -118,6 +120,8 @@ describe("detectConflict", () => {
     expect(result).toEqual({
       type: "conflict",
       conflicting_fields: ["occurred_at"],
+      changedFields: { occurred_at: "2026-04-01T00:00:00.000Z" },
+      collidingItemFields: ["occurred_at"],
     });
   });
 
@@ -137,6 +141,8 @@ describe("detectConflict", () => {
     expect(result).toEqual({
       type: "conflict",
       conflicting_fields: ["tier"],
+      changedFields: { tier: "feed" },
+      collidingItemFields: ["tier"],
     });
   });
 
@@ -152,7 +158,7 @@ describe("detectConflict", () => {
     expect(result).toEqual({
       type: "no_conflict",
       merged: { body: "server moved on" },
-      mergedFields: { occurred_at: "2026-04-01T00:00:00.000Z" },
+      changedFields: { occurred_at: "2026-04-01T00:00:00.000Z" },
     });
   });
 
@@ -171,7 +177,7 @@ describe("detectConflict", () => {
     expect(result).toEqual({
       type: "no_conflict",
       merged: { title: "client title", body: "unchanged" },
-      mergedFields: {},
+      changedFields: {},
     });
   });
 
@@ -187,6 +193,30 @@ describe("detectConflict", () => {
     expect(result).toEqual({
       type: "conflict",
       conflicting_fields: ["body", "source_id"],
+      changedFields: { source_id: "mine" },
+      collidingItemFields: ["source_id"],
+    });
+  });
+
+  it("keeps an echoed item field out of a resolution that collides elsewhere", () => {
+    // The case that makes `changedFields` belong on the conflict branch too.
+    // The write collides on a property and echoes the tier it read; a
+    // resolution that reapplied everything the write named would revert a
+    // tier written since, which is the clobber this whole file is about,
+    // arriving through the resolution rather than through the merge.
+    const result = detectConflict({
+      clientProperties: { body: "my edit" },
+      currentProperties: { body: "their edit" },
+      ancestorProperties: { body: "original" },
+      clientFields: fields({ tier: "library" }),
+      currentFields: fields({ tier: "feed" }),
+      ancestorFields: fields({ tier: "library" }),
+    });
+    expect(result).toEqual({
+      type: "conflict",
+      conflicting_fields: ["body"],
+      changedFields: {},
+      collidingItemFields: [],
     });
   });
 });

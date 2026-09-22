@@ -47,16 +47,29 @@ export interface ConflictInput {
   ancestorFields: ItemFieldValues;
 }
 
+/**
+ * The item fields this write genuinely changes, on either outcome.
+ *
+ * A field the client echoed back at the value it read is not here, so it
+ * can never revert a value written since — which is the same protection
+ * the properties overlay gets, and the reason this is carried on the
+ * conflict branch too: a write that collides on one field and echoes
+ * another still has to not revert the echoed one when the server resolves.
+ */
 export type ConflictResult =
   | {
       type: "no_conflict";
       merged: Record<string, unknown>;
-      /** The item fields this write genuinely changes, to apply over the
-       *  current row. A field the client echoed back unchanged is not
-       *  here, so it cannot revert a value written since. */
-      mergedFields: ItemFieldValues;
+      changedFields: ItemFieldValues;
     }
-  | { type: "conflict"; conflicting_fields: string[] };
+  | {
+      type: "conflict";
+      conflicting_fields: string[];
+      changedFields: ItemFieldValues;
+      /** The colliding fields that are item fields rather than properties,
+       *  which the type's policy has no per-field strategy for. */
+      collidingItemFields: VersionedItemField[];
+    };
 
 function deepEqual(a: unknown, b: unknown): boolean {
   if (a === b) return true;
@@ -142,23 +155,28 @@ export function detectConflict(input: ConflictInput): ConflictResult {
   // The item's own fields, on the same rule. A field the write does not
   // name is absent from `clientFields` and cannot be a client change; one
   // whose value equals the ancestor's is an echo and is not one either.
-  const mergedFields: ItemFieldValues = {};
+  // A change is recorded whether or not it collided, because a server-side
+  // resolution takes the later writer for these and needs the value.
+  const changedFields: ItemFieldValues = {};
+  const collidingItemFields: VersionedItemField[] = [];
   for (const field of VERSIONED_ITEM_FIELDS) {
     if (!(field in input.clientFields)) continue;
     const client = input.clientFields[field] ?? null;
     const ancestor = input.ancestorFields[field] ?? null;
     if (client === ancestor) continue;
+    changedFields[field] = client;
     if ((input.currentFields[field] ?? null) !== ancestor) {
       conflictingFields.push(field);
-      continue;
+      collidingItemFields.push(field);
     }
-    mergedFields[field] = client;
   }
 
   if (conflictingFields.length > 0) {
     return {
       type: "conflict",
       conflicting_fields: conflictingFields.sort(),
+      changedFields,
+      collidingItemFields,
     };
   }
 
@@ -174,7 +192,7 @@ export function detectConflict(input: ConflictInput): ConflictResult {
   return {
     type: "no_conflict",
     merged,
-    mergedFields,
+    changedFields,
   };
 }
 
@@ -195,6 +213,10 @@ export interface AutoMergeInput {
   currentProperties: Record<string, unknown>;
   ancestorProperties: Record<string, unknown>;
   conflictingFields: string[];
+  /** The colliding fields that are the item's own rather than properties.
+   *  They carry no per-field strategy, so they are resolved here and named
+   *  in the report rather than looked up in the policy. */
+  collidingItemFields: readonly VersionedItemField[];
   policy: MergePolicy;
 }
 
@@ -240,6 +262,7 @@ export function planAutoMerge(input: AutoMergeInput): AutoMergePlan {
     currentProperties,
     ancestorProperties,
     conflictingFields,
+    collidingItemFields,
     policy,
   } = input;
 
@@ -247,6 +270,15 @@ export function planAutoMerge(input: AutoMergeInput): AutoMergePlan {
   const keepBothFields: string[] = [];
   const strategyByField: Record<string, MergeStrategy> = {};
   const colliding = new Set(conflictingFields);
+
+  // An item field is not a property, so the type declares no strategy for
+  // one and `keep_both_copies` has nothing to mean: the sibling a keep-both
+  // writes is a copy of the row's properties, and a tier on it would be the
+  // sibling's own. They take the later writer, and the report says so
+  // rather than leaving a field it names with no strategy beside it.
+  for (const field of collidingItemFields) {
+    strategyByField[field] = "last_writer_wins";
+  }
 
   for (const [key, value] of Object.entries(clientProperties)) {
     if (deepEqual(value, ancestorProperties[key])) continue;
