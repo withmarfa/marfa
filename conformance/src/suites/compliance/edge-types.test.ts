@@ -112,16 +112,21 @@ describe("custom edge-type registration", () => {
   });
 
   it("refuses to delete an edge type while edges of it exist, and orphans them on force", async () => {
-    // The sibling shape. `DELETE /types/{id}` refuses `409 type_in_use`
-    // while rows of the type exist and takes `?force=true` to delete
-    // anyway; this door answered `200` and looked at nothing but the
-    // core list and the row, leaving edges naming a type the instance no
-    // longer held. Its own published description promised the refusal it
-    // did not make.
+    // The two registries answer one question one way. `DELETE
+    // /types/{id}` refuses `409 type_in_use` while rows of the type
+    // exist and takes `?force=true`; this door does the same for edges,
+    // so a caller does not have to learn which registry it is talking to
+    // before it can predict the answer.
+    //
+    // **Force orphans rather than cascades.** The edges stay and keep
+    // naming a type the instance no longer holds, which is untidy and
+    // recoverable; deleting rows nobody asked to delete is neither.
     //
     // A new code rather than `type_in_use`, matching the
     // `edge_type_not_found` that already sits beside `type_not_found`:
-    // the two doors agree in shape, and an edge type is not a type.
+    // the doors agree in shape and differ in vocabulary, because an edge
+    // type is not a type and a caller branching on the code should be
+    // able to tell which registry refused it.
     const etId = `mock.dangling.${ctx.runId}`;
     const reg = await client.registerEdgeType({
       id: etId,
@@ -159,7 +164,7 @@ describe("custom edge-type registration", () => {
     // `force` is the way through, and it orphans rather than cascades:
     // the edges are the caller's to deal with, and deleting rows nobody
     // asked to delete is the worse of the two surprises.
-    const forced = await client.deleteEdgeType(etId, { force: true });
+    const forced = await client.deleteEdgeType(etId, true);
     expect(forced.ok, JSON.stringify(forced.error)).toBe(true);
     expect(forced.status).toBe(200);
 
