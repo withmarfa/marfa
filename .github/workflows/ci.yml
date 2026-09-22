@@ -171,6 +171,13 @@ jobs:
         working-directory: conformance
         run: pnpm test:conformance
 
+      # Reads the log of the server the selection just drove, so it runs
+      # here rather than as a job of its own and before the stop, which
+      # clears the state directory the log is in.
+      - name: Hold every status observed to its declaration
+        working-directory: conformance
+        run: pnpm check:statuses --state "$RUNNER_TEMP/marfa"
+
       # Before the stop, because `marfa:down` clears the state directory and
       # the log is in it. The server is still running here, which costs
       # nothing: the log is appended to and what a failure needs is already
@@ -252,6 +259,10 @@ jobs:
       - name: Run the scenarios
         working-directory: conformance
         run: pnpm test:cli
+
+      - name: Hold every status observed to its declaration
+        working-directory: conformance
+        run: pnpm check:statuses --state "$RUNNER_TEMP/marfa-cli"
 
       # Before the stop, because `marfa:down` clears the state directory and
       # the log is in it.

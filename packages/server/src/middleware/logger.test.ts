@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, it } from "vitest";
+import { Hono } from "hono";
 import {
   formatErrorSummary,
   log,
+  loggerMiddleware,
   resolveRequestId,
   serializeError,
 } from "./logger.js";
@@ -324,6 +326,119 @@ describe("the OpenTelemetry mirror", () => {
     expect(stdout.join("")).toContain("ordinary line");
     // Only one leaves the machine.
     expect(emitted).toEqual(["ordinary line"]);
+  });
+});
+
+/**
+ * The request line names the operation that answered, not only the concrete
+ * path, because `check:statuses` in the conformance suite holds the statuses
+ * observed on an operation to the ones its document declares. With the
+ * concrete path alone every id is its own door and there is nothing to hold.
+ */
+describe("the matched route on a request line", () => {
+  async function lineFor(
+    build: (app: Hono) => void,
+    path: string,
+    method = "GET",
+  ): Promise<Record<string, unknown>> {
+    const app = new Hono();
+    app.use("*", loggerMiddleware());
+    // A second universal middleware, as the real chain has several: none of
+    // them is the route that answered.
+    app.use("*", async (_c, next) => next());
+    build(app);
+
+    const stdout: string[] = [];
+    const writer = process.stdout.write.bind(process.stdout);
+    process.stdout.write = (chunk: string) => {
+      stdout.push(chunk);
+      return true;
+    };
+    try {
+      await app.request(path, { method });
+    } finally {
+      process.stdout.write = writer;
+    }
+    const lines = stdout.join("").trim().split("\n");
+    return JSON.parse(lines[lines.length - 1] ?? "{}") as Record<
+      string,
+      unknown
+    >;
+  }
+
+  it("names the template in the document's spelling, not the concrete path", async () => {
+    const entry = await lineFor((app) => {
+      app.get("/items/:id/purge", (c) => c.text("ok"));
+    }, "/items/019537a0-7b80-7000-8000-000000000000/purge");
+
+    expect(entry.route).toBe("/items/{id}/purge");
+    expect(entry.path).toBe(
+      "/items/019537a0-7b80-7000-8000-000000000000/purge",
+    );
+  });
+
+  // The regression the `routePath(c, -1)` spelling would carry. Better Auth
+  // mounts `/auth/*` after the explicit auth routes, so the last matching
+  // pattern is the catch-all on every one of them.
+  it("names the handler that answered, not a catch-all registered after it", async () => {
+    const entry = await lineFor((app) => {
+      app.get("/auth/sign-in", (c) => c.text("explicit"));
+      app.all("/auth/*", (c) => c.text("catch-all"));
+    }, "/auth/sign-in");
+
+    expect(entry.route).toBe("/auth/sign-in");
+  });
+
+  it("carries no route when nothing but the universal middleware matched", async () => {
+    const entry = await lineFor((app) => {
+      app.get("/items", (c) => c.text("ok"));
+    }, "/nothing-here");
+
+    expect(entry.status).toBe(404);
+    expect(entry).not.toHaveProperty("route");
+  });
+
+  // The witness for the case above: the field is absent because no route
+  // answered, not because nothing ever writes it.
+  it("carries the route when one did answer the same app", async () => {
+    const entry = await lineFor((app) => {
+      app.get("/items", (c) => c.text("ok"));
+    }, "/items");
+
+    expect(entry.route).toBe("/items");
+  });
+
+  // The 413 the body-size cap answers, and the 429 the limiter answers,
+  // both come from a universal middleware that never calls `next()`. The
+  // router matched the door all the same, and a status recorded against no
+  // operation is one no declaration can be held to.
+  it("names the door a universal middleware refused before the handler ran", async () => {
+    const entry = await lineFor(
+      (app) => {
+        app.use("*", async (c) =>
+          Promise.resolve(
+            c.json({ error: { code: "request_too_large" } }, 413),
+          ),
+        );
+        app.post("/items", (c) => c.text("never reached"));
+      },
+      "/items",
+      "POST",
+    );
+
+    expect(entry.status).toBe(413);
+    expect(entry.route).toBe("/items");
+  });
+
+  it("names the route a refused request reached", async () => {
+    const entry = await lineFor((app) => {
+      app.get("/items/:id", () => {
+        throw new Error("boom");
+      });
+    }, "/items/019537a0-7b80-7000-8000-000000000000");
+
+    expect(entry.status).toBe(500);
+    expect(entry.route).toBe("/items/{id}");
   });
 });
 

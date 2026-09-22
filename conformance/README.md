@@ -58,6 +58,10 @@ pnpm test:conformance
 # The scenario suite: the binary as the reference client, end to end
 pnpm test:cli
 
+# Hold what the run observed to what the document declares. Before
+# `marfa:down`, which clears the log it reads.
+pnpm check:statuses
+
 pnpm marfa:down
 pnpm garage:down
 ```
