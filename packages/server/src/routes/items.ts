@@ -1372,7 +1372,7 @@ export function itemRoutes(storage: Storage) {
     // Update semantics: properties / tier / occurred_at via `ItemStore.update`
     // (shallow-merge); tags via `metadata.set`; edges via `applyInlineEdges`
     // (replace-by-edge-type). Fields only meaningful at create time (id,
-    // state, device, capture_*) are ignored — the existing row's id wins.
+    // state, capture_*) are ignored — the existing row's id wins.
     if (stampedSource && body.source_id) {
       // Including trashed rows, deliberately. `findBySourceId` hides them,
       // which would send a re-sync of a mirror the user had deleted into

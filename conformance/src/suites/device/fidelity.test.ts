@@ -645,7 +645,6 @@ describe("the scripted answers match the server's", () => {
           // difference `kindAt` can see and a device reads as two different
           // things.
           "data.0.item.source_id",
-          "data.0.item.device",
           "data.0.item.occurred_at",
           "data.0.item.created_at",
           "data.0.item.updated_at",
@@ -783,7 +782,6 @@ describe("the scripted answers match the server's", () => {
           "item.version",
           "item.source",
           "item.source_id",
-          "item.device",
           "item.created_at",
           "item.updated_at",
         ],

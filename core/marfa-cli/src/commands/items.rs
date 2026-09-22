@@ -241,9 +241,6 @@ pub struct CreateArgs {
     /// The id this row has in the system it came from: the natural key.
     #[arg(long)]
     pub source_id: Option<String>,
-    /// The device it was written from.
-    #[arg(long)]
-    pub device: Option<String>,
     /// The id to mint it under. Omitted, the server mints one.
     #[arg(long)]
     pub id: Option<String>,
@@ -495,7 +492,6 @@ pub fn create_request(args: &CreateArgs) -> Result<Request, CliError> {
     insert_opt(&mut body, "occurred_at", args.occurred_at.clone());
     insert_opt(&mut body, "source", args.source.clone());
     insert_opt(&mut body, "source_id", args.source_id.clone());
-    insert_opt(&mut body, "device", args.device.clone());
     insert_opt(&mut body, "id", args.id.clone());
     insert_opt(&mut body, "version", args.version);
     if let Some(edges) = &args.edges {
