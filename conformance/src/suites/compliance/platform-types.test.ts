@@ -79,12 +79,15 @@ describe("platform type maintenance", () => {
     expect(still.ok).toBe(true);
   });
 
-  it("answers 409 for an identifier no platform row carries", async () => {
-    // The document declares 404 for this case; the server answers 409 with
-    // the same refusal it gives a shipped type. Recorded in spec/findings.md.
+  it("answers 404 for an identifier no platform row carries", async () => {
+    // Two different refusals, told apart. An identifier no row carries is
+    // absent, and a refusal names its reason: `404`. The `409` beside it
+    // is for an identifier a row does carry and the build still ships,
+    // which is a refusal about the state of the row rather than about
+    // whether there is one.
     const r = await operator.removePlatformType("core.never-existed");
-    expect(r.status).toBe(409);
-    expect(r.error?.error.code).toBe("conflict");
+    expect(r.status).toBe(404);
+    expect(r.error?.error.code).toBe("type_not_found");
   });
 
   it("refuses removal to a working key", async () => {

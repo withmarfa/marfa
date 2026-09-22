@@ -7763,7 +7763,7 @@
             }
           },
           "403": {
-            "description": "Write access denied for one of the item types",
+            "description": "Write access denied for one of the item types. Under the default `atomic` the page rolls back and the code is `bulk_atomic_rollback` with `type_not_permitted` in `details.code`; the status is the inner refusal's, because a caller sorts by status before it reads a code and a permission failure filed under 400 reads as a body it can fix.",
             "content": {
               "application/json": {
                 "schema": {
@@ -7775,6 +7775,7 @@
                         "code": {
                           "type": "string",
                           "enum": [
+                            "bulk_atomic_rollback",
                             "forbidden",
                             "type_not_permitted"
                           ]
@@ -13968,6 +13969,12 @@
                               },
                               "message": {
                                 "type": "string"
+                              },
+                              "details": {
+                                "type": "object",
+                                "additionalProperties": {
+                                  "nullable": true
+                                }
                               }
                             },
                             "required": [
@@ -14120,7 +14127,7 @@
             }
           },
           "403": {
-            "description": "Write access denied for a source type or edge type",
+            "description": "Write access denied for a source type or edge type. Under the default `atomic` the page rolls back and the code is `bulk_atomic_rollback` with the inner refusal in `details.code`, at this status rather than 400 for the reason `POST /items/bulk` gives.",
             "content": {
               "application/json": {
                 "schema": {
@@ -14134,7 +14141,8 @@
                           "enum": [
                             "forbidden",
                             "type_not_permitted",
-                            "edge_permission_denied"
+                            "edge_permission_denied",
+                            "bulk_atomic_rollback"
                           ]
                         },
                         "message": {
@@ -26258,7 +26266,7 @@
             }
           },
           "404": {
-            "description": "No platform row with this identifier",
+            "description": "`type_not_found` when no platform row carries the identifier; `not_found` for a path this server does not serve.",
             "content": {
               "application/json": {
                 "schema": {
@@ -26270,7 +26278,8 @@
                         "code": {
                           "type": "string",
                           "enum": [
-                            "not_found"
+                            "not_found",
+                            "type_not_found"
                           ]
                         },
                         "message": {
@@ -26314,7 +26323,7 @@
             }
           },
           "409": {
-            "description": "The build still ships this type, items still carry the identifier, or another registered type inherits from it",
+            "description": "A row carries the identifier and it cannot be removed here: the build still ships this type, items still carry it, or another registered type inherits from it. An identifier no row carries is absent rather than in the way, and answers `404 type_not_found`.",
             "content": {
               "application/json": {
                 "schema": {

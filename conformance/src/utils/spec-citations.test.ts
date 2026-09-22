@@ -25,7 +25,7 @@ interface Citation {
  * The statement numbers a spec file defines: its ordered-list items, and the
  * `## N.` headings `findings.md` uses instead.
  *
- * The files cite each other by bare integer — "`findings.md` 8",
+ * The files cite each other by bare integer — "`findings.md` 7",
  * "`items.md` 5" — so nothing in a citation ties it to what it names.
  * Renumber a file, which the last sweep did to eight entries of
  * `findings.md`, and every citation still reads as a sentence while pointing

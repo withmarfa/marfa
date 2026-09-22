@@ -101,11 +101,11 @@ interface Door {
   /**
    * How the door says no. The direct routes refuse the request outright
    * with the permission error. Bulk in atomic mode wraps every per-item
-   * failure in `bulk_atomic_rollback` and answers 400, which is the same
-   * envelope it already gives an unauthorized type — the refusal is the
-   * batch aborting, and the underlying code rides in the details. Spelled
-   * out per door rather than flattened, so a door that starts answering
-   * the wrong way fails here.
+   * failure in `bulk_atomic_rollback` — the refusal is the batch aborting
+   * and the underlying code rides in the details — and takes that
+   * refusal's own status, so a permission refusal answers 403 here too.
+   * Spelled out per door rather than flattened, so a door that starts
+   * answering the wrong way fails here.
    */
   refusalStatus: 403 | 400;
   /**
@@ -149,7 +149,7 @@ const DOORS: Door[] = [
   {
     name: "POST /items/bulk (by id)",
     route: "POST /items/bulk",
-    refusalStatus: 400,
+    refusalStatus: 403,
     write: (key, existing, edges) =>
       request(ctx.app, "POST", "/items/bulk", {
         key,
@@ -169,7 +169,7 @@ const DOORS: Door[] = [
   {
     name: "POST /items/bulk (natural key)",
     route: "POST /items/bulk",
-    refusalStatus: 400,
+    refusalStatus: 403,
     write: (key, existing, edges) =>
       request(ctx.app, "POST", "/items/bulk", {
         key,

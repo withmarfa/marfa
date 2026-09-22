@@ -36,6 +36,7 @@ import {
 } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
+import { bulkAtomicRollback } from "./_bulk-rollback.js";
 import { refuseReusedEdgeId } from "./_reused-edge-id.js";
 import { assertEdgeCanBeCreated } from "../storage/edge-constraints.js";
 import { publishEdge } from "../pubsub.js";
@@ -86,6 +87,11 @@ const BulkEdgeResultEntrySchema = z.object({
     .object({
       code: z.string(),
       message: z.string(),
+      /** What the refusal carried beside its code, as on the item door:
+       *  a per-entry refusal is the same refusal a single-edge write
+       *  gives, and an `id_reused` entry naming no `differs` tells a
+       *  caller which mistake it made and not what to do about it. */
+      details: z.record(z.string(), z.unknown()).optional(),
     })
     .optional(),
 });
@@ -161,10 +167,12 @@ const edgesBulkRoute = createRoute({
             "forbidden",
             "type_not_permitted",
             "edge_permission_denied",
+            "bulk_atomic_rollback",
           ]),
         },
       },
-      description: "Write access denied for a source type or edge type",
+      description:
+        "Write access denied for a source type or edge type. Under the default `atomic` the page rolls back and the code is `bulk_atomic_rollback` with the inner refusal in `details.code`, at this status rather than 400 for the reason `POST /items/bulk` gives.",
     },
   },
 });
@@ -189,7 +197,11 @@ interface BulkEdgeResult {
   outcome: "created" | "updated" | "skipped" | "errored";
   id?: string;
   reason?: string;
-  error?: { code: string; message: string };
+  error?: {
+    code: string;
+    message: string;
+    details?: Record<string, unknown>;
+  };
 }
 
 /**
@@ -275,7 +287,11 @@ async function processBulkEdge(
         result: {
           index,
           outcome: "errored",
-          error: { code: err.code, message: err.message },
+          error: {
+            code: err.code,
+            message: err.message,
+            ...(err.details && { details: err.details }),
+          },
         },
       };
     }
@@ -354,7 +370,11 @@ async function processBulkEdge(
           result: {
             index,
             outcome: "errored",
-            error: { code: err.code, message: err.message },
+            error: {
+              code: err.code,
+              message: err.message,
+              ...(err.details && { details: err.details }),
+            },
           },
         };
       }
@@ -409,7 +429,11 @@ async function processBulkEdge(
         result: {
           index,
           outcome: "errored",
-          error: { code: err.code, message: err.message },
+          error: {
+            code: err.code,
+            message: err.message,
+            ...(err.details && { details: err.details }),
+          },
         },
       };
     }
@@ -467,36 +491,30 @@ export function edgesBulkRoutes(storage: Storage) {
     if (atomic) {
       for (const [i, raw] of rawEdges.entries()) {
         if (!isValidId(raw.source_id)) {
-          throw new MarfaError(
-            ErrorCode.BULK_ATOMIC_ROLLBACK,
-            `Bulk edges rolled back on edge ${String(i)}`,
+          throw bulkAtomicRollback(
+            i,
             {
-              index: i,
               code: ErrorCode.INVALID_ID,
               message: `Invalid source_id: ${raw.source_id}`,
             },
+            "edge",
           );
         }
         if (!isValidId(raw.target_id)) {
-          throw new MarfaError(
-            ErrorCode.BULK_ATOMIC_ROLLBACK,
-            `Bulk edges rolled back on edge ${String(i)}`,
+          throw bulkAtomicRollback(
+            i,
             {
-              index: i,
               code: ErrorCode.INVALID_ID,
               message: `Invalid target_id: ${raw.target_id}`,
             },
+            "edge",
           );
         }
         if (raw.id !== undefined && !isValidId(raw.id)) {
-          throw new MarfaError(
-            ErrorCode.BULK_ATOMIC_ROLLBACK,
-            `Bulk edges rolled back on edge ${String(i)}`,
-            {
-              index: i,
-              code: ErrorCode.INVALID_ID,
-              message: `Invalid id: ${raw.id}`,
-            },
+          throw bulkAtomicRollback(
+            i,
+            { code: ErrorCode.INVALID_ID, message: `Invalid id: ${raw.id}` },
+            "edge",
           );
         }
         // Authorize the write up-front so an unauthorized edge aborts the
@@ -508,10 +526,10 @@ export function edgesBulkRoutes(storage: Storage) {
           checkEdgeWrite(srcItem?.type ?? null, raw.edge_type);
         } catch (err) {
           if (err instanceof MarfaError) {
-            throw new MarfaError(
-              ErrorCode.BULK_ATOMIC_ROLLBACK,
-              `Bulk edges rolled back on edge ${String(i)}`,
-              { index: i, code: err.code, message: err.message },
+            throw bulkAtomicRollback(
+              i,
+              { code: err.code, message: err.message },
+              "edge",
             );
           }
           throw err;
@@ -550,14 +568,10 @@ export function edgesBulkRoutes(storage: Storage) {
           },
         );
         if (atomic && result.outcome === "errored") {
-          throw new MarfaError(
-            ErrorCode.BULK_ATOMIC_ROLLBACK,
-            `Bulk edges rolled back on edge ${String(i)}`,
-            {
-              index: i,
-              code: result.error?.code,
-              message: result.error?.message,
-            },
+          throw bulkAtomicRollback(
+            i,
+            { code: result.error?.code, message: result.error?.message },
+            "edge",
           );
         }
         results.push(result);

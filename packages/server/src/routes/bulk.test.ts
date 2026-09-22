@@ -567,9 +567,12 @@ describe("POST /items/bulk", () => {
     expect(body.counts.created).toBe(1);
   });
 
-  it("rejects a credential without write on the item's type (atomic 400)", async () => {
+  it("rejects a credential without write on the item's type (atomic 403)", async () => {
     // No type_permissions → no writable types. The atomic pre-check aborts
-    // the whole batch with bulk_atomic_rollback carrying type_not_permitted.
+    // the whole batch with bulk_atomic_rollback carrying type_not_permitted,
+    // at the status that refusal has on its own: a caller sorts by status
+    // before it reads a code, and a permission failure under 400 reads as a
+    // body it can fix.
     const rawKey = `marfa_k1_scoped_${Math.random().toString(36).slice(2)}`;
     const keyHash = hashApiKey(rawKey, "test-salt");
     await ctx.storage.keys.create(
@@ -588,7 +591,7 @@ describe("POST /items/bulk", () => {
         items: [{ type: "core.note", properties: { body: "nope" } }],
       },
     });
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(403);
     const body = (await res.json()) as {
       error: { code: string; details?: { code?: string } };
     };

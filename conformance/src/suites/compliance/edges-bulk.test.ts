@@ -323,9 +323,19 @@ describe("edges.bulk", () => {
       ],
     });
     expect(rejected.ok).toBe(false);
-    expect(rejected.status).toBe(400);
+    // `403`, as on the item door beside it: the batch was refused for a
+    // permission the caller does not hold, and a `400` files that under
+    // "fix the request".
+    expect(rejected.status).toBe(403);
     expect(rejected.error?.error.code).toBe("bulk_atomic_rollback");
     expect(rejected.error?.error.details?.code).toBe("edge_permission_denied");
+
+    // Still a rollback: nothing of the page landed.
+    const listed = await client.listItemEdges(b.sourceId, {
+      edge_type: "about",
+    });
+    expect(listed.ok).toBe(true);
+    expect(listed.data.data).toHaveLength(0);
   });
 
   it("refuses a reused edge id here as the single door does, and says what differs", async () => {

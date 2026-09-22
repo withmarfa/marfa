@@ -215,9 +215,85 @@ describe("bulk", () => {
       ],
     });
     expect(rejected.ok).toBe(false);
-    expect(rejected.status).toBe(400);
+    // `403`, because the batch was refused for a permission the caller
+    // does not hold. A client sorts refusals by status before it reads a
+    // code, and a `400` filed this under "fix the request" — which is the
+    // one thing the caller cannot do about it.
+    expect(rejected.status).toBe(403);
     expect(rejected.error?.error.code).toBe("bulk_atomic_rollback");
     expect(rejected.error?.error.details?.code).toBe("type_not_permitted");
+
+    // The rollback is still a rollback. A status that changed and a page
+    // that landed would be worse than either.
+    const listed = await denied.listItems({ type: "core.note", limit: 5 });
+    expect(listed.ok).toBe(true);
+    expect(listed.data.data).toHaveLength(0);
+  });
+
+  it("leaves a state alone on an entry that resolves a row rather than creating one", async () => {
+    // The update path never reads `state`, so an entry carrying one that
+    // its type's lifecycle could not have created is a field the write it
+    // describes is going to ignore. Refusing it would roll a page back
+    // over nothing, which is what a create-time check moved too early
+    // does: `state` is checked where an entry can only be a create.
+    const sourceId = `bulk-state-upsert-${ctx.runId}`;
+    const seed = await client.bulkItems({
+      items: [
+        {
+          type: "core.note",
+          source_id: sourceId,
+          properties: { body: "seeded" },
+        },
+      ],
+    });
+    expect(seed.ok).toBe(true);
+    trackItem(ctx, seed.data.results[0]!.id!);
+
+    const upsert = await client.bulkItems({
+      items: [
+        {
+          type: "core.note",
+          source_id: sourceId,
+          state: "revoked",
+          properties: { body: "updated" },
+        },
+      ],
+      mode: "upsert",
+    });
+    expect(
+      upsert.ok,
+      `an upsert was rolled back over a state its write ignores: ${JSON.stringify(upsert.error)}`,
+    ).toBe(true);
+    expect(upsert.data.counts.updated).toBe(1);
+
+    // The witness. The same state on an entry that can only be a create —
+    // no id, no natural key — is still refused, so the check moved rather
+    // than went.
+    const created = await client.bulkItems({
+      items: [
+        { type: "core.note", state: "revoked", properties: { body: "new" } },
+      ],
+    });
+    expect(created.ok).toBe(false);
+    expect(created.error?.error.details?.code).toBe("validation_error");
+  });
+
+  it("keeps a rollback that is not a permission refusal at 400", async () => {
+    // The witness for the case above, and the line the status draws: a
+    // page refused for something the caller can fix stays where a caller
+    // looks for that, and only the permission refusal moves.
+    const rejected = await client.bulkItems({
+      items: [
+        {
+          type: "acme.not-registered",
+          properties: { title: "unknown type" },
+        },
+      ],
+    });
+    expect(rejected.ok).toBe(false);
+    expect(rejected.status).toBe(400);
+    expect(rejected.error?.error.code).toBe("bulk_atomic_rollback");
+    expect(rejected.error?.error.details?.code).toBe("unknown_type");
   });
 
   it("create_only skips a repeated (source, source_id) as duplicate_source", async () => {

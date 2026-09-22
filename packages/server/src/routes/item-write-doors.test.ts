@@ -409,6 +409,11 @@ describe("mirror protection on the doors that resolve a row by id", () => {
       },
     });
     expect(await refusalCode(res)).toBe("connector_owned");
+    // And at the status the single door gives it. A rolled-back page takes
+    // the status of the refusal that rolled it back, so the two doors
+    // answer one mistake the same way; deciding which `403`s "count" is
+    // how they would drift apart again.
+    expect(res.status).toBe(403);
     const after = await ctx.storage.items.get(id);
     expect(after?.properties.title).toBe("the owning connector's copy");
   });

@@ -411,9 +411,10 @@ describe("POST /edges/bulk", () => {
     expect(body.counts.created).toBe(1);
   });
 
-  it("rejects a key lacking edge-type write (atomic 400)", async () => {
+  it("rejects a key lacking edge-type write (atomic 403)", async () => {
     // Has source-type write but no edge_permissions → edge_permission_denied,
-    // surfaced as a bulk_atomic_rollback by the atomic pre-check.
+    // surfaced as a bulk_atomic_rollback by the atomic pre-check, at that
+    // refusal's own status rather than 400.
     const rawKey = await mintWorkingKey(ctx, {
       label: "edges-bulk-member-noedge",
       source: `edges-bulk-member-noedge-${Math.random().toString(36).slice(2, 8)}`,
@@ -434,7 +435,7 @@ describe("POST /edges/bulk", () => {
         ],
       },
     });
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(403);
     const body = (await res.json()) as {
       error: { code: string; details?: { code?: string } };
     };
