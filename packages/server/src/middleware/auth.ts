@@ -602,9 +602,10 @@ export function checkTypeAccess(
  * so silently — every suite that does not mint an exclusion-carrying key
  * would still pass. Returning one object makes it unrepresentable: a call
  * site cannot forget a field it has to destructure. (Ten consumers today,
- * eight through `getTypeFilter` and two direct: the change stream, and
- * `refuseNarrowCredential` in `routes/webhooks.ts`, which reads both
- * `allowed` and `excluded` — the pair this reasoning is about.)
+ * nine through `getTypeFilter` and one direct: `refuseNarrowCredential` in
+ * `routes/webhooks.ts`, which reads both `allowed` and `excluded` — the
+ * pair this reasoning is about — and which asks this function rather than
+ * the wrapper so that it answers its own code.)
  *
  * `allowed: undefined` keeps meaning "no restriction" and `allowed: []` keeps
  * meaning "nothing visible", so the contract at every call site survives.
@@ -923,9 +924,41 @@ export function requirePermission(
   );
 }
 
+/**
+ * The filter a data-plane read narrows by, refusing a credential the map
+ * leaves nowhere to look.
+ *
+ * An empty `allowed` at read level is a credential that may read no type
+ * at all. Answering it `200` with an empty page says "there is nothing
+ * here", which is not what happened: there is a great deal here and this
+ * credential may not see it. The single-row doors have always said so —
+ * `checkTypeAccess` resolves the same empty map to `none` and throws
+ * `type_not_permitted` — so one question was answered two ways depending
+ * on how many rows the caller asked for.
+ *
+ * **Only at read level.** `POST /items/bulk-actions` asks at `"write"`,
+ * where it narrows a match set rather than refusing a row, and a key
+ * holding read across the board matching nothing there is its own settled
+ * behavior.
+ *
+ * **In the wrapper and not in `computeTypeFilter`**, which stays a pure
+ * predicate: `refuseNarrowCredential` in `routes/webhooks.ts` asks it
+ * whether a credential reaches everything and answers its own
+ * `scoped_credential_not_permitted`, and a throw from the shared function
+ * would change that door's refusal for the credentials it exists to catch.
+ */
 export function getTypeFilter(
   c: Context<AppEnv>,
   level: "read" | "write" = "read",
 ): TypeFilter {
-  return computeTypeFilter(c.get("apiKey"), level);
+  const filter = computeTypeFilter(c.get("apiKey"), level);
+  // `allowed === undefined` is "no credential at all" and nothing else;
+  // the doors that reach here have already required one.
+  if (level === "read" && filter.allowed?.length === 0) {
+    throw new MarfaError(
+      ErrorCode.TYPE_NOT_PERMITTED,
+      "This credential's type permissions reach no type, so there is nothing on the data plane it may read.",
+    );
+  }
+  return filter;
 }

@@ -3,6 +3,7 @@ import { ErrorCode, MarfaError, isValidId } from "@withmarfa/shared";
 import type { Edge } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import {
+  getTypeFilter,
   requireAuth,
   requireEdgePermission,
   requireTypeAccess,
@@ -166,6 +167,15 @@ const listEdgesRoute = createRoute({
         },
       },
       description: "Unauthorized",
+    },
+    403: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["type_not_permitted"]),
+        },
+      },
+      description:
+        "The credential's type permissions reach no type, so there is nothing on the data plane it may read. A credential that reaches some types reads this listing rather than being refused.",
     },
   },
 });
@@ -390,6 +400,20 @@ export function edgeRoutes(storage: Storage) {
 
   router.openapi(listEdgesRoute, async (c) => {
     requireAuth(c);
+
+    // The same question every other data-plane listing asks, and the one
+    // this door did not. Its answer is discarded: the listing is not
+    // narrowed by type, because an edge's readability is its source
+    // item's and this door does not resolve one per row. What the call
+    // does is refuse a credential whose map reaches no type at all —
+    // which `GET /edges/{id}` beside it already refuses, so without this
+    // the same credential was told no for one edge and handed every edge
+    // in the instance for the plural.
+    //
+    // A credential that reaches *some* type still reads every edge here,
+    // which is a narrower version of the same defect and is not this
+    // change's to fix; it is recorded as an open question.
+    getTypeFilter(c);
 
     // An edge has no time of its own, so this door carries only the
     // modification-time bounds. A caller reaching for `occurred_after`

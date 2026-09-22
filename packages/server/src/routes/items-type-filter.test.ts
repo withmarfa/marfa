@@ -174,25 +174,39 @@ describe("allowed_types — underscore handling across read surfaces", () => {
     expect(tags).not.toContain("tag-lookalike");
   });
 
-  it("returns no tags to a credential with no readable types", async () => {
-    // An empty allow-list means "nothing is readable", and every other read
-    // surface says so. The tag aggregate guarded on a non-empty list, so the
-    // empty case skipped the type clause and handed back the whole
-    // vocabulary with counts — which names what exists even though no item
-    // behind it is readable.
+  it("refuses every read surface to a credential with no readable types", async () => {
+    // An empty allow-list is a credential that may read no type at all, and
+    // the single-row doors have always refused it `type_not_permitted`.
+    // These four answered `200` with an empty body, which says there is
+    // nothing here rather than that this credential may not see it. All
+    // four are pinned in one test so a future divergence reads as the
+    // disagreement it is.
     const key = await mintScopedKey({});
 
-    const tagsRes = await request(ctx.app, "GET", "/metadata/tags", { key });
-    expect(tagsRes.status).toBe(200);
-    const tagsBody = (await tagsRes.json()) as { tags: { tag: string }[] };
-    expect(tagsBody.tags).toEqual([]);
+    for (const path of [
+      "/items",
+      "/items/stats",
+      "/metadata/tags",
+      "/search?q=a",
+    ]) {
+      const res = await request(ctx.app, "GET", path, { key });
+      expect(res.status, `${path} answered ${String(res.status)}`).toBe(403);
+      const body = (await res.json()) as { error: { code: string } };
+      expect(body.error.code).toBe("type_not_permitted");
+    }
 
-    // The sibling surfaces, pinned in the same test so a future divergence
-    // reads as the disagreement it is.
-    expect(await listTypes("/items", key)).toEqual([]);
-    const statsRes = await request(ctx.app, "GET", "/items/stats", { key });
-    expect(statsRes.status).toBe(200);
-    expect(await statsRes.json()).toEqual({});
+    // The witness: a credential reaching one type reads all four, so what
+    // closed is the reach and not the doors.
+    const reader = await mintScopedKey({ "*": "read" });
+    for (const path of [
+      "/items",
+      "/items/stats",
+      "/metadata/tags",
+      "/search?q=a",
+    ]) {
+      const res = await request(ctx.app, "GET", path, { key: reader });
+      expect(res.status, `${path} refused a key that reaches a type`).toBe(200);
+    }
   });
 });
 
@@ -231,11 +245,19 @@ describe("GET /items/stats — counts what the caller can actually read", () => 
     expect(await statsTotal(key)).toBeGreaterThan(0);
   });
 
-  it("counts nothing for a credential with no readable types", async () => {
-    // The list path already forces zero rows on an empty filter; stats used to
-    // skip the clause entirely and report everything.
+  it("refuses a credential with no readable types rather than counting zero", async () => {
+    // Stats once skipped the type clause entirely and reported everything;
+    // then it reported zero. Neither is the answer: a credential that may
+    // read no type is refused, as it is on every sibling read.
     const key = await mintScopedKey({});
-    expect(await statsTotal(key)).toBe(0);
+    const res = await request(ctx.app, "GET", "/items/stats", { key });
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("type_not_permitted");
+
+    // The witness, so the refusal is about the map and not about the door.
+    const reader = await mintScopedKey({ "*": "read" });
+    expect(await statsTotal(reader)).toBeGreaterThanOrEqual(0);
   });
 });
 

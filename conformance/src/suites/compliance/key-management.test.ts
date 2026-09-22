@@ -4,6 +4,7 @@ import type { TestContext } from "../../client/types.js";
 import {
   createTestContext,
   getOperatorClient,
+  trackItem,
   trackKey,
   cleanup,
 } from "../../utils/setup.js";
@@ -34,7 +35,7 @@ afterAll(async () => {
 async function createClientWithoutPermissions(
   label: string,
   typePermissions: Record<string, string> = { "*": "write" },
-): Promise<{ client: MarfaClient; keyId: string }> {
+): Promise<{ client: MarfaClient; keyId: string; key: string }> {
   const keyResp = await client.createKey({
     label,
     source: `${ctx.source}-${label}`,
@@ -50,7 +51,30 @@ async function createClientWithoutPermissions(
       apiKey: keyResp.data.key,
     }),
     keyId: keyResp.data.id,
+    key: keyResp.data.key,
   };
+}
+
+/**
+ * The status `GET /events` answers, without reading its body.
+ *
+ * A stream that opens stays open, so a caller that awaits the body of a
+ * successful subscription waits for ever. Abort once the headers are in.
+ */
+async function openStreamStatus(bearer: string): Promise<number> {
+  const control = new AbortController();
+  try {
+    const res = await fetch(`${apiUrl}/events`, {
+      headers: {
+        Authorization: `Bearer ${bearer}`,
+        Accept: "text/event-stream",
+      },
+      signal: control.signal,
+    });
+    return res.status;
+  } finally {
+    control.abort();
+  }
 }
 
 describe("key management", () => {
@@ -274,13 +298,62 @@ describe("key management", () => {
     expect(second.error?.error.details?.source).toBe(source);
   });
 
-  it("the operator key reads an empty data plane and cannot write to it", async () => {
+  it("the operator key is refused the data plane, reading as well as writing", async () => {
     const operator = getOperatorClient();
 
-    const listed = await operator.listItems({ limit: 5 });
-    expect(listed.ok).toBe(true);
-    expect(listed.status).toBe(200);
-    expect(listed.data.data).toEqual([]);
+    // A row the file's own key can see, so `POST /items/bulk-get` names
+    // something real: an empty answer there has to be the refusal and not
+    // an id that resolves nothing.
+    const seeded = await client.createItem({
+      type: "core.note",
+      properties: { title: "operator-canary", body: "operator canary" },
+    });
+    expect(seeded.ok).toBe(true);
+    trackItem(ctx, seeded.data.item.id);
+    const seededId = seeded.data.item.id;
+
+    // A listing used to answer `200` with an empty array, which says "there
+    // is nothing here" — and there is a great deal here; what is true is
+    // that this credential may not see it. The single-row doors already
+    // said so, refusing `type_not_permitted` through the same map, so one
+    // question was answered two ways depending on how many rows were asked
+    // for.
+    const refused = [
+      ["GET /items", await operator.listItems({ limit: 5 })],
+      ["GET /items/stats", await operator.itemStats()],
+      ["GET /search", await operator.search("a")],
+      ["GET /metadata/tags", await operator.listTags()],
+      ["GET /export", await operator.exportItems({ type: "core.note" })],
+      [
+        "GET /occurrences",
+        await operator.listOccurrences({
+          from: "2026-01-01T00:00:00.000Z",
+          to: "2026-12-31T00:00:00.000Z",
+        }),
+      ],
+      [
+        "GET /events",
+        await operator.rawRequest("/events", {
+          headers: { Accept: "text/event-stream" },
+        }),
+      ],
+      ["GET /edges", await operator.rawRequest("/edges?limit=5")],
+      [
+        "POST /items/bulk-get",
+        await operator.rawRequest("/items/bulk-get", {
+          method: "POST",
+          body: JSON.stringify({ ids: [seededId] }),
+          headers: { "Content-Type": "application/json" },
+        }),
+      ],
+    ] as const;
+    for (const [door, answer] of refused) {
+      expect(answer.ok, `${door} was not refused`).toBe(false);
+      expect(answer.status, `${door} answered ${String(answer.status)}`).toBe(
+        403,
+      );
+      expect(answer.error?.error.code).toBe("type_not_permitted");
+    }
 
     const written = await operator.createItem({
       type: "core.note",
@@ -289,6 +362,85 @@ describe("key management", () => {
     expect(written.ok).toBe(false);
     expect(written.status).toBe(403);
     expect(written.error?.error.code).toBe("type_not_permitted");
+
+    // The witness. A key that reaches one type reads every one of those
+    // doors, so what closed is this credential's reach and not the doors.
+    const { client: reader, key: readerKey } =
+      await createClientWithoutPermissions(`km-operator-witness-${ctx.runId}`, {
+        "core.note": "read",
+      });
+    const served = [
+      ["GET /items", await reader.listItems({ limit: 5 })],
+      ["GET /items/stats", await reader.itemStats()],
+      ["GET /search", await reader.search("a")],
+      ["GET /metadata/tags", await reader.listTags()],
+      ["GET /export", await reader.exportItems({ type: "core.note" })],
+      [
+        "GET /occurrences",
+        await reader.listOccurrences({
+          from: "2026-01-01T00:00:00.000Z",
+          to: "2026-12-31T00:00:00.000Z",
+        }),
+      ],
+      ["GET /edges", await reader.rawRequest("/edges?limit=5")],
+      [
+        "POST /items/bulk-get",
+        await reader.rawRequest("/items/bulk-get", {
+          method: "POST",
+          body: JSON.stringify({ ids: [seededId] }),
+          headers: { "Content-Type": "application/json" },
+        }),
+      ],
+    ] as const;
+    for (const [door, answer] of served) {
+      expect(answer.ok, `${door} was refused a key that reaches a type`).toBe(
+        true,
+      );
+      expect(answer.status).toBe(200);
+    }
+
+    // `GET /events` by hand, because a stream that opens stays open and
+    // awaiting its body would never return. The status off the headers is
+    // the whole question a permission fixture asks of this door: whether
+    // the refusal above was this credential's reach or the door closing
+    // for everyone.
+    expect(
+      await openStreamStatus(readerKey),
+      "GET /events refused a key that reaches a type",
+    ).toBe(200);
+  });
+
+  it("narrows a bulk action to nothing rather than refusing it, where a read is refused", async () => {
+    // `POST /items/bulk-actions` asks the same filter at `"write"` level,
+    // and the refusal is deliberately read-level only: this door narrows a
+    // match set rather than refusing a row, so a credential that can write
+    // nothing matches nothing and does nothing. Held here because nothing
+    // else holds it, and a later simplification of the level check would
+    // otherwise turn every narrow key's bulk action into a hard refusal
+    // with no test to notice.
+    const operator = getOperatorClient();
+    const dryRun = await operator.rawRequest<{ matched: number }>(
+      "/items/bulk-actions",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          action: "transition",
+          filter: { type: "core.note" },
+          state: "archived",
+          dry_run: true,
+        }),
+        headers: { "Content-Type": "application/json" },
+      },
+    );
+    expect(dryRun.ok).toBe(true);
+    expect(dryRun.status).toBe(200);
+
+    // The witness. The same credential reading the same filter is refused,
+    // so the `200` above is the write level answering its own way and not
+    // the refusal having gone.
+    const read = await operator.listItems({ type: "core.note", limit: 1 });
+    expect(read.ok).toBe(false);
+    expect(read.status).toBe(403);
   });
 
   it("the operator key mints past its own reach, which is how a run is provisioned", async () => {

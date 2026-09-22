@@ -337,7 +337,7 @@ describe("OAuth scope grammar enforcement on the data plane", () => {
   // -----------------------------------------------------------------------
 
   describe("malformed scope grants are inert", () => {
-    it("a token with only nonsense scopes returns empty data on list and 403 on direct access", async () => {
+    it("a token with only nonsense scopes is refused every read, listings included", async () => {
       const seeder = ctx.workingKey;
       const created = (await (
         await request(ctx.app, "POST", "/items", {
@@ -353,35 +353,31 @@ describe("OAuth scope grammar enforcement on the data plane", () => {
       const { rawToken } = await mintOAuthToken({
         scopes: ["nonsense", "::write", "DELETE EVERYTHING"],
       });
-      // List read — empty type_permissions → allowed_types is [],
-      // storage returns no rows. 200 with empty data.
-      const list = await request(ctx.app, "GET", "/items?type=core.note", {
-        key: rawToken,
-      });
-      expect(list.status).toBe(200);
-      const body = (await list.json()) as { data: unknown[] };
-      expect(body.data).toEqual([]);
-      // The tag aggregate reads the same empty allow-list and has to agree.
-      // It used to skip the type clause on an empty list and hand back the
-      // whole tag vocabulary, naming what exists to a token that can
-      // read none of it.
+      // Every scope was dropped, so `type_permissions` is empty and the
+      // token reaches no type. The listings used to answer `200` with an
+      // empty body — which reads as "there is nothing here" to a token
+      // that is in fact being kept out — while the single-row door beside
+      // them refused. All of them refuse now.
+      for (const path of [
+        "/items?type=core.note",
+        "/metadata/tags",
+        `/items/${created.item.id}`,
+      ]) {
+        const res = await request(ctx.app, "GET", path, { key: rawToken });
+        expect(res.status, `${path} answered ${String(res.status)}`).toBe(403);
+      }
+
+      // The witness: the canary row and its tag are both there, and a
+      // credential that reaches the type reads them. So the refusals above
+      // are about this token and not about an empty instance.
       const tags = await request(ctx.app, "GET", "/metadata/tags", {
-        key: rawToken,
+        key: seeder,
       });
       expect(tags.status).toBe(200);
       const tagsBody = (await tags.json()) as { tags: { tag: string }[] };
-      expect(tagsBody.tags.map((t) => t.tag)).not.toContain(
+      expect(tagsBody.tags.map((t) => t.tag)).toContain(
         "nonsense-scope-canary",
       );
-      expect(tagsBody.tags).toEqual([]);
-      // Direct read — requireTypeAccess fires and rejects.
-      const direct = await request(
-        ctx.app,
-        "GET",
-        `/items/${created.item.id}`,
-        { key: rawToken },
-      );
-      expect(direct.status).toBe(403);
     });
   });
 });

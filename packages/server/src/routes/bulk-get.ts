@@ -18,7 +18,11 @@ import { createRoute, z } from "@hono/zod-openapi";
 import { MarfaError, ErrorCode, isValidId } from "@withmarfa/shared";
 import type { Item } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
-import { requireAuth, checkTypeAccess } from "../middleware/auth.js";
+import {
+  requireAuth,
+  checkTypeAccess,
+  getTypeFilter,
+} from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import { hydrateEdgesForItems } from "./_edges-hydrate.js";
@@ -124,6 +128,15 @@ const bulkGetRoute = createRoute({
       },
       description: "Unauthorized",
     },
+    403: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["type_not_permitted"]),
+        },
+      },
+      description:
+        "The credential's type permissions reach no type, so there is nothing on the data plane it may read. A credential that reaches some types is served the ids it may read and the rest are omitted rather than refused.",
+    },
   },
 });
 
@@ -154,6 +167,14 @@ export function bulkGetRoutes(storage: Storage) {
       }
     }
 
+    // Before the per-id filter below, which omits what a credential may
+    // not read. Omission is the right shape for "you may read some of
+    // these and not others"; it is the wrong shape for a credential that
+    // may read no type at all, where an empty `items` says the ids named
+    // nothing rather than that the caller may see nothing. The sibling
+    // listings refuse that credential and so does this one.
+    getTypeFilter(c);
+
     const includeSet = new Set(body.include ?? []);
     const includeEdges = includeSet.has("edges");
     const includeMetadata = includeSet.has("metadata");
@@ -172,7 +193,10 @@ export function bulkGetRoutes(storage: Storage) {
 
     // Permission filter: same `checkTypeAccess(..., "read")` gate the
     // single-item GET applies, but here a denial omits the item instead of
-    // 403ing — mirroring the list endpoint's implicit-denial shape. `system.*`
+    // 403ing, because a page of ids is a question about each of them and
+    // a caller may hold some types and not others. The credential that
+    // holds none is refused above rather than omitted into silence.
+    // `system.*`
     // items stay out unless the caller opts in via `include: ["system"]`,
     // matching the list endpoint's default exclusion. Preserve request order
     // by iterating `ids`; de-dupe so a repeated id appears once.
