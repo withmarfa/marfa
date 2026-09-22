@@ -150,6 +150,12 @@ const BulkResultEntrySchema = z.object({
     .object({
       code: z.string(),
       message: z.string(),
+      /** What the refusal carried beside its code. A per-entry refusal is
+       *  the same refusal a single-item door gives, and flattening it to a
+       *  code and a message dropped the half a caller acts on — an
+       *  `id_reused` entry naming no `differs` tells a caller which
+       *  mistake it made and not what to do about it. */
+      details: z.record(z.string(), z.unknown()).optional(),
     })
     .optional(),
 });
@@ -238,9 +244,13 @@ const bulkRoute = createRoute({
       description:
         "Validation error, or an atomic rollback. `atomic` defaults to " +
         "true, so a single refused entry aborts the whole page and the " +
-        "per-entry reason travels in `details.code` — `type_mismatch` " +
-        "among them, when an entry declares a `type` that is not the " +
-        "type of the row its natural key or id resolved. Send " +
+        "per-entry reason travels in `details.code`. Two of them turn on " +
+        "an entry declaring a `type` that is not the type of the row " +
+        "it resolved: `type_mismatch` where the natural key resolved " +
+        "it, because the entry named no id and the declaration is the " +
+        "mistake, and `id_reused` where the entry's own `id` did, " +
+        "because the id is taken by a row the entry is not describing " +
+        "— the same code the single-item doors answer. Send " +
         "`atomic: false` to have each entry reported on its own instead.",
     },
     401: {
@@ -440,7 +450,11 @@ interface BulkItemResult {
   outcome: "created" | "updated" | "skipped" | "errored";
   id?: string;
   reason?: string;
-  error?: { code: string; message: string };
+  error?: {
+    code: string;
+    message: string;
+    details?: Record<string, unknown>;
+  };
 }
 
 /**
@@ -621,7 +635,11 @@ async function processBulkItem(
         result: {
           index,
           outcome: "errored",
-          error: { code: err.code, message: err.message },
+          error: {
+            code: err.code,
+            message: err.message,
+            ...(err.details && { details: err.details }),
+          },
         },
       };
     }
@@ -713,7 +731,27 @@ async function processBulkItem(
       // 400 carrying this refusal in `details.code` rather than the 409
       // the other doors answer with. That is this route's established
       // answer to any per-entry refusal rather than something new here.
+      //
+      // **Which code depends on which resolution got here.** An entry the
+      // natural key resolved named no id, so the declaration is the
+      // mistake and the code is `type_mismatch`. One the id fallback
+      // resolved minted that id, and the id is taken by a row it is not
+      // describing — the same mistake `POST /items` and `POST /edges`
+      // answer `id_reused` for, so this door answers it too rather than
+      // making the code depend on how many entries the caller batched.
       if (!(retype && raw.type !== existing.type)) {
+        if (matchedBy === "id" && raw.type !== existing.type) {
+          throw new MarfaError(
+            ErrorCode.ID_REUSED,
+            `Item id ${existing.id} already names an item of type "${existing.type}", not "${raw.type}"`,
+            {
+              existing_id: existing.id,
+              differs: ["type"],
+              declared_type: raw.type,
+              actual_type: existing.type,
+            },
+          );
+        }
         requireDeclaredTypeMatches(raw.type, existing);
       }
       // A re-type needs write on the type being entered as well as the
@@ -732,7 +770,11 @@ async function processBulkItem(
             index,
             outcome: "errored",
             id: existing.id,
-            error: { code: err.code, message: err.message },
+            error: {
+              code: err.code,
+              message: err.message,
+              ...(err.details && { details: err.details }),
+            },
           },
         };
       }
@@ -858,7 +900,11 @@ async function processBulkItem(
               index,
               outcome: "errored",
               id: existing.id,
-              error: { code: err.code, message: err.message },
+              error: {
+                code: err.code,
+                message: err.message,
+                ...(err.details && { details: err.details }),
+              },
             },
           };
         }
@@ -930,7 +976,11 @@ async function processBulkItem(
         result: {
           index,
           outcome: "errored",
-          error: { code: err.code, message: err.message },
+          error: {
+            code: err.code,
+            message: err.message,
+            ...(err.details && { details: err.details }),
+          },
         },
       };
     }
@@ -1044,7 +1094,12 @@ export function bulkRoutes(storage: Storage) {
             throw new MarfaError(
               ErrorCode.BULK_ATOMIC_ROLLBACK,
               `Bulk upsert rolled back on item ${String(i)}`,
-              { index: i, code: err.code, message: err.message },
+              {
+                index: i,
+                code: err.code,
+                message: err.message,
+                ...(err.details && { details: err.details }),
+              },
             );
           }
           throw err;
@@ -1076,6 +1131,9 @@ export function bulkRoutes(storage: Storage) {
               index: i,
               code: processed.result.error?.code,
               message: processed.result.error?.message,
+              ...(processed.result.error?.details && {
+                details: processed.result.error.details,
+              }),
             },
           );
         }

@@ -16,6 +16,7 @@ import {
   trackKey,
   cleanup,
 } from "../../utils/setup.js";
+import { v7 as uuidv7 } from "uuid";
 import { createNote } from "../../generators/items.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
 
@@ -325,5 +326,58 @@ describe("edges.bulk", () => {
     expect(rejected.status).toBe(400);
     expect(rejected.error?.error.code).toBe("bulk_atomic_rollback");
     expect(rejected.error?.error.details?.code).toBe("edge_permission_denied");
+  });
+
+  it("refuses a reused edge id here as the single door does, and says what differs", async () => {
+    // The code a caller gets for one mistake must not depend on how many
+    // edges it batched, and neither must what the refusal tells it: a
+    // per-entry error that carried only a code and a message left an
+    // `id_reused` entry naming the mistake and not what to do about it.
+    const first = await makePair();
+    const second = await makePair();
+    const id = uuidv7();
+
+    const seeded = await client.createEdge({
+      id,
+      source_id: first.sourceId,
+      target_id: first.targetId,
+      edge_type: "about",
+    });
+    expect(seeded.ok, JSON.stringify(seeded.error)).toBe(true);
+    trackEdge(ctx, id);
+
+    const collision = await client.bulkEdges({
+      edges: [
+        {
+          id,
+          source_id: second.sourceId,
+          target_id: second.targetId,
+          edge_type: "about",
+        },
+      ],
+      atomic: false,
+    });
+    expect(collision.ok).toBe(true);
+    const entry = collision.data.results[0];
+    expect(entry.outcome).toBe("errored");
+    expect(entry.error?.code).toBe("id_reused");
+    expect(entry.error?.details?.differs).toEqual(["source_id", "target_id"]);
+
+    // The witness: the same entry under an id nothing holds lands, so the
+    // refusal is the id rather than the triple or the door.
+    const accepted = await client.bulkEdges({
+      edges: [
+        {
+          source_id: second.sourceId,
+          target_id: second.targetId,
+          edge_type: "about",
+        },
+      ],
+      atomic: false,
+    });
+    expect(accepted.ok).toBe(true);
+    expect(accepted.data.results[0].outcome).toBe("created");
+    const madeId = accepted.data.results[0].id;
+    if (madeId) trackEdge(ctx, madeId);
   });
 });

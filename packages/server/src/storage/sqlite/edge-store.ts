@@ -81,9 +81,15 @@ export class SqliteEdgeStore implements EdgeStore {
       await this.db.insert(edges).values(row).run();
     } catch (err) {
       if (isPrimaryKeyViolation(err, "edges")) {
+        // The race the doors' own comparison cannot close: both read the
+        // id as free and one of them inserts first. Same code as that
+        // comparison gives, because it is the same mistake from the
+        // caller's side; no `differs`, because the row that won is not
+        // read here and naming a field without having compared it would
+        // be a guess.
         throw new MarfaError(
-          ErrorCode.CONFLICT,
-          `Edge with id=${id} already exists`,
+          ErrorCode.ID_REUSED,
+          `Edge id ${id} already names a different edge`,
           { existing_id: id },
         );
       }

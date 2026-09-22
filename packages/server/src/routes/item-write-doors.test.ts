@@ -170,6 +170,20 @@ interface Door {
    * absent hook read as a deliberate exemption.
    */
   misdeclareType?: (w: DoorWrite) => Promise<Response>;
+
+  /**
+   * The code the misdeclaration is refused with, where it is not
+   * `type_mismatch`.
+   *
+   * A door that resolved the row by an id the caller minted answers
+   * `id_reused` instead: there the id is the thing that is wrong, and the
+   * type is only how the caller finds out. A door that resolved it by the
+   * natural key, or by the path, named no id and so the declaration is
+   * the mistake. The distinction is the caller's, not the door's, which
+   * is why it rides on the row here rather than being inferred from the
+   * door's name.
+   */
+  misdeclareCode?: "id_reused";
 }
 
 /**
@@ -329,6 +343,7 @@ const DOORS: Door[] = [
     write: bulkByIdWrite("core.note"),
     writeTruthful: bulkByIdWrite("core.bookmark"),
     misdeclareType: bulkByIdWrite("core.note"),
+    misdeclareCode: "id_reused",
   },
   {
     name: "POST /items/bulk (natural key)",
@@ -503,7 +518,9 @@ describe.each(DOORS)("$name", (door) => {
         properties: { title: "re-typed" },
       });
       expect(res.status).toBeGreaterThanOrEqual(400);
-      expect(await refusalCode(res)).toBe("type_mismatch");
+      expect(await refusalCode(res)).toBe(
+        door.misdeclareCode ?? "type_mismatch",
+      );
 
       // The status is not the property. A door that answered an error
       // after writing would satisfy the line above and still have

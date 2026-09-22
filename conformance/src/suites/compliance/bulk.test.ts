@@ -693,4 +693,69 @@ describe("bulk_action async-job lifecycle", () => {
     expect(replay.ok).toBe(true);
     expect((replay.data as BulkActionJob).id).toBe(firstJobId);
   });
+
+  it("tells a reused id from a mistaken declaration, as the single-item doors do", async () => {
+    // The code a batched write gets must not depend on its being batched.
+    // An entry whose own `id` resolves a row of another type is the
+    // reused-id mistake and answers `id_reused`; one whose natural key
+    // resolves a row of another type is the declaration mistake and
+    // answers `type_mismatch`. Both travel in `details.code` here,
+    // because the page rolls back under the default `atomic`.
+    const byId = await client.createItem(createNote({ source: ctx.source }));
+    expect(byId.ok).toBe(true);
+    trackItem(ctx, byId.data.item.id);
+
+    const reusedId = await client.bulkItems({
+      items: [
+        {
+          id: byId.data.item.id,
+          type: "core.task",
+          properties: { title: "landed on a note by id" },
+        },
+      ],
+    });
+    expect(reusedId.status).toBe(400);
+    expect(reusedId.error?.error.code).toBe("bulk_atomic_rollback");
+    expect(reusedId.error?.error.details?.code).toBe("id_reused");
+
+    const sourceId = `bulk-retype-${ctx.runId}`;
+    const byKey = await client.createItem(
+      createNote({ source: ctx.source, source_id: sourceId }),
+    );
+    expect(byKey.ok).toBe(true);
+    trackItem(ctx, byKey.data.item.id);
+
+    const mistakenDeclaration = await client.bulkItems({
+      items: [
+        {
+          type: "core.task",
+          source_id: sourceId,
+          properties: { title: "landed on a note by natural key" },
+        },
+      ],
+    });
+    expect(mistakenDeclaration.status).toBe(400);
+    expect(mistakenDeclaration.error?.error.details?.code).toBe(
+      "type_mismatch",
+    );
+
+    // The witness for both: the same two entries declaring the rows' own
+    // type land, so each refusal is the type rather than the door.
+    const accepted = await client.bulkItems({
+      items: [
+        {
+          id: byId.data.item.id,
+          type: "core.note",
+          properties: { body: "by id" },
+        },
+        {
+          type: "core.note",
+          source_id: sourceId,
+          properties: { body: "by natural key" },
+        },
+      ],
+    });
+    expect(accepted.ok).toBe(true);
+    expect(accepted.data.counts.updated).toBe(2);
+  });
 });

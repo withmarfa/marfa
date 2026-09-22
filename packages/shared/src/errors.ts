@@ -229,6 +229,29 @@ export enum ErrorCode {
    * types is a deliberate operation rather than a side effect of a drain.
    */
   TYPE_MISMATCH = "type_mismatch",
+
+  /**
+   * A caller-minted id that already names something else.
+   *
+   * One code wherever it happens — `POST /items`, `POST /edges`, and a
+   * bulk entry the id fallback resolved — because it is one mistake: a
+   * client picked an id, sent it, and the id is taken by a row that is
+   * not the one it is describing. A client sorts a refusal by its code,
+   * and a code that depended on which door was asked, or on how many
+   * entries the caller batched, would not sort.
+   *
+   * `details.differs` names what differed: `type` on an item, and the
+   * members of the triple that moved on an edge. A caller that minted the
+   * id knows what it sent, and what it needs is which part of the stored
+   * row disagrees, because that is what says whether it has a duplicate id
+   * or a bug in how it derives one.
+   *
+   * Not `type_mismatch`, which answers the other question: a body
+   * declaring a type that the row it resolved is not, where the row was
+   * resolved by its natural key or is the one the path names. The write
+   * named no id there, so the declaration is the mistake; here the id is.
+   */
+  ID_REUSED = "id_reused",
   /**
    * An `Idempotency-Key` names a request that is still being served.
    *
@@ -313,6 +336,7 @@ const STATUS_MAP: Record<ErrorCode, number> = {
   [ErrorCode.BULK_JOB_NOT_FOUND]: 404,
   [ErrorCode.BLOB_LOCATION_NOT_FOUND]: 404,
   [ErrorCode.COPIES_BELOW_MINIMUM]: 409,
+  [ErrorCode.ID_REUSED]: 409,
   [ErrorCode.HOUSEKEEPING_JOB_NOT_FOUND]: 404,
   [ErrorCode.HOUSEKEEPING_JOB_RUNNING]: 409,
   [ErrorCode.CONNECTOR_NOT_FOUND]: 404,

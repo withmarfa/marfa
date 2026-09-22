@@ -341,14 +341,18 @@ const createItemRoute = createRoute({
           schema: z.union([
             ConflictResponseSchema,
             AncestorUnavailableSchema,
-            makeErrorResponseSchema(["conflict", "type_mismatch"]),
+            makeErrorResponseSchema(["conflict", "id_reused", "type_mismatch"]),
           ]),
         },
       },
       description:
-        "`type_mismatch`: the request resolved an existing item — by the " +
-        "`(source, source_id)` natural key or by a repeated `id` — whose " +
-        "type is not the one declared. Re-typing an item is a deliberate " +
+        "`id_reused`: the `id` this request minted is taken by an item it " +
+        "is not describing, and `details.differs` names what disagrees. " +
+        "`POST /edges` answers the same code for an id naming a different " +
+        "triple. `type_mismatch`: the request resolved an existing item by " +
+        "the `(source, source_id)` natural key and declared a type that " +
+        "row is not — the id was never in question, the declaration was. " +
+        "Re-typing an item is a deliberate " +
         "operation, not something a re-sync does in passing. `conflict`: " +
         "the `id` is held by an item this caller cannot read, so the " +
         "server cannot tell it is a repeat of this caller's own create " +
@@ -1747,21 +1751,38 @@ export function itemRoutes(storage: Storage) {
       if (!existing) return null;
 
       // **No type gate of its own here, and its absence is the honest
-      // shape.** `requireDeclaredTypeMatches` below is exact, so a row
-      // that is acknowledged has the type the body named — and that type
-      // already cleared `requireTypeAccess` at the top of this route. A
-      // second call could therefore never refuse, and a gate that cannot
-      // refuse reads as a protection somebody is relying on.
+      // shape.** The comparison below is exact, so a row that is
+      // acknowledged has the type the body named — and that type already
+      // cleared `requireTypeAccess` at the top of this route. A second
+      // call could therefore never refuse, and a gate that cannot refuse
+      // reads as a protection somebody is relying on.
       //
       // The natural-key arms do carry one, and the difference is real:
       // they resolve by `(source, source_id)`, which says nothing about
       // the row's type, so the row can be a type the caller may not
       // write.
       //
-      // A write never re-types the row it lands on, on any door. Shared
-      // with the natural-key branch and the bulk door rather than
-      // restated.
-      requireDeclaredTypeMatches(type, existing);
+      // **`id_reused` here, where the natural-key branch above says
+      // `type_mismatch`, and the difference is which thing is in
+      // question.** There the caller resolved a row by its `(source,
+      // source_id)` and declared a type the row is not: the id was never
+      // named and the declaration is the mistake. Here the caller minted
+      // the id, and the id is taken by a row it is not describing —
+      // the same mistake the edge door answers for an id naming a
+      // different triple, so the same code, with `details.differs`
+      // naming what disagrees.
+      if (existing.type !== type) {
+        throw new MarfaError(
+          ErrorCode.ID_REUSED,
+          `Item id ${existing.id} already names an item of type "${existing.type}", not "${type}"`,
+          {
+            existing_id: existing.id,
+            differs: ["type"],
+            declared_type: type,
+            actual_type: existing.type,
+          },
+        );
+      }
       return existing;
     };
 

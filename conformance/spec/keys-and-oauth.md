@@ -13,13 +13,13 @@
 6. The plaintext `key` is returned on creation only; `GET /keys` never carries it. `compliance/key-management.test.ts › key secret is not included in list response`.
 7. `source` is stamped on every row the key writes and cannot be forged in a body; a second key naming a `source` already in use answers `409 conflict` with `details.source`, a status the document does not declare for the door (`findings.md` 7). `compliance/field-enforcement.test.ts › source: server stamps the credential source, client value is ignored`, `compliance/key-management.test.ts › refuses a second key claiming a source already in use`.
 8. A key without `keys.mint` cannot list, mint, update or revoke keys: `403 forbidden` with `details.required_scope: "keys.mint"`. `compliance/key-management.test.ts › list keys requires keys.mint`, `› revoke key requires keys.mint`, `› minting requires keys.mint`, `compliance/keys-update.test.ts › refuses a caller without keys.mint`.
-9. An invalid permission value in a mint body answers `400`. `compliance/type-scoped-access.test.ts › rejects invalid permission values in key creation`.
+9. An invalid permission value in a mint body answers `400 validation_error`, with `details.errors[].path` naming the map entry. `compliance/type-scoped-access.test.ts › rejects invalid permission values in key creation`.
 
 ## Updating and revoking
 
 10. `PATCH /keys/{id}` changes `label`, `default_tier` and the permission maps in place, and the change reads back on `GET /keys`; `source` is immutable and its presence in the body answers `400 validation_error`. `compliance/keys-update.test.ts › updates the label and the maps in place, never the source`, `› refuses a change of source`.
 11. A key cannot widen itself past what it holds: `403 forbidden` with `details.required_scope` naming the reach it lacks. `compliance/keys-update.test.ts › refuses a key widening itself past what it holds`.
-12. An unknown key id answers `404 api_key_not_found`; a malformed id answers `400`. `compliance/keys-update.test.ts › answers 404 for an unknown key and 400 for a malformed id`.
+12. An unknown key id answers `404 api_key_not_found`; a malformed id answers `400 validation_error`. `compliance/keys-update.test.ts › answers 404 for an unknown key and 400 for a malformed id`.
 13. `DELETE /keys/{id}` revokes at once: the next request bearing the key answers `401 unauthorized`. `compliance/key-management.test.ts › revoke key: create, use, revoke, retry fails with 401`.
 14. `last_used_at` is null or absent on a new key, is set to an ISO 8601 instant after the key's first use, and appears in the listing. `compliance/key-last-used.test.ts › new key has null or absent last_used_at`, `› last_used_at is set after first use`, `› last_used_at is a valid ISO 8601 timestamp`, `› last_used_at appears in list response`.
 

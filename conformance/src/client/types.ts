@@ -372,7 +372,11 @@ export interface BulkResultEntry {
   outcome: BulkOutcome;
   id?: string;
   reason?: string;
-  error?: { code: string; message: string };
+  error?: {
+    code: string;
+    message: string;
+    details?: Record<string, unknown>;
+  };
 }
 
 export interface BulkResponse {
@@ -406,7 +410,11 @@ export interface BulkEdgeResultEntry {
   outcome: BulkOutcome;
   id?: string;
   reason?: string;
-  error?: { code: string; message: string };
+  error?: {
+    code: string;
+    message: string;
+    details?: Record<string, unknown>;
+  };
 }
 
 export interface BulkEdgeResponse {

@@ -81,4 +81,79 @@ describe("deduplication", () => {
 
     expect(r2.data.item.id).not.toBe(r1.data.item.id);
   });
+
+  it("refuses an upsert whose natural key lands on a row of another type", async () => {
+    // The other half of the split `id_reused` made: here the caller named
+    // no id, resolved a row by `(source, source_id)`, and declared a type
+    // that row is not. The id was never in question and the declaration
+    // is the mistake, so the code is `type_mismatch` rather than the one
+    // a reused id gets.
+    const sourceId = `dedup-retype-${generateId()}`;
+    const seed = await client.createItem(
+      createNote({ source: ctx.source, source_id: sourceId }),
+    );
+    expect(seed.ok).toBe(true);
+    trackItem(ctx, seed.data.item.id);
+
+    const mismatched = await client.createItem({
+      type: "core.task",
+      source: ctx.source,
+      source_id: sourceId,
+      properties: { title: "landed on a note" },
+    });
+    expect(mismatched.status).toBe(409);
+    expect(mismatched.error?.error.code).toBe("type_mismatch");
+
+    // The witness, and the half that says the refusal was about the type
+    // rather than about the natural key: the same upsert declaring the
+    // row's own type lands on it.
+    const accepted = await client.createItem(
+      createNote({
+        source: ctx.source,
+        source_id: sourceId,
+        properties: { body: "upserted onto the note" },
+      }),
+    );
+    expect(accepted.ok).toBe(true);
+    expect(accepted.data.item.id).toBe(seed.data.item.id);
+    expect(accepted.data.item.type).toBe("core.note");
+  });
+
+  it("refuses an update declaring a type the item is not", async () => {
+    // The update door's half of the same rule, and the third place
+    // `type_mismatch` is answered. The path names the row, so the id was
+    // never the caller's to get wrong; what disagrees is the declaration.
+    const seed = await client.createItem(createNote({ source: ctx.source }));
+    expect(seed.ok).toBe(true);
+    trackItem(ctx, seed.data.item.id);
+
+    const mismatched = await client.rawRequest<unknown>(
+      `/items/${seed.data.item.id}`,
+      {
+        method: "PATCH",
+        body: {
+          type: "core.task",
+          properties: { body: "still a note" },
+          version: seed.data.item.version,
+        },
+      },
+    );
+    expect(mismatched.status).toBe(409);
+    expect(mismatched.error?.error.code).toBe("type_mismatch");
+
+    // The witness: the same update declaring the row's own type lands, so
+    // the refusal is the declaration rather than the shape of the write.
+    const accepted = await client.rawRequest<unknown>(
+      `/items/${seed.data.item.id}`,
+      {
+        method: "PATCH",
+        body: {
+          type: "core.note",
+          properties: { body: "still a note" },
+          version: seed.data.item.version,
+        },
+      },
+    );
+    expect(accepted.status).toBe(200);
+  });
 });

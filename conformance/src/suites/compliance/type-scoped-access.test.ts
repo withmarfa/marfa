@@ -272,5 +272,12 @@ describe("type-scoped access control (type_permissions)", () => {
     });
     expect(r.ok).toBe(false);
     expect(r.status).toBe(400);
+    // The code, not only the status. A client acts on the code, and a
+    // status alone does not tell a body it can fix from a permission it
+    // does not hold.
+    expect(r.error?.error.code).toBe("validation_error");
+    const errors = r.error?.error.details?.errors as
+      { path: string }[] | undefined;
+    expect(errors?.[0]?.path).toBe("type_permissions.core.note");
   });
 });
