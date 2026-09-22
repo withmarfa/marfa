@@ -63,6 +63,7 @@ import { namesSystemNamespace } from "./_system-type-visibility.js";
 import type { BulkActionJobRow, Storage } from "../storage/interface.js";
 import { readInstanceConfig } from "../storage/instance-config.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
+import { bulkAtomicRollback } from "./_bulk-rollback.js";
 import { publish } from "../pubsub.js";
 import { applyInlineEdges, announceInlineEdges } from "./_edges-inline.js";
 import type { InlineEdgeChanges } from "./_edges-inline.js";
@@ -264,10 +265,15 @@ const bulkRoute = createRoute({
     403: {
       content: {
         "application/json": {
-          schema: makeErrorResponseSchema(["forbidden", "type_not_permitted"]),
+          schema: makeErrorResponseSchema([
+            "bulk_atomic_rollback",
+            "forbidden",
+            "type_not_permitted",
+          ]),
         },
       },
-      description: "Write access denied for one of the item types",
+      description:
+        "Write access denied for one of the item types. Under the default `atomic` the page rolls back and the code is `bulk_atomic_rollback` with `type_not_permitted` in `details.code`; the status is the inner refusal's, because a caller sorts by status before it reads a code and a permission failure filed under 400 reads as a body it can fix.",
     },
   },
 });
@@ -1061,29 +1067,43 @@ export function bulkRoutes(storage: Storage) {
     if (atomic) {
       for (const [i, raw] of items.entries()) {
         if (!isValidTypeIdentifier(raw.type)) {
-          throw new MarfaError(
-            ErrorCode.BULK_ATOMIC_ROLLBACK,
-            `Bulk upsert rolled back on item ${String(i)}`,
-            {
-              index: i,
-              code: ErrorCode.VALIDATION_ERROR,
-              message: `Invalid type identifier: ${raw.type}`,
-            },
-          );
+          throw bulkAtomicRollback(i, {
+            code: ErrorCode.VALIDATION_ERROR,
+            message: `Invalid type identifier: ${raw.type}`,
+          });
         }
         if (
           raw.occurred_at !== undefined &&
           !isValidTimestamp(raw.occurred_at)
         ) {
-          throw new MarfaError(
-            ErrorCode.BULK_ATOMIC_ROLLBACK,
-            `Bulk upsert rolled back on item ${String(i)}`,
-            {
-              index: i,
-              code: ErrorCode.VALIDATION_ERROR,
-              message: "occurred_at must be an ISO 8601 string",
-            },
+          throw bulkAtomicRollback(i, {
+            code: ErrorCode.VALIDATION_ERROR,
+            message: "occurred_at must be an ISO 8601 string",
+          });
+        }
+        // **Before the write gate, because the single door asks it
+        // first.** The two are parameterized over one table in
+        // `item-state-doors.test.ts` precisely so they cannot answer one
+        // request differently, and while a rollback was a `400` whatever
+        // refused it the disagreement was invisible: an entry naming a
+        // state its type's lifecycle cannot reach hit the write gate here
+        // and the state gate there, and both came back `400`. Now that a
+        // rolled-back permission refusal carries the permission's status,
+        // the same request would answer `403` on this door and `400` on
+        // the other, which is the caller-facing disagreement the table
+        // exists to stop.
+        if (raw.state && raw.state !== SYSTEM_DEFAULT_STATE) {
+          const stateError = validateTransition(
+            raw.type,
+            SYSTEM_DEFAULT_STATE,
+            raw.state,
           );
+          if (stateError) {
+            throw bulkAtomicRollback(i, {
+              code: ErrorCode.VALIDATION_ERROR,
+              message: stateError,
+            });
+          }
         }
         // Authorize the write up-front so an unauthorized type aborts the
         // batch before any row lands (SQLite can't roll back async txns).
@@ -1091,16 +1111,11 @@ export function bulkRoutes(storage: Storage) {
           checkWrite(raw);
         } catch (err) {
           if (err instanceof MarfaError) {
-            throw new MarfaError(
-              ErrorCode.BULK_ATOMIC_ROLLBACK,
-              `Bulk upsert rolled back on item ${String(i)}`,
-              {
-                index: i,
-                code: err.code,
-                message: err.message,
-                ...(err.details && { details: err.details }),
-              },
-            );
+            throw bulkAtomicRollback(i, {
+              code: err.code,
+              message: err.message,
+              details: err.details,
+            });
           }
           throw err;
         }
@@ -1124,18 +1139,10 @@ export function bulkRoutes(storage: Storage) {
           // In atomic mode a single failure aborts the whole batch. Throw
           // so runInTransaction rolls back; carry the failure context out
           // via the error details.
-          throw new MarfaError(
-            ErrorCode.BULK_ATOMIC_ROLLBACK,
-            `Bulk upsert rolled back on item ${String(i)}`,
-            {
-              index: i,
-              code: processed.result.error?.code,
-              message: processed.result.error?.message,
-              ...(processed.result.error?.details && {
-                details: processed.result.error.details,
-              }),
-            },
-          );
+          throw bulkAtomicRollback(i, {
+            code: processed.result.error?.code,
+            message: processed.result.error?.message,
+          });
         }
         out.push(processed);
       }

@@ -126,10 +126,11 @@ const removeDriftedTypeRoute = createRoute({
     404: {
       content: {
         "application/json": {
-          schema: makeErrorResponseSchema(["not_found"]),
+          schema: makeErrorResponseSchema(["not_found", "type_not_found"]),
         },
       },
-      description: "No platform row with this identifier",
+      description:
+        "`type_not_found` when no platform row carries the identifier; `not_found` for a path this server does not serve.",
     },
     409: {
       content: {
@@ -138,7 +139,7 @@ const removeDriftedTypeRoute = createRoute({
         },
       },
       description:
-        "The build still ships this type, items still carry the identifier, or another registered type inherits from it",
+        "A row carries the identifier and it cannot be removed here: the build still ships this type, items still carry it, or another registered type inherits from it. An identifier no row carries is absent rather than in the way, and answers `404 type_not_found`.",
     },
   },
 });
@@ -197,9 +198,19 @@ export function adminPlatformTypeRoutes(storage: Storage) {
     // difference is the guard: a row exists for every shipped type too, so
     // testing existence alone would make this able to remove a live one.
     if (!platformDrift().includes(id)) {
+      // **Two refusals, told apart by whether there is a row at all.** An
+      // identifier nothing carries is absent, which is `404`, and one a
+      // row does carry is present and not removable here, which is a
+      // statement about its state and stays `409`. Answering both `409`
+      // sent a caller looking for a row to move out of the way when the
+      // thing it named had never existed.
+      const rows = await storage.types.loadAll();
+      const carried = rows.some((row) => row.schema.id === id);
       throw new MarfaError(
-        ErrorCode.CONFLICT,
-        `"${id}" is not a type this build has stopped shipping, so it cannot be removed here`,
+        carried ? ErrorCode.CONFLICT : ErrorCode.TYPE_NOT_FOUND,
+        carried
+          ? `"${id}" is not a type this build has stopped shipping, so it cannot be removed here`
+          : `No platform row carries "${id}"`,
         { type: id },
       );
     }

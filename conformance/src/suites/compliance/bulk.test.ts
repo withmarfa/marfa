@@ -215,9 +215,37 @@ describe("bulk", () => {
       ],
     });
     expect(rejected.ok).toBe(false);
-    expect(rejected.status).toBe(400);
+    // `403`, because the batch was refused for a permission the caller
+    // does not hold. A client sorts refusals by status before it reads a
+    // code, and a `400` filed this under "fix the request" — which is the
+    // one thing the caller cannot do about it.
+    expect(rejected.status).toBe(403);
     expect(rejected.error?.error.code).toBe("bulk_atomic_rollback");
     expect(rejected.error?.error.details?.code).toBe("type_not_permitted");
+
+    // The rollback is still a rollback. A status that changed and a page
+    // that landed would be worse than either.
+    const listed = await denied.listItems({ type: "core.note", limit: 5 });
+    expect(listed.ok).toBe(true);
+    expect(listed.data.data).toHaveLength(0);
+  });
+
+  it("keeps a rollback that is not a permission refusal at 400", async () => {
+    // The witness for the case above, and the line the status draws: a
+    // page refused for something the caller can fix stays where a caller
+    // looks for that, and only the permission refusal moves.
+    const rejected = await client.bulkItems({
+      items: [
+        {
+          type: "acme.not-registered",
+          properties: { title: "unknown type" },
+        },
+      ],
+    });
+    expect(rejected.ok).toBe(false);
+    expect(rejected.status).toBe(400);
+    expect(rejected.error?.error.code).toBe("bulk_atomic_rollback");
+    expect(rejected.error?.error.details?.code).toBe("unknown_type");
   });
 
   it("create_only skips a repeated (source, source_id) as duplicate_source", async () => {

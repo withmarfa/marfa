@@ -368,15 +368,28 @@ export class MarfaError extends Error {
   readonly status: number;
   readonly details?: Record<string, unknown>;
 
+  /**
+   * `status` comes from `STATUS_MAP` and is overridden by one code.
+   *
+   * The map is the single place a code and its status are tied together,
+   * and keeping it that way is what stops the two drifting across a
+   * hundred throw sites. The exception is `bulk_atomic_rollback`, whose
+   * status is not its own: a page is refused for the reason the entry
+   * inside it was refused, and the outer code says only that the page
+   * went back. A caller sorts by status before it reads a code, so a
+   * permission refusal answered `400` there is filed under "fix the
+   * request", which is the one thing that caller cannot do about it.
+   */
   constructor(
     code: ErrorCode,
     message: string,
     details?: Record<string, unknown>,
+    status?: number,
   ) {
     super(message);
     this.name = "MarfaError";
     this.code = code;
-    this.status = STATUS_MAP[code];
+    this.status = status ?? STATUS_MAP[code];
     this.details = details;
   }
 

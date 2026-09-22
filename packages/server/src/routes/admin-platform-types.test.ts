@@ -107,10 +107,10 @@ describe("DELETE /admin/platform-types/{id}", () => {
   it("binds `drift` as an identifier rather than reaching the listing", async () => {
     // The two doors share a prefix now that this one names no verb of its
     // own, so the listing's own path is a well-formed `{id}` under DELETE.
-    // It binds the literal, and `drift` is not an identifier the build has
-    // stopped shipping, so it is refused like any other — the sibling
-    // cannot be addressed as something to remove. The listing keeps
-    // answering its own verb.
+    // It binds the literal, and no platform row carries `drift`, so it is
+    // refused as an identifier that is not there — the sibling cannot be
+    // addressed as something to remove. The listing keeps answering its
+    // own verb.
     const ctx = await newContext();
     const id = await seedDriftedType(ctx);
 
@@ -120,9 +120,9 @@ describe("DELETE /admin/platform-types/{id}", () => {
       "/admin/platform-types/drift",
       { key: ctx.operatorKey },
     );
-    expect(res.status).toBe(409);
+    expect(res.status).toBe(404);
     const body = (await res.json()) as { error: { code: string } };
-    expect(body.error.code).toBe("conflict");
+    expect(body.error.code).toBe("type_not_found");
 
     const listed = await request(
       ctx.app,
