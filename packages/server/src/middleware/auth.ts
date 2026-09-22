@@ -602,9 +602,10 @@ export function checkTypeAccess(
  * so silently — every suite that does not mint an exclusion-carrying key
  * would still pass. Returning one object makes it unrepresentable: a call
  * site cannot forget a field it has to destructure. (Ten consumers today,
- * eight through `getTypeFilter` and two direct: the change stream, and
- * `refuseNarrowCredential` in `routes/webhooks.ts`, which reads both
- * `allowed` and `excluded` — the pair this reasoning is about.)
+ * nine through `getTypeFilter` and one direct: `refuseNarrowCredential` in
+ * `routes/webhooks.ts`, which reads both `allowed` and `excluded` — the
+ * pair this reasoning is about — and which asks this function rather than
+ * the wrapper so that it answers its own code.)
  *
  * `allowed: undefined` keeps meaning "no restriction" and `allowed: []` keeps
  * meaning "nothing visible", so the contract at every call site survives.
@@ -938,7 +939,7 @@ export function requirePermission(
  * **Only at read level.** `POST /items/bulk-actions` asks at `"write"`,
  * where it narrows a match set rather than refusing a row, and a key
  * holding read across the board matching nothing there is its own settled
- * behaviour.
+ * behavior.
  *
  * **In the wrapper and not in `computeTypeFilter`**, which stays a pure
  * predicate: `refuseNarrowCredential` in `routes/webhooks.ts` asks it

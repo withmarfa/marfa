@@ -211,6 +211,10 @@ export const EXTRA_PATHS: Record<string, Record<string, unknown>> = {
             "The filter cannot be honored: more than 10 types, a `type` entry that is the global `*` or is outside the type-identifier grammar, or an `edges` value outside the enum.",
         },
         "401": { description: "Unauthorized" },
+        "403": {
+          description:
+            "The credential's type permissions reach no type, so there is nothing on the data plane it may read. A credential that reaches some types opens a stream narrowed to them rather than being refused.",
+        },
       },
     },
   },

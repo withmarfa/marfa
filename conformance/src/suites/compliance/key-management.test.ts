@@ -288,6 +288,20 @@ describe("key management", () => {
       ["GET /items/stats", await operator.itemStats()],
       ["GET /search", await operator.search("a")],
       ["GET /metadata/tags", await operator.listTags()],
+      ["GET /export", await operator.exportItems({ type: "core.note" })],
+      [
+        "GET /occurrences",
+        await operator.listOccurrences({
+          from: "2026-01-01T00:00:00.000Z",
+          to: "2026-12-31T00:00:00.000Z",
+        }),
+      ],
+      [
+        "GET /events",
+        await operator.rawRequest("/events", {
+          headers: { Accept: "text/event-stream" },
+        }),
+      ],
     ] as const;
     for (const [door, answer] of refused) {
       expect(answer.ok, `${door} was not refused`).toBe(false);
@@ -316,6 +330,14 @@ describe("key management", () => {
       ["GET /items/stats", await reader.itemStats()],
       ["GET /search", await reader.search("a")],
       ["GET /metadata/tags", await reader.listTags()],
+      ["GET /export", await reader.exportItems({ type: "core.note" })],
+      [
+        "GET /occurrences",
+        await reader.listOccurrences({
+          from: "2026-01-01T00:00:00.000Z",
+          to: "2026-12-31T00:00:00.000Z",
+        }),
+      ],
     ] as const;
     for (const [door, answer] of served) {
       expect(answer.ok, `${door} was refused a key that reaches a type`).toBe(

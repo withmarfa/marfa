@@ -74,8 +74,9 @@ async function cleanupLoadData(
 
 console.log(`Trashing every item tagged env:test on ${apiUrl}...`);
 
-// `MARFA_API_KEY` is the bootstrap key, which reads an empty data plane; a key
-// it mints carries the whole dataset, which is what this has to sweep.
+// `MARFA_API_KEY` is the bootstrap key, which the data plane refuses
+// outright; a key it mints carries the whole dataset, which is what this
+// has to sweep.
 const provisioner = new MarfaClient({ baseUrl: apiUrl, apiKey });
 const runId = newRunId();
 const minted = await provisioner.createKey({
