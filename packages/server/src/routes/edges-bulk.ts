@@ -36,7 +36,7 @@ import {
 } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
-import { bulkAtomicRollback } from "./_bulk-rollback.js";
+import { bulkAtomicRollback, isEntryVerdict } from "./_bulk-rollback.js";
 import { refuseReusedEdgeId } from "./_reused-edge-id.js";
 import { assertEdgeCanBeCreated } from "../storage/edge-constraints.js";
 import { publishEdge } from "../pubsub.js";
@@ -282,7 +282,7 @@ async function processBulkEdge(
     const srcItem = await storage.items.getIncludingTrashed(raw.source_id);
     checkEdgeWrite(srcItem?.type ?? null, raw.edge_type);
   } catch (err) {
-    if (err instanceof MarfaError) {
+    if (isEntryVerdict(err)) {
       return {
         result: {
           index,
@@ -310,7 +310,7 @@ async function processBulkEdge(
       try {
         refuseReusedEdgeId(held, raw);
       } catch (err) {
-        if (err instanceof MarfaError) {
+        if (isEntryVerdict(err)) {
           return {
             result: {
               index,
@@ -365,7 +365,7 @@ async function processBulkEdge(
         raw.version,
       );
     } catch (err) {
-      if (err instanceof MarfaError) {
+      if (isEntryVerdict(err)) {
         return {
           result: {
             index,
@@ -424,7 +424,7 @@ async function processBulkEdge(
       created,
     };
   } catch (err) {
-    if (err instanceof MarfaError) {
+    if (isEntryVerdict(err)) {
       return {
         result: {
           index,
@@ -525,7 +525,7 @@ export function edgesBulkRoutes(storage: Storage) {
           );
           checkEdgeWrite(srcItem?.type ?? null, raw.edge_type);
         } catch (err) {
-          if (err instanceof MarfaError) {
+          if (isEntryVerdict(err)) {
             throw bulkAtomicRollback(
               i,
               { code: err.code, message: err.message },

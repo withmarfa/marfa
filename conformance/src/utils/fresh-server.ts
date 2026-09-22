@@ -69,7 +69,7 @@ export async function bootFreshServer(
    * Extra environment for the server this boots, merged over the
    * script's own.
    *
-   * A behaviour that only appears under a setting cannot be asserted
+   * A behavior that only appears under a setting cannot be asserted
    * against the shared server, and a fixture that tries either races the
    * default or changes it for every other file on the same instance.
    */
