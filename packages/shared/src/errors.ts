@@ -229,6 +229,31 @@ export enum ErrorCode {
    * types is a deliberate operation rather than a side effect of a drain.
    */
   TYPE_MISMATCH = "type_mismatch",
+
+  /**
+   * A caller-minted id that already names something else.
+   *
+   * One code on the item door and the edge door, because it is one
+   * mistake: a client picked an id, sent it, and the id is taken by a row
+   * that is not the one it is describing. The two doors used to answer it
+   * differently — `type_mismatch` on items, a bare `conflict` on edges —
+   * so a client sorting refusals by code had to know which door it had
+   * asked before it could tell a collision from anything else a `409`
+   * means.
+   *
+   * `details.differs` names what differed: `type` on an item, and the
+   * members of the triple that moved on an edge. A caller that minted the
+   * id knows what it sent, and what it needs is which part of the stored
+   * row disagrees, because that is what says whether it has a duplicate id
+   * or a bug in how it derives one.
+   *
+   * Not `type_mismatch`, which stays for the other question it answers on
+   * three doors — a body declaring a type that the row it resolved is not,
+   * on a natural-key upsert, an update, or a bulk entry. There the id is
+   * not in question and the declaration is; here it is the other way
+   * round.
+   */
+  ID_REUSED = "id_reused",
   /**
    * An `Idempotency-Key` names a request that is still being served.
    *
@@ -313,6 +338,7 @@ const STATUS_MAP: Record<ErrorCode, number> = {
   [ErrorCode.BULK_JOB_NOT_FOUND]: 404,
   [ErrorCode.BLOB_LOCATION_NOT_FOUND]: 404,
   [ErrorCode.COPIES_BELOW_MINIMUM]: 409,
+  [ErrorCode.ID_REUSED]: 409,
   [ErrorCode.HOUSEKEEPING_JOB_NOT_FOUND]: 404,
   [ErrorCode.HOUSEKEEPING_JOB_RUNNING]: 409,
   [ErrorCode.CONNECTOR_NOT_FOUND]: 404,

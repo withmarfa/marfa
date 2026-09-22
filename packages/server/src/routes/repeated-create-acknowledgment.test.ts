@@ -133,9 +133,10 @@ describe("a repeated item create", () => {
       body: { type: "core.task", id, properties: { title: "different" } },
     });
     expect(repeat.status).toBe(409);
-    expect(((await repeat.json()) as ErrorBody).error.code).toBe(
-      "type_mismatch",
-    );
+    // A reused id, not a declaration that disagrees: the caller minted the
+    // id and it is taken by a row it is not describing, which is the same
+    // mistake the edge door answers for an id naming a different triple.
+    expect(((await repeat.json()) as ErrorBody).error.code).toBe("id_reused");
   });
 });
 

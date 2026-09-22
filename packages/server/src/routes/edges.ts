@@ -253,11 +253,11 @@ const createEdgeRoute = createRoute({
     409: {
       content: {
         "application/json": {
-          schema: makeErrorResponseSchema(["conflict"]),
+          schema: makeErrorResponseSchema(["id_reused"]),
         },
       },
       description:
-        "The supplied `id` is taken by an edge that is not the one this request describes — a different source, target or type. An id naming this exact edge is a repeat and answers 200 instead. The response names the id as `existing_id`.",
+        "`id_reused`: the supplied `id` is taken by an edge that is not the one this request describes. An id naming this exact edge is a repeat and answers 200 instead. The response names the id as `existing_id` and what disagrees as `differs` — any of `source_id`, `target_id` and `edge_type`. `POST /items` answers the same code for an id already used, so a client sorts the two doors' collisions together.",
     },
   },
 });
@@ -474,11 +474,20 @@ export function edgeRoutes(storage: Storage) {
         existing.edge_type === body.edge_type;
       if (sameEdge) return existing;
       // The id is this caller's to see and names something else. That is
-      // a genuine collision rather than a repeat.
+      // a genuine collision rather than a repeat, and the same one the
+      // item door answers for an id already used: `details.differs` says
+      // which part of the stored row disagrees, because a caller that
+      // minted the id knows what it sent and needs to know whether it has
+      // a duplicate id or a bug in how it derives one.
+      const differs = [
+        existing.source_id === body.source_id ? null : "source_id",
+        existing.target_id === body.target_id ? null : "target_id",
+        existing.edge_type === body.edge_type ? null : "edge_type",
+      ].filter((field): field is string => field !== null);
       throw new MarfaError(
-        ErrorCode.CONFLICT,
-        `Edge with id=${body.id} already exists`,
-        { existing_id: body.id },
+        ErrorCode.ID_REUSED,
+        `Edge id ${body.id} already names a different ${differs.join(", ")}`,
+        { existing_id: body.id, differs },
       );
     };
 

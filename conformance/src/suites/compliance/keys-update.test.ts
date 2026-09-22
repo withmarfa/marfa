@@ -111,6 +111,10 @@ describe("PATCH /keys/{id}", () => {
 
     const malformed = await client.updateKey("not-an-id", { label: "x" });
     expect(malformed.status).toBe(400);
+    // The code, not only the status. `errors.md` 2 promises every refusal
+    // carries an exact one, and a bare 400 leaves a client sorting on the
+    // status it shares with every other shape failure.
+    expect(malformed.error?.error.code).toBe("validation_error");
   });
 
   it("refuses a request with no credential", async () => {

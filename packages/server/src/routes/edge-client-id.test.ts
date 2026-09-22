@@ -129,10 +129,17 @@ describe("a client-supplied edge id", () => {
     });
     expect(res.status).toBe(409);
     const body = (await res.json()) as {
-      error: { code: string; details?: { existing_id?: string } };
+      error: {
+        code: string;
+        details?: { existing_id?: string; differs?: string[] };
+      };
     };
-    expect(body.error.code).toBe("conflict");
+    expect(body.error.code).toBe("id_reused");
     expect(body.error.details?.existing_id).toBe(clientId);
+    // Both ends moved, so both are named. The caller minted the id and
+    // knows what it sent; what it needs is which part of the stored row
+    // disagrees.
+    expect(body.error.details?.differs).toEqual(["source_id", "target_id"]);
 
     await settle();
     controller.abort();

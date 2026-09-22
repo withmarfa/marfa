@@ -192,7 +192,13 @@ describe("a repeated create is acknowledged", () => {
       mismatched.status,
       "a repeat naming a different type was not refused, so a write can silently re-type the row it lands on",
     ).toBe(409);
-    expect(mismatched.error?.error.code).toBe("type_mismatch");
+    // One code for a reused id, on this door and on the edge door, and
+    // `details` says what differed. The two used to answer the same
+    // question differently — `type_mismatch` here, a bare `conflict`
+    // there — so a client sorting refusals by code had to know which door
+    // it had asked.
+    expect(mismatched.error?.error.code).toBe("id_reused");
+    expect(mismatched.error?.error.details?.differs).toEqual(["type"]);
 
     const stored = await client.getItem(id);
     expect(stored.ok).toBe(true);
@@ -337,7 +343,11 @@ describe("a repeated create is acknowledged", () => {
       collision.status,
       "an id naming a different edge was treated as a repeat, so the caller now holds an edge pointing somewhere it did not ask for",
     ).toBe(409);
-    expect(collision.error?.error.code).toBe("conflict");
+    // The same code the item door answers for the same mistake, and
+    // `details` names the member of the triple that differed rather than
+    // leaving the caller to compare three.
+    expect(collision.error?.error.code).toBe("id_reused");
+    expect(collision.error?.error.details?.differs).toEqual(["target_id"]);
 
     const stored = await client.listItemEdges(a.data.item.id);
     expect(stored.ok).toBe(true);

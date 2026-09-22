@@ -81,4 +81,41 @@ describe("deduplication", () => {
 
     expect(r2.data.item.id).not.toBe(r1.data.item.id);
   });
+
+  it("refuses an upsert whose natural key lands on a row of another type", async () => {
+    // The other half of the split `id_reused` made: here the caller named
+    // no id, resolved a row by `(source, source_id)`, and declared a type
+    // that row is not. The id was never in question and the declaration
+    // is the mistake, so the code is `type_mismatch` rather than the one
+    // a reused id gets.
+    const sourceId = `dedup-retype-${generateId()}`;
+    const seed = await client.createItem(
+      createNote({ source: ctx.source, source_id: sourceId }),
+    );
+    expect(seed.ok).toBe(true);
+    trackItem(ctx, seed.data.item.id);
+
+    const mismatched = await client.createItem({
+      type: "core.task",
+      source: ctx.source,
+      source_id: sourceId,
+      properties: { title: "landed on a note" },
+    });
+    expect(mismatched.status).toBe(409);
+    expect(mismatched.error?.error.code).toBe("type_mismatch");
+
+    // The witness, and the half that says the refusal was about the type
+    // rather than about the natural key: the same upsert declaring the
+    // row's own type lands on it.
+    const accepted = await client.createItem(
+      createNote({
+        source: ctx.source,
+        source_id: sourceId,
+        properties: { body: "upserted onto the note" },
+      }),
+    );
+    expect(accepted.ok).toBe(true);
+    expect(accepted.data.item.id).toBe(seed.data.item.id);
+    expect(accepted.data.item.type).toBe("core.note");
+  });
 });
