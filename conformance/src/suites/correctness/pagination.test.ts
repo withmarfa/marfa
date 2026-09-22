@@ -37,8 +37,8 @@ describe("pagination correctness", () => {
     expect(page.ok).toBe(true);
     await expectMatchesSchema("GET", "/items", 200, page.data);
     expect(page.data.data.length).toBe(3);
-    expect(page.data.has_more).toBe(true);
-    expect(page.data.cursor).not.toBeNull();
+    expect(Object.keys(page.data).sort()).toEqual(["data", "next_cursor"]);
+    expect(page.data.next_cursor).not.toBeNull();
   });
 
   it("cursor continuation delivers every item exactly once", async () => {
@@ -58,8 +58,8 @@ describe("pagination correctness", () => {
       delivered.push(...page.data.data.map((item) => item.id));
 
       pages++;
-      if (!page.data.has_more) break;
-      cursor = page.data.cursor ?? undefined;
+      if (page.data.next_cursor === null) break;
+      cursor = page.data.next_cursor ?? undefined;
     }
 
     expect(delivered.length).toBe(15);
@@ -70,12 +70,12 @@ describe("pagination correctness", () => {
   it("cursor is opaque and enables next page retrieval", async () => {
     const page1 = await client.listItems({ limit: 5, source: ctx.source });
     expect(page1.ok).toBe(true);
-    expect(page1.data.cursor).not.toBeNull();
-    expect(typeof page1.data.cursor).toBe("string");
+    expect(page1.data.next_cursor).not.toBeNull();
+    expect(typeof page1.data.next_cursor).toBe("string");
 
     const page2 = await client.listItems({
       limit: 5,
-      cursor: page1.data.cursor!,
+      cursor: page1.data.next_cursor!,
       source: ctx.source,
     });
     expect(page2.ok).toBe(true);
@@ -86,7 +86,7 @@ describe("pagination correctness", () => {
     }
   });
 
-  it("last page has has_more=false", async () => {
+  it("the last page answers next_cursor: null", async () => {
     let cursor: string | undefined = undefined;
     let lastPage;
     for (let i = 0; i < 100; i++) {
@@ -95,11 +95,11 @@ describe("pagination correctness", () => {
         cursor,
         source: ctx.source,
       });
-      if (!lastPage.data.has_more) break;
-      cursor = lastPage.data.cursor ?? undefined;
+      if (lastPage.data.next_cursor === null) break;
+      cursor = lastPage.data.next_cursor ?? undefined;
     }
     expect(lastPage!.ok).toBe(true);
-    expect(lastPage!.data.has_more).toBe(false);
+    expect(lastPage!.data.next_cursor).toBeNull();
   });
 
   it("refuses a cursor issued by another listing or ordering", async () => {
@@ -113,7 +113,7 @@ describe("pagination correctness", () => {
       sort: "updated_at",
     });
     expect(byUpdate.ok).toBe(true);
-    const cursor = byUpdate.data.cursor!;
+    const cursor = byUpdate.data.next_cursor!;
     expect(typeof cursor).toBe("string");
 
     // The witness: the ordering that minted it continues on it.
@@ -159,6 +159,6 @@ describe("pagination correctness", () => {
     // Fifteen seeded titles match, so the limit is what bounds the answer.
     const page = await client.search("Pagination", { limit: 2 });
     expect(page.ok).toBe(true);
-    expect(page.data.results.length).toBe(2);
+    expect(page.data.data.length).toBe(2);
   });
 });

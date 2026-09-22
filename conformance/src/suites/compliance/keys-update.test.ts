@@ -57,7 +57,7 @@ describe("PATCH /keys/{id}", () => {
 
     const listed = await client.listKeys();
     expect(listed.ok).toBe(true);
-    const row = listed.data.keys.find((k) => k.id === key.id);
+    const row = listed.data.data.find((k) => k.id === key.id);
     expect(row?.label).toBe("ku-renamed");
     expect(row?.default_tier).toBe("feed");
   });
@@ -80,7 +80,7 @@ describe("PATCH /keys/{id}", () => {
     expect(r.error?.error.details?.required_scope).toBe("*:write");
 
     const unchanged = await client.listKeys();
-    const row = unchanged.data.keys.find((k) => k.id === key.id);
+    const row = unchanged.data.data.find((k) => k.id === key.id);
     expect(row?.type_permissions).toEqual({ "core.note": "read" });
   });
 

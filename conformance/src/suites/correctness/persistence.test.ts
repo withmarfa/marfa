@@ -82,7 +82,7 @@ describe("persistence — multi-read-path verification", () => {
 
     const results = await client.search(marker, { limit: 50 });
     expect(results.ok).toBe(true);
-    const found = results.data.results.some(
+    const found = results.data.data.some(
       (r) => r.item.id === created.data.item.id,
     );
     expect(found).toBe(true);
@@ -165,7 +165,7 @@ describe("search correctness", () => {
     const results = await client.search(marker, { limit: 50 });
     expect(results.ok).toBe(true);
 
-    const foundIds = results.data.results.map((r) => r.item.id);
+    const foundIds = results.data.data.map((r) => r.item.id);
     for (const id of createdIds) {
       expect(foundIds).toContain(id);
     }
@@ -175,7 +175,7 @@ describe("search correctness", () => {
     const nonsense = `zzz-nonexistent-${generateId()}-zzz`;
     const results = await client.search(nonsense, { limit: 50 });
     expect(results.ok).toBe(true);
-    expect(results.data.results.length).toBe(0);
+    expect(results.data.data.length).toBe(0);
   });
 
   it("type-filtered search only returns matching types", async () => {
@@ -211,7 +211,7 @@ describe("search correctness", () => {
     });
     expect(results.ok).toBe(true);
 
-    const resultIds = results.data.results.map((r) => r.item.id);
+    const resultIds = results.data.data.map((r) => r.item.id);
     expect(resultIds).toContain(r1.data.item.id);
     expect(resultIds).not.toContain(r2.data.item.id);
   });

@@ -238,10 +238,10 @@ describe("type-scoped access control (type_permissions)", () => {
     const results = await scoped.search(searchTerm);
     expect(results.ok).toBe(true);
 
-    const ids = results.data.results.map((r) => r.item.id);
+    const ids = results.data.data.map((r) => r.item.id);
     expect(ids).toContain(note.data.item.id);
     expect(ids).not.toContain(bookmark.data.item.id);
-    for (const r of results.data.results) {
+    for (const r of results.data.data) {
       expect(r.item.type).toBe("core.note");
     }
   });

@@ -53,7 +53,7 @@ async function waitForIndexedCount(
   let observed = 0;
   for (;;) {
     const response = await client.search(query, { limit: SEARCH_LIMIT });
-    observed = response.ok ? response.data.results.length : 0;
+    observed = response.ok ? response.data.data.length : 0;
     if (observed >= expected) return observed;
     if (Date.now() >= deadline) {
       throw new Error(
@@ -114,7 +114,7 @@ describe("search at scale", () => {
           const response = await client.search(marker, { limit: SEARCH_LIMIT });
           if (!response.ok)
             throw new Error(`search failed: ${response.status}`);
-          return response.data.results.length;
+          return response.data.data.length;
         },
       },
       {
@@ -126,7 +126,7 @@ describe("search at scale", () => {
           });
           if (!response.ok)
             throw new Error(`search failed: ${response.status}`);
-          return response.data.results.length;
+          return response.data.data.length;
         },
       },
       {
@@ -135,7 +135,7 @@ describe("search at scale", () => {
           const response = await client.search("project", { limit: 20 });
           if (!response.ok)
             throw new Error(`search failed: ${response.status}`);
-          return response.data.results.length;
+          return response.data.data.length;
         },
       },
       {
@@ -146,7 +146,7 @@ describe("search at scale", () => {
           });
           if (!response.ok)
             throw new Error(`search failed: ${response.status}`);
-          return response.data.results.length;
+          return response.data.data.length;
         },
       },
       {
@@ -157,7 +157,7 @@ describe("search at scale", () => {
           });
           if (!response.ok)
             throw new Error(`search failed: ${response.status}`);
-          return response.data.results.length;
+          return response.data.data.length;
         },
       },
     ];
@@ -204,8 +204,8 @@ describe("search at scale", () => {
     });
     expect(response.ok).toBe(true);
     // Every seeded row is active, so a state filter must not shrink the set.
-    expect(response.data.results.length).toBe(markedCount);
-    for (const hit of response.data.results) {
+    expect(response.data.data.length).toBe(markedCount);
+    for (const hit of response.data.data) {
       expect(hit.item.state).toBe("active");
     }
   });

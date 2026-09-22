@@ -628,7 +628,7 @@ describe("source_filter lever", () => {
     // Full-text search: a separate index from the list query.
     const found = await client.search(marker, { limit: 50 });
     expect(found.ok).toBe(true);
-    const searchIds = found.data.results.map((r) => r.item.id);
+    const searchIds = found.data.data.map((r) => r.item.id);
     // Both directions. Asserting only the absence passes vacuously against a
     // search that returned nothing at all, which is a plausible outcome — the
     // write happened milliseconds earlier and indexing need not be synchronous

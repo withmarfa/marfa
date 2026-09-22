@@ -180,8 +180,7 @@ describe("what a hydration leaves behind", () => {
     // landed, the second attempt reports the whole slice either way and the
     // assertion below would be about nothing.
     const firstPage = itemsPage([{ item: wireItem({ id: "a" }) }], {
-      cursor: "p2",
-      hasMore: true,
+      nextCursor: "p2",
     });
     server.answer(
       "GET",
@@ -219,8 +218,7 @@ describe("what a hydration leaves behind", () => {
       "GET",
       "/items",
       itemsPage([{ item: wireItem({ id: "page-one" }) }], {
-        cursor: "p2",
-        hasMore: true,
+        nextCursor: "p2",
       }),
       itemsPage([{ item: wireItem({ id: "page-two" }) }]),
     );

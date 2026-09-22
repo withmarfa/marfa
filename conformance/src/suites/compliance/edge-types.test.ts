@@ -58,7 +58,7 @@ describe("custom edge-type registration", () => {
     const r = await client.listEdgeTypes();
     expect(r.ok).toBe(true);
     await expectMatchesSchema("GET", "/edge-types", 200, r.data);
-    const ids = r.data.edge_types.map((t) => t.id);
+    const ids = r.data.data.map((t) => t.id);
     // A copy of the registry rather than a read of it, because nothing
     // under `src/suites/` may import a workspace package.
     const SHIPPED = [
@@ -87,7 +87,7 @@ describe("custom edge-type registration", () => {
     expect(
       ids.filter((id) => !SHIPPED.includes(id) && !id.includes(".")),
     ).toEqual([]);
-    const mine = r.data.edge_types.find((t) => t.id === etId);
+    const mine = r.data.data.find((t) => t.id === etId);
     expect(mine?.cardinality).toBe("one-to-many");
   });
 
@@ -105,7 +105,7 @@ describe("custom edge-type registration", () => {
     await expectMatchesSchema("DELETE", "/edge-types/{id}", 200, removed.data);
     const listed = await client.listEdgeTypes();
     expect(listed.ok).toBe(true);
-    expect(listed.data.edge_types.map((t) => t.id)).not.toContain(etId);
+    expect(listed.data.data.map((t) => t.id)).not.toContain(etId);
     const again = await client.deleteEdgeType(etId);
     expect(again.status).toBe(404);
     expect(again.error?.error.code).toBe("edge_type_not_found");
@@ -159,7 +159,7 @@ describe("custom edge-type registration", () => {
     // The refusal changed nothing: the registration is still there, so a
     // caller that fixes the edges can try again.
     const stillListed = await client.listEdgeTypes();
-    expect(stillListed.data.edge_types.map((t) => t.id)).toContain(etId);
+    expect(stillListed.data.data.map((t) => t.id)).toContain(etId);
 
     // `force` is the way through, and it orphans rather than cascades:
     // the edges are the caller's to deal with, and deleting rows nobody
@@ -169,7 +169,7 @@ describe("custom edge-type registration", () => {
     expect(forced.status).toBe(200);
 
     const listed = await client.listEdgeTypes();
-    expect(listed.data.edge_types.map((t) => t.id)).not.toContain(etId);
+    expect(listed.data.data.map((t) => t.id)).not.toContain(etId);
 
     const orphan = await client.getEdge(edge.data.edge.id);
     expect(orphan.status).toBe(200);
@@ -192,7 +192,7 @@ describe("custom edge-type registration", () => {
     expect(removed.status).toBe(200);
 
     const listed = await client.listEdgeTypes();
-    expect(listed.data.edge_types.map((t) => t.id)).not.toContain(etId);
+    expect(listed.data.data.map((t) => t.id)).not.toContain(etId);
   });
 
   it("refuses a delete to a key without schema.write, and declares the refusal", async () => {
@@ -288,7 +288,7 @@ describe("custom edge-type registration", () => {
     // exist to shadow it, which the collision test above pins.
     const registry = await client.listEdgeTypes();
     expect(registry.ok).toBe(true);
-    const about = registry.data.edge_types.find((t) => t.id === "about");
+    const about = registry.data.data.find((t) => t.id === "about");
     expect(about).toBeDefined();
     expect(about!.cardinality).toBe("many-to-many");
     expect(about!.source_type_constraints).toEqual(["*"]);

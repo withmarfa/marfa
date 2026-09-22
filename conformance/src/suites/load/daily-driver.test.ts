@@ -205,7 +205,8 @@ describe("daily driver simulation", () => {
     const response = await client.listItems({ source: ctx.source, limit: 100 });
     expect(response.ok).toBe(true);
     // The workload only ever adds rows, so the corpus cannot have shrunk.
-    const visible = response.data.has_more ? 100 : response.data.data.length;
+    const visible =
+      response.data.next_cursor !== null ? 100 : response.data.data.length;
     expect(visible).toBeGreaterThanOrEqual(Math.min(100, corpusIds.length));
 
     const probe = await client.getItem(corpusIds[0]);

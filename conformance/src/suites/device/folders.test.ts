@@ -979,7 +979,7 @@ describe("files and items", () => {
               properties: { title: "From the server", body: "no link here\n" },
               edges: {
                 references: {
-                  edges: [
+                  data: [
                     {
                       id: "01a00000-0000-7000-8000-0000000000e1",
                       source_id: "01a00000-0000-7000-8000-0000000000a1",
@@ -991,7 +991,6 @@ describe("files and items", () => {
                       updated_at: "2026-09-18T00:00:00.000Z",
                     },
                   ],
-                  has_more: false,
                   next_cursor: null,
                 },
               },

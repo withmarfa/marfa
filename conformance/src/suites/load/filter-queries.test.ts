@@ -174,7 +174,7 @@ describe("filter query performance", () => {
     let pages = 0;
     const durations: number[] = [];
 
-    // Bounded so a server that never clears has_more fails on the assertion
+    // Bounded so a server that never answers a null cursor fails on the assertion
     // below rather than looping until the test times out.
     const maxPages = Math.ceil(corpusSize / pageSize) + 2;
 
@@ -196,8 +196,8 @@ describe("filter query performance", () => {
         seen.add(item.id);
       }
 
-      if (!result.data.has_more || !result.data.cursor) break;
-      cursor = result.data.cursor;
+      if (result.data.next_cursor === null) break;
+      cursor = result.data.next_cursor;
     }
 
     await record({

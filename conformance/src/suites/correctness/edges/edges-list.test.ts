@@ -114,8 +114,8 @@ describe("edge listing and reads", () => {
       expect(r.ok).toBe(true);
       expect(r.data.data.length).toBeLessThanOrEqual(2);
       delivered.push(...r.data.data.map((e) => e.id));
-      if (!r.data.has_more) break;
-      cursor = r.data.cursor ?? undefined;
+      if (r.data.next_cursor === null) break;
+      cursor = r.data.next_cursor ?? undefined;
     }
     const ours = delivered.filter((id) => mine.has(id));
     expect(ours).toHaveLength(5);

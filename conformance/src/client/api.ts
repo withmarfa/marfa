@@ -272,8 +272,8 @@ export class MarfaClient {
 
   async getVersions(
     id: string,
-  ): Promise<ApiResponse<{ versions: MarfaVersion[] }>> {
-    return this.request<{ versions: MarfaVersion[] }>(`/items/${id}/versions`);
+  ): Promise<ApiResponse<PaginatedResult<MarfaVersion>>> {
+    return this.request<PaginatedResult<MarfaVersion>>(`/items/${id}/versions`);
   }
 
   async search(
@@ -285,13 +285,14 @@ export class MarfaClient {
       /** Structured filter expression, the same grammar `GET /items`
        *  takes — edge terms included. */
       filter?: string;
+      cursor?: string;
     } = {},
-  ): Promise<ApiResponse<{ results: SearchResult[] }>> {
+  ): Promise<ApiResponse<PaginatedResult<SearchResult>>> {
     const params = new URLSearchParams({ q: query });
     for (const [key, value] of Object.entries(filters)) {
       if (value !== undefined) params.set(key, String(value));
     }
-    return this.request<{ results: SearchResult[] }>(`/search?${params}`);
+    return this.request<PaginatedResult<SearchResult>>(`/search?${params}`);
   }
 
   async registerType(
@@ -303,8 +304,8 @@ export class MarfaClient {
     });
   }
 
-  async listTypes(): Promise<ApiResponse<TypeSchema[]>> {
-    return this.request<TypeSchema[]>("/types");
+  async listTypes(): Promise<ApiResponse<PaginatedResult<TypeSchema>>> {
+    return this.request<PaginatedResult<TypeSchema>>("/types");
   }
 
   async getType(typeId: string): Promise<ApiResponse<TypeSchema>> {
@@ -639,9 +640,9 @@ export class MarfaClient {
   }
 
   async listEdgeTypes(): Promise<
-    ApiResponse<{ edge_types: EdgeTypeDefinition[] }>
+    ApiResponse<PaginatedResult<EdgeTypeDefinition>>
   > {
-    return this.request<{ edge_types: EdgeTypeDefinition[] }>("/edge-types");
+    return this.request<PaginatedResult<EdgeTypeDefinition>>("/edge-types");
   }
 
   async deleteEdgeType(
@@ -694,9 +695,9 @@ export class MarfaClient {
   /** `GET /blobs/stores`: the stores the instance keeps bytes in, and the
    *  live copies a blob keeps at the least. */
   async listBlobStores(): Promise<
-    ApiResponse<{ data: BlobStoreRow[]; min_copies: number }>
+    ApiResponse<PaginatedResult<BlobStoreRow> & { min_copies: number }>
   > {
-    return this.request<{ data: BlobStoreRow[]; min_copies: number }>(
+    return this.request<PaginatedResult<BlobStoreRow> & { min_copies: number }>(
       "/blobs/stores",
     );
   }
@@ -712,24 +713,26 @@ export class MarfaClient {
   }
 
   /** `GET /blobs/orphans`: the blobs nothing references. */
-  async listBlobOrphans(): Promise<ApiResponse<{ data: BlobOrphanRow[] }>> {
-    return this.request<{ data: BlobOrphanRow[] }>("/blobs/orphans");
+  async listBlobOrphans(): Promise<
+    ApiResponse<PaginatedResult<BlobOrphanRow>>
+  > {
+    return this.request<PaginatedResult<BlobOrphanRow>>("/blobs/orphans");
   }
 
   /** `GET /blobs/{hash}/locations`: the location log for one blob. */
   async listBlobLocations(
     hash: string,
-  ): Promise<ApiResponse<{ data: BlobLocationRow[] }>> {
-    return this.request<{ data: BlobLocationRow[] }>(
+  ): Promise<ApiResponse<PaginatedResult<BlobLocationRow>>> {
+    return this.request<PaginatedResult<BlobLocationRow>>(
       `/blobs/${hash}/locations`,
     );
   }
 
   /** `GET /housekeeping`: the jobs the server runs on itself. */
   async listHousekeeping(): Promise<
-    ApiResponse<{ data: HousekeepingJobRow[] }>
+    ApiResponse<PaginatedResult<HousekeepingJobRow>>
   > {
-    return this.request<{ data: HousekeepingJobRow[] }>("/housekeeping");
+    return this.request<PaginatedResult<HousekeepingJobRow>>("/housekeeping");
   }
 
   /** `POST /housekeeping/{name}/run`: one housekeeping job, now. */
@@ -751,8 +754,8 @@ export class MarfaClient {
     });
   }
 
-  async listConnectors(): Promise<ApiResponse<{ data: ConnectorRow[] }>> {
-    return this.request<{ data: ConnectorRow[] }>("/connectors");
+  async listConnectors(): Promise<ApiResponse<PaginatedResult<ConnectorRow>>> {
+    return this.request<PaginatedResult<ConnectorRow>>("/connectors");
   }
 
   async getConnector(id: string): Promise<ApiResponse<ConnectorRow>> {
@@ -787,9 +790,9 @@ export class MarfaClient {
   async listConnectorRuns(
     id: string,
     limit?: number,
-  ): Promise<ApiResponse<{ data: ConnectorRun[] }>> {
+  ): Promise<ApiResponse<PaginatedResult<ConnectorRun>>> {
     const query = limit === undefined ? "" : `?limit=${String(limit)}`;
-    return this.request<{ data: ConnectorRun[] }>(
+    return this.request<PaginatedResult<ConnectorRun>>(
       `/connectors/${id}/runs${query}`,
     );
   }
@@ -803,8 +806,8 @@ export class MarfaClient {
     });
   }
 
-  async listKeys(): Promise<ApiResponse<{ keys: ApiKeyResponse[] }>> {
-    return this.request<{ keys: ApiKeyResponse[] }>("/keys");
+  async listKeys(): Promise<ApiResponse<PaginatedResult<ApiKeyResponse>>> {
+    return this.request<PaginatedResult<ApiKeyResponse>>("/keys");
   }
 
   async revokeKey(id: string): Promise<ApiResponse<{ ok: boolean }>> {
@@ -853,9 +856,9 @@ export class MarfaClient {
   }
 
   async listTags(): Promise<
-    ApiResponse<{ tags: Array<{ tag: string; count: number }> }>
+    ApiResponse<PaginatedResult<{ tag: string; count: number }>>
   > {
-    return this.request<{ tags: Array<{ tag: string; count: number }> }>(
+    return this.request<PaginatedResult<{ tag: string; count: number }>>(
       "/metadata/tags",
     );
   }
@@ -979,8 +982,8 @@ export class MarfaClient {
     return this.request<Webhook>("/webhooks", { method: "POST", body: input });
   }
 
-  async listWebhooks(): Promise<ApiResponse<{ webhooks: Webhook[] }>> {
-    return this.request<{ webhooks: Webhook[] }>("/webhooks");
+  async listWebhooks(): Promise<ApiResponse<PaginatedResult<Webhook>>> {
+    return this.request<PaginatedResult<Webhook>>("/webhooks");
   }
 
   async getWebhook(id: string): Promise<ApiResponse<Webhook>> {
@@ -1005,9 +1008,9 @@ export class MarfaClient {
   async listWebhookDeliveries(
     id: string,
     limit?: number,
-  ): Promise<ApiResponse<{ deliveries: WebhookDelivery[] }>> {
+  ): Promise<ApiResponse<PaginatedResult<WebhookDelivery>>> {
     const query = limit === undefined ? "" : `?limit=${String(limit)}`;
-    return this.request<{ deliveries: WebhookDelivery[] }>(
+    return this.request<PaginatedResult<WebhookDelivery>>(
       `/webhooks/${id}/deliveries${query}`,
     );
   }
@@ -1049,14 +1052,14 @@ export class MarfaClient {
 
   /** `GET /admin/platform-types/drift`: the operator key only. */
   async listPlatformTypeDrift(): Promise<
-    ApiResponse<{
-      types: Array<{
+    ApiResponse<
+      PaginatedResult<{
         id: string;
         item_count: number;
         child_types: string[];
         removable: boolean;
-      }>;
-    }>
+      }>
+    >
   > {
     return this.request("/admin/platform-types/drift");
   }

@@ -69,9 +69,9 @@ describe("item versioning", () => {
     const history = await client.getVersions(r.data.item.id);
     expect(history.ok).toBe(true);
     await expectMatchesSchema("GET", "/items/{id}/versions", 200, history.data);
-    expect(history.data.versions.length).toBe(1);
+    expect(history.data.data.length).toBe(1);
 
-    const firstVersion = history.data.versions[0];
+    const firstVersion = history.data.data[0];
     expect(firstVersion.properties.title).toBe("Version 1");
   });
 
@@ -96,7 +96,7 @@ describe("item versioning", () => {
 
     const history = await client.getVersions(r.data.item.id);
     expect(history.ok).toBe(true);
-    expect(history.data.versions.map((v) => v.properties.title)).toEqual([
+    expect(history.data.data.map((v) => v.properties.title)).toEqual([
       "V1",
       "V2",
       "V3",
@@ -142,9 +142,7 @@ describe("item versioning", () => {
     expect(accepted.ok).toBe(true);
     const history = await client.getVersions(r.data.item.id);
     expect(history.ok).toBe(true);
-    expect(history.data.versions.map((v) => v.properties.title)).toEqual([
-      "C1",
-    ]);
+    expect(history.data.data.map((v) => v.properties.title)).toEqual(["C1"]);
   });
 
   it("answers 404 for an unknown item's history and 400 for a malformed id", async () => {
@@ -432,7 +430,7 @@ describe("item versioning", () => {
 
     const history = await client.getVersions(r.data.item.id);
     expect(history.ok).toBe(true);
-    expect(history.data.versions.length).toBe(0);
+    expect(history.data.data.length).toBe(0);
   });
 
   it("versions have correct item_id reference", async () => {
@@ -448,7 +446,7 @@ describe("item versioning", () => {
 
     const history = await client.getVersions(r.data.item.id);
     expect(history.ok).toBe(true);
-    expect(history.data.versions.length).toBe(1);
-    expect(history.data.versions[0].item_id).toBe(r.data.item.id);
+    expect(history.data.data.length).toBe(1);
+    expect(history.data.data[0].item_id).toBe(r.data.item.id);
   });
 });

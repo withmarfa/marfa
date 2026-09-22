@@ -94,18 +94,18 @@ describe(`search performance (scale: ${scale})`, () => {
     // measurement of the empty-result path.
     const probe = await client.search(runToken, { limit: 50 });
     expect(probe.ok).toBe(true);
-    expect(probe.data.results.length).toBeGreaterThan(0);
+    expect(probe.data.data.length).toBeGreaterThan(0);
 
     const series = await measureSeries(
       "GET /search (selective)",
       async () => {
         const res = await client.search(runToken, { limit: 20 });
-        return res.ok && res.data.results.length > 0;
+        return res.ok && res.data.data.length > 0;
       },
       { runs: config.runs },
     );
 
-    logPerf(series, `${String(probe.data.results.length)} hits`);
+    logPerf(series, `${String(probe.data.data.length)} hits`);
     assertHealthySeries(series, config.runs);
   });
 
@@ -115,7 +115,7 @@ describe(`search performance (scale: ${scale})`, () => {
     // Against an unseeded index a broad term and a term that matches nothing
     // measure the same empty path, and both look fast. Each arm has to prove
     // its own term matches before timing it.
-    expect(probe.data.results.length).toBeGreaterThan(0);
+    expect(probe.data.data.length).toBeGreaterThan(0);
 
     const series = await measureSeries(
       "GET /search (broad)",
@@ -126,7 +126,7 @@ describe(`search performance (scale: ${scale})`, () => {
       { runs: config.runs },
     );
 
-    logPerf(series, `${String(probe.data.results.length)} hits`);
+    logPerf(series, `${String(probe.data.data.length)} hits`);
     assertHealthySeries(series, config.runs);
   });
 
@@ -139,7 +139,7 @@ describe(`search performance (scale: ${scale})`, () => {
           limit: 20,
         });
         return (
-          res.ok && res.data.results.every((r) => r.item.type === "core.note")
+          res.ok && res.data.data.every((r) => r.item.type === "core.note")
         );
       },
       { runs: config.runs },
@@ -160,7 +160,7 @@ describe(`search performance (scale: ${scale})`, () => {
       "GET /search (no matches)",
       async () => {
         const res = await client.search(missToken, { limit: 20 });
-        return res.ok && res.data.results.length === 0;
+        return res.ok && res.data.data.length === 0;
       },
       { runs: config.runs },
     );

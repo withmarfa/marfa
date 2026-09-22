@@ -93,7 +93,7 @@ describe("audit log", () => {
     // Every read below carries both bounds, holding the one not under test
     // a millisecond outside the outermost row. The log is instance-wide and
     // sibling files write to it, so an unbounded page would be truncated
-    // and `has_more` could not be asserted; a window this narrow cannot be.
+    // and a whole page could not be asserted; a window this narrow can be.
     // It does not weaken the case: a dropped bound under test still leaves
     // the boundary row inside the window, where the assertion finds it.
     const rows = [];
@@ -121,9 +121,9 @@ describe("audit log", () => {
       // The page has to be whole, or an absence below is a truncation
       // rather than a bound.
       expect(
-        page.data.has_more,
+        page.data.next_cursor,
         "the page was truncated, so a row missing from it proves nothing about the bound",
-      ).toBe(false);
+      ).toBeNull();
       return page.data.data.map((r) => r.id);
     };
 
@@ -178,9 +178,9 @@ describe("audit log", () => {
       expect(rows.ok).toBe(true);
       expect(rows.data.data.length).toBeLessThanOrEqual(2);
       seen.push(...rows.data.data.map((r) => r.resource_id));
-      if (!rows.data.has_more) break;
-      expect(typeof rows.data.cursor).toBe("string");
-      cursor = rows.data.cursor ?? undefined;
+      if (rows.data.next_cursor === null) break;
+      expect(typeof rows.data.next_cursor).toBe("string");
+      cursor = rows.data.next_cursor ?? undefined;
     }
     for (const id of ids) {
       expect(seen.filter((s) => s === id)).toHaveLength(1);

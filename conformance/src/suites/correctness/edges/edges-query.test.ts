@@ -52,7 +52,7 @@ describe("edge query filters on /items", () => {
 
     for (const item of [a.data.item, b.data.item]) {
       for (const section of Object.values(item.edges ?? {})) {
-        for (const edge of section.edges) trackEdge(ctx, edge.id);
+        for (const edge of section.data) trackEdge(ctx, edge.id);
       }
     }
 
@@ -80,7 +80,7 @@ describe("edge query filters on /items", () => {
     expect(source.ok).toBe(true);
     trackItem(ctx, source.data.item.id);
     for (const section of Object.values(source.data.item.edges ?? {})) {
-      for (const edge of section.edges) trackEdge(ctx, edge.id);
+      for (const edge of section.data) trackEdge(ctx, edge.id);
     }
 
     const r = await client.listItems({
@@ -104,7 +104,7 @@ describe("edge query filters on /items", () => {
     expect(noteLinked.ok).toBe(true);
     trackItem(ctx, noteLinked.data.item.id);
     for (const section of Object.values(noteLinked.data.item.edges ?? {})) {
-      for (const edge of section.edges) trackEdge(ctx, edge.id);
+      for (const edge of section.data) trackEdge(ctx, edge.id);
     }
 
     const taskLinked = await client.createItem({
@@ -116,7 +116,7 @@ describe("edge query filters on /items", () => {
     expect(taskLinked.ok).toBe(true);
     trackItem(ctx, taskLinked.data.item.id);
     for (const section of Object.values(taskLinked.data.item.edges ?? {})) {
-      for (const edge of section.edges) trackEdge(ctx, edge.id);
+      for (const edge of section.data) trackEdge(ctx, edge.id);
     }
 
     const list = await client.listItems({

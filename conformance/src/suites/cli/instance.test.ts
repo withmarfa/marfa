@@ -136,9 +136,11 @@ describe("the instance from the terminal", () => {
     expect(minted.source).toBe(source);
 
     const listed = await c.cli.json<{
-      keys: Array<{ id: string; label: string }>;
+      data: Array<{ id: string; label: string }>;
+      next_cursor: null;
     }>(["keys", "list"]);
-    expect(listed.keys.map((key) => key.id)).toContain(minted.id);
+    expect(listed.data.map((key) => key.id)).toContain(minted.id);
+    expect(listed.next_cursor).toBeNull();
 
     const relabeled = await c.cli.json<{ label: string }>([
       "keys",
@@ -335,7 +337,7 @@ describe("the instance from the terminal", () => {
 
   it("reaches the operator doors under the operator key and is refused them under a working key", async () => {
     const drift = await c.operator.json<{
-      types: Array<{ id: string; item_count: number; removable: boolean }>;
+      data: Array<{ id: string; item_count: number; removable: boolean }>;
     }>(["types", "drift"]);
     // **What this asserts is that the door answers and who it answers to**,
     // and nothing about how many rows it holds. Drift is a platform row an
@@ -345,7 +347,7 @@ describe("the instance from the terminal", () => {
     // assertion that it is empty would pass against a handler that reports
     // nothing. The server's own suite is where the populated report is
     // proved, because seeding a drifted row is in-process work.
-    expect(Array.isArray(drift.types)).toBe(true);
+    expect(Array.isArray(drift.data)).toBe(true);
     const refused = await c.cli.refused(["types", "drift"]);
     expect(refused.code).toBe(1);
     expect(refused.envelope.error.server?.status).toBe(403);
@@ -474,11 +476,11 @@ describe("the instance from the terminal", () => {
     expect(created.secret).toBeTruthy();
     expect(created.active).toBe(true);
 
-    const listed = await c.cli.json<{ webhooks: Array<{ id: string }> }>([
+    const listed = await c.cli.json<{ data: Array<{ id: string }> }>([
       "webhooks",
       "list",
     ]);
-    expect(listed.webhooks.map((hook) => hook.id)).toContain(created.id);
+    expect(listed.data.map((hook) => hook.id)).toContain(created.id);
     const read = await c.cli.json<{ id: string }>([
       "webhooks",
       "get",
@@ -523,10 +525,10 @@ describe("the instance from the terminal", () => {
     const delivered = await vi.waitFor(
       async () => {
         const rows = await c.cli.json<{
-          deliveries: Array<{ event_type: string; succeeded: boolean }>;
+          data: Array<{ event_type: string; succeeded: boolean }>;
         }>(["webhooks", "deliveries", live.id]);
-        expect(rows.deliveries.length).toBeGreaterThan(0);
-        return rows.deliveries;
+        expect(rows.data.length).toBeGreaterThan(0);
+        return rows.data;
       },
       { timeout: 20_000, interval: 250 },
     );
@@ -535,12 +537,12 @@ describe("the instance from the terminal", () => {
 
     // The same write, and the paused subscription has nothing: a pause
     // stops delivery rather than only stopping the log.
-    const quiet = await c.cli.json<{ deliveries: unknown[] }>([
+    const quiet = await c.cli.json<{ data: unknown[] }>([
       "webhooks",
       "deliveries",
       created.id,
     ]);
-    expect(quiet.deliveries).toEqual([]);
+    expect(quiet.data).toEqual([]);
     await c.cli.json(["webhooks", "delete", created.id]);
     const gone = await c.cli.refused(["webhooks", "get", created.id]);
     expect(gone.envelope.error.code).toBe("not_found");

@@ -135,7 +135,7 @@ describe("type inheritance rule", () => {
   it("core entity/file/media subtypes resolve", async () => {
     const r = await client.listTypes();
     expect(r.ok).toBe(true);
-    const ids = new Set(r.data.map((t) => t.id));
+    const ids = new Set(r.data.data.map((t) => t.id));
 
     // The subtypes that have to resolve for inheritance-aware behavior.
     const expected = [

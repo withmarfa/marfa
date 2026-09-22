@@ -113,8 +113,8 @@ describe("edge backrefs", () => {
       });
       expect(page.ok).toBe(true);
       for (const e of page.data.data) collected.push(e.id);
-      if (!page.data.has_more || !page.data.cursor) break;
-      cursor = page.data.cursor;
+      if (page.data.next_cursor === null) break;
+      cursor = page.data.next_cursor;
     }
     expect(collected.length).toBe(15);
     expect(new Set(collected).size).toBe(15);

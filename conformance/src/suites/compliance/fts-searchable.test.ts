@@ -56,14 +56,14 @@ describe("FTS — searchable:false honoring", () => {
     const visibleSearch = await client.search(visibleToken, { limit: 50 });
     expect(visibleSearch.ok).toBe(true);
     await expectMatchesSchema("GET", "/search", 200, visibleSearch.data);
-    const visibleHits = visibleSearch.data.results.filter(
+    const visibleHits = visibleSearch.data.data.filter(
       (r) => r.item.id === created.data.item.id,
     );
     expect(visibleHits.length).toBe(1);
 
     const hiddenSearch = await client.search(hiddenToken, { limit: 50 });
     expect(hiddenSearch.ok).toBe(true);
-    const hiddenHits = hiddenSearch.data.results.filter(
+    const hiddenHits = hiddenSearch.data.data.filter(
       (r) => r.item.id === created.data.item.id,
     );
     expect(hiddenHits.length).toBe(0);

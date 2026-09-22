@@ -166,11 +166,11 @@ describe("edge events", () => {
 
     const rows = await client.listWebhookDeliveries(subscription.data.id);
     expect(rows.ok).toBe(true);
-    expect(rows.data.deliveries.map((d) => d.event_type).sort()).toEqual([
+    expect(rows.data.data.map((d) => d.event_type).sort()).toEqual([
       "edge.created",
       "edge.deleted",
     ]);
-    expect(rows.data.deliveries.every((d) => d.succeeded)).toBe(true);
+    expect(rows.data.data.every((d) => d.succeeded)).toBe(true);
   });
 
   it("audit log records edge mutations with edge_id in resource_id", async () => {

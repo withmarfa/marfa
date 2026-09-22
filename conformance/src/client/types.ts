@@ -15,18 +15,14 @@ export interface MarfaItem {
   capture_latitude: number | null;
   capture_longitude: number | null;
   /**
-   * Hydrated relationships. Keyed by edge_type → per-type page with has_more flag.
+   * Hydrated relationships. Keyed by edge_type → the first page of that type.
    * Empty object `{}` when the item has no edges.
    */
   edges?: Record<string, HydratedEdgeSection>;
 }
 
 /** Per-edge-type page on a hydrated item response, capped at 50 edges. */
-export interface HydratedEdgeSection {
-  edges: MarfaEdge[];
-  has_more: boolean;
-  next_cursor?: string | null;
-}
+export type HydratedEdgeSection = PaginatedResult<MarfaEdge>;
 
 /** Mutable metadata sidecar — tags and extensions */
 export interface MarfaMetadata {
@@ -149,8 +145,7 @@ export interface SearchResult {
 
 export interface PaginatedResult<T> {
   data: T[];
-  cursor: string | null;
-  has_more: boolean;
+  next_cursor: string | null;
 }
 
 export interface ApiKeyRequest {
@@ -609,6 +604,7 @@ export interface AuditEntry {
 }
 
 export interface OccurrencesResponse {
+  next_cursor: null;
   data: Array<{
     starts_at: string;
     ends_at?: string;

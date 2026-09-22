@@ -631,7 +631,7 @@ describe("the scripted answers match the server's", () => {
       { status: page.status, body: page.data },
       itemsPage([{ item: wireItem({ id: seeded.id }) }]),
       {
-        same: ["has_more", "cursor", "data.0.metadata.tags"],
+        same: ["next_cursor", "data.0.metadata.tags"],
         shape: [
           "data.0.item.id",
           "data.0.item.type",

@@ -19,7 +19,7 @@ describe("type label compliance", () => {
     const list = await client.listTypes();
     expect(list.ok).toBe(true);
 
-    const coreNote = list.data.find((t) => t.id === "core.note");
+    const coreNote = list.data.data.find((t) => t.id === "core.note");
     expect(coreNote).toBeDefined();
     expect(coreNote!.label).toBe("Note");
   });
@@ -82,7 +82,7 @@ describe("type label compliance", () => {
     const list = await client.listTypes();
     expect(list.ok).toBe(true);
 
-    const found = list.data.find((t) => t.id === typeId);
+    const found = list.data.data.find((t) => t.id === typeId);
     expect(found).toBeDefined();
     expect(found!.label).toBe("Listed Widget");
   });
