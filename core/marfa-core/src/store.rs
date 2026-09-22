@@ -904,6 +904,55 @@ mod tests {
         conn.execute_batch(&statements).unwrap();
     }
 
+    /// Every column read by position, with every value distinct.
+    ///
+    /// `row_to_item` indexes `ITEM_COLUMNS` by number, so a column added or
+    /// removed in the middle shifts everything after it and one field
+    /// silently takes another's value. The helpers give an item the same
+    /// string for all three timestamps and no `source_id`, which makes a
+    /// shift of one indistinguishable from a correct read, so this builds a
+    /// row where no two values are equal.
+    #[test]
+    fn every_column_lands_in_its_own_field() {
+        let conn = conn();
+        let row = WireItem {
+            id: "positional-1".into(),
+            r#type: "core.bookmark".into(),
+            properties: json!({ "title": "T", "url": "https://example.invalid" })
+                .as_object()
+                .unwrap()
+                .clone(),
+            state: "archived".into(),
+            tier: Some("feed".into()),
+            version: 7,
+            schema_version: 3,
+            source: "source-value".into(),
+            source_id: Some("source-id-value".into()),
+            occurred_at: "1999-12-31T23:59:58Z".into(),
+            created_at: "2020-02-02T02:02:02Z".into(),
+            updated_at: "2031-03-03T03:03:03Z".into(),
+            edges: None,
+        };
+        upsert_item(&conn, &row, None, Some("title")).unwrap();
+
+        let item = item_by_id(&conn, "positional-1").unwrap().unwrap();
+        assert_eq!(item.id, "positional-1");
+        assert_eq!(item.r#type, "core.bookmark");
+        assert_eq!(item.state, ItemState::Archived);
+        assert_eq!(item.tier, Some(Tier::Feed));
+        assert_eq!(item.version, 7);
+        assert_eq!(item.schema_version, 3);
+        assert_eq!(item.source, "source-value");
+        assert_eq!(item.source_id.as_deref(), Some("source-id-value"));
+        assert_eq!(item.occurred_at, "1999-12-31T23:59:58Z");
+        assert_eq!(item.created_at, "2020-02-02T02:02:02Z");
+        assert_eq!(item.updated_at, "2031-03-03T03:03:03Z");
+        assert_eq!(
+            item.properties.get("title").and_then(Value::as_str),
+            Some("T")
+        );
+    }
+
     #[test]
     fn an_item_round_trips_with_its_tags_and_keeps_them_when_none_are_sent() {
         let conn = conn();

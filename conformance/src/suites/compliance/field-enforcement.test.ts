@@ -89,28 +89,58 @@ describe("fields the wire no longer declares", () => {
 
     // The first witness: `capture_latitude` rode in the same body and came
     // back, so the create the absence is asserted about is a create that
-    // happened and that kept what the door declares.
+    // happened and that kept what the door does declare.
     expect(r.data.item.capture_latitude).toBe(999);
 
-    // And it is not there on a later read either, so nothing stored it out
-    // of sight of the create response.
+    // And it is not there on a later read either. The create answer and
+    // the read are built by different code — the door's own return shape
+    // and `rowToItem` — so these are two claims rather than one repeated.
     const read = await client.getItem(r.data.item.id);
     expect(read.ok).toBe(true);
     expect(read.data.item).not.toHaveProperty("device");
     expect(read.data.item.capture_latitude).toBe(999);
 
-    // The second witness, and the one the absence rests on: the same key
-    // on the strict door is refused. A refusal is only reachable if the
-    // key travels, so the client is not quietly dropping it before the
-    // request leaves and the assertions above are about the server.
+    // The second witness, and the one the absences rest on: the strict
+    // door refuses the key *by name*. The status alone would not do it —
+    // a PATCH the door finds empty answers `400 validation_error` too, so
+    // a body that never carried the key would satisfy a status-only
+    // assertion. Hence the name in the detail, alongside a change the
+    // door would otherwise accept. A refusal naming the key is
+    // unreachable unless the key travels, so the client is not dropping
+    // it before the request leaves.
     const refused = await client.rawRequest<unknown>(
       `/items/${r.data.item.id}`,
       {
         method: "PATCH",
-        body: { version: r.data.item.version, device: label },
+        body: {
+          version: r.data.item.version,
+          properties: { title: "still a note" },
+          device: label,
+        },
       },
     );
     expect(refused.status).toBe(400);
     expect(refused.error?.error.code).toBe("validation_error");
+    const errors = refused.error?.error.details?.errors as
+      { message: string }[] | undefined;
+    expect(errors?.some((e) => e.message.includes("device"))).toBe(true);
+  });
+
+  it("device: the filter grammar no longer knows the name", async () => {
+    // The one thing that ever consulted the field. It was a system field
+    // in the query grammar, so `filter=device eq "X"` filtered the column
+    // it sat in. With the column gone the name is unknown, and the
+    // grammar says so rather than degrading to a property lookup that
+    // quietly matches nothing.
+    const refused = await client.listItems({ filter: 'device eq "anything"' });
+    expect(refused.status).toBe(400);
+    expect(refused.error?.error.code).toBe("validation_error");
+    expect(refused.error?.error.message).toContain("device");
+
+    // The witness. A name the grammar does know filters on the same door
+    // in the same run, so the refusal is about the name and not about the
+    // door, the credential or the shape of the expression.
+    const accepted = await client.listItems({ filter: "version gte 1" });
+    expect(accepted.ok).toBe(true);
   });
 });

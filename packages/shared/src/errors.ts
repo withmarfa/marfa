@@ -132,8 +132,9 @@ export enum ErrorCode {
    * `occurred_at`, `version`, `schema_version`, `capture_latitude`,
    * `capture_longitude`). Letting a custom type redefine a first-class
    * field name means every row carries two values under the same name
-   * and nothing downstream can tell which is authoritative. Reject at registration so the type author renames
-   * before any data is written. Authoritative list lives at
+   * and nothing downstream can tell which is authoritative. Reject at
+   * registration so the type author renames before any data is written.
+   * Authoritative list lives at
    * `RESERVED_ITEM_FIELDS` in `type-registry.ts`, derived from the
    * `Item` interface in `types.ts`.
    */
