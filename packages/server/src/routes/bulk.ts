@@ -150,6 +150,12 @@ const BulkResultEntrySchema = z.object({
     .object({
       code: z.string(),
       message: z.string(),
+      /** What the refusal carried beside its code. A per-entry refusal is
+       *  the same refusal a single-item door gives, and flattening it to a
+       *  code and a message dropped the half a caller acts on — an
+       *  `id_reused` entry naming no `differs` tells a caller which
+       *  mistake it made and not what to do about it. */
+      details: z.record(z.string(), z.unknown()).optional(),
     })
     .optional(),
 });
@@ -444,7 +450,11 @@ interface BulkItemResult {
   outcome: "created" | "updated" | "skipped" | "errored";
   id?: string;
   reason?: string;
-  error?: { code: string; message: string };
+  error?: {
+    code: string;
+    message: string;
+    details?: Record<string, unknown>;
+  };
 }
 
 /**
@@ -625,7 +635,11 @@ async function processBulkItem(
         result: {
           index,
           outcome: "errored",
-          error: { code: err.code, message: err.message },
+          error: {
+            code: err.code,
+            message: err.message,
+            ...(err.details && { details: err.details }),
+          },
         },
       };
     }
@@ -756,7 +770,11 @@ async function processBulkItem(
             index,
             outcome: "errored",
             id: existing.id,
-            error: { code: err.code, message: err.message },
+            error: {
+              code: err.code,
+              message: err.message,
+              ...(err.details && { details: err.details }),
+            },
           },
         };
       }
@@ -882,7 +900,11 @@ async function processBulkItem(
               index,
               outcome: "errored",
               id: existing.id,
-              error: { code: err.code, message: err.message },
+              error: {
+                code: err.code,
+                message: err.message,
+                ...(err.details && { details: err.details }),
+              },
             },
           };
         }
@@ -954,7 +976,11 @@ async function processBulkItem(
         result: {
           index,
           outcome: "errored",
-          error: { code: err.code, message: err.message },
+          error: {
+            code: err.code,
+            message: err.message,
+            ...(err.details && { details: err.details }),
+          },
         },
       };
     }
@@ -1068,7 +1094,12 @@ export function bulkRoutes(storage: Storage) {
             throw new MarfaError(
               ErrorCode.BULK_ATOMIC_ROLLBACK,
               `Bulk upsert rolled back on item ${String(i)}`,
-              { index: i, code: err.code, message: err.message },
+              {
+                index: i,
+                code: err.code,
+                message: err.message,
+                ...(err.details && { details: err.details }),
+              },
             );
           }
           throw err;
@@ -1100,6 +1131,9 @@ export function bulkRoutes(storage: Storage) {
               index: i,
               code: processed.result.error?.code,
               message: processed.result.error?.message,
+              ...(processed.result.error?.details && {
+                details: processed.result.error.details,
+              }),
             },
           );
         }

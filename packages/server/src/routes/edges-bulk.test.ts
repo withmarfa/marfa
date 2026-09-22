@@ -490,7 +490,11 @@ describe("POST /edges/bulk", () => {
 
 describe("POST /edges/bulk — the client-supplied id", () => {
   interface BulkBody {
-    results: { index: number; outcome: string; error?: { code: string } }[];
+    results: {
+      index: number;
+      outcome: string;
+      error?: { code: string; details?: { differs?: string[] } };
+    }[];
   }
 
   it("is refused per entry when it is not a valid identifier", async () => {
@@ -557,11 +561,14 @@ describe("POST /edges/bulk — the client-supplied id", () => {
     expect(((await listed.json()) as { data: unknown[] }).data).toHaveLength(0);
   });
 
-  it("reports a reused id as a conflict rather than a driver error", async () => {
-    // The trap lives in `createRaw`, so this door inherits it. Before it
-    // existed the collision reached the driver and was rethrown past the
-    // per-entry handler, which only catches a MarfaError — a 500 for the
-    // whole batch rather than one errored entry.
+  it("reports a reused id as the single door does, not as a driver error", async () => {
+    // The door compares the id before the insert, as the single door
+    // does, so the entry carries what disagrees rather than only that
+    // something did. The store's own trap is behind it for the race the
+    // comparison cannot close: without either, the collision reaches the
+    // driver and is rethrown past the per-entry handler, which catches a
+    // MarfaError alone — a 500 for the whole batch rather than one
+    // errored entry.
     const first = await makePair();
     const second = await makePair();
     const shared = generateId();
@@ -594,6 +601,10 @@ describe("POST /edges/bulk — the client-supplied id", () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as BulkBody;
     expect(body.results[0]?.outcome).toBe("errored");
-    expect(body.results[0]?.error?.code).toBe("conflict");
+    expect(body.results[0]?.error?.code).toBe("id_reused");
+    expect(body.results[0]?.error?.details?.differs).toEqual([
+      "source_id",
+      "target_id",
+    ]);
   });
 });

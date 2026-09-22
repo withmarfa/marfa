@@ -14,6 +14,7 @@ import {
   makeErrorResponseSchema,
 } from "../openapi.js";
 import { EdgeSchema } from "./_schemas.js";
+import { refuseReusedEdgeId } from "./_reused-edge-id.js";
 import { assertEdgeCanBeCreated } from "../storage/edge-constraints.js";
 import { publishEdge } from "../pubsub.js";
 import {
@@ -478,22 +479,12 @@ export function edgeRoutes(storage: Storage) {
       // item door answers for an id already used: `details.differs` says
       // which part of the stored row disagrees, because a caller that
       // minted the id knows what it sent and needs to know whether it has
-      // a duplicate id or a bug in how it derives one.
-      const differs = [
-        existing.source_id === body.source_id ? null : "source_id",
-        existing.target_id === body.target_id ? null : "target_id",
-        existing.edge_type === body.edge_type ? null : "edge_type",
-      ].filter((field): field is string => field !== null);
-      const last = differs.at(-1) ?? "triple";
-      const named =
-        differs.length < 2
-          ? last
-          : `${differs.slice(0, -1).join(", ")} and ${last}`;
-      throw new MarfaError(
-        ErrorCode.ID_REUSED,
-        `Edge id ${body.id} already names an edge with a different ${named}`,
-        { existing_id: body.id, differs },
-      );
+      // a duplicate id or a bug in how it derives one. Shared with the
+      // bulk door, so the code cannot depend on how many edges were sent.
+      refuseReusedEdgeId(existing, body);
+      /* v8 ignore next -- the helper always throws when the triple differs,
+         and `sameEdge` above is the only way here with one that does not */
+      return existing;
     };
 
     const alreadyHeld = await repeatedEdge();
@@ -523,7 +514,7 @@ export function edgeRoutes(storage: Storage) {
       const isOwnIdCollision =
         body.id !== undefined &&
         err instanceof MarfaError &&
-        err.code === ErrorCode.CONFLICT &&
+        err.code === ErrorCode.ID_REUSED &&
         (err.details as { existing_id?: string } | undefined)?.existing_id ===
           body.id;
       if (!isOwnIdCollision) throw err;

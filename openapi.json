@@ -7605,6 +7605,12 @@
                               },
                               "message": {
                                 "type": "string"
+                              },
+                              "details": {
+                                "type": "object",
+                                "additionalProperties": {
+                                  "nullable": true
+                                }
                               }
                             },
                             "required": [

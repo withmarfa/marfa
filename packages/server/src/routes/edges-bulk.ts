@@ -36,6 +36,7 @@ import {
 } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
+import { refuseReusedEdgeId } from "./_reused-edge-id.js";
 import { assertEdgeCanBeCreated } from "../storage/edge-constraints.js";
 import { publishEdge } from "../pubsub.js";
 
@@ -279,6 +280,36 @@ async function processBulkEdge(
       };
     }
     throw err;
+  }
+
+  // An id the caller minted that already names a different edge, refused
+  // here rather than left to the primary key. The same comparison the
+  // single door makes, shared with it, because the code a caller gets for
+  // one mistake must not depend on how many edges it batched: without
+  // this the insert below met the constraint and came back as a bare
+  // collision with nothing saying what disagreed.
+  if (raw.id !== undefined) {
+    const held = await storage.edges.get(raw.id);
+    if (held) {
+      try {
+        refuseReusedEdgeId(held, raw);
+      } catch (err) {
+        if (err instanceof MarfaError) {
+          return {
+            result: {
+              index,
+              outcome: "errored",
+              error: {
+                code: err.code,
+                message: err.message,
+                ...(err.details && { details: err.details }),
+              },
+            },
+          };
+        }
+        throw err;
+      }
+    }
   }
 
   const tripleKey = `${raw.source_id}|${raw.target_id}|${raw.edge_type}`;
