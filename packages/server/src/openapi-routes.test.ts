@@ -7,6 +7,7 @@
  * been told about.
  */
 
+import { readFileSync } from "node:fs";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import {
   finalizeOpenAPISpec,
@@ -35,9 +36,11 @@ const HTTP_METHODS = ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"];
  * `app.use("*", …)` is not a door, and the one real catch-all, Better
  * Auth's `/auth/*`, is accounted for below.
  */
-function servedDoors(): Set<string> {
+function servedDoors(
+  routes: readonly { method: string; path: string }[] = ctx.app.routes,
+): Set<string> {
   const out = new Set<string>();
-  for (const route of ctx.app.routes) {
+  for (const route of routes) {
     if (!HTTP_METHODS.includes(route.method)) continue;
     if (route.path.includes("*")) continue;
     out.add(`${route.method} ${route.path}`);
@@ -67,41 +70,21 @@ function operationsIn(paths: object): Set<string> {
 }
 
 /**
- * Doors the server serves and the document deliberately does not carry.
- * A door in neither this record nor the document fails the walk below.
+ * Doors the server serves and the document deliberately does not carry, each
+ * with why. A door in neither this record nor the document fails the walk
+ * below. Kept as data in document spelling because `check:statuses` reads
+ * the same list for the routes a run reaches outside the document.
  */
-const UNPUBLISHED: Record<string, string> = {
-  "GET /": "names the instance, its build and the surfaces it serves",
-  "GET /health": "liveness, read before any credential exists",
-  "GET /openapi.json": "the document itself",
-  "GET /metrics": "server metrics, internal",
-  "GET /blobs/:hash/fetch":
-    "the target of an instance-served blob link, gated by the signature in its query",
-
-  "GET /.well-known/oauth-authorization-server/auth": "RFC 8414 discovery",
-  "GET /.well-known/openid-configuration/auth": "OIDC discovery",
-  "GET /auth/.well-known/oauth-authorization-server":
-    "the issuer-suffixed spelling of the same document",
-  "GET /auth/.well-known/openid-configuration": "and of the OIDC one",
-  "GET /.well-known/oauth-protected-resource":
-    "RFC 9728 resource metadata, which a bearer challenge points at",
-
-  "GET /auth/sign-in": "the sign-in page",
-  "POST /auth/sign-in": "its form post",
-  "GET /auth/authorize": "the consent screen",
-  "POST /auth/authorize/decision": "its decision",
-  "GET /auth/device": "the device-code entry page",
-  "POST /auth/device": "its form post",
-  "GET /auth/device/consent": "the device consent screen",
-  "POST /auth/device/consent": "its decision",
-  "GET /auth/error": "the OAuth failure page a redirect lands on",
-  "GET /auth/oauth2/end-session": "the RP-initiated logout page",
-  "GET /auth/static/auth.css": "a stylesheet those pages load",
-  "GET /auth/static/password-toggle.js": "a script those pages load",
-  "GET /auth/static/submit-state.js": "a script those pages load",
-  "GET /auth/grants": "lists the apps the owner authorized",
-  "DELETE /auth/grants/:id": "revokes one",
-};
+const UNPUBLISHED: Record<string, string> = Object.fromEntries(
+  Object.entries(
+    JSON.parse(
+      readFileSync(
+        new URL("../unpublished-routes.json", import.meta.url),
+        "utf8",
+      ),
+    ) as Record<string, string>,
+  ).map(([door, why]) => [door.replace(/\{([^}]+)\}/g, ":$1"), why]),
+);
 
 /** Published operations with no route of their own, and what serves them. */
 const SERVED_BY_A_CATCH_ALL: Record<string, string> = {
@@ -143,6 +126,18 @@ describe("the document and the routes", () => {
     const served = new Set([...servedDoors(), "POST /items/reindex"]);
     expect(undocumented(served, publishedOperations())).toEqual([
       "POST /items/reindex",
+    ]);
+  });
+
+  it("sees a HEAD door registered on its own", () => {
+    // Hono answers HEAD from the GET handler, so no such door exists today;
+    // one registered explicitly is a door the document has to carry.
+    const served = servedDoors([
+      ...ctx.app.routes,
+      { method: "HEAD", path: "/items/:id" },
+    ]);
+    expect(undocumented(served, publishedOperations())).toEqual([
+      "HEAD /items/:id",
     ]);
   });
 

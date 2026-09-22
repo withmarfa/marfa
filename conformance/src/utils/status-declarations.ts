@@ -12,6 +12,8 @@
  * real log and a real document into it.
  */
 
+import { readFileSync } from "node:fs";
+
 /** One request as `middleware/logger.ts` writes it. */
 export interface RequestLine {
   method: string;
@@ -57,36 +59,23 @@ export interface StatusReport {
 const HTTP_METHODS = ["get", "head", "post", "put", "patch", "delete"];
 
 /**
- * The routes the server serves outside its document, each with why. A route
- * served and missing from here is reported, so the document cannot lose a
- * door into this bucket without somebody writing the reason down.
+ * The routes the server serves outside its document, each with why: the
+ * server's own list, which its route walk holds to its route table, and the
+ * sign-in library's catch-all, which that walk does not see because it is a
+ * pattern rather than a door. A served route missing from here is reported,
+ * so the document cannot lose a door into this bucket without somebody
+ * writing the reason down.
  */
 export const UNPUBLISHED_ROUTES: Readonly<Record<string, string>> = {
-  "GET /": "names the instance, its build and the surfaces it serves",
-  "GET /health": "liveness, read before any credential exists",
-  "GET /openapi.json": "the document itself",
-  "GET /metrics": "server metrics, internal",
-  "GET /blobs/{hash}/fetch":
-    "the target of an instance-served blob link, gated by the signature in its query",
-  "GET /.well-known/oauth-authorization-server/auth": "RFC 8414 discovery",
-  "GET /.well-known/openid-configuration/auth": "OIDC discovery",
-  "GET /auth/.well-known/oauth-authorization-server":
-    "the issuer-suffixed spelling of the same document",
-  "GET /auth/.well-known/openid-configuration": "and of the OIDC one",
-  "GET /.well-known/oauth-protected-resource":
-    "RFC 9728 resource metadata, which a bearer challenge points at",
-  "GET /auth/sign-in": "the sign-in page",
-  "POST /auth/sign-in": "its form post",
-  "GET /auth/authorize": "the consent screen",
-  "POST /auth/authorize/decision": "its decision",
-  "GET /auth/device": "the device-code entry page",
-  "POST /auth/device": "its form post",
-  "GET /auth/device/consent": "the device consent screen",
-  "POST /auth/device/consent": "its decision",
-  "GET /auth/error": "the OAuth failure page a redirect lands on",
-  "GET /auth/oauth2/end-session": "the RP-initiated logout page",
-  "GET /auth/static/auth.css": "a stylesheet those pages load",
-  "GET /auth/static/password-toggle.js": "a script those pages load",
+  ...(JSON.parse(
+    readFileSync(
+      new URL(
+        "../../../packages/server/unpublished-routes.json",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+  ) as Record<string, string>),
   "GET /auth/*":
     "the sign-in library's own endpoints, a browser's and an OAuth client's rather than an API caller's",
   "POST /auth/*":
@@ -105,28 +94,33 @@ export const HARNESS_UNREACHABLE_STATUSES: ReadonlySet<number> = new Set([
 ]);
 
 /**
- * Declared statuses on a door's own account that no fixture draws, each with
- * why. The list is the size of what the document says and nothing asserts:
- * a run that draws one of these reports the entry as stale, and a run that
- * leaves a declaration undrawn and unlisted fails.
+ * Declared statuses on a door's own account that no fixture can draw, each
+ * with why. The list is the size of what the document says and nothing
+ * asserts: a run that draws one of these reports the entry as stale, and a
+ * run that leaves a declaration undrawn and unlisted fails.
  */
-const IN_FLIGHT =
-  "a second request under a key whose first is still being written; a local write finishes before a second request can land, so only a race draws it";
-
 export const UNREACHED: Readonly<Record<string, string>> = {
   "DELETE /admin/platform-types/{id} 200":
     "removes a row an earlier build shipped and this one does not; the harness boots one build, so no such row exists",
+  "GET /types/{id} 409":
+    "a stored inheritance chain with a cycle or past the resolution depth, which the type doors refuse to write; only a store written outside the server carries one",
+};
+
+const IN_FLIGHT =
+  "a second request under a key whose first is still being written, which two concurrent requests draw when they interleave";
+
+/**
+ * Declared statuses a run draws only when two requests race, so one run
+ * draws them and the next does not. Neither required nor held stale.
+ */
+export const RACES: Readonly<Record<string, string>> = {
   "DELETE /edges/{id} 409": IN_FLIGHT,
   "DELETE /items/{id} 409": IN_FLIGHT,
   "DELETE /items/{id}/purge 409": IN_FLIGHT,
   "POST /items/{id}/restore 409": IN_FLIGHT,
   "POST /items/{id}/transition 409": IN_FLIGHT,
-  "GET /types/{id} 409":
-    "a stored inheritance chain with a cycle or past the depth limit, which the type doors refuse to write; only a store written outside the server carries one",
-  "POST /connectors 403":
-    "a session token, which only a person signing in through the browser flow holds",
   "POST /housekeeping/{name}/run 409":
-    "a run already holding the job; a local run finishes before a second request can land",
+    "a run already holding the job, which a request draws when the scheduler has started one, as an upload does",
 };
 
 /**
@@ -259,6 +253,7 @@ export function reportStatuses(
     const drawn = observed.get(operation);
     for (const status of statuses) {
       if (HARNESS_UNREACHABLE_STATUSES.has(status)) continue;
+      if (RACES[`${operation} ${String(status)}`] !== undefined) continue;
       if (drawn?.has(status)) continue;
       unanswered.push(`${operation} ${String(status)}`);
     }

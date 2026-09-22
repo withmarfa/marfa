@@ -21,6 +21,7 @@ import {
   reportStatuses,
   unreachedDebt,
 } from "../src/utils/status-declarations.js";
+import { FRESH_SERVER_LOGS } from "../src/utils/fresh-server.js";
 
 interface Args {
   state: string;
@@ -72,8 +73,7 @@ const document = (await response.json()) as Parameters<
   typeof reportStatuses
 >[1];
 
-// The fixtures' own servers leave their logs here; see `fresh-server.ts`.
-const freshLogs = resolve(args.state, "fresh-server-logs");
+const freshLogs = resolve(args.state, FRESH_SERVER_LOGS);
 const logs = [
   logPath,
   ...(existsSync(freshLogs)

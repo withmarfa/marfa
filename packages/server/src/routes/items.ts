@@ -103,7 +103,7 @@ import {
 /**
  * The `?edge[<type>]=<id>` / `?backref[<type>]=<id>` shorthand keys.
  *
- * Declared once because two things read it now: the clause builder that
+ * Declared once because two things read it: the clause builder that
  * compiles a match into the filter grammar, and the unknown-parameter
  * refusal, which would otherwise reject every one of them. Two copies of
  * this pattern would mean a working shorthand starting to answer 400 the

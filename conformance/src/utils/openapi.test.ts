@@ -95,7 +95,7 @@ describe("the closed validator", () => {
   });
 
   it("closes the one allOf-rooted success in the committed document", () => {
-    // The door the gap was found on. The `allOf` assertion keeps this from
+    // The one `allOf`-rooted success. The `allOf` assertion keeps this from
     // passing against a document that stopped composing the response.
     const schema =
       committed.paths["/items/{id}"]?.patch?.responses["200"]?.content[

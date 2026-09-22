@@ -178,8 +178,7 @@ describe("specification citations", () => {
   /**
    * The same check, over the code that cites the chapters.
    *
-   * There are more citations in Rust comments and in the fixtures than in
-   * the chapters themselves. A comment citing a statement number reads as authority — it is how the next
+   * A comment citing a statement number reads as authority — it is how the next
    * person finds the rule a piece of code exists for — so one that resolves
    * to nothing, or to a chapter with fewer statements than it names, sends
    * them somewhere else entirely.

@@ -176,9 +176,8 @@ describe("published OpenAPI spec", () => {
     for (const [key, operation] of typeOperations) {
       const responses = (operation as { responses?: unknown }).responses;
       expect(responses, `${key} has no responses object`).toBeDefined();
-      // Followed through the registered components: the type shape is one
-      // of them now, so the field this pins is a reference away rather than
-      // written out on each operation.
+      // Followed through the registered components, because the type shape
+      // is one, so the field this pins is a reference away.
       const text = JSON.stringify(inlineOpenApiRefs(responses, document));
       if (!text.includes('"compatible_with"')) missing.push(key);
     }

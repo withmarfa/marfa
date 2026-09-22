@@ -44,6 +44,7 @@ import {
   readBootstrapSecret,
   renderEnvFile,
 } from "../src/utils/target.js";
+import { FRESH_SERVER_LOGS } from "../src/utils/fresh-server.js";
 
 const HEALTH_BUDGET_MS = 180_000;
 const HEALTH_POLL_MS = 250;
@@ -99,9 +100,7 @@ function paths(state: string) {
     db: resolve(state, "marfa.db"),
     blobs: resolve(state, "blobs"),
     env: resolve(state, "env"),
-    // Where a fixture's own server leaves its request log on the way out,
-    // so `check:statuses` holds what those servers answered too.
-    statusLogs: resolve(state, "fresh-server-logs"),
+    statusLogs: resolve(state, FRESH_SERVER_LOGS),
   };
 }
 

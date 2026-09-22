@@ -9,7 +9,7 @@
  */
 import { describe, it, expect } from "vitest";
 import { spawn } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -22,6 +22,7 @@ import {
   reportStatuses,
   unreachedDebt,
 } from "./status-declarations.js";
+import { FRESH_SERVER_LOGS } from "./fresh-server.js";
 
 /** A document declaring one door, the way the server's does. */
 function documentDeclaring(statuses: number[]) {
@@ -264,10 +265,32 @@ describe("the status checker", () => {
     );
   });
 
-  it("exits 1 end to end on a log naming an undeclared status, and 0 once declared", async () => {
-    // The script is the shell CI runs, so its exit path is what a red check
-    // rests on. Driven against a hand-written log and a server that serves
-    // only the document.
+  it("neither requires nor holds stale a status only a race draws", () => {
+    const document = {
+      paths: {
+        "/items/{id}": {
+          delete: { responses: { "200": {}, "409": {} } },
+        },
+      },
+    };
+    const report = reportStatuses(
+      parseRequestLines(
+        logLine({
+          method: "DELETE",
+          path: "/items/x",
+          route: "/items/{id}",
+          status: 200,
+        }),
+      ),
+      document,
+    );
+    expect(report.unanswered).toEqual([]);
+  });
+
+  it("exits end to end on each thing it refuses, and 0 on a clean run", async () => {
+    // The script is the shell CI runs, so its exit paths are what a red
+    // check rests on. Driven against hand-written logs and a server that
+    // serves only the document.
     const script = resolve(
       dirname(fileURLToPath(import.meta.url)),
       "..",
@@ -276,8 +299,7 @@ describe("the status checker", () => {
       "check-statuses.ts",
     );
     const tsx = resolve(script, "..", "..", "node_modules", ".bin", "tsx");
-    const state = mkdtempSync(join(tmpdir(), "check-statuses-"));
-    let statuses = [200, 401, 404];
+    let statuses = [200, 401, 403];
     const server = createServer((_req, res) => {
       res.setHeader("Content-Type", "application/json");
       res.end(JSON.stringify(documentDeclaring(statuses)));
@@ -285,32 +307,68 @@ describe("the status checker", () => {
     await new Promise<void>((done) => server.listen(0, "127.0.0.1", done));
     const address = server.address();
     const url = `http://127.0.0.1:${String(typeof address === "object" && address ? address.port : 0)}`;
-    try {
-      writeFileSync(
-        join(state, "server.log"),
-        [OBSERVED_200, OBSERVED_403].join("\n"),
-      );
-      const run = () =>
-        new Promise<{ status: number | null; stderr: string }>((done) => {
-          const child = spawn(tsx, [script, "--state", state, "--url", url]);
-          let stderr = "";
-          child.stderr.on("data", (chunk: Buffer) => {
-            stderr += chunk.toString();
-          });
-          child.on("close", (status) => done({ status, stderr }));
+    const states: string[] = [];
+    const stateWith = (main: string[], fresh: string[] = []) => {
+      const state = mkdtempSync(join(tmpdir(), "check-statuses-"));
+      states.push(state);
+      writeFileSync(join(state, "server.log"), main.join("\n"));
+      if (fresh.length > 0) {
+        mkdirSync(join(state, FRESH_SERVER_LOGS));
+        writeFileSync(
+          join(state, FRESH_SERVER_LOGS, "fixture.log"),
+          fresh.join("\n"),
+        );
+      }
+      return state;
+    };
+    const run = (state: string, ...extra: string[]) =>
+      new Promise<{ status: number | null; stderr: string }>((done) => {
+        const child = spawn(tsx, [
+          script,
+          "--state",
+          state,
+          "--url",
+          url,
+          ...extra,
+        ]);
+        let stderr = "";
+        child.stderr.on("data", (chunk: Buffer) => {
+          stderr += chunk.toString();
         });
+        child.on("close", (status) => done({ status, stderr }));
+      });
+    const UNLISTED_ROUTE = logLine({
+      method: "GET",
+      path: "/unlisted",
+      route: "/unlisted",
+      status: 200,
+    });
+    try {
+      const clean = await run(stateWith([OBSERVED_200, OBSERVED_403]));
+      expect(clean.stderr).toBe("");
+      expect(clean.status).toBe(0);
 
-      const refused = await run();
-      expect(refused.stderr).toContain("GET /items/{id} answered 403");
-      expect(refused.status).toBe(1);
+      statuses = [200, 401];
+      const undeclared = await run(stateWith([OBSERVED_200, OBSERVED_403]));
+      expect(undeclared.stderr).toContain("GET /items/{id} answered 403");
+      expect(undeclared.status).toBe(1);
 
-      statuses = [200, 401, 403, 404];
-      const passed = await run();
-      expect(passed.stderr).toBe("");
-      expect(passed.status).toBe(0);
+      const inFresh = await run(stateWith([OBSERVED_200], [OBSERVED_403]));
+      expect(inFresh.stderr).toContain("GET /items/{id} answered 403");
+      expect(inFresh.status).toBe(1);
+
+      statuses = [200, 401, 403];
+      const unlisted = await run(stateWith([OBSERVED_200, UNLISTED_ROUTE]));
+      expect(unlisted.stderr).toContain("GET /unlisted");
+      expect(unlisted.status).toBe(1);
+
+      const undrawn = await run(stateWith([OBSERVED_200]), "--complete");
+      expect(undrawn.stderr).toContain("GET /items/{id} 403");
+      expect(undrawn.status).toBe(1);
     } finally {
       server.close();
-      rmSync(state, { recursive: true, force: true });
+      for (const state of states)
+        rmSync(state, { recursive: true, force: true });
     }
   });
 });

@@ -119,6 +119,18 @@ describe("a key names one request", () => {
     }[] = [
       {
         method: "POST",
+        template: "/items",
+        first: async () => ({
+          path: "/items",
+          body: createNote({ source: ctx.source, properties: { body: "a" } }),
+        }),
+        second: async () => ({
+          path: "/items",
+          body: createNote({ source: ctx.source, properties: { body: "b" } }),
+        }),
+      },
+      {
+        method: "POST",
         template: "/edges",
         first: async () => ({
           path: "/edges",
@@ -218,6 +230,14 @@ describe("a key names one request", () => {
       expect(accepted.status, `${door.method} ${door.template}`).toBeLessThan(
         300,
       );
+      const made = accepted.body as {
+        item?: { id?: string };
+        edge?: { id?: string };
+      };
+      if (door.template === "/items" && made.item?.id)
+        trackItem(ctx, made.item.id);
+      if (door.template === "/edges" && made.edge?.id)
+        trackEdge(ctx, made.edge.id);
       const second = await door.second();
       const refused = await call(door.method, second.path, {
         body: second.body,
@@ -452,12 +472,145 @@ describe("a deployment that caps live viewers", () => {
       expect(first.status).toBe(200);
 
       const second = await open();
-      const body = (await second.json()) as { error?: { code?: string } };
       expect(second.status).toBe(503);
+      const body = (await second.json()) as { error?: { code?: string } };
       expect(body.error?.code).toBe("stream_capacity_exhausted");
       await expectMatchesSchema("GET", "/events", 503, body);
     } finally {
       held.abort();
+      server.stop();
+    }
+  });
+});
+
+describe("a session token", () => {
+  // A registration keyed to a session token would be orphaned by its next
+  // refresh, so the door refuses one. A session token is what the device
+  // flow hands an app once a signed-in person approves it, so the flow runs
+  // here over HTTP on a server of this file's own, which has an owner.
+  it("cannot register a connector", async () => {
+    const server = await bootFreshServer("session-connector");
+    try {
+      const owner = {
+        email: "a@example.com",
+        password: "correct horse battery",
+      };
+      const created = await fetch(`${server.apiUrl}/owner`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${server.operatorKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(owner),
+      });
+      expect(created.status).toBe(201);
+
+      const discovery = (await (
+        await fetch(
+          `${server.apiUrl}/.well-known/oauth-authorization-server/auth`,
+        )
+      ).json()) as {
+        registration_endpoint: string;
+        device_authorization_endpoint: string;
+        token_endpoint: string;
+        scopes_supported: string[];
+      };
+      const registered = (await (
+        await fetch(discovery.registration_endpoint, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            client_name: "conformance",
+            application_type: "native",
+            grant_types: [
+              "urn:ietf:params:oauth:grant-type:device_code",
+              "refresh_token",
+            ],
+            response_types: [],
+            token_endpoint_auth_method: "none",
+          }),
+        })
+      ).json()) as { client_id: string };
+
+      const code = (await (
+        await fetch(discovery.device_authorization_endpoint, {
+          method: "POST",
+          headers: { "content-type": "application/x-www-form-urlencoded" },
+          body: new URLSearchParams({
+            client_id: registered.client_id,
+            scope: discovery.scopes_supported.join(" "),
+          }),
+        })
+      ).json()) as {
+        device_code: string;
+        user_code: string;
+        verification_uri_complete: string;
+      };
+
+      const origin = new URL(code.verification_uri_complete).origin;
+      const signIn = await fetch(`${origin}/auth/sign-in/email`, {
+        method: "POST",
+        headers: { "content-type": "application/json", origin },
+        body: JSON.stringify(owner),
+      });
+      expect(signIn.status).toBe(200);
+      const cookie = /(?:^|,\s*)([\w.-]*session_token=[^;]+)/.exec(
+        signIn.headers.get("set-cookie") ?? "",
+      )?.[1];
+      expect(cookie, "sign-in set no session cookie").toBeTruthy();
+      const consent = await fetch(
+        `${origin}/auth/device/consent?user_code=${encodeURIComponent(code.user_code)}`,
+        { headers: { cookie: cookie! } },
+      );
+      const html = await consent.text();
+      const form = new URLSearchParams({
+        user_code: code.user_code,
+        decision: "approve",
+      });
+      for (const scope of new Set(
+        [...html.matchAll(/name="scopes"[^>]*value="([^"]+)"/g)].map(
+          (m) => m[1]!,
+        ),
+      )) {
+        form.append("scopes", scope);
+      }
+      const approved = await fetch(`${origin}/auth/device/consent`, {
+        method: "POST",
+        headers: {
+          cookie: cookie!,
+          origin,
+          "content-type": "application/x-www-form-urlencoded",
+        },
+        body: form,
+      });
+      expect(approved.status).toBe(200);
+
+      const token = (await (
+        await fetch(discovery.token_endpoint, {
+          method: "POST",
+          headers: { "content-type": "application/x-www-form-urlencoded" },
+          body: new URLSearchParams({
+            grant_type: "urn:ietf:params:oauth:grant-type:device_code",
+            device_code: code.device_code,
+            client_id: registered.client_id,
+          }),
+        })
+      ).json()) as { access_token: string };
+      expect(token.access_token).toMatch(/^marfa_at_/);
+
+      const refused = await fetch(`${server.apiUrl}/connectors`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token.access_token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ name: "session" }),
+      });
+      expect(refused.status).toBe(403);
+      const body = (await refused.json()) as { error?: { code?: string } };
+      expect(body.error?.code).toBe("forbidden");
+      await expectMatchesSchema("POST", "/connectors", 403, body);
+    } finally {
       server.stop();
     }
   });

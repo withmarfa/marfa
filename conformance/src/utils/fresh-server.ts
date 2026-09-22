@@ -38,6 +38,12 @@ export interface FreshServer {
   stop(): void;
 }
 
+/**
+ * The folder under the run's state directory where a fixture's own server
+ * leaves its request log on the way out, for `check:statuses` to read.
+ */
+export const FRESH_SERVER_LOGS = "fresh-server-logs";
+
 const conformanceRoot = resolve(
   dirname(fileURLToPath(import.meta.url)),
   "..",

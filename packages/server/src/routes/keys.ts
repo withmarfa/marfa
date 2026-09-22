@@ -1172,7 +1172,7 @@ export function keyRoutes(storage: Storage, salt: string) {
     //
     // Asked of every editor rather than only of a session, for the reason the
     // mint states: a key holding `keys.mint` and read on one type is an
-    // ordinary credential now, and nothing about holding the permission to
+    // ordinary credential, and nothing about holding the permission to
     // edit says how far what it edits may reach.
     const requestedReach = {
       type_permissions: body.type_permissions,

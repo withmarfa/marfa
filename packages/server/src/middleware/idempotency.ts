@@ -55,21 +55,15 @@ import { withPreparedHeaders } from "../prepared-headers.js";
  * key against the app's own route table.
  *
  * **A door over a free-text PATH segment is safe here; the query is not
- * covered.** Every entry below carries a UUIDv7, which percent-encodes to
- * itself, so for a long time the fingerprint could hash the raw path and
- * nothing showed. It no longer does: `canonicalPath` re-spells each path
- * segment before the digest, so two encodings of one request are one
- * fingerprint and a retry that re-encodes is replayed rather than
- * refused. That is what lets a tag, an extension namespace or any other
- * free-text path segment join this list.
+ * covered.** `canonicalPath` re-spells each path segment before the digest,
+ * so two encodings of one request are one fingerprint and a retry that
+ * re-encodes is replayed rather than refused. That is what lets a tag, an
+ * extension namespace or any other free-text path segment join this list.
  *
  * **The query string is hashed as written**, so a door taking a free-text
- * query value reopens the same bug on that axis. It is safe today because
- * no door here takes one: nine carry no query parameter and the tenth
- * carries `conflict`, a closed enum. Both halves are stated because the
- * alternative was two lists that happened not to overlap, with nothing
- * recording the relationship — which is how this went unnoticed the first
- * time.
+ * query value would refuse a retry that re-encoded it. No door here takes
+ * one: `PATCH /items/:id` carries `conflict`, a closed enum, and the rest
+ * carry no query parameter.
  */
 export const IDEMPOTENT_WRITE_DOORS: readonly string[] = [
   "POST /items",

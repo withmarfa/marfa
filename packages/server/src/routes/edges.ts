@@ -469,8 +469,8 @@ export function edgeRoutes(storage: Storage) {
       cursor: q.cursor,
     });
 
-    // The two questions `GET /edges/{id}` asks, asked of every row, and
-    // asked through the one function every plural door now calls. The
+    // The two questions `GET /edges/{id}` asks, asked of every row through
+    // the one function every plural door calls. The
     // cursor and `has_more` are the store's and are untouched, so a page
     // can come back short — empty, even, while `has_more` is true — and
     // paging still walks the whole listing.
