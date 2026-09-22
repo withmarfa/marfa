@@ -1,4 +1,5 @@
 import { createRoute, z } from "@hono/zod-openapi";
+import { pageOf } from "./_schemas.js";
 import type { AppEnv } from "../middleware/auth.js";
 import { requireAuth, getTypeFilter } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
@@ -8,14 +9,14 @@ import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 // Schemas
 // ---------------------------------------------------------------------------
 
-const TagWithCountSchema = z.object({
-  tag: z.string(),
-  count: z.number().int(),
-});
+const TagWithCountSchema = z
+  .object({
+    tag: z.string(),
+    count: z.number().int(),
+  })
+  .openapi("TagCount");
 
-const TagListSchema = z.object({
-  tags: z.array(TagWithCountSchema),
-});
+const TagListSchema = pageOf(TagWithCountSchema, "TagCountPage");
 
 // ---------------------------------------------------------------------------
 // Routes
@@ -71,7 +72,7 @@ export function metadataRoutes(storage: Storage) {
       allowedTypes,
       excludedTypes,
     });
-    return c.json({ tags }, 200);
+    return c.json({ data: tags, next_cursor: null }, 200);
   });
 
   return router;

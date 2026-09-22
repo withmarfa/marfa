@@ -12,21 +12,24 @@ import {
   refuseUnknownQueryParams,
   UNKNOWN_PARAM_NOTE,
 } from "./_unknown-query-keys.js";
+import { pageOf } from "./_schemas.js";
 
-const AuditEntrySchema = z.object({
-  id: z.string(),
-  created_at: z.string(),
-  key_id: z.string().nullable(),
-  action: z.string(),
-  resource_type: z.string(),
-  resource_id: z.string().nullable(),
-  /**
-   * Resolved client IP for the action. Null for system-initiated audits
-   * with no Hono context.
-   */
-  client_ip: z.string().nullable(),
-  details: z.record(z.string(), z.unknown()),
-});
+const AuditEntrySchema = z
+  .object({
+    id: z.string(),
+    created_at: z.string(),
+    key_id: z.string().nullable(),
+    action: z.string(),
+    resource_type: z.string(),
+    resource_id: z.string().nullable(),
+    /**
+     * Resolved client IP for the action. Null for system-initiated audits
+     * with no Hono context.
+     */
+    client_ip: z.string().nullable(),
+    details: z.record(z.string(), z.unknown()),
+  })
+  .openapi("AuditEntry");
 
 const listAuditRoute = createRoute({
   operationId: "listAuditLog",
@@ -75,11 +78,7 @@ const listAuditRoute = createRoute({
     200: {
       content: {
         "application/json": {
-          schema: z.object({
-            data: z.array(AuditEntrySchema),
-            cursor: z.string().nullable(),
-            has_more: z.boolean(),
-          }),
+          schema: pageOf(AuditEntrySchema, "AuditEntryPage"),
         },
       },
       description: "Paginated audit log entries",

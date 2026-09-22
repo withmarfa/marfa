@@ -4,7 +4,7 @@ import type { AppEnv } from "../middleware/auth.js";
 import { requireTypeAccess } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
-import { VersionSchema } from "./_schemas.js";
+import { VersionSchema, pageOf } from "./_schemas.js";
 
 // ---------------------------------------------------------------------------
 // Local schemas
@@ -34,9 +34,7 @@ const listVersionsRoute = createRoute({
     200: {
       content: {
         "application/json": {
-          schema: z.object({
-            versions: z.array(VersionSchema),
-          }),
+          schema: pageOf(VersionSchema, "VersionPage"),
         },
       },
       description: "Version history",
@@ -89,7 +87,7 @@ export function itemsVersionsRoutes(storage: Storage) {
 
     requireTypeAccess(c, item.type, "read");
     const versions = await storage.versions.list(id);
-    return c.json({ versions }, 200);
+    return c.json({ data: versions, next_cursor: null }, 200);
   });
 
   return router;

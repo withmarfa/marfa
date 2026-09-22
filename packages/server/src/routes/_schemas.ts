@@ -126,17 +126,33 @@ export const EdgeSchema = z
   .openapi("Edge");
 
 /**
- * A single edge type's hydrated block on an item response. Per-type cap is
- * 50 by default; has_more + next_cursor signal that more edges exist and the
- * caller should paginate via GET /items/:id/edges?edge_type=X&cursor=...
+ * One page of rows, the shape of every list and search: the rows, and the
+ * cursor that continues past them, `null` on the last page. Registered under
+ * its own name so each list's page is one component a generated client
+ * names, and every page is the same two keys.
  */
-export const ItemEdgesBlockSchema = z
-  .object({
-    edges: z.array(EdgeSchema),
-    has_more: z.boolean(),
-    next_cursor: z.string().optional(),
-  })
-  .openapi("ItemEdgesBlock");
+export function pageOf<T extends z.ZodType>(row: T, name: string) {
+  return z
+    .object({ data: z.array(row), next_cursor: NextCursorSchema })
+    .openapi(name);
+}
+
+/** The continuation every page carries, and the two doors whose page also
+ *  carries a sibling about the answer rather than about the page. A door
+ *  that answers its whole set answers `null`. */
+export const NextCursorSchema = z
+  .string()
+  .nullable()
+  .describe(
+    "Pass as `cursor` for the next page; `null` on the last. A page can be short, or empty, with a cursor still to follow, so a walk stops on `null` and never on a short page.",
+  );
+
+/**
+ * A single edge type's hydrated block on an item response: the first page of
+ * that type's edges, cut at 50 by default, which
+ * `GET /items/{id}/edges?edge_type=X&cursor=...` continues.
+ */
+export const ItemEdgesBlockSchema = pageOf(EdgeSchema, "ItemEdgesBlock");
 
 export const ItemSchema = z
   .object({

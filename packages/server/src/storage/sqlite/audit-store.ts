@@ -165,7 +165,7 @@ export class SqliteAuditStore implements AuditStore {
       );
     }
 
-    return { data, cursor: nextCursor, has_more: hasMore };
+    return { data, next_cursor: nextCursor };
   }
 
   async cleanup(retentionDays: number): Promise<number> {

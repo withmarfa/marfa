@@ -89,6 +89,7 @@ import {
   TierEnum,
   VersionConflictErrorSchema,
   ALL_STATES,
+  pageOf,
   resolveStateFilter,
 } from "./_schemas.js";
 import { filterMetadataForCaller } from "./util.js";
@@ -527,18 +528,15 @@ const listItemsRoute = createRoute({
     200: {
       content: {
         "application/json": {
-          schema: z.union([
-            z.object({
-              data: z.array(ItemSchema),
-              cursor: z.string().nullable(),
-              has_more: z.boolean(),
-            }),
-            z.object({
-              data: z.array(ItemWithMetadataSchema),
-              cursor: z.string().nullable(),
-              has_more: z.boolean(),
-            }),
-          ]),
+          schema: pageOf(
+            z
+              .union([ItemSchema, ItemWithMetadataSchema])
+              .describe(
+                "An `Item`, or, when `include` names `metadata`, an `ItemWithMetadata`; every row of one page is the same shape.",
+              )
+              .openapi("ItemListRow"),
+            "ItemPage",
+          ),
         },
       },
       description: "Paginated list of items",
@@ -2048,8 +2046,7 @@ export function itemRoutes(storage: Storage) {
               apiKey,
             ),
           })),
-          cursor: result.cursor,
-          has_more: result.has_more,
+          next_cursor: result.next_cursor,
         },
         200,
       );
@@ -2058,8 +2055,7 @@ export function itemRoutes(storage: Storage) {
     return c.json(
       {
         data: result.data.map(decorate),
-        cursor: result.cursor,
-        has_more: result.has_more,
+        next_cursor: result.next_cursor,
       },
       200,
     );
@@ -2139,11 +2135,11 @@ export function itemRoutes(storage: Storage) {
       // neighbor the caller cannot read is silently omitted, never leaked.
       const neighborIds = new Set<string>();
       for (const block of Object.values(edges)) {
-        for (const e of block.edges) neighborIds.add(e.target_id);
+        for (const e of block.data) neighborIds.add(e.target_id);
       }
       if (backrefs) {
         for (const block of Object.values(backrefs)) {
-          for (const e of block.edges) neighborIds.add(e.source_id);
+          for (const e of block.data) neighborIds.add(e.source_id);
         }
       }
       neighborIds.delete(id);

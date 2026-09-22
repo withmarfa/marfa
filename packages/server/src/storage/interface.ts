@@ -406,6 +406,9 @@ export const ITEM_BACKREFS_CURSOR_KEY = cursorSortKey(
   "desc",
 );
 export const AUDIT_CURSOR_KEY = cursorSortKey("audit", NEWEST_FIRST, "desc");
+/** Search ranks by relevance rather than by a column, so its cursor carries
+ *  the position in the ranking and names the ranking as its key. */
+export const SEARCH_CURSOR_KEY: CursorSortKey = "search:relevance:desc";
 
 interface CursorPayload {
   v: string;

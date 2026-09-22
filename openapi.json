@@ -125,22 +125,23 @@
       "ItemEdgesBlock": {
         "type": "object",
         "properties": {
-          "edges": {
+          "data": {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/Edge"
             }
           },
-          "has_more": {
-            "type": "boolean"
-          },
           "next_cursor": {
-            "type": "string"
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Pass as `cursor` for the next page; `null` on the last. A page can be short, or empty, with a cursor still to follow, so a walk stops on `null` and never on a short page."
           }
         },
         "required": [
-          "edges",
-          "has_more"
+          "data",
+          "next_cursor"
         ]
       },
       "Edge": {
@@ -517,6 +518,39 @@
         "required": [
           "error"
         ]
+      },
+      "ItemPage": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ItemListRow"
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Pass as `cursor` for the next page; `null` on the last. A page can be short, or empty, with a cursor still to follow, so a walk stops on `null` and never on a short page."
+          }
+        },
+        "required": [
+          "data",
+          "next_cursor"
+        ]
+      },
+      "ItemListRow": {
+        "anyOf": [
+          {
+            "$ref": "#/components/schemas/Item"
+          },
+          {
+            "$ref": "#/components/schemas/ItemWithMetadata"
+          }
+        ],
+        "description": "An `Item`, or, when `include` names `metadata`, an `ItemWithMetadata`; every row of one page is the same shape."
       },
       "MissingRequiredFieldOrUnknownTypeOrValidationErrorRefusal": {
         "type": "object",
@@ -904,6 +938,28 @@
         },
         "required": [
           "error"
+        ]
+      },
+      "VersionPage": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Version"
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Pass as `cursor` for the next page; `null` on the last. A page can be short, or empty, with a cursor still to follow, so a walk stops on `null` and never on a short page."
+          }
+        },
+        "required": [
+          "data",
+          "next_cursor"
         ]
       },
       "MetadataResponse": {
@@ -1444,20 +1500,17 @@
               "$ref": "#/components/schemas/Edge"
             }
           },
-          "cursor": {
+          "next_cursor": {
             "type": [
               "string",
               "null"
-            ]
-          },
-          "has_more": {
-            "type": "boolean"
+            ],
+            "description": "Pass as `cursor` for the next page; `null` on the last. A page can be short, or empty, with a cursor still to follow, so a walk stops on `null` and never on a short page."
           }
         },
         "required": [
           "data",
-          "cursor",
-          "has_more"
+          "next_cursor"
         ]
       },
       "EdgeResponse": {
@@ -1839,6 +1892,28 @@
           "cardinality"
         ]
       },
+      "EdgeTypePage": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EdgeType"
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Pass as `cursor` for the next page; `null` on the last. A page can be short, or empty, with a cursor still to follow, so a walk stops on `null` and never on a short page."
+          }
+        },
+        "required": [
+          "data",
+          "next_cursor"
+        ]
+      },
       "EdgeTypeNotFoundRefusal": {
         "type": "object",
         "properties": {
@@ -1897,6 +1972,28 @@
         },
         "required": [
           "error"
+        ]
+      },
+      "TypeDefinitionPage": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TypeDefinition"
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Pass as `cursor` for the next page; `null` on the last. A page can be short, or empty, with a cursor still to follow, so a walk stops on `null` and never on a short page."
+          }
+        },
+        "required": [
+          "data",
+          "next_cursor"
         ]
       },
       "TypeDefinition": {
@@ -2438,6 +2535,28 @@
           "error"
         ]
       },
+      "SearchResultPage": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SearchResult"
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Pass as `cursor` for the next page; `null` on the last. A page can be short, or empty, with a cursor still to follow, so a walk stops on `null` and never on a short page."
+          }
+        },
+        "required": [
+          "data",
+          "next_cursor"
+        ]
+      },
       "SearchResult": {
         "type": "object",
         "properties": {
@@ -2489,6 +2608,286 @@
         },
         "required": [
           "error"
+        ]
+      },
+      "OccurrencePage": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "starts_at": {
+                  "type": "string"
+                },
+                "ends_at": {
+                  "type": "string"
+                },
+                "item": {
+                  "$ref": "#/components/schemas/Item"
+                },
+                "series_id": {
+                  "type": "string"
+                },
+                "replaces": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "starts_at",
+                "item"
+              ]
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Pass as `cursor` for the next page; `null` on the last. A page can be short, or empty, with a cursor still to follow, so a walk stops on `null` and never on a short page."
+          },
+          "window": {
+            "type": "object",
+            "properties": {
+              "from": {
+                "type": "string"
+              },
+              "to": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "from",
+              "to"
+            ]
+          },
+          "scan": {
+            "type": "object",
+            "properties": {
+              "events_read": {
+                "type": "integer",
+                "description": "Event rows this request read, summed across its passes. Two of the three cannot be narrowed by the window, so this grows with the size of the calendar rather than with the window asked for."
+              },
+              "occurrences": {
+                "type": "integer",
+                "description": "Occurrences returned, the length of `data`."
+              },
+              "max_occurrences": {
+                "type": "integer",
+                "description": "Ceiling `occurrences` is refused at. Reported on every successful read so a calendar approaching it is visible before a request is refused, rather than only once one is."
+              },
+              "series_errors": {
+                "type": "integer",
+                "description": "Failures this request found in recurrence rules, in the same unit as the `series_errors` array on the envelope: entries, not rows. One row can account for two — an unreadable line dropped from its rule is one failure, and expanding what was left then failing is another — so this is an upper bound on the number of rows to go and look at, and `item_id` is what a caller groups on to get the exact number. Counted across the event types this request read, and scoped to those and not to everything stored: a request narrowed by `type`, or a credential permissioned for one event type, is told about the rules it read and nothing about the ones it did not, so a zero here is not a statement that the rest of the calendar is healthy. It counts everything this read detected, even when the array lists fewer, which is what lets a caller tell a handful of broken rules from a corrupt import without receiving the bytes of the larger one. Read it as a floor rather than as a certificate: it counts the ways of being broken this route knows how to recognize."
+              },
+              "max_series_errors": {
+                "type": "integer",
+                "description": "Longest list of failures the response will carry, counted in entries. Past this the list is capped and `series_errors_truncated` says so; the read still succeeds, because the list is a diagnostic beside the calendar and nothing in `data` depends on it. Entries rather than rows is the unit that matters here as well: a row reported twice consumes two of these."
+              },
+              "unproductive_iterations": {
+                "type": "integer",
+                "description": "Rule iterations this request spent on expansions that returned no occurrence: a rule that ended before the window or produced nothing in it, one too frequent to reach the window before the per-series iteration ceiling, and one refused for flooding the window — that last having produced occurrences the refusal then discarded, so this is what the expansion returned rather than what the rule computed. It is not a count of what reached `data`, which is assembled later behind a filter this does not consult. Only iterations are counted, so a series that fails before it iterates — an unreadable rule, a timezone that does not resolve — is reported in `series_errors` and charges nothing here. The unit the expansion ceiling is denominated in, reported on every successful read so a calendar approaching it is visible before it truncates one."
+              },
+              "max_unproductive_iterations": {
+                "type": "integer",
+                "description": "Ceiling `unproductive_iterations` stops expanding at. Iterations spent on series that do produce occurrences are not counted against it, so crossing it cannot be caused by a calendar having many meetings in it."
+              },
+              "series_unexpanded": {
+                "type": "integer",
+                "description": "Series left unexpanded because `max_unproductive_iterations` was reached before they were reached. Zero on any read that finished expanding; above zero, `expansion_incomplete` is set on the envelope and `data` may be missing occurrences these series would have contributed."
+              }
+            },
+            "required": [
+              "events_read",
+              "occurrences",
+              "max_occurrences",
+              "series_errors",
+              "max_series_errors",
+              "unproductive_iterations",
+              "max_unproductive_iterations",
+              "series_unexpanded"
+            ]
+          },
+          "series_errors": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "item_id": {
+                  "type": "string"
+                },
+                "message": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "item_id",
+                "message"
+              ]
+            },
+            "description": "One entry per failure found in a recurrence rule: a malformed rule, one that floods the window, one with no start to unfold from, a timezone that does not resolve, or a `recurrence` holding something that is not an RFC 5545 property line. Absent when there were none. `item_id` names the row, and one row can appear more than once — a dropped rule line and a failure expanding what was left are two entries against the same id. A reported row may still appear in `data`: a rule that could not be applied leaves the row rendering as the single event its own times describe, and a rule missing one unreadable line still contributes every occurrence the rest of it produces. This reports on rules rather than on which rows are missing."
+          },
+          "series_errors_truncated": {
+            "type": "boolean",
+            "description": "Present and true when `series_errors` lists fewer failures than the request found. Both are counted in entries, so the comparison is exact. The array is capped at `scan.max_series_errors` rather than the read refused, so this is how the response says the list is partial; `scan.series_errors` carries the real total."
+          },
+          "expansion_incomplete": {
+            "type": "boolean",
+            "description": "Present and true when the request stopped expanding series before it had walked them all, having spent `scan.max_unproductive_iterations` on expansions that returned no occurrence. `data` may be missing occurrences the unexpanded series held, and `scan.series_unexpanded` says how many were left. A narrower window does not recover it — the budget is spent walking rules from their own start, before the window is reached — so the moves are narrowing by `type` or fixing the rules `series_errors` names."
+          }
+        },
+        "required": [
+          "data",
+          "next_cursor",
+          "window",
+          "scan"
+        ]
+      },
+      "TagCountPage": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TagCount"
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Pass as `cursor` for the next page; `null` on the last. A page can be short, or empty, with a cursor still to follow, so a walk stops on `null` and never on a short page."
+          }
+        },
+        "required": [
+          "data",
+          "next_cursor"
+        ]
+      },
+      "TagCount": {
+        "type": "object",
+        "properties": {
+          "tag": {
+            "type": "string"
+          },
+          "count": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "tag",
+          "count"
+        ]
+      },
+      "BlobOrphanPage": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BlobOrphan"
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Pass as `cursor` for the next page; `null` on the last. A page can be short, or empty, with a cursor still to follow, so a walk stops on `null` and never on a short page."
+          }
+        },
+        "required": [
+          "data",
+          "next_cursor"
+        ]
+      },
+      "BlobOrphan": {
+        "type": "object",
+        "properties": {
+          "hash": {
+            "type": "string"
+          },
+          "mime_type": {
+            "type": "string"
+          },
+          "size_bytes": {
+            "type": "integer"
+          },
+          "reported_at": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "hash",
+          "mime_type",
+          "size_bytes",
+          "reported_at"
+        ]
+      },
+      "BlobStorePage": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BlobStore"
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Pass as `cursor` for the next page; `null` on the last. A page can be short, or empty, with a cursor still to follow, so a walk stops on `null` and never on a short page."
+          },
+          "min_copies": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "data",
+          "next_cursor",
+          "min_copies"
+        ]
+      },
+      "BlobStore": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "disk",
+              "s3"
+            ]
+          },
+          "locator": {
+            "type": "string"
+          },
+          "policy": {
+            "type": "string"
+          },
+          "attached_at": {
+            "type": "string"
+          },
+          "detached_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "locator",
+          "policy",
+          "attached_at",
+          "detached_at"
         ]
       },
       "BlobNotFoundRefusal": {
@@ -2551,6 +2950,66 @@
           "error"
         ]
       },
+      "BlobLocationPage": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BlobLocation"
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Pass as `cursor` for the next page; `null` on the last. A page can be short, or empty, with a cursor still to follow, so a walk stops on `null` and never on a short page."
+          }
+        },
+        "required": [
+          "data",
+          "next_cursor"
+        ]
+      },
+      "BlobLocation": {
+        "type": "object",
+        "properties": {
+          "store_id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "disk",
+              "s3"
+            ]
+          },
+          "policy": {
+            "type": "string"
+          },
+          "detached": {
+            "type": "boolean"
+          },
+          "recorded_at": {
+            "type": "string"
+          },
+          "verified_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "store_id",
+          "kind",
+          "policy",
+          "detached",
+          "recorded_at",
+          "verified_at"
+        ]
+      },
       "BlobLocationNotFoundOrBlobNotFoundRefusal": {
         "type": "object",
         "properties": {
@@ -2610,6 +3069,28 @@
         },
         "required": [
           "error"
+        ]
+      },
+      "HousekeepingJobPage": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HousekeepingJob"
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Pass as `cursor` for the next page; `null` on the last. A page can be short, or empty, with a cursor still to follow, so a walk stops on `null` and never on a short page."
+          }
+        },
+        "required": [
+          "data",
+          "next_cursor"
         ]
       },
       "HousekeepingJob": {
@@ -2913,6 +3394,28 @@
           "reported_at"
         ]
       },
+      "ConnectorPage": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Connector"
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Pass as `cursor` for the next page; `null` on the last. A page can be short, or empty, with a cursor still to follow, so a walk stops on `null` and never on a short page."
+          }
+        },
+        "required": [
+          "data",
+          "next_cursor"
+        ]
+      },
       "ConnectorNotFoundRefusal": {
         "type": "object",
         "properties": {
@@ -2941,6 +3444,28 @@
         },
         "required": [
           "error"
+        ]
+      },
+      "ConnectorRunPage": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ConnectorRun"
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Pass as `cursor` for the next page; `null` on the last. A page can be short, or empty, with a cursor still to follow, so a walk stops on `null` and never on a short page."
+          }
+        },
+        "required": [
+          "data",
+          "next_cursor"
         ]
       },
       "KeyResponse": {
@@ -3103,6 +3628,28 @@
         "required": [
           "types",
           "sources"
+        ]
+      },
+      "ApiKeyPage": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ApiKey"
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Pass as `cursor` for the next page; `null` on the last. A page can be short, or empty, with a cursor still to follow, so a walk stops on `null` and never on a short page."
+          }
+        },
+        "required": [
+          "data",
+          "next_cursor"
         ]
       },
       "ApiKey": {
@@ -3303,6 +3850,54 @@
         ],
         "additionalProperties": false
       },
+      "DriftedPlatformTypePage": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DriftedPlatformType"
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Pass as `cursor` for the next page; `null` on the last. A page can be short, or empty, with a cursor still to follow, so a walk stops on `null` and never on a short page."
+          }
+        },
+        "required": [
+          "data",
+          "next_cursor"
+        ]
+      },
+      "DriftedPlatformType": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "item_count": {
+            "type": "number"
+          },
+          "child_types": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "removable": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "item_count",
+          "child_types",
+          "removable"
+        ]
+      },
       "NotFoundOrTypeNotFoundRefusal": {
         "type": "object",
         "properties": {
@@ -3493,6 +4088,28 @@
           "error"
         ]
       },
+      "WebhookPage": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Webhook"
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Pass as `cursor` for the next page; `null` on the last. A page can be short, or empty, with a cursor still to follow, so a walk stops on `null` and never on a short page."
+          }
+        },
+        "required": [
+          "data",
+          "next_cursor"
+        ]
+      },
       "WebhookNotFoundRefusal": {
         "type": "object",
         "properties": {
@@ -3521,6 +4138,28 @@
         },
         "required": [
           "error"
+        ]
+      },
+      "WebhookDeliveryPage": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WebhookDelivery"
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Pass as `cursor` for the next page; `null` on the last. A page can be short, or empty, with a cursor still to follow, so a walk stops on `null` and never on a short page."
+          }
+        },
+        "required": [
+          "data",
+          "next_cursor"
         ]
       },
       "WebhookDelivery": {
@@ -3566,6 +4205,77 @@
           "succeeded",
           "error",
           "created_at"
+        ]
+      },
+      "AuditEntryPage": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AuditEntry"
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Pass as `cursor` for the next page; `null` on the last. A page can be short, or empty, with a cursor still to follow, so a walk stops on `null` and never on a short page."
+          }
+        },
+        "required": [
+          "data",
+          "next_cursor"
+        ]
+      },
+      "AuditEntry": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "key_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "action": {
+            "type": "string"
+          },
+          "resource_type": {
+            "type": "string"
+          },
+          "resource_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "client_ip": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "details": {
+            "type": "object",
+            "additionalProperties": {}
+          }
+        },
+        "required": [
+          "id",
+          "created_at",
+          "key_id",
+          "action",
+          "resource_type",
+          "resource_id",
+          "client_ip",
+          "details"
         ]
       },
       "RequestTooLargeRefusal": {
@@ -4384,58 +5094,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "anyOf": [
-                    {
-                      "type": "object",
-                      "properties": {
-                        "data": {
-                          "type": "array",
-                          "items": {
-                            "$ref": "#/components/schemas/Item"
-                          }
-                        },
-                        "cursor": {
-                          "type": [
-                            "string",
-                            "null"
-                          ]
-                        },
-                        "has_more": {
-                          "type": "boolean"
-                        }
-                      },
-                      "required": [
-                        "data",
-                        "cursor",
-                        "has_more"
-                      ]
-                    },
-                    {
-                      "type": "object",
-                      "properties": {
-                        "data": {
-                          "type": "array",
-                          "items": {
-                            "$ref": "#/components/schemas/ItemWithMetadata"
-                          }
-                        },
-                        "cursor": {
-                          "type": [
-                            "string",
-                            "null"
-                          ]
-                        },
-                        "has_more": {
-                          "type": "boolean"
-                        }
-                      },
-                      "required": [
-                        "data",
-                        "cursor",
-                        "has_more"
-                      ]
-                    }
-                  ]
+                  "$ref": "#/components/schemas/ItemPage"
                 }
               }
             },
@@ -6516,18 +7175,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "properties": {
-                    "versions": {
-                      "type": "array",
-                      "items": {
-                        "$ref": "#/components/schemas/Version"
-                      }
-                    }
-                  },
-                  "required": [
-                    "versions"
-                  ]
+                  "$ref": "#/components/schemas/VersionPage"
                 }
               }
             },
@@ -10582,7 +11230,7 @@
           "Edges"
         ],
         "summary": "List outbound edges from an item",
-        "description": "Returns the edges where this item is the source, paginated and optionally filtered by edge type. Use the backrefs endpoint for edges pointing at the item. An item in the trash still answers with its edges, because an edge carries no lifecycle of its own: a 404 here means no such item, not a deleted one. Requires read access to the item's type. Each row is held to the two permissions `GET /edges/{id}` asks for: read on the source item's type, and read on the edge type. A row failing either is left out rather than refused, so a page can come back shorter than `limit` and can come back empty while `has_more` is true. The cursor and `has_more` describe the whole listing rather than the page: stop on `has_more`, never on an empty page. Unrecognized query parameters are refused with `400` rather than ignored, so a misspelled filter cannot silently return an unfiltered page. A parameter of your own — a cache-buster, an analytics tag — must start with `_`, which is always ignored.",
+        "description": "Returns the edges where this item is the source, paginated and optionally filtered by edge type. Use the backrefs endpoint for edges pointing at the item. An item in the trash still answers with its edges, because an edge carries no lifecycle of its own: a 404 here means no such item, not a deleted one. Requires read access to the item's type. Each row is held to the two permissions `GET /edges/{id}` asks for: read on the source item's type, and read on the edge type. A row failing either is left out rather than refused, so a page can come back shorter than `limit` and can come back empty with a `next_cursor` still to follow. The cursor describes the whole listing rather than the page: stop on `next_cursor: null`, never on an empty page. Unrecognized query parameters are refused with `400` rather than ignored, so a misspelled filter cannot silently return an unfiltered page. A parameter of your own — a cache-buster, an analytics tag — must start with `_`, which is always ignored.",
         "security": [
           {
             "bearerAuth": []
@@ -10859,7 +11507,7 @@
           "Edges"
         ],
         "summary": "List inbound edges to an item",
-        "description": "Returns the edges where this item is the target (backrefs), paginated and optionally filtered by edge type. Use the edges endpoint for edges pointing away from the item. An item in the trash still answers with its edges, because an edge carries no lifecycle of its own: a 404 here means no such item, not a deleted one. Requires read access to the item's type. Each row is held to the two permissions `GET /edges/{id}` asks for: read on the source item's type, and read on the edge type. A row failing either is left out rather than refused, so a page can come back shorter than `limit` and can come back empty while `has_more` is true. The cursor and `has_more` describe the whole listing rather than the page: stop on `has_more`, never on an empty page. Unrecognized query parameters are refused with `400` rather than ignored, so a misspelled filter cannot silently return an unfiltered page. A parameter of your own — a cache-buster, an analytics tag — must start with `_`, which is always ignored.",
+        "description": "Returns the edges where this item is the target (backrefs), paginated and optionally filtered by edge type. Use the edges endpoint for edges pointing away from the item. An item in the trash still answers with its edges, because an edge carries no lifecycle of its own: a 404 here means no such item, not a deleted one. Requires read access to the item's type. Each row is held to the two permissions `GET /edges/{id}` asks for: read on the source item's type, and read on the edge type. A row failing either is left out rather than refused, so a page can come back shorter than `limit` and can come back empty with a `next_cursor` still to follow. The cursor describes the whole listing rather than the page: stop on `next_cursor: null`, never on an empty page. Unrecognized query parameters are refused with `400` rather than ignored, so a misspelled filter cannot silently return an unfiltered page. A parameter of your own — a cache-buster, an analytics tag — must start with `_`, which is always ignored.",
         "security": [
           {
             "bearerAuth": []
@@ -11136,7 +11784,7 @@
           "Edges"
         ],
         "summary": "List edges",
-        "description": "Returns a paginated list of edges the credential may read, optionally filtered by edge type. Pass `edge_type` as a comma-separated list (up to 10 entries) to scope, or omit it to list every edge this credential reaches.\n\nEach row is held to the two permissions `GET /edges/{id}` asks for: read on the source item's type, and read on the edge type. A row failing either is left out rather than refused, so a page can come back shorter than `limit` and can come back empty while `has_more` is true. The cursor and `has_more` describe the whole listing rather than the page, so paging still walks it: stop on `has_more`, never on an empty page.\n\nEdges carry no lifecycle state of their own and are never hidden by the state of the items they join, so this listing has no `state` parameter and needs none: an edge whose endpoints are in the bin is returned like any other. That is deliberate — a client reconciling its copy has to see those edges rather than watch them disappear.\n\nRemovals are a different question and this read cannot answer it. A deleted edge leaves no row and no tombstone, so nothing here distinguishes one that was removed from one that never existed. The event stream carries the deletions; a client that reconciles completely needs both channels.\n\nUnrecognized query parameters are refused with `400` rather than ignored, so a misspelled filter cannot silently return an unfiltered page. A parameter of your own — a cache-buster, an analytics tag — must start with `_`, which is always ignored. The two retired time-filter names are refused here too, naming their replacements, even though this door never carried them — the published rename says it covers this listing, and an absence discovered at `200` over the whole corpus is the failure that refusal exists to prevent.",
+        "description": "Returns a paginated list of edges the credential may read, optionally filtered by edge type. Pass `edge_type` as a comma-separated list (up to 10 entries) to scope, or omit it to list every edge this credential reaches.\n\nEach row is held to the two permissions `GET /edges/{id}` asks for: read on the source item's type, and read on the edge type. A row failing either is left out rather than refused, so a page can come back shorter than `limit` and can come back empty with a `next_cursor` still to follow. The cursor describes the whole listing rather than the page, so paging still walks it: stop on `next_cursor: null`, never on an empty page.\n\nEdges carry no lifecycle state of their own and are never hidden by the state of the items they join, so this listing has no `state` parameter and needs none: an edge whose endpoints are in the bin is returned like any other. That is deliberate — a client reconciling its copy has to see those edges rather than watch them disappear.\n\nRemovals are a different question and this read cannot answer it. A deleted edge leaves no row and no tombstone, so nothing here distinguishes one that was removed from one that never existed. The event stream carries the deletions; a client that reconciles completely needs both channels.\n\nUnrecognized query parameters are refused with `400` rather than ignored, so a misspelled filter cannot silently return an unfiltered page. A parameter of your own — a cache-buster, an analytics tag — must start with `_`, which is always ignored. The two retired time-filter names are refused here too, naming their replacements, even though this door never carried them — the published rename says it covers this listing, and an absence discovered at `200` over the whole corpus is the failure that refusal exists to prevent.",
         "security": [
           {
             "bearerAuth": []
@@ -13236,18 +13884,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "properties": {
-                    "edge_types": {
-                      "type": "array",
-                      "items": {
-                        "$ref": "#/components/schemas/EdgeType"
-                      }
-                    }
-                  },
-                  "required": [
-                    "edge_types"
-                  ]
+                  "$ref": "#/components/schemas/EdgeTypePage"
                 }
               }
             },
@@ -13685,10 +14322,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/TypeDefinition"
-                  }
+                  "$ref": "#/components/schemas/TypeDefinitionPage"
                 }
               }
             },
@@ -14822,7 +15456,7 @@
           "Search"
         ],
         "summary": "Search items",
-        "description": "Full-text search across every item the caller can read, indexing textual properties and tags, ranked by relevance with a configurable recency boost. Accepts the same filters as `GET /items` — including its two time bounds, which read the item's own time — and uses `limit` / `offset` paging rather than a cursor; absolute scores aren't stable across index rebuilds. Unrecognized query parameters are refused with `400` rather than ignored, so a misspelled filter cannot silently return an unfiltered page. A parameter of your own — a cache-buster, an analytics tag — must start with `_`, which is always ignored.",
+        "description": "Full-text search across every item the caller can read, indexing textual properties and tags, ranked by relevance with a configurable recency boost. Accepts the same filters as `GET /items` — including its two time bounds, which read the item's own time — and pages by cursor like every list: pass `next_cursor` back as `cursor`. The ranking is recomputed on every page, so a row whose score moves between two reads can be seen twice or missed; absolute scores aren't stable across index rebuilds. The ranking is read at most 10,000 rows deep, and the page that reaches that depth answers `next_cursor: null`. Unrecognized query parameters are refused with `400` rather than ignored, so a misspelled filter cannot silently return an unfiltered page. A parameter of your own — a cache-buster, an analytics tag — must start with `_`, which is always ignored.",
         "security": [
           {
             "bearerAuth": []
@@ -14910,18 +15544,12 @@
           },
           {
             "schema": {
-              "type": [
-                "integer",
-                "null"
-              ],
-              "minimum": 0,
-              "maximum": 10000,
-              "default": 0,
-              "description": "Number of results to skip for paging."
+              "type": "string",
+              "description": "Opaque cursor from a previous page's `next_cursor`."
             },
             "required": false,
-            "description": "Number of results to skip for paging.",
-            "name": "offset",
+            "description": "Opaque cursor from a previous page's `next_cursor`.",
+            "name": "cursor",
             "in": "query"
           },
           {
@@ -14963,18 +15591,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "properties": {
-                    "results": {
-                      "type": "array",
-                      "items": {
-                        "$ref": "#/components/schemas/SearchResult"
-                      }
-                    }
-                  },
-                  "required": [
-                    "results"
-                  ]
+                  "$ref": "#/components/schemas/SearchResultPage"
                 }
               }
             },
@@ -15212,130 +15829,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "properties": {
-                    "data": {
-                      "type": "array",
-                      "items": {
-                        "type": "object",
-                        "properties": {
-                          "starts_at": {
-                            "type": "string"
-                          },
-                          "ends_at": {
-                            "type": "string"
-                          },
-                          "item": {
-                            "$ref": "#/components/schemas/Item"
-                          },
-                          "series_id": {
-                            "type": "string"
-                          },
-                          "replaces": {
-                            "type": "string"
-                          }
-                        },
-                        "required": [
-                          "starts_at",
-                          "item"
-                        ]
-                      }
-                    },
-                    "window": {
-                      "type": "object",
-                      "properties": {
-                        "from": {
-                          "type": "string"
-                        },
-                        "to": {
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "from",
-                        "to"
-                      ]
-                    },
-                    "scan": {
-                      "type": "object",
-                      "properties": {
-                        "events_read": {
-                          "type": "integer",
-                          "description": "Event rows this request read, summed across its passes. Two of the three cannot be narrowed by the window, so this grows with the size of the calendar rather than with the window asked for."
-                        },
-                        "occurrences": {
-                          "type": "integer",
-                          "description": "Occurrences returned, the length of `data`."
-                        },
-                        "max_occurrences": {
-                          "type": "integer",
-                          "description": "Ceiling `occurrences` is refused at. Reported on every successful read so a calendar approaching it is visible before a request is refused, rather than only once one is."
-                        },
-                        "series_errors": {
-                          "type": "integer",
-                          "description": "Failures this request found in recurrence rules, in the same unit as the `series_errors` array on the envelope: entries, not rows. One row can account for two — an unreadable line dropped from its rule is one failure, and expanding what was left then failing is another — so this is an upper bound on the number of rows to go and look at, and `item_id` is what a caller groups on to get the exact number. Counted across the event types this request read, and scoped to those and not to everything stored: a request narrowed by `type`, or a credential permissioned for one event type, is told about the rules it read and nothing about the ones it did not, so a zero here is not a statement that the rest of the calendar is healthy. It counts everything this read detected, even when the array lists fewer, which is what lets a caller tell a handful of broken rules from a corrupt import without receiving the bytes of the larger one. Read it as a floor rather than as a certificate: it counts the ways of being broken this route knows how to recognize."
-                        },
-                        "max_series_errors": {
-                          "type": "integer",
-                          "description": "Longest list of failures the response will carry, counted in entries. Past this the list is capped and `series_errors_truncated` says so; the read still succeeds, because the list is a diagnostic beside the calendar and nothing in `data` depends on it. Entries rather than rows is the unit that matters here as well: a row reported twice consumes two of these."
-                        },
-                        "unproductive_iterations": {
-                          "type": "integer",
-                          "description": "Rule iterations this request spent on expansions that returned no occurrence: a rule that ended before the window or produced nothing in it, one too frequent to reach the window before the per-series iteration ceiling, and one refused for flooding the window — that last having produced occurrences the refusal then discarded, so this is what the expansion returned rather than what the rule computed. It is not a count of what reached `data`, which is assembled later behind a filter this does not consult. Only iterations are counted, so a series that fails before it iterates — an unreadable rule, a timezone that does not resolve — is reported in `series_errors` and charges nothing here. The unit the expansion ceiling is denominated in, reported on every successful read so a calendar approaching it is visible before it truncates one."
-                        },
-                        "max_unproductive_iterations": {
-                          "type": "integer",
-                          "description": "Ceiling `unproductive_iterations` stops expanding at. Iterations spent on series that do produce occurrences are not counted against it, so crossing it cannot be caused by a calendar having many meetings in it."
-                        },
-                        "series_unexpanded": {
-                          "type": "integer",
-                          "description": "Series left unexpanded because `max_unproductive_iterations` was reached before they were reached. Zero on any read that finished expanding; above zero, `expansion_incomplete` is set on the envelope and `data` may be missing occurrences these series would have contributed."
-                        }
-                      },
-                      "required": [
-                        "events_read",
-                        "occurrences",
-                        "max_occurrences",
-                        "series_errors",
-                        "max_series_errors",
-                        "unproductive_iterations",
-                        "max_unproductive_iterations",
-                        "series_unexpanded"
-                      ]
-                    },
-                    "series_errors": {
-                      "type": "array",
-                      "items": {
-                        "type": "object",
-                        "properties": {
-                          "item_id": {
-                            "type": "string"
-                          },
-                          "message": {
-                            "type": "string"
-                          }
-                        },
-                        "required": [
-                          "item_id",
-                          "message"
-                        ]
-                      },
-                      "description": "One entry per failure found in a recurrence rule: a malformed rule, one that floods the window, one with no start to unfold from, a timezone that does not resolve, or a `recurrence` holding something that is not an RFC 5545 property line. Absent when there were none. `item_id` names the row, and one row can appear more than once — a dropped rule line and a failure expanding what was left are two entries against the same id. A reported row may still appear in `data`: a rule that could not be applied leaves the row rendering as the single event its own times describe, and a rule missing one unreadable line still contributes every occurrence the rest of it produces. This reports on rules rather than on which rows are missing."
-                    },
-                    "series_errors_truncated": {
-                      "type": "boolean",
-                      "description": "Present and true when `series_errors` lists fewer failures than the request found. Both are counted in entries, so the comparison is exact. The array is capped at `scan.max_series_errors` rather than the read refused, so this is how the response says the list is partial; `scan.series_errors` carries the real total."
-                    },
-                    "expansion_incomplete": {
-                      "type": "boolean",
-                      "description": "Present and true when the request stopped expanding series before it had walked them all, having spent `scan.max_unproductive_iterations` on expansions that returned no occurrence. `data` may be missing occurrences the unexpanded series held, and `scan.series_unexpanded` says how many were left. A narrower window does not recover it — the budget is spent walking rules from their own start, before the window is reached — so the moves are narrowing by `type` or fixing the rules `series_errors` names."
-                    }
-                  },
-                  "required": [
-                    "data",
-                    "window",
-                    "scan"
-                  ]
+                  "$ref": "#/components/schemas/OccurrencePage"
                 }
               }
             },
@@ -15541,30 +16035,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "properties": {
-                    "tags": {
-                      "type": "array",
-                      "items": {
-                        "type": "object",
-                        "properties": {
-                          "tag": {
-                            "type": "string"
-                          },
-                          "count": {
-                            "type": "integer"
-                          }
-                        },
-                        "required": [
-                          "tag",
-                          "count"
-                        ]
-                      }
-                    }
-                  },
-                  "required": [
-                    "tags"
-                  ]
+                  "$ref": "#/components/schemas/TagCountPage"
                 }
               }
             },
@@ -15921,38 +16392,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "properties": {
-                    "data": {
-                      "type": "array",
-                      "items": {
-                        "type": "object",
-                        "properties": {
-                          "hash": {
-                            "type": "string"
-                          },
-                          "mime_type": {
-                            "type": "string"
-                          },
-                          "size_bytes": {
-                            "type": "integer"
-                          },
-                          "reported_at": {
-                            "type": "string"
-                          }
-                        },
-                        "required": [
-                          "hash",
-                          "mime_type",
-                          "size_bytes",
-                          "reported_at"
-                        ]
-                      }
-                    }
-                  },
-                  "required": [
-                    "data"
-                  ]
+                  "$ref": "#/components/schemas/BlobOrphanPage"
                 }
               }
             },
@@ -16104,57 +16544,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "properties": {
-                    "data": {
-                      "type": "array",
-                      "items": {
-                        "type": "object",
-                        "properties": {
-                          "id": {
-                            "type": "string"
-                          },
-                          "kind": {
-                            "type": "string",
-                            "enum": [
-                              "disk",
-                              "s3"
-                            ]
-                          },
-                          "locator": {
-                            "type": "string"
-                          },
-                          "policy": {
-                            "type": "string"
-                          },
-                          "attached_at": {
-                            "type": "string"
-                          },
-                          "detached_at": {
-                            "type": [
-                              "string",
-                              "null"
-                            ]
-                          }
-                        },
-                        "required": [
-                          "id",
-                          "kind",
-                          "locator",
-                          "policy",
-                          "attached_at",
-                          "detached_at"
-                        ]
-                      }
-                    },
-                    "min_copies": {
-                      "type": "integer"
-                    }
-                  },
-                  "required": [
-                    "data",
-                    "min_copies"
-                  ]
+                  "$ref": "#/components/schemas/BlobStorePage"
                 }
               }
             },
@@ -16813,53 +17203,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "properties": {
-                    "data": {
-                      "type": "array",
-                      "items": {
-                        "type": "object",
-                        "properties": {
-                          "store_id": {
-                            "type": "string"
-                          },
-                          "kind": {
-                            "type": "string",
-                            "enum": [
-                              "disk",
-                              "s3"
-                            ]
-                          },
-                          "policy": {
-                            "type": "string"
-                          },
-                          "detached": {
-                            "type": "boolean"
-                          },
-                          "recorded_at": {
-                            "type": "string"
-                          },
-                          "verified_at": {
-                            "type": [
-                              "string",
-                              "null"
-                            ]
-                          }
-                        },
-                        "required": [
-                          "store_id",
-                          "kind",
-                          "policy",
-                          "detached",
-                          "recorded_at",
-                          "verified_at"
-                        ]
-                      }
-                    }
-                  },
-                  "required": [
-                    "data"
-                  ]
+                  "$ref": "#/components/schemas/BlobLocationPage"
                 }
               }
             },
@@ -17293,18 +17637,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "properties": {
-                    "data": {
-                      "type": "array",
-                      "items": {
-                        "$ref": "#/components/schemas/HousekeepingJob"
-                      }
-                    }
-                  },
-                  "required": [
-                    "data"
-                  ]
+                  "$ref": "#/components/schemas/HousekeepingJobPage"
                 }
               }
             },
@@ -18007,18 +18340,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "properties": {
-                    "data": {
-                      "type": "array",
-                      "items": {
-                        "$ref": "#/components/schemas/Connector"
-                      }
-                    }
-                  },
-                  "required": [
-                    "data"
-                  ]
+                  "$ref": "#/components/schemas/ConnectorPage"
                 }
               }
             },
@@ -19107,18 +19429,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "properties": {
-                    "data": {
-                      "type": "array",
-                      "items": {
-                        "$ref": "#/components/schemas/ConnectorRun"
-                      }
-                    }
-                  },
-                  "required": [
-                    "data"
-                  ]
+                  "$ref": "#/components/schemas/ConnectorRunPage"
                 }
               }
             },
@@ -19625,18 +19936,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "properties": {
-                    "keys": {
-                      "type": "array",
-                      "items": {
-                        "$ref": "#/components/schemas/ApiKey"
-                      }
-                    }
-                  },
-                  "required": [
-                    "keys"
-                  ]
+                  "$ref": "#/components/schemas/ApiKeyPage"
                 }
               }
             },
@@ -21066,41 +21366,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "properties": {
-                    "types": {
-                      "type": "array",
-                      "items": {
-                        "type": "object",
-                        "properties": {
-                          "id": {
-                            "type": "string"
-                          },
-                          "item_count": {
-                            "type": "number"
-                          },
-                          "child_types": {
-                            "type": "array",
-                            "items": {
-                              "type": "string"
-                            }
-                          },
-                          "removable": {
-                            "type": "boolean"
-                          }
-                        },
-                        "required": [
-                          "id",
-                          "item_count",
-                          "child_types",
-                          "removable"
-                        ]
-                      }
-                    }
-                  },
-                  "required": [
-                    "types"
-                  ]
+                  "$ref": "#/components/schemas/DriftedPlatformTypePage"
                 }
               }
             },
@@ -22526,18 +22792,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "properties": {
-                    "webhooks": {
-                      "type": "array",
-                      "items": {
-                        "$ref": "#/components/schemas/Webhook"
-                      }
-                    }
-                  },
-                  "required": [
-                    "webhooks"
-                  ]
+                  "$ref": "#/components/schemas/WebhookPage"
                 }
               }
             },
@@ -23460,18 +23715,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "properties": {
-                    "deliveries": {
-                      "type": "array",
-                      "items": {
-                        "$ref": "#/components/schemas/WebhookDelivery"
-                      }
-                    }
-                  },
-                  "required": [
-                    "deliveries"
-                  ]
+                  "$ref": "#/components/schemas/WebhookDeliveryPage"
                 }
               }
             },
@@ -23752,75 +23996,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "properties": {
-                    "data": {
-                      "type": "array",
-                      "items": {
-                        "type": "object",
-                        "properties": {
-                          "id": {
-                            "type": "string"
-                          },
-                          "created_at": {
-                            "type": "string"
-                          },
-                          "key_id": {
-                            "type": [
-                              "string",
-                              "null"
-                            ]
-                          },
-                          "action": {
-                            "type": "string"
-                          },
-                          "resource_type": {
-                            "type": "string"
-                          },
-                          "resource_id": {
-                            "type": [
-                              "string",
-                              "null"
-                            ]
-                          },
-                          "client_ip": {
-                            "type": [
-                              "string",
-                              "null"
-                            ]
-                          },
-                          "details": {
-                            "type": "object",
-                            "additionalProperties": {}
-                          }
-                        },
-                        "required": [
-                          "id",
-                          "created_at",
-                          "key_id",
-                          "action",
-                          "resource_type",
-                          "resource_id",
-                          "client_ip",
-                          "details"
-                        ]
-                      }
-                    },
-                    "cursor": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
-                    "has_more": {
-                      "type": "boolean"
-                    }
-                  },
-                  "required": [
-                    "data",
-                    "cursor",
-                    "has_more"
-                  ]
+                  "$ref": "#/components/schemas/AuditEntryPage"
                 }
               }
             },

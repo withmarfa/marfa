@@ -249,9 +249,7 @@ export function exportRoutes(
                 );
               }
 
-              cursor = result.has_more
-                ? (result.cursor as string | undefined)
-                : undefined;
+              cursor = result.next_cursor ?? undefined;
             } while (cursor);
 
             let edgeCursor: string | undefined;
@@ -281,9 +279,7 @@ export function exportRoutes(
                   );
                 }
               }
-              edgeCursor = page.has_more
-                ? (page.cursor ?? undefined)
-                : undefined;
+              edgeCursor = page.next_cursor ?? undefined;
             } while (edgeCursor);
           };
           await work();
@@ -415,9 +411,7 @@ async function handleArchiveExport(
         collectBlobHashes(item.properties, blobHashes);
         collectBlobHashes(metadata.extensions, blobHashes);
       }
-      cursor = result.has_more
-        ? (result.cursor as string | undefined)
-        : undefined;
+      cursor = result.next_cursor ?? undefined;
     } while (cursor);
 
     let edgeCursor: string | undefined;
@@ -438,7 +432,7 @@ async function handleArchiveExport(
           edgeLines.push(JSON.stringify({ edge }));
         }
       }
-      edgeCursor = page.has_more ? (page.cursor ?? undefined) : undefined;
+      edgeCursor = page.next_cursor ?? undefined;
     } while (edgeCursor);
 
     // The instance's own registrations, not the filtered item set's: a

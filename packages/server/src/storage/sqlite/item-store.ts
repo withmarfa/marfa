@@ -757,7 +757,7 @@ export class SqliteItemStore implements ItemStore {
       cursor = encodeKeyedCursor(sortValue, last.id, cursorKey);
     }
 
-    return { data, cursor, has_more: hasMore };
+    return { data, next_cursor: cursor };
   }
 
   async update(

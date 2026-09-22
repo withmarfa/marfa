@@ -33,7 +33,7 @@ import {
   makeErrorResponseSchema,
 } from "../openapi.js";
 import { assertParentChain } from "./_parent-chain.js";
-import { MergePolicySchema } from "./_schemas.js";
+import { MergePolicySchema, pageOf } from "./_schemas.js";
 
 // ---------------------------------------------------------------------------
 // Constants & helpers
@@ -301,7 +301,7 @@ const listTypesRoute = createRoute({
     200: {
       content: {
         "application/json": {
-          schema: z.array(TypeSchemaResponse),
+          schema: pageOf(TypeSchemaResponse, "TypeDefinitionPage"),
         },
       },
       description: "List of all type schemas",
@@ -630,10 +630,13 @@ export function typeRoutes(storage: Storage) {
     // path accepts them. Same helper as the single read, so the two cannot
     // give different answers about the same type.
     return c.json(
-      listTypes().map((schema) => {
-        const roles = resolveRoles(schema.id, resolve);
-        return roles ? { ...schema, roles } : schema;
-      }),
+      {
+        data: listTypes().map((schema) => {
+          const roles = resolveRoles(schema.id, resolve);
+          return roles ? { ...schema, roles } : schema;
+        }),
+        next_cursor: null,
+      },
       200,
     );
   });
