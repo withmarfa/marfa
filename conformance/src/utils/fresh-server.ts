@@ -86,8 +86,16 @@ export async function bootFreshServer(
       cwd: conformanceRoot,
       encoding: "utf8",
       // The script pins the port to `PORT` when one is set, and the run's
-      // own server may already hold it.
-      env: { ...process.env, PORT: "", ...extraEnv },
+      // own server may already hold it. The limiter is pinned off for the
+      // same kind of reason and in the same place: a fixture that does not
+      // ask for it should not inherit one from whoever started the run.
+      // `extraEnv` comes last, so a fixture that does ask still wins.
+      env: {
+        ...process.env,
+        PORT: "",
+        RATE_LIMIT_ENABLED: "false",
+        ...extraEnv,
+      },
       // Bounded, because the call blocks the worker and vitest's own hook
       // timeout cannot fire while it does.
       timeout: BOOT_BUDGET_MS,

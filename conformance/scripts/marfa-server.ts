@@ -251,9 +251,14 @@ export async function bootServer(args: BootOptions): Promise<void> {
     // wake and the fixture's runs nothing copies on a clock of its own.
     MARFA_BLOB_CLEANUP_GRACE_MS: "0",
     MARFA_BLOB_REPLICATE_INTERVAL_MS: "3600000",
-    // The suite mints and revokes a key per file through /keys, whose fixed
-    // limit of 200 requests a minute per credential a local run exceeds.
-    RATE_LIMIT_ENABLED: "false",
+    // Off unless the caller says otherwise. A fixture about the limiter
+    // boots a server of its own with it on, and this literal sits after
+    // the spread — pinned, it would overwrite what such a fixture asked
+    // for and leave both halves of the case passing against a server
+    // with no limiter at all. The run's own server does not rely on the
+    // default here: `marfa:up` says `false` outright, so an ambient
+    // variable cannot flip the instance every other file shares.
+    RATE_LIMIT_ENABLED: process.env.RATE_LIMIT_ENABLED || "false",
   };
   delete env.NODE_ENV;
 

@@ -90,8 +90,14 @@ export function rateLimitMiddleware(
       }
     }
 
-    // More generous for read-heavy endpoints
-    if (c.req.method === "GET" && limit === config.defaultLimit) {
+    // More generous for read-heavy endpoints, and only where no path cap
+    // was chosen. The condition is the absence of a match rather than
+    // `limit === config.defaultLimit`, which says the same thing only
+    // while no path's cap happens to equal the default: a deployment
+    // that set `RATE_LIMIT_KEYS_REQUESTS` to the default would otherwise
+    // have its key reads judged against twice the number it asked for,
+    // and the header would name the doubled one.
+    if (c.req.method === "GET" && matchedPrefix === null) {
       limit = config.defaultLimit * 2;
     }
 

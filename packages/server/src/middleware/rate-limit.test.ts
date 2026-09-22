@@ -27,7 +27,12 @@ interface Ctx {
 // Build an app with rate limiting ENABLED and an intentionally tiny
 // per-window limit, so we can observe per-credential isolation in a
 // handful of requests rather than thousands.
-async function buildCtx(): Promise<Ctx> {
+async function buildCtx(
+  /** The `/keys` cap, when a case is about one. Left out, the path table's
+   *  own default stands and the key doors are far above this context's
+   *  tiny global cap. */
+  keysLimit?: number,
+): Promise<Ctx> {
   // Rate-limit values flow through AppConfig, set on the literal below;
   // the middleware reads nothing from the environment.
   const tmpDir = mkdtempSync(join(tmpdir(), "marfa-ratelimit-"));
@@ -74,6 +79,7 @@ async function buildCtx(): Promise<Ctx> {
       authBaseUrl: "http://localhost:0",
       authSecret: "test-auth-secret",
       rateLimitDefaultLimit: 2,
+      rateLimitKeysLimit: keysLimit,
       rateLimitWindowMs: 60_000,
       // Disable the aggregate per-identifier window for the per-path /
       // per-credential isolation tests below — several reuse one shared
@@ -176,6 +182,31 @@ describe("rate-limit keying", () => {
     // would also get 429.
     const bFirst = await hitB();
     expect(bFirst.status).toBe(200);
+  });
+
+  it("judges a GET against the cap the path was given, even when it equals the default", async () => {
+    // The read-heavy doubling applies where no path cap was chosen. While
+    // every path cap was a literal below the default, testing the value
+    // and testing for a match said the same thing; `/keys` is now an
+    // operator's number, and the two part company the moment that number
+    // is the default. A deployment that set them equal would otherwise be
+    // given twice what it asked for on reads and exactly what it asked
+    // for on writes.
+    const equal = await buildCtx(2);
+    try {
+      const hit = async () =>
+        equal.app.request("/keys", {
+          headers: { Authorization: `Bearer ${equal.workingKey}` },
+        });
+      for (let i = 0; i < 2; i++) {
+        expect((await hit()).status).toBe(200);
+      }
+      const overflow = await hit();
+      expect(overflow.status).toBe(429);
+      expect(overflow.headers.get("X-RateLimit-Limit")).toBe("2");
+    } finally {
+      await equal.cleanup();
+    }
   });
 });
 

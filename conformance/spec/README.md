@@ -43,5 +43,5 @@ The device's half runs against a scripted server the fixture controls, because t
 ## Outside the fixtures
 
 - Enrichment and OCR are switched off for a run; no statement covers what the sweeper does to a file item after the fact.
-- Rate limiting is switched off for a run. `/keys` and `/keys/{id}` share a fixed limit of 200 requests a minute per credential that no configuration raises, and a run that mints and revokes one key per file exceeds it; nothing is asserted about `429 rate_limited`.
+- Rate limiting is switched off for a run, because a run that mints and revokes one key per file would spend the key doors' allowance on its own housekeeping. What that allowance is, and what a caller past it is told, is `keys-and-oauth.md` 33, asserted against a server booted with the limiter on. The caps on every other path group are the server's own numbers and no statement covers them.
 - The boot mint. A fresh instance mints its first key once through `POST /keys` with the one-time secret printed in its boot log as the bearer token; the answer is one key, the operator key, which is also what the suite provisions with. `scripts/marfa-server.ts` performs it and `src/utils/target.test.ts` pins how the answer is read; no fixture repeats it, because the secret is consumed by the first mint.
