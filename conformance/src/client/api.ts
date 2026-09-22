@@ -82,6 +82,9 @@ export interface UpdateItemInput {
   properties?: Record<string, unknown>;
   source_id?: string; // Mutable — updated value round-trips on subsequent GET
   tier?: "library" | "feed";
+  /** The item's own time. One of the three fields of the row that are not
+   *  properties and that the version check covers (`versions.md` 8). */
+  occurred_at?: string;
   /**
    * The version the caller read. Required on this door: an update names the
    * version it is based on, or it is a blind overwrite of whatever arrived
@@ -89,7 +92,6 @@ export interface UpdateItemInput {
    * a fixture that omits it here is asserting that refusal by accident.
    */
   version: number;
-  force_snapshot?: boolean; // Force version snapshot creation
   /**
    * Replace-all-for-specified-types. Edges of types listed here are
    * replaced wholesale; edges of types NOT listed remain untouched.

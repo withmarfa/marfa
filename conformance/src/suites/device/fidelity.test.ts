@@ -274,8 +274,20 @@ describe("the scripted answers match the server's", () => {
       "a stale write with a retained base",
       { status: stale.status, body: stale.error },
       answers.versionConflict(
-        { version: 2, properties: { title: "winner", body: "winner" } },
-        { version: 1, properties: { title: "base", body: "base" } },
+        {
+          version: 2,
+          properties: { title: "winner", body: "winner" },
+          tier: "library",
+          occurred_at: "2026-01-01T00:00:00.000Z",
+          source_id: null,
+        },
+        {
+          version: 1,
+          properties: { title: "base", body: "base" },
+          tier: "library",
+          occurred_at: "2026-01-01T00:00:00.000Z",
+          source_id: null,
+        },
         ["body", "title"],
         // core.note declares both of its text fields keep-both
         // (`versions.md` 12); a policy naming one of them would send a device
@@ -296,8 +308,14 @@ describe("the scripted answers match the server's", () => {
         shape: [
           "current.version",
           "current.properties",
+          "current.tier",
+          "current.occurred_at",
+          "current.source_id",
           "ancestor.version",
           "ancestor.properties",
+          "ancestor.tier",
+          "ancestor.occurred_at",
+          "ancestor.source_id",
         ],
       },
     );
@@ -315,12 +333,24 @@ describe("the scripted answers match the server's", () => {
       "a write naming a version with no snapshot",
       { status: refused.status, body: refused.error },
       answers.ancestorUnavailable(
-        { version: 1, properties: { title: "base", body: "base" } },
+        {
+          version: 1,
+          properties: { title: "base", body: "base" },
+          tier: "library",
+          occurred_at: "2026-01-01T00:00:00.000Z",
+          source_id: null,
+        },
         0,
       ),
       {
         same: ["error.code", "error.status", "requested_version", "ancestor"],
-        shape: ["current.version", "current.properties"],
+        shape: [
+          "current.version",
+          "current.properties",
+          "current.tier",
+          "current.occurred_at",
+          "current.source_id",
+        ],
       },
     );
   });

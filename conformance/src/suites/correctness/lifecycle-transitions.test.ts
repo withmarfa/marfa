@@ -58,6 +58,31 @@ describe("lifecycle transitions", () => {
     expect(invalid.error?.error.code).toBe("validation_error");
   });
 
+  it("offers a canonical type three states, and not the fourth", async () => {
+    // Four states exist, and a client that built its enum from this door
+    // would get three. `revoked` is the fourth: a `system.*` type's
+    // terminal state, on a lifecycle where `archived` and `trashed` do not
+    // apply, and no state a canonical type reaches. This door is the
+    // canonical lifecycle's, so `revoked` is outside the values it takes
+    // and is refused as a body would be rather than as a move would be —
+    // which is the same answer `nonexistent` gets above, and is why the
+    // sentence naming the fourth state has to say where it lives.
+    const r = await client.createItem(createNote({ source: ctx.source }));
+    expect(r.ok).toBe(true);
+    trackItem(ctx, r.data.item.id);
+
+    const revoked = await client.transitionItem(r.data.item.id, "revoked");
+    expect(revoked.status).toBe(400);
+    expect(revoked.error?.error.code).toBe("validation_error");
+
+    // The witness. The same door moves the same row to a state this
+    // type's lifecycle does contain, so the refusal above is about
+    // `revoked` and not about the door, the row or the credential.
+    const archived = await client.transitionItem(r.data.item.id, "archived");
+    expect(archived.ok).toBe(true);
+    expect(archived.data.item.state).toBe("archived");
+  });
+
   it("item can be created with a specified initial state", async () => {
     const note = createNote({
       source: ctx.source,

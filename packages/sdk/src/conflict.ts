@@ -258,10 +258,12 @@ export async function handleConflictUpdate(
   }
 
   // Unreachable — the loop always returns or throws.
-  throw new ConflictError(
-    { version: 0, properties: {} },
-    { version: 0, properties: {} },
-    [],
-    clientPatch,
-  );
+  const nowhere = {
+    version: 0,
+    properties: {},
+    tier: "library" as const,
+    occurred_at: "",
+    source_id: null,
+  };
+  throw new ConflictError(nowhere, nowhere, [], clientPatch);
 }

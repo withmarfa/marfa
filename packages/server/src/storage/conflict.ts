@@ -15,15 +15,69 @@ import { generateId } from "@withmarfa/shared";
 import type { ResolvedItem } from "./interface.js";
 import { sha256Hex } from "../utils/crypto.js";
 
+/**
+ * The three fields of an item an update may change that are not properties.
+ *
+ * They go through the same three-way comparison as properties and are kept
+ * apart from them because they are columns rather than schema-governed
+ * values: merging them into the properties object would write them into the
+ * item's own properties, where the type does not declare them.
+ */
+export const VERSIONED_ITEM_FIELDS = [
+  "tier",
+  "occurred_at",
+  "source_id",
+] as const;
+
+export type VersionedItemField = (typeof VERSIONED_ITEM_FIELDS)[number];
+
+/** A value per field, absent where the write did not name it. */
+export type ItemFieldValues = Partial<
+  Record<VersionedItemField, string | null>
+>;
+
+/** The same three as a snapshot carries them: every one present, because a
+ *  row always has a tier and an own time and either holds a natural-key
+ *  identifier or does not. */
+export type SnapshotItemFields = Pick<
+  ConflictSnapshot,
+  "tier" | "occurred_at" | "source_id"
+>;
+
 export interface ConflictInput {
   clientProperties: Record<string, unknown>;
   currentProperties: Record<string, unknown>;
   ancestorProperties: Record<string, unknown>;
+  /** The item fields the write names; a field it does not name is absent
+   *  and cannot collide. */
+  clientFields: ItemFieldValues;
+  currentFields: ItemFieldValues;
+  ancestorFields: ItemFieldValues;
 }
 
+/**
+ * The item fields this write genuinely changes, on either outcome.
+ *
+ * A field the client echoed back at the value it read is not here, so it
+ * can never revert a value written since — which is the same protection
+ * the properties overlay gets, and the reason this is carried on the
+ * conflict branch too: a write that collides on one field and echoes
+ * another still has to not revert the echoed one when the server resolves.
+ */
 export type ConflictResult =
-  | { type: "no_conflict"; merged: Record<string, unknown> }
-  | { type: "conflict"; conflicting_fields: string[] };
+  | {
+      type: "no_conflict";
+      merged: Record<string, unknown>;
+      changedFields: ItemFieldValues;
+    }
+  | {
+      type: "conflict";
+      conflicting_fields: string[];
+      changedFields: ItemFieldValues;
+      /** The colliding fields that are item fields rather than properties,
+       *  which the type's policy has no per-field strategy for. */
+      collidingItemFields: VersionedItemField[];
+    };
 
 function deepEqual(a: unknown, b: unknown): boolean {
   if (a === b) return true;
@@ -64,6 +118,13 @@ function deepEqual(a: unknown, b: unknown): boolean {
  *   server already holds for it — unless the server changed it, in which
  *   case the overlay must not revert that change (handled below).
  * - If conflicts: return the sorted list of conflicting field names.
+ *
+ * `tier`, `occurred_at` and `source_id` go through the same comparison and
+ * appear in the same list. They are not properties and are not merged into
+ * the properties object, but a device holding the version as its protection
+ * is protected on every field of the row or on none of them: a check that
+ * looked at properties alone let a stale write carrying a tier overwrite a
+ * newer one with nothing refused.
  */
 export function detectConflict(input: ConflictInput): ConflictResult {
   const { clientProperties, currentProperties, ancestorProperties } = input;
@@ -99,10 +160,31 @@ export function detectConflict(input: ConflictInput): ConflictResult {
     }
   }
 
+  // The item's own fields, on the same rule. A field the write does not
+  // name is absent from `clientFields` and cannot be a client change; one
+  // whose value equals the ancestor's is an echo and is not one either.
+  // A change is recorded whether or not it collided, because a server-side
+  // resolution takes the later writer for these and needs the value.
+  const changedFields: ItemFieldValues = {};
+  const collidingItemFields: VersionedItemField[] = [];
+  for (const field of VERSIONED_ITEM_FIELDS) {
+    if (!(field in input.clientFields)) continue;
+    const client = input.clientFields[field] ?? null;
+    const ancestor = input.ancestorFields[field] ?? null;
+    if (client === ancestor) continue;
+    changedFields[field] = client;
+    if ((input.currentFields[field] ?? null) !== ancestor) {
+      conflictingFields.push(field);
+      collidingItemFields.push(field);
+    }
+  }
+
   if (conflictingFields.length > 0) {
     return {
       type: "conflict",
       conflicting_fields: conflictingFields.sort(),
+      changedFields,
+      collidingItemFields,
     };
   }
 
@@ -118,6 +200,7 @@ export function detectConflict(input: ConflictInput): ConflictResult {
   return {
     type: "no_conflict",
     merged,
+    changedFields,
   };
 }
 
@@ -138,6 +221,10 @@ export interface AutoMergeInput {
   currentProperties: Record<string, unknown>;
   ancestorProperties: Record<string, unknown>;
   conflictingFields: string[];
+  /** The colliding fields that are the item's own rather than properties.
+   *  They carry no per-field strategy, so they are resolved here and named
+   *  in the report rather than looked up in the policy. */
+  collidingItemFields: readonly VersionedItemField[];
   policy: MergePolicy;
 }
 
@@ -183,6 +270,7 @@ export function planAutoMerge(input: AutoMergeInput): AutoMergePlan {
     currentProperties,
     ancestorProperties,
     conflictingFields,
+    collidingItemFields,
     policy,
   } = input;
 
@@ -190,6 +278,15 @@ export function planAutoMerge(input: AutoMergeInput): AutoMergePlan {
   const keepBothFields: string[] = [];
   const strategyByField: Record<string, MergeStrategy> = {};
   const colliding = new Set(conflictingFields);
+
+  // An item field is not a property, so the type declares no strategy for
+  // one and `keep_both_copies` has nothing to mean: the sibling a keep-both
+  // writes is a copy of the row's properties, and a tier on it would be the
+  // sibling's own. They take the later writer, and the report says so
+  // rather than leaving a field it names with no strategy beside it.
+  for (const field of collidingItemFields) {
+    strategyByField[field] = "last_writer_wins";
+  }
 
   for (const [key, value] of Object.entries(clientProperties)) {
     if (deepEqual(value, ancestorProperties[key])) continue;
@@ -295,6 +392,7 @@ export function versionConflict(
   ancestorProperties: Record<string, unknown>,
   conflictingFields: string[],
   policy: MergePolicy,
+  fields: { current: SnapshotItemFields; ancestor: SnapshotItemFields },
 ): ConflictResponse {
   return {
     error: {
@@ -305,8 +403,16 @@ export function versionConflict(
         `${String(currentVersion)}. Conflicting fields: ` +
         `${conflictingFields.length > 0 ? conflictingFields.join(", ") : "none"}.`,
     },
-    current: { version: currentVersion, properties: currentProperties },
-    ancestor: { version: requestedVersion, properties: ancestorProperties },
+    current: {
+      version: currentVersion,
+      properties: currentProperties,
+      ...fields.current,
+    },
+    ancestor: {
+      version: requestedVersion,
+      properties: ancestorProperties,
+      ...fields.ancestor,
+    },
     conflicting_fields: conflictingFields,
     merge_policy: policy,
   };
@@ -333,6 +439,7 @@ export function staleVersion(
   currentVersion: number,
   currentProperties: Record<string, unknown>,
   requestedVersion: number,
+  currentFields: SnapshotItemFields,
 ): StaleVersionResponse {
   return {
     error: {
@@ -343,7 +450,11 @@ export function staleVersion(
         `${String(currentVersion)}. This write carried nothing to merge, so ` +
         `re-read the item and send again at version ${String(currentVersion)}.`,
     },
-    current: { version: currentVersion, properties: currentProperties },
+    current: {
+      version: currentVersion,
+      properties: currentProperties,
+      ...currentFields,
+    },
   };
 }
 
@@ -352,6 +463,7 @@ export function ancestorUnavailable(
   currentVersion: number,
   currentProperties: Record<string, unknown>,
   requestedVersion: number,
+  currentFields: SnapshotItemFields,
 ): AncestorUnavailableResponse {
   return {
     error: {
@@ -362,7 +474,11 @@ export function ancestorUnavailable(
         `retained, so this write cannot be merged. Re-read the item at ` +
         `version ${String(currentVersion)} and re-apply the change.`,
     },
-    current: { version: currentVersion, properties: currentProperties },
+    current: {
+      version: currentVersion,
+      properties: currentProperties,
+      ...currentFields,
+    },
     requested_version: requestedVersion,
   };
 }

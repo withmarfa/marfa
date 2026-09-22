@@ -610,4 +610,43 @@ describe("a create that resolves an existing row", () => {
       "the refused upsert wrote a second row under the same natural key",
     ).toBe(1);
   });
+
+  it("takes a create's version of zero as the claim that there is no row", async () => {
+    // Zero is the version a device sends when its copy holds nothing under
+    // the natural key, and the server never mints it, so no row can ever
+    // carry it. That makes it usable as a precondition and as nothing else:
+    // on an empty key it creates, and on a key that already names a row it
+    // is a stale version like any other.
+    const emptyKey = `version-zero-${randomUUID()}`;
+    const created = await client.createItem({
+      type: "core.note",
+      source: ctx.source,
+      source_id: emptyKey,
+      properties: { title: "nothing was here", body: "first" },
+      version: 0,
+    });
+    expect(
+      created.ok,
+      `a create carrying version 0 onto an empty natural key was refused: ${JSON.stringify(created.error)}`,
+    ).toBe(true);
+    trackItem(ctx, created.data.item.id);
+    // The server mints 1 rather than the 0 it was handed, which is the half
+    // that makes zero safe to mean "I read nothing".
+    expect(created.data.item.version).toBe(1);
+
+    const refused = await client.createItem({
+      type: "core.note",
+      source: ctx.source,
+      source_id: emptyKey,
+      properties: { title: "still nothing here?", body: "second" },
+      version: 0,
+    });
+    expect(refused.status).toBe(409);
+    expect(refused.error?.error.code).toBe("ancestor_unavailable");
+
+    const after = await client.getItem(created.data.item.id);
+    expect(after.ok).toBe(true);
+    expect(after.data.item.properties.title).toBe("nothing was here");
+    expect(after.data.item.version).toBe(1);
+  });
 });

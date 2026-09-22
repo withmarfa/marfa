@@ -306,9 +306,6 @@ pub struct UpdateArgs {
     /// within its own transaction.
     #[arg(long)]
     pub conflict: Option<Conflict>,
-    /// Keep a snapshot of the version this write replaces.
-    #[arg(long)]
-    pub force_snapshot: bool,
     #[command(flatten)]
     pub idempotency: IdempotencyArgs,
 }
@@ -540,9 +537,6 @@ pub fn update_request(args: &UpdateArgs) -> Result<Request, CliError> {
     insert_opt(&mut body, "source_id", args.source_id.clone());
     if let Some(edges) = &args.edges {
         body.insert("edges".into(), Value::Object(object(edges, "--edges")?));
-    }
-    if args.force_snapshot {
-        body.insert("force_snapshot".into(), Value::Bool(true));
     }
     let conflict = args.conflict.map(|conflict| match conflict {
         Conflict::Auto => "auto",

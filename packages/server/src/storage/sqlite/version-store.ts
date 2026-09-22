@@ -1,7 +1,11 @@
 import { eq, and, asc, desc, gt, inArray, sql } from "drizzle-orm";
 import { generateId } from "@withmarfa/shared";
 import type { Version } from "@withmarfa/shared";
-import type { VersionStore } from "../interface.js";
+import type {
+  VersionedItemFields,
+  VersionSnapshot,
+  VersionStore,
+} from "../interface.js";
 import { versions } from "./schema.js";
 import { items } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
@@ -20,6 +24,7 @@ export class SqliteVersionStore implements VersionStore {
     itemId: string,
     version: number,
     properties: Record<string, unknown>,
+    itemFields: VersionedItemFields,
     deviceId?: string,
     db: TxOrDb = this.db,
   ): Promise<Version> {
@@ -29,6 +34,9 @@ export class SqliteVersionStore implements VersionStore {
       item_id: itemId,
       version,
       properties: JSON.stringify(properties),
+      tier: itemFields.tier,
+      occurred_at: itemFields.occurred_at,
+      source_id: itemFields.source_id,
       created_at: now,
       device: deviceId ?? null,
     };
@@ -57,14 +65,22 @@ export class SqliteVersionStore implements VersionStore {
     itemId: string,
     version: number,
     tx?: TxOrDb,
-  ): Promise<Version | null> {
+  ): Promise<VersionSnapshot | null> {
     const executor = tx ?? this.db;
     const row = await executor
       .select()
       .from(versions)
       .where(and(eq(versions.item_id, itemId), eq(versions.version, version)))
       .get();
-    return row ? rowToVersion(row) : null;
+    if (!row) return null;
+    return {
+      ...rowToVersion(row),
+      item_fields: {
+        tier: row.tier,
+        occurred_at: row.occurred_at,
+        source_id: row.source_id,
+      },
+    };
   }
 
   async getLatestTimestamp(itemId: string): Promise<string | null> {

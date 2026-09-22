@@ -296,11 +296,27 @@ export interface MergePolicy {
   default?: MergeStrategy;
 }
 
+/**
+ * A snapshot of an item at one version, as a conflict envelope carries it.
+ *
+ * The three item fields ride beside the properties because the version
+ * check covers them and `conflicting_fields` can name one (`versions.md`
+ * 8): a client told that `tier` collided and shown neither side's value
+ * has been named a reason it cannot act on.
+ */
+export interface ConflictSnapshot {
+  version: number;
+  properties: Record<string, unknown>;
+  tier: "library" | "feed";
+  occurred_at: string;
+  source_id: string | null;
+}
+
 /** The 409 a stale write gets when its base version's snapshot is retained. */
 export interface ConflictResponse {
   error: { code: "version_conflict"; status: 409; message: string };
-  current: { version: number; properties: Record<string, unknown> };
-  ancestor: { version: number; properties: Record<string, unknown> };
+  current: ConflictSnapshot;
+  ancestor: ConflictSnapshot;
   conflicting_fields: string[];
   merge_policy: MergePolicy;
 }
@@ -315,13 +331,13 @@ export interface ConflictResponse {
  */
 export interface StaleVersionResponse {
   error: { code: "version_conflict"; status: 409; message: string };
-  current: { version: number; properties: Record<string, unknown> };
+  current: ConflictSnapshot;
 }
 
 /** The 409 a write gets when no snapshot exists for the version it names. */
 export interface AncestorUnavailableResponse {
   error: { code: "ancestor_unavailable"; status: 409; message: string };
-  current: { version: number; properties: Record<string, unknown> };
+  current: ConflictSnapshot;
   requested_version: number;
 }
 

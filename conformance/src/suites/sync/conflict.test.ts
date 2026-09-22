@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { MarfaClient } from "../../client/api.js";
 import type { TestContext } from "../../client/types.js";
 import { createTestContext, trackItem, cleanup } from "../../utils/setup.js";
+import { createNote } from "../../generators/items.js";
 import {
   detectSyncCapabilities,
   requireRule,
@@ -166,5 +167,80 @@ describe("the server resolves a conflict", () => {
     expect(sibling.ok).toBe(true);
     expect(sibling.data.item.type).toBe("core.note");
     expect(sibling.data.metadata.tags).toContain("conflicted-copy");
+  });
+
+  it("resolves a colliding item field to the later writer, and leaves an echoed one alone", async () => {
+    // `tier`, `occurred_at` and `source_id` are the item's own fields
+    // rather than properties, so the type declares no strategy for them
+    // and `keep_both_copies` has nothing to mean: a sibling is a copy of
+    // the row's properties, and a tier on it would be the sibling's own.
+    // They take the later writer, and the resolution says so rather than
+    // naming a field in `fields` with no strategy beside it.
+    const seed = await client.createItem(
+      createNote({
+        source: ctx.source,
+        properties: { title: "item fields", body: "original" },
+      }),
+    );
+    expect(seed.ok).toBe(true);
+    const id = seed.data.item.id;
+    trackItem(ctx, id);
+    const base = seed.data.item.version;
+
+    const winner = await client.updateItem(id, {
+      occurred_at: "2026-05-01T00:00:00.000Z",
+      tier: "feed",
+      version: base,
+    });
+    expect(winner.ok).toBe(true);
+
+    // The control, as above: without it a server that never refused this
+    // write would satisfy everything below.
+    const refused = await client.updateItem(id, {
+      occurred_at: "2026-04-01T00:00:00.000Z",
+      version: base,
+    });
+    expect(refused.status).toBe(409);
+    expect(refused.error?.error.code).toBe("version_conflict");
+
+    // The same write asking the server to resolve, and carrying the tier
+    // this caller read alongside the time it genuinely changed. The tier is
+    // an echo, so resolving must not use it to undo the tier written since.
+    const resolved = await client.rawRequest<{
+      item: { tier: string; occurred_at: string };
+      conflict_resolution?: {
+        fields?: string[];
+        strategy?: Record<string, string>;
+      };
+    }>(`/items/${id}?conflict=auto`, {
+      method: "PATCH",
+      body: {
+        occurred_at: "2026-04-01T00:00:00.000Z",
+        tier: "library",
+        version: base,
+      },
+    });
+    expect(
+      resolved.ok,
+      `a colliding item-field update sent with conflict=auto was not resolved: ${resolved.status} ${JSON.stringify(resolved.error)}`,
+    ).toBe(true);
+    await trackSourceScopedItems({ client, ctx });
+
+    expect(resolved.data.conflict_resolution?.fields).toEqual(["occurred_at"]);
+    expect(
+      resolved.data.conflict_resolution?.strategy?.occurred_at,
+      "the resolution named the field without naming the strategy it applied",
+    ).toBe("last_writer_wins");
+
+    const after = await client.getItem(id);
+    expect(after.ok).toBe(true);
+    expect(
+      after.data.item.occurred_at,
+      "the colliding field did not take the later writer",
+    ).toBe("2026-04-01T00:00:00.000Z");
+    expect(
+      after.data.item.tier,
+      "an echoed item field reverted a value written since, which is the clobber the version check exists to stop",
+    ).toBe("feed");
   });
 });

@@ -793,11 +793,28 @@
                               "additionalProperties": {
                                 "nullable": true
                               }
+                            },
+                            "tier": {
+                              "type": "string",
+                              "enum": [
+                                "library",
+                                "feed"
+                              ]
+                            },
+                            "occurred_at": {
+                              "type": "string"
+                            },
+                            "source_id": {
+                              "type": "string",
+                              "nullable": true
                             }
                           },
                           "required": [
                             "version",
-                            "properties"
+                            "properties",
+                            "tier",
+                            "occurred_at",
+                            "source_id"
                           ]
                         },
                         "ancestor": {
@@ -811,11 +828,28 @@
                               "additionalProperties": {
                                 "nullable": true
                               }
+                            },
+                            "tier": {
+                              "type": "string",
+                              "enum": [
+                                "library",
+                                "feed"
+                              ]
+                            },
+                            "occurred_at": {
+                              "type": "string"
+                            },
+                            "source_id": {
+                              "type": "string",
+                              "nullable": true
                             }
                           },
                           "required": [
                             "version",
-                            "properties"
+                            "properties",
+                            "tier",
+                            "occurred_at",
+                            "source_id"
                           ]
                         },
                         "conflicting_fields": {
@@ -894,11 +928,28 @@
                               "additionalProperties": {
                                 "nullable": true
                               }
+                            },
+                            "tier": {
+                              "type": "string",
+                              "enum": [
+                                "library",
+                                "feed"
+                              ]
+                            },
+                            "occurred_at": {
+                              "type": "string"
+                            },
+                            "source_id": {
+                              "type": "string",
+                              "nullable": true
                             }
                           },
                           "required": [
                             "version",
-                            "properties"
+                            "properties",
+                            "tier",
+                            "occurred_at",
+                            "source_id"
                           ]
                         },
                         "requested_version": {
@@ -3264,9 +3315,6 @@
                     "minimum": 0,
                     "description": "The version the caller read. Required: an update carries the version it is based on, or it is not an update but a blind overwrite of whatever arrived since."
                   },
-                  "force_snapshot": {
-                    "type": "boolean"
-                  },
                   "tier": {
                     "type": "string",
                     "enum": [
@@ -3292,7 +3340,8 @@
                 },
                 "required": [
                   "version"
-                ]
+                ],
+                "additionalProperties": false
               }
             }
           }
@@ -3817,11 +3866,28 @@
                               "additionalProperties": {
                                 "nullable": true
                               }
+                            },
+                            "tier": {
+                              "type": "string",
+                              "enum": [
+                                "library",
+                                "feed"
+                              ]
+                            },
+                            "occurred_at": {
+                              "type": "string"
+                            },
+                            "source_id": {
+                              "type": "string",
+                              "nullable": true
                             }
                           },
                           "required": [
                             "version",
-                            "properties"
+                            "properties",
+                            "tier",
+                            "occurred_at",
+                            "source_id"
                           ]
                         },
                         "ancestor": {
@@ -3835,11 +3901,28 @@
                               "additionalProperties": {
                                 "nullable": true
                               }
+                            },
+                            "tier": {
+                              "type": "string",
+                              "enum": [
+                                "library",
+                                "feed"
+                              ]
+                            },
+                            "occurred_at": {
+                              "type": "string"
+                            },
+                            "source_id": {
+                              "type": "string",
+                              "nullable": true
                             }
                           },
                           "required": [
                             "version",
-                            "properties"
+                            "properties",
+                            "tier",
+                            "occurred_at",
+                            "source_id"
                           ]
                         },
                         "conflicting_fields": {
@@ -3918,11 +4001,28 @@
                               "additionalProperties": {
                                 "nullable": true
                               }
+                            },
+                            "tier": {
+                              "type": "string",
+                              "enum": [
+                                "library",
+                                "feed"
+                              ]
+                            },
+                            "occurred_at": {
+                              "type": "string"
+                            },
+                            "source_id": {
+                              "type": "string",
+                              "nullable": true
                             }
                           },
                           "required": [
                             "version",
-                            "properties"
+                            "properties",
+                            "tier",
+                            "occurred_at",
+                            "source_id"
                           ]
                         }
                       },
@@ -3970,11 +4070,28 @@
                               "additionalProperties": {
                                 "nullable": true
                               }
+                            },
+                            "tier": {
+                              "type": "string",
+                              "enum": [
+                                "library",
+                                "feed"
+                              ]
+                            },
+                            "occurred_at": {
+                              "type": "string"
+                            },
+                            "source_id": {
+                              "type": "string",
+                              "nullable": true
                             }
                           },
                           "required": [
                             "version",
-                            "properties"
+                            "properties",
+                            "tier",
+                            "occurred_at",
+                            "source_id"
                           ]
                         },
                         "requested_version": {
@@ -6822,7 +6939,7 @@
             }
           },
           "400": {
-            "description": "The item is a live `system.connection`. Revoke the app grant through `DELETE /auth/grants/{id}` first: removing the row here would leave the app's tokens and stored consent behind with nothing naming their owner.",
+            "description": "`invalid_transition` when the item is not soft-deleted: purging is the hard delete behind a soft one, and the same code the restore door beside it answers for the same class of mistake. `validation_error` when the item is a live `system.connection` — revoke the app grant through `DELETE /auth/grants/{id}` first, because removing the row here would leave the app's tokens and stored consent behind with nothing naming their owner.",
             "content": {
               "application/json": {
                 "schema": {
@@ -6834,6 +6951,7 @@
                         "code": {
                           "type": "string",
                           "enum": [
+                            "invalid_transition",
                             "validation_error"
                           ]
                         },
@@ -6937,7 +7055,7 @@
             }
           },
           "403": {
-            "description": "`items.purge` is missing, or the item is in a reserved namespace this credential may not write. The second reads `type_not_permitted` and is the answer for an untrashed row: purging is trash-then-purge, and a credential refused at the trash door would otherwise be told only that the item is not trashed, which describes an ordering mistake it did not make.",
+            "description": "`items.purge` is missing, or the item is in a reserved namespace this credential may not write. The second is reached only by a credential that could not have trashed the row either: purging is trash-then-purge, and being told the item is not trashed would describe an ordering mistake the caller did not make.",
             "content": {
               "application/json": {
                 "schema": {

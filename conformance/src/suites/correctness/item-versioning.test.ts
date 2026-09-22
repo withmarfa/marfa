@@ -88,7 +88,6 @@ describe("item versioning", () => {
     for (let i = 2; i <= 4; i++) {
       const updated = await client.updateItem(r.data.item.id, {
         properties: { title: `V${i}`, body: `Version ${i}` },
-        force_snapshot: true,
         version,
       });
       expect(updated.ok).toBe(true);
@@ -104,9 +103,12 @@ describe("item versioning", () => {
     ]);
   });
 
-  it("every update writes a snapshot, with or without force_snapshot", async () => {
-    // The control for the case above: the flag changes nothing observable
-    // on this server, so the count is the same without it.
+  it("refuses a body key the update door does not declare", async () => {
+    // `force_snapshot` is the key this case is written around: it was
+    // accepted and did nothing, so a caller sending it was told its request
+    // had been honored when only the half the door understood was. The door
+    // now refuses a key it does not declare rather than dropping it, which
+    // is the rule the query grammar already keeps.
     const r = await client.createItem(
       createNote({
         source: ctx.source,
@@ -115,21 +117,33 @@ describe("item versioning", () => {
     );
     expect(r.ok).toBe(true);
     trackItem(ctx, r.data.item.id);
-    let version = r.data.item.version;
-    for (let i = 2; i <= 4; i++) {
-      const updated = await client.updateItem(r.data.item.id, {
-        properties: { title: `C${i}`, body: `Version ${i}` },
-        version,
-      });
-      expect(updated.ok).toBe(true);
-      version = updated.data.item.version;
-    }
+
+    const refused = await client.rawRequest<unknown>(
+      `/items/${r.data.item.id}`,
+      {
+        method: "PATCH",
+        body: {
+          properties: { title: "C2" },
+          version: r.data.item.version,
+          force_snapshot: true,
+        },
+      },
+    );
+    expect(refused.status).toBe(400);
+    expect(refused.error?.error.code).toBe("validation_error");
+
+    // The witness. The same body without the key is accepted, so the
+    // refusal above is about the key and not about the write, and a
+    // snapshot is written on an update that carries no flag asking for one.
+    const accepted = await client.updateItem(r.data.item.id, {
+      properties: { title: "C2" },
+      version: r.data.item.version,
+    });
+    expect(accepted.ok).toBe(true);
     const history = await client.getVersions(r.data.item.id);
     expect(history.ok).toBe(true);
     expect(history.data.versions.map((v) => v.properties.title)).toEqual([
       "C1",
-      "C2",
-      "C3",
     ]);
   });
 
@@ -248,6 +262,117 @@ describe("item versioning", () => {
     expect(body.merge_policy.fields?.body).toBe("keep_both_copies");
     expect(body.merge_policy.fields?.notes).toBe("keep_both_copies");
     expect(body.merge_policy.fields?.title).toBeUndefined();
+  });
+
+  it("refuses a stale write that collides on tier, occurred_at or source_id", async () => {
+    // The three item fields an update may change that are not properties.
+    // The version check used to look at properties alone, so a stale write
+    // carrying only one of these was merged and the newer value it landed
+    // on was overwritten with nothing refused — a device holding the
+    // version as its protection was protected on properties and on
+    // nothing else.
+    const cases = [
+      {
+        // Both writers move it, and a tier has two values, so they agree
+        // on the destination. It is still a collision: the stale writer
+        // read a row the first has already moved, and a check that let the
+        // agreement through would depend on how many values a field has.
+        field: "tier",
+        server: { tier: "feed" as const },
+        client: { tier: "feed" as const },
+      },
+      {
+        field: "occurred_at",
+        server: { occurred_at: "2026-03-01T00:00:00.000Z" },
+        client: { occurred_at: "2026-04-01T00:00:00.000Z" },
+      },
+      {
+        field: "source_id",
+        server: { source_id: `${ctx.source}-server` },
+        client: { source_id: `${ctx.source}-client` },
+      },
+    ];
+
+    for (const { field, server, client: clientChange } of cases) {
+      const r = await client.createItem(
+        createNote({
+          source: ctx.source,
+          properties: { title: `Stale ${field}`, body: "Original" },
+        }),
+      );
+      expect(r.ok, field).toBe(true);
+      trackItem(ctx, r.data.item.id);
+      // The three as they stand at the version the stale write will name,
+      // so the envelope's `ancestor` can be held to them rather than to
+      // whatever it happens to carry.
+      const atBase = {
+        tier: r.data.item.tier,
+        occurred_at: r.data.item.occurred_at,
+        source_id: r.data.item.source_id ?? null,
+      };
+
+      const advanced = await client.updateItem(r.data.item.id, {
+        ...server,
+        version: 1,
+      });
+      expect(advanced.ok, field).toBe(true);
+      expect(advanced.data.item.version, field).toBe(2);
+
+      const stale = await client.updateItem(r.data.item.id, {
+        ...clientChange,
+        version: 1,
+      });
+      expect(stale.status, field).toBe(409);
+      expect(stale.error?.error.code, field).toBe("version_conflict");
+      const body = stale.error as unknown as ConflictResponse;
+      expect(body.conflicting_fields, field).toEqual([field]);
+
+      // Both sides of the field the refusal names. Without them the
+      // caller is told which field collided and has no way to read
+      // either value, so the one thing it needs to resolve is the one
+      // thing the envelope withholds.
+      const snapshotField = field as "tier" | "occurred_at" | "source_id";
+      expect(body.current[snapshotField], field).toEqual(
+        server[snapshotField as keyof typeof server],
+      );
+      expect(body.ancestor[snapshotField], field).toEqual(
+        atBase[snapshotField],
+      );
+
+      // The row is the one the first writer left, not the stale writer's.
+      const after = await client.getItem(r.data.item.id);
+      expect(after.ok, field).toBe(true);
+      expect(after.data.item.version, field).toBe(2);
+    }
+  });
+
+  it("merges a stale write on an item field nobody else changed", async () => {
+    // The witness for the case above, and the rule it must not break:
+    // `versions.md` 11 merges a stale write whose changed fields did not
+    // collide, and widening the check to the three item fields does not
+    // make every stale write carrying one a refusal.
+    const r = await client.createItem(
+      createNote({
+        source: ctx.source,
+        properties: { title: "Non-colliding", body: "Original" },
+      }),
+    );
+    expect(r.ok).toBe(true);
+    trackItem(ctx, r.data.item.id);
+
+    const advanced = await client.updateItem(r.data.item.id, {
+      properties: { title: "Server title" },
+      version: 1,
+    });
+    expect(advanced.ok).toBe(true);
+
+    const stale = await client.updateItem(r.data.item.id, {
+      tier: "feed",
+      version: 1,
+    });
+    expect(stale.status).toBe(200);
+    expect(stale.data.item.tier).toBe("feed");
+    expect(stale.data.item.properties.title).toBe("Server title");
   });
 
   it("answers an edges-only stale write with the envelope minus its merge half", async () => {
