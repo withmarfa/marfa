@@ -71,6 +71,13 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm lint
       - run: pnpm format:check
+      # The suite reaches `ci/version-fields.test.ts`, which asks cargo how it
+      # reads the Rust manifests; Homebrew's rustup is keg-only, so nothing
+      # it installs is on the default PATH.
+      - name: Put the Rust toolchain on PATH
+        run: |
+          echo "/opt/homebrew/opt/rustup/bin" >> "$GITHUB_PATH"
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
       # MARFA_TEST_OCR runs the real tesseract engine (ocr.real.test.ts).
       # `MARFA_ENRICHMENT_TESSDATA_DIR` is a cache path the engine may write
       # to; the test resolves its model from the installed package, so
