@@ -166,11 +166,11 @@ type StreamIncompleteReason =
 /**
  * Most live frames one connection holds while its prologue runs.
  *
- * **Chosen as a memory bound, not derived from anything.** An earlier
- * version of this comment claimed it followed from `REPLAY_DEDUPE_WINDOW`
- * because the two bounded the same population from opposite sides. They
- * do not: that window holds the last few ids the replay actually SENT,
- * after filtering, while this holds live frames on their way in — and
+ * **Chosen as a memory bound, not derived from anything.** It does not
+ * follow from `REPLAY_DEDUPE_WINDOW`, though the two look like bounds on
+ * the same population from opposite sides. They are not: that window
+ * holds the last few ids the replay actually SENT, after filtering, while
+ * this holds live frames on their way in — and
  * whether a held frame's id is still inside that window depends on how
  * many rows the replay sent after it, which is a property of the
  * backlog's length rather than of this buffer's. Neither number is a
@@ -886,24 +886,26 @@ export function eventRoutes(
                   }
                   // Everything that classifies a row lives inside this
                   // branch, and `parsed !== null` is exactly the
-                  // condition under which it was decoded — an edge row,
-                  // or a subscriber with neither filter, never reaches
-                  // it and is never asked to name a type it does not
-                  // carry.
+                  // condition under which it was decoded — an edge row
+                  // never reaches it and is never asked to name a type
+                  // it does not carry. It is the only row that does
+                  // not, because every authenticated caller carries a
+                  // permission map and the decode turns on that.
                   //
                   // **One decision about a row that cannot be
                   // classified, rather than two checks reaching
-                  // opposite conclusions about it.** These were adjacent
-                  // and disagreed: the type filter withheld an item row
-                  // whose payload named no type, while the permission
-                  // narrowing three lines below guarded on the same
-                  // value being present and so let it through
-                  // unnarrowed. The check that failed open was the
-                  // permission one. Nothing in the tree writes that
-                  // payload today — the publisher always attaches the
-                  // item — but that is a property of the current
-                  // writers rather than of this code, and it is not one
-                  // a permission check should be resting on.
+                  // opposite conclusions about it.** The type filter
+                  // and the permission narrowing immediately after it
+                  // read the same value, so splitting the decision
+                  // between them lets one withhold the row while the
+                  // other, guarding on that value being present, hands
+                  // it over unnarrowed — and the one that fails open
+                  // that way is the permission check. Nothing in the
+                  // tree writes that payload today — the publisher
+                  // always attaches the item — but that is a property
+                  // of the current writers rather than of this code,
+                  // and it is not one a permission check should be
+                  // resting on.
                   //
                   // Withheld rather than sent, because a row whose type
                   // cannot be read cannot be proved readable by this

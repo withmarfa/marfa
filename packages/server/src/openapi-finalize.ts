@@ -126,7 +126,7 @@ const PUBLIC_TAGS = [
   {
     name: "Housekeeping",
     description:
-      "The periodic jobs the server runs on itself: what runs, when, and what the last run did.",
+      "The housekeeping jobs the server runs on itself: what runs, when, and what the last run did.",
   },
   {
     name: "Events",

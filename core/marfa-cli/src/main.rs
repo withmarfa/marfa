@@ -124,7 +124,7 @@ enum Command {
     Audit(audit::AuditArgs),
     /// The event stream, one frame per line.
     Events(events::EventsArgs),
-    /// The jobs the server runs on itself. Operator key only.
+    /// The housekeeping jobs the server runs on itself. Operator key only.
     Housekeeping {
         #[command(subcommand)]
         command: housekeeping::HousekeepingCommand,

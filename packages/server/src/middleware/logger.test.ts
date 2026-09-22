@@ -291,7 +291,7 @@ describe("the OpenTelemetry mirror", () => {
   // safe by construction. The bootstrap secret breaks that reasoning: it has
   // to be readable by whoever runs the instance and by nobody further, and
   // exporting it turns "can read the boot log" into "can read the
-  // observability backend".
+  // observability stack".
   //
   // Asserted through the real logs API rather than a spy on the private
   // helper, because the helper is what a refactor would move.

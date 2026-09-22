@@ -44,7 +44,7 @@ let client: MarfaClient;
 let ctx: TestContext;
 /** Single alphanumeric token unique to this run — hyphens and other
  *  punctuation are tokenizer boundaries, so they cannot appear in a term that
- *  has to match as one word across backends. */
+ *  has to match as one word in the full-text index. */
 let runToken = "";
 
 function assertHealthySeries(series: PerfSeries, runs: number): void {

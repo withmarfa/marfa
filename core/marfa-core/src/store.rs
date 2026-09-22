@@ -25,8 +25,13 @@ pub const SCHEMA_VERSION: &str = "5";
 /// from the earlier build and fail on its first read of a column that build
 /// never wrote; the test that holds this hash is what makes the version move
 /// with the schema.
+///
+/// Over the statements SQLite executes, not the file: a comment cannot make
+/// one build read a column another build never wrote, and a hash that moved
+/// on one would price every edit to the prose at a version bump that refuses
+/// every working copy on disk.
 #[cfg(test)]
-const SCHEMA_HASH: &str = "47eee38026c40172";
+const SCHEMA_HASH: &str = "a501f36fb9ad593a";
 
 const ITEM_COLUMNS: &str = "id, type, state, tier, version, schema_version, source, source_id, device, occurred_at, created_at, updated_at, properties";
 const EDGE_COLUMNS: &str =
@@ -855,15 +860,51 @@ mod tests {
     use super::testing::*;
     use super::*;
 
-    /// The version names this schema and no other: a change to the file
-    /// moves both, or this says so.
+    /// The version names this schema and no other: a change to the
+    /// statements moves both, or this says so.
     #[test]
     fn the_schema_version_names_the_schema_as_it_is() {
         assert_eq!(
-            crate::folder::state::hash(SCHEMA.as_bytes()),
+            crate::folder::state::hash(schema_statements().as_bytes()),
             SCHEMA_HASH,
-            "schema.sql changed: move SCHEMA_VERSION on and set SCHEMA_HASH to the new value"
+            "schema.sql's statements changed: move SCHEMA_VERSION on and set SCHEMA_HASH to the new value"
         );
+    }
+
+    /// `schema.sql` with the prose taken out. Every `--` in the file opens a
+    /// comment that runs to the end of its own line and none follows a
+    /// statement on one, so dropping those lines and the blank ones leaves
+    /// every statement `execute_batch` runs and nothing else. Production
+    /// still hands it the whole file, comments and all; this is the text the
+    /// version is held against, not the text SQLite is given.
+    fn schema_statements() -> String {
+        let mut kept = String::new();
+        for line in SCHEMA.lines() {
+            let line = line.trim_end();
+            if line.trim_start().starts_with("--") || line.trim().is_empty() {
+                continue;
+            }
+            kept.push_str(line);
+            kept.push('\n');
+        }
+        kept
+    }
+
+    /// The witness for the line above: the file does carry comments, and
+    /// taking them out leaves statements behind rather than nothing.
+    #[test]
+    fn the_hashed_schema_is_the_statements_without_the_prose() {
+        let statements = schema_statements();
+        assert!(SCHEMA.contains("\n  --"), "schema.sql carries no comments");
+        assert!(!statements.contains("--"), "a comment survived the strip");
+        // The strip reads `--` alone, so a block comment would ride through
+        // it and price prose at a version bump again, silently.
+        assert!(!SCHEMA.contains("/*"), "schema.sql grew a block comment");
+        assert!(statements.contains("CREATE TABLE IF NOT EXISTS queue ("));
+        assert!(statements.len() < SCHEMA.len());
+        // And the strip is about prose alone: SQLite runs what is left.
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(&statements).unwrap();
     }
 
     #[test]
@@ -1039,10 +1080,10 @@ mod tests {
 
     /// What `forget_answered` may and may not clear.
     ///
-    /// The predicate had no test at all, and was twice rewritten from a
-    /// reading of which verdicts look final rather than from which rows a
-    /// caller can still act on. Both mistakes end the same way: a write the
-    /// person made, gone with no verdict, no report and no row.
+    /// The predicate is easy to write from a reading of which verdicts look
+    /// final rather than from which rows a caller can still act on, and
+    /// every such reading ends the same way: a write the person made, gone
+    /// with no verdict, no report and no row.
     #[test]
     fn forgetting_spares_every_row_a_caller_can_still_release() {
         let conn = conn();
@@ -1062,10 +1103,10 @@ mod tests {
         row("dependency", "refused", 1, "[]");
         row("dependant", "blocked", 1, "[\"dependency\"]");
         // And the same again where the waiter is the *third* releasable kind
-        // — refused without going out. Without this pair the protection
-        // clause added for that kind is unwitnessed: the `blocked` waiter
-        // above is matched by the clause that was already there, so the new
-        // one could be deleted and this test would still pass.
+        // — refused without going out. Without this pair that kind's clause
+        // in the waiter set is unwitnessed: the `blocked` waiter above is
+        // matched by the `blocked`/`dead` clause, so the refused-unsent one
+        // could be deleted and this test would still pass.
         row("kept-for-unsent", "accepted", 1, "[]");
         row("unsent-waiter", "refused", 0, "[\"kept-for-unsent\"]");
 
@@ -1498,9 +1539,9 @@ pub fn release(conn: &Connection, id: &str) -> Result<bool, CoreError> {
     // **`sent` is the test, not `depends_on`.** A row the *server* refused
     // can carry a dependency too — queue a create, edit before the drain
     // runs, and the update names the create — so releasing on a dependency
-    // alone cleared a terminal refusal and sent the write again. A refusal
-    // that later stops applying would then land content the caller had
-    // watched disappear from their copy.
+    // alone clears a terminal refusal and sends the write a second time. A
+    // refusal that later stops applying would then land content the caller
+    // had watched disappear from their copy.
     let refused_by_dependency = verdict.as_deref() == Some("refused") && !sent;
     if !matches!(verdict.as_deref(), Some("blocked") | Some("dead")) && !refused_by_dependency {
         return Ok(false);
@@ -1562,18 +1603,19 @@ fn dependants_refused_with(conn: &Connection, id: &str) -> Result<Vec<String>, C
 /// Only the four terminal verdicts. A `blocked` or `dead` row is one a
 /// caller may still release, and clearing it would take that away.
 ///
-/// **Releasable is the test, on both sides of it.** A row is releasable when
-/// it is `blocked`, `dead`, or `refused` without having been sent — the three
-/// `release` takes — and a releasable row is neither cleared itself nor
-/// allowed to lose the dependency it names.
+/// **Whether a caller can still act on the row is the test, on both sides of
+/// it.** A row is releasable when it is `blocked`, `dead`, or `refused`
+/// without having been sent — the three `release` takes — and a releasable
+/// row is never cleared. The dependency side is wider by one: a row is also
+/// kept while anything still unanswered names it, because an unanswered row
+/// has a verdict coming and may yet become one of those three.
 ///
-/// Both halves were wrong in the same way and for the same reason: the set
-/// was written as a list of verdicts when the question is whether a caller
-/// can still act on the row. A refused-unsent row was cleared although
-/// `release` accepts it, and a blocked row left its create unprotected — and
-/// the release the caller was told to perform then produced a row whose
-/// dependency could not be found, which `readiness` reads as unanswered and
-/// holds forever against a write that no longer exists.
+/// Both halves go wrong the same way if the set is written as a list of
+/// verdicts instead: a refused-unsent row cleared although `release` accepts
+/// it, and a blocked row's create left unprotected, so that the release the
+/// caller is told to perform produces a row whose dependency cannot be
+/// found, which `readiness` reads as unanswered and holds forever against a
+/// write that no longer exists.
 pub fn forget_answered(conn: &Connection) -> Result<usize, CoreError> {
     Ok(conn.execute(
         "DELETE FROM queue

@@ -30069,7 +30069,7 @@
     },
     {
       "name": "Housekeeping",
-      "description": "The periodic jobs the server runs on itself: what runs, when, and what the last run did."
+      "description": "The housekeeping jobs the server runs on itself: what runs, when, and what the last run did."
     },
     {
       "name": "Events",

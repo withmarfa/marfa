@@ -4,18 +4,18 @@
  * The filter names a type and covers that type's declared-parent
  * subtree: a type whose `parent` chain reaches the named one answers for
  * it. Live delivery goes through `eventMatchesTypeFilter`, which walks
- * that chain. The `Last-Event-ID` replay compared the stored type string
- * with `!==`, so a subscriber narrowing to a parent type received a
- * subtype's event while connected and lost the same event on every
- * reconnect.
+ * that chain, and the `Last-Event-ID` replay has to walk the same one: a
+ * replay that compared the stored type string alone would hand a
+ * subscriber narrowing to a parent type a subtype's event while connected
+ * and lose the same event on every reconnect.
  *
  * The same parameter as the list surfaces take, resolved by the same rule:
  * the global wildcard, the named type and everything under its name, and
- * the types that declare their way there. The stream used to resolve the
- * declared clause alone, so `*` and `core.*` matched nothing at all while
- * the same spellings on `/items` matched everything and a subtree — a 200
- * carrying no events, which is the one filter failure a client cannot tell
- * from a quiet instance. Agreement with the list surface is pinned below by
+ * the types that declare their way there. A stream resolving the declared
+ * clause alone would match nothing for `*` and `core.*` while the same
+ * spellings on `/items` matched everything and a subtree — a 200 carrying
+ * no events, which is the one filter failure a client cannot tell from a
+ * quiet instance. Agreement with the list surface is pinned below by
  * asking both and comparing, rather than by restating what either should
  * return.
  *
@@ -183,7 +183,7 @@ describe("GET /events?type= on the Last-Event-ID replay", () => {
     //
     // Asked of a filtering subscriber and of one carrying no `?type=`,
     // because the replay decodes the payload for both and reaches the same
-    // answer. There is no longer a subscriber it decodes nothing for: every
+    // answer. There is no subscriber it decodes nothing for: every
     // credential is held to its permission maps, so `typeFilter.allowed` is
     // never absent and the row is classified for all of them.
     //
@@ -197,6 +197,12 @@ describe("GET /events?type= on the Last-Event-ID replay", () => {
       event_type: "item.created",
       payload: JSON.stringify({ type: "item.created", note: "ZZtypelessZZ" }),
     });
+    // The witness: the row is in the log after the cursor, so a replay
+    // from that cursor walks over it and the absence below is a decision
+    // rather than a row that was never there to withhold.
+    expect(
+      (await ctx.storage.eventLog.getAfter(cursor, 100)).map((e) => e.payload),
+    ).toContainEqual(expect.stringContaining("ZZtypelessZZ"));
     // Written after, so reaching it means the row above was already decided.
     const anchorId = await createItem("core.media", { title: "ZZanchorZZ" });
 
@@ -244,8 +250,8 @@ describe("GET /events?type= on the Last-Event-ID replay", () => {
  * the answer. `/items` rejects the global wildcard deliberately —
  * "everything" is the request with no `type` at all, and a filter
  * matching every type would slip past the per-type levers keyed off this
- * parameter — and rejects anything outside the pattern grammar. The
- * stream used to accept both and then match nothing, which is a 200
+ * parameter — and rejects anything outside the pattern grammar. A stream
+ * that accepted either and then matched nothing would answer a 200
  * carrying no events: the one filter failure a client cannot tell from a
  * quiet instance.
  */
@@ -354,12 +360,12 @@ describe("GET /events?type= answers the spellings /items answers", () => {
  * A stored row the replay cannot classify is withheld by both checks that
  * look at it, not by one of them.
  *
- * The type filter and the permission narrowing sit three lines apart and
- * read the same value. One treated a missing item type as "does not
- * match" and skipped the row; the other guarded on the value being
- * present, so a missing one skipped the NARROWING and the row went out
- * unfiltered. The check that failed open was the permission check, which
- * is the wrong one of the two to be wrong.
+ * The type filter and the permission narrowing sit one after the other and
+ * read the same value, so they can disagree about a row that names no item
+ * type: the filter reads it as "does not match" and skips the row, while
+ * the narrowing, guarding on the value being present, skips ITSELF and
+ * sends the row out unfiltered. The check that fails open that way is the
+ * permission check, which is the wrong one of the two to be wrong.
  *
  * Pinned on a narrow credential and a request carrying no `?type=`, so the
  * permission narrowing is the only check with anything to say about the row.
@@ -393,6 +399,12 @@ describe("the replay's two checks on a row that names no item type", () => {
         note: "ZZunclassifiableZZ",
       }),
     });
+    // The witness: the row is in the log after the cursor, so the replay
+    // below walks over it and decides, and the absence is not a row that
+    // was never appended.
+    expect(
+      (await ctx.storage.eventLog.getAfter(cursor, 100)).map((e) => e.payload),
+    ).toContainEqual(expect.stringContaining("ZZunclassifiableZZ"));
     // Written after, so reaching it proves the row above was already
     // decided rather than merely not yet replayed.
     const anchorId = await createItem("core.note", {

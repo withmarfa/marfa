@@ -26,7 +26,7 @@ import {
  */
 
 /**
- * A warm read of a small page is a sub-second operation on every backend this
+ * A warm read of a small page is a sub-second operation on the database this
  * suite targets. A median past this means something structural regressed (a
  * lost index, an N+1 hydration), not that the server was busy.
  */

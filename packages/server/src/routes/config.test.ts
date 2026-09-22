@@ -274,7 +274,7 @@ describe("Instance config — round trips", () => {
     expect(body.error.code).toBe("validation_error");
 
     // And the refusal left the instance's config alone, which is the whole
-    // point: the old behavior returned 200 with this now empty.
+    // point: a refused body must not have been applied.
     const getRes = await request(configCtx.app, "GET", "/config", {
       key: configCtx.workingKey,
     });
@@ -286,9 +286,6 @@ describe("Instance config — round trips", () => {
     expect(getBody.trash_retention_days).toBe(7);
   });
 
-  // Documented in the shared type as writable through this route, read
-  // by the publish path, and absent from the route's schema until now, so the
-  // one way it was documented to be set was the one way it could not be.
   // The outer object refusing an unknown key while the nested one accepts it
   // is the same defect one level down, and `.strict()` does not recurse.
   it("PUT refuses a mistyped key inside enforcement too", async () => {

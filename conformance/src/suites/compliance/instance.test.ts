@@ -141,10 +141,9 @@ describe("the instance", () => {
   });
 
   it("advertises no inbound webhook feature, and serves no inbound door", async () => {
-    // The root named `inbound-webhooks` after the door left with the
-    // connector runtime. Both halves are asserted, because re-adding the
-    // advertisement and re-adding the door are separate regressions and
-    // either alone puts the root back into contradiction.
+    // Both halves are asserted, because adding the advertisement and adding
+    // the door are separate regressions and either alone puts the root into
+    // contradiction with what it serves.
     const r = await client.root();
     expect(r.ok).toBe(true);
     expect(r.data.features).not.toContain("inbound-webhooks");
@@ -263,9 +262,10 @@ describe("the instance", () => {
     // `GET /metrics` is served and deliberately absent from the document
     // (`INTERNAL_OPERATION_IDS`), so nothing in the published reference
     // describes its body and `expectMatchesSchema` has nothing to check it
-    // against. A key inside it was renamed twice with nothing anywhere going
-    // red. The shape is asserted here instead, and `coverage.md` carries the
-    // unpublished row that records the absence as a decision.
+    // against. Every other route in this file is held to the document; this
+    // one is held to the keys written out below, which is the only place a
+    // black-box caller's view of the body is pinned. `coverage.md` carries
+    // the unpublished row that records the absence as a decision.
     const operator = getOperatorClient();
     const r = await operator.rawRequest<{
       items: { total: number; by_state: Record<string, number> };

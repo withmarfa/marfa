@@ -262,9 +262,9 @@ describe("POST /items", () => {
       body: {
         label: "alt-source",
         source: "alt-source",
-        // The map is named because nothing is implied: the rank that used to
-        // reach every type regardless is gone, and the boundary under test is
-        // the stamped `source`, not the reach.
+        // The map is named because nothing is implied: no rank reaches every
+        // type regardless, and the boundary under test is the stamped
+        // `source`, not the reach.
         type_permissions: { "core.note": "write" },
       },
     });
@@ -986,8 +986,8 @@ describe("PATCH /items/:id — retype", () => {
       key: ctx.workingKey,
       body: { retype: true, properties: { name: "Ada" }, version: 1 },
     });
-    // The code as well as the status. Five sites in this handler answer
-    // 400, so a bare status assertion passes whichever one fired — and a
+    // The code as well as the status. More than one site in this handler
+    // answers 400, so a bare status assertion passes whichever one fired — and a
     // refusal produced by a guard other than the one under test is a
     // green that covers nothing.
     expect(res.status).toBe(400);
@@ -1110,11 +1110,10 @@ describe("PATCH /items/:id — properties_mode", () => {
    * A caller that means the set it sends to BE the item's properties, rather
    * than to be laid over them.
    *
-   * The clearing itself was reachable before this, but only by naming every
-   * field to be removed — which puts the type's shape into every call site
-   * and leaves the next one written from scratch with nothing. Nine such
-   * lists were about to be hand-maintained across the connector estate,
-   * which is the every-caller-must-remember shape rather than one mechanism.
+   * Without it a caller clears properties only by naming every field to be
+   * removed, which puts the type's shape into every call site and leaves
+   * the next one written from scratch with nothing: the
+   * every-caller-must-remember shape rather than one mechanism.
    */
   async function bookmark(ctx: TestContext): Promise<string> {
     const created = await request(ctx.app, "POST", "/items", {
@@ -1208,7 +1207,7 @@ describe("PATCH /items/:id — properties_mode", () => {
       },
     });
     // The type refusing the resulting shape, rather than any of the other
-    // four guards in this handler that also answer 400.
+    // guards in this handler that also answer 400.
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: { code: string } };
     expect(body.error.code).toBe("invalid_properties");
@@ -2876,11 +2875,10 @@ describe("POST /items — inline-edge hydration parity past the cap", () => {
 /**
  * The `include` token that widens the row set rather than hydrating an extra.
  *
- * It had no test anywhere before this one — not on `/items`, not on `/search`,
- * and not in the conformance suite, which covers the default exclusion and the
- * explicit-type path and never the token. Two independently written client kits
- * lost data to it, both by listing everything they could see and pruning what
- * the listing did not carry.
+ * The conformance suite covers the default exclusion and the explicit-type
+ * path and never the token, so this file is where it is held. A client that
+ * lists everything it can see and prunes what the listing did not carry
+ * loses data to a token that silently widens nothing.
  *
  * Every case that asserts an absence pairs it with an ordinary row that must be
  * present, because an assertion checking only that the system row is missing
@@ -2948,18 +2946,16 @@ describe("GET /items?include=system", () => {
     expect(ids).toContain(deviceId);
   });
 
-  // Every other case in this file and its sibling runs as `ctx.workingKey`,
-  // which holds `"*": "write"` — so `allowed_types` admits everything and
-  // says nothing in any of them. `exclude_system_types` and `allowed_types`
-  // are independent arguments to the same storage call, and nothing asserted
-  // how they compose, which matters now the published description advertises
-  // the token to every client.
+  // The cases above run as `ctx.workingKey`, which holds `"*": "write"`, so
+  // `allowed_types` admits everything and says nothing in any of them.
+  // `exclude_system_types` and `allowed_types` are independent arguments to
+  // the same storage call, so how they compose is held here, and the
+  // published description advertises the token to every client.
   //
   // The grant has to name the system type. A key holding only `core.note`
   // proves nothing: the device is absent whether the token was honored or
-  // ignored, so the test would pass against a handler that dropped `system`
-  // entirely. That was the first version of this test, and it is the guard
-  // that cannot fail for the reason it exists.
+  // ignored, so the case would pass against a handler that dropped `system`
+  // entirely — a guard that cannot fail for the reason it exists.
   //
   // Reads to `system.*` pass the reserved-namespace fence, which gates
   // writes only, so the permission map is the one thing fencing them.
@@ -3030,9 +3026,9 @@ describe("GET /items?include=system", () => {
     );
     expect(res.status).toBe(200);
     // `metadata` changes the envelope: each row becomes `{ item, metadata }`
-    // rather than a bare item. That is itself a second way this parameter does
-    // more than hydrate inline, and the first draft of this test read `r.id`
-    // and got two `undefined`s back.
+    // rather than a bare item. That is itself a second way this parameter
+    // does more than hydrate inline, and a case reading `r.id` off these
+    // rows gets `undefined` back rather than a failure naming the envelope.
     const body = (await res.json()) as {
       data: { item: { id: string }; metadata: { tags: string[] } }[];
     };

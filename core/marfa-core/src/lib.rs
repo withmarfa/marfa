@@ -961,7 +961,7 @@ mod tests {
             // a `NoServer`.
             ("drain", reader.drain().unwrap_err()),
             // Clearing answered rows is a write to the queue like any
-            // other, and it was the door this list had missed.
+            // other.
             ("forget_answered", reader.forget_answered().unwrap_err()),
         ];
         for (door, refusal) in &refusals {

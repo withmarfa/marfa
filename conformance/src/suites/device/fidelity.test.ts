@@ -127,11 +127,11 @@ function keyPaths(value: unknown, prefix = ""): string[] {
  * value of every field a device decides something by, and on the presence and
  * kind of every field a run mints for itself.
  *
- * Comparing kinds alone is not enough and was the first thing wrong with this
- * file: a scripted `error.code` of "nope" is a string, so is the server's, and
- * the code is the one field the device classifies a refusal by. Comparing
- * values alone is not possible either, because an id, a version and an instant
- * differ every run — hence the two lists.
+ * Comparing kinds alone is not enough: a scripted `error.code` of "nope" is a
+ * string, so is the server's, and the code is the one field the device
+ * classifies a refusal by. Comparing values alone is not possible either,
+ * because an id, a version and an instant differ every run — hence the two
+ * lists.
  */
 function expectFidelity(
   name: string,
@@ -515,11 +515,11 @@ describe("the scripted answers match the server's", () => {
   /**
    * The doors that answer something other than an item.
    *
-   * Ten of the fourteen sendable write kinds go to one of these, and none of
-   * their answers carries an `item`. They were scripted with item-shaped
-   * bodies, which no server returns, and that is what hid a device reading
-   * every one of them as an answer it could not understand — counting a
-   * refusal against a write the server had already taken.
+   * Every sendable write kind that does not answer with an item goes to one
+   * of these, and none of their answers carries an `item`. Scripting them
+   * with item-shaped bodies, which no server returns, would hide a device
+   * reading every one of them as an answer it could not understand —
+   * counting a refusal against a write the server had already taken.
    */
   it("matches the write doors that do not answer with an item", async () => {
     const seeded = await note({ title: "sidecar", body: "sidecar" });
