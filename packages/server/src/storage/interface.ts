@@ -589,12 +589,16 @@ export interface ItemStore {
    * nothing is absent from the map rather than an error.
    *
    * Trashed rows are excluded by default, because every read surface treats a
-   * soft-deleted item as gone. Two callers pass `includeTrashed`, both in
-   * `bulk-actions/runner.ts`: purge, whose whole input is trashed rows, and
-   * the tag chunk, which says at its own call site why it is load-bearing
-   * there rather than defensive. Without it the purge runner's pre-fetch
-   * would come back empty, so it would report every id as "not found" while
-   * the delete underneath it succeeded.
+   * soft-deleted item as gone. Three callers pass `includeTrashed`. Two are
+   * in `bulk-actions/runner.ts`: purge, whose whole input is trashed rows,
+   * and the tag chunk, which says at its own call site why it is
+   * load-bearing there rather than defensive. Without it the purge runner's
+   * pre-fetch would come back empty, so it would report every id as "not
+   * found" while the delete underneath it succeeded. The third is the edge
+   * read gate in `routes/_edge-visibility.ts`, which resolves an edge's
+   * source to ask about its type: a plain read answers null for a trashed
+   * source, and a null source has no type to refuse, so trashing the source
+   * item would turn a refusal into a disclosure.
    */
   getMany(
     ids: string[],

@@ -171,6 +171,12 @@ export class MarfaClient {
       edge?: Record<string, string>;
       /** Optional `filter=` expression using the canonical query language. */
       filter?: string;
+      /** Comma-separated `include` tokens: `edges`, `metadata`,
+       *  `extensions`, `system`. */
+      include?: string;
+      /** Inbound edge shorthand. `{ about: itemId }` becomes
+       *  `backref[about]=itemId`. */
+      backref?: Record<string, string>;
     } = {},
   ): Promise<ApiResponse<PaginatedResult<MarfaItem>>> {
     const params = new URLSearchParams();
@@ -185,6 +191,12 @@ export class MarfaClient {
           value as Record<string, string>,
         )) {
           params.append(`edge[${edgeType}]`, targetId);
+        }
+      } else if (key === "backref" && value && typeof value === "object") {
+        for (const [edgeType, sourceId] of Object.entries(
+          value as Record<string, string>,
+        )) {
+          params.append(`backref[${edgeType}]`, sourceId);
         }
       } else {
         params.set(key, String(value));

@@ -324,11 +324,13 @@ function parseTypeFilter(raw: string | undefined): string[] | undefined {
  * The edge inside a stored event payload, or null if the row cannot be
  * read as one.
  *
- * Null rather than a throw, and the caller withholds the row: a stored
- * string's declared shape is a claim about it rather than a fact, and a
- * row that cannot be measured against the permission maps cannot be
- * proved readable by anyone. One line names it, because a payload that
- * does not decode is a defect somebody has to find.
+ * Null rather than a throw, and the caller withholds the row and names it
+ * in the log: a stored string's declared shape is a claim about it rather
+ * than a fact, and a row that cannot be measured against the permission
+ * maps cannot be proved readable by anyone. The item path logs its own
+ * undecodable rows for the same reason — a payload that does not decode
+ * is a defect somebody has to find, and a silent skip leaves no trace of
+ * it anywhere.
  */
 function decodeStoredEdge(payload: string): Edge | null {
   let parsed: unknown;
@@ -944,7 +946,13 @@ export function eventRoutes(
                 for (const row of batch) {
                   if (row.edge_id === null || edgeMode === "none") continue;
                   const edge = decodeStoredEdge(row.payload);
-                  if (edge) replayEdges.set(row.id, edge);
+                  if (edge) {
+                    replayEdges.set(row.id, edge);
+                  } else {
+                    console.warn(
+                      `[events] replay skipped event ${String(row.id)}: stored edge payload is not valid JSON`,
+                    );
+                  }
                 }
                 const replaySourceTypes = await sourceTypesFor(
                   storage,

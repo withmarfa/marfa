@@ -3809,10 +3809,10 @@
           {
             "schema": {
               "type": "string",
-              "description": "Filter expression in the query grammar"
+              "description": "Filter expression in the query grammar. A term naming an edge type — `edge[<type>]` or `backref[<type>]`, in this parameter or as the `edge[<type>]=<id>` shorthand — asks about a relationship, so it is held to the edge read permission: one naming a type the credential may not read is refused `403 edge_permission_denied`, and a `backref` term anchored on an item whose type it may not read is `403 type_not_permitted`."
             },
             "required": false,
-            "description": "Filter expression in the query grammar",
+            "description": "Filter expression in the query grammar. A term naming an edge type — `edge[<type>]` or `backref[<type>]`, in this parameter or as the `edge[<type>]=<id>` shorthand — asks about a relationship, so it is held to the edge read permission: one naming a type the credential may not read is refused `403 edge_permission_denied`, and a `backref` term anchored on an item whose type it may not read is `403 type_not_permitted`.",
             "name": "filter",
             "in": "query"
           },

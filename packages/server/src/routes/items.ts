@@ -20,6 +20,7 @@ import {
   resolveEnforcement,
   getSourceAllowlist,
   malformedTypeIdentifier,
+  parseFilter,
 } from "@withmarfa/shared";
 import type {
   AncestorUnavailableResponse,
@@ -441,7 +442,16 @@ const listItemsRoute = createRoute({
       filter: z
         .string()
         .optional()
-        .describe("Filter expression in the query grammar"),
+        .describe(
+          "Filter expression in the query grammar. A term naming an edge " +
+            "type — `edge[<type>]` or `backref[<type>]`, in this " +
+            "parameter or as the `edge[<type>]=<id>` shorthand — asks " +
+            "about a relationship, so it is held to the edge read " +
+            "permission: one naming a type the credential may not read is " +
+            "refused `403 edge_permission_denied`, and a `backref` term " +
+            "anchored on an item whose type it may not read is " +
+            "`403 type_not_permitted`.",
+        ),
       sort: z
         .string()
         .regex(
@@ -1901,6 +1911,46 @@ export function itemRoutes(storage: Storage) {
         ? `${filter} AND ${edgeClauses.join(" AND ")}`
         : edgeClauses.join(" AND ");
     }
+    // A filter term naming an edge type is a question about a
+    // relationship, and it is answered: `edge[X]=<id>` returns the items
+    // that point at that one, `backref[X]=<id>` the items it points at.
+    // So the shorthand and the full `filter=` form reach the same fact
+    // every edge door withholds — that an edge of this kind joins these
+    // two items — with the caller supplying one end and the page naming
+    // the other.
+    //
+    // Refused rather than dropped, which is the opposite of what the
+    // doors that answer with edges do, and for a reason: those narrow a
+    // page of rows, and a row a caller may not read is not evidence of
+    // anything once it is gone. This narrows on a term the caller wrote.
+    // Honoring it against a kind of relationship the credential may not
+    // read would answer the question; dropping the term would answer a
+    // different question under the same status, which is the unfiltered
+    // page the unknown-parameter refusal exists to prevent. So the term
+    // is refused the way `GET /edges/{id}` refuses the edge.
+    //
+    // Parsed here as well as in the store: the expression is bounded at
+    // `MAX_FILTER_INPUT_LENGTH` and a second pass over two kilobytes is
+    // cheaper than threading a parsed form through a store interface
+    // that takes the string.
+    //
+    // **Both directions, and the backref direction needs its anchor
+    // too.** An edge's readability is its source item's. On `edge[X]` the
+    // sources are the rows this listing returns, and they are already
+    // held to the type map. On `backref[X]` the source is the item the
+    // caller named, which nothing here would otherwise read — the same
+    // asymmetry that made `GET /items/{id}/backrefs` the wider of the two
+    // per-item doors.
+    if (filter !== undefined) {
+      for (const condition of parseFilter(filter).conditions) {
+        if (condition.field.kind !== "edge") continue;
+        requireEdgePermission(c, condition.field.edge_type, "read");
+        if (condition.field.direction !== "backref") continue;
+        if (typeof condition.value !== "string") continue;
+        const anchor = await storage.items.getIncludingTrashed(condition.value);
+        if (anchor) requireTypeAccess(c, anchor.type, "read");
+      }
+    }
     // Read tier from the raw query string — zod-openapi occasionally drops enum strings.
     const rawTier = c.req.query("tier");
     const tier: "library" | "feed" | undefined =
@@ -2058,11 +2108,23 @@ export function itemRoutes(storage: Storage) {
     // that case. Consumers must treat every neighbor-derived view as
     // incomplete when this is set and page the per-type edge/backref endpoints.
     let neighborsTruncated = false;
-    // How many neighbors the caller may not read. Omitting them is right —
-    // a neighbor outside the caller's scope must never leak — but omitting
-    // them *silently* made a partial neighborhood indistinguishable from a
-    // complete one. An app missing an edge scope rendered a ticket with none
-    // of its relations and looked correct doing it.
+    // How many neighbors the caller may not read, counted over the edge
+    // blocks this response carries. Omitting them is right — a neighbor
+    // outside the caller's scope must never leak — but omitting them
+    // *silently* made a partial neighborhood indistinguishable from a
+    // complete one. An app missing a type scope rendered a ticket with
+    // none of its relations and looked correct doing it.
+    //
+    // **It counts what the item map hid, and cannot count what the edge
+    // map hid.** A relationship the credential may not read is not in
+    // those blocks at all, so its far end never becomes a neighbor to
+    // omit. Counting it would say how many relationships of a kind this
+    // item has, which is the fact the edge gate withholds — the same
+    // decision that makes `GET /edges` drop a row rather than refuse the
+    // page. So an app missing an *edge* scope still sees a neighborhood
+    // that looks complete, and the signal it has to read instead is the
+    // block: a kind of relationship it holds no scope on has no block
+    // here, whatever the item carries.
     let neighborsOmitted = 0;
     if (includeNeighbors) {
       // The 1-hop neighborhood: the far-end items of the edge blocks present
