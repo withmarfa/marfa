@@ -94,7 +94,12 @@ const bulkGetRoute = createRoute({
     "are silently omitted rather than erroring the whole request. Optional " +
     "`include` takes the same tokens as GET /items: `edges`, `metadata` and " +
     "`extensions` hydrate an extra inline, while `system` widens the result " +
-    "to include `system.*` items, which are omitted by default.",
+    "to include `system.*` items, which are omitted by default.\n\n" +
+    "Every edge carried on a response is held to the two permissions " +
+    "`GET /edges/{id}` asks for: read on the source item's type, and read " +
+    "on the edge type. A block whose edges all fail is left out rather " +
+    "than returned empty, so a response can carry fewer kinds of " +
+    "relationship than the item has.",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -220,7 +225,7 @@ export function bulkGetRoutes(storage: Storage) {
     const visibleIds = visible.map((item) => item.id);
 
     const edgesMap = includeEdges
-      ? await hydrateEdgesForItems(storage, visibleIds)
+      ? await hydrateEdgesForItems(storage, apiKey, visibleIds)
       : null;
     const extensionsMap = includeExtensions
       ? await hydrateExtensionsForItems(storage, visibleIds, apiKey)

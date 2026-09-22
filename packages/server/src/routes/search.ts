@@ -2,6 +2,7 @@ import { createRoute, z } from "@hono/zod-openapi";
 import { resolveEnforcement } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { assertTypeFilter } from "./_type-filter.js";
+import { assertFilterEdgeTermsReadable } from "./_edge-visibility.js";
 import {
   requireAuth,
   requireTypeAccess,
@@ -108,7 +109,14 @@ const searchRoute = createRoute({
         .describe("Number of results to skip for paging."),
       filter: z
         .string()
-        .describe("Structured filter expression, as on `GET /items`.")
+        .describe(
+          "Structured filter expression, as on `GET /items`, including " +
+            "its edge terms and their refusals: a term naming an edge " +
+            "type the credential may not read is refused " +
+            "`403 edge_permission_denied`, and a `backref` term anchored " +
+            "on an item whose type it may not read is " +
+            "`403 type_not_permitted`.",
+        )
         .optional(),
       occurred_after: z
         .string()
@@ -159,11 +167,14 @@ const searchRoute = createRoute({
     403: {
       content: {
         "application/json": {
-          schema: makeErrorResponseSchema(["type_not_permitted"]),
+          schema: makeErrorResponseSchema([
+            "type_not_permitted",
+            "edge_permission_denied",
+          ]),
         },
       },
       description:
-        "The credential's type permissions reach no type, so there is nothing on the data plane it may read. A credential that reaches some types reads this door narrowed to them rather than being refused.",
+        "The credential's type permissions reach no type, so there is nothing on the data plane it may read. A credential that reaches some types reads this door narrowed to them rather than being refused. Also `edge_permission_denied` where a filter term names an edge type the credential may not read, and `type_not_permitted` where a `backref` term is anchored on an item whose type it may not read: a term naming a relationship is a question, and it is refused rather than answered or dropped.",
     },
   },
 });
@@ -204,6 +215,12 @@ export function searchRoutes(storage: Storage) {
     assertTypeFilter(type);
 
     if (type) requireTypeAccess(c, type, "read");
+
+    // This door takes the same grammar `GET /items` takes, and it
+    // compiles an edge term rather than ignoring one, so it asks the same
+    // question of it. Two doors that disagreed about one term would be
+    // the disclosure reached through the other one.
+    await assertFilterEdgeTermsReadable(c, storage, filter);
 
     const { allowed: allowed_types, excluded: excluded_types } =
       getTypeFilter(c);

@@ -7,6 +7,7 @@ import { resolveEnforcement } from "@withmarfa/shared";
 import * as tar from "tar-stream";
 import type { AppEnv } from "../middleware/auth.js";
 import { assertTypeFilter } from "./_type-filter.js";
+import { edgeKindReadable } from "./_edge-visibility.js";
 import { withPreparedHeaders } from "../prepared-headers.js";
 import { requireAuth, getTypeFilter } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
@@ -50,7 +51,7 @@ const exportRoute = createRoute({
   tags: ["Export"],
   summary: "Export data",
   description:
-    "Streams the instance's items with their metadata (tags and extensions) as `{item, metadata}` NDJSON lines, followed by the edges between exported items as `{edge}` lines (default) or, with `format=archive`, a `marfa-archive-v2.tar.gz` carrying `manifest.json`, `items.ndjson`, `edges.ndjson`, `types.ndjson` (the type and edge-type registrations, so a restore into an empty database can write the items that use them), and blob bytes that `POST /admin/restore-archive` can ingest. Exports only what the caller can read; the response streams until the filter is exhausted. Only edges whose endpoints are both in the exported item set are included, so a filtered export never references items it does not carry. " +
+    "Streams the instance's items with their metadata (tags and extensions) as `{item, metadata}` NDJSON lines, followed by the edges between exported items as `{edge}` lines (default) or, with `format=archive`, a `marfa-archive-v2.tar.gz` carrying `manifest.json`, `items.ndjson`, `edges.ndjson`, `types.ndjson` (the type and edge-type registrations, so a restore into an empty database can write the items that use them), and blob bytes that `POST /admin/restore-archive` can ingest. Exports only what the caller can read; the response streams until the filter is exhausted. Only edges whose endpoints are both in the exported item set are included, so a filtered export never references items it does not carry, and only edges of a type the credential may read, so an export never carries a kind of relationship the edge doors would refuse. " +
     UNKNOWN_PARAM_NOTE,
   security: [{ bearerAuth: [] }],
   request: {
@@ -140,7 +141,7 @@ export function exportRoutes(
   const router = createOpenAPIRouter<AppEnv>();
 
   router.openapi(exportRoute, async (c) => {
-    requireAuth(c);
+    const callerKey = requireAuth(c);
 
     // One check for both output formats: `format=archive` is handled by a
     // separate function further down but arrives through this handler and
@@ -260,9 +261,20 @@ export function exportRoutes(
                 cursor: edgeCursor,
               });
               for (const edge of page.data) {
+                // Both halves of the edge read gate, answered differently
+                // because this door has already answered one of them.
+                // `exportedIds` is the set of items this credential may
+                // read, so requiring both endpoints in it settles the
+                // source half more strictly than the gate asks. The edge
+                // type is this door's own gap: an export carried every
+                // kind of relationship among those items whatever the
+                // credential's edge map said, which is the same disclosure
+                // `GET /edges` closed, reached through a copy instead of a
+                // page.
                 if (
                   exportedIds.has(edge.source_id) &&
-                  exportedIds.has(edge.target_id)
+                  exportedIds.has(edge.target_id) &&
+                  edgeKindReadable(callerKey, edge)
                 ) {
                   controller.enqueue(
                     encoder.encode(JSON.stringify({ edge }) + "\n"),
@@ -360,6 +372,7 @@ async function handleArchiveExport(
   const occurredBefore = c.req.query("occurred_before");
   const source = c.req.query("source");
   const { allowed: allowedTypes, excluded: excludedTypes } = getTypeFilter(c);
+  const callerKey = requireAuth(c);
 
   const lines: string[] = [];
   const edgeLines: string[] = [];
@@ -414,9 +427,13 @@ async function handleArchiveExport(
         cursor: edgeCursor,
       });
       for (const edge of page.data) {
+        // The NDJSON path's twin, and the same two halves: the endpoint
+        // rule settles the source, and the edge map has to be asked for
+        // the kind of relationship.
         if (
           exportedIds.has(edge.source_id) &&
-          exportedIds.has(edge.target_id)
+          exportedIds.has(edge.target_id) &&
+          edgeKindReadable(callerKey, edge)
         ) {
           edgeLines.push(JSON.stringify({ edge }));
         }

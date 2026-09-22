@@ -1,15 +1,9 @@
 import { createRoute, z } from "@hono/zod-openapi";
-import {
-  ErrorCode,
-  MarfaError,
-  edgePermissionCovers,
-  isValidId,
-} from "@withmarfa/shared";
+import { ErrorCode, MarfaError, isValidId } from "@withmarfa/shared";
 import type { Edge } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import {
   getTypeFilter,
-  mayReadType,
   requireAuth,
   requireEdgePermission,
   requireTypeAccess,
@@ -26,6 +20,7 @@ import {
   VersionConflictErrorSchema,
 } from "./_schemas.js";
 import { refuseReusedEdgeId } from "./_reused-edge-id.js";
+import { readableEdges } from "./_edge-visibility.js";
 import { assertEdgeCanBeCreated } from "../storage/edge-constraints.js";
 import { publishEdge } from "../pubsub.js";
 import {
@@ -429,47 +424,13 @@ export function edgeRoutes(storage: Storage) {
       cursor: q.cursor,
     });
 
-    // The two questions `GET /edges/{id}` asks, asked of every row: may
-    // this credential read the source item's type, and may it read the
-    // edge type. Reading an edge discloses both endpoints, the kind of
-    // relationship and the properties on it, so a credential refused one
-    // edge cannot be handed the same edge inside a page.
-    //
-    // Dropped rather than refused, because a page is a page of what the
-    // caller may see, and a listing that refused would tell a caller a
-    // row it may not read exists. A page can therefore come back short,
-    // and empty while `has_more` is true; the cursor and `has_more` are
-    // the store's and are untouched, so paging still walks the whole
-    // listing and a caller stops on `has_more` rather than on an empty
-    // page.
-    //
-    // Trashed sources are read too, for the reason the point check reads
-    // them: a plain `items.get` answers null for a trashed source, and a
-    // null source has no type to refuse, so trashing the source item
-    // would turn a refusal into a disclosure.
-    //
-    // **This door and not its siblings.** `GET /items/{id}/edges`,
-    // `GET /items/{id}/backrefs` and the edges carried on an item read
-    // check the anchor item's type and neither the edge type nor, on the
-    // backref side, the source's — so they still answer rows this one
-    // leaves out. They are open questions rather than oversights; the
-    // note is here so the next reader does not take this door's gate for
-    // the whole of it.
+    // The two questions `GET /edges/{id}` asks, asked of every row, and
+    // asked through the one function every plural door now calls. The
+    // cursor and `has_more` are the store's and are untouched, so a page
+    // can come back short — empty, even, while `has_more` is true — and
+    // paging still walks the whole listing.
     const key = requireAuth(c);
-    const ofReadableKind = result.data.filter((edge) =>
-      edgePermissionCovers(key.edge_permissions, edge.edge_type, "read"),
-    );
-    // One query for the page's sources rather than one per row: the cap on
-    // `limit` is 500, and a walk of the whole listing would otherwise be
-    // that many serial round trips per page.
-    const sources = await storage.items.getMany(
-      [...new Set(ofReadableKind.map((edge) => edge.source_id))],
-      { includeTrashed: true },
-    );
-    const visible = ofReadableKind.filter((edge) => {
-      const source = sources.get(edge.source_id);
-      return source === undefined || mayReadType(key, source.type);
-    });
+    const visible = await readableEdges(storage, key, result.data);
     return c.json({ ...result, data: visible }, 200);
   });
 
@@ -752,7 +713,7 @@ const listFromSourceRoute = createRoute({
   operationId: "listItemEdges",
   tags: ["Edges"],
   summary: "List outbound edges from an item",
-  description: `Returns the edges where this item is the source, paginated and optionally filtered by edge type. Use the backrefs endpoint for edges pointing at the item. An item in the trash still answers with its edges, because an edge carries no lifecycle of its own: a 404 here means no such item, not a deleted one. Requires read access to the item's type. ${UNKNOWN_PARAM_NOTE}`,
+  description: `Returns the edges where this item is the source, paginated and optionally filtered by edge type. Use the backrefs endpoint for edges pointing at the item. An item in the trash still answers with its edges, because an edge carries no lifecycle of its own: a 404 here means no such item, not a deleted one. Requires read access to the item's type. Each row is held to the two permissions \`GET /edges/{id}\` asks for: read on the source item's type, and read on the edge type. A row failing either is left out rather than refused, so a page can come back shorter than \`limit\` and can come back empty while \`has_more\` is true. The cursor and \`has_more\` describe the whole listing rather than the page: stop on \`has_more\`, never on an empty page. ${UNKNOWN_PARAM_NOTE}`,
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({ id: z.string().describe("Item id.") }),
@@ -823,7 +784,7 @@ const listBackrefsRoute = createRoute({
   operationId: "listItemBackrefs",
   tags: ["Edges"],
   summary: "List inbound edges to an item",
-  description: `Returns the edges where this item is the target (backrefs), paginated and optionally filtered by edge type. Use the edges endpoint for edges pointing away from the item. An item in the trash still answers with its edges, because an edge carries no lifecycle of its own: a 404 here means no such item, not a deleted one. Requires read access to the item's type. ${UNKNOWN_PARAM_NOTE}`,
+  description: `Returns the edges where this item is the target (backrefs), paginated and optionally filtered by edge type. Use the edges endpoint for edges pointing away from the item. An item in the trash still answers with its edges, because an edge carries no lifecycle of its own: a 404 here means no such item, not a deleted one. Requires read access to the item's type. Each row is held to the two permissions \`GET /edges/{id}\` asks for: read on the source item's type, and read on the edge type. A row failing either is left out rather than refused, so a page can come back shorter than \`limit\` and can come back empty while \`has_more\` is true. The cursor and \`has_more\` describe the whole listing rather than the page: stop on \`has_more\`, never on an empty page. ${UNKNOWN_PARAM_NOTE}`,
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({ id: z.string().describe("Item id.") }),
@@ -892,7 +853,7 @@ export function itemEdgeListingRoutes(storage: Storage) {
   const router = createOpenAPIRouter<AppEnv>();
 
   router.openapi(listFromSourceRoute, async (c) => {
-    requireAuth(c);
+    const key = requireAuth(c);
 
     // The listing's twin. A misspelled `edge_type` here widens the
     // page from one type to every edge on the item, which is the
@@ -943,11 +904,23 @@ export function itemEdgeListingRoutes(storage: Storage) {
       limit: q.limit,
       cursor: q.cursor,
     });
-    return c.json(result, 200);
+    // The anchor check above answers half of what `GET /edges/{id}` asks
+    // and the door used to stop there: the anchor is every row's source,
+    // so the source's type is settled, and the edge type was never asked
+    // at all. A credential holding `edge.about:read` and nothing else
+    // read every kind of relationship this item has, one door along from
+    // the one that refuses it each of them singly.
+    //
+    // Both questions go through the shared reading anyway, source
+    // included, rather than the half this door is missing. The
+    // redundant half is one keyed read; a parameter asserting the anchor
+    // was already authorized is a claim the next caller can get wrong.
+    const visible = await readableEdges(storage, key, result.data);
+    return c.json({ ...result, data: visible }, 200);
   });
 
   router.openapi(listBackrefsRoute, async (c) => {
-    requireAuth(c);
+    const key = requireAuth(c);
 
     // The listing's twin. A misspelled `edge_type` here widens the
     // page from one type to every edge on the item, which is the
@@ -998,7 +971,15 @@ export function itemEdgeListingRoutes(storage: Storage) {
       limit: q.limit,
       cursor: q.cursor,
     });
-    return c.json(result, 200);
+    // The anchor check above answers neither half here, which is what
+    // made this the wider of the two doors: the anchor is the **target**,
+    // and an edge's readability is its source item's — a row this door
+    // never read. A credential holding read on one type therefore read
+    // the relationships every other type has with it, and their
+    // properties, from the one side that never consults them. The edge
+    // type was not asked either.
+    const visible = await readableEdges(storage, key, result.data);
+    return c.json({ ...result, data: visible }, 200);
   });
 
   return router;

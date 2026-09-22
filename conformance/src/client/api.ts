@@ -5,6 +5,7 @@ import type {
   MarfaMetadata,
   MarfaVersion,
   MarfaEdge,
+  HydratedEdgeSection,
   EdgeTypeRegistration,
   EdgeTypeDefinition,
   TypeSchema,
@@ -170,6 +171,12 @@ export class MarfaClient {
       edge?: Record<string, string>;
       /** Optional `filter=` expression using the canonical query language. */
       filter?: string;
+      /** Comma-separated `include` tokens: `edges`, `metadata`,
+       *  `extensions`, `system`. */
+      include?: string;
+      /** Inbound edge shorthand. `{ about: itemId }` becomes
+       *  `backref[about]=itemId`. */
+      backref?: Record<string, string>;
     } = {},
   ): Promise<ApiResponse<PaginatedResult<MarfaItem>>> {
     const params = new URLSearchParams();
@@ -184,6 +191,12 @@ export class MarfaClient {
           value as Record<string, string>,
         )) {
           params.append(`edge[${edgeType}]`, targetId);
+        }
+      } else if (key === "backref" && value && typeof value === "object") {
+        for (const [edgeType, sourceId] of Object.entries(
+          value as Record<string, string>,
+        )) {
+          params.append(`backref[${edgeType}]`, sourceId);
         }
       } else {
         params.set(key, String(value));
@@ -265,7 +278,14 @@ export class MarfaClient {
 
   async search(
     query: string,
-    filters: { type?: string; state?: string; limit?: number } = {},
+    filters: {
+      type?: string;
+      state?: string;
+      limit?: number;
+      /** Structured filter expression, the same grammar `GET /items`
+       *  takes — edge terms included. */
+      filter?: string;
+    } = {},
   ): Promise<ApiResponse<{ results: SearchResult[] }>> {
     const params = new URLSearchParams({ q: query });
     for (const [key, value] of Object.entries(filters)) {
@@ -863,6 +883,27 @@ export class MarfaClient {
     return this.request<{
       extensions: Record<string, Record<string, unknown>>;
     }>(`/items/${id}/extensions`);
+  }
+
+  /**
+   * The item read with its inbound edges hydrated beside it.
+   *
+   * `backrefs` is a sibling of `item` rather than a block on it, because
+   * the outbound edges the read always carries are the item's own and the
+   * inbound ones are other items' statements about it.
+   */
+  async getItemWithBackrefs(id: string): Promise<
+    ApiResponse<{
+      item: MarfaItem;
+      metadata: MarfaMetadata;
+      backrefs?: Record<string, HydratedEdgeSection>;
+    }>
+  > {
+    return this.request<{
+      item: MarfaItem;
+      metadata: MarfaMetadata;
+      backrefs?: Record<string, HydratedEdgeSection>;
+    }>(`/items/${id}?include=backrefs`);
   }
 
   async getItemExtension(

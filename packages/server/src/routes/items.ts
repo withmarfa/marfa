@@ -70,6 +70,7 @@ import {
 import { applyInlineEdges, announceInlineEdges } from "./_edges-inline.js";
 import { itemAfterMetadataWrite } from "./_metadata-publish.js";
 import { undeclaredPropertyRefusal } from "./_undeclared-property.js";
+import { assertFilterEdgeTermsReadable } from "./_edge-visibility.js";
 import type { InlineEdgeChanges } from "./_edges-inline.js";
 import { assertTierApplicable } from "./_tier-rules.js";
 import { hydrateExtensionsForItems } from "./_extensions-hydrate.js";
@@ -398,11 +399,14 @@ const getItemStatsRoute = createRoute({
     403: {
       content: {
         "application/json": {
-          schema: makeErrorResponseSchema(["type_not_permitted"]),
+          schema: makeErrorResponseSchema([
+            "type_not_permitted",
+            "edge_permission_denied",
+          ]),
         },
       },
       description:
-        "The credential's type permissions reach no type, so there is nothing on the data plane it may read. A credential that reaches some types reads this door narrowed to them rather than being refused.",
+        "The credential's type permissions reach no type, so there is nothing on the data plane it may read. A credential that reaches some types reads this door narrowed to them rather than being refused. Also `edge_permission_denied` where a filter term names an edge type the credential may not read, and `type_not_permitted` where a `backref` term is anchored on an item whose type it may not read: a term naming a relationship is a question, and it is refused rather than answered or dropped.",
     },
   },
 });
@@ -413,7 +417,7 @@ const listItemsRoute = createRoute({
   path: "/",
   tags: ["Items"],
   summary: "List items",
-  description: `Returns a paginated list of items, narrowed by the query parameters; a \`type\` filter matches subtypes via inheritance. Lists are lean by default — use \`include\` to hydrate edges, metadata, or extensions inline and avoid an N+1. That same parameter also takes \`system\`, which is not a hydration: it widens the rows returned to include \`system.*\` items, which this listing omits by default. ${UNKNOWN_PARAM_NOTE}`,
+  description: `Returns a paginated list of items, narrowed by the query parameters; a \`type\` filter matches subtypes via inheritance. Lists are lean by default — use \`include\` to hydrate edges, metadata, or extensions inline and avoid an N+1. That same parameter also takes \`system\`, which is not a hydration: it widens the rows returned to include \`system.*\` items, which this listing omits by default. Every edge carried on a response is held to the two permissions \`GET /edges/{id}\` asks for: read on the source item's type, and read on the edge type. A block whose edges all fail is left out rather than returned empty, so a response can carry fewer kinds of relationship than the item has. ${UNKNOWN_PARAM_NOTE}`,
   security: [{ bearerAuth: [] }],
   request: {
     query: z.object({
@@ -441,7 +445,16 @@ const listItemsRoute = createRoute({
       filter: z
         .string()
         .optional()
-        .describe("Filter expression in the query grammar"),
+        .describe(
+          "Filter expression in the query grammar. A term naming an edge " +
+            "type — `edge[<type>]` or `backref[<type>]`, in this " +
+            "parameter or as the `edge[<type>]=<id>` shorthand — asks " +
+            "about a relationship, so it is held to the edge read " +
+            "permission: one naming a type the credential may not read is " +
+            "refused `403 edge_permission_denied`, and a `backref` term " +
+            "anchored on an item whose type it may not read is " +
+            "`403 type_not_permitted`.",
+        ),
       sort: z
         .string()
         .regex(
@@ -573,7 +586,8 @@ const getItemRoute = createRoute({
   summary: "Get an item",
   description:
     "Returns a single item with its metadata layer and outbound edges hydrated inline; extensions are not included. An item the caller cannot see returns 404 rather than 403, so the server never leaks existence.\n\n" +
-    "`?include=` widens the response with the item's 1-hop neighborhood in one round trip instead of a per-section fan-out: `backrefs` adds inbound edges grouped by type (same block shape as `edges`, capped + cursored per type); `neighbors` adds the far-end items of the item's edges (outbound targets, plus inbound sources when `backrefs` is also requested), each with its metadata and filtered to what the caller may read; `versions` adds the item's version snapshots newest-first. Tokens are comma-separated and compose.",
+    "`?include=` widens the response with the item's 1-hop neighborhood in one round trip instead of a per-section fan-out: `backrefs` adds inbound edges grouped by type (same block shape as `edges`, capped + cursored per type); `neighbors` adds the far-end items of the item's edges (outbound targets, plus inbound sources when `backrefs` is also requested), each with its metadata and filtered to what the caller may read; `versions` adds the item's version snapshots newest-first. Tokens are comma-separated and compose.\n\n" +
+    "Every edge carried on a response is held to the two permissions `GET /edges/{id}` asks for: read on the source item's type, and read on the edge type. A block whose edges all fail is left out rather than returned empty, so a response can carry fewer kinds of relationship than the item has.",
   security: [{ bearerAuth: [] }],
   request: {
     params: IdParam,
@@ -619,7 +633,7 @@ const updateItemRoute = createRoute({
   tags: ["Items"],
   summary: "Update an item",
   description:
-    "Updates an item's properties, tier, own time, edges, or natural key. Properties merge shallowly with existing values by default, or become the item's properties outright when `properties_mode` is `replace`, while tier and `occurred_at` always replace; `version` is required, a stale value returns 409 with the conflict context to resolve, and a write naming none is refused 400 `missing_required_field`. An item's `type` is not updatable here by default: sending one that matches the item is accepted and ignored, and sending a different one is refused with 409 `type_mismatch` rather than silently dropped. Passing `retype: true` alongside a different `type` moves the item to it — that requires write on the type being entered as well as the one being left, and the resulting properties are validated against the destination.",
+    "Updates an item's properties, tier, own time, edges, or natural key. Properties merge shallowly with existing values by default, or become the item's properties outright when `properties_mode` is `replace`, while tier and `occurred_at` always replace; `version` is required, a stale value returns 409 with the conflict context to resolve, and a write naming none is refused 400 `missing_required_field`. An item's `type` is not updatable here by default: sending one that matches the item is accepted and ignored, and sending a different one is refused with 409 `type_mismatch` rather than silently dropped. Passing `retype: true` alongside a different `type` moves the item to it — that requires write on the type being entered as well as the one being left, and the resulting properties are validated against the destination. Where the instance's strict-mode lever names the type, a property the type does not declare is refused `400 invalid_properties` with `details.code` `unknown_property`, judged on the properties this request carries.",
   security: [{ bearerAuth: [] }],
   request: {
     params: IdParam,
@@ -1553,6 +1567,7 @@ export function itemRoutes(storage: Storage) {
 
         const hydratedExisting = await hydrateEdgesForItem(
           storage,
+          requireAuth(c),
           updatedItem.id,
         );
         const itemWithEdges = { ...updatedItem, edges: hydratedExisting };
@@ -1899,6 +1914,9 @@ export function itemRoutes(storage: Storage) {
         ? `${filter} AND ${edgeClauses.join(" AND ")}`
         : edgeClauses.join(" AND ");
     }
+    // The shorthand and the full form are one expression by this point,
+    // so one pass over it covers both. `GET /search` makes the same call.
+    await assertFilterEdgeTermsReadable(c, storage, filter);
     // Read tier from the raw query string — zod-openapi occasionally drops enum strings.
     const rawTier = c.req.query("tier");
     const tier: "library" | "feed" | undefined =
@@ -1960,7 +1978,7 @@ export function itemRoutes(storage: Storage) {
     const ids = result.data.map((item) => item.id);
     const apiKey = c.get("apiKey");
     const edgesMap = includeEdges
-      ? await hydrateEdgesForItems(storage, ids)
+      ? await hydrateEdgesForItems(storage, requireAuth(c), ids)
       : null;
     const extensionsMap = includeExtensions
       ? await hydrateExtensionsForItems(storage, ids, apiKey)
@@ -2021,6 +2039,10 @@ export function itemRoutes(storage: Storage) {
     }
 
     requireTypeAccess(c, item.type, "read");
+    // Non-optional, which `c.get("apiKey")` is not: the edge blocks
+    // below are narrowed against it, and the gate above has already
+    // refused a request carrying none.
+    const callerKey = requireAuth(c);
 
     const includeSet = new Set(
       (c.req.query("include") ?? "")
@@ -2037,9 +2059,9 @@ export function itemRoutes(storage: Storage) {
     // blocks are additive and default-off so the lean read stays lean.
     const [metadata, edges, backrefs, versions] = await Promise.all([
       storage.metadata.get(id),
-      hydrateEdgesForItem(storage, id),
+      hydrateEdgesForItem(storage, callerKey, id),
       includeBackrefs
-        ? hydrateBackrefsForItem(storage, id)
+        ? hydrateBackrefsForItem(storage, callerKey, id)
         : Promise.resolve(null),
       includeVersions ? storage.versions.list(id) : Promise.resolve(null),
     ]);
@@ -2052,11 +2074,23 @@ export function itemRoutes(storage: Storage) {
     // that case. Consumers must treat every neighbor-derived view as
     // incomplete when this is set and page the per-type edge/backref endpoints.
     let neighborsTruncated = false;
-    // How many neighbors the caller may not read. Omitting them is right —
-    // a neighbor outside the caller's scope must never leak — but omitting
-    // them *silently* made a partial neighborhood indistinguishable from a
-    // complete one. An app missing an edge scope rendered a ticket with none
-    // of its relations and looked correct doing it.
+    // How many neighbors the caller may not read, counted over the edge
+    // blocks this response carries. Omitting them is right — a neighbor
+    // outside the caller's scope must never leak — but omitting them
+    // *silently* made a partial neighborhood indistinguishable from a
+    // complete one. An app missing a type scope rendered a ticket with
+    // none of its relations and looked correct doing it.
+    //
+    // **It counts what the item map hid, and cannot count what the edge
+    // map hid.** A relationship the credential may not read is not in
+    // those blocks at all, so its far end never becomes a neighbor to
+    // omit. Counting it would say how many relationships of a kind this
+    // item has, which is the fact the edge gate withholds — the same
+    // decision that makes `GET /edges` drop a row rather than refuse the
+    // page. So an app missing an *edge* scope still sees a neighborhood
+    // that looks complete, and the signal it has to read instead is the
+    // block: a kind of relationship it holds no scope on has no block
+    // here, whatever the item carries.
     let neighborsOmitted = 0;
     if (includeNeighbors) {
       // The 1-hop neighborhood: the far-end items of the edge blocks present
@@ -2286,6 +2320,14 @@ export function itemRoutes(storage: Storage) {
     }
 
     if (body.properties) {
+      // The levers this door has to ask before it writes. Read here
+      // rather than at the top of the handler because this is the only
+      // branch that needs them: a body carrying no `properties` changes
+      // nothing a schema has an opinion about.
+      const enforcementForUpdate = resolveEnforcement(
+        await readInstanceConfig(storage.settings),
+        c.get("apiKey"),
+      );
       // Through the shared helper rather than a shallow spread of its own,
       // because this has to predict exactly what the store will write: a
       // copy that validated the merged set while the store wrote the
@@ -2296,6 +2338,29 @@ export function itemRoutes(storage: Storage) {
       // would admit a move whose result the destination calls invalid,
       // which is the whole hazard of moving a corpus.
       const resultingType = retypeTo ?? item.type;
+      // The strict-mode lever, which this door went past. `POST /items`
+      // asks it of the properties the caller sent, and so does the
+      // restore door; asked of the same input here, through the same
+      // function, so the three cannot drift. A caller could otherwise
+      // write a property no type declares through the update door that
+      // the create door beside it refuses, on a type the lever names —
+      // and the property reads back ever after undeclared and unmarked
+      // under the type's current version.
+      //
+      // Against the payload rather than the merged result, because that
+      // is the reading the other two callers take: the lever refuses a
+      // caller introducing an undeclared property, and measuring the
+      // merge would instead freeze every row that already carries one
+      // from before the lever was set.
+      //
+      // Against the type the row ends up as, for the reason the
+      // validation below uses it: a move is judged by the destination.
+      const undeclared = undeclaredPropertyRefusal(
+        enforcementForUpdate,
+        resultingType,
+        body.properties,
+      );
+      if (undeclared) throw undeclared;
       const merged = mergeUpdateProperties(
         item.properties,
         resolveIncomingProperties(resultingType, body.properties, false),
@@ -2498,7 +2563,7 @@ export function itemRoutes(storage: Storage) {
       resource_type: "item",
       resource_id: id,
     });
-    const hydrated = await hydrateEdgesForItem(storage, id);
+    const hydrated = await hydrateEdgesForItem(storage, requireAuth(c), id);
     return c.json(
       {
         item: { ...resolvedItem, edges: hydrated },

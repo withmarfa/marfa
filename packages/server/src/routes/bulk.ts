@@ -40,7 +40,7 @@ import {
   resolveEnforcement,
   malformedTypeIdentifier,
 } from "@withmarfa/shared";
-import type { Item, Metadata } from "@withmarfa/shared";
+import type { EnforcementSettings, Item, Metadata } from "@withmarfa/shared";
 import {
   mergeUpdateProperties,
   resolveIncomingProperties,
@@ -60,6 +60,7 @@ import { MAX_TAGS_PER_ITEM } from "../tag-limits.js";
 import { namesSystemNamespace } from "./_system-type-visibility.js";
 import type { BulkActionJobRow, Storage } from "../storage/interface.js";
 import { readInstanceConfig } from "../storage/instance-config.js";
+import { undeclaredPropertyRefusal } from "./_undeclared-property.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import { bulkAtomicRollback, isEntryVerdict } from "./_bulk-rollback.js";
 import { publish } from "../pubsub.js";
@@ -150,7 +151,7 @@ const bulkRoute = createRoute({
   tags: ["Items"],
   summary: "Bulk upsert items",
   description:
-    "Creates or upserts up to 5000 items in one call, matching existing rows on `(source, source_id)`. Atomic by default; `source` is server-stamped from the credential, so any caller-supplied value is overwritten. Requires write access to each item's type — the credential's own type permissions decide, and nothing bypasses them.\n\nAn entry that resolves a row of a different type is refused with `type_mismatch` — a write does not re-type the row it lands on. Passing `retype: true` for the batch moves those rows instead, which is how a corpus is brought onto a type a mapping now names. It is opt-in rather than inferred from a differing type, because a declared type accompanies nearly every write and inferring would move a corpus on an ordinary sync bug. Each move requires write on the type being entered as well as the one being left, and the resulting properties are validated against the destination: an item the destination type cannot accept is reported as an `errored` entry naming why, and the rest of the batch proceeds.\n\nAn ordinary update is validated too, against the row's own type and on the properties the write would leave on it rather than on the body alone, so a patch removing a required field is refused even though it names no invalid value. A refusal is an `errored` entry under `invalid_properties`; with the default `atomic` it rolls the page back instead, carrying that code in `details.code`. An entry may also carry the `version` it was based on, which makes its upsert conditional and is refused the same two ways.",
+    "Creates or upserts up to 5000 items in one call, matching existing rows on `(source, source_id)`. Atomic by default; `source` is server-stamped from the credential, so any caller-supplied value is overwritten. Requires write access to each item's type — the credential's own type permissions decide, and nothing bypasses them.\n\nAn entry that resolves a row of a different type is refused with `type_mismatch` — a write does not re-type the row it lands on. Passing `retype: true` for the batch moves those rows instead, which is how a corpus is brought onto a type a mapping now names. It is opt-in rather than inferred from a differing type, because a declared type accompanies nearly every write and inferring would move a corpus on an ordinary sync bug. Each move requires write on the type being entered as well as the one being left, and the resulting properties are validated against the destination: an item the destination type cannot accept is reported as an `errored` entry naming why, and the rest of the batch proceeds.\n\nAn ordinary update is validated too, against the row's own type and on the properties the write would leave on it rather than on the body alone, so a patch removing a required field is refused even though it names no invalid value. A refusal is an `errored` entry under `invalid_properties`; with the default `atomic` it rolls the page back instead, carrying that code in `details.code`. An entry may also carry the `version` it was based on, which makes its upsert conditional and is refused the same two ways.\n\nWhere the instance's strict-mode lever names the type, a property the type does not declare is refused `400 invalid_properties` with `details.code` `unknown_property`, judged on the properties this request carries. It is asked of every entry, on the rows this call creates and the rows it updates alike, and `details.index` names the entry it came from.",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -532,6 +533,14 @@ async function processBulkItem(
      * below the result this function reports.
      */
     recordEdgeChanges: (changes: InlineEdgeChanges) => void;
+    /**
+     * The instance's enforcement levers, resolved once for the batch.
+     *
+     * Read by the caller rather than per entry: the configuration is one
+     * row, a page carries up to five thousand entries, and the answer
+     * cannot change inside a batch.
+     */
+    enforcement: EnforcementSettings;
   },
 ): Promise<ProcessedBulkItem> {
   if (!isValidTypeIdentifier(raw.type)) {
@@ -743,6 +752,36 @@ async function processBulkItem(
     const resultingType =
       retype && raw.type !== existing.type ? raw.type : existing.type;
     const isMove = resultingType !== existing.type;
+    if (raw.properties !== undefined) {
+      // The same lever the create branch asks a few lines down, asked of
+      // the update half for the same reason: this is one door, and a
+      // door that refused an undeclared property on the rows it creates
+      // and accepted it on the rows it updates would be the defect
+      // restated rather than closed. `PATCH /items/{id}`, which is this
+      // branch reached singly, asks it of the same input.
+      const undeclaredOnUpdate = undeclaredPropertyRefusal(
+        options.enforcement,
+        resultingType,
+        raw.properties,
+        { index, item_id: existing.id },
+      );
+      if (undeclaredOnUpdate) {
+        return {
+          result: {
+            index,
+            outcome: "errored",
+            id: existing.id,
+            error: {
+              code: undeclaredOnUpdate.code,
+              message: undeclaredOnUpdate.message,
+              ...(undeclaredOnUpdate.details && {
+                details: undeclaredOnUpdate.details,
+              }),
+            },
+          },
+        };
+      }
+    }
     // Both arms, not only the move. Without it on a same-type update this
     // door stores the number 12345 into `core.note.body`, a required
     // string, and reports the entry as `updated`, while
@@ -903,6 +942,30 @@ async function processBulkItem(
         throw new MarfaError(ErrorCode.VALIDATION_ERROR, stateError);
       }
     }
+    // The strict-mode lever, which this door went past on its way to the
+    // store. `storage.items.create` validates loosely whatever the
+    // configuration says, so a door writing through it asks above the
+    // store or not at all — and this is the door built for volume,
+    // reachable by any working key, where `POST /items` beside it refuses
+    // the identical body. A property that lands reads back ever after
+    // undeclared and unmarked under the type's current version.
+    //
+    // The same function the create and restore doors call, given the
+    // entry's index so a caller reading a refused batch can tell which
+    // row it came from — the details bag that helper carries exists for
+    // exactly this.
+    //
+    // Thrown rather than returned, inside the `try` that turns an entry
+    // verdict into this row's `errored` outcome: in best-effort mode the
+    // page reports it beside the entry, and in atomic mode it rolls the
+    // batch back with the refusal's own status.
+    const undeclaredOnCreate = undeclaredPropertyRefusal(
+      options.enforcement,
+      raw.type,
+      raw.properties ?? {},
+      { index },
+    );
+    if (undeclaredOnCreate) throw undeclaredOnCreate;
     const createInput: CreateInput = {
       type: raw.type,
       properties: raw.properties ?? {},
@@ -993,6 +1056,14 @@ export function bulkRoutes(storage: Storage) {
     }
 
     const stampedSource = itemProvenanceSource(c.get("apiKey"));
+
+    // The instance's enforcement levers, read once for the page. The
+    // strict-mode half is what each entry is held to below; the read is
+    // one row and the answer cannot change inside a batch.
+    const enforcement = resolveEnforcement(
+      await readInstanceConfig(storage.settings),
+      c.get("apiKey"),
+    );
 
     if (items.length === 0) {
       return c.json(
@@ -1088,6 +1159,7 @@ export function bulkRoutes(storage: Storage) {
           checkUpdate,
           checkEdgeWrite,
           recordEdgeChanges: (changes) => inlineEdgeChanges.push(changes),
+          enforcement,
         });
         if (atomic && processed.result.outcome === "errored") {
           // In atomic mode a single failure aborts the whole batch. Throw

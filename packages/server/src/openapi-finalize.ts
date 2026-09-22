@@ -192,7 +192,7 @@ export const EXTRA_PATHS: Record<string, Record<string, unknown>> = {
           required: false,
           schema: { type: "string", enum: ["all", "none"], default: "all" },
           description:
-            "Whether edge lifecycle events reach this stream. Defaults to `all`, including under a `type` filter. Any other value is rejected rather than ignored.",
+            "Whether edge lifecycle events reach this stream. Defaults to `all`, including under a `type` filter. Any other value is rejected rather than ignored. It is your own parameter and narrows nothing else: every edge frame is separately held to the two permissions `GET /edges/{id}` asks for, read on the edge type and read on the source item's type, on a replay exactly as on a live frame.",
         },
         {
           name: "Last-Event-ID",
