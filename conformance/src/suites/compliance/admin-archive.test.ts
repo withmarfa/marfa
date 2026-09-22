@@ -26,6 +26,7 @@ import {
   cleanup,
 } from "../../utils/setup.js";
 import { createNote } from "../../generators/items.js";
+import { expectMatchesSchema } from "../../utils/openapi.js";
 
 let client: MarfaClient;
 let ctx: TestContext;
@@ -80,6 +81,12 @@ describe("admin/restore-archive", () => {
     expect(restored.ok).toBe(true);
     expect(restored.data.duplicates).toBeGreaterThanOrEqual(1);
     expect(restored.data.blobs_imported).toBe(0);
+    await expectMatchesSchema(
+      "POST",
+      "/admin/restore-archive",
+      200,
+      restored.data,
+    );
   });
 
   it("restores an archive carrying a blob larger than the request cap, byte for byte, and leaves out an entry that does not hash to its name", async () => {

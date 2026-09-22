@@ -577,6 +577,22 @@ fn a_connector_registers_under_its_name_and_reports_a_run_whole() {
     assert_eq!(query(&connectors::runs_request("c1", None), "limit"), None);
 }
 
+#[test]
+fn restore_posts_the_archive_under_its_own_type() {
+    let request = restore::request(&restore::RestoreArgs {
+        file: PathBuf::from("/nowhere/archive.tar.gz"),
+    });
+    assert_eq!(request.method, Method::Post);
+    assert_eq!(request.path(), "/admin/restore-archive");
+    match &request.body {
+        Body::File { path, content_type } => {
+            assert_eq!(path, &PathBuf::from("/nowhere/archive.tar.gz"));
+            assert_eq!(content_type, "application/gzip");
+        }
+        other => panic!("the archive is not sent as a file: {other:?}"),
+    }
+}
+
 /// Every operation the document publishes has a command, and every command
 /// in the table names an operation the document still publishes.
 ///

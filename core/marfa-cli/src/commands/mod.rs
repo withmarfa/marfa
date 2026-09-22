@@ -23,6 +23,7 @@ pub mod logout;
 pub mod metadata;
 pub mod operations;
 pub mod owner;
+pub mod restore;
 pub mod search;
 pub mod status;
 pub mod types;

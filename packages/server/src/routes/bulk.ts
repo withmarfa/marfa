@@ -388,11 +388,16 @@ const bulkActionStatusRoute = createRoute({
   },
 });
 
-// Request cancellation. Idempotent — already-terminal rows return
-// their final state without mutation. The worker observes the
-// `canceled` flag between chunks and stops; the response from this
-// endpoint surfaces the row as-of-now, which may still show
-// `in_progress` if the worker hasn't yet observed the flag.
+// Request cancellation. The door sets the row itself, whether it is
+// queued or running, and answers what it wrote; a row already terminal is
+// left alone and answered as it stands.
+//
+// The description says that and no more. The worker reads the row at the
+// top of each chunk and stops when it finds it canceled, but there is no
+// read after the last chunk and `complete()` carries no status guard, so
+// a cancel landing in the final chunk is overwritten. Describing what
+// happens to the work afterwards would be the same unkeepable promise
+// this door's prose was rewritten to drop.
 const bulkActionCancelRoute = createRoute({
   method: "delete",
   path: "/bulk-actions/jobs/{id}",
@@ -400,7 +405,7 @@ const bulkActionCancelRoute = createRoute({
   tags: ["Items"],
   summary: "Cancel a bulk-action job",
   description:
-    "Signals cancellation of a bulk-action job. Queued jobs flip to `canceled` immediately and in-progress jobs flip when the worker next checks between chunks; already-terminal jobs return their final state unchanged.",
+    "Cancels a bulk-action job. A job still queued or running is set to `canceled` and the answer carries that state; a job already terminal is left as it is and answers its final state unchanged.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({
