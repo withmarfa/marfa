@@ -119,18 +119,6 @@ pub enum ItemsCommand {
         #[command(subcommand)]
         command: BulkActionCommand,
     },
-    /// Promote a connector's copy into an item of your own.
-    Promote {
-        /// The item id.
-        id: String,
-        #[command(flatten)]
-        idempotency: IdempotencyArgs,
-    },
-    /// Compare an item against the mirror it was promoted from.
-    Reconcile {
-        /// The item id.
-        id: String,
-    },
 }
 
 /// The states a caller may move an item to. `revoked` is the server's alone.
@@ -728,14 +716,6 @@ pub fn bulk_action_request(command: &BulkActionCommand) -> Result<Request, CliEr
     Ok(Request::post(&["items", "bulk-actions"]).json(body))
 }
 
-pub fn promote_request(id: &str) -> Request {
-    Request::post(&["items", id, "promote"])
-}
-
-pub fn reconcile_request(id: &str) -> Request {
-    Request::get(&["items", id, "reconcile"])
-}
-
 /// The MIME type a file is sent under: the flag, else the extension's, else
 /// bytes.
 pub fn mime_type_for(path: &std::path::Path, given: Option<&str>) -> String {
@@ -841,8 +821,6 @@ pub fn run(command: ItemsCommand, remote: &Remote, out: &Printer) -> Result<(), 
         ItemsCommand::Bulk(args) => bulk_request(args)?,
         ItemsCommand::BulkGet { ids, include } => bulk_get_request(ids, include),
         ItemsCommand::BulkAction { command } => bulk_action_request(command)?,
-        ItemsCommand::Promote { id, idempotency } => idempotency.apply(promote_request(id)),
-        ItemsCommand::Reconcile { id } => reconcile_request(id),
     };
     out.value(&remote.json(&request)?)
 }

@@ -87,26 +87,6 @@ async function bookmarkRow(
   return { id: item.id, source_id: sourceId, version: item.version };
 }
 
-/**
- * A connector's mirror of an external record, written through the store:
- * nothing this server mints can be the owning connector, so the store is
- * the only writer a mirror has.
- */
-async function mirrorRow(
-  connector: string,
-): Promise<{ id: string; version: number }> {
-  const row = await ctx.storage.items.create({
-    type: "core.bookmark",
-    source: `connector:${connector}`,
-    source_id: `mirror-${Math.random().toString(36).slice(2, 10)}`,
-    properties: {
-      url: "https://upstream.example/a",
-      title: "the owning connector's copy",
-    },
-  });
-  return { id: row.id, version: row.version };
-}
-
 // ---------------------------------------------------------------------------
 // The doors
 // ---------------------------------------------------------------------------
@@ -364,92 +344,6 @@ const DOORS: Door[] = [
     writeTruthful: bulkActionWrite,
   },
 ];
-
-/**
- * Mirror protection, on the doors where it can actually refuse.
- *
- * `permitsMirrorWrite` refuses a row whose `source` is a connector's, and
- * nothing this server mints can be that connector. One consequence decides
- * where it can be tested at all: **not on the natural-key doors.** The lookup
- * keys on the caller's own `source`, so a row resolved by natural key always
- * carries it and can never be a mirror. Deleting the call from that branch
- * leaves this file and `mirror-rule.test.ts` green, and that is
- * unreachability rather than a coverage gap.
- *
- * So the row here is addressed by id, or selected by filter, which are the
- * only ways to reach a row whose source is not the caller's.
- * `mirror-rule.test.ts` asserts this rule through `PATCH /items/{id}` alone;
- * these are the sibling doors it does not reach.
- */
-describe("mirror protection on the doors that resolve a row by id", () => {
-  let mine: Credential;
-
-  beforeAll(async () => {
-    mine = await credentialFor("acme/mirror-mine");
-  });
-
-  it("refuses PATCH /items/{id} on a connector's mirror", async () => {
-    const mirror = await mirrorRow("acme/mirror-sibling");
-    const res = await request(ctx.app, "PATCH", `/items/${mirror.id}`, {
-      key: mine.key,
-      body: { properties: { title: "overwritten" }, version: mirror.version },
-    });
-    // The rule that refused, not merely that something did.
-    expect(await refusalCode(res)).toBe("connector_owned");
-    const after = await ctx.storage.items.get(mirror.id);
-    expect(after?.properties.title).toBe("the owning connector's copy");
-  });
-
-  it("refuses POST /items/bulk (by id) on a connector's mirror", async () => {
-    const { id } = await mirrorRow("acme/mirror-sibling");
-    const res = await request(ctx.app, "POST", "/items/bulk", {
-      key: mine.key,
-      body: {
-        items: [{ id, type: "core.bookmark", properties: { title: "x" } }],
-      },
-    });
-    expect(await refusalCode(res)).toBe("connector_owned");
-    // And at the status the single door gives it. A rolled-back page takes
-    // the status of the refusal that rolled it back, so the two doors
-    // answer one mistake the same way; deciding which `403`s "count" is
-    // how they would drift apart again.
-    expect(res.status).toBe(403);
-    const after = await ctx.storage.items.get(id);
-    expect(after?.properties.title).toBe("the owning connector's copy");
-  });
-
-  it("narrows POST /items/bulk-actions past a connector's mirror", async () => {
-    // Narrowing rather than refusing: the door takes a filter, and its
-    // established answer to a row the caller may not touch is to leave it
-    // out of the match set rather than fail the action over every other row.
-    const mirror = await mirrorRow("acme/mirror-sibling");
-    const own = await bookmarkRow(mine, `own-${String(Math.random())}`);
-    const res = await bulkActionWrite({
-      key: mine.key,
-      target: own,
-      properties: { title: "patched by bulk action" },
-    });
-    expect(res.status).toBe(202);
-    const mirrorAfter = await ctx.storage.items.get(mirror.id);
-    expect(mirrorAfter?.properties.title).toBe("the owning connector's copy");
-    const ownAfter = await ctx.storage.items.get(own.id);
-    expect(ownAfter?.properties.title).toBe("patched by bulk action");
-  });
-
-  it("still writes a row no connector owns", async () => {
-    // The permissive direction. Without it a guard that refuses everything
-    // satisfies the assertions above and this file would not notice.
-    const own = await bookmarkRow(mine, `own-${String(Math.random())}`);
-    const res = await request(ctx.app, "PATCH", `/items/${own.id}`, {
-      key: mine.key,
-      body: { properties: { title: "its own update" }, version: own.version },
-    });
-    expect(res.status).toBe(200);
-    const after = await ctx.storage.items.get(own.id);
-    expect(after?.properties.title).toBe("its own update");
-  });
-});
-
 /**
  * Routes under `/items` that mutate something but cannot write an item's
  * properties, so they are not doors this file speaks for. Listed rather
@@ -467,8 +361,6 @@ const NOT_A_PROPERTIES_DOOR: Record<string, string> = {
   "POST /items/:id/transition":
     "lifecycle state axis, not the item's properties",
   "POST /items/:id/restore": "lifecycle state axis, not the item's properties",
-  "POST /items/:id/promote":
-    "creates a fresh item from a mirror it only reads; never writes an existing row's properties, and the create it performs runs the create-door gates",
 };
 
 // ---------------------------------------------------------------------------

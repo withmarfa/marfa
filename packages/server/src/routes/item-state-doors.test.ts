@@ -147,8 +147,6 @@ const NOT_A_STATE_CREATE_DOOR: Record<string, string> = {
   "PATCH /items/:id/metadata": "metadata layer, reaches no state",
   "PUT /items/:id/extensions/:namespace": "extension layer, reaches no state",
   "PATCH /items/:id": "writes properties; `state` is not on its input schema",
-  "POST /items/:id/promote":
-    "creates a fresh item from a mirror; the create it performs runs the create-door gates above",
 };
 
 describe("every route that can set an item's state on create is accounted for", () => {

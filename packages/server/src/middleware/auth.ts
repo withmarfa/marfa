@@ -453,10 +453,11 @@ export function authMiddleware(storage: Storage, salt: string) {
  * shape would read later as a grant it has no binding to.
  *
  * `connector:` is read as provenance. `itemProvenanceSource` stamps a
- * credential's source onto the rows it writes, and `permitsMirrorWrite`
- * treats a row carrying this prefix as a connector's mirror of an
- * external record, which nothing writes over. A minted key carrying the
- * prefix would let any caller plant rows that read as mirrors.
+ * credential's source onto every row it writes, so a minted key
+ * carrying the prefix would put the mark of a connector on rows a
+ * caller wrote by hand. The connector registry (`connectors.md`) is
+ * where a connector is declared; a credential source is not, and the
+ * reservation is what keeps the two from being confusable.
  */
 export const RESERVED_CREDENTIAL_SOURCE_PREFIXES = [
   "oauth:",
@@ -715,42 +716,6 @@ export function itemProvenanceSource(
   key: ApiKey | undefined,
 ): string | undefined {
   return key?.source;
-}
-
-/** The provenance prefix every connector-written row carries. */
-export const CONNECTOR_SOURCE_PREFIX = "connector:";
-
-/**
- * One rule: nothing writes to an item a connector owns. Ownership is
- * provenance: a row whose source carries the connector prefix is a
- * connector's mirror of an external record, and nothing this server
- * mints can be that connector, so the copy is refused toward promotion.
- * Two write paths onto one mirror is how user edits and re-syncs silently
- * clobber each other. Lifecycle transitions, tags, and extensions stay
- * user gestures: they do not edit the copy, so they do not answer to this.
- *
- * Called from each property-writing door; the door-coverage tests pin the
- * set.
- */
-export function requireMirrorProtection(row: {
-  id: string;
-  source: string;
-}): void {
-  if (permitsMirrorWrite(row)) return;
-  throw new MarfaError(
-    ErrorCode.CONNECTOR_OWNED,
-    "This item is a connector's copy of an external record; only the owning connector writes it. Promote it to edit your own copy",
-    { item_id: row.id, source: row.source },
-  );
-}
-
-/** The predicate behind `requireMirrorProtection`, for the door that
- *  narrows rather than refuses (`POST /items/bulk-actions`). */
-export function permitsMirrorWrite(row: {
-  id: string;
-  source: string;
-}): boolean {
-  return !row.source.startsWith(CONNECTOR_SOURCE_PREFIX);
 }
 
 /**

@@ -263,11 +263,15 @@ References: housekeeping 1, 2, 3, 4, #1103.
 
 ## A connector
 
-A connector is something outside the server that reads or writes on a person's behalf. Connectors never run inside the server. Two doors and one refusal survive from a time when they did.
+A connector is something outside the server that reads or writes on a person's behalf. Connectors never run inside the server, and the server does not run them: what it offers is a place to say one exists and to report what it did.
 
-A connector's copy is an item whose `source` carries the `connector:` prefix. No write door can create one, because `POST /items` stamps the key's own source over the body's. The one door that writes one is `POST /admin/restore-archive`, which copies `item.source` from the archive as it finds it. On such a row, `PATCH /items/{id}` is refused with `403 connector_owned` and the row is left unchanged. `POST /items/{id}/promote` answers `201` with the caller's own copy, joined back to the original by a `derived-from` edge. `GET /items/{id}/reconcile` then answers `200` over that join, reporting each property as diverged or the same. On any other item both doors are refused with `400 validation_error` naming the item. An unknown id is `404 item_not_found`, and no credential is `401`.
+**Registering.** `POST /connectors` registers the caller's key as a connector, with a name and an optional description, and answers `201`. One registration per key: the same key registering again updates the name and the description and answers `200` with the same id. `GET /connectors` lists every registration to any key, newest first, each with its key's id and source, its last heartbeat and its last run. `DELETE /connectors/{id}` removes the registration and its runs, to the connector's own key or the operator key; another key is refused `403 forbidden`. A registration outlives its key: revoking the key leaves the registration and its runs listed under the key they were written with.
 
-References: `items.md` 44, 45.
+**Reporting.** `POST /connectors/{id}/heartbeat`, from the connector's own key, records the server's clock and answers it back. `POST /connectors/{id}/runs` records a run with its outcome, its start and finish and an optional summary or error. `GET /connectors/{id}/runs` lists a connector's runs to any key, newest first. The server keeps the last hundred per connector; the hundred and first drops the oldest.
+
+**A connector writes items like anything else.** It holds a key, and the rows it writes carry that key's source, stamped by the server over whatever the body said. There is no ownership mark on an item and no door that treats one row as a connector's and another as a person's — a write is refused, or it is not, by the credential's permissions and by nothing else. The `connector:` prefix is reserved as a credential source so that nothing can claim to be the connector registry's, and `POST /admin/restore-archive` refuses an archive that records one for the same reason.
+
+References: `connectors.md` 1 to 11, `search-and-filters.md` 22.
 
 ## How to read a refusal
 
@@ -280,7 +284,7 @@ The codes group by what they ask of you.
 - **Fix the request.** `400 validation_error` (a body or query of the wrong shape, an off-enum state, an inverted window, a malformed identifier, an unknown query key), `400 missing_required_field`, `400 invalid_id`, `400 invalid_properties`, `400 property_shadows_field`, `400 inheritance_violation`, `400 bulk_confirmation_required`, `413 request_too_large`, `422 version_bump_mismatch`, `422 compatible_with_violation`, `422 idempotency_key_reused`.
 - **The thing is not there.** `400 unknown_type` (a well-formed type nothing registered), `404 item_not_found`, `404 type_not_found`, `404 edge_not_found`, `404 edge_type_not_found`, `404 webhook_not_found`, `404 api_key_not_found`, `404 bulk_job_not_found`, `404 blob_not_found`, `404 owner_not_found`, `404 not_found`.
 - **The graph says no.** `400 edge_cycle`, `400 edge_constraint_violation`, `400 invalid_transition`.
-- **This key may not.** `401 unauthorized`, `403 forbidden` (with `details.required_scope` where a permission is missing), `403 type_not_permitted`, `403 edge_permission_denied`, `403 core_type_immutable`, `403 connector_owned`.
+- **This key may not.** `401 unauthorized`, `403 forbidden` (with `details.required_scope` where a permission is missing), `403 type_not_permitted`, `403 edge_permission_denied`, `403 core_type_immutable`.
 - **Something is already there.** `409 conflict`, `409 id_reused`, `409 type_mismatch`, `409 type_already_exists`, `409 type_in_use`, `409 edge_type_in_use`, `409 type_has_subtypes`, `409 owner_exists`.
 - **Read the envelope, then decide.** `409 version_conflict` and `409 ancestor_unavailable`, described under Versions.
 - **The batch was rolled back.** `bulk_atomic_rollback`, with the inner code in `details.code`, at the status that refusal would have had on its own: `403` for a permission, `400` otherwise.

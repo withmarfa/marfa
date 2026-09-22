@@ -41,7 +41,6 @@ export enum ErrorCode {
    * The row is a connector's copy of an external record; only the
    * owning connector writes it. Promote it to edit your own copy.
    */
-  CONNECTOR_OWNED = "connector_owned",
   TYPE_NOT_PERMITTED = "type_not_permitted",
   /**
    * A credential that cannot read everything stored attempted an operation
@@ -323,7 +322,6 @@ const STATUS_MAP: Record<ErrorCode, number> = {
   [ErrorCode.ANCESTOR_UNAVAILABLE]: 409,
   [ErrorCode.UNAUTHORIZED]: 401,
   [ErrorCode.FORBIDDEN]: 403,
-  [ErrorCode.CONNECTOR_OWNED]: 403,
   [ErrorCode.TYPE_NOT_PERMITTED]: 403,
   [ErrorCode.SCOPED_CREDENTIAL_NOT_PERMITTED]: 403,
   [ErrorCode.INVALID_TRANSITION]: 400,

@@ -37,7 +37,10 @@ import { publish, publishEdge } from "../pubsub.js";
 import type { Edge, Item, Metadata } from "@withmarfa/shared";
 import type { ItemState, Tier } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
-import { requireOperatorKey } from "../middleware/auth.js";
+import {
+  isReservedCredentialSource,
+  requireOperatorKey,
+} from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import type { BlobLayer } from "../storage/blob-layer.js";
 import { HashingTransform } from "../storage/blob-store.js";
@@ -549,6 +552,26 @@ export function adminArchiveRoutes(storage: Storage, blobs: BlobLayer) {
           `Maximum ${String(MAX_ARCHIVE_EDGES)} edges per archive`,
         ),
       );
+    }
+
+    // A row whose `source` claims a reserved credential shape is refused,
+    // on the same terms and for the same reason as the state check below:
+    // the restore is the one door that copies `source` verbatim, and
+    // `POST /keys` refuses those prefixes precisely so no credential can
+    // stamp one. A row carrying `connector:` would otherwise read, ever
+    // after, as written by a connector that never existed — planted
+    // through the one door that does not ask.
+    for (const { item } of items) {
+      const source = item.source;
+      if (typeof source === "string" && isReservedCredentialSource(source)) {
+        return refuse(
+          new MarfaError(
+            ErrorCode.VALIDATION_ERROR,
+            `Item ${String(item.id)} records a source no credential can hold: ${source}`,
+            { item_id: item.id, source },
+          ),
+        );
+      }
     }
 
     // A row in a state its type's lifecycle cannot produce is refused, the

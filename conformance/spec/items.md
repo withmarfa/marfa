@@ -66,11 +66,6 @@ An item is a typed row: an `id`, a `type`, `properties` validated against the ty
 42. An unknown item answers `404 item_not_found` on every extension door and a malformed id answers `400 invalid_id`. `compliance/extensions.test.ts › answers 404 for an unknown item and 400 for a malformed id on every door`.
 43. A tag write announces `metadata.changed`. `compliance/events-contract.test.ts › announces metadata.changed on a tag write`.
 
-## Promotion
-
-44. `POST /items/{id}/promote` and `GET /items/{id}/reconcile` act on an item that is a connector's copy; on any other item they answer `400 validation_error` naming the item, and `404 item_not_found` for an unknown id; no credential answers `401` where the document declares none (`findings.md` 6). `compliance/promote-reconcile.test.ts › refuses to promote an item that is already the caller's own`, `› refuses to reconcile an item that was never promoted`, `› answers 404 for an unknown item on both doors`, `› refuses both doors without a credential`.
-45. A connector's copy is a row whose `source` carries the `connector:` prefix, and `POST /admin/restore-archive` is the one door that writes one: it copies `item.source` from the archive verbatim, where `POST /keys` refuses the prefix as a credential source and `POST /items` stamps the credential's own over the body's. On such a row `PATCH /items/{id}` answers `403 connector_owned`, leaving it unchanged; `POST /items/{id}/promote` answers `201` with the caller's own copy joined back by a `derived-from` edge; and `GET /items/{id}/reconcile` then answers `200` over that join, reporting each property as diverged or the same. `compliance/promote-reconcile.test.ts › restores a connector's copy, which no write door can create`.
-
 ## Property order
 
 46. An item's properties are answered in one order: the fields the type declares first, in the type's order, and every other property after them in the order the write sent them. The order holds on the create's answer, on a read by id, and across a `PATCH`, which moves no key. `compliance/validation.test.ts › orders properties by the type's fields, then by the order they were sent`.

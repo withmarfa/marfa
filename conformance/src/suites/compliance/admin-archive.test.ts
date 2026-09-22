@@ -129,6 +129,66 @@ describe("admin/restore-archive", () => {
     expect(item.data.item.properties.blob_ref).toBe(hash);
   });
 
+  it("refuses an archive recording a source no credential can hold, and writes nothing", async () => {
+    // The restore is the one door that copies `source` verbatim, and
+    // `POST /keys` refuses the reserved prefixes precisely so nothing
+    // can stamp one. Without this the restore was the way around that:
+    // a row could be planted carrying `connector:`, and would read ever
+    // after as written by a connector that never existed.
+    //
+    // Refused whole, like the state check beside it, so the answer is
+    // never half a restore.
+    const fine = uuidv7();
+    const planted = uuidv7();
+    const refused = await operator.restoreArchive(
+      itemsArchive([
+        {
+          id: fine,
+          type: "core.note",
+          source: ctx.source,
+          properties: { body: "an ordinary row ahead of the bad one" },
+        },
+        {
+          id: planted,
+          type: "core.note",
+          source: "connector:readwise",
+          properties: { body: "a row claiming a connector wrote it" },
+        },
+      ]),
+    );
+    expect(refused.status).toBe(400);
+    expect(refused.error?.error.code).toBe("validation_error");
+    expect(refused.error?.error.message).toContain(planted);
+    expect((await client.getItem(fine)).status).toBe(404);
+    expect((await client.getItem(planted)).status).toBe(404);
+
+    // The witness. The same two rows with an ordinary source restore, so
+    // what was refused is the source and not the archive.
+    const okFine = uuidv7();
+    const okOther = uuidv7();
+    const restored = await operator.restoreArchive(
+      itemsArchive([
+        {
+          id: okFine,
+          type: "core.note",
+          source: ctx.source,
+          properties: { body: "an ordinary row ahead of the bad one" },
+        },
+        {
+          id: okOther,
+          type: "core.note",
+          source: ctx.source,
+          properties: { body: "a row claiming a connector wrote it" },
+        },
+      ]),
+    );
+    expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
+    trackItem(ctx, okFine);
+    trackItem(ctx, okOther);
+    expect((await client.getItem(okFine)).status).toBe(200);
+    expect((await client.getItem(okOther)).status).toBe(200);
+  });
+
   it("refuses an archive recording a state the type's lifecycle cannot produce, and writes nothing", async () => {
     // `revoked` is a state, and not one the canonical lifecycle reaches, so
     // a note recorded in it is a row no door could have written. The whole

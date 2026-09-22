@@ -25,8 +25,6 @@ const fn reached(id: &'static str, command: &'static str) -> Operation {
 pub const OPERATIONS: &[Operation] = &[
     reached("createItem", "items create"),
     reached("listItems", "items list"),
-    reached("promoteItem", "items promote"),
-    reached("reconcileItem", "items reconcile"),
     reached("getItemStats", "items stats"),
     reached("getItem", "items get"),
     reached("updateItem", "items update"),
