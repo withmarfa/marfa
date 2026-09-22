@@ -12,6 +12,11 @@ Under rebuild since 17 September 2026. The decisions in force live outside this 
 - No personal details of any machine or person in this repository: no absolute paths, hostnames, account names, credentials, or a real machine or person as an example value.
 - No time estimates anywhere.
 
+## Versions
+
+- A version exists only as a git tag, and tags are the maintainer's. An agent never creates a tag and never writes a version into a file: every manifest carries the placeholder `0.0.0`, `ci/version-fields.test.ts` refuses a tree where one does not, and `release.yml` stamps the tag's version into its own checkout with `scripts/release/stamp-version.sh`.
+- Every version is the previous one plus 0.0.1, whatever the change. The first is 0.0.1.
+
 ## Evidence
 
 - A test that asserts absence needs a witness: show the thing was producible before asserting it is not produced, or the assertion passes against nothing.
