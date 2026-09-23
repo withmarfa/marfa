@@ -18,15 +18,24 @@ import { fileURLToPath } from "node:url";
 import { SHIPPED_EDGE_TYPE_SHAPES } from "../generated/edge-type-registry.js";
 import { SHIPPED_TYPE_SHAPES } from "../generated/type-registry.js";
 
-/** The generator writes every key in code-unit order, so the text is stable. */
-export function shapesDigest(): string {
+export interface Shapes {
+  types: Record<string, unknown>;
+  edges: Record<string, unknown>;
+}
+
+/**
+ * The generator writes every key in code-unit order, so the text is stable.
+ * Takes the shapes as an argument so a test can show that a change to either
+ * family moves the digest.
+ */
+export function shapesDigest(
+  shapes: Shapes = {
+    types: SHIPPED_TYPE_SHAPES,
+    edges: SHIPPED_EDGE_TYPE_SHAPES,
+  },
+): string {
   return createHash("sha256")
-    .update(
-      JSON.stringify({
-        types: SHIPPED_TYPE_SHAPES,
-        edges: SHIPPED_EDGE_TYPE_SHAPES,
-      }),
-    )
+    .update(JSON.stringify({ types: shapes.types, edges: shapes.edges }))
     .digest("hex");
 }
 
