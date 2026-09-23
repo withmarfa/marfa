@@ -186,10 +186,10 @@ describe("what a caller's own code sees", () => {
   });
 
   it("releases the body of an answer it refuses", async () => {
-    let cancelled = false;
+    let canceled = false;
     const body = new ReadableStream({
       cancel() {
-        cancelled = true;
+        canceled = true;
       },
     });
     const client = createClient({
@@ -205,7 +205,7 @@ describe("what a caller's own code sees", () => {
     await expect(client.GET("/edge-types")).rejects.toBeInstanceOf(
       ContractMismatchError,
     );
-    expect(cancelled).toBe(true);
+    expect(canceled).toBe(true);
   });
 
   it("holds an answer from a request's own fetch too", async () => {
