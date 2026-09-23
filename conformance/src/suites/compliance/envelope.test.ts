@@ -150,10 +150,13 @@ describe("one envelope for every list and search", () => {
     },
   ];
 
-  it("names every door the document publishes as a page", async () => {
-    // Derived from the served document rather than counted, so a door that
-    // starts answering a page without a row here turns this red.
-    expect(doors.map((door) => door.template).sort()).toEqual(
+  it("names twenty-one doors, every one the document publishes as a page", async () => {
+    // The derived set holds the rows to the document, so a door that starts
+    // answering a page without a row here turns this red. The count holds
+    // both to the number the specification states, so a new page added with
+    // a row beside it turns this red too.
+    expect(doors).toHaveLength(21);
+    expect(doors.map((door) => `GET ${door.template}`).sort()).toEqual(
       pageDoors(await servedDocument()).sort(),
     );
   });
