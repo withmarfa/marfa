@@ -26,9 +26,8 @@
  *
  *   - Only `run:` blocks that set `pipefail`. GitHub runs a `run:` step under
  *     `bash -e`, not `-o pipefail`, so without an explicit set the pipeline
- *     already takes grep's own status and the shape is correct. `publish.yml`
- *     has five of them and every one is fine. A version of this check that
- *     ignored the set flagged all five.
+ *     already takes grep's own status and the shape is correct, and a check
+ *     that ignored the set would flag a correct block.
  *   - Only `if` conditions, because that is where a wrong answer becomes a
  *     wrong decision. A pipeline whose status is discarded, or one guarded
  *     with `|| true`, is outside this deliberately.
@@ -113,7 +112,7 @@ describe("a decision taken from a pipeline that can exit early", () => {
     expect(offendingLines(withPipefail)).toHaveLength(1);
 
     // The same line without the set is correct, and this is the bound that
-    // stops the check asserting something false about `publish.yml`.
+    // stops the check asserting something false about a block without it.
     const withoutPipefail = withPipefail.replace(
       "          set -euo pipefail\n",
       "",

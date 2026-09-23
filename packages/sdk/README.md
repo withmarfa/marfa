@@ -52,4 +52,4 @@ try {
 
 ## Versioning
 
-Major bumps when `@withmarfa/shared` major-bumps (every wire-shape change cascades). Minor bumps for additive SDK features. Patch for bug fixes. Tag pushes (`v*`) run `.github/workflows/publish.yml`, which publishes over OIDC and skips a package whose version is already on npm.
+The package carries the placeholder `0.0.0`. A version is a git tag on the repository, stamped into every manifest by `release.yml` when it builds; nothing on a branch holds one.

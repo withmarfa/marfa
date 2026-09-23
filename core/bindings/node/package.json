@@ -1,7 +1,6 @@
 {
-  "name": "@withmarfa/marfa-core",
-  "version": "0.1.0",
-  "private": true,
+  "name": "@withmarfa/core",
+  "version": "0.0.0",
   "description": "marfa-core as a Node module.",
   "license": "Apache-2.0",
   "engines": {
@@ -19,5 +18,13 @@
   },
   "devDependencies": {
     "@napi-rs/cli": "^3"
+  },
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "*.node"
+  ],
+  "publishConfig": {
+    "access": "public"
   }
 }

@@ -1,21 +1,16 @@
 /**
  * The published surface lock's own tests, plus the check that gates a merge.
  *
- * The gating test lives here, in the ordinary suite, rather than in a
- * generated-artifact freshness workflow, for the same reason the manifest
- * lock's does: those workflows are excluded from pull-request events, so
- * the only pre-merge guard is a manual dispatch somebody has to remember to
- * read. A plain test cannot be merged past, and the publish workflow will
- * not pack anything without a green run of this suite on the same commit,
- * so a surface that moved under a stale lock cannot reach npm either.
+ * The gating test lives here, in the ordinary suite, because a plain test
+ * cannot be merged past, and `release.yml` builds nothing without a green
+ * `ci.yml` run on the same commit, so a surface that moved under a stale
+ * lock cannot reach a registry either.
  *
  * Every case that asks whether something is REFUSED asserts on
- * `blockingViolations`, never on the raw list. This guard was reachable,
- * tested and green for its whole life while blocking nothing, because its
- * tests asked whether a violation was recorded and the build asked whether
- * one was blocking. Those are different questions and only the second one
- * stops anything. The cases that read a message are the exception, and
- * they assert on text rather than on refusal.
+ * `blockingViolations`, never on the raw list: a violation that is recorded
+ * and not blocking stops nothing, and only the blocking set is what the
+ * build asks. The cases that read a message are the exception, and they
+ * assert on text rather than on refusal.
  */
 import { describe, it, expect, afterEach } from "vitest";
 import {
@@ -29,13 +24,15 @@ import { tmpdir } from "node:os";
 import { resolve, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  assertLockShape,
   buildSurfaceLock,
   compareToSurfaceLock,
   blockingViolations,
+  describeSurfaceDelta,
   describeSurfaceViolation,
   hashSurface,
+  surfaceDelta,
   type PackageSurface,
-  type SurfaceLock,
 } from "./published-surface.js";
 import { readPublishedSurfaces } from "./read-surfaces.js";
 
@@ -51,7 +48,6 @@ const ALPHA_WIDENED = { name: "alpha", declaration: "type alpha = 1 | 2 | 3;" };
 function surface(over: Partial<PackageSurface> = {}): PackageSurface {
   return {
     name: "@withmarfa/example",
-    version: "1.0.0",
     exports: [ALPHA, BETA],
     ...over,
   };
@@ -106,42 +102,21 @@ describe("compareToSurfaceLock", () => {
     expect(compareToSurfaceLock(s, buildSurfaceLock(s))).toEqual([]);
   });
 
-  it("blocks a surface that moved under a standing version", () => {
-    // The defect this whole file exists for: shared published at 4.0.0,
-    // then lost exports with the version left alone.
+  it("blocks a surface that lost a name, and names it", () => {
     const locked = buildSurfaceLock([surface()]);
     const now = [surface({ exports: [ALPHA] })];
 
     const blocking = blockingViolations(compareToSurfaceLock(now, locked));
 
     expect(blocking).toHaveLength(1);
-    expect(blocking[0]).toMatchObject({
+    expect(blocking[0]).toEqual({
       kind: "surface-moved",
       name: "@withmarfa/example",
-      lockedVersion: "1.0.0",
-      version: "1.0.0",
-      lockedExports: 2,
-      currentExports: 1,
+      delta: { added: [], removed: ["beta"], changed: [] },
     });
   });
 
-  it("blocks a surface that moved under a version that moved too", () => {
-    // Bumping the version used to be the bypass: the comparison read the
-    // version first and returned before the hash was ever looked at, so
-    // the one change most likely to move a surface switched the check off.
-    const locked = buildSurfaceLock([surface()]);
-    const now = [surface({ version: "2.0.0", exports: [ALPHA] })];
-
-    const blocking = blockingViolations(compareToSurfaceLock(now, locked));
-
-    expect(blocking).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ kind: "surface-moved", version: "2.0.0" }),
-      ]),
-    );
-  });
-
-  it("blocks a shape change to an already-exported name", () => {
+  it("blocks a shape change to an already-exported name, and names it", () => {
     // No name added, none removed, and the count is identical.
     const locked = buildSurfaceLock([surface()]);
     const now = [surface({ exports: [ALPHA_WIDENED, BETA] })];
@@ -151,45 +126,52 @@ describe("compareToSurfaceLock", () => {
     expect(blocking).toHaveLength(1);
     expect(blocking[0]).toMatchObject({
       kind: "surface-moved",
-      lockedExports: 2,
-      currentExports: 2,
+      delta: { added: [], removed: [], changed: ["alpha"] },
     });
   });
 
-  it("is quiet when a version moves with the lock regenerated for it", () => {
-    // The normal, correct flow, and the one that has to stay silent:
-    // move the version, regenerate, commit both.
-    const now = [surface({ version: "2.0.0", exports: [ALPHA] })];
-    const regenerated = buildSurfaceLock(now);
-    expect(blockingViolations(compareToSurfaceLock(now, regenerated))).toEqual(
-      [],
-    );
-  });
-
-  it("blocks a version that moved and left the lock behind", () => {
-    // The surface is untouched, so nothing here is unsafe yet. It is
-    // refused because the recorded hash now describes a version nothing
-    // builds, which makes the next comparison meaningless rather than
-    // merely stale.
-    const locked = buildSurfaceLock([surface()]);
-    const now = [surface({ version: "1.0.1" })];
+  it("blocks an added name too, because the lock must describe the tree", () => {
+    const locked = buildSurfaceLock([surface({ exports: [ALPHA] })]);
+    const now = [surface()];
 
     const blocking = blockingViolations(compareToSurfaceLock(now, locked));
 
     expect(blocking).toHaveLength(1);
     expect(blocking[0]).toMatchObject({
-      kind: "version-moved",
-      from: "1.0.0",
-      to: "1.0.1",
+      kind: "surface-moved",
+      delta: { added: ["beta"], removed: [], changed: [] },
     });
   });
 
-  it("blocks both when a surface and its version moved together", () => {
+  it("blocks a lock whose names were edited under a standing hash", () => {
+    // The hash gates and the names are what a reader diffs; a map that no
+    // longer describes the hash would name the wrong moves.
     const locked = buildSurfaceLock([surface()]);
-    const now = [surface({ version: "2.0.0", exports: [ALPHA] })];
-    expect(
-      blockingViolations(compareToSurfaceLock(now, locked)).map((v) => v.kind),
-    ).toEqual(["surface-moved", "version-moved"]);
+    const edited = {
+      "@withmarfa/example": {
+        hash: locked["@withmarfa/example"]!.hash,
+        exports: { alpha: locked["@withmarfa/example"]!.exports.alpha! },
+      },
+    };
+    const blocking = blockingViolations(
+      compareToSurfaceLock([surface()], edited),
+    );
+    expect(blocking).toHaveLength(1);
+    expect(blocking[0]).toMatchObject({
+      kind: "names-stale",
+      delta: { added: ["beta"], removed: [], changed: [] },
+    });
+    expect(describeSurfaceViolation(blocking[0]!)).toContain("edited by hand");
+  });
+
+  it("is quiet once the lock is regenerated for the moved surface", () => {
+    // The normal, correct flow, and the one that has to stay silent:
+    // change the surface, regenerate, commit both.
+    const now = [surface({ exports: [ALPHA] })];
+    const regenerated = buildSurfaceLock(now);
+    expect(blockingViolations(compareToSurfaceLock(now, regenerated))).toEqual(
+      [],
+    );
   });
 
   it("blocks a publishable package the lock has never seen", () => {
@@ -207,33 +189,78 @@ describe("compareToSurfaceLock", () => {
 });
 
 describe("describeSurfaceViolation", () => {
-  it("names the package and both counts when a name is lost", () => {
+  it("names the package and the name that was lost", () => {
     const locked = buildSurfaceLock([surface()]);
     const now = [surface({ exports: [ALPHA] })];
     const text = describeSurfaceViolation(
       compareToSurfaceLock(now, locked)[0]!,
     );
     expect(text).toContain("@withmarfa/example");
-    expect(text).toContain("1.0.0");
-    // The verdict is the policy, so it is asserted as the policy rather than
-    // as a substring: a removal is a minor with a footer, and the message must
-    // not go on calling it a major while the convention calls it a minor.
-    expect(text).toContain("at least a minor");
-    expect(text).toContain("footer");
-    expect(text).not.toContain("is a major");
+    expect(text).toContain("removed beta");
+    // The verdict is the policy, so it is asserted as the policy.
+    expect(text).toContain("a break for a consumer");
   });
 
-  it("does not claim the names held when only the count did", () => {
-    // A rename keeps the count and is a removal plus an addition, so a
-    // message promising the names are the same would send the reader
-    // hunting for a widened union that is not there.
+  it("says a rename is a removal and an addition, not a held name", () => {
+    // A rename keeps the count, so a message about counts would send the
+    // reader hunting for a widened union that is not there.
     const locked = buildSurfaceLock([surface()]);
     const renamed = [surface({ exports: [{ ...ALPHA, name: "gamma" }, BETA] })];
     const text = describeSurfaceViolation(
       compareToSurfaceLock(renamed, locked)[0]!,
     );
-    expect(text).toContain("Still 2 exported names");
-    expect(text).toContain("a name was swapped");
+    expect(text).toContain("added gamma");
+    expect(text).toContain("removed alpha");
+  });
+});
+
+describe("assertLockShape", () => {
+  it("refuses what a comparison would skip", () => {
+    for (const bad of [
+      {},
+      [],
+      { "@withmarfa/example": { hash: "x" } },
+      { "@withmarfa/example": { hash: "x", exports: {} } },
+      { "@withmarfa/example": { hash: "x", exports: [] } },
+    ]) {
+      expect(() => assertLockShape(bad, "a lock")).toThrow();
+    }
+  });
+
+  it("accepts what the generator writes", () => {
+    const lock = buildSurfaceLock([surface()]);
+    expect(assertLockShape(lock, "a lock")).toBe(lock);
+  });
+});
+
+describe("surfaceDelta", () => {
+  it("reads added, removed and changed names off two entries", () => {
+    const before = buildSurfaceLock([surface()])["@withmarfa/example"]!;
+    const after = buildSurfaceLock([
+      surface({
+        exports: [
+          ALPHA_WIDENED,
+          { name: "gamma", declaration: "type gamma = 1;" },
+        ],
+      }),
+    ])["@withmarfa/example"]!;
+    expect(surfaceDelta(before, after)).toEqual({
+      added: ["gamma"],
+      removed: ["beta"],
+      changed: ["alpha"],
+    });
+  });
+
+  it("reports nothing when the recordings agree", () => {
+    const entry = buildSurfaceLock([surface()])["@withmarfa/example"]!;
+    expect(surfaceDelta(entry, entry)).toEqual({
+      added: [],
+      removed: [],
+      changed: [],
+    });
+    expect(describeSurfaceDelta(surfaceDelta(entry, entry))).toBe(
+      "no name moved",
+    );
   });
 });
 
@@ -277,7 +304,6 @@ describe("readPublishedSurfaces", () => {
       join(pkg, "package.json"),
       JSON.stringify({
         name: "@withmarfa/fixture",
-        version: "1.0.0",
         exports: exportsMap,
       }),
     );
@@ -294,15 +320,10 @@ describe("readPublishedSurfaces", () => {
   });
 
   it("records the shape behind a re-exported name, not the specifier", () => {
-    // The same failure shape, one level down. Every root export of two
-    // published packages arrives through `export { X } from "./y.js"`, and
-    // if an alias is not resolved the printer emits the specifier —
-    // `Inner as Outer` — which is non-empty, hashes consistently, and
-    // records nothing about the shape. That is the names-only surface this
-    // guard was repaired to stop being.
-    //
-    // No fixture exercised a re-export at all, so collapsing the alias
-    // resolution passed every case here.
+    // A root export that arrives through `export { X } from "./y.js"` is
+    // an alias, and unresolved the printer emits the specifier, `Inner as
+    // Outer`, which is non-empty, hashes consistently and records nothing
+    // about the shape: a names-only surface wearing a declaration.
     const [s] = readFixture(
       ROOT_ONLY,
       "export interface Inner { a: string }\n",
@@ -316,10 +337,10 @@ describe("readPublishedSurfaces", () => {
 
   it("moves when an exported constant becomes reassignable", () => {
     // `const` and `let` live on the enclosing declaration list rather than
-    // on the declaration a symbol points at, so the printer rendered both
-    // as `X: string` and widening a binding moved no hash. It compiles
-    // everywhere and breaks any consumer relying on the value being fixed,
-    // which makes it the quiet direction and the one worth catching.
+    // on the declaration a symbol points at, so the printer renders both
+    // as `X: string`. Widening a binding compiles everywhere and breaks any
+    // consumer relying on the value being fixed, which makes it the quiet
+    // direction and the one worth catching.
     const asConst = readFixture(
       ROOT_ONLY,
       "export {};\n",
@@ -339,7 +360,7 @@ describe("readPublishedSurfaces", () => {
     // A name is only importable through the subpath that exports it, so
     // moving one between entry points, or renaming an entry point, breaks
     // consumers while leaving the file, the names and the declarations
-    // untouched. Recording the file alone hashed that to nothing.
+    // untouched; only the subpath in the hash can see it.
     const twoEntryPoints = {
       ".": { types: "./dist/index.d.ts" },
       "./helper": { types: "./dist/helper.d.ts" },
@@ -372,8 +393,8 @@ describe("readPublishedSurfaces", () => {
   it("stands still when a doc comment inside a declaration is reworded", () => {
     // `getText` drops only the trivia in FRONT of a node, so a comment on
     // an interface field sits inside the declaration. Hashing it would
-    // demand a regenerated lock for a typo fix, and reflexive
-    // regeneration is how this guard was hollowed out the first time.
+    // demand a regenerated lock for a typo fix, and a lock regenerated by
+    // reflex is one nobody reads.
     const plain = readFixture(
       ROOT_ONLY,
       "export interface Helper {\n  /** first wording */\n  a: string;\n}\n",
@@ -416,7 +437,10 @@ describe("readPublishedSurfaces", () => {
 
 describe("the tree against the committed lock", () => {
   const surfaces = readPublishedSurfaces(PACKAGES_DIR);
-  const lock = JSON.parse(readFileSync(LOCK_PATH, "utf8")) as SurfaceLock;
+  const lock = assertLockShape(
+    JSON.parse(readFileSync(LOCK_PATH, "utf8")),
+    "the committed lock",
+  );
 
   it("reads a surface for every publishable package", () => {
     // An empty read hashes consistently and would pass forever, so the
@@ -429,20 +453,11 @@ describe("the tree against the committed lock", () => {
 
   it("reads a declaration for every exported name", () => {
     // An empty declaration list hashes consistently, so a reader that
-    // stopped resolving them would pass every case above.
-    //
-    // The emptiness has to be READ rather than string-matched, and two
-    // earlier versions of this test did not manage it. The first asserted
-    // `not.toBe("[]")` against a value that cannot be `"[]"`, because
-    // `declaration` is encoded twice. The second parsed the outer layer
-    // and asserted its length, which is structurally at least one for
-    // every key that exists at all — a key is only present because
-    // something was added to its set. Both could pass under any mutation.
-    //
-    // What is asserted here instead is content: every entry carries a
-    // subpath a consumer can import and at least one declaration text,
-    // and that text is not empty. Arity alone is what let the last two
-    // versions through.
+    // stopped resolving them would pass every case above. `declaration` is
+    // encoded twice, and the outer layer has at least one entry for every
+    // key that exists at all, so neither a string match nor the outer
+    // length can see emptiness: what is asserted is content, a subpath a
+    // consumer can import and a non-empty declaration text behind it.
     for (const s of surfaces) {
       for (const e of s.exports) {
         for (const pair of JSON.parse(e.declaration) as string[]) {
@@ -467,7 +482,7 @@ describe("the tree against the committed lock", () => {
     }
   });
 
-  it("locks every publishable package and nothing else", () => {
+  it("locks every publishable workspace package and nothing else", () => {
     expect(Object.keys(lock).sort()).toEqual(
       surfaces.map((s) => s.name).sort(),
     );

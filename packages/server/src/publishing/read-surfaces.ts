@@ -2,15 +2,16 @@
  * Read every publishable package's export surface off the built tree.
  *
  * A package is publishable when its `package.json` does not say
- * `"private": true`, which is the same test the publish workflow makes by
- * having a step per package. Deriving the set rather than listing it means
- * a new published package is locked the day it appears instead of the day
- * somebody remembers to add it here.
+ * `"private": true`, which is npm's own test. Deriving the set rather than
+ * listing it means a new published package is locked the day it appears
+ * instead of the day somebody remembers to add it here. The set is the pnpm
+ * workspace under `packages/`; the Node binding under `core/bindings/node`
+ * is outside the workspace and its declarations are napi's, so it is not
+ * locked here.
  *
- * Every entry point counts, not just the root. Both published packages
- * declare exactly one today, so the rule costs nothing now; it is here so
- * that adding a subpath export does not quietly widen the surface without
- * widening the lock. An entry point that names no type
+ * Every entry point counts, not just the root, so that adding a subpath
+ * export does not quietly widen the surface without widening the lock. An
+ * entry point that names no type
  * declarations is an error rather than a skip: dropping one silently
  * leaves a smaller surface that still hashes consistently and passes
  * forever, which is the failure this whole file is built against.
@@ -33,7 +34,6 @@ import type { PackageSurface, SurfaceExport } from "./published-surface.js";
 
 interface PackageJson {
   name?: string;
-  version?: string;
   private?: boolean;
   exports?: Record<string, unknown>;
 }
@@ -307,7 +307,7 @@ export function readPublishedSurfaces(packagesDir: string): PackageSurface[] {
     if (!existsSync(pkgPath)) continue;
     const pkg = JSON.parse(readFileSync(pkgPath, "utf8")) as PackageJson;
     if (pkg.private === true) continue;
-    if (!pkg.name || !pkg.version) continue;
+    if (!pkg.name) continue;
 
     const pkgRoot = realPath(resolve(pkgDir));
     const entryPoints = entryDeclarations(pkgDir, pkg, pkg.name);
@@ -340,7 +340,6 @@ export function readPublishedSurfaces(packagesDir: string): PackageSurface[] {
 
     surfaces.push({
       name: pkg.name,
-      version: pkg.version,
       exports: [...exported].map(([name, texts]) => ({
         name,
         declaration: JSON.stringify([...texts].sort()),
