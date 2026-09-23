@@ -983,4 +983,51 @@ describe("a claim the store did not grant", () => {
     expect(calls.route).toBe(1);
     expect(calls.completed).toBe(1);
   });
+
+  it("refuses a retry that crosses a move of the contract, and does not write again", async () => {
+    const errorHandler = createErrorHandler({ errorWebhookUrl: "" });
+    let writes = 0;
+    const served = (contract: number) => {
+      const app = new Hono<AppEnv>();
+      app.onError(errorHandler);
+      app.use("/w", async (c, next) => {
+        c.set("apiKey", {
+          id: "cred-contract",
+          source: "fixture",
+          role: "admin",
+        } as unknown as ApiKey);
+        c.set("authType", "api_key");
+        await next();
+      });
+      app.use(
+        "/w",
+        idempotencyMiddleware({ storage: ctx.storage, errorHandler, contract }),
+      );
+      app.post("/w", (c) => {
+        writes += 1;
+        return c.json({ ok: true }, 201);
+      });
+      return app;
+    };
+    const idempotencyKey = key();
+    const send = (contract: number) =>
+      served(contract).request("/w", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": idempotencyKey,
+        },
+        body: JSON.stringify({ body: "one write" }),
+      });
+
+    expect((await send(1)).status).toBe(201);
+    // The witness: under the same contract the retry is a replay.
+    const replayed = await send(1);
+    expect(replayed.status).toBe(201);
+    expect(replayed.headers.get("Idempotency-Replayed")).toBe("true");
+    const crossed = await send(2);
+    expect(crossed.status).toBe(422);
+    expect(crossed.headers.get("X-Error-Code")).toBe("idempotency_key_reused");
+    expect(writes).toBe(1);
+  });
 });

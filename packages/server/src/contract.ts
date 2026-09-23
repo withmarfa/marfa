@@ -25,7 +25,7 @@ export const CONTRACT_VERSION = 1;
 
 /**
  * The response header that carries the contract version. On every answer
- * rather than only the root, so a client checks the answer it is about to
- * read instead of spending a round trip on the root first.
+ * the application gives, so a client checks the answer it is about to read
+ * against the contract it was generated for.
  */
 export const CONTRACT_HEADER = "X-Marfa-Contract";

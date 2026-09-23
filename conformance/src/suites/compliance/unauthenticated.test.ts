@@ -17,8 +17,9 @@ afterAll(async () => {
 /**
  * Two doors are open by design. Dynamic client registration, because RFC
  * 7591 lets a client register before it holds anything; and the root,
- * because a client reads the contract there before it holds a credential to
- * send. Every other published door must turn a bare request away.
+ * because a caller with no credential yet reads there which instance
+ * answers and which contract it speaks. Every other published door must
+ * turn a bare request away.
  */
 const OPEN_DOORS = new Set(["POST /auth/oauth2/register", "GET /"]);
 

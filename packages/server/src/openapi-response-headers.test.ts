@@ -58,8 +58,10 @@ const ANSWERED_AHEAD = "413";
 
 /**
  * The registration door is answered by the sign-in library's own response,
- * which none of the middleware headers reach. Recorded as an open question
- * rather than declared away, so the wire half leaves it out by name.
+ * which the prepared headers (`X-Request-ID`, the limiter's trio) never
+ * reach; the contract header is stamped on the way out and does. Recorded as
+ * an open question rather than declared away, so the prepared-header wire
+ * check leaves it out by name.
  */
 const UNSTAMPED_ON_THE_WIRE = new Set(["POST /auth/oauth2/register"]);
 
@@ -547,8 +549,9 @@ describe("the server sends the headers the spec declares", () => {
         );
       }
     }
-    // The refusals the chain answers ahead of the routes were reached, so
-    // the loop did not pass by only ever meeting route handlers.
+    // A 401 and the body cap's 413 are answered by the chain rather than a
+    // route, and an unmatched path by the fallback, so reaching all three
+    // shows the loop met more than route handlers.
     expect([...statuses]).toEqual(expect.arrayContaining([200, 401, 404, 413]));
     expect(wrong).toEqual([]);
   });

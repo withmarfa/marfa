@@ -1,5 +1,6 @@
 import { OpenAPIHono } from "@hono/zod-openapi";
 import {
+  EXPOSED_RESPONSE_HEADERS,
   finalizeOpenAPISpec,
   OPENAPI_DOCUMENT_INFO,
 } from "./openapi-finalize.js";
@@ -171,6 +172,7 @@ export function createApp(
     app.use(
       "*",
       cors({
+        exposeHeaders: [...EXPOSED_RESPONSE_HEADERS],
         origin: (origin) => {
           if (!origin) return config.corsOrigins[0];
           if (config.corsOrigins.includes(origin)) return origin;

@@ -8,7 +8,7 @@ Status values:
 - **refusals only**: the success path cannot be arranged over the wire; the reason is in the row and the refusals are asserted. The reason is what a row has to state, not the conclusion, because a precondition can turn out to be arrangeable through a third door.
 - **unpublished**: served and asserted, but absent from the document; the row goes when the server drops the door, and its status changes when the document gains it.
 
-`compliance/unauthenticated.test.ts` asserts `401 unauthorized` for every published operation but `POST /auth/oauth2/register`, which RFC 7591 leaves open, and `GET /`, where a client reads the contract before it holds a credential. `compliance/instance.test.ts` also fails when a row other than an unpublished one names an operation the document no longer publishes.
+`compliance/unauthenticated.test.ts` asserts `401 unauthorized` for every published operation but `POST /auth/oauth2/register`, which RFC 7591 leaves open, and `GET /`, where a caller with no credential yet reads which instance answers and which contract it speaks. `compliance/instance.test.ts` also fails when a row other than an unpublished one names an operation the document no longer publishes.
 
 **Two gates hold this table to the server, one from each side.** Those two read the document and ask what the server does with it, which cannot see a door the document never mentioned: a route added without an entry is invisible to anything that starts from the document. The server's own `openapi-routes.test.ts` asks the reverse, walking the router's table and failing on a door that is neither published nor named unpublished there. An **unpublished** row above is a door that walk has classified.
 

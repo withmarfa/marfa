@@ -22,7 +22,7 @@
 import { IDEMPOTENT_WRITE_DOORS } from "./middleware/idempotency.js";
 import { refusalComponentName } from "./openapi.js";
 import { toOpenApiPath } from "./openapi-path.js";
-import { CONTRACT_VERSION } from "./contract.js";
+import { CONTRACT_HEADER, CONTRACT_VERSION } from "./contract.js";
 import { bodyCapFor } from "./middleware/body-cap.js";
 
 // Loose typing — the document is a plain OpenAPI 3.1 object. `paths` is typed
@@ -197,9 +197,9 @@ const IDEMPOTENT_OPERATIONS = new Set(
  * meaning is written once rather than restated on every operation.
  */
 const RESPONSE_HEADER_COMPONENTS: Record<string, unknown> = {
-  "X-Marfa-Contract": {
+  [CONTRACT_HEADER]: {
     description:
-      "The contract version this server speaks, the same integer as the document's `info.version` and the root's `contract`. Sent on every response, refusals included, so a client can check the answer it is about to read rather than reading the root first. A client generated for another number cannot trust the body.",
+      "The contract version this server speaks, the same integer as the document's `info.version` and the root's `contract`. Sent on every response the application gives, refusals included, so a client can check the answer it is about to read. A client generated for another number cannot trust the body. A request refused by the HTTP layer before it reaches the application, such as one with a malformed host, is answered without it.",
     schema: { type: "integer", minimum: 1 },
   },
   "X-Request-ID": {
@@ -240,7 +240,16 @@ const RESPONSE_HEADER_COMPONENTS: Record<string, unknown> = {
 };
 
 /** Headers on every response, whatever the operation or the status. */
-const UNIVERSAL_RESPONSE_HEADERS = ["X-Marfa-Contract", "X-Request-ID"];
+const UNIVERSAL_RESPONSE_HEADERS = [CONTRACT_HEADER, "X-Request-ID"];
+
+/**
+ * Every header the chain sets that a browser hides from a page on another
+ * origin unless CORS exposes it. None is on the safelist, and a client that
+ * cannot see `X-Marfa-Contract` refuses every success it is sent.
+ */
+export const EXPOSED_RESPONSE_HEADERS: readonly string[] = Object.keys(
+  RESPONSE_HEADER_COMPONENTS,
+);
 
 /** Headers the rate limiter sets on every response that passes through it. */
 const RATE_LIMIT_HEADERS = [

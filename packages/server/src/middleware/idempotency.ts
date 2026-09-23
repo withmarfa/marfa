@@ -5,6 +5,7 @@ import type { AppEnv } from "./auth.js";
 import { log } from "./logger.js";
 import type { Storage } from "../storage/interface.js";
 import { withPreparedHeaders } from "../prepared-headers.js";
+import { CONTRACT_VERSION } from "../contract.js";
 
 /**
  * A write that is retried after a lost response learns what its first
@@ -233,9 +234,19 @@ function canonicalPath(pathname: string): string {
     .join("/");
 }
 
-async function fingerprint(c: Context<AppEnv>, body: string): Promise<string> {
+async function fingerprint(
+  c: Context<AppEnv>,
+  body: string,
+  contract: number,
+): Promise<string> {
   const url = new URL(c.req.url);
   const material = [
+    // A stored answer is shaped for the contract it was written under, and
+    // a replay goes out under whatever contract the server now speaks. So a
+    // retry that crosses a move of the number digests differently and is
+    // refused as a reused key, rather than replayed under a header that
+    // vouches for a shape the body does not have.
+    String(contract),
     c.req.method,
     canonicalPath(url.pathname),
     // The query is left as written, and the reason is checkable rather
@@ -317,8 +328,10 @@ function errorCodeOf(body: string): string | null {
 export function idempotencyMiddleware(opts: {
   storage: Storage;
   errorHandler: ErrorHandler<AppEnv>;
+  /** The contract the answers are shaped for; a test names another. */
+  contract?: number;
 }): MiddlewareHandler<AppEnv> {
-  const { storage, errorHandler } = opts;
+  const { storage, errorHandler, contract = CONTRACT_VERSION } = opts;
 
   return createMiddleware<AppEnv>(async (c, next) => {
     const key = c.req.header(HEADER);
@@ -356,7 +369,7 @@ export function idempotencyMiddleware(opts: {
     // stream stays unconsumed and the validator parses it as usual.
     const bodyText =
       c.req.raw.body === null ? "" : await c.req.raw.clone().text();
-    const digest = await fingerprint(c, bodyText);
+    const digest = await fingerprint(c, bodyText, contract);
 
     const held = await acquire(storage, key, digest);
     if ("answer" in held) return withPreparedHeaders(c, held.answer);

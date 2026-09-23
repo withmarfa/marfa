@@ -1,5 +1,7 @@
 import { describe, expect, it, afterEach } from "vitest";
 import { createApp } from "./app.js";
+import { CONTRACT_HEADER } from "./contract.js";
+import { EXPOSED_RESPONSE_HEADERS } from "./openapi-finalize.js";
 import { ensureInstanceId } from "./storage/instance-id.js";
 import { createSqliteStorage } from "./storage/sqlite/index.js";
 import { createBlobLayer } from "./storage/blob-layer.js";
@@ -130,5 +132,20 @@ describe("CORS localhost auto-reflect gating", () => {
       headers: { Origin: ALLOWED_ORIGIN },
     });
     expect(res.headers.get("access-control-allow-origin")).toBe(ALLOWED_ORIGIN);
+  });
+
+  it("exposes every header the chain sets to a page on another origin", async () => {
+    ctx = await buildCtx(true);
+    const res = await ctx.app.request("/health", {
+      headers: { Origin: ALLOWED_ORIGIN },
+    });
+    const exposed = (res.headers.get("access-control-expose-headers") ?? "")
+      .split(",")
+      .map((name) => name.trim().toLowerCase());
+    // The one a generated client cannot work without, then the rest.
+    expect(exposed).toContain(CONTRACT_HEADER.toLowerCase());
+    for (const name of EXPOSED_RESPONSE_HEADERS) {
+      expect(exposed).toContain(name.toLowerCase());
+    }
   });
 });
