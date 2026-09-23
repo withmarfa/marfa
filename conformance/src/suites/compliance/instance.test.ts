@@ -6,7 +6,10 @@ import {
   cleanup,
   getOperatorClient,
 } from "../../utils/setup.js";
-import { publishedOperations } from "../../utils/openapi.js";
+import {
+  expectMatchesSchema,
+  publishedOperations,
+} from "../../utils/openapi.js";
 import { coverageRows } from "../../utils/coverage-table.js";
 import { readTarGzEntry } from "../../utils/archive.js";
 
@@ -104,6 +107,7 @@ describe("the instance", () => {
     expect(r.data.name).toBe("marfa");
     expect(typeof r.data.version).toBe("string");
     expect(r.data.instance_id).toMatch(UUID_V7);
+    await expectMatchesSchema("GET", "/", 200, r.data);
     // Every entry held against a door, by the case below.
     expect([...(r.data.features as string[])].sort()).toEqual(
       FEATURE_DOORS.map((door) => door.feature).sort(),
@@ -167,6 +171,20 @@ describe("the instance", () => {
       (name) => !/^[a-z][a-z0-9]*(_[a-z0-9]+)*$/.test(name),
     );
     expect(odd).toEqual([]);
+  });
+
+  it("carries one contract version at the root and in its document", async () => {
+    const root = await client.root();
+    expect(root.ok).toBe(true);
+    expect(Number.isInteger(root.data.contract)).toBe(true);
+    expect(root.data.contract).toBeGreaterThanOrEqual(1);
+    const document = (await (await fetch(`${apiUrl}/openapi.json`)).json()) as {
+      info: { version: string };
+    };
+    expect(document.info.version).toBe(String(root.data.contract));
+    // The build is a different number and moves on a deploy; the two are
+    // not the same field under two names.
+    expect(root.data.version).not.toBe(String(root.data.contract));
   });
 
   it("names itself the same way at the root, at /config and in an archive", async () => {

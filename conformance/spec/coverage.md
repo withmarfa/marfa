@@ -8,7 +8,7 @@ Status values:
 - **refusals only**: the success path cannot be arranged over the wire; the reason is in the row and the refusals are asserted. The reason is what a row has to state, not the conclusion, because a precondition can turn out to be arrangeable through a third door.
 - **unpublished**: served and asserted, but absent from the document; the row goes when the server drops the door, and its status changes when the document gains it.
 
-`compliance/unauthenticated.test.ts` asserts `401 unauthorized` for every published operation but `POST /auth/oauth2/register`, which RFC 7591 leaves open, so no row cites it. `compliance/instance.test.ts` also fails when a row other than an unpublished one names an operation the document no longer publishes.
+`compliance/unauthenticated.test.ts` asserts `401 unauthorized` for every published operation but `POST /auth/oauth2/register`, which RFC 7591 leaves open, and `GET /`, where a client reads the contract before it holds a credential. `compliance/instance.test.ts` also fails when a row other than an unpublished one names an operation the document no longer publishes.
 
 **Two gates hold this table to the server, one from each side.** Those two read the document and ask what the server does with it, which cannot see a door the document never mentioned: a route added without an entry is invisible to anything that starts from the document. The server's own `openapi-routes.test.ts` asks the reverse, walking the router's table and failing on a door that is neither published nor named unpublished there. An **unpublished** row above is a door that walk has classified.
 
@@ -127,6 +127,7 @@ Fixture paths are under `src/suites/`.
 | Operation     | Status  | Fixture                                                                | Notes                                                                                                                                      |
 | ------------- | ------- | ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
 | `GET /audit`  | covered | `compliance/audit.test.ts`, `compliance/edge-events.test.ts`           | Filters, exclusive bounds, cursor, `audit.read` gate.                                                                                      |
+| `GET /`       | covered | `compliance/instance.test.ts`, `compliance/unauthenticated.test.ts`    | Name, build, `instance_id`, the contract version and the feature list, without a credential.                                               |
 | `GET /config` | covered | `compliance/schema-enforcement.test.ts`, `compliance/instance.test.ts` | Carries `instance_id` beside the levers.                                                                                                   |
 | `PUT /config` | covered | `compliance/schema-enforcement.test.ts`                                | Strict mode, source allowlist, source filter; wholesale replacement; `instance_id` round trips and one naming another instance is refused. |
 
@@ -158,7 +159,6 @@ Fixture paths are under `src/suites/`.
 | Operation                                          | Status      | Fixture                       | Notes                                            |
 | -------------------------------------------------- | ----------- | ----------------------------- | ------------------------------------------------ |
 | `GET /health`                                      | unpublished | `compliance/instance.test.ts` |                                                  |
-| `GET /`                                            | unpublished | `compliance/instance.test.ts` | Name, build, `instance_id` and the feature list. |
 | `GET /openapi.json`                                | unpublished | `compliance/instance.test.ts` |                                                  |
 | `GET /.well-known/oauth-authorization-server/auth` | unpublished | `compliance/oauth.test.ts`    | The authorization server metadata.               |
 | `POST /auth/oauth2/token`                          | unpublished | `compliance/oauth.test.ts`    | Refusals only: a grant needs a signed-in person. |

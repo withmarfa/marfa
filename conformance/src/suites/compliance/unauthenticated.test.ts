@@ -15,11 +15,12 @@ afterAll(async () => {
 });
 
 /**
- * Dynamic client registration is an open door by design: RFC 7591 lets a
- * client register before it holds anything. Every other published door must
- * turn a bare request away.
+ * Two doors are open by design. Dynamic client registration, because RFC
+ * 7591 lets a client register before it holds anything; and the root,
+ * because a client reads the contract there before it holds a credential to
+ * send. Every other published door must turn a bare request away.
  */
-const OPEN_DOORS = new Set(["POST /auth/oauth2/register"]);
+const OPEN_DOORS = new Set(["POST /auth/oauth2/register", "GET /"]);
 
 /**
  * Nothing about these requests is well formed, which is the point. The

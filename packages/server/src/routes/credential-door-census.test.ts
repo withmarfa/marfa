@@ -102,6 +102,8 @@ function documentedDoors(): Set<string> {
  * one, so the registration door is open by construction.
  */
 const OPEN_OPERATIONS: Record<string, string> = {
+  "GET /":
+    "the instance's description, where a client reads the contract before it holds a credential to send",
   "POST /auth/oauth2/register":
     "dynamic client registration, which is how a client comes to hold anything",
   "GET /blobs/:hash/fetch":

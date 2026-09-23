@@ -11,6 +11,10 @@ What one deployment says about itself. The credential chapters state what a key 
 
 3. The root's `features` array names a surface this deployment serves, and every entry has a route: a request at the door each one names is answered by something other than `404 not_found`, which is what the server gives a path it does not serve. `inbound-webhooks` is absent from the array and its door answers `404 not_found`, so both halves of an advertisement that was withdrawn are held. Entries are lower_snake_case. `compliance/instance.test.ts › serves a route for every feature it advertises`, `› advertises no inbound webhook feature, and serves no inbound door`, `› names every advertised feature in one convention`.
 
+## The contract
+
+4. **The root and the document carry one contract version**: the root answers it as `contract`, a positive integer, and the document's `info.version` is the same number. It is not the build, which the root answers as `version` and which moves on every deploy. It moves only when a client generated for the old number cannot read the new answers: a path, a method, an operation, a field, an enum member, a status or a refusal code removed or reshaped. An addition does not move it. `compliance/instance.test.ts › carries one contract version at the root and in its document`, `› describes itself at the root`.
+
 **That the value is minted once and survives a restart is not stated here, because nothing over HTTP can see it.** Both halves — a mint that answers the same value to every caller of a fresh database, and a value that a reopen of the same database returns — are properties of the server's own storage, asserted in `packages/server/src/storage/instance-id.test.ts`. A fixture run against an already-booted server reads whatever that server holds and cannot tell a durable id from one minted at the start of the run.
 
 What the identity is _not_ — never a prefix on an identifier, never a permission or a permission root, never a column on an item — is a decision about vocabulary rather than an observable behavior, so it is stated in `GLOSSARY.md` and carries no statement here.
