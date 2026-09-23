@@ -38,7 +38,10 @@ export class ContractUnreadableError extends Error {
 }
 
 export interface ClientOptions {
-  /** The instance's origin, e.g. `https://marfa.example.com`. */
+  /**
+   * Where the instance is served: an `http` or `https` URL, with a path
+   * prefix where the instance sits under one, and no query or fragment.
+   */
   baseUrl: string;
   /** An API key or an access token, sent as a bearer. */
   credential: string;
@@ -48,23 +51,40 @@ export interface ClientOptions {
 
 export type MarfaClient = Client<paths>;
 
+/** How long the root may take to answer before the check fails. */
+const ROOT_BUDGET_MS = 10_000;
+
 /**
  * A typed client for one instance. Before its first request it reads the
  * root once, without the credential, and refuses a server whose `contract`
  * is not the one this client was generated for with
  * {@link ContractMismatchError}, or one whose root cannot be read with
  * {@link ContractUnreadableError}. The credential is sent only under the
- * configured `baseUrl`, never to the root.
+ * configured `baseUrl`, never to the root, and never after a redirect.
  */
 export function createClient(options: ClientOptions): MarfaClient {
   const fetcher = options.fetch ?? globalThis.fetch;
-  const baseUrl = options.baseUrl.replace(/\/+$/, "");
+  const base = new URL(options.baseUrl);
+  if (base.protocol !== "http:" && base.protocol !== "https:") {
+    throw new TypeError(`baseUrl must be http or https, not ${base.protocol}`);
+  }
+  if (base.search !== "" || base.hash !== "") {
+    throw new TypeError(
+      "baseUrl names where the instance is served, with no query or fragment",
+    );
+  }
+  const baseUrl = base.href.replace(/\/+$/, "");
   // Normalized as a request's own URL is, so the comparisons below are
   // between two spellings of the same thing.
   const root = new URL(`${baseUrl}/`).href;
   let checked: Promise<void> | undefined;
   const checkContract = async (): Promise<void> => {
-    const response = await fetcher(root);
+    // A redirect is refused rather than followed: the contract read has to
+    // be the configured server's, not whatever it points at.
+    const response = await fetcher(root, {
+      redirect: "error",
+      signal: AbortSignal.timeout(ROOT_BUDGET_MS),
+    });
     if (!response.ok) throw new ContractUnreadableError(response.status);
     let served: unknown;
     try {
@@ -74,8 +94,30 @@ export function createClient(options: ClientOptions): MarfaClient {
     }
     if (served !== CONTRACT_VERSION) throw new ContractMismatchError(served);
   };
+  /** The check, abandoned by this request if its own signal aborts first. */
+  const awaitCheck = (signal: AbortSignal): Promise<void> => {
+    checked ??= checkContract().catch((error: unknown) => {
+      // A failure is not remembered as a pass: the next request asks again.
+      checked = undefined;
+      throw error;
+    });
+    const reason = () =>
+      signal.reason instanceof Error
+        ? signal.reason
+        : new Error("The request was aborted before the contract was read.");
+    if (signal.aborted) return Promise.reject(reason());
+    return new Promise<void>((resolve, reject) => {
+      const abandon = () => {
+        reject(reason());
+      };
+      signal.addEventListener("abort", abandon, { once: true });
+      checked?.then(resolve, reject).finally(() => {
+        signal.removeEventListener("abort", abandon);
+      });
+    });
+  };
   const gate: Middleware = {
-    async onRequest({ request }) {
+    async onRequest({ request, params }) {
       // A per-request `baseUrl` would otherwise carry the credential to a
       // server whose contract was never read.
       if (request.url !== root && !request.url.startsWith(root)) {
@@ -83,17 +125,24 @@ export function createClient(options: ClientOptions): MarfaClient {
           `This client is for ${baseUrl}; it refuses to send ${request.url}.`,
         );
       }
-      checked ??= checkContract().catch((error: unknown) => {
-        // A failure is not remembered as a pass: the next request asks again.
-        checked = undefined;
-        throw error;
-      });
-      await checked;
-      // The root answers without a credential, and is not sent one.
-      if (request.url.split(/[?#]/)[0] !== root) {
-        request.headers.set("Authorization", `Bearer ${options.credential}`);
+      // A path segment of `.` or `..` survives encoding and is resolved
+      // away, sending the call to another route than the one named.
+      for (const value of Object.values(params.path ?? {})) {
+        if (value === "." || value === "..") {
+          throw new Error(
+            `A path parameter of ${JSON.stringify(value)} names no resource.`,
+          );
+        }
       }
-      return request;
+      await awaitCheck(request.signal);
+      // The root answers without a credential, and is not sent one. A
+      // redirect is refused, so the credential never leaves the URL it was
+      // sent to.
+      const headers = new Headers(request.headers);
+      if (request.url.split(/[?#]/)[0] !== root) {
+        headers.set("Authorization", `Bearer ${options.credential}`);
+      }
+      return new Request(request, { headers, redirect: "error" });
     },
   };
   const client = createFetchClient<paths>({ baseUrl, fetch: fetcher });
@@ -120,6 +169,13 @@ export async function* pages<T>(
   const followed = new Set<string>();
   for (;;) {
     const page = await fetchPage(cursor);
+    // Checked before a row is handed on: a page with no cursor to read is
+    // not one whose rows can be trusted to be the next ones.
+    if (page.next_cursor !== null && typeof page.next_cursor !== "string") {
+      throw new Error(
+        "A page answered no next_cursor, so the walk cannot continue.",
+      );
+    }
     yield* page.data;
     if (page.next_cursor === null) return;
     if (followed.has(page.next_cursor)) {

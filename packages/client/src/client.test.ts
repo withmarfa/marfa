@@ -10,19 +10,25 @@ import {
 
 /** A server that answers the root with `contract` and every other path
  *  with an empty page, recording what it was asked. */
-function stubServer(contract: unknown, root?: () => Response) {
+function stubServer(
+  contract: unknown,
+  root?: (init?: RequestInit) => Response | Promise<Response>,
+  rootPath = "/",
+) {
   const seen: { url: string; authorization: string | null }[] = [];
+  const redirects: Request["redirect"][] = [];
   const fetch = (input: string | URL | Request, init?: RequestInit) => {
     const request = new Request(input, init);
+    redirects.push(request.redirect);
     seen.push({
       url: new URL(request.url).pathname,
       authorization: request.headers.get("Authorization"),
     });
-    if (new URL(request.url).pathname === "/" && root) {
-      return Promise.resolve(root());
+    if (new URL(request.url).pathname === rootPath && root) {
+      return Promise.resolve(root(init));
     }
     const body =
-      new URL(request.url).pathname === "/"
+      new URL(request.url).pathname === rootPath
         ? { name: "marfa", contract }
         : { data: [], next_cursor: null };
     return Promise.resolve(
@@ -31,7 +37,7 @@ function stubServer(contract: unknown, root?: () => Response) {
       }),
     );
   };
-  return { seen, fetch };
+  return { seen, redirects, fetch };
 }
 
 describe("the contract gate", () => {
@@ -106,6 +112,118 @@ describe("the contract gate", () => {
     await expect(
       client.GET("/edge-types", { baseUrl: "https://elsewhere.example" }),
     ).rejects.toThrow(/refuses to send/);
+    expect(server.seen).toEqual([]);
+  });
+
+  it("holds every concurrent first request until the check refuses them", async () => {
+    const server = stubServer(
+      CONTRACT_VERSION + 1,
+      () =>
+        new Promise((resolve) =>
+          setTimeout(() => {
+            resolve(Response.json({ contract: CONTRACT_VERSION + 1 }));
+          }, 20),
+        ),
+    );
+    const client = createClient({
+      baseUrl: "https://marfa.example",
+      credential: "k",
+      fetch: server.fetch,
+    });
+    const answers = await Promise.allSettled([
+      client.GET("/edge-types"),
+      client.GET("/edge-types"),
+      client.GET("/edge-types"),
+    ]);
+    expect(answers.every((a) => a.status === "rejected")).toBe(true);
+    expect(server.seen).toEqual([{ url: "/", authorization: null }]);
+  });
+
+  it("sends the root no credential when it is called directly", async () => {
+    const server = stubServer(CONTRACT_VERSION);
+    const client = createClient({
+      baseUrl: "https://marfa.example",
+      credential: "k",
+      fetch: server.fetch,
+    });
+    await client.GET("/");
+    expect(server.seen.map((r) => r.authorization)).toEqual([null, null]);
+  });
+
+  it("follows no redirect, on the root read or on a call", async () => {
+    const server = stubServer(CONTRACT_VERSION);
+    const client = createClient({
+      baseUrl: "https://marfa.example",
+      credential: "k",
+      fetch: server.fetch,
+    });
+    await client.GET("/edge-types");
+    expect(server.redirects).toEqual(["error", "error"]);
+  });
+
+  it("lets a request's own abort release it from a root that never answers", async () => {
+    const server = stubServer(
+      CONTRACT_VERSION,
+      () => new Promise<Response>(() => undefined),
+    );
+    const client = createClient({
+      baseUrl: "https://marfa.example",
+      credential: "k",
+      fetch: server.fetch,
+    });
+    await expect(
+      client.GET("/edge-types", { signal: AbortSignal.timeout(50) }),
+    ).rejects.toThrow();
+    expect(server.seen.map((r) => r.url)).toEqual(["/"]);
+  });
+
+  it("reads a root that answers something other than JSON as unreadable", async () => {
+    const server = stubServer(
+      CONTRACT_VERSION,
+      () => new Response("<html>a page</html>", { status: 200 }),
+    );
+    const client = createClient({
+      baseUrl: "https://marfa.example",
+      credential: "k",
+      fetch: server.fetch,
+    });
+    const refused = client.GET("/edge-types");
+    await expect(refused).rejects.toBeInstanceOf(ContractUnreadableError);
+    await expect(refused).rejects.toMatchObject({ status: undefined });
+  });
+
+  it("serves an instance under a path prefix, reading the root there", async () => {
+    const server = stubServer(CONTRACT_VERSION, undefined, "/api/");
+    const client = createClient({
+      baseUrl: "https://marfa.example/api/",
+      credential: "k",
+      fetch: server.fetch,
+    });
+    await client.GET("/edge-types");
+    expect(server.seen.map((r) => r.url)).toEqual(["/api/", "/api/edge-types"]);
+    await expect(
+      client.GET("/edge-types", { baseUrl: "https://marfa.example" }),
+    ).rejects.toThrow(/refuses to send/);
+  });
+
+  it("refuses a base URL with a query, a fragment or another scheme", () => {
+    const make = (baseUrl: string) => () =>
+      createClient({ baseUrl, credential: "k", fetch: stubServer(1).fetch });
+    expect(make("https://marfa.example/?x=1")).toThrow(TypeError);
+    expect(make("https://marfa.example/#top")).toThrow(TypeError);
+    expect(make("ftp://marfa.example")).toThrow(TypeError);
+  });
+
+  it("refuses a path parameter that would resolve to another route", async () => {
+    const server = stubServer(CONTRACT_VERSION);
+    const client = createClient({
+      baseUrl: "https://marfa.example",
+      credential: "k",
+      fetch: server.fetch,
+    });
+    await expect(
+      client.GET("/items/{id}", { params: { path: { id: ".." } } }),
+    ).rejects.toThrow(/names no resource/);
     expect(server.seen).toEqual([]);
   });
 
@@ -188,6 +306,16 @@ describe("pages", () => {
     };
     await expect(walk()).rejects.toThrow(/would not end/);
     expect(rows).toEqual(["a", "b", "c"]);
+  });
+
+  it("refuses a page with no cursor to read, before handing on its rows", async () => {
+    const source = stub([{ data: ["a"] } as unknown as Page<string>]);
+    const rows: string[] = [];
+    const walk = async () => {
+      for await (const row of pages(source.fetch)) rows.push(row);
+    };
+    await expect(walk()).rejects.toThrow(/no next_cursor/);
+    expect(rows).toEqual([]);
   });
 
   it("refuses a cursor answered back unchanged", async () => {

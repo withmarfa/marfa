@@ -6,6 +6,6 @@ export default defineConfig({
   test: {
     ...sharedTestBudget,
     name: "@withmarfa/client",
-    include: ["src/**/*.test.ts"],
+    include: ["src/**/*.test.ts", "scripts/**/*.test.ts"],
   },
 });

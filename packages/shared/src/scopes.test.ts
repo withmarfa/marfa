@@ -1529,8 +1529,8 @@ describe("the content category projection", () => {
 
   it("excludes exactly the compiled system set when nothing has seeded a registry", () => {
     // The registry-dependence contract, named. This package resolves against
-    // the compiled shipped set wherever no server has booted — a browser
-    // bundle, the codegen, this file — and against the seeded set on a server.
+    // the compiled shipped set wherever no server has booted, this file
+    // among them, and against the seeded set on a server.
     // Both are the intended behavior; what would not be is the projection
     // silently holding a set from before a seed.
     const perms = scopesToTypePermissions(["content:read"]);

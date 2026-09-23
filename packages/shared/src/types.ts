@@ -228,14 +228,6 @@ export interface CreateEdgeInput {
   id?: string;
 }
 
-/** Input for updating an existing edge (properties only — direction/type immutable). */
-export interface UpdateEdgeInput {
-  properties: Record<string, unknown>;
-  /** The version the caller read. Required, for the same reason it is on an
-   *  item: an update names what it is based on or it is not an update. */
-  version: number;
-}
-
 /** Per-edge-type permission levels. */
 export type EdgePermission = "read" | "write";
 
@@ -526,57 +518,6 @@ export interface Attachment {
 /** OAuth token type discriminator. */
 export type OAuthTokenType = "access" | "refresh";
 
-/** A registered OAuth application. */
-export interface OAuthClient {
-  id: string;
-  name: string;
-  redirect_uris: string[];
-  created_at: string;
-}
-
-/** Input for registering an OAuth client. */
-export interface CreateOAuthClientInput {
-  name: string;
-  redirect_uris: string[];
-}
-
-/**
- * A user's approval for a client — records which scopes were granted.
- * The durable grant record lives on a `system.connection` item (kind: app).
- * The `id` field is the underlying item id; subsequent OAuth records (codes,
- * tokens) reference it as `connection_item_id`.
- */
-export interface OAuthGrant {
-  id: string;
-  client_id: string;
-  scopes: string[];
-  created_at: string;
-}
-
-/** An OAuth access or refresh token record (without raw token value). */
-export interface OAuthToken {
-  id: string;
-  /** id of the system.connection item this token was issued under. */
-  connection_item_id: string;
-  token_type: OAuthTokenType;
-  scopes: string[];
-  expires_at: string;
-  revoked_at: string | null;
-  created_at: string;
-}
-
-/** A short-lived authorization code issued during the consent flow. */
-export interface OAuthCode {
-  id: string;
-  /** id of the system.connection item this code was minted against. */
-  connection_item_id: string;
-  code_challenge: string;
-  code_challenge_method: string;
-  redirect_uri: string;
-  expires_at: string;
-  used_at: string | null;
-  created_at: string;
-}
 // ---------------------------------------------------------------------------
 // Webhook types
 // ---------------------------------------------------------------------------
