@@ -5,7 +5,7 @@ generate:
 accessModifier: public
 namingStrategy: idiomatic
 # The generator cannot express a map whose values are any of several scalars
-# or null (1.13.1 emits a payload that does not compile), so the report is
+# or null (the pinned generator emits a payload that does not compile), so the report is
 # read as the free-form object it is.
 typeOverrides:
   schemas:
