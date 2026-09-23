@@ -1,8 +1,8 @@
 name: Release
 
-# A release is a tag, and tags are the maintainer's. Pushing `v<version>`
-# builds the artifacts from that commit and uploads them to the run. Nothing
-# here publishes.
+# A release is a tag, and tags are the maintainer's. Each is the one before
+# it plus 0.0.1, starting at 0.0.1. Pushing `v<version>` builds the artifacts
+# from that commit and uploads them to the run. Nothing here publishes.
 #
 # The version is the tag's, and nowhere else: `scripts/release/stamp-version.sh`
 # writes it into every manifest in this checkout, which is why no manifest in

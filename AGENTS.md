@@ -14,8 +14,9 @@ Under rebuild since 17 September 2026. The decisions in force live outside this 
 
 ## Versions
 
-- A version exists only as a git tag, and tags are the maintainer's. An agent never creates a tag and never writes a version into a file: every manifest carries the placeholder `0.0.0`, `ci/version-fields.test.ts` refuses a tree where one does not, and `release.yml` stamps the tag's version into its own checkout with `scripts/release/stamp-version.sh`.
-- Every version is the previous one plus 0.0.1, whatever the change. The first is 0.0.1.
+- A version exists only as a git tag, and tags are the maintainer's. An agent never creates a tag and never writes a version into a file.
+- Every version is the previous one plus 0.0.1, whatever the size of the change, with no milestone steps. The first is 0.0.1.
+- Every manifest carries the placeholder `0.0.0`, `ci/version-fields.test.ts` refuses a tree where one does not, and `release.yml` stamps the tag's version into its own checkout with `scripts/release/stamp-version.sh`.
 
 ## Evidence
 
