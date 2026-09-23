@@ -9,6 +9,7 @@ import {
   answers,
   catchupTooOld,
   connected,
+  edgeEvent,
   headRead,
   itemEvent,
   itemsPage,
@@ -391,6 +392,78 @@ describe("catch-up replays from the cursor", () => {
       held.value.properties.title,
       "the event erased an edit the device has not had answered, so the copy shows the write as undone while the queue still sends it",
     ).toBe("edited here, not yet sent");
+  });
+
+  it("applies an edge event beneath an edge edit it has not had answered", async () => {
+    harness = await startHarness("edge-event-beneath-write");
+    const { server, device } = harness;
+    const edge = {
+      id: "link",
+      source_id: "from",
+      target_id: "to",
+      edge_type: "references",
+      properties: { weight: 1 },
+      version: 1,
+      created_at: "2026-09-18T00:00:00.000Z",
+      updated_at: "2026-09-18T00:00:00.000Z",
+    };
+    scriptHydration(server, {
+      head: "10",
+      rows: {
+        "core.note": [
+          {
+            item: {
+              id: "from",
+              edges: {
+                references: {
+                  edges: [edge],
+                  has_more: false,
+                  next_cursor: null,
+                },
+              },
+            },
+          },
+          { item: { id: "to" } },
+        ],
+      },
+    });
+    server.answer(
+      "GET",
+      "/events",
+      replay("11", [
+        edgeEvent("11", "edge.updated", {
+          ...edge,
+          version: 2,
+          properties: { weight: 1, note: "changed elsewhere" },
+        }),
+      ]),
+    );
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    expect(
+      (
+        await device.updateEdge("link", {
+          properties: { weight: 2 },
+          version: 1,
+        })
+      ).ok,
+    ).toBe(true);
+    expect((await device.catchUp()).ok).toBe(true);
+
+    const edges = await device.edgesFrom("from");
+    expect(edges.ok).toBe(true);
+    const held = edges.ok
+      ? edges.value.find((row) => row.id === "link")
+      : undefined;
+    // The witness: the event was applied.
+    expect(
+      held?.properties.note,
+      "the edge event was not applied at all, so nothing here is about applying one beneath a waiting edit",
+    ).toBe("changed elsewhere");
+    expect(held?.version).toBe(2);
+    expect(
+      held?.properties.weight,
+      "the edge event erased an edit the device has not had answered",
+    ).toBe(2);
   });
 
   it("applies an event beneath a blocked write, which a release sends again", async () => {

@@ -152,6 +152,11 @@ pub enum ItemsCommand {
 
 #[derive(Debug, Subcommand)]
 pub enum EdgesCommand {
+    /// The edges the copy holds from one item.
+    List {
+        /// The item the edges start from.
+        item: String,
+    },
     /// Link two items, and queue the edge.
     Create {
         /// The item the edge starts from.
@@ -445,6 +450,25 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<(), CliError> 
         DeviceCommand::Edges { command } => {
             let core = open(&args.db, None)?;
             match command {
+                EdgesCommand::List { item } => {
+                    let edges = core.edges_from(&item)?;
+                    output::report(&edges, json, || {
+                        edges
+                            .iter()
+                            .map(|edge| {
+                                format!(
+                                    "{}  {} -> {}  {}  v{}",
+                                    edge.id,
+                                    edge.source_id,
+                                    edge.target_id,
+                                    edge.edge_type,
+                                    edge.version
+                                )
+                            })
+                            .collect::<Vec<_>>()
+                            .join("\n")
+                    })
+                }
                 EdgesCommand::Create {
                     source,
                     target,

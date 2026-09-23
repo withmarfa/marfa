@@ -274,7 +274,7 @@ pub fn enqueue(conn: &Connection, write: &NewWrite<'_>) -> Result<QueuedWrite, C
 
 /// One queued write by id.
 pub fn queued_write(conn: &Connection, id: &str) -> Result<Option<QueuedWrite>, CoreError> {
-    Ok(queued_writes(conn)?.into_iter().find(|row| row.id == id))
+    Ok(read_writes(conn, "WHERE id = ?1", [id])?.pop())
 }
 
 /// Queue rows naming this item that the server has not answered.
@@ -1233,6 +1233,14 @@ mod tests {
         // could be deleted and this test would still pass.
         row("kept-for-unsent", "accepted", 1, "[]");
         row("unsent-waiter", "refused", 0, "[\"kept-for-unsent\"]");
+        // The other two answers that clear, and the one that does not: a
+        // dead row is released like a blocked one, and so is what it waits
+        // on kept.
+        row("merged", "merged", 1, "[]");
+        row("conflicted", "conflicted", 1, "[]");
+        row("dead", "dead", 1, "[]");
+        row("kept-for-dead", "accepted", 1, "[]");
+        row("dead-waiter", "dead", 1, "[\"kept-for-dead\"]");
 
         let cleared = forget_answered(&conn).unwrap();
         let left: Vec<String> = conn
@@ -1245,8 +1253,11 @@ mod tests {
         assert_eq!(
             left,
             vec![
+                "dead".to_string(),
+                "dead-waiter".to_string(),
                 "dependant".to_string(),
                 "dependency".to_string(),
+                "kept-for-dead".to_string(),
                 "kept-for-unsent".to_string(),
                 "unsent".to_string(),
                 "unsent-waiter".to_string()
@@ -1258,7 +1269,7 @@ mod tests {
         // The control: something was cleared, so the assertion above is not
         // satisfied by a function that deletes nothing at all.
         assert_eq!(
-            cleared, 1,
+            cleared, 3,
             "nothing was cleared, so the queue grows without bound and every \
              later write reads a longer one"
         );
@@ -1312,8 +1323,10 @@ mod tests {
     /// The three closed sets, held to the schema and to the reader.
     ///
     /// The enums are the sets the code speaks, and `schema.sql`'s `CHECK`s
-    /// are the sets the file keeps; this holds the two to each other in both
-    /// directions, and holds the reader to refusing a value outside them.
+    /// are the sets the file keeps for a kind and a verdict; this holds the
+    /// two to each other in both directions. A blocked reason shares its
+    /// column with a refusal's code, which is open text, so the schema cannot
+    /// close it and the reader is what refuses one outside the five.
     #[test]
     fn the_closed_sets_agree_with_the_schema_and_the_reader_refuses_the_rest() {
         let conn = conn();
@@ -1458,6 +1471,119 @@ mod tests {
         lay_waiting_writes_over(&conn, "n1", Some("title")).unwrap();
         let item = items_by_ids(&conn, &["n1".into()]).unwrap().pop().unwrap();
         assert_eq!(item.state, ItemState::Trashed);
+
+        // And a move to another state after that takes it there.
+        queue(WriteKind::TransitionItem, r#"{"state":"archived"}"#, None);
+        lay_waiting_writes_over(&conn, "n1", Some("title")).unwrap();
+        let item = items_by_ids(&conn, &["n1".into()]).unwrap().pop().unwrap();
+        assert_eq!(item.state, ItemState::Archived);
+    }
+
+    #[test]
+    fn waiting_edge_writes_are_laid_back_over_the_edge() {
+        let conn = conn();
+        let mut edge = wire_edge("e1", "a", "b", "references");
+        edge.properties.insert("weight".into(), Value::from(1));
+        upsert_edge(&conn, &edge).unwrap();
+        let queue = |kind: WriteKind, payload: &str| {
+            enqueue(
+                &conn,
+                &NewWrite {
+                    kind,
+                    item_id: Some("a"),
+                    target_id: Some("b"),
+                    edge_id: Some("e1"),
+                    namespace: None,
+                    tag: None,
+                    base_version: None,
+                    payload,
+                    depends_on: &[],
+                },
+            )
+            .unwrap()
+        };
+        let answered = queue(
+            WriteKind::UpdateEdge,
+            r#"{"properties":{"note":"answered"}}"#,
+        );
+        record_verdict(
+            &conn,
+            &answered.id,
+            &Answered {
+                verdict: Verdict::Accepted,
+                reason: None,
+                answer: None,
+                conflicted_copy_id: None,
+            },
+        )
+        .unwrap();
+        queue(WriteKind::UpdateEdge, r#"{"properties":{"weight":2}}"#);
+        lay_waiting_edge_writes_over(&conn, "e1").unwrap();
+        let held = edge_by_id(&conn, "e1").unwrap().unwrap();
+        assert_eq!(held.properties.get("weight"), Some(&Value::from(2)));
+        assert_eq!(
+            held.properties.get("note"),
+            None,
+            "an answered write was laid back, and its answer is already the edge"
+        );
+        queue(WriteKind::DeleteEdge, r#"{"edge_type":"references"}"#);
+        lay_waiting_edge_writes_over(&conn, "e1").unwrap();
+        assert_eq!(edge_by_id(&conn, "e1").unwrap(), None);
+    }
+
+    /// Which blocked rows a drain unblocks before it starts
+    /// (`queue-and-verdicts.md` 24, 27): the reasons that clear without a
+    /// person, and those alone.
+    #[test]
+    fn a_drain_unblocks_the_reasons_that_clear_and_no_other() {
+        let conn = conn();
+        for reason in BlockedReason::ALL {
+            conn.execute(
+                "INSERT INTO queue (id, kind, idempotency_key, payload, verdict, reason, queued_at)
+                 VALUES (?1, 'update_item', ?1, '{}', 'blocked', ?1, '2026-01-01T00:00:00Z')",
+                [reason.as_str()],
+            )
+            .unwrap();
+        }
+        unblock_self_clearing(&conn).unwrap();
+        let mut unblocked: Vec<String> = queued_writes(&conn)
+            .unwrap()
+            .into_iter()
+            .filter(|row| row.verdict.is_none())
+            .map(|row| row.id)
+            .collect();
+        unblocked.sort();
+        assert_eq!(unblocked, vec!["awaiting_dependency", "credential_refused"]);
+    }
+
+    /// The two lookups laid over every answer and event go through their
+    /// indexes, rather than scanning a queue that grows with every write
+    /// made offline.
+    #[test]
+    fn waiting_writes_are_found_through_the_indexes() {
+        let conn = conn();
+        let plan = |column: &str| -> String {
+            conn.prepare(&format!(
+                "EXPLAIN QUERY PLAN SELECT {QUEUE_COLUMNS} FROM queue
+                  WHERE {column} = ?1 AND (verdict IS NULL OR verdict = ?2) ORDER BY seq ASC"
+            ))
+            .unwrap()
+            .query_map(["x", "blocked"], |row| row.get::<_, String>(3))
+            .unwrap()
+            .map(|detail| detail.unwrap())
+            .collect::<Vec<_>>()
+            .join("; ")
+        };
+        assert!(
+            plan("item_id").contains("queue_item"),
+            "{}",
+            plan("item_id")
+        );
+        assert!(
+            plan("edge_id").contains("queue_edge"),
+            "{}",
+            plan("edge_id")
+        );
     }
 
     #[test]
@@ -1594,12 +1720,6 @@ pub fn record_verdict(
     id: &str,
     answered: &Answered<'_>,
 ) -> Result<(), CoreError> {
-    if answered.verdict == Verdict::Blocked {
-        answered
-            .reason
-            .unwrap_or_default()
-            .parse::<BlockedReason>()?;
-    }
     let changed = conn.execute(
         "UPDATE queue
             SET verdict = ?2, reason = ?3, answer = ?4,
@@ -1825,8 +1945,6 @@ pub fn forget_item(conn: &Connection, id: &str) -> Result<(), CoreError> {
     Ok(())
 }
 
-/// Whether a queued row still stands to be sent: unanswered, or parked for
-/// a reason that may yet clear.
 /// Lays every write to an item that is still waiting back over the row as
 /// the server last sent it (`queue-and-verdicts.md` 35), whole fields in the
 /// order they were queued. Called after anything puts the server's row into

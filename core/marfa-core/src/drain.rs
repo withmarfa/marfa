@@ -921,9 +921,11 @@ fn reconcile_inner(core: &Core, row: &QueuedWrite) -> Result<()> {
         }
         let conn = core.conn()?;
         match found {
+            // Nothing is laid back over it: every later write to an edge
+            // waits on the earlier ones, so a refused edge write refuses
+            // them too (`queue-and-verdicts.md` 16) and none is left waiting.
             Some(edge) => {
                 store::upsert_edge(&conn, &edge)?;
-                store::lay_waiting_edge_writes_over(&conn, &edge.id)?;
             }
             // The server holds no such edge, which for a refused create is
             // the honest answer and for a refused update means it went
@@ -1032,6 +1034,21 @@ mod tests {
                 own_create_version(&conn, &answered(subject)).unwrap(),
                 Some(5)
             );
+
+            // Rebased, the write reports what it was sent on in both places.
+            store::rebase(&conn, &edit.id, 5).unwrap();
+            let rebased = store::queued_write(&conn, &edit.id).unwrap().unwrap();
+            assert_eq!(rebased.base_version, Some(5));
+            let payload: serde_json::Value =
+                serde_json::from_str(&store::payload_of(&conn, &edit.id).unwrap()).unwrap();
+            assert_eq!(payload["version"], 5);
+
+            // And only a write based on the placeholder: one based on a
+            // version the server issued waits on the same create and is not
+            // moved.
+            let issued =
+                store::enqueue(&conn, &write(edited, "mine", edge, Some(3), &depends_on)).unwrap();
+            assert_eq!(own_create_version(&conn, &issued).unwrap(), None);
         }
     }
 }

@@ -1029,6 +1029,31 @@ mod tests {
     }
 
     #[test]
+    fn a_release_by_reason_releases_that_reason_and_no_other() {
+        let core = Core::open_in_memory(None).unwrap();
+        {
+            let conn = core.conn().unwrap();
+            for reason in [BlockedReason::KeySpent, BlockedReason::ConflictUnresolved] {
+                conn.execute(
+                    "INSERT INTO queue (id, kind, idempotency_key, payload, verdict, reason, sent, queued_at)
+                     VALUES (?1, 'update_item', ?1, '{}', 'blocked', ?1, 1, '2026-01-01T00:00:00Z')",
+                    [reason.as_str()],
+                )
+                .unwrap();
+            }
+        }
+        assert_eq!(core.release_reason(BlockedReason::KeySpent).unwrap(), 1);
+        let rows = core.queue().unwrap();
+        let still = |id: &str| rows.iter().find(|row| row.id == id).unwrap().verdict;
+        assert_eq!(still("key_spent"), None);
+        assert_eq!(
+            still("conflict_unresolved"),
+            Some(Verdict::Blocked),
+            "a release by one reason released a row blocked for another"
+        );
+    }
+
+    #[test]
     fn a_file_bound_to_one_server_refuses_another() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("core.sqlite");

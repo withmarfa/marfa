@@ -187,8 +187,7 @@ pub struct ListFilters {
 
 /// Narrowing for a local search: the state rule the list takes, a type
 /// with its subtree, and tags, each read exactly as the list reads it. The
-/// rest of the listing grammar is answered by a list; a filter a search does
-/// not take is refused where it is asked for (`device.md` 24).
+/// rest of the listing grammar is a list's, and has no field here.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SearchFilters {
     pub state: Option<ItemState>,

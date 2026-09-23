@@ -8,6 +8,7 @@ import {
   type DeviceUnderTest,
   type Draft,
   type DrainReport,
+  type Edge,
   type EdgeDraft,
   type Edit,
   type HydrateReport,
@@ -313,6 +314,10 @@ export class CliDevice implements DeviceUnderTest {
 
   async deleteEdge(id: string): Promise<Outcome<QueuedWrite>> {
     return this.json<QueuedWrite>(["edges", "delete", id]);
+  }
+
+  async edgesFrom(item: string): Promise<Outcome<Edge[]>> {
+    return this.json<Edge[]>(["edges", "list", item]);
   }
 
   async addTag(item: string, tag: string): Promise<Outcome<QueuedWrite>> {

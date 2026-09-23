@@ -164,7 +164,10 @@ fn lay_queue_over(conn: &rusqlite::Connection, catalog: &Catalog) -> Result<()> 
             WriteKind::CreateEdge => {
                 let (id, draft) = EdgeDraft::from_payload(&store::payload_of(conn, &row.id)?)?;
                 if store::edge_by_id(conn, &id)?.is_none() {
-                    store::upsert_edge(conn, &draft.wire(&id))?;
+                    let mut wire = draft.wire(&id);
+                    wire.created_at.clone_from(&row.queued_at);
+                    wire.updated_at.clone_from(&row.queued_at);
+                    store::upsert_edge(conn, &wire)?;
                 }
             }
             _ => {}

@@ -1,5 +1,10 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { answers, wireItem, writeAnswers } from "../../device/marfa-answers.js";
+import {
+  answers,
+  refusal,
+  wireItem,
+  writeAnswers,
+} from "../../device/marfa-answers.js";
 import type { DeviceUnderTest, QueuedWrite } from "../../device/protocol.js";
 import { hydratedHarness, scriptWrites, startHarness } from "./harness.js";
 import type { Harness } from "./harness.js";
@@ -36,6 +41,26 @@ function held() {
         },
       },
     ],
+  };
+}
+
+/** An edge row as the server answers one. */
+function edgeRow(
+  id: string,
+  source: string,
+  target: string,
+  version: number,
+  properties: Record<string, unknown> = {},
+): Record<string, unknown> {
+  return {
+    id,
+    source_id: source,
+    target_id: target,
+    edge_type: "references",
+    properties,
+    version,
+    created_at: "2026-09-18T00:00:00.000Z",
+    updated_at: "2026-09-18T00:00:00.000Z",
   };
 }
 
@@ -1033,6 +1058,14 @@ describe("an answer the device applies keeps what it has not had answered", () =
       listed.ok ? listed.value.map((item) => item.id) : [],
       "the answer to a create brought back a row the device had already put in the bin, and a delete's own answer carries no row to take it away again",
     ).not.toContain(binnedId);
+    // The witness: the row is held, in the bin, so the absence above is the
+    // waiting delete laid over it and not a row that went missing.
+    const everything = await device.list({ allStates: true });
+    expect(
+      everything.ok
+        ? everything.value.find((item) => item.id === binnedId)?.state
+        : undefined,
+    ).toBe("trashed");
 
     const waiting = (await queueOf(device)).filter(
       (row) => row.verdict === null,
@@ -1176,6 +1209,130 @@ describe("an answer the device applies keeps what it has not had answered", () =
     ).toBe(1);
   });
 
+  it("keeps a waiting write through the reconcile of a refused one", async () => {
+    harness = await hydratedHarness("queue-overlay-reconcile", {
+      rows: held(),
+    });
+    const { device, server } = harness;
+    expect((await device.addTag(HELD.id, "refused-here")).ok).toBe(true);
+    expect(
+      (
+        await device.update(HELD.id, {
+          properties: { title: "edited, waiting" },
+          version: HELD.version,
+        })
+      ).ok,
+    ).toBe(true);
+    scriptWrites(server, {
+      tags: [refusal(400, "validation_error", "not a tag this server takes")],
+      update: [answers.serverFault()],
+      read: [
+        answers.updated(
+          wireItem({
+            id: HELD.id,
+            version: HELD.version,
+            properties: { title: "held", body: "held" },
+          }),
+        ),
+      ],
+    });
+    expect((await device.drain()).ok).toBe(true);
+
+    const read = await device.get(HELD.id);
+    expect(read.ok).toBe(true);
+    if (!read.ok) return;
+    // The witness: the refusal was reconciled, so the row took the server's
+    // copy and lost the refused tag.
+    expect(
+      read.value.tags,
+      "the refused tag was not reconciled away, so nothing here is about a reconcile",
+    ).not.toContain("refused-here");
+    expect(
+      read.value.properties.title,
+      "the reconcile of a refused write erased an edit still waiting behind it",
+    ).toBe("edited, waiting");
+  });
+
+  it("keeps a waiting edge edit through the answer to the edge's create", async () => {
+    harness = await hydratedHarness("queue-overlay-edge-answer", {
+      rows: held(),
+    });
+    const { device, server } = harness;
+    const note = await device.create({
+      type: "core.note",
+      properties: { title: "the other end", body: "the other end" },
+    });
+    expect(note.ok).toBe(true);
+    if (!note.ok) return;
+    const target = note.value.item_id ?? "a";
+    const link = await device.createEdge({
+      source: HELD.id,
+      target,
+      type: "references",
+    });
+    expect(link.ok).toBe(true);
+    if (!link.ok) return;
+    const edgeId = link.value.edge_id ?? "e";
+    expect(
+      (
+        await device.updateEdge(edgeId, {
+          properties: { weight: 2 },
+          version: 0,
+        })
+      ).ok,
+    ).toBe(true);
+
+    acceptCreates(harness);
+    server.answer("POST", "/edges", {
+      kind: "json",
+      status: 201,
+      body: { edge: edgeRow(edgeId, HELD.id, target, 1) },
+    });
+    server.answer("PATCH", /^\/edges\/[^/]+$/, answers.serverFault());
+    expect((await device.drain()).ok).toBe(true);
+
+    const edges = await device.edgesFrom(HELD.id);
+    expect(edges.ok).toBe(true);
+    if (!edges.ok) return;
+    const edge = edges.value.find((held) => held.id === edgeId);
+    // The witness: the create's answer was adopted.
+    expect(
+      edge?.version,
+      "the edge's answer was not adopted, so nothing here is about laying an edit over it",
+    ).toBe(1);
+    expect(
+      edge?.properties.weight,
+      "the answer to the edge's create erased the edit still waiting on it",
+    ).toBe(2);
+  });
+
+  it("keeps a blocked write through a re-hydration", async () => {
+    harness = await hydratedHarness("queue-overlay-rehydrate-blocked", {
+      rows: held(),
+    });
+    const { device, server } = harness;
+    const note = await device.create({
+      type: "core.note",
+      properties: { title: "made, then blocked", body: "blocked" },
+    });
+    expect(note.ok).toBe(true);
+    if (!note.ok) return;
+    scriptWrites(server, { create: [answers.unauthorized()] });
+    expect((await device.drain()).ok).toBe(true);
+    const queued = await queueOf(device);
+    expect(
+      queued.map((row) => [row.verdict, row.reason]),
+      "the create was not blocked, so nothing here is about a blocked write",
+    ).toEqual([["blocked", "credential_refused"]]);
+
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    const own = await device.get(note.value.item_id ?? "a");
+    expect(
+      own.ok,
+      "a re-hydration dropped a create that is blocked and waiting for a release",
+    ).toBe(true);
+  });
+
   it("keeps the writes it has not had answered through a re-hydration", async () => {
     const rows = held();
     harness = await hydratedHarness("queue-overlay-rehydrate", { rows });
@@ -1196,9 +1353,25 @@ describe("an answer the device applies keeps what it has not had answered", () =
       ).ok,
     ).toBe(true);
     expect((await device.addTag(HELD.id, "favorite")).ok).toBe(true);
+    const link = await device.createEdge({
+      source: HELD.id,
+      target: made,
+      type: "references",
+    });
+    expect(link.ok).toBe(true);
+    if (!link.ok) return;
+    const edgeId = link.value.edge_id ?? "e";
+    expect(
+      (
+        await device.updateEdge(edgeId, {
+          properties: { weight: 4 },
+          version: 0,
+        })
+      ).ok,
+    ).toBe(true);
 
     // The server has since moved the held row on elsewhere, and nothing the
-    // hydration pulls answers any of the three writes above.
+    // hydration pulls answers any of the writes above.
     rows["core.note"] = [
       {
         item: {
@@ -1236,9 +1409,30 @@ describe("an answer the device applies keeps what it has not had answered", () =
     ).toBe(true);
     if (!own.ok) return;
     expect(own.value.properties.title).toBe("made here");
+    const queued = await queueOf(device);
     expect(
-      (await queueOf(device)).filter((row) => row.verdict === null).length,
+      own.value.created_at,
+      "the row held again after the re-hydration took the hydration's time rather than the time it was made",
+    ).toBe(
+      queued.find((row) => row.item_id === made && row.kind === "create_item")
+        ?.queued_at,
+    );
+    const edges = await device.edgesFrom(HELD.id);
+    expect(edges.ok).toBe(true);
+    const edge = edges.ok
+      ? edges.value.find((held) => held.id === edgeId)
+      : undefined;
+    expect(
+      edge,
+      "the re-hydration dropped an edge the device created and has not had answered",
+    ).toBeDefined();
+    expect(
+      edge?.properties.weight,
+      "the re-hydration erased an edit still waiting on the device's own edge",
+    ).toBe(4);
+    expect(
+      queued.filter((row) => row.verdict === null).length,
       "the writes this case lays over the refilled copy were not left waiting",
-    ).toBe(3);
+    ).toBe(5);
   });
 });

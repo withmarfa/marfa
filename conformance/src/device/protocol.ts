@@ -96,6 +96,16 @@ export interface QueuedWrite {
   answered_at: string | null;
 }
 
+/** An edge as the working copy holds it. */
+export interface Edge {
+  id: string;
+  source_id: string;
+  target_id: string;
+  edge_type: string;
+  properties: Record<string, unknown>;
+  version: number;
+}
+
 /** What a drain did (`queue-and-verdicts.md` 6). */
 export interface DrainReport {
   /** Rows the drain put on the wire. */
@@ -229,6 +239,8 @@ export interface DeviceUnderTest {
     edit: { properties: Record<string, unknown>; version?: number },
   ): Promise<Outcome<QueuedWrite>>;
   deleteEdge(id: string): Promise<Outcome<QueuedWrite>>;
+  /** The edges the copy holds from one item. */
+  edgesFrom(item: string): Promise<Outcome<Edge[]>>;
   /** One tag, as its own write. */
   addTag(item: string, tag: string): Promise<Outcome<QueuedWrite>>;
   removeTag(item: string, tag: string): Promise<Outcome<QueuedWrite>>;

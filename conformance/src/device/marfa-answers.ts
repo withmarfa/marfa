@@ -221,6 +221,15 @@ export function itemEvent(
   };
 }
 
+/** An edge's event, as the server publishes it: the type and the edge. */
+export function edgeEvent(
+  id: string,
+  kind: string,
+  edge: Record<string, unknown>,
+): SseFrame {
+  return { id, event: kind, data: { type: kind, edge } };
+}
+
 export function catchupTooOld(
   minRetainedId: string,
   requested: string,

@@ -406,6 +406,17 @@ impl From<BlockedReason> for marfa_core::BlockedReason {
     }
 }
 
+impl From<SearchFilters> for marfa_core::SearchFilters {
+    fn from(filters: SearchFilters) -> Self {
+        marfa_core::SearchFilters {
+            state: filters.state.map(Into::into),
+            all_states: filters.all_states.unwrap_or(false),
+            r#type: filters.type_,
+            tags: filters.tags.unwrap_or_default(),
+        }
+    }
+}
+
 impl From<marfa_core::Outcome> for Verdict {
     fn from(outcome: marfa_core::Outcome) -> Self {
         use marfa_core::Outcome as O;
@@ -721,16 +732,7 @@ impl MarfaCore {
         let filters = filters.unwrap_or_default();
         let hits = self
             .inner
-            .search(
-                &query,
-                &marfa_core::SearchFilters {
-                    state: filters.state.map(Into::into),
-                    all_states: filters.all_states.unwrap_or(false),
-                    r#type: filters.type_,
-                    tags: filters.tags.unwrap_or_default(),
-                },
-                limit.unwrap_or(20) as usize,
-            )
+            .search(&query, &filters.into(), limit.unwrap_or(20) as usize)
             .map_err(failure)?;
         Ok(hits
             .into_iter()
@@ -938,5 +940,65 @@ impl MarfaCore {
     #[napi]
     pub fn forget_answered(&self) -> Result<i64> {
         Ok(count(self.inner.forget_answered().map_err(failure)? as u64))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_blocked_reason_crosses_as_itself_both_ways() {
+        for reason in marfa_core::BlockedReason::ALL {
+            let crossed: BlockedReason = reason.into();
+            assert_eq!(marfa_core::BlockedReason::from(crossed), reason);
+        }
+    }
+
+    /// Each outcome lands on its own variant carrying what it carries. The
+    /// variants hold no comparison, so each is matched out.
+    #[test]
+    fn every_outcome_crosses_with_what_it_carries() {
+        use marfa_core::Outcome as O;
+        assert!(matches!(Verdict::from(O::Accepted), Verdict::Accepted));
+        assert!(matches!(
+            Verdict::from(O::Merged { fields: vec!["title".into()] }),
+            Verdict::Merged { fields } if fields == ["title"]
+        ));
+        assert!(matches!(
+            Verdict::from(O::Conflicted { sibling_id: "s".into(), fields: vec!["body".into()] }),
+            Verdict::Conflicted { sibling_id, fields } if sibling_id == "s" && fields == ["body"]
+        ));
+        assert!(matches!(
+            Verdict::from(O::Refused { reason: "type_not_permitted".into() }),
+            Verdict::Refused { reason } if reason == "type_not_permitted"
+        ));
+        for reason in marfa_core::BlockedReason::ALL {
+            let Verdict::Blocked { reason: crossed } = Verdict::from(O::Blocked { reason }) else {
+                panic!("a blocked outcome crossed as another verdict");
+            };
+            assert_eq!(marfa_core::BlockedReason::from(crossed), reason);
+        }
+        assert!(matches!(Verdict::from(O::Dead), Verdict::Dead));
+    }
+
+    #[test]
+    fn search_filters_cross_whole() {
+        let crossed: marfa_core::SearchFilters = SearchFilters {
+            state: Some(ItemState::Archived),
+            all_states: Some(true),
+            type_: Some("core.note".into()),
+            tags: Some(vec!["a".into(), "b".into()]),
+        }
+        .into();
+        assert_eq!(
+            crossed,
+            marfa_core::SearchFilters {
+                state: Some(marfa_core::ItemState::Archived),
+                all_states: true,
+                r#type: Some("core.note".into()),
+                tags: vec!["a".into(), "b".into()],
+            }
+        );
     }
 }
