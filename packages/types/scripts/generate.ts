@@ -333,30 +333,50 @@ lines.push("");
 lines.push("export type PlatformTypeId = (typeof ALL_TYPE_IDS)[number];");
 lines.push("");
 
-// Every shipped enum field's values as literal types, keyed by type and
-// field. The schemas above are annotated `TypeSchema`, whose `enum_values` is
-// `string[]`, so a changed value never reaches a declaration; this does, and
-// is what the published-surface lock sees move when a vocabulary changes.
-const enumLines: string[] = [];
-for (const schema of [...coreTypes, ...connectorTypes, ...systemTypes].sort(
-  (a, b) => a.id.localeCompare(b.id),
-)) {
-  const fields = Object.entries(schema.fields)
-    .filter(([, def]) => def.enum_values !== undefined)
-    .sort(([a], [b]) => a.localeCompare(b));
-  if (fields.length === 0) continue;
-  enumLines.push(`  ${quote(schema.id)}: {`);
-  for (const [name, def] of fields) {
-    enumLines.push(
-      `    ${quote(name)}: [${(def.enum_values ?? []).map(quote).join(", ")}],`,
-    );
+/**
+ * A shipped definition as literal types: every key sorted by code unit, the
+ * prose (`label`, `description`) left out. The consts above are annotated
+ * with the schema interfaces, which widen every value to `string` and every
+ * list to `string[]`, so no field, enum value, parent, role, constraint or
+ * cardinality reaches a built declaration through them. These do, and they
+ * are what the published-surface lock sees move when a shipped definition
+ * does. Prose is left out because it moves nothing a consumer compiles
+ * against.
+ */
+function shapeLiteral(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(shapeLiteral);
+  if (value === null || typeof value !== "object") return value;
+  const out: Record<string, unknown> = {};
+  for (const key of Object.keys(value).sort()) {
+    if (key === "label" || key === "description" || key === "id") continue;
+    out[key] = shapeLiteral((value as Record<string, unknown>)[key]);
   }
-  enumLines.push("  },");
+  return out;
 }
-lines.push("export const SHIPPED_ENUM_VALUES = {");
-lines.push(...enumLines);
-lines.push("} as const;");
-lines.push("");
+
+function shapesConst(
+  name: string,
+  definitions: readonly { id: string }[],
+): string[] {
+  const shapes: Record<string, unknown> = {};
+  for (const definition of [...definitions].sort((a, b) =>
+    a.id < b.id ? -1 : a.id > b.id ? 1 : 0,
+  )) {
+    shapes[definition.id] = shapeLiteral(definition);
+  }
+  return [
+    `export const ${name} = ${JSON.stringify(shapes, null, 2)} as const;`,
+    "",
+  ];
+}
+
+lines.push(
+  ...shapesConst("SHIPPED_TYPE_SHAPES", [
+    ...coreTypes,
+    ...connectorTypes,
+    ...systemTypes,
+  ]),
+);
 
 mkdirSync(outDir, { recursive: true });
 const outPath = join(outDir, "type-registry.ts");
@@ -437,6 +457,7 @@ edgeLines.push("export const ALL_EDGE_TYPES: EdgeTypeSchema[] = [");
 for (const edge of edgeSchemas) edgeLines.push(`  ${edgeVarName(edge.id)},`);
 edgeLines.push("];");
 edgeLines.push("");
+edgeLines.push(...shapesConst("SHIPPED_EDGE_TYPE_SHAPES", edgeSchemas));
 
 const edgeOutPath = join(outDir, "edge-type-registry.ts");
 writeFileSync(edgeOutPath, edgeLines.join("\n") + "\n");

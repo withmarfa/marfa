@@ -118,3 +118,113 @@ export const ALL_EDGE_TYPES: EdgeTypeSchema[] = [
   supersedes,
 ];
 
+export const SHIPPED_EDGE_TYPE_SHAPES = {
+  "about": {
+    "cardinality": "many-to-many",
+    "cascade_on_delete": "orphan",
+    "property_schema": {},
+    "source_type_constraints": [
+      "*"
+    ],
+    "target_type_constraints": [
+      "*"
+    ]
+  },
+  "attached-to": {
+    "cardinality": "many-to-many",
+    "cascade_on_delete": "orphan",
+    "property_schema": {},
+    "source_type_constraints": [
+      "*"
+    ],
+    "target_type_constraints": [
+      "*"
+    ]
+  },
+  "authored-by": {
+    "cardinality": "many-to-many",
+    "cascade_on_delete": "orphan",
+    "property_schema": {},
+    "source_type_constraints": [
+      "*"
+    ],
+    "target_type_constraints": [
+      "*"
+    ]
+  },
+  "derived-from": {
+    "cardinality": "many-to-many",
+    "cascade_on_delete": "orphan",
+    "property_schema": {},
+    "source_type_constraints": [
+      "*"
+    ],
+    "target_type_constraints": [
+      "*"
+    ]
+  },
+  "in-collection": {
+    "cardinality": "many-to-many",
+    "cascade_on_delete": "orphan",
+    "property_schema": {
+      "position": {
+        "type": "number"
+      }
+    },
+    "source_type_constraints": [
+      "*"
+    ],
+    "target_type_constraints": [
+      "role:container"
+    ]
+  },
+  "in-thread": {
+    "cardinality": "many-to-one",
+    "cascade_on_delete": "orphan",
+    "property_schema": {
+      "position": {
+        "type": "number"
+      }
+    },
+    "source_type_constraints": [
+      "*"
+    ],
+    "target_type_constraints": [
+      "*"
+    ]
+  },
+  "parent-of": {
+    "cardinality": "one-to-many",
+    "cascade_on_delete": "cascade",
+    "property_schema": {},
+    "source_type_constraints": [
+      "*"
+    ],
+    "target_type_constraints": [
+      "*"
+    ]
+  },
+  "references": {
+    "cardinality": "many-to-many",
+    "cascade_on_delete": "orphan",
+    "property_schema": {},
+    "source_type_constraints": [
+      "*"
+    ],
+    "target_type_constraints": [
+      "*"
+    ]
+  },
+  "supersedes": {
+    "cardinality": "one-to-one",
+    "cascade_on_delete": "orphan",
+    "property_schema": {},
+    "source_type_constraints": [
+      "*"
+    ],
+    "target_type_constraints": [
+      "*"
+    ]
+  }
+} as const;
+

@@ -1120,76 +1120,2315 @@ export const ALL_TYPE_IDS = [
 
 export type PlatformTypeId = (typeof ALL_TYPE_IDS)[number];
 
-export const SHIPPED_ENUM_VALUES = {
+export const SHIPPED_TYPE_SHAPES = {
+  "core.bookmark": {
+    "display_hints": {
+      "body_field": "body",
+      "title_field": "title"
+    },
+    "fields": {
+      "author": {
+        "type": "string"
+      },
+      "body": {
+        "type": "string"
+      },
+      "image_url": {
+        "type": "url"
+      },
+      "language": {
+        "format": "bcp47",
+        "type": "string"
+      },
+      "notes": {
+        "type": "string"
+      },
+      "published_at": {
+        "type": "datetime"
+      },
+      "source_title": {
+        "type": "string"
+      },
+      "source_url": {
+        "type": "url"
+      },
+      "title": {
+        "type": "string"
+      },
+      "url": {
+        "type": "url"
+      }
+    },
+    "merge_policy": {
+      "default": "last_writer_wins",
+      "fields": {
+        "body": "keep_both_copies",
+        "notes": "keep_both_copies"
+      }
+    },
+    "version": 1
+  },
+  "core.entity": {
+    "display_hints": {
+      "title_field": "name"
+    },
+    "fields": {
+      "email": {
+        "type": "email"
+      },
+      "founded": {
+        "type": "date"
+      },
+      "image_url": {
+        "type": "url"
+      },
+      "legal_name": {
+        "type": "string"
+      },
+      "name": {
+        "required": true,
+        "type": "string"
+      },
+      "notes": {
+        "type": "string"
+      },
+      "phone": {
+        "type": "string"
+      },
+      "place": {
+        "type": "string"
+      },
+      "url": {
+        "type": "url"
+      }
+    },
+    "merge_policy": {
+      "default": "last_writer_wins"
+    },
+    "version": 1
+  },
+  "core.entity.person": {
+    "display_hints": {
+      "title_field": "name"
+    },
+    "fields": {
+      "birthday": {
+        "type": "date"
+      },
+      "department": {
+        "type": "string"
+      },
+      "email": {
+        "type": "email"
+      },
+      "family_name": {
+        "type": "string"
+      },
+      "founded": {
+        "type": "date"
+      },
+      "given_name": {
+        "type": "string"
+      },
+      "image_url": {
+        "type": "url"
+      },
+      "job_title": {
+        "type": "string"
+      },
+      "legal_name": {
+        "type": "string"
+      },
+      "middle_name": {
+        "type": "string"
+      },
+      "name": {
+        "required": true,
+        "type": "string"
+      },
+      "nickname": {
+        "type": "string"
+      },
+      "notes": {
+        "type": "string"
+      },
+      "organization": {
+        "type": "string"
+      },
+      "phone": {
+        "type": "string"
+      },
+      "place": {
+        "type": "string"
+      },
+      "prefix": {
+        "type": "string"
+      },
+      "pronouns": {
+        "type": "string"
+      },
+      "suffix": {
+        "type": "string"
+      },
+      "url": {
+        "type": "url"
+      }
+    },
+    "merge_policy": {
+      "default": "last_writer_wins"
+    },
+    "parent": "core.entity",
+    "version": 1
+  },
+  "core.entity.place": {
+    "display_hints": {
+      "title_field": "name"
+    },
+    "fields": {
+      "altitude": {
+        "type": "number"
+      },
+      "country": {
+        "format": "iso3166",
+        "type": "string"
+      },
+      "email": {
+        "type": "email"
+      },
+      "founded": {
+        "type": "date"
+      },
+      "image_url": {
+        "type": "url"
+      },
+      "latitude": {
+        "type": "number"
+      },
+      "legal_name": {
+        "type": "string"
+      },
+      "locality": {
+        "type": "string"
+      },
+      "longitude": {
+        "type": "number"
+      },
+      "name": {
+        "required": true,
+        "type": "string"
+      },
+      "notes": {
+        "type": "string"
+      },
+      "phone": {
+        "type": "string"
+      },
+      "place": {
+        "type": "string"
+      },
+      "postal_code": {
+        "type": "string"
+      },
+      "region": {
+        "type": "string"
+      },
+      "street_address": {
+        "type": "string"
+      },
+      "timezone": {
+        "type": "string"
+      },
+      "url": {
+        "type": "url"
+      }
+    },
+    "merge_policy": {
+      "default": "last_writer_wins"
+    },
+    "parent": "core.entity",
+    "version": 1
+  },
   "core.event": {
-    "precision": ["year", "month", "day", "time"],
+    "display_hints": {
+      "body_field": "description",
+      "title_field": "title"
+    },
+    "fields": {
+      "all_day": {
+        "type": "boolean"
+      },
+      "duration": {
+        "type": "number"
+      },
+      "end_timezone": {
+        "type": "string"
+      },
+      "ends_at": {
+        "type": "datetime"
+      },
+      "latitude": {
+        "type": "number"
+      },
+      "longitude": {
+        "type": "number"
+      },
+      "notes": {
+        "type": "string"
+      },
+      "original_starts_at": {
+        "type": "datetime"
+      },
+      "place": {
+        "type": "string"
+      },
+      "precision": {
+        "enum_values": [
+          "year",
+          "month",
+          "day",
+          "time"
+        ],
+        "type": "enum"
+      },
+      "recurrence": {
+        "items_type": "string",
+        "type": "array"
+      },
+      "starts_at": {
+        "type": "datetime"
+      },
+      "status": {
+        "type": "string"
+      },
+      "timezone": {
+        "type": "string"
+      },
+      "title": {
+        "required": true,
+        "type": "string"
+      },
+      "url": {
+        "type": "url"
+      }
+    },
+    "merge_policy": {
+      "default": "last_writer_wins",
+      "fields": {
+        "notes": "keep_both_copies"
+      }
+    },
+    "version": 2
+  },
+  "core.file": {
+    "display_hints": {
+      "title_field": "title"
+    },
+    "fields": {
+      "author": {
+        "type": "string"
+      },
+      "blob_ref": {
+        "required": true,
+        "type": "string"
+      },
+      "extracted_text": {
+        "type": "string"
+      },
+      "language": {
+        "format": "bcp47",
+        "type": "string"
+      },
+      "mime_type": {
+        "required": true,
+        "type": "string"
+      },
+      "notes": {
+        "type": "string"
+      },
+      "source_url": {
+        "type": "url"
+      },
+      "title": {
+        "type": "string"
+      },
+      "url": {
+        "type": "url"
+      }
+    },
+    "merge_policy": {
+      "default": "last_writer_wins"
+    },
+    "version": 1
+  },
+  "core.file.audio": {
+    "display_hints": {
+      "title_field": "title"
+    },
+    "fields": {
+      "author": {
+        "type": "string"
+      },
+      "blob_ref": {
+        "required": true,
+        "type": "string"
+      },
+      "duration": {
+        "type": "number"
+      },
+      "extracted_text": {
+        "type": "string"
+      },
+      "language": {
+        "format": "bcp47",
+        "type": "string"
+      },
+      "mime_type": {
+        "required": true,
+        "type": "string"
+      },
+      "notes": {
+        "type": "string"
+      },
+      "source_url": {
+        "type": "url"
+      },
+      "title": {
+        "type": "string"
+      },
+      "url": {
+        "type": "url"
+      }
+    },
+    "merge_policy": {
+      "default": "last_writer_wins"
+    },
+    "parent": "core.file",
+    "version": 2
+  },
+  "core.file.image": {
+    "display_hints": {
+      "title_field": "title"
+    },
+    "fields": {
+      "altitude": {
+        "type": "number"
+      },
+      "author": {
+        "type": "string"
+      },
+      "blob_ref": {
+        "required": true,
+        "type": "string"
+      },
+      "extracted_text": {
+        "type": "string"
+      },
+      "height": {
+        "type": "integer"
+      },
+      "language": {
+        "format": "bcp47",
+        "type": "string"
+      },
+      "latitude": {
+        "type": "number"
+      },
+      "longitude": {
+        "type": "number"
+      },
+      "mime_type": {
+        "required": true,
+        "type": "string"
+      },
+      "notes": {
+        "type": "string"
+      },
+      "source_url": {
+        "type": "url"
+      },
+      "title": {
+        "type": "string"
+      },
+      "url": {
+        "type": "url"
+      },
+      "width": {
+        "type": "integer"
+      }
+    },
+    "merge_policy": {
+      "default": "last_writer_wins"
+    },
+    "parent": "core.file",
+    "version": 2
+  },
+  "core.file.video": {
+    "display_hints": {
+      "title_field": "title"
+    },
+    "fields": {
+      "altitude": {
+        "type": "number"
+      },
+      "author": {
+        "type": "string"
+      },
+      "blob_ref": {
+        "required": true,
+        "type": "string"
+      },
+      "duration": {
+        "type": "number"
+      },
+      "extracted_text": {
+        "type": "string"
+      },
+      "height": {
+        "type": "integer"
+      },
+      "language": {
+        "format": "bcp47",
+        "type": "string"
+      },
+      "latitude": {
+        "type": "number"
+      },
+      "longitude": {
+        "type": "number"
+      },
+      "mime_type": {
+        "required": true,
+        "type": "string"
+      },
+      "notes": {
+        "type": "string"
+      },
+      "source_url": {
+        "type": "url"
+      },
+      "title": {
+        "type": "string"
+      },
+      "url": {
+        "type": "url"
+      },
+      "width": {
+        "type": "integer"
+      }
+    },
+    "merge_policy": {
+      "default": "last_writer_wins"
+    },
+    "parent": "core.file",
+    "version": 2
   },
   "core.highlight": {
-    "color": ["yellow", "blue", "green", "pink", "orange", "purple"],
-    "locator_type": ["offset", "page", "time", "cfi", "order", "none"],
+    "display_hints": {
+      "body_field": "note",
+      "title_field": "text"
+    },
+    "fields": {
+      "color": {
+        "enum_values": [
+          "yellow",
+          "blue",
+          "green",
+          "pink",
+          "orange",
+          "purple"
+        ],
+        "type": "enum"
+      },
+      "end_location": {
+        "type": "string"
+      },
+      "locator_type": {
+        "enum_values": [
+          "offset",
+          "page",
+          "time",
+          "cfi",
+          "order",
+          "none"
+        ],
+        "type": "enum"
+      },
+      "note": {
+        "type": "string"
+      },
+      "start_location": {
+        "type": "string"
+      },
+      "text": {
+        "required": true,
+        "type": "string"
+      }
+    },
+    "merge_policy": {
+      "default": "last_writer_wins",
+      "fields": {
+        "note": "keep_both_copies"
+      }
+    },
+    "version": 1
+  },
+  "core.media": {
+    "display_hints": {
+      "body_field": "body",
+      "title_field": "title"
+    },
+    "fields": {
+      "author": {
+        "type": "string"
+      },
+      "body": {
+        "type": "string"
+      },
+      "image_url": {
+        "type": "url"
+      },
+      "language": {
+        "format": "bcp47",
+        "type": "string"
+      },
+      "notes": {
+        "type": "string"
+      },
+      "published_at": {
+        "type": "datetime"
+      },
+      "publisher": {
+        "type": "string"
+      },
+      "title": {
+        "required": true,
+        "type": "string"
+      },
+      "url": {
+        "type": "url"
+      }
+    },
+    "merge_policy": {
+      "default": "last_writer_wins",
+      "fields": {
+        "body": "keep_both_copies",
+        "notes": "keep_both_copies"
+      }
+    },
+    "version": 1
+  },
+  "core.media.album": {
+    "display_hints": {
+      "body_field": "body",
+      "title_field": "title"
+    },
+    "fields": {
+      "author": {
+        "type": "string"
+      },
+      "body": {
+        "type": "string"
+      },
+      "image_url": {
+        "type": "url"
+      },
+      "language": {
+        "format": "bcp47",
+        "type": "string"
+      },
+      "notes": {
+        "type": "string"
+      },
+      "num_tracks": {
+        "type": "integer"
+      },
+      "published_at": {
+        "type": "datetime"
+      },
+      "publisher": {
+        "type": "string"
+      },
+      "release_type": {
+        "type": "string"
+      },
+      "title": {
+        "required": true,
+        "type": "string"
+      },
+      "url": {
+        "type": "url"
+      }
+    },
+    "merge_policy": {
+      "default": "last_writer_wins",
+      "fields": {
+        "body": "keep_both_copies",
+        "notes": "keep_both_copies"
+      }
+    },
+    "parent": "core.media",
+    "roles": [
+      "container"
+    ],
+    "version": 2
+  },
+  "core.media.article": {
+    "display_hints": {
+      "body_field": "body",
+      "title_field": "title"
+    },
+    "fields": {
+      "author": {
+        "type": "string"
+      },
+      "body": {
+        "required": true,
+        "type": "string"
+      },
+      "image_url": {
+        "type": "url"
+      },
+      "language": {
+        "format": "bcp47",
+        "type": "string"
+      },
+      "notes": {
+        "type": "string"
+      },
+      "published_at": {
+        "type": "datetime"
+      },
+      "publisher": {
+        "type": "string"
+      },
+      "section": {
+        "type": "string"
+      },
+      "title": {
+        "required": true,
+        "type": "string"
+      },
+      "url": {
+        "type": "url"
+      },
+      "word_count": {
+        "type": "integer"
+      }
+    },
+    "merge_policy": {
+      "default": "last_writer_wins",
+      "fields": {
+        "body": "keep_both_copies",
+        "notes": "keep_both_copies"
+      }
+    },
+    "parent": "core.media",
+    "version": 1
+  },
+  "core.media.book": {
+    "display_hints": {
+      "body_field": "body",
+      "title_field": "title"
+    },
+    "fields": {
+      "author": {
+        "type": "string"
+      },
+      "body": {
+        "type": "string"
+      },
+      "edition": {
+        "type": "string"
+      },
+      "image_url": {
+        "type": "url"
+      },
+      "isbn": {
+        "type": "string"
+      },
+      "language": {
+        "format": "bcp47",
+        "type": "string"
+      },
+      "notes": {
+        "type": "string"
+      },
+      "page_count": {
+        "type": "integer"
+      },
+      "published_at": {
+        "type": "datetime"
+      },
+      "publisher": {
+        "type": "string"
+      },
+      "title": {
+        "required": true,
+        "type": "string"
+      },
+      "url": {
+        "type": "url"
+      }
+    },
+    "merge_policy": {
+      "default": "last_writer_wins",
+      "fields": {
+        "body": "keep_both_copies",
+        "notes": "keep_both_copies"
+      }
+    },
+    "parent": "core.media",
+    "version": 1
   },
   "core.media.episode": {
-    "medium": ["tv", "podcast", "radio", "video", "mixed"],
+    "display_hints": {
+      "body_field": "body",
+      "title_field": "title"
+    },
+    "fields": {
+      "author": {
+        "type": "string"
+      },
+      "body": {
+        "type": "string"
+      },
+      "duration": {
+        "type": "number"
+      },
+      "episode_number": {
+        "type": "integer"
+      },
+      "image_url": {
+        "type": "url"
+      },
+      "language": {
+        "format": "bcp47",
+        "type": "string"
+      },
+      "media_url": {
+        "type": "url"
+      },
+      "medium": {
+        "enum_values": [
+          "tv",
+          "podcast",
+          "radio",
+          "video",
+          "mixed"
+        ],
+        "type": "enum"
+      },
+      "mime_type": {
+        "type": "string"
+      },
+      "notes": {
+        "type": "string"
+      },
+      "published_at": {
+        "type": "datetime"
+      },
+      "publisher": {
+        "type": "string"
+      },
+      "season_number": {
+        "type": "integer"
+      },
+      "title": {
+        "required": true,
+        "type": "string"
+      },
+      "url": {
+        "type": "url"
+      }
+    },
+    "merge_policy": {
+      "default": "last_writer_wins",
+      "fields": {
+        "body": "keep_both_copies",
+        "notes": "keep_both_copies"
+      }
+    },
+    "parent": "core.media",
+    "version": 2
+  },
+  "core.media.film": {
+    "display_hints": {
+      "body_field": "body",
+      "title_field": "title"
+    },
+    "fields": {
+      "author": {
+        "type": "string"
+      },
+      "body": {
+        "type": "string"
+      },
+      "content_rating": {
+        "type": "string"
+      },
+      "director": {
+        "type": "string"
+      },
+      "duration": {
+        "type": "number"
+      },
+      "image_url": {
+        "type": "url"
+      },
+      "language": {
+        "format": "bcp47",
+        "type": "string"
+      },
+      "media_url": {
+        "type": "url"
+      },
+      "mime_type": {
+        "type": "string"
+      },
+      "notes": {
+        "type": "string"
+      },
+      "published_at": {
+        "type": "datetime"
+      },
+      "publisher": {
+        "type": "string"
+      },
+      "title": {
+        "required": true,
+        "type": "string"
+      },
+      "url": {
+        "type": "url"
+      }
+    },
+    "merge_policy": {
+      "default": "last_writer_wins",
+      "fields": {
+        "body": "keep_both_copies",
+        "notes": "keep_both_copies"
+      }
+    },
+    "parent": "core.media",
+    "version": 2
   },
   "core.media.series": {
-    "medium": ["tv", "podcast", "radio", "video", "mixed"],
-    "status": ["ongoing", "ended", "canceled"],
+    "display_hints": {
+      "body_field": "body",
+      "title_field": "title"
+    },
+    "fields": {
+      "author": {
+        "type": "string"
+      },
+      "body": {
+        "type": "string"
+      },
+      "image_url": {
+        "type": "url"
+      },
+      "language": {
+        "format": "bcp47",
+        "type": "string"
+      },
+      "medium": {
+        "enum_values": [
+          "tv",
+          "podcast",
+          "radio",
+          "video",
+          "mixed"
+        ],
+        "type": "enum"
+      },
+      "notes": {
+        "type": "string"
+      },
+      "published_at": {
+        "type": "datetime"
+      },
+      "publisher": {
+        "type": "string"
+      },
+      "status": {
+        "enum_values": [
+          "ongoing",
+          "ended",
+          "canceled"
+        ],
+        "type": "enum"
+      },
+      "title": {
+        "required": true,
+        "type": "string"
+      },
+      "url": {
+        "type": "url"
+      }
+    },
+    "merge_policy": {
+      "default": "last_writer_wins",
+      "fields": {
+        "body": "keep_both_copies",
+        "notes": "keep_both_copies"
+      }
+    },
+    "parent": "core.media",
+    "roles": [
+      "container"
+    ],
+    "version": 4
+  },
+  "core.media.song": {
+    "display_hints": {
+      "body_field": "body",
+      "title_field": "title"
+    },
+    "fields": {
+      "album": {
+        "type": "string"
+      },
+      "author": {
+        "type": "string"
+      },
+      "body": {
+        "type": "string"
+      },
+      "duration": {
+        "type": "number"
+      },
+      "image_url": {
+        "type": "url"
+      },
+      "isrc": {
+        "type": "string"
+      },
+      "language": {
+        "format": "bcp47",
+        "type": "string"
+      },
+      "media_url": {
+        "type": "url"
+      },
+      "mime_type": {
+        "type": "string"
+      },
+      "notes": {
+        "type": "string"
+      },
+      "published_at": {
+        "type": "datetime"
+      },
+      "publisher": {
+        "type": "string"
+      },
+      "title": {
+        "required": true,
+        "type": "string"
+      },
+      "track_number": {
+        "type": "integer"
+      },
+      "url": {
+        "type": "url"
+      }
+    },
+    "merge_policy": {
+      "default": "last_writer_wins",
+      "fields": {
+        "body": "keep_both_copies",
+        "notes": "keep_both_copies"
+      }
+    },
+    "parent": "core.media",
+    "version": 2
+  },
+  "core.message": {
+    "display_hints": {
+      "body_field": "body"
+    },
+    "fields": {
+      "body": {
+        "required": true,
+        "type": "string"
+      },
+      "from": {
+        "required": true,
+        "type": "string"
+      },
+      "to": {
+        "items_type": "string",
+        "type": "array"
+      }
+    },
+    "merge_policy": {
+      "default": "last_writer_wins",
+      "fields": {
+        "body": "keep_both_copies"
+      }
+    },
+    "version": 1
+  },
+  "core.note": {
+    "display_hints": {
+      "body_field": "body",
+      "title_field": "title"
+    },
+    "fields": {
+      "body": {
+        "required": true,
+        "type": "string"
+      },
+      "language": {
+        "format": "bcp47",
+        "type": "string"
+      },
+      "notes": {
+        "type": "string"
+      },
+      "title": {
+        "type": "string"
+      }
+    },
+    "merge_policy": {
+      "default": "last_writer_wins",
+      "fields": {
+        "body": "keep_both_copies",
+        "notes": "keep_both_copies"
+      }
+    },
+    "version": 1
   },
   "core.task": {
-    "precision": ["year", "month", "day", "time"],
-    "priority": ["low", "medium", "high", "urgent"],
+    "display_hints": {
+      "body_field": "body",
+      "title_field": "title"
+    },
+    "fields": {
+      "body": {
+        "type": "string"
+      },
+      "completed_at": {
+        "type": "datetime"
+      },
+      "due_at": {
+        "type": "datetime"
+      },
+      "notes": {
+        "type": "string"
+      },
+      "place": {
+        "type": "string"
+      },
+      "precision": {
+        "enum_values": [
+          "year",
+          "month",
+          "day",
+          "time"
+        ],
+        "type": "enum"
+      },
+      "priority": {
+        "enum_values": [
+          "low",
+          "medium",
+          "high",
+          "urgent"
+        ],
+        "type": "enum"
+      },
+      "starts_at": {
+        "type": "datetime"
+      },
+      "status": {
+        "type": "string"
+      },
+      "title": {
+        "required": true,
+        "type": "string"
+      },
+      "url": {
+        "type": "url"
+      }
+    },
+    "merge_policy": {
+      "default": "last_writer_wins",
+      "fields": {
+        "body": "keep_both_copies",
+        "notes": "keep_both_copies"
+      }
+    },
+    "version": 1
   },
   "google.calendar.event": {
-    "status": ["confirmed", "tentative", "cancelled"],
-    "transparency": ["opaque", "transparent"],
-    "visibility": ["default", "public", "private", "confidential"],
+    "compatible_with": [
+      "core.event"
+    ],
+    "display_hints": {
+      "body_field": "description",
+      "title_field": "title"
+    },
+    "fields": {
+      "all_day": {
+        "type": "boolean"
+      },
+      "color_id": {
+        "type": "string"
+      },
+      "creator_email": {
+        "type": "string"
+      },
+      "end_timezone": {
+        "type": "string"
+      },
+      "ends_at": {
+        "type": "datetime"
+      },
+      "etag": {
+        "type": "string"
+      },
+      "html_link": {
+        "type": "url"
+      },
+      "organizer_email": {
+        "type": "string"
+      },
+      "original_starts_at": {
+        "type": "datetime"
+      },
+      "place": {
+        "type": "string"
+      },
+      "recurrence": {
+        "items_type": "string",
+        "type": "array"
+      },
+      "recurring_event_id": {
+        "type": "string"
+      },
+      "source_calendar_id": {
+        "type": "string"
+      },
+      "starts_at": {
+        "type": "datetime"
+      },
+      "status": {
+        "enum_values": [
+          "confirmed",
+          "tentative",
+          "cancelled"
+        ],
+        "type": "enum"
+      },
+      "timezone": {
+        "type": "string"
+      },
+      "title": {
+        "required": true,
+        "type": "string"
+      },
+      "transparency": {
+        "enum_values": [
+          "opaque",
+          "transparent"
+        ],
+        "type": "enum"
+      },
+      "visibility": {
+        "enum_values": [
+          "default",
+          "public",
+          "private",
+          "confidential"
+        ],
+        "type": "enum"
+      }
+    },
+    "version": 2
+  },
+  "google.contacts.contact": {
+    "display_hints": {
+      "body_field": "biography",
+      "title_field": "title"
+    },
+    "fields": {
+      "addresses": {
+        "items_type": "string",
+        "type": "array"
+      },
+      "biography": {
+        "type": "string"
+      },
+      "birthday": {
+        "type": "date"
+      },
+      "department": {
+        "type": "string"
+      },
+      "emails": {
+        "items_type": "string",
+        "type": "array"
+      },
+      "etag": {
+        "type": "string"
+      },
+      "family_name": {
+        "type": "string"
+      },
+      "given_name": {
+        "type": "string"
+      },
+      "job_title": {
+        "type": "string"
+      },
+      "middle_name": {
+        "type": "string"
+      },
+      "nickname": {
+        "type": "string"
+      },
+      "organization": {
+        "type": "string"
+      },
+      "phones": {
+        "items_type": "string",
+        "type": "array"
+      },
+      "photo_url": {
+        "type": "url"
+      },
+      "prefix": {
+        "type": "string"
+      },
+      "resource_name": {
+        "type": "string"
+      },
+      "suffix": {
+        "type": "string"
+      },
+      "title": {
+        "required": true,
+        "type": "string"
+      }
+    },
+    "version": 1
+  },
+  "google.drive.file": {
+    "display_hints": {
+      "title_field": "title"
+    },
+    "fields": {
+      "blob_ref": {
+        "type": "string"
+      },
+      "created_at_drive": {
+        "type": "datetime"
+      },
+      "drive_file_id": {
+        "required": true,
+        "type": "string"
+      },
+      "etag": {
+        "type": "string"
+      },
+      "icon_link": {
+        "type": "url"
+      },
+      "md5_checksum": {
+        "type": "string"
+      },
+      "mime_type": {
+        "required": true,
+        "type": "string"
+      },
+      "modified_at_drive": {
+        "type": "datetime"
+      },
+      "owners": {
+        "items_type": "string",
+        "type": "array"
+      },
+      "parents": {
+        "items_type": "string",
+        "type": "array"
+      },
+      "sha256_checksum": {
+        "type": "string"
+      },
+      "size_bytes": {
+        "type": "integer"
+      },
+      "thumbnail_link": {
+        "type": "url"
+      },
+      "title": {
+        "required": true,
+        "type": "string"
+      },
+      "trashed": {
+        "type": "boolean"
+      },
+      "web_view_link": {
+        "type": "url"
+      }
+    },
+    "version": 1
   },
   "google.tasks.task": {
-    "status": ["needsAction", "completed"],
+    "compatible_with": [
+      "core.task"
+    ],
+    "display_hints": {
+      "body_field": "notes",
+      "title_field": "title"
+    },
+    "fields": {
+      "completed_at": {
+        "type": "datetime"
+      },
+      "deleted": {
+        "type": "boolean"
+      },
+      "due_at": {
+        "type": "datetime"
+      },
+      "etag": {
+        "type": "string"
+      },
+      "hidden": {
+        "type": "boolean"
+      },
+      "html_link": {
+        "type": "url"
+      },
+      "notes": {
+        "type": "string"
+      },
+      "parent": {
+        "type": "string"
+      },
+      "position": {
+        "type": "string"
+      },
+      "source_task_list_id": {
+        "type": "string"
+      },
+      "status": {
+        "enum_values": [
+          "needsAction",
+          "completed"
+        ],
+        "type": "enum"
+      },
+      "title": {
+        "required": true,
+        "type": "string"
+      }
+    },
+    "version": 1
+  },
+  "google.youtube.channel": {
+    "display_hints": {
+      "body_field": "description",
+      "title_field": "title"
+    },
+    "fields": {
+      "channel_id": {
+        "required": true,
+        "type": "string"
+      },
+      "custom_url": {
+        "type": "string"
+      },
+      "html_link": {
+        "type": "url"
+      },
+      "published_at": {
+        "type": "datetime"
+      },
+      "subscribed_at": {
+        "type": "datetime"
+      },
+      "subscriber_count": {
+        "type": "number"
+      },
+      "thumbnail_url": {
+        "type": "url"
+      },
+      "title": {
+        "required": true,
+        "type": "string"
+      },
+      "video_count": {
+        "type": "number"
+      },
+      "view_count": {
+        "type": "number"
+      }
+    },
+    "version": 1
   },
   "google.youtube.playlist": {
-    "privacy_status": ["public", "unlisted", "private"],
+    "display_hints": {
+      "body_field": "description",
+      "title_field": "title"
+    },
+    "fields": {
+      "channel_id": {
+        "type": "string"
+      },
+      "etag": {
+        "type": "string"
+      },
+      "html_link": {
+        "type": "url"
+      },
+      "item_count": {
+        "type": "number"
+      },
+      "playlist_id": {
+        "required": true,
+        "type": "string"
+      },
+      "privacy_status": {
+        "enum_values": [
+          "public",
+          "unlisted",
+          "private"
+        ],
+        "type": "enum"
+      },
+      "published_at": {
+        "type": "datetime"
+      },
+      "thumbnail_url": {
+        "type": "url"
+      },
+      "title": {
+        "required": true,
+        "type": "string"
+      }
+    },
+    "version": 1
+  },
+  "google.youtube.video": {
+    "compatible_with": [
+      "core.media"
+    ],
+    "display_hints": {
+      "body_field": "description",
+      "title_field": "title"
+    },
+    "fields": {
+      "category_id": {
+        "type": "string"
+      },
+      "channel_id": {
+        "type": "string"
+      },
+      "channel_title": {
+        "type": "string"
+      },
+      "default_audio_language": {
+        "type": "string"
+      },
+      "duration_iso8601": {
+        "type": "string"
+      },
+      "html_link": {
+        "type": "url"
+      },
+      "like_count": {
+        "type": "number"
+      },
+      "liked_at": {
+        "type": "datetime"
+      },
+      "published_at": {
+        "type": "datetime"
+      },
+      "tags": {
+        "items_type": "string",
+        "type": "array"
+      },
+      "thumbnail_url": {
+        "type": "url"
+      },
+      "title": {
+        "required": true,
+        "type": "string"
+      },
+      "video_id": {
+        "required": true,
+        "type": "string"
+      },
+      "view_count": {
+        "type": "number"
+      }
+    },
+    "version": 1
+  },
+  "marfa.captured_email": {
+    "display_hints": {
+      "body_field": "text_body",
+      "title_field": "subject"
+    },
+    "fields": {
+      "attachments": {
+        "items_type": "object",
+        "type": "array"
+      },
+      "body": {
+        "type": "string"
+      },
+      "from_address": {
+        "required": true,
+        "type": "string"
+      },
+      "from_name": {
+        "type": "string"
+      },
+      "headers": {
+        "type": "object"
+      },
+      "html_body": {
+        "type": "string"
+      },
+      "in_reply_to": {
+        "type": "string"
+      },
+      "message_id": {
+        "type": "string"
+      },
+      "references": {
+        "items_type": "string",
+        "type": "array"
+      },
+      "sent_at": {
+        "type": "datetime"
+      },
+      "subject": {
+        "type": "string"
+      },
+      "text_body": {
+        "type": "string"
+      },
+      "to_address": {
+        "required": true,
+        "type": "string"
+      }
+    },
+    "version": 1
   },
   "marfa.podcast.episode": {
-    "episode_type": ["full", "trailer", "bonus"],
-    "explicit": ["true", "false", "clean"],
+    "display_hints": {
+      "body_field": "content_encoded",
+      "title_field": "title"
+    },
+    "fields": {
+      "author": {
+        "type": "string"
+      },
+      "content_encoded": {
+        "type": "string"
+      },
+      "duration_raw": {
+        "type": "string"
+      },
+      "duration_seconds": {
+        "type": "number"
+      },
+      "enclosure_length": {
+        "type": "integer"
+      },
+      "enclosure_type": {
+        "type": "string"
+      },
+      "enclosure_url": {
+        "type": "url"
+      },
+      "episode_number": {
+        "type": "integer"
+      },
+      "episode_type": {
+        "enum_values": [
+          "full",
+          "trailer",
+          "bonus"
+        ],
+        "type": "enum"
+      },
+      "explicit": {
+        "enum_values": [
+          "true",
+          "false",
+          "clean"
+        ],
+        "type": "enum"
+      },
+      "feed_url": {
+        "type": "url"
+      },
+      "guid": {
+        "type": "string"
+      },
+      "guid_is_permalink": {
+        "type": "boolean"
+      },
+      "image_url": {
+        "type": "url"
+      },
+      "link": {
+        "type": "url"
+      },
+      "podcast_guid": {
+        "type": "string"
+      },
+      "pub_date": {
+        "type": "datetime"
+      },
+      "season_number": {
+        "type": "integer"
+      },
+      "title": {
+        "required": true,
+        "type": "string"
+      }
+    },
+    "version": 1
   },
   "marfa.podcast.show": {
-    "explicit": ["true", "false", "clean"],
-    "itunes_type": ["episodic", "serial"],
+    "display_hints": {
+      "body_field": "description",
+      "title_field": "title"
+    },
+    "fields": {
+      "author": {
+        "type": "string"
+      },
+      "categories": {
+        "items_type": "string",
+        "maxItems": 50,
+        "type": "array"
+      },
+      "complete": {
+        "type": "boolean"
+      },
+      "copyright": {
+        "type": "string"
+      },
+      "episode_count": {
+        "type": "integer"
+      },
+      "explicit": {
+        "enum_values": [
+          "true",
+          "false",
+          "clean"
+        ],
+        "type": "enum"
+      },
+      "feed_url": {
+        "required": true,
+        "type": "url"
+      },
+      "image_url": {
+        "type": "url"
+      },
+      "itunes_type": {
+        "enum_values": [
+          "episodic",
+          "serial"
+        ],
+        "type": "enum"
+      },
+      "language": {
+        "type": "string"
+      },
+      "last_build_date": {
+        "type": "datetime"
+      },
+      "link": {
+        "type": "url"
+      },
+      "new_feed_url": {
+        "type": "url"
+      },
+      "owner_name": {
+        "type": "string"
+      },
+      "podcast_guid": {
+        "type": "string"
+      },
+      "title": {
+        "required": true,
+        "type": "string"
+      }
+    },
+    "roles": [
+      "container"
+    ],
+    "version": 2
   },
   "raindrop.collection": {
-    "view": ["list", "simple", "grid", "masonry"],
+    "display_hints": {
+      "title_field": "title"
+    },
+    "fields": {
+      "color": {
+        "type": "string"
+      },
+      "count": {
+        "type": "integer"
+      },
+      "cover": {
+        "type": "string"
+      },
+      "created": {
+        "type": "datetime"
+      },
+      "expanded": {
+        "type": "boolean"
+      },
+      "last_update": {
+        "type": "datetime"
+      },
+      "parent_id": {
+        "type": "string"
+      },
+      "public": {
+        "type": "boolean"
+      },
+      "slug": {
+        "type": "string"
+      },
+      "title": {
+        "required": true,
+        "type": "string"
+      },
+      "view": {
+        "enum_values": [
+          "list",
+          "simple",
+          "grid",
+          "masonry"
+        ],
+        "type": "enum"
+      }
+    },
+    "version": 1
   },
   "raindrop.raindrop": {
-    "raindrop_type": ["link", "article", "image", "video", "document", "audio"],
+    "compatible_with": [
+      "core.bookmark"
+    ],
+    "display_hints": {
+      "body_field": "excerpt",
+      "title_field": "title"
+    },
+    "fields": {
+      "body": {
+        "type": "string"
+      },
+      "collection_id": {
+        "type": "string"
+      },
+      "cover": {
+        "type": "url"
+      },
+      "created": {
+        "type": "datetime"
+      },
+      "domain": {
+        "type": "string"
+      },
+      "excerpt": {
+        "type": "string"
+      },
+      "important": {
+        "type": "boolean"
+      },
+      "last_update": {
+        "type": "datetime"
+      },
+      "media": {
+        "items_type": "object",
+        "type": "array"
+      },
+      "note": {
+        "type": "string"
+      },
+      "raindrop_type": {
+        "enum_values": [
+          "link",
+          "article",
+          "image",
+          "video",
+          "document",
+          "audio"
+        ],
+        "type": "enum"
+      },
+      "tags": {
+        "items_type": "string",
+        "type": "array"
+      },
+      "title": {
+        "required": true,
+        "type": "string"
+      },
+      "url": {
+        "required": true,
+        "type": "url"
+      }
+    },
+    "version": 1
   },
   "readwise.book": {
-    "category": ["books", "articles", "tweets", "podcasts"],
+    "display_hints": {
+      "title_field": "title"
+    },
+    "fields": {
+      "author": {
+        "type": "string"
+      },
+      "category": {
+        "enum_values": [
+          "books",
+          "articles",
+          "tweets",
+          "podcasts"
+        ],
+        "type": "enum"
+      },
+      "cover_image_url": {
+        "type": "url"
+      },
+      "num_highlights": {
+        "type": "integer"
+      },
+      "readwise_source": {
+        "type": "string"
+      },
+      "source_url": {
+        "type": "url"
+      },
+      "title": {
+        "required": true,
+        "type": "string"
+      },
+      "updated": {
+        "type": "datetime"
+      }
+    },
+    "version": 1
   },
   "readwise.document": {
-    "category": ["article", "email", "epub", "highlight", "note", "pdf", "podcast", "rss", "tweet", "video"],
-    "location": ["new", "later", "shortlist", "archive", "feed"],
+    "display_hints": {
+      "title_field": "title"
+    },
+    "fields": {
+      "author": {
+        "type": "string"
+      },
+      "category": {
+        "enum_values": [
+          "article",
+          "email",
+          "epub",
+          "highlight",
+          "note",
+          "pdf",
+          "podcast",
+          "rss",
+          "tweet",
+          "video"
+        ],
+        "type": "enum"
+      },
+      "first_opened_at": {
+        "type": "datetime"
+      },
+      "image_url": {
+        "type": "url"
+      },
+      "last_moved_at": {
+        "type": "datetime"
+      },
+      "last_opened_at": {
+        "type": "datetime"
+      },
+      "listening_time": {
+        "type": "string"
+      },
+      "location": {
+        "enum_values": [
+          "new",
+          "later",
+          "shortlist",
+          "archive",
+          "feed"
+        ],
+        "type": "enum"
+      },
+      "notes": {
+        "type": "string"
+      },
+      "published_date": {
+        "type": "datetime"
+      },
+      "reader_url": {
+        "type": "url"
+      },
+      "reading_progress": {
+        "type": "number"
+      },
+      "reading_time": {
+        "type": "string"
+      },
+      "readwise_source": {
+        "type": "string"
+      },
+      "saved_at": {
+        "type": "datetime"
+      },
+      "site_name": {
+        "type": "string"
+      },
+      "source_url": {
+        "type": "url"
+      },
+      "summary": {
+        "type": "string"
+      },
+      "tags": {
+        "items_type": "string",
+        "maxItems": 200,
+        "type": "array"
+      },
+      "title": {
+        "required": true,
+        "type": "string"
+      },
+      "updated": {
+        "type": "datetime"
+      },
+      "word_count": {
+        "type": "integer"
+      }
+    },
+    "version": 1
   },
   "readwise.highlight": {
-    "location_type": ["page", "location", "offset", "order", "time_offset", "none"],
+    "display_hints": {
+      "body_field": "note",
+      "title_field": "text"
+    },
+    "fields": {
+      "book_id": {
+        "type": "string"
+      },
+      "color": {
+        "type": "string"
+      },
+      "highlighted_at": {
+        "type": "datetime"
+      },
+      "location": {
+        "type": "integer"
+      },
+      "location_type": {
+        "enum_values": [
+          "page",
+          "location",
+          "offset",
+          "order",
+          "time_offset",
+          "none"
+        ],
+        "type": "enum"
+      },
+      "note": {
+        "type": "string"
+      },
+      "tags": {
+        "items_type": "string",
+        "type": "array"
+      },
+      "text": {
+        "required": true,
+        "type": "string"
+      },
+      "updated": {
+        "type": "datetime"
+      },
+      "url": {
+        "type": "url"
+      }
+    },
+    "version": 1
+  },
+  "system.account_holder": {
+    "fields": {},
+    "version": 1
   },
   "system.activity": {
-    "severity": ["info", "warning", "error", "action_required"],
+    "fields": {
+      "connection_id": {
+        "required": true,
+        "type": "string"
+      },
+      "detail": {
+        "type": "object"
+      },
+      "severity": {
+        "enum_values": [
+          "info",
+          "warning",
+          "error",
+          "action_required"
+        ],
+        "required": true,
+        "type": "enum"
+      },
+      "summary": {
+        "required": true,
+        "type": "string"
+      }
+    },
+    "version": 2
+  },
+  "system.app": {
+    "fields": {
+      "display_name": {
+        "type": "string"
+      },
+      "homepage_url": {
+        "type": "url"
+      },
+      "name": {
+        "required": true,
+        "type": "string"
+      },
+      "publisher_handle": {
+        "type": "string"
+      }
+    },
+    "version": 1
   },
   "system.connection": {
-    "direction": ["read", "write", "both"],
-    "kind": ["app", "connector"],
-    "status": ["active", "revoked"],
+    "fields": {
+      "client_id": {
+        "type": "string"
+      },
+      "configuration": {
+        "type": "object"
+      },
+      "connector_id": {
+        "type": "string"
+      },
+      "credential_id": {
+        "type": "string"
+      },
+      "direction": {
+        "enum_values": [
+          "read",
+          "write",
+          "both"
+        ],
+        "type": "enum"
+      },
+      "granted_at": {
+        "required": true,
+        "type": "datetime"
+      },
+      "kind": {
+        "enum_values": [
+          "app",
+          "connector"
+        ],
+        "required": true,
+        "type": "enum"
+      },
+      "last_used_at": {
+        "type": "datetime"
+      },
+      "mapping": {
+        "type": "object"
+      },
+      "revoked_at": {
+        "type": "datetime"
+      },
+      "scopes": {
+        "items_type": "string",
+        "type": "array"
+      },
+      "status": {
+        "enum_values": [
+          "active",
+          "revoked"
+        ],
+        "required": true,
+        "type": "enum"
+      }
+    },
+    "version": 5
   },
   "system.connector": {
-    "direction": ["read", "write", "both"],
+    "fields": {
+      "direction": {
+        "enum_values": [
+          "read",
+          "write",
+          "both"
+        ],
+        "type": "enum"
+      },
+      "manifest": {
+        "required": true,
+        "type": "object"
+      },
+      "manifest_name": {
+        "required": true,
+        "type": "string"
+      },
+      "manifest_version": {
+        "required": true,
+        "type": "string"
+      },
+      "publisher": {
+        "required": true,
+        "type": "string"
+      },
+      "registered_at": {
+        "required": true,
+        "type": "datetime"
+      },
+      "summary": {
+        "type": "string"
+      }
+    },
+    "version": 2
   },
   "system.credential": {
-    "kind": ["api_key", "oauth_token", "api_token"],
+    "fields": {
+      "api_token_config": {
+        "type": "object"
+      },
+      "kind": {
+        "enum_values": [
+          "api_key",
+          "oauth_token",
+          "api_token"
+        ],
+        "required": true,
+        "type": "enum"
+      },
+      "last_used_at": {
+        "type": "datetime"
+      },
+      "oauth_provider_config": {
+        "type": "object"
+      },
+      "scopes": {
+        "items_type": "string",
+        "type": "array"
+      },
+      "secret_encrypted": {
+        "type": "string"
+      }
+    },
+    "version": 1
   },
   "system.device": {
-    "kind": ["phone", "tablet", "laptop", "desktop", "watch", "sync-agent", "other"],
+    "fields": {
+      "kind": {
+        "enum_values": [
+          "phone",
+          "tablet",
+          "laptop",
+          "desktop",
+          "watch",
+          "sync-agent",
+          "other"
+        ],
+        "required": true,
+        "type": "enum"
+      },
+      "last_active_at": {
+        "type": "datetime"
+      },
+      "name": {
+        "required": true,
+        "type": "string"
+      }
+    },
+    "version": 1
   },
+  "system.webhook": {
+    "fields": {
+      "active": {
+        "type": "boolean"
+      },
+      "events": {
+        "items_type": "string",
+        "required": true,
+        "type": "array"
+      },
+      "type_filter": {
+        "type": "string"
+      },
+      "url": {
+        "required": true,
+        "type": "url"
+      }
+    },
+    "version": 1
+  },
+  "todoist.task": {
+    "display_hints": {
+      "body_field": "description",
+      "title_field": "title"
+    },
+    "fields": {
+      "child_order": {
+        "type": "integer"
+      },
+      "comment_count": {
+        "type": "integer"
+      },
+      "completed": {
+        "type": "boolean"
+      },
+      "due": {
+        "type": "object"
+      },
+      "labels": {
+        "items_type": "string",
+        "type": "array"
+      },
+      "parent_id": {
+        "type": "string"
+      },
+      "priority": {
+        "type": "integer"
+      },
+      "project_id": {
+        "type": "string"
+      },
+      "section_id": {
+        "type": "string"
+      },
+      "title": {
+        "required": true,
+        "type": "string"
+      },
+      "url": {
+        "type": "url"
+      }
+    },
+    "version": 1
+  }
 } as const;
 

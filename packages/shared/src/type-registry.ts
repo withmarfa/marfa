@@ -4,11 +4,11 @@ import {
   ALL_CONNECTOR_TYPES,
   ALL_SYSTEM_TYPES,
   ALL_TYPE_IDS,
-  SHIPPED_ENUM_VALUES,
   FIELD_FORMATS,
   FIELD_TYPES,
   RESERVED_ITEM_FIELDS,
   ROLE_CONSTRAINT_PREFIX,
+  SHIPPED_TYPE_SHAPES,
   TYPE_ROLES,
   isRoleConstraint,
   roleFromConstraint,
@@ -59,7 +59,7 @@ export {
   ALL_CONNECTOR_TYPES,
   ALL_SYSTEM_TYPES,
   ALL_TYPE_IDS,
-  SHIPPED_ENUM_VALUES,
+  SHIPPED_TYPE_SHAPES,
 };
 // The closed role vocabulary and the constraint-entry grammar, re-exported so
 // a consumer validating or rendering roles reads the same list and the same
