@@ -271,6 +271,8 @@ pub struct QueuedWrite {
     pub edge_id: Option<String>,
     pub namespace: Option<String>,
     pub tag: Option<String>,
+    /// The blob an upload carries, by its hash.
+    pub blob: Option<String>,
     pub base_version: Option<i64>,
     pub idempotency_key: String,
     pub depends_on: Vec<String>,
@@ -280,6 +282,26 @@ pub struct QueuedWrite {
     pub refusals: i64,
     pub queued_at: String,
     pub answered_at: Option<String>,
+}
+
+/// How a file is attached. Every field has a default: the MIME type from the
+/// file's extension, the title from its name, the type from the MIME type.
+#[napi(object)]
+#[derive(Default)]
+pub struct Attachment {
+    pub mime_type: Option<String>,
+    pub title: Option<String>,
+    #[napi(js_name = "type")]
+    pub r#type: Option<String>,
+    pub tier: Option<Tier>,
+}
+
+/// The three writes an attachment is, in the order they go out.
+#[napi(object)]
+pub struct Attached {
+    pub upload: QueuedWrite,
+    pub item: QueuedWrite,
+    pub edge: QueuedWrite,
 }
 
 /// What became of one write a drain sent.
@@ -443,6 +465,7 @@ fn queued(write: marfa_core::QueuedWrite) -> Result<QueuedWrite> {
         edge_id: write.edge_id,
         namespace: write.namespace,
         tag: write.tag,
+        blob: write.blob,
         base_version: write.base_version,
         idempotency_key: write.idempotency_key,
         depends_on: write.depends_on,
@@ -578,6 +601,7 @@ fn failure(error: marfa_core::CoreError) -> Error {
         E::CatchUpTooOld { .. } => ("catch_up_too_old", error.to_string()),
         E::StreamIncomplete { .. } => ("stream_incomplete", error.to_string()),
         E::WrongServer { .. } => ("wrong_server", error.to_string()),
+        E::BytesAbsent { .. } => ("bytes_absent", error.to_string()),
         E::Invalid(message) => ("invalid", message.clone()),
     };
     Error::new(napi::Status::GenericFailure, format!("{code}: {detail}"))
@@ -641,6 +665,74 @@ impl Task for CatchUp {
 
 pub struct Drain {
     core: Arc<marfa_core::Core>,
+}
+
+pub struct PutBlob {
+    core: Arc<marfa_core::Core>,
+    path: String,
+    mime_type: Option<String>,
+}
+
+#[napi]
+impl Task for PutBlob {
+    type Output = marfa_core::QueuedWrite;
+    type JsValue = QueuedWrite;
+
+    fn compute(&mut self) -> Result<Self::Output> {
+        self.core
+            .put_blob(std::path::Path::new(&self.path), self.mime_type.as_deref())
+            .map_err(failure)
+    }
+
+    fn resolve(&mut self, _: Env, write: Self::Output) -> Result<Self::JsValue> {
+        queued(write)
+    }
+}
+
+pub struct Attach {
+    core: Arc<marfa_core::Core>,
+    id: String,
+    path: String,
+    attachment: marfa_core::Attachment,
+}
+
+#[napi]
+impl Task for Attach {
+    type Output = marfa_core::Attached;
+    type JsValue = Attached;
+
+    fn compute(&mut self) -> Result<Self::Output> {
+        self.core
+            .attach(&self.id, std::path::Path::new(&self.path), &self.attachment)
+            .map_err(failure)
+    }
+
+    fn resolve(&mut self, _: Env, attached: Self::Output) -> Result<Self::JsValue> {
+        Ok(Attached {
+            upload: queued(attached.upload)?,
+            item: queued(attached.item)?,
+            edge: queued(attached.edge)?,
+        })
+    }
+}
+
+pub struct FetchBlob {
+    core: Arc<marfa_core::Core>,
+    hash: String,
+}
+
+#[napi]
+impl Task for FetchBlob {
+    type Output = std::path::PathBuf;
+    type JsValue = String;
+
+    fn compute(&mut self) -> Result<Self::Output> {
+        self.core.blob(&self.hash).map_err(failure)
+    }
+
+    fn resolve(&mut self, _: Env, path: Self::Output) -> Result<Self::JsValue> {
+        Ok(path.to_string_lossy().into_owned())
+    }
 }
 
 #[napi]
@@ -920,6 +1012,59 @@ impl MarfaCore {
         AsyncTask::new(Drain {
             core: Arc::clone(&self.inner),
         })
+    }
+
+    /// Holds a file's bytes beside the working copy and queues their upload.
+    /// Off the JavaScript thread, because the whole file is copied and
+    /// hashed.
+    #[napi(ts_return_type = "Promise<QueuedWrite>")]
+    pub fn put_blob(&self, path: String, mime_type: Option<String>) -> AsyncTask<PutBlob> {
+        AsyncTask::new(PutBlob {
+            core: Arc::clone(&self.inner),
+            path,
+            mime_type,
+        })
+    }
+
+    /// Attaches a file to an item: its upload, a file item naming the bytes,
+    /// and an `attached-to` edge, three queued writes. Off the JavaScript
+    /// thread, for the reason `putBlob` is.
+    #[napi(ts_return_type = "Promise<Attached>")]
+    pub fn attach(
+        &self,
+        id: String,
+        path: String,
+        attachment: Option<Attachment>,
+    ) -> AsyncTask<Attach> {
+        let attachment = attachment.unwrap_or_default();
+        AsyncTask::new(Attach {
+            core: Arc::clone(&self.inner),
+            id,
+            path,
+            attachment: marfa_core::Attachment {
+                mime_type: attachment.mime_type,
+                title: attachment.title,
+                r#type: attachment.r#type,
+                tier: attachment.tier.map(Into::into),
+            },
+        })
+    }
+
+    /// Where a blob's bytes are held, fetching them first where this store
+    /// does not hold them yet. Refused `bytes_absent` where they can be
+    /// neither read nor fetched.
+    #[napi(ts_return_type = "Promise<string>")]
+    pub fn blob(&self, hash: String) -> AsyncTask<FetchBlob> {
+        AsyncTask::new(FetchBlob {
+            core: Arc::clone(&self.inner),
+            hash,
+        })
+    }
+
+    /// Whether a blob's bytes are held beside the store, with no request.
+    #[napi]
+    pub fn blob_held(&self, hash: String) -> Result<bool> {
+        self.inner.blob_held(&hash).map_err(failure)
     }
 
     /// Sends a blocked or dead write again, under a fresh idempotency key.

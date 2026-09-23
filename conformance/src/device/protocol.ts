@@ -80,6 +80,8 @@ export interface QueuedWrite {
   edge_id: string | null;
   namespace: string | null;
   tag: string | null;
+  /** The blob an upload carries, by its hash. */
+  blob: string | null;
   base_version: number | null;
   idempotency_key: string;
   /** The queue rows this one waits for. Empty when nothing holds it; more
@@ -260,6 +262,17 @@ export interface DeviceUnderTest {
     item: string,
     namespace: string,
   ): Promise<Outcome<QueuedWrite>>;
+
+  /** Hold a file's bytes beside the store and queue their upload. */
+  putBlob(path: string, mimeType?: string): Promise<Outcome<QueuedWrite>>;
+  /** Where a blob's bytes are held, fetched first where they are not. */
+  blob(hash: string): Promise<Outcome<{ hash: string; path: string }>>;
+  /** A file attached to an item: the upload, the file item, the edge. */
+  attach(
+    item: string,
+    path: string,
+    options?: { mimeType?: string; title?: string; type?: string; tier?: Tier },
+  ): Promise<Outcome<QueuedWrite[]>>;
 
   /** A second device over the same store, for the one-writer rule. */
   reopen(options?: { url?: string; key?: string }): DeviceUnderTest;

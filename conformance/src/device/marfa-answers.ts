@@ -407,6 +407,18 @@ export const writeAnswers = {
   }),
   /** `DELETE /items/{id}` and `DELETE /edges/{id}`. */
   ok: (): Answer => ({ kind: "json", status: 200, body: { ok: true } }),
+  /** `POST /blobs`: the name the server gives the bytes it was sent. */
+  uploaded: (hash: string, mimeType: string, size: number): Answer => ({
+    kind: "json",
+    status: 201,
+    body: { hash, mime_type: mimeType, size_bytes: size },
+  }),
+  /** `GET /blobs/{hash}/url`: a link to the bytes, and its lifetime. */
+  link: (url: string): Answer => ({
+    kind: "json",
+    status: 200,
+    body: { url, expires_in: 3600 },
+  }),
   /** `POST /edges` and `PATCH /edges/{id}`. */
   edge: (edge: {
     id: string;

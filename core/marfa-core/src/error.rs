@@ -58,6 +58,9 @@ pub enum CoreError {
     StreamIncomplete { reason: String },
     #[error("this file belongs to {expected}, not {got}")]
     WrongServer { expected: String, got: String },
+    /// The item is whole and its bytes are not here (`device.md` 30).
+    #[error("the bytes of {hash} are not held here and cannot be fetched: {reason}")]
+    BytesAbsent { hash: String, reason: String },
     #[error("{0}")]
     Invalid(String),
 }

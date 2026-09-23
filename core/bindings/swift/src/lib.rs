@@ -288,6 +288,8 @@ pub struct QueuedWrite {
     pub edge_id: Option<String>,
     pub namespace: Option<String>,
     pub tag: Option<String>,
+    /// The blob an upload carries, by its hash.
+    pub blob: Option<String>,
     pub base_version: Option<i64>,
     pub idempotency_key: String,
     pub depends_on: Vec<String>,
@@ -297,6 +299,28 @@ pub struct QueuedWrite {
     pub refusals: i64,
     pub queued_at: String,
     pub answered_at: Option<String>,
+}
+
+/// How a file is attached. Every field has a default: the MIME type from the
+/// file's extension, the title from its name, the type from the MIME type.
+#[derive(Debug, Clone, Default, uniffi::Record)]
+pub struct Attachment {
+    #[uniffi(default = None)]
+    pub mime_type: Option<String>,
+    #[uniffi(default = None)]
+    pub title: Option<String>,
+    #[uniffi(default = None)]
+    pub r#type: Option<String>,
+    #[uniffi(default = None)]
+    pub tier: Option<Tier>,
+}
+
+/// The three writes an attachment is, in the order they go out.
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct Attached {
+    pub upload: QueuedWrite,
+    pub item: QueuedWrite,
+    pub edge: QueuedWrite,
 }
 
 /// What became of one write a drain sent.
@@ -399,6 +423,12 @@ pub enum MarfaError {
         got: String,
         message: String,
     },
+    /// The item is whole and its bytes are not here, nor can they be fetched.
+    BytesAbsent {
+        hash: String,
+        reason: String,
+        message: String,
+    },
     Invalid {
         message: String,
     },
@@ -425,6 +455,7 @@ impl MarfaError {
             | MarfaError::CatchUpTooOld { message, .. }
             | MarfaError::StreamIncomplete { message, .. }
             | MarfaError::WrongServer { message, .. }
+            | MarfaError::BytesAbsent { message, .. }
             | MarfaError::Invalid { message } => message,
         }
     }
@@ -485,6 +516,11 @@ impl From<marfa_core::CoreError> for MarfaError {
             E::WrongServer { expected, got } => MarfaError::WrongServer {
                 expected,
                 got,
+                message,
+            },
+            E::BytesAbsent { hash, reason } => MarfaError::BytesAbsent {
+                hash,
+                reason,
                 message,
             },
             E::Invalid(_) => MarfaError::Invalid { message },
@@ -685,6 +721,7 @@ fn queued(write: marfa_core::QueuedWrite) -> Result<QueuedWrite, MarfaError> {
         edge_id: write.edge_id,
         namespace: write.namespace,
         tag: write.tag,
+        blob: write.blob,
         base_version: write.base_version,
         idempotency_key: write.idempotency_key,
         depends_on: write.depends_on,
@@ -959,6 +996,55 @@ impl MarfaCore {
         self.inner.queue()?.into_iter().map(queued).collect()
     }
 
+    /// Holds a file's bytes beside the store and queues their upload.
+    pub fn put_blob(
+        &self,
+        path: String,
+        mime_type: Option<String>,
+    ) -> Result<QueuedWrite, MarfaError> {
+        queued(
+            self.inner
+                .put_blob(std::path::Path::new(&path), mime_type.as_deref())?,
+        )
+    }
+
+    /// Attaches a file to an item: its upload, a file item naming the bytes,
+    /// and an `attached-to` edge, three queued writes.
+    pub fn attach(
+        &self,
+        id: String,
+        path: String,
+        attachment: Attachment,
+    ) -> Result<Attached, MarfaError> {
+        let attached = self.inner.attach(
+            &id,
+            std::path::Path::new(&path),
+            &marfa_core::Attachment {
+                mime_type: attachment.mime_type,
+                title: attachment.title,
+                r#type: attachment.r#type,
+                tier: attachment.tier.map(Into::into),
+            },
+        )?;
+        Ok(Attached {
+            upload: queued(attached.upload)?,
+            item: queued(attached.item)?,
+            edge: queued(attached.edge)?,
+        })
+    }
+
+    /// Where a blob's bytes are held, fetching them first where this store
+    /// does not hold them yet. Refused `BytesAbsent` where they can be
+    /// neither read nor fetched.
+    pub fn blob(&self, hash: String) -> Result<String, MarfaError> {
+        Ok(self.inner.blob(&hash)?.to_string_lossy().into_owned())
+    }
+
+    /// Whether a blob's bytes are held beside the store, with no request.
+    pub fn blob_held(&self, hash: String) -> Result<bool, MarfaError> {
+        Ok(self.inner.blob_held(&hash)?)
+    }
+
     /// Sends what the queue holds and records what came back. One pass.
     pub fn drain(&self) -> Result<DrainReport, MarfaError> {
         drained(self.inner.drain()?)
@@ -1033,6 +1119,122 @@ mod tests {
             );
         }
         assert_eq!(Verdict::from(O::Dead), Verdict::Dead);
+    }
+
+    /// Each of the core's refusals lands on the case of the same name, with
+    /// what it carries.
+    #[test]
+    fn every_core_error_crosses_as_its_own_case() {
+        use marfa_core::CoreError as E;
+        let text = || "x".to_string();
+        let crossed: Vec<(MarfaError, &str)> = vec![
+            (
+                E::NotFound {
+                    code: text(),
+                    message: text(),
+                }
+                .into(),
+                "NotFound",
+            ),
+            (
+                E::Unauthorized {
+                    code: text(),
+                    message: text(),
+                }
+                .into(),
+                "Unauthorized",
+            ),
+            (
+                E::Forbidden {
+                    code: text(),
+                    message: text(),
+                }
+                .into(),
+                "Forbidden",
+            ),
+            (
+                E::Validation {
+                    code: text(),
+                    message: text(),
+                }
+                .into(),
+                "Validation",
+            ),
+            (E::UnknownType { message: text() }.into(), "UnknownType"),
+            (
+                E::RateLimited {
+                    code: text(),
+                    message: text(),
+                    retry_after_seconds: Some(1),
+                }
+                .into(),
+                "RateLimited",
+            ),
+            (
+                E::Server {
+                    status: 500,
+                    code: text(),
+                    message: text(),
+                }
+                .into(),
+                "Server",
+            ),
+            (E::Network(text()).into(), "Network"),
+            (E::Decoding(text()).into(), "Decoding"),
+            (E::Store(text()).into(), "Store"),
+            (E::NoServer.into(), "NoServer"),
+            (E::NoCursor.into(), "NoCursor"),
+            (E::HydrationIncomplete.into(), "HydrationIncomplete"),
+            (E::ReadingHandle.into(), "ReadingHandle"),
+            (
+                E::WrongSchema {
+                    expected: text(),
+                    found: text(),
+                    path: text(),
+                }
+                .into(),
+                "WrongSchema",
+            ),
+            (
+                E::CatchUpTooOld {
+                    min_retained_id: text(),
+                }
+                .into(),
+                "CatchUpTooOld",
+            ),
+            (
+                E::StreamIncomplete { reason: text() }.into(),
+                "StreamIncomplete",
+            ),
+            (
+                E::WrongServer {
+                    expected: text(),
+                    got: text(),
+                }
+                .into(),
+                "WrongServer",
+            ),
+            (
+                E::BytesAbsent {
+                    hash: "sha256:h".into(),
+                    reason: text(),
+                }
+                .into(),
+                "BytesAbsent",
+            ),
+            (E::Invalid(text()).into(), "Invalid"),
+        ];
+        for (error, name) in &crossed {
+            let debug = format!("{error:?}");
+            assert!(
+                debug.starts_with(&format!("{name} ")) || debug.starts_with(&format!("{name} {{")),
+                "{name} crossed as {debug}"
+            );
+        }
+        assert!(matches!(
+            &crossed[18].0,
+            MarfaError::BytesAbsent { hash, .. } if hash == "sha256:h"
+        ));
     }
 
     #[test]

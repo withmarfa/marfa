@@ -2,6 +2,7 @@
 //! over HTTP, kept current from the event log, read locally, and written to
 //! through a queue that holds every write until the server answers it.
 
+mod blob;
 mod catalog;
 mod catch_up;
 mod drain;
@@ -19,20 +20,22 @@ mod sse;
 mod store;
 mod wire;
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
 use std::time::Duration;
 
 use rusqlite::Connection;
+use serde_json::Value;
 
+pub use blob::{file_type_for, mime_type_for};
 pub use drain::{DrainReport, DrainVerdict};
 pub use error::CoreError;
 pub use folder::{Folder, PullReport, ScanReport, Slice};
 pub use lock::Handle;
 pub use model::{
-    BlockedReason, CatchUpReport, Draft, Edge, EdgeDraft, EdgeEdit, Edit, HydrateReport, Hydration,
-    Item, ItemState, ListFilters, MetadataWrite, Outcome, QueuedWrite, SearchFilters, SearchHit,
-    Sort, SortDirection, SortField, Status, Tier, Verdict, WriteKind,
+    Attached, Attachment, BlockedReason, CatchUpReport, Draft, Edge, EdgeDraft, EdgeEdit, Edit,
+    HydrateReport, Hydration, Item, ItemState, ListFilters, MetadataWrite, Outcome, QueuedWrite,
+    SearchFilters, SearchHit, Sort, SortDirection, SortField, Status, Tier, Verdict, WriteKind,
 };
 pub use store::CEILING;
 
@@ -48,6 +51,9 @@ pub struct Server {
 pub struct Core {
     conn: Mutex<Connection>,
     http: Option<http::Http>,
+    /// Where blobs' bytes are held: beside the working copy's file, and nowhere for a
+    /// store held in memory.
+    cache: Option<blob::Cache>,
     catch_up_idle: Duration,
     /// Held for as long as the `Core` lives, which is what makes it the
     /// claim rather than a record of one (`device.md` 3).
@@ -55,6 +61,10 @@ pub struct Core {
 }
 
 const DEFAULT_CATCH_UP_IDLE: Duration = Duration::from_secs(3);
+
+/// How old a half-written copy of a blob's bytes must be before the writer
+/// takes it away on open: well past any fetch or copy still running.
+const INCOMING_GRACE: Duration = Duration::from_secs(3600);
 
 impl Core {
     /// Opens the file at `path`, creating it and its schema when absent. A
@@ -65,12 +75,16 @@ impl Core {
         // store first would have done so as a writer for as long as it took
         // to find out it was not one.
         let lock = lock::WriterLock::claim(Some(path))?;
-        Self::from_connection(store::open(path)?, server, lock)
+        let cache = blob::Cache::beside(path);
+        if lock.handle() == Handle::Writer {
+            cache.sweep_incoming(INCOMING_GRACE);
+        }
+        Self::from_connection(store::open(path)?, server, lock, Some(cache))
     }
 
     pub fn open_in_memory(server: Option<Server>) -> Result<Core> {
         let lock = lock::WriterLock::claim(None)?;
-        Self::from_connection(store::open_in_memory()?, server, lock)
+        Self::from_connection(store::open_in_memory()?, server, lock, None)
     }
 
     /// Which handle this process holds: the one that may write, or a second
@@ -90,6 +104,7 @@ impl Core {
         conn: Connection,
         server: Option<Server>,
         lock: lock::WriterLock,
+        cache: Option<blob::Cache>,
     ) -> Result<Core> {
         let http = match server {
             Some(server) => Some(http::Http::new(&server.url, Some(&server.key))?),
@@ -107,6 +122,7 @@ impl Core {
         Ok(Core {
             conn: Mutex::new(conn),
             http,
+            cache,
             catch_up_idle: DEFAULT_CATCH_UP_IDLE,
             lock,
         })
@@ -228,166 +244,28 @@ impl Core {
         Ok(released)
     }
 
-    /// Queues a create, and holds the row locally until it is answered.
-    ///
-    /// The id is minted here rather than left to the server, because a row a
-    /// caller has been told was queued has to be readable locally before
-    /// anyone has answered for it (`queue-and-verdicts.md` 31), and a row
-    /// with no id cannot be read by one.
-    ///
-    /// The version is optional on a create and carried when given
-    /// (`queue-and-verdicts.md` 2): where the natural key resolves a live
-    /// row the server answers it exactly as it answers an update.
+    /// Queues a create, and holds the row locally until it is answered
+    /// (`queue_create` says how).
     pub fn create_item(&self, draft: &Draft) -> Result<QueuedWrite> {
         self.lock.refuse_unless_writer()?;
         let mut conn = self.conn()?;
         store::refuse_unless_hydrated(&conn)?;
         let catalog = catalog::Catalog::load(&conn)?;
-        if !catalog.known(&draft.r#type) {
-            return Err(CoreError::UnknownType {
-                message: format!("{} is not a type this copy holds", draft.r#type),
-            });
-        }
-        let id = draft
-            .id
-            .clone()
-            .unwrap_or_else(|| uuid::Uuid::now_v7().to_string());
-        let payload = draft.payload(&id)?;
         let tx = conn.transaction()?;
-        // The row lands locally and the write is queued in one transaction.
-        // Either would be wrong alone: a queued write with no local row is a
-        // change a caller cannot see, and a local row with no queued write is
-        // a change the server will never hear about.
-        store::upsert_item(
-            &tx,
-            &draft.wire(&id),
-            Some(&draft.tags),
-            catalog.title_field(&draft.r#type),
-        )?;
-        let queued = store::enqueue(
-            &tx,
-            &store::NewWrite {
-                kind: WriteKind::CreateItem,
-                item_id: Some(&id),
-                target_id: None,
-                edge_id: None,
-                namespace: None,
-                tag: None,
-                base_version: draft.base_version,
-                payload: &payload,
-                depends_on: &[],
-            },
-        )?;
-        // One write per tag, each waiting on the create
-        // (`queue-and-verdicts.md` 33, `device.md` 22). Queued in the same
-        // transaction as the create: a create that landed with its tags
-        // queued separately and then failed to queue them would be a create
-        // that dropped what it was asked for, which is exactly what 22
-        // forbids.
-        for tag in &draft.tags {
-            let body = serde_json::to_string(&serde_json::json!({ "tags": [tag] }))?;
-            store::enqueue(
-                &tx,
-                &store::NewWrite {
-                    kind: WriteKind::AddTag,
-                    item_id: Some(&id),
-                    target_id: None,
-                    edge_id: None,
-                    namespace: None,
-                    tag: Some(tag),
-                    base_version: None,
-                    payload: &body,
-                    depends_on: std::slice::from_ref(&queued.id),
-                },
-            )?;
-        }
+        let queued = queue_create(&tx, &catalog, draft, &[])?;
         tx.commit()?;
         Ok(queued)
     }
 
-    /// Queues an update, and applies it to the working copy.
-    ///
-    /// **The version is required** (`queue-and-verdicts.md` 2). An update
-    /// with none is refused here rather than sent, because a version-less
-    /// update is a write that overwrites whatever it finds — which is the
-    /// defect the folder rules were written against.
-    ///
-    /// The fields are the caller's, whole (`queue-and-verdicts.md` 34). A
-    /// device does not merge inside a field and does not assume the server
-    /// will, so what it sends is what it was handed.
+    /// Queues an update, and applies it to the working copy
+    /// (`queue_update` says what it requires).
     pub fn update_item(&self, id: &str, edit: &Edit) -> Result<QueuedWrite> {
         self.lock.refuse_unless_writer()?;
         let mut conn = self.conn()?;
         store::refuse_unless_hydrated(&conn)?;
-
-        let Some(held) = store::item_by_id(&conn, id)? else {
-            return Err(CoreError::NotFound {
-                code: "item_not_found".into(),
-                message: format!("{id} is not a row this copy holds"),
-            });
-        };
-        let Some(base) = edit.base_version else {
-            return Err(CoreError::Invalid(format!(
-                "an update to {id} carries no version; a write that names no version overwrites whatever it finds"
-            )));
-        };
-        // The version the caller read, against the row as it stands. A
-        // caller editing a row the copy has since replaced is editing
-        // something they have not seen, and sending it would be a write
-        // based on a version that was never theirs.
-        if base != held.version {
-            return Err(CoreError::Invalid(format!(
-                "the update to {id} is based on version {base} and this copy holds version {}; read it again",
-                held.version
-            )));
-        }
-
         let catalog = catalog::Catalog::load(&conn)?;
-        let payload = edit.payload(base)?;
-        let mut next = held.clone();
-        for (key, value) in &edit.properties {
-            next.properties.insert(key.clone(), value.clone());
-        }
-        // **The natural key moves on the copy too, not only on the wire.**
-        //
-        // The copy is what the folder reads to answer "who holds this name".
-        // Leaving the old key on it means an item that has asked to be
-        // renamed still answers to the name it is leaving, and the next file
-        // to take that name bases its create on this row — which the server
-        // resolves as an upsert onto it. The name is applied for the same
-        // reason the properties are: a refusal reconciles the row back.
-        if let Some(source_id) = &edit.source_id {
-            next.source_id = Some(source_id.clone());
-        }
-        next.updated_at = store::now_iso();
-
         let tx = conn.transaction()?;
-        store::upsert_item(
-            &tx,
-            &next.as_wire(),
-            None,
-            catalog.title_field(&next.r#type),
-        )?;
-        let queued = store::enqueue(
-            &tx,
-            &store::NewWrite {
-                kind: WriteKind::UpdateItem,
-                item_id: Some(id),
-                target_id: None,
-                edge_id: None,
-                namespace: None,
-                tag: None,
-                base_version: Some(base),
-                payload: &payload,
-                // The create and nothing else (`queue-and-verdicts.md` 4).
-                // A write held for every unanswered row is a write a
-                // refused tag can refuse, and statement 16 is about a row
-                // the server never accepted — not about a sibling write
-                // that failed for its own reasons. The queue drains in
-                // order, so ordering needs no dependency to hold it.
-                depends_on: &store::unanswered_creates_for_item(&tx, id)?,
-            },
-        )?;
+        let queued = queue_update(&tx, &catalog, id, edit, &[])?;
         tx.commit()?;
         Ok(queued)
     }
@@ -452,6 +330,7 @@ impl Core {
                 edge_id: None,
                 namespace: None,
                 tag: None,
+                blob: None,
                 base_version: None,
                 payload,
                 depends_on: &depends_on,
@@ -461,47 +340,14 @@ impl Core {
         Ok(queued)
     }
 
-    /// Queues an edge, and holds it locally until it is answered.
-    ///
-    /// It waits for both of its endpoints (`queue-and-verdicts.md` 4): an
-    /// edge naming a row whose create has not landed is an edge the server
-    /// has nowhere to put, and either end can be the one that has not.
+    /// Queues an edge, and holds it locally until it is answered
+    /// (`queue_edge` says what it waits for).
     pub fn create_edge(&self, draft: &EdgeDraft) -> Result<QueuedWrite> {
         self.lock.refuse_unless_writer()?;
         let mut conn = self.conn()?;
         store::refuse_unless_hydrated(&conn)?;
-        let id = draft
-            .id
-            .clone()
-            .unwrap_or_else(|| uuid::Uuid::now_v7().to_string());
-        let payload = draft.payload(&id)?;
-        // Both endpoints' creates: an edge naming a row whose create has
-        // not landed is an edge the server has nowhere to put, and either
-        // end can be the one that has not.
-        let mut depends_on: Vec<String> = Vec::new();
-        for endpoint in [&draft.source_id, &draft.target_id] {
-            for id in store::unanswered_creates_for_item(&conn, endpoint)? {
-                if !depends_on.contains(&id) {
-                    depends_on.push(id);
-                }
-            }
-        }
         let tx = conn.transaction()?;
-        store::upsert_edge(&tx, &draft.wire(&id))?;
-        let queued = store::enqueue(
-            &tx,
-            &store::NewWrite {
-                kind: WriteKind::CreateEdge,
-                item_id: Some(&draft.source_id),
-                target_id: Some(&draft.target_id),
-                edge_id: Some(&id),
-                namespace: None,
-                tag: None,
-                base_version: None,
-                payload: &payload,
-                depends_on: &depends_on,
-            },
-        )?;
+        let queued = queue_edge(&tx, draft)?;
         tx.commit()?;
         Ok(queued)
     }
@@ -547,6 +393,7 @@ impl Core {
                 edge_id: Some(id),
                 namespace: None,
                 tag: None,
+                blob: None,
                 base_version: Some(base),
                 payload: &payload,
                 depends_on: &depends_on,
@@ -591,6 +438,7 @@ impl Core {
                 edge_id: Some(id),
                 namespace: None,
                 tag: None,
+                blob: None,
                 base_version: None,
                 payload: &payload,
                 depends_on: &depends_on,
@@ -646,6 +494,7 @@ impl Core {
                 edge_id: None,
                 namespace: None,
                 tag,
+                blob: None,
                 base_version: None,
                 payload,
                 depends_on: &depends_on,
@@ -728,6 +577,7 @@ impl Core {
                 edge_id: None,
                 namespace: Some(namespace),
                 tag: None,
+                blob: None,
                 base_version: None,
                 payload,
                 depends_on: &depends_on,
@@ -735,6 +585,167 @@ impl Core {
         )?;
         tx.commit()?;
         Ok(queued)
+    }
+
+    /// Queues an upload (`device.md` 38).
+    ///
+    /// The bytes are copied beside the working copy under their hash, and
+    /// the queue holds that name and never the bytes: a queue is read whole
+    /// by every write that looks for what it depends on.
+    pub fn put_blob(&self, path: &Path, mime_type: Option<&str>) -> Result<QueuedWrite> {
+        self.with_upload(
+            path,
+            &blob::mime_type_for(path, mime_type),
+            |_, _, upload, _| Ok(upload.clone()),
+        )
+    }
+
+    /// Queues a file item for a file: its upload, and the create waiting on
+    /// it, naming the bytes and their MIME type.
+    pub(crate) fn create_file_item(&self, path: &Path, draft: &Draft) -> Result<QueuedWrite> {
+        self.refuse_unknown_type(&draft.r#type)?;
+        let mime_type = blob::mime_type_for(path, None);
+        self.with_upload(path, &mime_type, |tx, catalog, upload, hash| {
+            let mut draft = draft.clone();
+            name_bytes(&mut draft.properties, hash, &mime_type);
+            queue_create(tx, catalog, &draft, std::slice::from_ref(&upload.id))
+        })
+    }
+
+    /// Queues new bytes for a file item: their upload, and the update waiting
+    /// on it that names them.
+    pub(crate) fn update_file_item(
+        &self,
+        id: &str,
+        path: &Path,
+        edit: &Edit,
+    ) -> Result<QueuedWrite> {
+        let mime_type = blob::mime_type_for(path, None);
+        self.with_upload(path, &mime_type, |tx, catalog, upload, hash| {
+            let mut edit = edit.clone();
+            name_bytes(&mut edit.properties, hash, &mime_type);
+            queue_update(tx, catalog, id, &edit, std::slice::from_ref(&upload.id))
+        })
+    }
+
+    /// Refuses a type the copy does not hold before any bytes are taken in,
+    /// so a create the type would refuse leaves no bytes behind that nothing
+    /// names.
+    fn refuse_unknown_type(&self, r#type: &str) -> Result<()> {
+        let conn = self.conn()?;
+        if catalog::Catalog::load(&conn)?.known(r#type) {
+            return Ok(());
+        }
+        Err(CoreError::UnknownType {
+            message: format!("{type} is not a type this copy holds", type = r#type),
+        })
+    }
+
+    /// Takes a file's bytes in beside the working copy, then queues their
+    /// upload and whatever waits on it in one transaction: a write queued
+    /// without the upload it names would name bytes the server is never
+    /// sent.
+    fn with_upload<T>(
+        &self,
+        path: &Path,
+        mime_type: &str,
+        then: impl FnOnce(&Connection, &catalog::Catalog, &QueuedWrite, &str) -> Result<T>,
+    ) -> Result<T> {
+        self.lock.refuse_unless_writer()?;
+        store::refuse_unless_hydrated(&*self.conn()?)?;
+        let hash = self.cache()?.take(path)?;
+        let mut conn = self.conn()?;
+        let catalog = catalog::Catalog::load(&conn)?;
+        let tx = conn.transaction()?;
+        let upload = queue_upload(&tx, &hash, mime_type)?;
+        let queued = then(&tx, &catalog, &upload, &hash)?;
+        tx.commit()?;
+        Ok(queued)
+    }
+
+    /// Attaches a file to an item (`device.md` 38): its upload, a file item
+    /// naming the bytes, and an `attached-to` edge from the file to the item.
+    ///
+    /// Three writes, each with its own verdict, each waiting on the one
+    /// before it, queued in one transaction: a file item queued without its
+    /// upload names bytes the server never receives, and an edge queued
+    /// without its file item links nothing.
+    pub fn attach(&self, target: &str, path: &Path, attachment: &Attachment) -> Result<Attached> {
+        self.lock.refuse_unless_writer()?;
+        {
+            let conn = self.conn()?;
+            store::refuse_unless_hydrated(&conn)?;
+            // A row in the bin reads as absent (`device.md` 32), and a file
+            // attached to it would be linked to something nobody can open.
+            if store::item_by_id(&conn, target)?.is_none() {
+                return Err(CoreError::NotFound {
+                    code: "item_not_found".into(),
+                    message: format!("{target} is not a row this copy holds"),
+                });
+            }
+        }
+        let mime_type = blob::mime_type_for(path, attachment.mime_type.as_deref());
+        let title = attachment.title.clone().unwrap_or_else(|| {
+            path.file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "file".into())
+        });
+        let mut properties = serde_json::Map::new();
+        properties.insert("title".into(), title.into());
+        let mut draft = Draft {
+            r#type: blob::file_type_for(&mime_type, attachment.r#type.as_deref()),
+            properties,
+            tier: attachment.tier,
+            ..Default::default()
+        };
+        self.refuse_unknown_type(&draft.r#type)?;
+        self.with_upload(path, &mime_type, |tx, catalog, upload, hash| {
+            name_bytes(&mut draft.properties, hash, &mime_type);
+            let item = queue_create(tx, catalog, &draft, std::slice::from_ref(&upload.id))?;
+            let edge = queue_edge(
+                tx,
+                &EdgeDraft {
+                    source_id: item.item_id.clone().unwrap_or_default(),
+                    target_id: target.to_string(),
+                    edge_type: "attached-to".into(),
+                    ..Default::default()
+                },
+            )?;
+            Ok(Attached {
+                upload: upload.clone(),
+                item,
+                edge,
+            })
+        })
+    }
+
+    /// A blob's bytes, as a file beside the working copy (`device.md` 30,
+    /// 37).
+    ///
+    /// Answered from what is held there when the bytes are held, and
+    /// otherwise fetched through the link the server gives and held for
+    /// next time. Where there are no bytes and no way to fetch them, the
+    /// refusal is `bytes_absent` naming the hash: the item that names them
+    /// is whole.
+    pub fn blob(&self, hash: &str) -> Result<PathBuf> {
+        let hash = blob::named(hash)?;
+        let cache = self.cache()?;
+        if let Some(path) = cache.held(&hash)? {
+            return Ok(path);
+        }
+        let Some(http) = self.http.as_ref() else {
+            return Err(CoreError::BytesAbsent {
+                hash,
+                reason: "this working copy was opened with no server to fetch them from".into(),
+            });
+        };
+        blob::fetch(cache, http, &hash)
+    }
+
+    /// Whether a blob's bytes are held beside the working copy, with no
+    /// request.
+    pub fn blob_held(&self, hash: &str) -> Result<bool> {
+        Ok(self.cache()?.held(&blob::named(hash)?)?.is_some())
     }
 
     /// Clears the rows the server has answered, and says how many went.
@@ -786,6 +797,12 @@ impl Core {
         self.http.as_ref().ok_or(CoreError::NoServer)
     }
 
+    pub(crate) fn cache(&self) -> Result<&blob::Cache> {
+        self.cache.as_ref().ok_or_else(|| {
+            CoreError::Invalid("a store held in memory has nowhere to hold a blob's bytes".into())
+        })
+    }
+
     pub(crate) fn http_ref(&self) -> Result<&http::Http> {
         self.http()
     }
@@ -799,6 +816,237 @@ impl Core {
             .lock()
             .map_err(|_| CoreError::Store("the connection was poisoned by an earlier panic".into()))
     }
+}
+
+/// A create, held locally and queued in the caller's transaction, waiting
+/// on `after` as well as on anything the row itself waits for.
+///
+/// The row lands locally and the write is queued together. Either would be
+/// wrong alone: a queued write with no local row is a change a caller cannot
+/// see, and a local row with no queued write is a change the server will
+/// never hear about.
+///
+/// The id is minted here rather than left to the server, because a row a
+/// caller has been told was queued has to be readable locally before anyone
+/// has answered for it (`queue-and-verdicts.md` 31), and a row with no id
+/// cannot be read by one.
+///
+/// The version is optional on a create and carried when given
+/// (`queue-and-verdicts.md` 2): where the natural key resolves a live row the
+/// server answers it exactly as it answers an update.
+fn queue_create(
+    tx: &Connection,
+    catalog: &catalog::Catalog,
+    draft: &Draft,
+    after: &[String],
+) -> Result<QueuedWrite> {
+    if !catalog.known(&draft.r#type) {
+        return Err(CoreError::UnknownType {
+            message: format!("{} is not a type this copy holds", draft.r#type),
+        });
+    }
+    let id = draft
+        .id
+        .clone()
+        .unwrap_or_else(|| uuid::Uuid::now_v7().to_string());
+    let payload = draft.payload(&id)?;
+    store::upsert_item(
+        tx,
+        &draft.wire(&id),
+        Some(&draft.tags),
+        catalog.title_field(&draft.r#type),
+    )?;
+    let queued = store::enqueue(
+        tx,
+        &store::NewWrite {
+            kind: WriteKind::CreateItem,
+            item_id: Some(&id),
+            target_id: None,
+            edge_id: None,
+            namespace: None,
+            tag: None,
+            blob: None,
+            base_version: draft.base_version,
+            payload: &payload,
+            depends_on: after,
+        },
+    )?;
+    // One write per tag, each waiting on the create
+    // (`queue-and-verdicts.md` 33, `device.md` 22), queued with it: a create
+    // that landed with its tags queued separately and then failed to queue
+    // them would be a create that dropped what it was asked for, which is
+    // exactly what 22 forbids.
+    for tag in &draft.tags {
+        let body = serde_json::to_string(&serde_json::json!({ "tags": [tag] }))?;
+        store::enqueue(
+            tx,
+            &store::NewWrite {
+                kind: WriteKind::AddTag,
+                item_id: Some(&id),
+                target_id: None,
+                edge_id: None,
+                namespace: None,
+                tag: Some(tag),
+                blob: None,
+                base_version: None,
+                payload: &body,
+                depends_on: std::slice::from_ref(&queued.id),
+            },
+        )?;
+    }
+    Ok(queued)
+}
+
+/// An update, applied to the copy and queued in the caller's transaction,
+/// waiting on `after` as well as on the row's own unanswered create.
+///
+/// **The version is required** (`queue-and-verdicts.md` 2). An update with
+/// none is refused here rather than sent, because a version-less update is a
+/// write that overwrites whatever it finds, which is the defect the folder
+/// rules were written against.
+///
+/// The fields are the caller's, whole (`queue-and-verdicts.md` 34). A device
+/// does not merge inside a field and does not assume the server will, so
+/// what it sends is what it was handed.
+fn queue_update(
+    tx: &Connection,
+    catalog: &catalog::Catalog,
+    id: &str,
+    edit: &Edit,
+    after: &[String],
+) -> Result<QueuedWrite> {
+    let Some(held) = store::item_by_id(tx, id)? else {
+        return Err(CoreError::NotFound {
+            code: "item_not_found".into(),
+            message: format!("{id} is not a row this copy holds"),
+        });
+    };
+    let Some(base) = edit.base_version else {
+        return Err(CoreError::Invalid(format!(
+            "an update to {id} carries no version; a write that names no version overwrites whatever it finds"
+        )));
+    };
+    // The version the caller read, against the row as it stands. A caller
+    // editing a row the copy has since replaced is editing something they
+    // have not seen, and sending it would be a write based on a version that
+    // was never theirs.
+    if base != held.version {
+        return Err(CoreError::Invalid(format!(
+            "the update to {id} is based on version {base} and this copy holds version {}; read it again",
+            held.version
+        )));
+    }
+    let payload = edit.payload(base)?;
+    let mut next = held.clone();
+    for (key, value) in &edit.properties {
+        next.properties.insert(key.clone(), value.clone());
+    }
+    // **The natural key moves on the copy too, not only on the wire.**
+    //
+    // The copy is what the folder reads to answer "who holds this name".
+    // Leaving the old key on it means an item that has asked to be renamed
+    // still answers to the name it is leaving, and the next file to take that
+    // name bases its create on this row, which the server resolves as an
+    // upsert onto it. The name is applied for the same reason the properties
+    // are: a refusal reconciles the row back.
+    if let Some(source_id) = &edit.source_id {
+        next.source_id = Some(source_id.clone());
+    }
+    next.updated_at = store::now_iso();
+    store::upsert_item(tx, &next.as_wire(), None, catalog.title_field(&next.r#type))?;
+    // The create and nothing else (`queue-and-verdicts.md` 4), besides what
+    // the caller names. A write held for every unanswered row is a write a
+    // refused tag can refuse, and statement 16 is about a row the server
+    // never accepted, not about a sibling write that failed for its own
+    // reasons. The queue drains in order, so ordering needs no dependency
+    // to hold it.
+    let mut depends_on = store::unanswered_creates_for_item(tx, id)?;
+    for waited in after {
+        if !depends_on.contains(waited) {
+            depends_on.push(waited.clone());
+        }
+    }
+    store::enqueue(
+        tx,
+        &store::NewWrite {
+            kind: WriteKind::UpdateItem,
+            item_id: Some(id),
+            target_id: None,
+            edge_id: None,
+            namespace: None,
+            tag: None,
+            blob: None,
+            base_version: Some(base),
+            payload: &payload,
+            depends_on: &depends_on,
+        },
+    )
+}
+
+/// An edge, held locally and queued in the caller's transaction.
+///
+/// It waits for both of its endpoints' creates (`queue-and-verdicts.md` 4):
+/// an edge naming a row whose create has not landed is an edge the server
+/// has nowhere to put, and either end can be the one that has not.
+fn queue_edge(tx: &Connection, draft: &EdgeDraft) -> Result<QueuedWrite> {
+    let id = draft
+        .id
+        .clone()
+        .unwrap_or_else(|| uuid::Uuid::now_v7().to_string());
+    let payload = draft.payload(&id)?;
+    let mut depends_on: Vec<String> = Vec::new();
+    for endpoint in [&draft.source_id, &draft.target_id] {
+        for id in store::unanswered_creates_for_item(tx, endpoint)? {
+            if !depends_on.contains(&id) {
+                depends_on.push(id);
+            }
+        }
+    }
+    store::upsert_edge(tx, &draft.wire(&id))?;
+    store::enqueue(
+        tx,
+        &store::NewWrite {
+            kind: WriteKind::CreateEdge,
+            item_id: Some(&draft.source_id),
+            target_id: Some(&draft.target_id),
+            edge_id: Some(&id),
+            namespace: None,
+            tag: None,
+            blob: None,
+            base_version: None,
+            payload: &payload,
+            depends_on: &depends_on,
+        },
+    )
+}
+
+/// A file item's two properties that name its bytes: their hash, and the
+/// MIME type they are sent under.
+fn name_bytes(properties: &mut serde_json::Map<String, Value>, hash: &str, mime_type: &str) {
+    properties.insert("blob_ref".into(), hash.into());
+    properties.insert("mime_type".into(), mime_type.into());
+}
+
+/// An upload, queued under the hash of bytes already held beside the working
+/// copy. The hash rides in the payload beside its own column, as a tag's
+/// does, and the MIME type is what the drain sends the bytes under.
+fn queue_upload(conn: &Connection, hash: &str, mime_type: &str) -> Result<QueuedWrite> {
+    let payload = serde_json::json!({ "hash": hash, "mime_type": mime_type }).to_string();
+    store::enqueue(
+        conn,
+        &store::NewWrite {
+            kind: WriteKind::UploadBlob,
+            item_id: None,
+            target_id: None,
+            edge_id: None,
+            namespace: None,
+            tag: None,
+            blob: Some(hash),
+            base_version: None,
+            payload: &payload,
+            depends_on: &[],
+        },
+    )
 }
 
 #[cfg(test)]
@@ -990,6 +1238,19 @@ mod tests {
             // Clearing answered rows is a write to the queue like any
             // other.
             ("forget_answered", reader.forget_answered().unwrap_err()),
+            // Refused before the file is read, so a reader copies nothing in.
+            (
+                "put_blob",
+                reader
+                    .put_blob(Path::new("no-such-file.png"), None)
+                    .unwrap_err(),
+            ),
+            (
+                "attach",
+                reader
+                    .attach("x", Path::new("no-such-file.png"), &Attachment::default())
+                    .unwrap_err(),
+            ),
         ];
         for (door, refusal) in &refusals {
             assert_eq!(
@@ -1008,7 +1269,7 @@ mod tests {
         // list from quietly shrinking.
         assert_eq!(
             refusals.len(),
-            17,
+            19,
             "an entry has gone from the list above. Every method on `Core` \
              that calls `refuse_unless_writer` belongs in it, and a door \
              dropped from it is a door nothing here covers."
@@ -1051,6 +1312,52 @@ mod tests {
             Some(Verdict::Blocked),
             "a release by one reason released a row blocked for another"
         );
+    }
+
+    #[test]
+    fn the_writer_sweeps_old_half_written_copies_when_it_opens() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("core.sqlite");
+        let blobs = dir.path().join("core.sqlite.blobs");
+        std::fs::create_dir_all(&blobs).unwrap();
+        let old = blobs.join(".incoming-old");
+        let young = blobs.join(".incoming-young");
+        std::fs::write(&old, b"half").unwrap();
+        std::fs::write(&young, b"half").unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(&old)
+            .unwrap()
+            .set_modified(std::time::SystemTime::now() - 2 * INCOMING_GRACE)
+            .unwrap();
+        let _writer = Core::open(&path, None).unwrap();
+        assert!(
+            !old.exists(),
+            "a half-written copy older than the grace survived the writer's open"
+        );
+        assert!(
+            young.exists(),
+            "a copy something may still be writing was taken"
+        );
+    }
+
+    /// Bytes held beside the working copy are answered with no server at
+    /// all, and bytes not held are absent rather than a missing server.
+    #[test]
+    fn with_no_server_held_bytes_are_answered_and_the_rest_are_absent() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("core.sqlite");
+        let core = Core::open(&path, None).unwrap();
+        let file = dir.path().join("note.txt");
+        std::fs::write(&file, b"held here").unwrap();
+        let hash = core.cache().unwrap().take(&file).unwrap();
+        let held = core.blob(&hash).unwrap();
+        assert_eq!(std::fs::read(held).unwrap(), b"held here");
+        let other = blob::name_of(b"never held");
+        assert!(matches!(
+            core.blob(&other),
+            Err(CoreError::BytesAbsent { hash, .. }) if hash == other
+        ));
     }
 
     #[test]

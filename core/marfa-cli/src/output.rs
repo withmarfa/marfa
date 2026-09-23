@@ -100,6 +100,7 @@ pub fn queued(writes: &[QueuedWrite], json: bool) -> Result<(), CliError> {
             .item_id
             .as_deref()
             .or(write.edge_id.as_deref())
+            .or(write.blob.as_deref())
             .unwrap_or("-");
         // The two things a person acts on, and neither is visible from the
         // verdict alone: how close a row is to the ceiling of five

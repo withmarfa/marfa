@@ -22,6 +22,9 @@ serde = { version = "1", features = ["derive"] }
 # alphabetical order, which is a change to their file the folder made for
 # no reason and which no scan can tell from one they made.
 serde_json = { version = "1", features = ["preserve_order"] }
+# A blob is addressed by the SHA-256 of its bytes, and a device checks the
+# bytes it caches against the name it asked for.
+sha2 = "0.10"
 thiserror = "2"
 # Frontmatter. `serde_yaml` is deprecated by its author and `serde_norway`
 # has not shipped in over a year; this one is current. It parses to its own

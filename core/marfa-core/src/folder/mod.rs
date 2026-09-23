@@ -17,6 +17,7 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
+use crate::catalog::Catalog;
 use crate::error::CoreError;
 use crate::model::{Draft, Edit, Item, Tier};
 use crate::{Core, Result, Server};
@@ -211,13 +212,17 @@ impl Folder {
     pub fn scan(&self) -> Result<ScanReport> {
         let mut report = ScanReport::default();
         let paths = self.files()?;
+        let catalog = {
+            let conn = self.core.conn()?;
+            Catalog::load(&conn)?
+        };
         // Resolving is fail-closed on a shared identity, so a file the
         // folder never touches — a hard link to a note, a copy some tool
         // made — would take the note's identity away with it and the
         // note's next rename would become a second item.
         let held: Vec<PathBuf> = paths
             .iter()
-            .filter(|path| self.holds(path))
+            .filter(|path| self.pushes(path, &catalog))
             .cloned()
             .collect();
         let identities = identity::resolve(&held);
@@ -275,7 +280,7 @@ impl Folder {
             // item it is bound to — which reaches any file the folder wrote
             // under a name `holds` rejects.
             seen.insert(key.clone());
-            if !self.holds(path) {
+            if !self.pushes(path, &catalog) {
                 report.skipped += 1;
                 continue;
             }
@@ -290,11 +295,19 @@ impl Folder {
                 // the folder holds what it last agreed with.
                 continue;
             };
+            // An empty file that is not a document is no blob the server
+            // holds (`folders.md` 28), and pushing one would queue an upload
+            // refused on its first answer.
+            if bytes.is_empty() && !is_document(path) {
+                report.skipped += 1;
+                continue;
+            }
             let text = String::from_utf8_lossy(&bytes).into_owned();
             let hash = state::hash(&bytes);
             let mark = identities.get(path).map(|found| found.key());
             let seen = Seen {
                 key: &key,
+                path,
                 text: &text,
                 hash: &hash,
                 mark: mark.as_deref(),
@@ -325,7 +338,7 @@ impl Folder {
                         report.unchanged += 1;
                         continue;
                     }
-                    self.queue_update(bound, &seen, &mut unresolved)?;
+                    self.queue_update(bound, &seen, &catalog, &mut unresolved)?;
                     report.updated += 1;
                 }
                 Some(bound) => {
@@ -410,7 +423,7 @@ impl Folder {
                     // server — and telling it nothing is what left the item
                     // under the old key and had the next pull put the old
                     // name back.
-                    self.queue_update(bound, &seen, &mut unresolved)?;
+                    self.queue_update(bound, &seen, &catalog, &mut unresolved)?;
                     report.renamed += 1;
                 }
                 // No identity the mapping knows and no row at this path: a
@@ -440,7 +453,7 @@ impl Folder {
                         }
                         holder.remove(key.as_str());
                     }
-                    self.queue_create(&seen, &mut unresolved)?;
+                    self.queue_create(&seen, &catalog, &mut unresolved)?;
                     report.created += 1;
                 }
             }
@@ -594,23 +607,48 @@ impl Folder {
             .find(|item| item.source_id.as_deref() == Some(key)))
     }
 
-    /// Whether this path is one the folder pushes (`folders.md` 19).
-    fn holds(&self, path: &Path) -> bool {
-        // By extension, because a file's type is decided by the folder's
-        // defaults and a file that is not a document is not one of them.
-        // Anything else is left alone rather than pushed as a note.
-        matches!(
-            path.extension().and_then(|ext| ext.to_str()),
-            Some("md" | "markdown" | "txt")
-        )
+    /// Whether this path is one the folder pushes (`folders.md` 19, 28): a
+    /// document, or a file the slice holds a file type for.
+    fn pushes(&self, path: &Path, catalog: &Catalog) -> bool {
+        is_document(path) || self.file_type_of(path, catalog).is_some()
     }
 
-    fn queue_create(&self, seen: &Seen<'_>, unresolved: &mut Vec<Unresolved>) -> Result<()> {
+    /// The type a file that is not a document becomes, where the slice holds
+    /// it (`folders.md` 28): the subtype its MIME type names, held with its
+    /// subtree as any slice type is.
+    fn file_type_of(&self, path: &Path, catalog: &Catalog) -> Option<String> {
+        if is_document(path) {
+            return None;
+        }
+        let named = crate::blob::file_type_for(&crate::blob::mime_type_for(path, None), None);
+        // A subtype the server does not register is a file all the same.
+        let file_type = if catalog.known(&named) {
+            named
+        } else {
+            FILE_TYPE.to_string()
+        };
+        self.slice
+            .types
+            .iter()
+            .any(|declared| catalog.matches(declared, &file_type))
+            .then_some(file_type)
+    }
+
+    fn queue_create(
+        &self,
+        seen: &Seen<'_>,
+        catalog: &Catalog,
+        unresolved: &mut Vec<Unresolved>,
+    ) -> Result<()> {
+        if let Some(file_type) = self.file_type_of(seen.path, catalog) {
+            return self.queue_create_file(seen, file_type);
+        }
         let Seen {
             key,
             text,
             hash,
             mark,
+            ..
         } = *seen;
         let document = document::read(text);
         // The version this create is based on, read and never invented.
@@ -702,6 +740,7 @@ impl Folder {
         &self,
         bound: &state::Bound,
         seen: &Seen<'_>,
+        catalog: &Catalog,
         unresolved: &mut Vec<Unresolved>,
     ) -> Result<()> {
         let Seen {
@@ -709,6 +748,7 @@ impl Folder {
             text,
             hash,
             mark,
+            ..
         } = *seen;
         let item_id = bound.item_id.as_str();
         let had = bound.links.as_slice();
@@ -734,6 +774,12 @@ impl Folder {
                  the file is left as it is and nothing is queued for it"
             )));
         };
+        // The item decides, not the extension: a file item pulled under a
+        // name that reads as a document is still bytes, and reading it as a
+        // document would send its bytes back as a body.
+        if bytes_of(&held, catalog).is_some() {
+            return self.queue_update_file(bound, seen, &held);
+        }
         let edit = Edit {
             properties: sendable(document.properties),
             base_version: Some(held.version),
@@ -770,6 +816,115 @@ impl Folder {
                 written_hash: None,
                 links: named,
                 declined,
+            },
+        )?;
+        Ok(())
+    }
+
+    /// A file that is not a document, as a file item keyed by its path
+    /// (`folders.md` 28): its bytes' upload, and the create waiting on it.
+    fn queue_create_file(&self, seen: &Seen<'_>, file_type: String) -> Result<()> {
+        let Seen {
+            key,
+            path,
+            hash,
+            mark,
+            ..
+        } = *seen;
+        // The version this create is based on, read as a document's is
+        // (`folders.md` 13).
+        let version = self
+            .held_under_key(key)?
+            .map(|item| item.version)
+            .unwrap_or(0);
+        let name = key.rsplit('/').next().unwrap_or(key);
+        let mut properties = Map::new();
+        properties.insert(document::TITLE_FIELD.into(), Value::String(name.into()));
+        let draft = Draft {
+            r#type: file_type,
+            properties,
+            tags: self.slice.tags.clone(),
+            tier: Some(self.slice.tier),
+            source_id: Some(key.to_string()),
+            base_version: Some(version),
+            ..Default::default()
+        };
+        let queued = self.core.create_file_item(path, &draft)?;
+        let Some(item_id) = queued.item_id else {
+            return Err(CoreError::Invalid(format!(
+                "the create queued for {key} names no item"
+            )));
+        };
+        let conn = self.core.conn()?;
+        state::bind(
+            &conn,
+            &state::Bound {
+                path: key.to_string(),
+                item_id,
+                identity: mark.map(str::to_string),
+                content_hash: hash.to_string(),
+                written_hash: None,
+                links: Vec::new(),
+                declined: Vec::new(),
+            },
+        )?;
+        Ok(())
+    }
+
+    /// A file item's file changed or moved: new bytes are a new upload and
+    /// an update naming them, and a move alone is an update carrying the
+    /// name (`folders.md` 23, 28).
+    fn queue_update_file(&self, bound: &state::Bound, seen: &Seen<'_>, held: &Item) -> Result<()> {
+        let Seen {
+            key,
+            path,
+            hash,
+            mark,
+            ..
+        } = *seen;
+        let mut edit = Edit {
+            properties: Map::new(),
+            base_version: Some(held.version),
+            source_id: (bound.path != key).then(|| key.to_string()),
+        };
+        // A title the folder gave the file follows it to its new name; one
+        // somebody set on the item stays theirs.
+        let old_name = bound.path.rsplit('/').next().unwrap_or(&bound.path);
+        let new_name = key.rsplit('/').next().unwrap_or(key);
+        if old_name != new_name
+            && held
+                .properties
+                .get(document::TITLE_FIELD)
+                .and_then(Value::as_str)
+                == Some(old_name)
+        {
+            edit.properties
+                .insert(document::TITLE_FIELD.into(), Value::String(new_name.into()));
+        }
+        if bound.content_hash == hash {
+            // The same bytes under a new name. They are named as the copy
+            // holds them, so the update carries a field and moves nothing
+            // but the key and the name.
+            for field in ["blob_ref", "mime_type"] {
+                if let Some(value) = held.properties.get(field) {
+                    edit.properties.insert(field.into(), value.clone());
+                }
+            }
+            self.core.update_item(&held.id, &edit)?;
+        } else {
+            self.core.update_file_item(&held.id, path, &edit)?;
+        }
+        let conn = self.core.conn()?;
+        state::bind(
+            &conn,
+            &state::Bound {
+                path: key.to_string(),
+                item_id: held.id.clone(),
+                identity: mark.map(str::to_string),
+                content_hash: hash.to_string(),
+                written_hash: None,
+                links: Vec::new(),
+                declined: Vec::new(),
             },
         )?;
         Ok(())
@@ -1011,7 +1166,7 @@ impl Folder {
         )?;
         let catalog = {
             let conn = self.core.conn()?;
-            crate::catalog::Catalog::load(&conn)?
+            Catalog::load(&conn)?
         };
         // Paths already taken in this pass. Two items resolving to one is
         // ordinary — two notes called "Notes", or the same natural key on
@@ -1044,7 +1199,7 @@ impl Folder {
                 let conn = self.core.conn()?;
                 state::bound_to_item(&conn, &item.id)?
             };
-            let want = self.path_for(item, bound.as_ref());
+            let want = self.path_for(item, bound.as_ref(), &catalog);
             // Nothing is counted as taken until this item is actually going
             // to be written there. A path a pull declines is not a path
             // anything took, and leaving the claim in starves whichever item
@@ -1060,8 +1215,53 @@ impl Folder {
                 .as_ref()
                 .map(|bound| bound.declined.clone())
                 .unwrap_or_default();
-            let (text, wrote) = self.render(item, &declined)?;
-            let bytes = text.as_bytes().to_vec();
+            // A file item's file is its bytes, fetched when the pull asks
+            // for them (`folders.md` 29). Where they cannot be had, nothing
+            // is written and nothing is bound, and the next pull asks again.
+            let (bytes, wrote) = match bytes_of(item, &catalog) {
+                Some(blob) => {
+                    // The file this folder wrote already holds these bytes:
+                    // nothing to fetch, and no server needed to fetch it.
+                    let on_disk = bound
+                        .as_ref()
+                        .filter(|bound| bound.path == want)
+                        .and_then(|bound| std::fs::read(self.root.join(&bound.path)).ok())
+                        .filter(|found| {
+                            crate::blob::named(blob)
+                                .is_ok_and(|named| crate::blob::name_of(found) == named)
+                        });
+                    match on_disk {
+                        Some(found) => (found, Vec::new()),
+                        None => match self.core.blob(blob) {
+                            Ok(held) => (
+                                std::fs::read(&held).map_err(|error| {
+                                    CoreError::Store(format!(
+                                        "cannot read {}: {error}",
+                                        held.display()
+                                    ))
+                                })?,
+                                Vec::new(),
+                            ),
+                            // A refused credential refuses every file alike,
+                            // and saying so once beats counting each.
+                            Err(error @ CoreError::Unauthorized { .. }) => return Err(error),
+                            // Anything else is about this file's bytes alone:
+                            // absent, missing on the server, a name that is
+                            // not one, bytes that are not what they are
+                            // named. The other files still reach the disk.
+                            Err(_) => {
+                                report.absent += 1;
+                                visited.insert(item.id.clone());
+                                continue;
+                            }
+                        },
+                    }
+                }
+                None => {
+                    let (text, wrote) = self.render(item, &declined)?;
+                    (text.into_bytes(), wrote)
+                }
+            };
             let hash = state::hash(&bytes);
             let ours = bound.as_ref().is_some_and(|bound| bound.path == want);
             visited.insert(item.id.clone());
@@ -1289,7 +1489,7 @@ impl Folder {
     /// The natural key the folder gave it, when it has one: the key is the
     /// path, so an item this folder created goes back where it came from. An
     /// item from elsewhere takes its title, which is the only name it has.
-    fn path_for(&self, item: &Item, bound: Option<&state::Bound>) -> String {
+    fn path_for(&self, item: &Item, bound: Option<&state::Bound>, catalog: &Catalog) -> String {
         if let Some(key) = item.source_id.as_deref()
             && !key.is_empty()
             && !key.starts_with('/')
@@ -1306,7 +1506,13 @@ impl Folder {
             .and_then(Value::as_str)
             .filter(|title| !title.trim().is_empty())
             .unwrap_or(&item.id);
-        format!("{}.md", safe_name(title))
+        // A file item's title is a file's name already, extension and all;
+        // a document's is a heading, and the folder names its file.
+        if bytes_of(item, catalog).is_some() {
+            safe_name(title)
+        } else {
+            format!("{}.md", safe_name(title))
+        }
     }
 
     /// An item as the bytes of a file, with its id written in as the
@@ -1384,6 +1590,8 @@ impl Folder {
 struct Seen<'a> {
     /// The natural key: the path inside the folder (`folders.md` 10).
     key: &'a str,
+    /// Where the file is, for a file item whose bytes are uploaded from it.
+    path: &'a Path,
     text: &'a str,
     hash: &'a str,
     /// Device, inode and birth time, where the filesystem gave a usable
@@ -1406,6 +1614,27 @@ struct Unresolved {
     declined: Vec<String>,
 }
 
+/// Whether a file is a document, which a folder reads as an item's fields
+/// rather than sending as bytes (`folders.md` 19).
+fn is_document(path: &Path) -> bool {
+    matches!(
+        path.extension().and_then(|ext| ext.to_str()),
+        Some("md" | "markdown" | "txt")
+    )
+}
+
+/// The hash a file item names its bytes by: an item of a file type
+/// carrying a `blob_ref`, whose file is those bytes rather than a document.
+fn bytes_of<'a>(item: &'a Item, catalog: &Catalog) -> Option<&'a str> {
+    if !catalog.matches(FILE_TYPE, &item.r#type) {
+        return None;
+    }
+    item.properties.get("blob_ref").and_then(Value::as_str)
+}
+
+/// The type every file item is, with its subtree.
+const FILE_TYPE: &str = "core.file";
+
 /// The kind of edge a link becomes, and the only kind a folder removes.
 pub const LINK_EDGE: &str = "references";
 
@@ -1420,6 +1649,9 @@ pub struct PullReport {
     pub moved: usize,
     pub unchanged: usize,
     pub skipped: usize,
+    /// File items whose bytes could not be had, so no file was written for
+    /// them (`folders.md` 29). The next pull asks again.
+    pub absent: usize,
     /// Files the pull would not write over: one the person changed since
     /// the folder last wrote it, and one at a path the mapping does not hold
     /// at all. Writing over either loses it with nothing reporting it.

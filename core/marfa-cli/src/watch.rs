@@ -115,7 +115,7 @@ fn step(folder: &Folder, json: bool) -> Result<(), CliError> {
             // The counts that mean an item has no file are named rather than
             // left out: a watcher that prints zeroes while declining to write
             // is a watcher telling somebody nothing is wrong.
-            let held = pulled.unwritten + pulled.collided + pulled.outside;
+            let held = pulled.unwritten + pulled.collided + pulled.outside + pulled.absent;
             format!(
                 "{} created, {} updated, {} renamed, {} deleted; sent {}; {} file(s) written{}",
                 scanned.created,

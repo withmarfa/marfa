@@ -35,8 +35,6 @@ export const PENDING: Readonly<Record<string, string>> = {};
 export const PENDING_BEYOND_MILESTONE: Readonly<Record<string, string>> = {
   "working-copy.test.ts › holds the thumbnail an item carries":
     "device.md 29 — the device has no thumbnail at all: no shipped type carries thumbnail bytes, nothing under core/ names one, and the local row holds an item's properties alone, so there is nothing for hydration to carry and nothing for a read to answer with",
-  "working-copy.test.ts › says the bytes are absent rather than the item":
-    "device.md 30 — the device has no door that reads a blob: upload_blob is the one queued kind the drain refuses to address and no local read takes a hash, so nothing can be asked for bytes and there is no answer to hold to absent bytes rather than an absent item",
 };
 
 /**

@@ -5,7 +5,8 @@ use std::path::PathBuf;
 
 use clap::{Args, Subcommand};
 use marfa_core::{
-    Core, Draft, EdgeDraft, EdgeEdit, Edit, ListFilters, MetadataWrite, SearchFilters, Server, Sort,
+    Attachment, Core, Draft, EdgeDraft, EdgeEdit, Edit, ListFilters, MetadataWrite, SearchFilters,
+    Server, Sort,
 };
 
 use crate::error::CliError;
@@ -115,6 +116,30 @@ pub enum DeviceCommand {
         #[command(subcommand)]
         command: ExtensionsCommand,
     },
+    /// Blobs' bytes: uploaded as queued writes, fetched when asked for.
+    Blobs {
+        #[command(subcommand)]
+        command: BlobsCommand,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum BlobsCommand {
+    /// Hold a file's bytes beside the store and queue their upload.
+    Put {
+        /// The file to upload.
+        file: PathBuf,
+        /// The MIME type to send them under; the default comes from the
+        /// file's extension.
+        #[arg(long)]
+        mime_type: Option<String>,
+    },
+    /// Print where a blob's bytes are held, fetching them first where the
+    /// store does not hold them yet.
+    Get {
+        /// The blob's hash, `sha256:<hex>`.
+        hash: String,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -148,6 +173,29 @@ pub enum ItemsCommand {
         #[arg(long)]
         state: ItemState,
     },
+    /// Attach a file to an item: its upload, a file item naming the bytes,
+    /// and an `attached-to` edge, three queued writes.
+    Attach(AttachArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct AttachArgs {
+    /// The item to attach the file to.
+    pub id: String,
+    /// The file to attach.
+    pub file: PathBuf,
+    /// The MIME type; the default comes from the file's extension.
+    #[arg(long)]
+    pub mime_type: Option<String>,
+    /// The file item's title; the default is the file's name.
+    #[arg(long)]
+    pub title: Option<String>,
+    /// The file item's type; the default comes from the MIME type.
+    #[arg(long = "type", value_name = "TYPE")]
+    pub type_: Option<String>,
+    /// The tier to write the file item at.
+    #[arg(long)]
+    pub tier: Option<Tier>,
 }
 
 #[derive(Debug, Subcommand)]
@@ -426,8 +474,40 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<(), CliError> 
                 ItemsCommand::Transition { id, state } => {
                     output::queued_one(&core.transition_item(&id, state.into())?, json)
                 }
+                ItemsCommand::Attach(args) => {
+                    let attachment = Attachment {
+                        mime_type: args.mime_type,
+                        title: args.title,
+                        r#type: args.type_,
+                        tier: args.tier.map(Into::into),
+                    };
+                    let attached = core.attach(&args.id, &args.file, &attachment)?;
+                    output::queued(&[attached.upload, attached.item, attached.edge], json)
+                }
             }
         }
+        DeviceCommand::Blobs { command } => match command {
+            BlobsCommand::Put { file, mime_type } => output::queued_one(
+                &open(&args.db, None)?.put_blob(&file, mime_type.as_deref())?,
+                json,
+            ),
+            BlobsCommand::Get { hash } => {
+                // Held bytes are answered with no server named at all; only
+                // a fetch needs one, and a store with none says the bytes
+                // are absent rather than that the command was misused.
+                let server = match named.server() {
+                    Ok(server) => Some(server),
+                    Err(CliError::NoServerNamed) => None,
+                    Err(error) => return Err(error),
+                };
+                let path = open(&args.db, server)?.blob(&hash)?;
+                output::report(
+                    &serde_json::json!({ "hash": hash, "path": path }),
+                    json,
+                    || path.display().to_string(),
+                )
+            }
+        },
         DeviceCommand::Search {
             query,
             state,

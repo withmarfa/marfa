@@ -109,12 +109,14 @@ CREATE TABLE IF NOT EXISTS queue (
   item_id TEXT,
   target_id TEXT,
   edge_id TEXT,
-  -- The namespace an extension write is about, and the tag a tag write is
-  -- about (`queue-and-verdicts.md` 32). Both also ride in `payload`; they are
-  -- columns because a caller asking what is outstanding for one namespace or
-  -- one tag is asking a question the payload cannot be searched for.
+  -- The namespace an extension write is about, the tag a tag write is about,
+  -- and the blob an upload is about (`queue-and-verdicts.md` 32). Each also
+  -- rides in `payload`; they are columns because a caller asking what is
+  -- outstanding for one namespace, one tag or one blob is asking a question
+  -- the payload cannot be searched for.
   namespace TEXT,
   tag TEXT,
+  blob TEXT,
   -- The version the write was based on (`queue-and-verdicts.md` 2). Required
   -- on an update and refused without one; optional on a create, which is
   -- conditional on it where it carries one.

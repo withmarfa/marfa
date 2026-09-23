@@ -34,6 +34,13 @@ export type Answer =
       headers?: Record<string, string>;
     }
   | { kind: "sse"; frames: SseFrame[]; hold?: boolean }
+  /** Bytes as they are, which is what a blob's link serves. */
+  | {
+      kind: "bytes";
+      status: number;
+      body: Buffer;
+      contentType?: string;
+    }
   /** The connection dies mid-answer: what a device sees when a network goes. */
   | { kind: "drop" }
   /**
@@ -54,7 +61,11 @@ export interface RecordedRequest {
   pathname: string;
   query: URLSearchParams;
   headers: Record<string, string>;
+  /** The request target exactly as it arrived, before any parsing. */
+  target: string;
   body: string;
+  /** The body's bytes as they arrived, for a body that is not text. */
+  raw: Buffer;
   /** Position in the whole run, so a fixture can assert one call preceded another. */
   seq: number;
 }
@@ -210,7 +221,9 @@ export class ScriptedServer {
         pathname: url.pathname,
         query: url.searchParams,
         headers,
+        target: request.url ?? "/",
         body: Buffer.concat(chunks).toString("utf8"),
+        raw: Buffer.concat(chunks),
         seq: this.seq++,
       };
       this.recorded.push(recorded);
@@ -252,6 +265,14 @@ export class ScriptedServer {
       // device waits on it until its own bound says otherwise.
       this.stalled.add(response);
       response.on("close", () => this.stalled.delete(response));
+      return;
+    }
+    if (answer.kind === "bytes") {
+      response.writeHead(answer.status, {
+        "content-type": answer.contentType ?? "application/octet-stream",
+        "content-length": String(answer.body.length),
+      });
+      response.end(answer.body);
       return;
     }
     if (answer.kind === "json") {

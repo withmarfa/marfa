@@ -1,4 +1,5 @@
-import { mkdtempSync, readdirSync, statSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { mkdtempSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -15,6 +16,7 @@ import {
   itemsPage,
   typeCatalog,
   wireItem,
+  writeAnswers,
   type WireItemOptions,
 } from "../../device/marfa-answers.js";
 
@@ -271,6 +273,8 @@ export interface FolderHarness {
   server: ScriptedServer;
   folder: CliFolder;
   dir: string;
+  /** What the hydration served, so a scripted write door knows those rows. */
+  rows: Record<string, Array<{ item: WireItemOptions; tags?: string[] }>>;
   stop: () => Promise<void>;
 }
 
@@ -343,5 +347,53 @@ export async function folderHarness(
       );
     }
   }
-  return { server, folder, dir, stop };
+  return { server, folder, dir, rows: options.rows ?? {}, stop };
+}
+
+/** The name a blob's bytes go by: `sha256:` and the hex of their digest. */
+export function hashOf(bytes: Buffer): string {
+  return `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
+}
+
+/**
+ * A blob the server holds: its link door answers a link on this server, and
+ * the link serves `served`, which is the blob's own bytes unless a fixture
+ * wants the link to lie. Answers the hash.
+ */
+export function scriptBlob(
+  server: ScriptedServer,
+  bytes: Buffer,
+  served: Buffer = bytes,
+): string {
+  const hash = hashOf(bytes);
+  const hex = hash.slice("sha256:".length);
+  server.answer(
+    "GET",
+    `/blobs/${hash}/url`,
+    writeAnswers.link(`${server.url}/links/${hex}`),
+  );
+  server.answer("GET", `/links/${hex}`, {
+    kind: "bytes",
+    status: 200,
+    body: served,
+  });
+  return hash;
+}
+
+/** A file on disk, for a fixture that uploads or attaches one. */
+export function fileOf(name: string, contents: string | Buffer): string {
+  const path = join(mkdtempSync(join(tmpdir(), "marfa-file-")), name);
+  writeFileSync(path, contents);
+  return path;
+}
+
+/** `POST /blobs` answered as the server answers it, naming what it was sent. */
+export function acceptUploads(server: ScriptedServer): void {
+  server.answer("POST", "/blobs", (request) =>
+    writeAnswers.uploaded(
+      hashOf(request.raw),
+      request.headers["content-type"] ?? "",
+      request.raw.length,
+    ),
+  );
 }

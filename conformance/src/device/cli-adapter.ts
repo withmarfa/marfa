@@ -360,6 +360,43 @@ export class CliDevice implements DeviceUnderTest {
     return this.json<QueuedWrite>(["extensions", "delete", item, namespace]);
   }
 
+  async putBlob(
+    path: string,
+    mimeType?: string,
+  ): Promise<Outcome<QueuedWrite>> {
+    const args = ["blobs", "put", path];
+    if (mimeType !== undefined) args.push("--mime-type", mimeType);
+    return this.json<QueuedWrite>(args);
+  }
+
+  async blob(hash: string): Promise<Outcome<{ hash: string; path: string }>> {
+    return this.json<{ hash: string; path: string }>([
+      "blobs",
+      "get",
+      hash,
+      ...this.server(),
+    ]);
+  }
+
+  async attach(
+    item: string,
+    path: string,
+    options: {
+      mimeType?: string;
+      title?: string;
+      type?: string;
+      tier?: Tier;
+    } = {},
+  ): Promise<Outcome<QueuedWrite[]>> {
+    const args = ["items", "attach", item, path];
+    if (options.tier !== undefined) args.push("--tier", options.tier);
+    if (options.mimeType !== undefined)
+      args.push("--mime-type", options.mimeType);
+    if (options.title !== undefined) args.push("--title", options.title);
+    if (options.type !== undefined) args.push("--type", options.type);
+    return this.json<QueuedWrite[]>(args);
+  }
+
   private server(): string[] {
     const args: string[] = [];
     if (this.options.url !== undefined) args.push("--url", this.options.url);
@@ -465,6 +502,8 @@ export interface PullReport {
   removed: number;
   /** The same, left where they are because the person changed them. */
   kept: number;
+  /** File items whose bytes could not be had, so no file was written (`folders.md` 29). */
+  absent: number;
 }
 
 export interface PushReport {
@@ -527,7 +566,12 @@ export class CliFolder {
   }
 
   async pull(): Promise<Outcome<PullReport>> {
-    return this.run<PullReport>(["folders", "pull", this.dir]);
+    return this.run<PullReport>([
+      "folders",
+      "pull",
+      this.dir,
+      ...this.server(),
+    ]);
   }
 
   async push(): Promise<Outcome<PushReport>> {

@@ -2,7 +2,9 @@ import { readFileSync } from "node:fs";
 import { describe, it, expect, afterEach, vi } from "vitest";
 import {
   KEY,
+  hashOf,
   hydratedHarness,
+  scriptBlob,
   startHarness,
   scriptHydration,
   type Harness,
@@ -12,11 +14,35 @@ import {
   SCRIPTED_TYPES,
   connected,
   itemEvent,
+  refusal,
   replay,
   streamCursor,
   wireItem,
   wireType,
+  writeAnswers,
 } from "../../device/marfa-answers.js";
+
+/** One `core.file` row naming `hash`, for a hydration to pull. */
+function hydrateOneFile(server: Harness["server"], hash: string): void {
+  scriptHydration(server, {
+    head: "10",
+    rows: {
+      "core.file": [
+        {
+          item: {
+            id: "file-row",
+            type: "core.file",
+            properties: {
+              title: "notes.txt",
+              blob_ref: hash,
+              mime_type: "text/plain",
+            },
+          },
+        },
+      ],
+    },
+  });
+}
 
 /**
  * "A device holds a working copy": one slice of one server, and nothing else.
@@ -182,9 +208,186 @@ describe("the working copy holds one slice", () => {
     notWrittenYet("a thumbnail traveling with its item");
   });
 
-  it("says the bytes are absent rather than the item", async (context) => {
-    skipIfPending(context);
-    notWrittenYet("absent bytes reported as absent bytes");
+  it("says the bytes are absent rather than the item", async () => {
+    harness = await startHarness("bytes-absent");
+    const { server, device } = harness;
+    const bytes = Buffer.from("the bytes of a note\n");
+    const hash = scriptBlob(server, bytes);
+    hydrateOneFile(server, hash);
+    expect((await device.hydrate(["core.file"], "library")).ok).toBe(true);
+
+    // A blob the server holds no bytes for is absent bytes too, not a
+    // missing item.
+    const unheld = hashOf(Buffer.from("never uploaded\n"));
+    server.answer(
+      "GET",
+      `/blobs/${unheld}/url`,
+      refusal(404, "blob_not_found", "no blob with this hash"),
+    );
+    const none = await device.blob(unheld);
+    expect(none.ok).toBe(false);
+    if (!none.ok) expect(none.refusal.code).toBe("bytes_absent");
+
+    await server.offline();
+    const absent = await device.blob(hash);
+    expect(
+      absent.ok,
+      "a device with no way to fetch the bytes answered as though it had them",
+    ).toBe(false);
+    if (!absent.ok) {
+      expect(
+        absent.refusal.code,
+        `a device without the bytes said something other than that they are absent: ${absent.refusal.raw}`,
+      ).toBe("bytes_absent");
+      expect(
+        absent.refusal.raw,
+        "the refusal did not name the bytes it is about",
+      ).toContain(hash);
+    }
+    const item = await device.get("file-row");
+    expect(
+      item.ok,
+      "absent bytes made the item that names them unreadable, so a missing file reads as a missing item",
+    ).toBe(true);
+    if (item.ok) expect(item.value.properties.blob_ref).toBe(hash);
+
+    // The witness: the same ask answered once the server is back, so the
+    // refusal above is the bytes being absent and not a device that cannot
+    // fetch bytes at all.
+    await server.online();
+    const fetched = await device.blob(hash);
+    expect(
+      fetched.ok,
+      `the device could not fetch the bytes with the server back: ${JSON.stringify(fetched)}`,
+    ).toBe(true);
+    if (fetched.ok) expect(readFileSync(fetched.value.path)).toEqual(bytes);
+  });
+
+  it("says the bytes are absent when the link does not serve them", async () => {
+    harness = await startHarness("bytes-link-fails");
+    const { server, device } = harness;
+    const bytes = Buffer.from("behind a link that has expired\n");
+    const hash = hashOf(bytes);
+    const hex = hash.slice("sha256:".length);
+    server.answer(
+      "GET",
+      `/blobs/${hash}/url`,
+      writeAnswers.link(`${server.url}/links/${hex}`),
+    );
+    // An object store refusing a signature that has run out.
+    server.answer("GET", `/links/${hex}`, {
+      kind: "bytes",
+      status: 403,
+      body: Buffer.from("<Error><Code>AccessDenied</Code></Error>"),
+      contentType: "application/xml",
+    });
+    hydrateOneFile(server, hash);
+    expect((await device.hydrate(["core.file"], "library")).ok).toBe(true);
+    const fetched = await device.blob(hash);
+    expect(
+      server.requests.some((request) => request.pathname.startsWith("/links/")),
+      "the link was never followed, so nothing here is about what it answered",
+    ).toBe(true);
+    expect(fetched.ok).toBe(false);
+    if (!fetched.ok) {
+      expect(
+        fetched.refusal.code,
+        "a link that would not serve the bytes was reported as something other than absent bytes",
+      ).toBe("bytes_absent");
+    }
+  });
+
+  it("answers a second ask for the same bytes from what it holds", async () => {
+    harness = await startHarness("bytes-held");
+    const { server, device } = harness;
+    const bytes = Buffer.from("fetched once\n");
+    const hash = hashOf(bytes);
+    const hex = hash.slice("sha256:".length);
+    // A link spelled the way an object store signs one, which a device that
+    // rebuilt the URL would spell differently.
+    const link = `/links/${hex}?X-Sig=a%2Fb%3D&Expires=1`;
+    server.answer(
+      "GET",
+      `/blobs/${hash}/url`,
+      writeAnswers.link(`${server.url}${link}`),
+    );
+    server.answer("GET", `/links/${hex}`, {
+      kind: "bytes",
+      status: 200,
+      body: bytes,
+    });
+    hydrateOneFile(server, hash);
+    expect((await device.hydrate(["core.file"], "library")).ok).toBe(true);
+
+    const first = await device.blob(hash);
+    expect(first.ok).toBe(true);
+    if (first.ok) {
+      expect(
+        first.value.path.startsWith(`${device.store}.blobs/`),
+        "the bytes were not kept beside the working copy",
+      ).toBe(true);
+    }
+    const followed = server.requests.find((request) =>
+      request.pathname.startsWith("/links/"),
+    );
+    expect(
+      followed?.target,
+      "the link was not fetched exactly as the server gave it",
+    ).toBe(link);
+    expect(
+      followed?.headers.authorization,
+      "the device sent its credential to the link, which an object store's host must never see",
+    ).toBeUndefined();
+    // The witness: the device does carry its credential, to the server.
+    expect(
+      server.requests.find((request) => request.pathname.endsWith("/url"))
+        ?.headers.authorization,
+    ).toBeDefined();
+    const asked = (): number =>
+      server.requests.filter(
+        (request) =>
+          request.pathname.startsWith("/blobs/") ||
+          request.pathname.startsWith("/links/"),
+      ).length;
+    // The witness: the first ask went to the server for the link and the
+    // bytes, so the silence below is the second ask being answered locally.
+    expect(asked(), "the first ask for the bytes made no request").toBe(2);
+
+    await server.offline();
+    const second = await device.blob(hash);
+    expect(
+      second.ok,
+      `a second ask for bytes the device holds needed the server: ${JSON.stringify(second)}`,
+    ).toBe(true);
+    if (second.ok) expect(readFileSync(second.value.path)).toEqual(bytes);
+    expect(asked()).toBe(2);
+  });
+
+  it("keeps no bytes that do not hash to the name they were fetched under", async () => {
+    harness = await startHarness("bytes-altered");
+    const { server, device } = harness;
+    const bytes = Buffer.from("the bytes the name is for\n");
+    const hash = scriptBlob(server, bytes, Buffer.from("something else\n"));
+    hydrateOneFile(server, hash);
+    expect((await device.hydrate(["core.file"], "library")).ok).toBe(true);
+
+    const altered = await device.blob(hash);
+    expect(
+      altered.ok,
+      "the device kept bytes that are not the blob they were fetched as, so the name answers a different file",
+    ).toBe(false);
+    // The link was followed, so the refusal is the check on what came back
+    // and not a fetch that never happened.
+    expect(
+      server.requests.some((request) => request.pathname.startsWith("/links/")),
+      "the device never followed the link, so nothing here is about what it does with what the link serves",
+    ).toBe(true);
+    await server.offline();
+    const after = await device.blob(hash);
+    expect(
+      after.ok,
+      "bytes refused for not matching their name were answered from the store on the next ask",
+    ).toBe(false);
   });
 
   it("holds an item whose bytes it has not fetched", async () => {

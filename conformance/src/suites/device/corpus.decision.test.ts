@@ -236,6 +236,36 @@ describe("every device statement is asserted by something", () => {
       "a device statement cites a fixture or a title that does not exist, so the statement is asserted by nothing at all",
     ).toEqual([]);
   });
+
+  it("cites every fixture of the device's behavior from some statement", () => {
+    // The suite's own controls are not the device's behavior: fidelity holds
+    // the scripting to the real server and the scripted server's own tests
+    // hold the harness. Everything else asserts a rule, and a fixture no
+    // statement cites is a rule written nowhere, whose citation could be
+    // dropped with nothing failing.
+    const CONTROLS = ["fidelity.test.ts", "scripted-server.test.ts"];
+    const cited = new Set(
+      allStatements.flatMap((statement) =>
+        citationsIn(statement.text).map(
+          (citation) => `${citation.file} › ${citation.title ?? ""}`,
+        ),
+      ),
+    );
+    const uncited = fixtureFiles
+      .filter((file) => !CONTROLS.includes(file))
+      .flatMap((file) =>
+        titlesIn(`device/${file}`)
+          .map((title) => `device/${file} › ${title}`)
+          .filter((key) => !cited.has(key)),
+      );
+    expect(
+      uncited,
+      "a fixture of the device's behavior is cited by no statement, so the rule it asserts is written nowhere",
+    ).toEqual([]);
+    // The witness: the files read are the fixtures, so an empty list above
+    // is every one of them cited and not nothing read.
+    expect(fixtureFiles).toContain("queue.test.ts");
+  });
 });
 
 describe("the pending list and the fixtures agree", () => {
@@ -243,17 +273,14 @@ describe("the pending list and the fixtures agree", () => {
     // The reason is the entry, not a comment beside it. Milestone one is
     // reached when `PENDING` is empty, so a statement that moved here without
     // the decision that put it here would let the milestone be declared by
-    // relabeling rather than by work. The device's blob work is the only
-    // thing the milestone deliberately leaves — the server's has landed, and
-    // these two are the device's half of it.
+    // relabeling rather than by work. The thumbnail is the only thing the
+    // milestone deliberately leaves.
     expect(
       PENDING_BEYOND_MILESTONE,
       "a statement was moved out of the milestone's list without the decision that allows it, so the list the milestone must empty is shrinking by bookkeeping",
     ).toEqual({
       "working-copy.test.ts › holds the thumbnail an item carries":
         "device.md 29 — the device has no thumbnail at all: no shipped type carries thumbnail bytes, nothing under core/ names one, and the local row holds an item's properties alone, so there is nothing for hydration to carry and nothing for a read to answer with",
-      "working-copy.test.ts › says the bytes are absent rather than the item":
-        "device.md 30 — the device has no door that reads a blob: upload_blob is the one queued kind the drain refuses to address and no local read takes a hash, so nothing can be asked for bytes and there is no answer to hold to absent bytes rather than an absent item",
     });
   });
 

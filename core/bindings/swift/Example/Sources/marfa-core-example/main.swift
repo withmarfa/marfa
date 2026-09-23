@@ -67,6 +67,10 @@ do {
         let third = try core.createItem(
             draft: Draft(type: "core.note", propertiesJson: #"{"title":"Swift third","body":"deleted before it was sent"}"#, tier: .feed))
         _ = try core.deleteItem(id: third.itemId ?? "")
+        let attachment = path + ".attachment.txt"
+        try Data("bytes attached with the server away\n".utf8).write(to: URL(fileURLWithPath: attachment))
+        let attached = try core.attach(id: firstId, path: attachment, attachment: Attachment())
+        expect(attached.item.dependsOn.contains(attached.upload.id), "the attached file item does not wait on its upload")
         _ = try core.createItem(draft: Draft(type: "system.device", propertiesJson: #"{"name":"not the device's to write"}"#))
         print("queued, nothing answered:")
         try printQueue(core)
@@ -103,6 +107,17 @@ do {
         expect(edited?.version == 2, "the edit was not answered at version 2")
         expect(edited?.tags.contains("favorite") == true, "the edit lost its tag")
         expect(try !notes.contains { try title(of: $0) == "Swift third" }, "the note deleted offline is still listed")
+        // The bytes, fetched into a store that has never held them, through
+        // the link the server gives.
+        let upload = report.verdicts.first { $0.kind == .uploadBlob }
+        let hash = try core.queue().first { $0.id == upload?.id }?.blob
+        expect(hash != nil, "no upload was drained")
+        let fresh = try MarfaCore.open(path: path + ".fresh", url: url, key: key)
+        let fetched = try fresh.blob(hash: hash ?? "")
+        print("fetched \(hash ?? "-") into a fresh store")
+        expect(
+            (try? String(contentsOfFile: fetched, encoding: .utf8)) == "bytes attached with the server away\n",
+            "the bytes fetched are not the bytes attached")
         print("cleared \(try core.forgetAnswered()) answered write(s); \(try core.queue().count) left")
         expect(try core.queue().isEmpty, "answered writes were left in the queue")
 

@@ -2,9 +2,10 @@ use std::io::{self, Write};
 use std::path::PathBuf;
 
 use clap::Subcommand;
+use marfa_core::mime_type_for;
 use serde_json::json;
 
-use super::items::{mime_type_for, upload_request};
+use super::items::upload_request;
 use crate::error::CliError;
 use crate::output::Printer;
 use crate::remote::Remote;
