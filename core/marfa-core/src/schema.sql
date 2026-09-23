@@ -14,6 +14,9 @@ CREATE TABLE IF NOT EXISTS types (
   parent TEXT,
   label TEXT,
   title_field TEXT,
+  -- The field the type declares as its thumbnail, read out of `json` once
+  -- when the catalog is written rather than on every read that loads it.
+  thumbnail_field TEXT,
   json TEXT NOT NULL
 );
 

@@ -234,20 +234,31 @@ impl Core {
     }
 
     /// The thumbnail an item carries, from the held row with no request.
-    /// `None` when the item is not held, or its type declares no thumbnail,
-    /// or it carries none.
+    /// `None` when its type declares no thumbnail or it carries none; an item
+    /// the copy does not hold is refused, so the two are never confused. A
+    /// held value that is not a thumbnail's (one written before its type
+    /// declared the field) is refused `Decoding`, naming the item.
     pub fn thumbnail(&self, id: &str) -> Result<Option<Thumbnail>> {
         let conn = self.conn()?;
         store::refuse_unless_hydrated(&conn)?;
         let Some(item) = store::item_by_id(&conn, id)? else {
-            return Ok(None);
+            return Err(CoreError::NotFound {
+                code: "not_held".into(),
+                message: format!("{id} is not held in this working copy"),
+            });
         };
         let catalog = catalog::Catalog::load(&conn)?;
         let value = catalog
             .thumbnail_field(&item.r#type)
             .and_then(|field| item.properties.get(field))
             .and_then(Value::as_str);
-        value.map(Thumbnail::from_data_uri).transpose()
+        value
+            .map(Thumbnail::from_data_uri)
+            .transpose()
+            .map_err(|error| match error {
+                CoreError::Decoding(reason) => CoreError::Decoding(format!("{id}: {reason}")),
+                other => other,
+            })
     }
 
     pub fn edges_from(&self, id: &str) -> Result<Vec<Edge>> {
@@ -1346,7 +1357,10 @@ mod tests {
             "a subtype's item lost the thumbnail its parent declares"
         );
         assert_eq!(core.thumbnail(&note).unwrap(), None);
-        assert_eq!(core.thumbnail("not-held").unwrap(), None);
+        assert!(
+            matches!(core.thumbnail("not-held"), Err(CoreError::NotFound { code, .. }) if code == "not_held"),
+            "an item the copy does not hold read as one that carries no thumbnail"
+        );
 
         let found = |query: &str| {
             core.search(query, &SearchFilters::default(), 10)
@@ -1362,6 +1376,108 @@ mod tests {
         );
         assert_eq!(found("unicornsXYZ"), vec![witness]);
         assert_eq!(found("Holiday"), vec![photo]);
+    }
+
+    /// What the local index holds follows the catalog: a thumbnail the
+    /// catalog learns after its rows were written leaves the index when it
+    /// does, and a title field naming the thumbnail indexes nothing.
+    #[test]
+    fn a_thumbnail_leaves_the_index_when_the_catalog_learns_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = Core::open(dir.path().join("core.sqlite"), None).unwrap();
+        let photo = |thumbnail: bool, title_field: &str| {
+            let mut wire = store::testing::wire_type("acme.photo", None, Some(title_field));
+            if thumbnail {
+                wire.rest.insert(
+                    "fields".into(),
+                    serde_json::json!({ "thumbnail": { "type": "thumbnail" } }),
+                );
+            }
+            wire
+        };
+        {
+            let conn = core.conn().unwrap();
+            store::meta_set(&conn, store::META_EVENT_CURSOR, "10").unwrap();
+            store::meta_set(&conn, store::META_SLICE_TYPES, "[\"acme.photo\"]").unwrap();
+            store::meta_set(&conn, store::META_SLICE_TIER, "library").unwrap();
+            store::replace_types(&conn, &[photo(false, "title")]).unwrap();
+        }
+        let id = core
+            .create_item(&Draft {
+                r#type: "acme.photo".into(),
+                properties: serde_json::json!({
+                    "title": "Holiday",
+                    "thumbnail": "data:image/png;base64,iVBORw0KGgoA/unicornsXYZ",
+                })
+                .as_object()
+                .unwrap()
+                .clone(),
+                ..Default::default()
+            })
+            .unwrap()
+            .item_id
+            .unwrap();
+        let found = |query: &str| {
+            core.search(query, &SearchFilters::default(), 10)
+                .unwrap()
+                .into_iter()
+                .map(|hit| hit.item.id)
+                .collect::<Vec<_>>()
+        };
+        // The witness: before the catalog knows the field, the base64 is a
+        // string property like any other, and found.
+        assert_eq!(found("unicornsXYZ"), vec![id.clone()]);
+        let adopt = |wire| {
+            let conn = core.conn().unwrap();
+            store::replace_types(&conn, &[wire]).unwrap();
+        };
+        adopt(photo(true, "title"));
+        assert!(
+            found("unicornsXYZ").is_empty(),
+            "the catalog learned the thumbnail and the row's index entry still holds its base64"
+        );
+        assert_eq!(found("Holiday"), vec![id.clone()]);
+        adopt(photo(true, "thumbnail"));
+        assert!(
+            found("unicornsXYZ").is_empty(),
+            "a title field naming the thumbnail put its base64 in the index"
+        );
+    }
+
+    /// A value held under a field before its type declared it a thumbnail is
+    /// not one, and reading it says which item it came from.
+    #[test]
+    fn an_unreadable_thumbnail_is_refused_naming_its_item() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = Core::open(dir.path().join("core.sqlite"), None).unwrap();
+        let mut photo = store::testing::wire_type("acme.photo", None, Some("title"));
+        photo.rest.insert(
+            "fields".into(),
+            serde_json::json!({ "thumbnail": { "type": "thumbnail" } }),
+        );
+        {
+            let conn = core.conn().unwrap();
+            store::meta_set(&conn, store::META_EVENT_CURSOR, "10").unwrap();
+            store::meta_set(&conn, store::META_SLICE_TYPES, "[\"acme.photo\"]").unwrap();
+            store::meta_set(&conn, store::META_SLICE_TIER, "library").unwrap();
+            store::replace_types(&conn, &[photo]).unwrap();
+        }
+        let id = core
+            .create_item(&Draft {
+                r#type: "acme.photo".into(),
+                properties: serde_json::json!({ "title": "Old", "thumbnail": "hello" })
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+                ..Default::default()
+            })
+            .unwrap()
+            .item_id
+            .unwrap();
+        match core.thumbnail(&id) {
+            Err(CoreError::Decoding(reason)) => assert!(reason.starts_with(&id), "{reason}"),
+            other => panic!("an unreadable thumbnail read as {other:?}"),
+        }
     }
 
     /// A second opener is refused at the doors, not merely by the predicate.

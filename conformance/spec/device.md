@@ -49,7 +49,7 @@ Every statement here is a refusal, and each of them is a refusal because the sil
 ## Blobs
 
 28. A blob's bytes are fetched on demand and are not held by hydration. An item that references bytes is held with the reference and without them. `device/working-copy.test.ts › holds an item whose bytes it has not fetched`.
-29. A thumbnail, where an item's type carries one, travels with the item rather than being fetched. A phone cannot hold a library's bytes and can hold its thumbnails. `device/working-copy.test.ts › holds the thumbnail an item carries`.
+29. A thumbnail, where an item's type carries one, travels with the item rather than being fetched. A phone cannot hold a library's bytes and can hold its thumbnails. `device/working-copy.test.ts › holds the thumbnail an item carries`, `› keeps a thumbnail out of its index when its type arrives after the stream opened`.
 30. A device with no bytes for a blob says so rather than reporting the item incomplete. The item is whole; the bytes are absent. `device/working-copy.test.ts › says the bytes are absent rather than the item`, `› says the bytes are absent when the link does not serve them`.
 
 ## Local reads

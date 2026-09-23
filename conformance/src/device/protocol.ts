@@ -293,7 +293,11 @@ export interface DeviceUnderTest {
   ): Promise<
     Outcome<{
       id: string;
-      thumbnail: { mime_type: string; size_bytes: number; path: string } | null;
+      thumbnail: {
+        mime_type: string;
+        size_bytes: number;
+        path: string | null;
+      } | null;
     }>
   >;
   /** A file attached to an item: the upload, the file item, the edge. */

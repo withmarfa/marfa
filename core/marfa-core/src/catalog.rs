@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 
 use rusqlite::Connection;
-use serde_json::Value;
 
 use crate::error::CoreError;
 
@@ -30,21 +29,6 @@ impl Indexing {
     }
 }
 
-/// The field a type's stored JSON declares as its thumbnail, by type or by
-/// the format that stands for it. Registration allows one per type.
-fn thumbnail_field_of(json: &str) -> Option<String> {
-    let schema: Value = serde_json::from_str(json).ok()?;
-    schema
-        .get("fields")?
-        .as_object()?
-        .iter()
-        .find(|(_, field)| {
-            field.get("type").and_then(Value::as_str) == Some("thumbnail")
-                || field.get("format").and_then(Value::as_str) == Some("thumbnail")
-        })
-        .map(|(name, _)| name.clone())
-}
-
 /// The server's type catalog as last hydrated, answering the same subtree
 /// question `?type=` answers on the server: exact name, dotted-name
 /// descendant, or a type whose declared parent chain reaches the root.
@@ -56,24 +40,25 @@ const MAX_PARENT_WALK: usize = 64;
 
 impl Catalog {
     pub fn load(conn: &Connection) -> Result<Catalog, CoreError> {
-        let mut statement = conn.prepare("SELECT id, parent, title_field, json FROM types")?;
+        let mut statement =
+            conn.prepare("SELECT id, parent, title_field, thumbnail_field FROM types")?;
         let rows = statement.query_map([], |row| {
             Ok((
                 row.get::<_, String>(0)?,
                 row.get::<_, Option<String>>(1)?,
                 row.get::<_, Option<String>>(2)?,
-                row.get::<_, String>(3)?,
+                row.get::<_, Option<String>>(3)?,
             ))
         })?;
         let mut entries = HashMap::new();
         for row in rows {
-            let (id, parent, title_field, json) = row?;
+            let (id, parent, title_field, thumbnail_field) = row?;
             entries.insert(
                 id,
                 Entry {
                     parent,
                     title_field,
-                    thumbnail_field: thumbnail_field_of(&json),
+                    thumbnail_field,
                 },
             );
         }

@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { validateTypeSchema } from "./schema-validation.js";
+import {
+  validateEdgeTypeSchema,
+  validateTypeSchema,
+} from "./schema-validation.js";
 import type { TypeSchema } from "./schema-types.js";
 
 const parent: TypeSchema = {
@@ -24,6 +27,67 @@ describe("a thumbnail field", () => {
         expect(result.data.fields.cover).toEqual({ type: "thumbnail" });
       }
     }
+  });
+
+  it("is refused on a parent whose registered child already declares one", () => {
+    const child: TypeSchema = {
+      id: "acme.photo.raw",
+      version: 1,
+      parent: "acme.album",
+      fields: { preview: { type: "thumbnail" } },
+    };
+    const withChildren = (data: unknown) =>
+      validateTypeSchema(data, {
+        resolveSchema: () => undefined,
+        descendantsOf: (id) => (id === "acme.album" ? [child] : []),
+      });
+    // The witness: the parent without a thumbnail is taken.
+    expect(
+      withChildren({ id: "acme.album", fields: { label: { type: "string" } } })
+        .success,
+    ).toBe(true);
+    const result = withChildren({
+      id: "acme.album",
+      fields: { cover: { type: "thumbnail" } },
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.errors[0]?.actual).toContain(
+        '"preview" in "acme.photo.raw"',
+      );
+    }
+  });
+
+  it("is never a title or a body, and never an edge's property", () => {
+    for (const hint of ["title_field", "body_field"]) {
+      const result = validate({
+        id: "acme.hinted",
+        fields: { cover: { type: "thumbnail" }, caption: { type: "string" } },
+        display_hints: { [hint]: "cover" },
+      });
+      expect(result.success, hint).toBe(false);
+    }
+    // The witness: a hint naming the text field is taken.
+    expect(
+      validate({
+        id: "acme.hinted",
+        fields: { cover: { type: "thumbnail" }, caption: { type: "string" } },
+        display_hints: { title_field: "caption" },
+      }).success,
+    ).toBe(true);
+    const edge = validateEdgeTypeSchema({
+      id: "depicts",
+      cardinality: "many-to-many",
+      property_schema: { preview: { type: "thumbnail" } },
+    });
+    expect(edge.success).toBe(false);
+    expect(
+      validateEdgeTypeSchema({
+        id: "depicts",
+        cardinality: "many-to-many",
+        property_schema: { note: { type: "string" } },
+      }).success,
+    ).toBe(true);
   });
 
   it("is refused beside one the type inherits", () => {

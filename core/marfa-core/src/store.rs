@@ -19,7 +19,7 @@ pub const META_SLICE_TIER: &str = "slice_tier";
 pub const META_EVENT_CURSOR: &str = "event_cursor";
 pub const META_HYDRATE_STATE: &str = "hydrate_state";
 pub const HYDRATE_IN_PROGRESS: &str = "in_progress";
-pub const SCHEMA_VERSION: &str = "8";
+pub const SCHEMA_VERSION: &str = "9";
 
 /// The schema the version above names, hashed as the folder mapping hashes
 /// bytes. A change to `schema.sql` without a new version would open a store
@@ -32,7 +32,7 @@ pub const SCHEMA_VERSION: &str = "8";
 /// on one would price every edit to the prose at a version bump that refuses
 /// every working copy on disk.
 #[cfg(test)]
-const SCHEMA_HASH: &str = "662310c80f2c6871";
+const SCHEMA_HASH: &str = "23d541400ea60681";
 
 const ITEM_COLUMNS: &str = "id, type, state, tier, version, schema_version, source, source_id, occurred_at, created_at, updated_at, properties";
 const EDGE_COLUMNS: &str =
@@ -570,12 +570,26 @@ type TypeRow = (
     Option<String>,
     Option<String>,
     Option<String>,
+    Option<String>,
     String,
 );
 
+/// The field a type's own declaration makes its thumbnail. Registration
+/// allows one, stored as the field type whichever way it was declared.
+fn thumbnail_field_of(declared: &Map<String, Value>) -> Option<String> {
+    declared
+        .get("fields")?
+        .as_object()?
+        .iter()
+        .find(|(_, field)| field.get("type").and_then(Value::as_str) == Some("thumbnail"))
+        .map(|(name, _)| name.clone())
+}
+
 /// Replaces the type catalog, and writes nothing where it is the one held:
 /// a follow asks for the catalog on every stream it opens, and a reader told
-/// of each save would otherwise be told of one every two minutes.
+/// of each save would otherwise be told of one every two minutes. Where it
+/// changes, every held row is indexed again, since a title or a thumbnail
+/// the catalog now names changes what a row's entry holds.
 pub fn replace_types(conn: &Connection, types: &[WireType]) -> Result<(), CoreError> {
     let mut rows: Vec<TypeRow> = types
         .iter()
@@ -594,13 +608,48 @@ pub fn replace_types(conn: &Connection, types: &[WireType]) -> Result<(), CoreEr
                 entry.parent.clone(),
                 entry.label.clone(),
                 hints.title_field,
+                thumbnail_field_of(&entry.rest),
                 Value::Object(json).to_string(),
             )
         })
         .collect();
     rows.sort();
     let held: Vec<TypeRow> = conn
-        .prepare("SELECT id, parent, label, title_field, json FROM types ORDER BY id")?
+        .prepare(
+            "SELECT id, parent, label, title_field, thumbnail_field, json FROM types ORDER BY id",
+        )?
+        .query_map([], |row| {
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+                row.get(5)?,
+            ))
+        })?
+        .collect::<Result<_, _>>()?;
+    if held == rows {
+        return Ok(());
+    }
+    conn.execute("DELETE FROM types", [])?;
+    {
+        let mut insert = conn.prepare(
+            "INSERT INTO types (id, parent, label, title_field, thumbnail_field, json)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        )?;
+        for row in rows {
+            insert.execute(params![row.0, row.1, row.2, row.3, row.4, row.5])?;
+        }
+    }
+    reindex(conn)
+}
+
+/// Writes every held row's index entry again from the catalog as it is.
+fn reindex(conn: &Connection) -> Result<(), CoreError> {
+    let catalog = crate::catalog::Catalog::load(conn)?;
+    let held: Vec<(i64, String, String, String, String)> = conn
+        .prepare("SELECT seq, id, type, state, properties FROM items")?
         .query_map([], |row| {
             Ok((
                 row.get(0)?,
@@ -611,16 +660,43 @@ pub fn replace_types(conn: &Connection, types: &[WireType]) -> Result<(), CoreEr
             ))
         })?
         .collect::<Result<_, _>>()?;
-    if held == rows {
-        return Ok(());
+    for (seq, id, type_id, state, properties) in held {
+        let properties: Map<String, Value> = serde_json::from_str(&properties)?;
+        index_row(
+            conn,
+            seq,
+            &id,
+            &state,
+            &properties,
+            &catalog.indexing(&type_id),
+        )?;
     }
-    conn.execute("DELETE FROM types", [])?;
-    let mut insert = conn.prepare(
-        "INSERT INTO types (id, parent, label, title_field, json)
-         VALUES (?1, ?2, ?3, ?4, ?5)",
-    )?;
-    for row in rows {
-        insert.execute(params![row.0, row.1, row.2, row.3, row.4])?;
+    Ok(())
+}
+
+/// The row's entry in the local index, from its properties and tags as the
+/// store holds them.
+fn index_row(
+    conn: &Connection,
+    seq: i64,
+    id: &str,
+    state: &str,
+    properties: &Map<String, Value>,
+    indexing: &Indexing,
+) -> Result<(), CoreError> {
+    let tags = tags_for_one(conn, id)?;
+    let (title, body) = fts_text(properties, indexing);
+    conn.execute("DELETE FROM items_fts WHERE rowid = ?1", [seq])?;
+    // A row in the bin is not indexed, which is the server's own rule on
+    // the same index: it drops a trashed row from the index on the write
+    // that trashes it, and rebuilds without one. A device that indexed it
+    // would answer a search the server it copies answers nothing for, and
+    // would do it under every state value rather than one.
+    if ItemState::from_str_checked(state)? != ItemState::Trashed {
+        conn.execute(
+            "INSERT INTO items_fts (rowid, title, body, tags) VALUES (?1, ?2, ?3, ?4)",
+            params![seq, title, body, tags.join(" ")],
+        )?;
     }
     Ok(())
 }
@@ -668,35 +744,18 @@ pub fn upsert_item(
             Value::Object(item.properties.clone()).to_string(),
         ],
     )?;
-    let tags: Vec<String> = match tags {
-        Some(tags) => {
-            conn.execute("DELETE FROM tags WHERE item_id = ?1", [&item.id])?;
-            let mut insert =
-                conn.prepare_cached("INSERT OR IGNORE INTO tags (item_id, tag) VALUES (?1, ?2)")?;
-            for tag in tags {
-                insert.execute(params![item.id, tag])?;
-            }
-            tags.to_vec()
+    if let Some(tags) = tags {
+        conn.execute("DELETE FROM tags WHERE item_id = ?1", [&item.id])?;
+        let mut insert =
+            conn.prepare_cached("INSERT OR IGNORE INTO tags (item_id, tag) VALUES (?1, ?2)")?;
+        for tag in tags {
+            insert.execute(params![item.id, tag])?;
         }
-        None => tags_for_one(conn, &item.id)?,
-    };
-    let (title, body) = fts_text(&item.properties, indexing);
+    }
     let seq: i64 = conn.query_row("SELECT seq FROM items WHERE id = ?1", [&item.id], |row| {
         row.get(0)
     })?;
-    conn.execute("DELETE FROM items_fts WHERE rowid = ?1", [seq])?;
-    // A row in the bin is not indexed, which is the server's own rule on
-    // the same index: it drops a trashed row from the index on the write
-    // that trashes it, and rebuilds without one. A device that indexed it
-    // would answer a search the server it copies answers nothing for, and
-    // would do it under every state value rather than one.
-    if ItemState::from_str_checked(&item.state)? != ItemState::Trashed {
-        conn.execute(
-            "INSERT INTO items_fts (rowid, title, body, tags) VALUES (?1, ?2, ?3, ?4)",
-            params![seq, title, body, tags.join(" ")],
-        )?;
-    }
-    Ok(())
+    index_row(conn, seq, &item.id, &item.state, &item.properties, indexing)
 }
 
 pub fn delete_item(conn: &Connection, id: &str) -> Result<bool, CoreError> {
@@ -909,14 +968,20 @@ fn invalid_row(column: usize, text: &str) -> rusqlite::Error {
     )
 }
 
-/// The title column and everything else string-valued, for the FTS row.
+/// The title column, and every other string-valued property but the
+/// thumbnail, for the FTS row. A thumbnail is never indexed, not even as a
+/// title a type named it.
 pub fn fts_text(properties: &Map<String, Value>, indexing: &Indexing) -> (String, String) {
     let title_key = indexing.title_field.as_deref().unwrap_or("title");
-    let title = properties
-        .get(title_key)
-        .and_then(Value::as_str)
-        .unwrap_or("")
-        .to_string();
+    let title = if indexing.thumbnail_field.as_deref() == Some(title_key) {
+        String::new()
+    } else {
+        properties
+            .get(title_key)
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string()
+    };
     let mut body = Vec::new();
     for (key, value) in properties {
         if key == title_key || indexing.thumbnail_field.as_deref() == Some(key.as_str()) {

@@ -89,12 +89,12 @@ const FORMAT_TO_FIELD_TYPE: Readonly<Partial<Record<FieldFormat, FieldType>>> =
  * The property names full-text search indexes whatever their field type. A
  * thumbnail may not take one, because its base64 would then be searchable.
  */
-export const ALWAYS_SEARCHED_FIELDS: readonly string[] = [
+export const ALWAYS_SEARCHED_FIELDS = [
   "title",
   "body",
   "description",
   "name",
-];
+] as const;
 
 export const MERGE_STRATEGIES: readonly string[] = [
   "last_writer_wins",
@@ -175,6 +175,12 @@ export interface SchemaValidationContext {
    * filename already pins the identifier).
    */
   isValidTypeIdentifier?: (value: string) => boolean;
+  /**
+   * Every registered type whose parent chain reaches `typeId`, for the rules
+   * a change to a parent can break in a child it already has. Omit where no
+   * type is registered yet (the codegen path).
+   */
+  descendantsOf?: (typeId: string) => TypeSchema[];
 }
 
 // ---------------------------------------------------------------------------
@@ -763,7 +769,15 @@ export function validateTypeSchema(
     ...ancestorFields.keys(),
   ]);
 
-  if (fields) validateThumbnails(fields, ancestorFields, errors);
+  if (fields) {
+    validateThumbnails(
+      typeof obj.id === "string" ? obj.id : "",
+      fields,
+      ancestorFields,
+      ctx.descendantsOf,
+      errors,
+    );
+  }
 
   for (const name of requiredNames) {
     if (!visibleFields.has(name)) {
@@ -780,7 +794,12 @@ export function validateTypeSchema(
   }
 
   validateRoles(obj, errors);
-  validateDisplayHints(obj, visibleFields, errors);
+  validateDisplayHints(
+    obj,
+    visibleFields,
+    thumbnailNames(fields, ancestorFields),
+    errors,
+  );
   validateVersionPolicy(obj, errors);
   validateMergePolicy(obj, visibleFields, errors);
   validateCompatibleWith(
@@ -898,25 +917,44 @@ function validateRoles(
   }
 }
 
+function isThumbnail(def: unknown): boolean {
+  const raw = asRecord(def);
+  return raw?.type === "thumbnail" || raw?.format === "thumbnail";
+}
+
+/** The thumbnail fields a type declares or inherits, by name. */
+function thumbnailNames(
+  fields: Record<string, unknown> | undefined,
+  ancestorFields: ReadonlyMap<string, { definition: FieldDefinition }>,
+): Set<string> {
+  const names = new Set<string>();
+  for (const [name, def] of Object.entries(fields ?? {})) {
+    if (isThumbnail(def)) names.add(name);
+  }
+  for (const [name, { definition }] of ancestorFields) {
+    if (definition.type === "thumbnail") names.add(name);
+  }
+  return names;
+}
+
 /**
- * A type carries at most one thumbnail, counting what it inherits, so a device
- * reading "the item's thumbnail" is never choosing between two.
+ * A type carries at most one thumbnail, counting what it inherits and what
+ * the types that inherit from it already declare, so a device reading "the
+ * item's thumbnail" is never choosing between two.
  */
 function validateThumbnails(
+  id: string,
   fields: Record<string, unknown>,
   ancestorFields: ReadonlyMap<
     string,
     { owner: string; definition: FieldDefinition }
   >,
+  descendantsOf: ((typeId: string) => TypeSchema[]) | undefined,
   errors: SchemaValidationIssue[],
 ): void {
-  const isThumbnail = (def: unknown): boolean => {
-    const raw = asRecord(def);
-    return raw?.type === "thumbnail" || raw?.format === "thumbnail";
-  };
   const own = Object.keys(fields).filter((name) => isThumbnail(fields[name]));
   for (const name of own) {
-    if (ALWAYS_SEARCHED_FIELDS.includes(name)) {
+    if ((ALWAYS_SEARCHED_FIELDS as readonly string[]).includes(name)) {
       errors.push(
         issue({
           field: `fields.${name}`,
@@ -933,9 +971,10 @@ function validateThumbnails(
         definition.type === "thumbnail" && !own.includes(name),
     )
     .map(([name, { owner }]) => `"${name}" from "${owner}"`);
-  const all = [...own.map((name) => `"${name}"`), ...inherited];
   const last = own.at(-1);
-  if (all.length > 1 && last !== undefined) {
+  if (last === undefined) return;
+  const all = [...own.map((name) => `"${name}"`), ...inherited];
+  if (all.length > 1) {
     errors.push(
       issue({
         field: `fields.${last}`,
@@ -944,12 +983,33 @@ function validateThumbnails(
         hint: "Keep one thumbnail field.",
       }),
     );
+    return;
+  }
+  // A type gaining a thumbnail its registered children already declare one
+  // beside would leave each of them with two.
+  const crowded = (id && descendantsOf ? descendantsOf(id) : []).flatMap(
+    (child) =>
+      Object.entries(child.fields)
+        .filter(([name, def]) => def.type === "thumbnail" && name !== last)
+        .map(([name]) => `"${name}" in "${child.id}"`),
+  );
+  if (crowded.length > 0) {
+    errors.push(
+      issue({
+        field: `fields.${last}`,
+        expected:
+          "at most one thumbnail field in every type that inherits this one",
+        actual: `a thumbnail beside ${crowded.join(", ")}`,
+        hint: "Keep the thumbnail on one level of the hierarchy.",
+      }),
+    );
   }
 }
 
 function validateDisplayHints(
   obj: Record<string, unknown>,
   visibleFields: ReadonlySet<string>,
+  thumbnails: ReadonlySet<string>,
   errors: SchemaValidationIssue[],
 ): void {
   if (obj.display_hints === undefined) return;
@@ -986,6 +1046,17 @@ function validateDisplayHints(
           expected: "a field this type declares or inherits",
           actual: `"${value}", which is neither`,
           hint: `Declare "${value}" in fields, or point ${hintKey} at an existing field.`,
+        }),
+      );
+    } else if (thumbnails.has(value)) {
+      // A title or a body is text a person reads and a search indexes; an
+      // image's base64 is neither.
+      errors.push(
+        issue({
+          field: `display_hints.${hintKey}`,
+          expected: "a field that is not a thumbnail",
+          actual: `"${value}", which is a thumbnail`,
+          hint: `Point ${hintKey} at a text field, or omit it.`,
         }),
       );
     }
@@ -1521,6 +1592,18 @@ export function validateEdgeTypeSchema(
       for (const [name, def] of Object.entries(props)) {
         const before = errors.length;
         validateFieldShape(name, def, errors);
+        // An edge carries no thumbnail: nothing reads one from an edge, and
+        // a value nothing reads is a value nothing checks.
+        if (isThumbnail(def)) {
+          errors.push(
+            issue({
+              field: `property_schema.${name}`,
+              expected: "a property type an edge can carry",
+              actual: "a thumbnail",
+              hint: "Put the thumbnail on the item the edge points at.",
+            }),
+          );
+        }
         if (errors.length === before) {
           const record = asRecord(def);
           if (record) {

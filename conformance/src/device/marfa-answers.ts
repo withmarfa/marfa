@@ -166,8 +166,8 @@ export const SCRIPTED_TYPES: ReadonlyArray<Record<string, unknown>> = [
  * real server under an id of its own run.
  */
 export function snapshotType(id = "user.snapshot"): Record<string, unknown> {
-  // A registered type carries what its registration named and no more: no
-  // description and no merge policy, which the shipped types have.
+  // A registered type carries no description and no merge policy unless its
+  // registration names them, and the shipped types have both.
   const {
     description: _description,
     merge_policy: _mergePolicy,

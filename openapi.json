@@ -2309,7 +2309,8 @@
               "array",
               "object",
               "thumbnail"
-            ]
+            ],
+            "description": "`thumbnail` holds a small image the writer supplies: `data:image/png;base64,…`, `image/jpeg` or `image/webp`, canonical base64, at most 16 KiB decoded, beginning with that format's signature. A type carries at most one, never under a name search indexes whatever its type (`title`, `body`, `description`, `name`)."
           },
           "description": {
             "type": "string"
@@ -2337,7 +2338,7 @@
               "bcp47",
               "iso3166"
             ],
-            "description": "Semantic refinement of a `string` field. Only the annotation-only formats reach the registry: the five with a field type of their own normalize into `type`."
+            "description": "Semantic refinement of a `string` field. Only the annotation-only formats reach the registry: those with a field type of their own normalize into `type`."
           },
           "searchable": {
             "type": "boolean"

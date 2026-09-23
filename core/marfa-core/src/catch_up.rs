@@ -344,6 +344,9 @@ fn follow_paced(
         let catalog = adopt(core, &types)?;
         let opened = Instant::now();
         let mut heard = Instant::now();
+        // A type registered after this stream opened is one the catalog
+        // cannot index by, so the stream is opened again at once to learn it.
+        let mut unknown_type = false;
         loop {
             if stop.load(Ordering::Relaxed) {
                 return Ok(report);
@@ -373,8 +376,19 @@ fn follow_paced(
                         None => report.skipped += 1,
                     }
                     report.cursor = id;
+                    if payload
+                        .item
+                        .as_ref()
+                        .is_some_and(|item| !catalog.known(&item.r#type))
+                    {
+                        unknown_type = true;
+                        break;
+                    }
                 }
             }
+        }
+        if unknown_type {
+            continue;
         }
         if opened.elapsed() >= pace.reconnect_most {
             backoff = pace.reconnect_first;

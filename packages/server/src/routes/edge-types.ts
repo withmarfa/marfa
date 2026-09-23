@@ -278,14 +278,26 @@ export function edgeTypeRoutes(storage: Storage) {
         "Invalid edge-type identifier",
       );
     }
-    // NQ-1 resolution (custom edges do not inherit): pull the raw body and
-    // reject `extends` explicitly. Zod's default .strip() would silently
-    // drop it — that's lenient but invites clients to believe it worked.
+    // A registered edge type does not inherit: pull the raw body and reject
+    // `extends` explicitly. Zod's default .strip() would silently drop it —
+    // that's lenient but invites clients to believe it worked.
     const rawBody = await c.req.json<Record<string, unknown>>();
     if ("extends" in rawBody) {
       throw new MarfaError(
         ErrorCode.VALIDATION_ERROR,
         "A registered edge type does not support `extends`",
+      );
+    }
+    // An edge carries no thumbnail: nothing reads one from an edge, and a
+    // value nothing reads is a value nothing checks.
+    const thumbnail = Object.entries(body.property_schema ?? {}).find(
+      ([, definition]) => definition.type === "thumbnail",
+    );
+    if (thumbnail) {
+      throw new MarfaError(
+        ErrorCode.VALIDATION_ERROR,
+        `property_schema.${thumbnail[0]} is a thumbnail, which an edge never carries`,
+        { field: `property_schema.${thumbnail[0]}` },
       );
     }
 

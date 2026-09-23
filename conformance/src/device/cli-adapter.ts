@@ -191,7 +191,11 @@ export class CliDevice implements DeviceUnderTest {
   ): Promise<
     Outcome<{
       id: string;
-      thumbnail: { mime_type: string; size_bytes: number; path: string } | null;
+      thumbnail: {
+        mime_type: string;
+        size_bytes: number;
+        path: string | null;
+      } | null;
     }>
   > {
     return this.json(["items", "thumbnail", id, "--out", out]);

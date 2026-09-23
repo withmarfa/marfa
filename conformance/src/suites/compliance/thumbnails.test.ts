@@ -1,7 +1,12 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { MarfaClient } from "../../client/api.js";
 import type { FieldDefinition, TestContext } from "../../client/types.js";
-import { createTestContext, trackItem, cleanup } from "../../utils/setup.js";
+import {
+  createTestContext,
+  trackEdgeType,
+  trackItem,
+  cleanup,
+} from "../../utils/setup.js";
 import { collectUntil, withStream } from "../../utils/stream.js";
 
 /**
@@ -81,6 +86,8 @@ describe("a thumbnail field", () => {
     const refusedShapes: Array<Record<string, FieldDefinition>> = [
       { title: { type: "thumbnail" } },
       { body: { type: "thumbnail" } },
+      { description: { type: "thumbnail" } },
+      { name: { type: "thumbnail" } },
       { thumbnail: { type: "thumbnail" }, cover: { type: "thumbnail" } },
     ];
     for (const fields of refusedShapes) {
@@ -113,6 +120,82 @@ describe("a thumbnail field", () => {
       fields: { camera: { type: "string" } },
     });
     expect(plainChild.ok, JSON.stringify(plainChild.error)).toBe(true);
+  });
+
+  it("refuses a parent gaining a thumbnail beside one its child already declares", async () => {
+    const parent = `user.album-${ctx.runId}`;
+    expect(
+      (
+        await client.registerType({
+          id: parent,
+          fields: { label: { type: "string" } },
+        })
+      ).ok,
+    ).toBe(true);
+    const child = await client.registerType({
+      id: `user.album-child-${ctx.runId}`,
+      parent,
+      fields: { preview: { type: "thumbnail" } },
+    });
+    expect(child.ok, JSON.stringify(child.error)).toBe(true);
+    const widened = await client.updateType(parent, {
+      id: parent,
+      version: 2,
+      fields: { label: { type: "string" }, cover: { type: "thumbnail" } },
+    });
+    expect(
+      widened.status,
+      "a parent gained a thumbnail beside its child's, so the child's items carry two and a device reads one of them",
+    ).toBe(400);
+    // The witness: the same update without the thumbnail is taken.
+    const plain = await client.updateType(parent, {
+      id: parent,
+      version: 2,
+      fields: { label: { type: "string" }, note: { type: "string" } },
+    });
+    expect(plain.ok, JSON.stringify(plain.error)).toBe(true);
+  });
+
+  it("refuses a title or a body naming the thumbnail, and an edge property that is one", async () => {
+    const titled = await client.registerType({
+      id: `user.snapshot-titled-${ctx.runId}`,
+      fields: { cover: { type: "thumbnail" }, caption: { type: "string" } },
+      display_hints: { title_field: "cover" },
+    });
+    expect(
+      titled.status,
+      "a type named its thumbnail as its title, so the image's base64 is read and searched as text",
+    ).toBe(400);
+    const bodied = await client.registerType({
+      id: `user.snapshot-bodied-${ctx.runId}`,
+      fields: { cover: { type: "thumbnail" }, caption: { type: "string" } },
+      display_hints: { body_field: "cover" },
+    });
+    expect(bodied.status).toBe(400);
+    // The witness: the same type titled by its caption registers.
+    const captioned = await client.registerType({
+      id: `user.snapshot-captioned-${ctx.runId}`,
+      fields: { cover: { type: "thumbnail" }, caption: { type: "string" } },
+      display_hints: { title_field: "caption" },
+    });
+    expect(captioned.ok, JSON.stringify(captioned.error)).toBe(true);
+
+    const edge = await client.registerEdgeType({
+      id: `mock.depicts.${ctx.runId}`,
+      cardinality: "many-to-many",
+      property_schema: { preview: { type: "thumbnail" } },
+    });
+    expect(
+      edge.status,
+      "an edge type declared a thumbnail property, which nothing checks and nothing reads",
+    ).toBe(400);
+    const plainEdge = await client.registerEdgeType({
+      id: `mock.depicts-plain.${ctx.runId}`,
+      cardinality: "many-to-many",
+      property_schema: { note: { type: "string" } },
+    });
+    expect(plainEdge.ok, JSON.stringify(plainEdge.error)).toBe(true);
+    trackEdgeType(ctx, `mock.depicts-plain.${ctx.runId}`);
   });
 
   it("travels inside its item on a get, a list, an event frame and an export", async ({
@@ -181,6 +264,12 @@ describe("a thumbnail field", () => {
         uri(Buffer.from("GIF89a and more"), "image/png"),
       ],
       ["a link rather than the bytes", "https://example.com/thumb.png"],
+      // Bits the bytes do not use, which a strict decoder refuses.
+      ["not canonical base64", "data:image/png;base64,iVBORw0KGgp="],
+      [
+        "an uppercase media type",
+        `data:image/PNG;base64,${padded(64).toString("base64")}`,
+      ],
     ] as const) {
       const refused = await create({ title: what, thumbnail: value });
       expect(refused.ok, `a thumbnail ${what} was taken`).toBe(false);

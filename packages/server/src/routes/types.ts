@@ -101,7 +101,11 @@ function validateParentChain(
  */
 const FieldDefinitionSchema = z
   .looseObject({
-    type: z.enum(FIELD_TYPES as unknown as [string, ...string[]]),
+    type: z
+      .enum(FIELD_TYPES as unknown as [string, ...string[]])
+      .describe(
+        "`thumbnail` holds a small image the writer supplies: `data:image/png;base64,…`, `image/jpeg` or `image/webp`, canonical base64, at most 16 KiB decoded, beginning with that format's signature. A type carries at most one, never under a name search indexes whatever its type (`title`, `body`, `description`, `name`).",
+      ),
     description: z.string().optional(),
     required: z.boolean().optional(),
     enum_values: z.array(z.string()).optional(),
@@ -110,7 +114,7 @@ const FieldDefinitionSchema = z
       .enum(FIELD_FORMATS as unknown as [string, ...string[]])
       .optional()
       .describe(
-        "Semantic refinement of a `string` field. Only the annotation-only formats reach the registry: the five with a field type of their own normalize into `type`.",
+        "Semantic refinement of a `string` field. Only the annotation-only formats reach the registry: those with a field type of their own normalize into `type`.",
       ),
     searchable: z.boolean().optional(),
     maxLength: z.number().int().optional(),

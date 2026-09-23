@@ -279,6 +279,78 @@ describe("the working copy holds one slice", () => {
     ).toEqual(["beside"]);
   });
 
+  it("keeps a thumbnail out of its index when its type arrives after the stream opened", async () => {
+    harness = await startHarness("thumbnail-late-type");
+    const { server, device } = harness;
+    scriptHydration(server, { head: "10" });
+    // The type is registered after the device's catalog was read: the
+    // hydration and the first stream read it without the type, and every read
+    // after with it. Queued behind the hydration's own catalog answer, which
+    // the hydration takes.
+    const late = wireType("core.note.snapshot", {
+      parent: "core.note",
+      titleField: "title",
+      fields: {
+        title: { type: "string" },
+        body: { type: "string" },
+        thumbnail: { type: "thumbnail" },
+      },
+    });
+    let reads = 0;
+    server.answer("GET", "/types", () => {
+      reads += 1;
+      return {
+        kind: "json",
+        status: 200,
+        body: {
+          data: reads <= 1 ? [...SCRIPTED_TYPES] : [...SCRIPTED_TYPES, late],
+          next_cursor: null,
+        },
+      };
+    });
+    server.answer(
+      "GET",
+      "/events",
+      {
+        kind: "sse",
+        hold: true,
+        frames: [
+          connected,
+          itemEvent(
+            "11",
+            "item.created",
+            wireItem({
+              id: "late",
+              type: "core.note.snapshot",
+              properties: {
+                title: "Late",
+                body: "zebraword",
+                thumbnail: "data:image/png;base64,iVBORw0KGgoA/unicornsXYZ",
+              },
+            }),
+          ),
+        ],
+      },
+      { kind: "sse", hold: true, frames: [connected] },
+    );
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    expect((await device.follow(4)).ok).toBe(true);
+    // The witness that the late read answered: the stream read the catalog
+    // again after the event named a type it did not hold.
+    expect(reads).toBeGreaterThan(1);
+
+    const found = async (query: string): Promise<string[]> => {
+      const hits = await device.search(query);
+      return hits.ok ? hits.value.map((hit) => hit.item.id) : [];
+    };
+    // The witness: the item is held and indexed.
+    expect(await found("zebraword")).toEqual(["late"]);
+    expect(
+      await found("unicornsXYZ"),
+      "a thumbnail of a type the device learned only after its item arrived stayed in the index",
+    ).toEqual([]);
+  });
+
   it("says the bytes are absent rather than the item", async () => {
     harness = await startHarness("bytes-absent");
     const { server, device } = harness;

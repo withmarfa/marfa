@@ -101,7 +101,11 @@ export interface FieldDefinition {
   items_type?: FieldType;
   maxLength?: number;
   maxItems?: number;
-  /** `bcp47` or `iso3166` — annotates what a string contains. */
+  /**
+   * A refinement of a string: `url`, `email`, `datetime`, `date` and
+   * `thumbnail` are stored as the field type of the same name, while
+   * `bcp47` and `iso3166` annotate the string and are stored as `format`.
+   */
   format?: string;
 }
 

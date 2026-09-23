@@ -1960,14 +1960,17 @@ export interface components {
             [key: string]: unknown;
         };
         FieldDefinition: {
-            /** @enum {string} */
+            /**
+             * @description `thumbnail` holds a small image the writer supplies: `data:image/png;base64,…`, `image/jpeg` or `image/webp`, canonical base64, at most 16 KiB decoded, beginning with that format's signature. A type carries at most one, never under a name search indexes whatever its type (`title`, `body`, `description`, `name`).
+             * @enum {string}
+             */
             type: "string" | "number" | "integer" | "boolean" | "url" | "email" | "datetime" | "date" | "enum" | "array" | "object" | "thumbnail";
             description?: string;
             required?: boolean;
             enum_values?: string[];
             items_type?: string;
             /**
-             * @description Semantic refinement of a `string` field. Only the annotation-only formats reach the registry: the five with a field type of their own normalize into `type`.
+             * @description Semantic refinement of a `string` field. Only the annotation-only formats reach the registry: those with a field type of their own normalize into `type`.
              * @enum {string}
              */
             format?: "url" | "email" | "datetime" | "date" | "thumbnail" | "bcp47" | "iso3166";

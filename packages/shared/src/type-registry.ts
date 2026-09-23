@@ -75,7 +75,7 @@ export {
 // The field vocabularies the validator enforces, re-exported for the same
 // reason: the door that declares what a field definition looks like reads
 // the validator's own lists rather than restating them.
-export { FIELD_TYPES, FIELD_FORMATS };
+export { ALWAYS_SEARCHED_FIELDS, FIELD_TYPES, FIELD_FORMATS };
 
 // ---------------------------------------------------------------------------
 // Universal fields (available on every type)
@@ -625,11 +625,11 @@ export function getResolvedFields(
   return fields;
 }
 
-const CORE_SEARCH_FIELDS = new Set(ALWAYS_SEARCHED_FIELDS);
+const CORE_SEARCH_FIELDS: ReadonlySet<string> = new Set(ALWAYS_SEARCHED_FIELDS);
 
 /**
  * Returns the names of string-typed fields for a type that are not already
- * covered by the 4 core search fields. Used to index custom type properties.
+ * covered by the core search fields. Used to index custom type properties.
  * Respects the `searchable: false` opt-out — fields explicitly flagged as
  * non-searchable are excluded, so `items_fts.extra` skips them. Fields
  * without the flag default to searchable.
@@ -865,14 +865,14 @@ const boundedString = (field: FieldDefinition): z.ZodType =>
 /**
  * The most a thumbnail may decode to. It travels inside its item on every
  * read, list and event, so it is sized for a phone holding a library's worth:
- * ten thousand items at the cap is 160 MiB.
+ * ten thousand items at the cap is about 210 MB of base64.
  */
 export const THUMBNAIL_MAX_BYTES = 16 * 1024;
 
 const THUMBNAIL_URI =
   /^data:image\/(png|jpeg|webp);base64,([A-Za-z0-9+/]+={0,2})$/;
 
-// What each accepted image's bytes begin with, so a data URI labelled as an
+// What each accepted image's bytes begin with, so a data URI labeled as an
 // image that holds something else is refused rather than carried.
 const THUMBNAIL_SIGNATURES: Record<string, (bytes: string) => boolean> = {
   png: (bytes) => bytes.startsWith("\x89PNG\r\n\x1a\n"),
@@ -900,7 +900,19 @@ const thumbnail = z.string().superRefine((value, ctx) => {
     });
     return;
   }
-  if (!THUMBNAIL_SIGNATURES[kind]?.(atob(data.slice(0, 16)))) {
+  // One spelling of the bytes: base64 whose last character carries bits the
+  // bytes do not use decodes here and is refused by a stricter decoder, and a
+  // device holding the value would be unable to read what the server took.
+  const bytes = atob(data);
+  if (btoa(bytes) !== data) {
+    ctx.addIssue({
+      code: "custom",
+      message:
+        "Must be canonical base64: its unused trailing bits are not zero",
+    });
+    return;
+  }
+  if (!THUMBNAIL_SIGNATURES[kind]?.(bytes)) {
     ctx.addIssue({
       code: "custom",
       message: `Must hold a ${kind.toUpperCase()} image, as its data URI says`,
@@ -1221,5 +1233,7 @@ export function validateTypeSchema(input: unknown): TypeSchemaValidationResult {
   return validateTypeSchemaShape(input, {
     resolveSchema: (typeId) => resolveSchema(typeId),
     isValidTypeIdentifier,
+    descendantsOf: (typeId) =>
+      declaredDescendants(typeId).flatMap((id) => resolveSchema(id) ?? []),
   });
 }
