@@ -765,10 +765,13 @@ describe("a local search narrows as a list does", () => {
     harness.server.answer("GET", "/types", {
       kind: "json",
       status: 200,
-      body: [
-        ...SCRIPTED_TYPES,
-        wireType("user.photo", { parent: "core.file", titleField: "title" }),
-      ],
+      body: {
+        data: [
+          ...SCRIPTED_TYPES,
+          wireType("user.photo", { parent: "core.file", titleField: "title" }),
+        ],
+        next_cursor: null,
+      },
     });
     scriptHydration(harness.server, {
       head: "10",

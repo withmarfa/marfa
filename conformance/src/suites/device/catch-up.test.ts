@@ -415,11 +415,7 @@ describe("catch-up replays from the cursor", () => {
             item: {
               id: "from",
               edges: {
-                references: {
-                  edges: [edge],
-                  has_more: false,
-                  next_cursor: null,
-                },
+                references: { data: [edge], next_cursor: null },
               },
             },
           },
