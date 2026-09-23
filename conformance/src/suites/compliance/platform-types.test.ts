@@ -44,13 +44,12 @@ describe("platform type maintenance", () => {
     expect(r.data.data).toEqual([]);
   });
 
-  it("serves no type this repository's vocabulary retired", async () => {
-    // A retired platform type is not removed by the build that stops
-    // shipping it: the seed upserts and never prunes, so the row keeps
-    // resolving and keeps listing on every instance upgraded across the
-    // rename. This instance is seeded by this build, so the listing is the
-    // shipped set and the retired identifier must be absent from it — which
-    // reddens if one is ever put back into the shipped catalog, the only
+  it("serves no type named by a word the glossary bans", async () => {
+    // The seed upserts and never prunes, so a platform type a build stops
+    // shipping keeps resolving and listing on an instance an earlier build
+    // seeded. This instance is seeded by this build, so the listing is the
+    // shipped set and the banned identifier must be absent from it, which
+    // reddens if one is ever put back into the shipped catalog: the only
     // half of the problem a black-box run can reach.
     const listed = await client.listTypes();
     expect(listed.ok).toBe(true);

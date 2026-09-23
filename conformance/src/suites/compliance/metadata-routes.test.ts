@@ -113,8 +113,8 @@ describe("metadata doors", () => {
 
   it("refuses every metadata door without a credential, on an id nothing carries", async () => {
     // A row nothing carries, and an empty body where the door wants one.
-    // Both of these used to be answered first — `404` for the id on three of
-    // these doors, `400` for the body on two — which is exactly what a
+    // Either answered ahead of the credential — `404` for the id on three of
+    // these doors, `400` for the body on two — would be exactly what a
     // credential-less caller must not be able to read.
     const unknown = "01999999-9999-7999-8999-999999999999";
     const anonymous = new MarfaClient({ baseUrl: apiUrl, apiKey: "" });
