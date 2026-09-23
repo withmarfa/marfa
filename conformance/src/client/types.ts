@@ -86,7 +86,8 @@ export type FieldType =
   | "datetime"
   | "enum"
   | "array"
-  | "object";
+  | "object"
+  | "thumbnail";
 
 export interface FieldDefinition {
   type: FieldType;

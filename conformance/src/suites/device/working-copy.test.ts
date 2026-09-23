@@ -11,6 +11,7 @@ import {
 } from "./harness.js";
 import {
   SCRIPTED_TYPES,
+  snapshotType,
   connected,
   itemEvent,
   refusal,
@@ -212,16 +213,7 @@ describe("the working copy holds one slice", () => {
       kind: "json",
       status: 200,
       body: {
-        data: [
-          ...SCRIPTED_TYPES,
-          wireType("user.snapshot", {
-            titleField: "title",
-            fields: {
-              title: { type: "string" },
-              thumbnail: { type: "thumbnail" },
-            },
-          }),
-        ],
+        data: [...SCRIPTED_TYPES, snapshotType()],
         next_cursor: null,
       },
     });

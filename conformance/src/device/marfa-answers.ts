@@ -160,6 +160,28 @@ export const SCRIPTED_TYPES: ReadonlyArray<Record<string, unknown>> = [
   wireType("core.bookmark", { titleField: "title" }),
 ];
 
+/**
+ * A registered type declaring a thumbnail (`device.md` 29). A function of
+ * its id, because the fidelity comparison registers the same type on the
+ * real server under an id of its own run.
+ */
+export function snapshotType(id = "user.snapshot"): Record<string, unknown> {
+  // A registered type carries what its registration named and no more: no
+  // description and no merge policy, which the shipped types have.
+  const {
+    description: _description,
+    merge_policy: _mergePolicy,
+    ...row
+  } = wireType(id, {
+    titleField: "title",
+    fields: {
+      title: { type: "string" },
+      thumbnail: { type: "thumbnail" },
+    },
+  });
+  return row;
+}
+
 /** One scripted type by id, for a comparison against the served one. */
 export function scriptedType(id: string): Record<string, unknown> {
   const found = SCRIPTED_TYPES.find((row) => row.id === id);

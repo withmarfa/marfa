@@ -1961,16 +1961,16 @@ export interface components {
         };
         FieldDefinition: {
             /** @enum {string} */
-            type: "string" | "number" | "integer" | "boolean" | "url" | "email" | "datetime" | "date" | "enum" | "array" | "object";
+            type: "string" | "number" | "integer" | "boolean" | "url" | "email" | "datetime" | "date" | "enum" | "array" | "object" | "thumbnail";
             description?: string;
             required?: boolean;
             enum_values?: string[];
             items_type?: string;
             /**
-             * @description Semantic refinement of a `string` field. Only the annotation-only formats reach the registry: the four with a field type of their own normalize into `type`.
+             * @description Semantic refinement of a `string` field. Only the annotation-only formats reach the registry: the five with a field type of their own normalize into `type`.
              * @enum {string}
              */
-            format?: "url" | "email" | "datetime" | "date" | "bcp47" | "iso3166";
+            format?: "url" | "email" | "datetime" | "date" | "thumbnail" | "bcp47" | "iso3166";
             searchable?: boolean;
             maxLength?: number;
             maxItems?: number;

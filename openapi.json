@@ -2307,7 +2307,8 @@
               "date",
               "enum",
               "array",
-              "object"
+              "object",
+              "thumbnail"
             ]
           },
           "description": {
@@ -2332,10 +2333,11 @@
               "email",
               "datetime",
               "date",
+              "thumbnail",
               "bcp47",
               "iso3166"
             ],
-            "description": "Semantic refinement of a `string` field. Only the annotation-only formats reach the registry: the four with a field type of their own normalize into `type`."
+            "description": "Semantic refinement of a `string` field. Only the annotation-only formats reach the registry: the five with a field type of their own normalize into `type`."
           },
           "searchable": {
             "type": "boolean"

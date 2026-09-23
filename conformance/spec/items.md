@@ -73,3 +73,7 @@ An item is a typed row: an `id`, a `type`, `properties` validated against the ty
 ## What the update door takes
 
 47. `PATCH /items/{id}` refuses a body key it does not declare, `400 validation_error`, rather than dropping it: a dropped key is a request half-performed and answered `200`, which is the rule the listing grammar keeps for a query key (`search-and-filters.md` 8). `properties` is the exception inside the body, because its keys are the type's rather than the door's. `correctness/item-versioning.test.ts › refuses a body key the update door does not declare`.
+
+## Thumbnails
+
+48. **A thumbnail travels inside its item.** Its value is a `data:` URI of a PNG, JPEG or WebP image in base64, at most 16 KiB decoded, whose bytes are the image the URI names; anything else is refused `400 invalid_properties` naming the field. It is answered as a property on every door that answers the item, a read, a list, an event frame and an export among them, so a device holds it with the item and never fetches it (`device.md` 29). Full-text search never matches it. `compliance/thumbnails.test.ts › travels inside its item on a get, a list, an event frame and an export`, `› refuses a thumbnail over the cap or not an image, naming the field`, `› is not found by a search that finds the same token in a body`.

@@ -1,0 +1,218 @@
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { MarfaClient } from "../../client/api.js";
+import type { FieldDefinition, TestContext } from "../../client/types.js";
+import { createTestContext, trackItem, cleanup } from "../../utils/setup.js";
+import { collectUntil, withStream } from "../../utils/stream.js";
+
+/**
+ * A thumbnail is a field type of its own: a small image a writer supplies,
+ * carried inside its item on every door that answers the item, and never
+ * searched. A device holds it with the item rather than fetching it, which
+ * is what lets a phone hold a library's thumbnails and not its bytes.
+ */
+
+let client: MarfaClient;
+let ctx: TestContext;
+let apiUrl: string;
+let apiKey: string;
+let typeId: string;
+
+const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+const CAP = 16 * 1024;
+const padded = (size: number): Buffer =>
+  Buffer.concat([PNG, Buffer.alloc(size - PNG.length, 7)]);
+const uri = (bytes: Buffer, mime = "image/png"): string =>
+  `data:${mime};base64,${bytes.toString("base64")}`;
+
+beforeAll(async () => {
+  ({ ctx, client, apiUrl, apiKey } = await createTestContext(
+    "compliance",
+    "thumbnails",
+  ));
+  typeId = `user.snapshot-${ctx.runId}`;
+  const registered = await client.registerType({
+    id: typeId,
+    fields: {
+      title: { type: "string" },
+      body: { type: "string" },
+      thumbnail: { type: "thumbnail" },
+    },
+  });
+  expect(registered.ok, JSON.stringify(registered.error)).toBe(true);
+});
+
+afterAll(async () => {
+  await cleanup(ctx);
+});
+
+async function create(
+  properties: Record<string, unknown>,
+): ReturnType<MarfaClient["createItem"]> {
+  const created = await client.createItem({
+    type: typeId,
+    source: ctx.source,
+    properties,
+  });
+  if (created.ok) trackItem(ctx, created.data.item.id);
+  return created;
+}
+
+describe("a thumbnail field", () => {
+  it("registers by its type or by the format that stands for it", async () => {
+    const read = await client.getType(typeId);
+    expect(read.ok).toBe(true);
+    expect(read.data.fields.thumbnail?.type).toBe("thumbnail");
+
+    const byFormat = `user.snapshot-format-${ctx.runId}`;
+    const registered = await client.registerType({
+      id: byFormat,
+      fields: { cover: { type: "string", format: "thumbnail" } },
+    });
+    expect(registered.ok, JSON.stringify(registered.error)).toBe(true);
+    const stored = await client.getType(byFormat);
+    expect(stored.ok).toBe(true);
+    expect(
+      stored.data.fields.cover,
+      "a thumbnail declared by its format is stored under a second spelling",
+    ).toEqual({ type: "thumbnail" });
+  });
+
+  it("refuses a thumbnail named for a field search indexes, and a second thumbnail", async () => {
+    const refusedShapes: Array<Record<string, FieldDefinition>> = [
+      { title: { type: "thumbnail" } },
+      { body: { type: "thumbnail" } },
+      { thumbnail: { type: "thumbnail" }, cover: { type: "thumbnail" } },
+    ];
+    for (const fields of refusedShapes) {
+      const refused = await client.registerType({
+        id: `user.snapshot-refused-${ctx.runId}`,
+        fields,
+      });
+      expect(
+        refused.status,
+        `a type declaring ${JSON.stringify(fields)} was registered`,
+      ).toBe(400);
+    }
+    // Counting the one a subtype inherits.
+    const inheriting = await client.registerType({
+      id: `user.snapshot-child-${ctx.runId}`,
+      parent: typeId,
+      fields: { cover: { type: "thumbnail" } },
+    });
+    expect(
+      inheriting.status,
+      "a subtype added a thumbnail beside the one it inherits",
+    ).toBe(400);
+    // The witnesses: the type registered before all this declares one
+    // thumbnail under a name search does not index, and a subtype that adds
+    // none registers.
+    expect((await client.getType(typeId)).ok).toBe(true);
+    const plainChild = await client.registerType({
+      id: `user.snapshot-plain-${ctx.runId}`,
+      parent: typeId,
+      fields: { camera: { type: "string" } },
+    });
+    expect(plainChild.ok, JSON.stringify(plainChild.error)).toBe(true);
+  });
+
+  it("travels inside its item on a get, a list, an event frame and an export", async ({
+    signal,
+  }) => {
+    const value = uri(padded(200));
+    const created = await withStream(apiUrl, apiKey, {}, async (stream) => {
+      // Let the subscription settle before the write, or its event is
+      // published to nobody.
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      const made = await create({ title: "Holiday", thumbnail: value });
+      expect(made.ok, JSON.stringify(made.error)).toBe(true);
+      const id = made.data.item.id;
+      const { events } = await collectUntil(
+        stream,
+        (seen) =>
+          seen.some(
+            (event) =>
+              (event.data as { item?: { id?: string } }).item?.id === id,
+          ),
+        `the create of ${id} to reach the stream`,
+        signal,
+      );
+      const frame = events.find(
+        (event) => (event.data as { item?: { id?: string } }).item?.id === id,
+      );
+      expect(
+        (frame?.data as { item: { properties: Record<string, unknown> } }).item
+          .properties.thumbnail,
+        "the event frame did not carry the thumbnail, so a device following the stream holds the item without it",
+      ).toBe(value);
+      return made.data.item;
+    });
+    expect(created.properties.thumbnail).toBe(value);
+
+    const got = await client.getItem(created.id);
+    expect(got.ok).toBe(true);
+    expect(got.data.item.properties.thumbnail).toBe(value);
+
+    const listed = await client.listItems({ type: typeId, limit: 50 });
+    expect(listed.ok).toBe(true);
+    expect(
+      listed.data.data.find((item) => item.id === created.id)?.properties
+        .thumbnail,
+      "a list answered the item without its thumbnail, so a hydration holds none",
+    ).toBe(value);
+
+    const exported = await client.exportItems({ type: typeId });
+    expect(exported.ok).toBe(true);
+    expect(exported.data).toContain(value);
+  });
+
+  it("refuses a thumbnail over the cap or not an image, naming the field", async () => {
+    // The witness: an image at the cap is taken.
+    const atCap = await create({
+      title: "At the cap",
+      thumbnail: uri(padded(CAP)),
+    });
+    expect(atCap.ok, JSON.stringify(atCap.error)).toBe(true);
+
+    for (const [what, value] of [
+      ["over the cap", uri(padded(CAP + 1))],
+      ["not an image", uri(Buffer.from("plain text"), "text/plain")],
+      [
+        "not the image it says",
+        uri(Buffer.from("GIF89a and more"), "image/png"),
+      ],
+      ["a link rather than the bytes", "https://example.com/thumb.png"],
+    ] as const) {
+      const refused = await create({ title: what, thumbnail: value });
+      expect(refused.ok, `a thumbnail ${what} was taken`).toBe(false);
+      expect(refused.status).toBe(400);
+      expect(refused.error?.error.code).toBe("invalid_properties");
+      const errors = refused.error?.error.details?.errors as
+        Array<{ field: string }> | undefined;
+      expect(errors?.map((error) => error.field)).toContain("thumbnail");
+    }
+  });
+
+  it("is not found by a search that finds the same token in a body", async () => {
+    // A PNG's signature, then base64 that spells a word of its own: `/`
+    // ends one token and starts the next.
+    let token = `thumb${ctx.runId.replace(/[^A-Za-z0-9]/g, "")}`;
+    while ((token.length + 1) % 4 !== 0) token += "Q";
+    const inThumbnail = await create({
+      title: "Carries the token in its image",
+      thumbnail: `data:image/png;base64,iVBORw0KGgoA/${token}`,
+    });
+    expect(inThumbnail.ok, JSON.stringify(inThumbnail.error)).toBe(true);
+    const inBody = await create({ title: "Carries it in words", body: token });
+    expect(inBody.ok).toBe(true);
+
+    const found = await client.search(token, { limit: 50 });
+    expect(found.ok).toBe(true);
+    const ids = found.data.data.map((hit) => hit.item.id);
+    // The witness: the token is searchable where a person wrote it.
+    expect(ids).toContain(inBody.data.item.id);
+    expect(
+      ids,
+      "a search matched an image's base64, so every thumbnail answers searches for whatever its encoding spells",
+    ).not.toContain(inThumbnail.data.item.id);
+  });
+});
