@@ -12,6 +12,10 @@ public import struct Foundation.Date
 extension Components {
     /// Types generated from the `#/components/headers` section of the OpenAPI document.
     public enum Headers {
+        /// The contract version this server speaks, the same integer as the document's `info.version` and the root's `contract`. Sent on every response the application gives, refusals included, so a client can check the answer it is about to read. A client generated for another number cannot trust the body. A request refused by the HTTP layer before it reaches the application, such as one with a malformed host, is answered without it.
+        ///
+        /// - Remark: Generated from `#/components/headers/X-Marfa-Contract`.
+        public typealias XMarfaContract = Swift.Int
         /// This request's identifier, the same one written to the server's request log. Echoes the caller's own `X-Request-ID` when it sends one matching `[A-Za-z0-9_-]{1,128}`, and is a generated UUIDv7 otherwise, so a client can either adopt the server's id or impose its own. Quote it when reporting a problem: it is the one value that finds the request again.
         ///
         /// - Remark: Generated from `#/components/headers/X-Request-ID`.
