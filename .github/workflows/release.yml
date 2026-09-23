@@ -141,18 +141,17 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 22
-      - run: pnpm install --frozen-lockfile
 
+      # Before the install, because the install records every package's
+      # version and the workspace refuses a script once one differs from
+      # that record (`verifyDepsBeforeRun`). The lockfile holds no workspace
+      # version, so a frozen install passes over the stamped manifests.
       - name: Stamp the version into every manifest
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: bash scripts/release/stamp-version.sh "$VERSION"
 
-      # The stamp rewrites every manifest, and the workspace refuses to run a
-      # script against manifests newer than its last install
-      # (`verifyDepsBeforeRun`). The lockfile holds no workspace version, so
-      # this install changes nothing but the state that check reads.
-      - run: pnpm install --frozen-lockfile --offline
+      - run: pnpm install --frozen-lockfile
 
       - run: pnpm build
 

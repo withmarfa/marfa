@@ -7,18 +7,12 @@ packages:
   # its `typecheck` joins the root's.
   - "conformance"
 
-# Catch the worktree-staleness gotcha: when a long-lived worktree
-# rebases `main` and picks up new workspace packages (e.g. a fresh
-# `packages/foo`), `pnpm install --frozen-lockfile`
-# is a near-instant no-op because the lockfile hash is unchanged. The
-# per-package `node_modules/.bin/` symlinks for the new packages are
-# never linked, and the first `pnpm run build` fails with
-# `sh: tsup: command not found`. `verifyDepsBeforeRun` compares the
-# `workspacePackagePatterns` recorded in `node_modules/.modules.yaml`
-# against the current set and fast-fails before any script runs.
-# `error` rather than `install` so the state change is surfaced
-# explicitly — the operator sees the message and runs `pnpm install`,
-# rather than the install happening silently mid-build.
+# A script refuses to run once the workspace's packages, or their
+# versions, differ from what the last install recorded. An install is what
+# links a new package's `.bin` entries, so without this the first build
+# after a rebase that adds a package fails with `tsup: command not found`.
+# `error` rather than `install`, so the install is one the operator runs
+# rather than one that happens silently mid-build.
 verifyDepsBeforeRun: error
 
 overrides:
