@@ -175,6 +175,12 @@ describe("DELETE /edge-types/:id — happy path and errors", () => {
     });
     expect(create.status).toBe(201);
 
+    const before = await request(ctx.app, "GET", "/edge-types", {
+      key: ctx.workingKey,
+    });
+    const listedBefore = (await before.json()) as EdgeTypeListResponse;
+    expect(listedBefore.data.map((t) => t.id)).toContain(id);
+
     const del = await request(ctx.app, "DELETE", `/edge-types/${id}`, {
       key: ctx.workingKey,
     });

@@ -100,6 +100,10 @@ describe("custom edge-type registration", () => {
     expect(reg.ok).toBe(true);
     trackEdgeType(ctx, etId);
 
+    const before = await client.listEdgeTypes();
+    expect(before.ok).toBe(true);
+    expect(before.data.data.map((t) => t.id)).toContain(etId);
+
     const removed = await client.deleteEdgeType(etId);
     expect(removed.ok).toBe(true);
     await expectMatchesSchema("DELETE", "/edge-types/{id}", 200, removed.data);
@@ -122,8 +126,8 @@ describe("custom edge-type registration", () => {
     // naming a type the instance no longer holds, which is untidy and
     // recoverable; deleting rows nobody asked to delete is neither.
     //
-    // A new code rather than `type_in_use`, matching the
-    // `edge_type_not_found` that already sits beside `type_not_found`:
+    // Its own code rather than `type_in_use`, matching the
+    // `edge_type_not_found` that sits beside `type_not_found`:
     // the doors agree in shape and differ in vocabulary, because an edge
     // type is not a type and a caller branching on the code should be
     // able to tell which registry refused it.
@@ -187,6 +191,10 @@ describe("custom edge-type registration", () => {
     expect(reg.ok).toBe(true);
     trackEdgeType(ctx, etId);
 
+    const before = await client.listEdgeTypes();
+    expect(before.ok).toBe(true);
+    expect(before.data.data.map((t) => t.id)).toContain(etId);
+
     const removed = await client.deleteEdgeType(etId);
     expect(removed.ok, JSON.stringify(removed.error)).toBe(true);
     expect(removed.status).toBe(200);
@@ -196,11 +204,11 @@ describe("custom edge-type registration", () => {
   });
 
   it("refuses a delete to a key without schema.write, and declares the refusal", async () => {
-    // The door gates on `schema.write` and published no 403, so the one
-    // refusal a caller arranges by holding the wrong credential was absent
-    // from the document. `expectMatchesSchema` is the half that reddens if
-    // the declaration goes: it throws when the served document declares no
-    // such status for the door.
+    // The door gates on `schema.write`, so holding the wrong credential is
+    // the one refusal a caller can arrange, and the document has to declare
+    // it. `expectMatchesSchema` is the half that reddens if the declaration
+    // goes: it throws when the served document declares no such status for
+    // the door.
     const etId = `mock.no-schema-write.${ctx.runId}`;
     const reg = await client.registerEdgeType({
       id: etId,
