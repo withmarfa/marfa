@@ -99,7 +99,9 @@ function documentedDoors(): Set<string> {
  * The published operations that take no credential, each with why.
  *
  * A caller cannot be asked for a credential in order to learn how to obtain
- * one, so the registration door is open by construction.
+ * one, or which contract a server speaks before choosing what to send, so
+ * registration and the root are open by construction; the blob link carries
+ * its credential in the URL.
  */
 const OPEN_OPERATIONS: Record<string, string> = {
   "GET /":
@@ -151,7 +153,8 @@ function fencedDoors(): Set<string> {
  * lands on before it holds anything.
  */
 const OPEN_DOORS: Record<string, string> = {
-  "GET /": "names the instance, its build and the surfaces it serves",
+  "GET /":
+    "names the instance, its build, its contract version and the surfaces it serves",
   "GET /health": "liveness, read before any credential exists",
   "GET /openapi.json":
     "the document a client reads to learn how to authenticate",

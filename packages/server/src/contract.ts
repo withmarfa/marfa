@@ -7,8 +7,11 @@
  * answers**: a path, a method, an operation, a field, an enum member, a status
  * or a refusal code removed or reshaped, including one the document never
  * declared, because a body the document leaves open is still a shape a
- * caller reads. An addition does not move it. One change moves it by one,
- * however many breaks it carries.
+ * caller reads. A member added to an enum a response carries moves it too,
+ * a refusal code included, because a generated client decodes that enum as
+ * closed and fails on a value it was not generated with. Any other addition
+ * does not move it. One change moves it by one, however many breaks it
+ * carries.
  *
  * The number is guarded; the decision to move it is not. The root and the
  * document read this one constant, and the committed document is compared to

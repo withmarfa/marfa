@@ -71,3 +71,22 @@ describe("every published door refuses a request with no credential", () => {
     expect(wrong).toEqual([]);
   });
 });
+
+describe("the open doors", () => {
+  it("are published, and answer a request with no credential", async () => {
+    const published = new Set(
+      (await publishedOperations()).map((op) => `${op.method} ${op.path}`),
+    );
+    for (const door of OPEN_DOORS) {
+      expect(published, door).toContain(door);
+      const [method, path] = door.split(" ") as [string, string];
+      const response = await fetch(`${apiUrl}${path}`, {
+        method,
+        headers: { "Content-Type": "application/json" },
+        body: method === "GET" ? undefined : UNPARSEABLE_BODY,
+      });
+      await response.body?.cancel();
+      expect(response.status, door).not.toBe(401);
+    }
+  });
+});

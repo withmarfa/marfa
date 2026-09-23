@@ -34,12 +34,20 @@ const DOOR_KEYS = new Set(
   }),
 );
 
-const UNIVERSAL = [
-  "X-Request-ID",
+const UNIVERSAL = ["X-Request-ID"];
+
+const RATE_LIMIT = [
   "X-RateLimit-Limit",
   "X-RateLimit-Remaining",
   "X-RateLimit-Reset",
 ];
+
+/**
+ * Operations `app.ts` mounts ahead of the rate limiter, which therefore
+ * answer no 429 and carry none of its headers. `app.root.test.ts` holds the
+ * root to that on the wire.
+ */
+const AHEAD_OF_THE_LIMITER = new Set(["GET /"]);
 
 /** Statuses an idempotency claim gives back rather than records. */
 const RELEASED = new Set([401, 403]);
@@ -115,6 +123,24 @@ describe("the published spec declares the headers the server sets", () => {
     expect(missing.sort()).toEqual([]);
   });
 
+  it("declares the rate limiter's headers on every response it passes, and no other", () => {
+    const wrong: string[] = [];
+    for (const [key, responses] of operations) {
+      const behind = !AHEAD_OF_THE_LIMITER.has(key);
+      for (const [status, response] of Object.entries(responses)) {
+        for (const name of RATE_LIMIT) {
+          if (name in (response.headers ?? {}) !== behind) {
+            wrong.push(`${key} ${status} ${name}`);
+          }
+        }
+      }
+    }
+    for (const key of AHEAD_OF_THE_LIMITER) {
+      expect(operations.has(key), `${key} is published`).toBe(true);
+    }
+    expect(wrong.sort()).toEqual([]);
+  });
+
   it("declares X-Error-Code on error responses and not on success", () => {
     // No exceptions: every error response declares the header and every
     // success response does not.
@@ -153,11 +179,10 @@ describe("the published spec declares the headers the server sets", () => {
         }
       }
     }
-    // Every served operation is behind the limiter, so every one answers
-    // 429 — a count of zero would mean the refusal stopped being declared
-    // and every assertion above passed by having nothing to check. Every
-    // published operation is served, so every one carries the refusal.
-    expect(refusals).toBe(operations.size);
+    // Every operation behind the limiter answers 429, so a count short of
+    // theirs means the refusal stopped being declared somewhere and the
+    // assertion above passed by having nothing to check there.
+    expect(refusals).toBe(operations.size - AHEAD_OF_THE_LIMITER.size);
     expect(wrong.sort()).toEqual([]);
   });
 

@@ -2,16 +2,16 @@
  * The root route, which is the one door a caller holding nothing can ask
  * what it is talking to.
  *
- * It had no test in this package at all. `compliance/instance.test.ts`
- * asserts what it serves, but that suite needs a booted server and runs in
- * a separate job, so a regression in the boot wiring — `index.ts` resolving
- * the identity and handing it to `createApp` — reached the conformance run
- * or nothing. Mutating the served id to a literal passed 2,559 tests here.
+ * `compliance/instance.test.ts` asserts what it serves, but that suite needs
+ * a booted server and runs in a separate job, so the boot wiring (`index.ts`
+ * resolving the identity and handing it to `createApp`) and the contract
+ * number are held here as well, where a change to either fails first.
  */
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import { createTestContext } from "./test-utils.js";
 import type { TestContext } from "./test-utils.js";
 import { ensureInstanceId } from "./storage/instance-id.js";
+import { buildPublishedOpenAPISpec } from "./openapi-published.js";
 
 let ctx: TestContext;
 
@@ -31,6 +31,7 @@ describe("GET /", () => {
       name: string;
       version: string;
       instance_id: string;
+      contract: number;
       features: string[];
     };
     expect(body.name).toBe("marfa");
@@ -39,6 +40,38 @@ describe("GET /", () => {
     // exactly the step that could hand the app somebody else's name.
     expect(body.instance_id).toBe(await ensureInstanceId(ctx.storage.settings));
     expect(body.features.length).toBeGreaterThan(0);
+  });
+
+  it("answers the contract version its document carries", async () => {
+    const body = (await (await ctx.app.request("/")).json()) as {
+      contract: unknown;
+    };
+    const document = (await buildPublishedOpenAPISpec()) as {
+      info: { version: string };
+    };
+    expect(Number.isInteger(body.contract)).toBe(true);
+    expect(body.contract).toBe(Number(document.info.version));
+  });
+
+  it("carries none of the rate limiter's headers, since it is mounted ahead of it", async () => {
+    const limited = await createTestContext({
+      rateLimitEnabled: true,
+      rateLimitDefaultLimit: 2,
+    });
+    try {
+      // Witness: a door behind the limiter carries them on the same app.
+      const behind = await limited.app.request("/items", {
+        headers: { Authorization: `Bearer ${limited.workingKey}` },
+      });
+      expect(behind.headers.get("X-RateLimit-Limit")).not.toBeNull();
+      for (let i = 0; i < 4; i++) {
+        const res = await limited.app.request("/");
+        expect(res.status).toBe(200);
+        expect(res.headers.get("X-RateLimit-Limit")).toBeNull();
+      }
+    } finally {
+      await limited.cleanup();
+    }
   });
 
   it("answers without a credential", async () => {

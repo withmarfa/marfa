@@ -10,9 +10,9 @@
  *   2. Strips platform-internal operations (server metrics, the blob
  *      link target). They still serve — they are simply not part of the
  *      public reference.
- *   3. Injects the two consumer routes defined as plain Hono handlers
- *      (the SSE stream and OAuth dynamic client registration), which the
- *      reflection cannot see.
+ *   3. Injects the routes defined as plain Hono handlers (the instance
+ *      root, the SSE stream and OAuth dynamic client registration), which
+ *      the reflection cannot see.
  *
  * Both the live `/openapi.json` endpoint (`app.ts`) and the committed
  * `openapi.json` (`scripts/generate-openapi.ts`) call this, so the two never
@@ -235,12 +235,20 @@ const RESPONSE_HEADER_COMPONENTS: Record<string, unknown> = {
 };
 
 /** Headers on every response, whatever the operation or the status. */
-const UNIVERSAL_RESPONSE_HEADERS = [
-  "X-Request-ID",
+const UNIVERSAL_RESPONSE_HEADERS = ["X-Request-ID"];
+
+/** Headers the rate limiter sets on every response that passes through it. */
+const RATE_LIMIT_HEADERS = [
   "X-RateLimit-Limit",
   "X-RateLimit-Remaining",
   "X-RateLimit-Reset",
 ];
+
+/**
+ * Operations `app.ts` mounts ahead of the rate limiter. The limiter never
+ * sees them, so they answer no `429` and carry none of its headers.
+ */
+const AHEAD_OF_THE_LIMITER = new Set(["get /"]);
 
 /**
  * A refusal middleware answers on behalf of the doors it is mounted over.
@@ -465,6 +473,8 @@ function withResponseHeaders(
     }
     const code = Number.parseInt(status, 10);
     const names = [...UNIVERSAL_RESPONSE_HEADERS];
+    if (!AHEAD_OF_THE_LIMITER.has(operationKey))
+      names.push(...RATE_LIMIT_HEADERS);
     // `default` and any other non-numeric key parses to NaN, and NaN fails
     // both comparisons — so an unrecognized key gets the universal set and
     // no claim this code cannot support.
@@ -504,7 +514,7 @@ export const EXTRA_PATHS: Record<string, Record<string, unknown>> = {
       tags: ["Instance"],
       summary: "Describe the instance",
       description:
-        "Answers without a credential: the instance's name, the build it runs as `version`, the `instance_id` that tells two instances answering the same shape apart, the contract version as `contract`, and the surfaces it carries as `features`. `contract` equals this document's `info.version`; a generated client reads it before its first request and refuses a server advertising a contract it was not generated for.",
+        "Answers without a credential: the instance's name, the build it runs as `version`, the `instance_id` that tells two instances answering the same shape apart, the contract version as `contract`, and the surfaces it carries as `features`. `contract` equals this document's `info.version`, so a client generated from this document can tell whether a server speaks the contract it was generated for.",
       responses: {
         "200": {
           description: "The instance",
@@ -752,10 +762,9 @@ export function finalizeOpenAPISpec<T extends OpenAPIDoc>(spec: T): T {
   }
 
   // Declare the middleware-set response headers, last so that the injected
-  // routes above are covered too — they are served through the same logger
-  // and the same limiter as everything else, and a client reading the
-  // reference has no way to know which routes the reflection happened to
-  // see.
+  // routes above are covered too: they are served through the same logger
+  // as everything else, and a client reading the reference has no way to
+  // know which routes the reflection happened to see.
   for (const [pathKey, methods] of Object.entries(nextPaths)) {
     const withHeaders: Record<string, unknown> = {};
     for (const [method, op] of Object.entries(methods)) {
@@ -770,10 +779,17 @@ export function finalizeOpenAPISpec<T extends OpenAPIDoc>(spec: T): T {
       if (declaresSecurity(operation)) {
         responses["401"] ??= CHAIN_REFUSALS.unauthorized.response;
       }
-      if (bodyCapFor(pathKey) !== "none") {
+      // The body cap counts a body, and a GET or HEAD carries none to count.
+      if (
+        bodyCapFor(pathKey) !== "none" &&
+        method !== "get" &&
+        method !== "head"
+      ) {
         responses["413"] ??= CHAIN_REFUSALS.requestTooLarge.response;
       }
-      responses["429"] ??= CHAIN_REFUSALS.rateLimited.response;
+      if (!AHEAD_OF_THE_LIMITER.has(`${method} ${pathKey}`)) {
+        responses["429"] ??= CHAIN_REFUSALS.rateLimited.response;
+      }
       if (declaresSecurity(operation)) {
         responses["503"] ??= CHAIN_REFUSALS.writeContention.response;
       }
