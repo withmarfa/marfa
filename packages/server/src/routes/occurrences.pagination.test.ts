@@ -452,11 +452,13 @@ async function readWindow(
   );
 }
 
-describe("GET /occurrences over a calendar of more than 20,000 series", () => {
-  // A refusal at a row total could not be recovered from: the one move a
-  // caller knows is to ask for a narrower window, and the window has no
-  // bearing on how many rows carry a rule.
-  const MANY_SERIES = 20_500;
+describe("GET /occurrences over rule-bearing rows a hundred pages deep", () => {
+  // No total of rule-bearing rows refuses the read. A refusal at a row
+  // total could not be recovered from: the one move a caller knows is to
+  // ask for a narrower window, and the window has no bearing on how many
+  // rows carry a rule. There is no bound to sit past, so the size is a
+  // walk of a hundred pages at the clamp the route reads the store by.
+  const MANY_SERIES = 100 * MAX_PAGE_LIMIT;
 
   it("serves the window rather than refusing the read", async () => {
     const rows: SyntheticRow[] = [];
@@ -489,8 +491,8 @@ describe("GET /occurrences over a calendar of more than 20,000 series", () => {
       data: OccurrenceRow[];
       scan: { events_read: number };
     };
-    // The three meetings actually in the window, found behind twenty
-    // thousand rows that a ceiling would have refused the read over.
+    // The three meetings actually in the window, found behind every
+    // rule-bearing row a ceiling would have refused the read over.
     expect(body.data.map((r) => r.item.properties.title)).toEqual([
       "meeting 0",
       "meeting 1",
@@ -879,13 +881,11 @@ describe("the expansion budget bounds the walking that contributes nothing", () 
    * A tenth of the production ceiling, handed to the route.
    *
    * Reaching a ceiling denominated in rule iterations means walking
-   * them, and at the production value that was six seconds a test on a
-   * box that also runs the organization's CI. Every assertion below is
-   * written against whatever value is in force — the overshoot, the
-   * count left unexpanded, what the refusal carries — so a tenth
-   * exercises the same code and the same arithmetic at a tenth of the
-   * cost. The production number is pinned by the equality below, which
-   * is what was really being asserted by spending it.
+   * them, which at the production value costs seconds a test. Every
+   * assertion below is written against whatever value is in force — the
+   * overshoot, the count left unexpanded, what the refusal carries — so a
+   * tenth exercises the same code and the same arithmetic at a tenth of
+   * the cost, and the production number is pinned by the equality below.
    */
   const BUDGET = MAX_UNPRODUCTIVE_EXPANSION_ITERATIONS / 10;
 
@@ -1036,9 +1036,8 @@ describe("the expansion budget bounds the walking that contributes nothing", () 
     // charged.
     //
     // Charging it is right: none of that reached `data` and the walk is
-    // spent either way. What was wrong was three descriptions saying the
-    // counter covers series that produced no occurrence, when the
-    // predicate is what they contributed.
+    // spent either way. The counter covers series that contributed no
+    // occurrence, not series that produced none.
     const res = await readWindow(
       appOver(
         syntheticCalendar([
@@ -1387,7 +1386,7 @@ describe("the exception edges are consumed a chunk at a time", () => {
 describe("the unwindowed scan", () => {
   it("keeps the expansion's input rather than the row", async () => {
     // The property that makes an unbounded walk affordable, and the one a
-    // regression would quietly undo: going back to accumulating rows still
+    // regression would quietly undo: accumulating rows instead still
     // returns the right answer, just at kilobytes each instead of a couple
     // of hundred bytes. Nothing else would notice.
     const rows: SyntheticRow[] = [];
