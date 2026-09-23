@@ -22,38 +22,70 @@ export interface OpenApiDocument {
 type JsonSchema = Record<string, unknown>;
 
 /**
- * The document has no reference cycle, so this terminates without a seen
- * set. An unresolvable reference throws: read as an empty schema it would
- * make the body pass whatever it carried.
+ * What a local reference names. An unresolvable reference throws: read as
+ * an empty schema it would make the body pass whatever it carried.
  */
-export function inline(node: unknown, document: OpenApiDocument): unknown {
-  if (Array.isArray(node)) return node.map((item) => inline(item, document));
+function resolveRef(ref: string, document: OpenApiDocument): unknown {
+  const target = ref
+    .replace(/^#\//, "")
+    .split("/")
+    .reduce<unknown>(
+      (at, segment) =>
+        at === null || typeof at !== "object"
+          ? undefined
+          : (at as Record<string, unknown>)[
+              segment.replace(/~1/g, "/").replace(/~0/g, "~")
+            ],
+      document,
+    );
+  if (target === undefined) {
+    throw new Error(`the document has no ${ref} to resolve`);
+  }
+  return target;
+}
+
+/**
+ * Refuse a reference that reaches itself. `refs` holds the references being
+ * expanded on the way down rather than every one seen, because the same
+ * component named twice side by side is not a cycle.
+ */
+function enter(ref: string, refs: ReadonlySet<string>): Set<string> {
+  if (refs.has(ref)) {
+    throw new Error(`the document's ${ref} refers back to itself`);
+  }
+  return new Set([...refs, ref]);
+}
+
+/**
+ * The schema with every reference replaced by what it names. A reference
+ * with sibling keywords is both at once, as the dialect reads it, so it
+ * becomes an `allOf` of the two rather than losing the siblings.
+ */
+export function inline(
+  node: unknown,
+  document: OpenApiDocument,
+  refs: ReadonlySet<string> = new Set(),
+): unknown {
+  if (Array.isArray(node)) {
+    return node.map((item) => inline(item, document, refs));
+  }
   if (node === null || typeof node !== "object") return node;
 
-  const record = node as JsonSchema;
-  const ref = record.$ref;
+  const { $ref: ref, ...rest } = node as JsonSchema;
   if (typeof ref === "string") {
-    const target = ref
-      .replace(/^#\//, "")
-      .split("/")
-      .reduce<unknown>(
-        (at, segment) =>
-          at === null || typeof at !== "object"
-            ? undefined
-            : (at as Record<string, unknown>)[
-                segment.replace(/~1/g, "/").replace(/~0/g, "~")
-              ],
-        document,
-      );
-    if (target === undefined) {
-      throw new Error(`the document has no ${ref} to resolve`);
-    }
-    return inline(target, document);
+    const target = inline(
+      resolveRef(ref, document),
+      document,
+      enter(ref, refs),
+    );
+    return Object.keys(rest).length === 0
+      ? target
+      : { allOf: [target, inline(rest, document, refs)] };
   }
 
   const out: JsonSchema = {};
-  for (const [key, value] of Object.entries(record)) {
-    out[key] = inline(value, document);
+  for (const [key, value] of Object.entries(node as JsonSchema)) {
+    out[key] = inline(value, document, refs);
   }
   return out;
 }
@@ -130,39 +162,95 @@ export function servedDocument(): Promise<OpenApiDocument> {
 }
 
 /**
- * The properties an inlined schema declares, its own and every `allOf`
- * branch's, so a page composed from parts reads as the object it answers.
+ * The top-level properties of each object a schema may answer, one set per
+ * alternative. Every keyword at one level applies at once, so a `$ref`, its
+ * siblings and each `allOf` branch add to the same object, while each
+ * `oneOf` or `anyOf` branch is an object of its own. Nothing below the top
+ * level is read: a page is a page by its own keys.
  */
-function declaredProperties(schema: unknown): string[] {
-  if (schema === null || typeof schema !== "object") return [];
-  const record = schema as JsonSchema;
-  const own = Object.keys((record.properties as object | undefined) ?? {});
-  const branches = Array.isArray(record.allOf)
-    ? record.allOf.flatMap((branch) => declaredProperties(branch))
-    : [];
-  return [...own, ...branches];
+function alternatives(
+  node: unknown,
+  document: OpenApiDocument,
+  refs: ReadonlySet<string> = new Set(),
+): Set<string>[] {
+  if (node === null || typeof node !== "object") return [new Set()];
+  const record = node as JsonSchema;
+  const parts: Set<string>[][] = [
+    [new Set(Object.keys((record.properties as object | undefined) ?? {}))],
+  ];
+  if (typeof record.$ref === "string") {
+    parts.push(
+      alternatives(
+        resolveRef(record.$ref, document),
+        document,
+        enter(record.$ref, refs),
+      ),
+    );
+  }
+  if (Array.isArray(record.allOf)) {
+    for (const branch of record.allOf) {
+      parts.push(alternatives(branch, document, refs));
+    }
+  }
+  for (const union of [record.oneOf, record.anyOf]) {
+    if (Array.isArray(union)) {
+      parts.push(
+        union.flatMap((branch) => alternatives(branch, document, refs)),
+      );
+    }
+  }
+  return parts.reduce<Set<string>[]>(
+    (sofar, part) =>
+      sofar.flatMap((left) =>
+        part.map((right) => new Set([...left, ...right])),
+      ),
+    [new Set()],
+  );
 }
 
+const isPage = (properties: Set<string>) =>
+  properties.has("data") && properties.has("next_cursor");
+
 /**
- * Every operation, as `METHOD /template`, that answers a 2xx JSON body
- * with a page: an object that declares both `data` and `next_cursor`,
+ * Every operation, as `METHOD /template`, that answers a success with a
+ * JSON page: an object that declares both `data` and `next_cursor`,
  * whether by reference, inline or across an `allOf`. A door answering
  * `data` alone, such as an extension read, is not one.
+ *
+ * Each status and media type is judged on its own, so keys two different
+ * answers declare are never added together into a page neither is.
+ *
+ * **A union counts only when every branch is a page, and one whose branches
+ * disagree throws, naming the door.** Such a door answers a page on some
+ * calls and not others, which is neither a page door nor safely left out of
+ * the list: left out, the only sign would be a count one short, with
+ * nothing saying which door fell away.
  */
 export function pageDoors(document: OpenApiDocument): string[] {
   const out: string[] = [];
   for (const [path, methods] of Object.entries(document.paths)) {
     for (const [method, operation] of Object.entries(methods)) {
-      const declared = Object.entries(operation.responses ?? {})
-        .filter(([status]) => /^2\d\d$/.test(status))
-        .flatMap(([, response]) => Object.entries(response.content ?? {}))
-        .filter(([mediaType]) => /\bjson\b/.test(mediaType))
-        .flatMap(([, media]) =>
-          declaredProperties(inline(media.schema, document)),
-        );
-      if (declared.includes("data") && declared.includes("next_cursor")) {
-        out.push(`${method.toUpperCase()} ${path}`);
+      const door = `${method.toUpperCase()} ${path}`;
+      let answersPage = false;
+      for (const [status, response] of Object.entries(
+        operation.responses ?? {},
+      )) {
+        if (!/^2(?:\d\d|XX)$/.test(status)) continue;
+        for (const [mediaType, media] of Object.entries(
+          response.content ?? {},
+        )) {
+          if (!/\bjson\b/.test(mediaType)) continue;
+          const shapes = alternatives(media.schema, document);
+          const pages = shapes.filter(isPage).length;
+          if (pages > 0 && pages < shapes.length) {
+            throw new Error(
+              `${door} answers ${status} ${mediaType} with a union of which ${String(pages)} of ${String(shapes.length)} branches are a page`,
+            );
+          }
+          if (pages > 0) answersPage = true;
+        }
       }
+      if (answersPage) out.push(door);
     }
   }
   return out;
