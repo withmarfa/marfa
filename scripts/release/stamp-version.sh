@@ -13,8 +13,10 @@
 # packed tarballs, the crate, the workspace's private packages. The
 # manifests are the tracked ones, listed the way the check lists them, so
 # the two cannot disagree about which files are manifests. Every manifest is
-# checked before any is written, so a refusal leaves the tree as it was
-# rather than half stamped.
+# checked before any is written, so a version or a manifest this script
+# refuses leaves the tree as it was rather than half stamped. A failure after
+# the writes, in `cargo update`, does not: the checkout is the workflow's and
+# is thrown away with the failed run.
 set -euo pipefail
 
 version="${1:-}"

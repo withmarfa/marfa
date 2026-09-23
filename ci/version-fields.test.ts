@@ -54,7 +54,8 @@ export interface Manifest {
 /** One manifest holding something other than the placeholder. */
 export interface VersionHeld {
   path: string;
-  /** The version found, or `(none)` where the placeholder is missing. */
+  /** The version found; `(none)` where a package.json has none, and for a
+   *  Cargo.toml the line found or `(no placeholder line)`. */
   version: string;
 }
 
@@ -233,7 +234,7 @@ describe("no file holds a version", () => {
       versionsHeld([
         {
           path: "d/Cargo.toml",
-          text: '[package]\nname = "d"\npackage.version = "1.2.3"\n\n[dependencies.foo]\nversion = "0.0.0"\n',
+          text: 'package.name = "d"\npackage.version = "1.2.3"\n\n[dependencies.foo]\nversion = "0.0.0"\n',
         },
       ]),
     ).toEqual([{ path: "d/Cargo.toml", version: "(no placeholder line)" }]);

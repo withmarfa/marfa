@@ -75,17 +75,24 @@ jobs:
             exit 1
           fi
           # Each version is the one before it plus 0.0.1, and the first is
-          # 0.0.1: the tag has to be the highest other tag's next step.
-          git fetch --quiet --tags origin
-          previous="$(git tag -l 'v*' --sort=-v:refname | grep -vx "v$version" | head -n 1)"
-          if [ -z "$previous" ]; then
-            expected="0.0.1"
-          else
-            IFS=. read -r major minor patch <<< "${previous#v}"
-            expected="$major.$minor.$((patch + 1))"
+          # 0.0.1, so every version is 0.0.N and follows the highest 0.0.M
+          # below it. Read off the remote, which needs no history, and never
+          # through a pipe whose empty answer would fail the step unexplained.
+          IFS=. read -r major minor patch <<< "$version"
+          if [ "$major.$minor" != "0.0" ]; then
+            echo "::error::$version is not 0.0.N; every version steps by 0.0.1."
+            exit 1
           fi
-          if [ "$version" != "$expected" ]; then
-            echo "::error::$version does not follow ${previous:-no tag}; the next version is $expected."
+          previous=-1
+          for tag in $(git ls-remote --tags --refs origin 'refs/tags/v0.0.*' | awk '{ print $2 }'); do
+            n="${tag#refs/tags/v0.0.}"
+            if [[ "$n" =~ ^(0|[1-9][0-9]*)$ ]] && [ "$n" -lt "$patch" ] && [ "$n" -gt "$previous" ]; then
+              previous="$n"
+            fi
+          done
+          expected=$((previous < 0 ? 1 : previous + 1))
+          if [ "$patch" != "$expected" ]; then
+            echo "::error::$version does not follow the tags before it; the next version is 0.0.$expected."
             exit 1
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
