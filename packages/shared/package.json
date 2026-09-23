@@ -1,12 +1,9 @@
 {
   "name": "@withmarfa/shared",
   "version": "0.0.0",
+  "private": true,
   "license": "Apache-2.0",
   "type": "module",
-  "publishConfig": {
-    "registry": "https://registry.npmjs.org",
-    "access": "public"
-  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -17,7 +14,7 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsup && node scripts/inline-types-dts.mjs",
+    "build": "tsup",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest"

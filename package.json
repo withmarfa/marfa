@@ -10,7 +10,7 @@
   "scripts": {
     "prepare": "git rev-parse --is-inside-work-tree >/dev/null 2>&1 && git config --local core.hooksPath hooks || true",
     "build": "pnpm -r --workspace-concurrency=1 run build",
-    "generate": "pnpm --filter @withmarfa/server run generate:openapi",
+    "generate": "pnpm --filter @withmarfa/server run generate:openapi && pnpm --filter @withmarfa/client run generate",
     "typecheck": "pnpm -r run typecheck && tsc -p ci --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",

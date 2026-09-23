@@ -2501,10 +2501,10 @@ export interface BetterAuthStorageAdapter {
 export type BulkActionJobStatus =
   "queued" | "in_progress" | "completed" | "failed" | "canceled";
 
-/** Server-side row shape for a `bulk_action_jobs` entry. The SDK-facing
- *  envelope (`BulkActionJob` in `@withmarfa/sdk/client`) is a strict subset
- *  — fields like `matched_ids`, `worker_id`, `worker_heartbeat_at`,
- *  `api_key_id`, and the original `input` are server-internal. */
+/** Server-side row shape for a `bulk_action_jobs` entry. The published
+ *  `BulkActionJob` is a strict subset — fields like `matched_ids`,
+ *  `worker_id`, `worker_heartbeat_at`, `api_key_id`, and the original
+ *  `input` are server-internal. */
 export interface BulkActionJobRow {
   id: string;
   api_key_id: string | null;

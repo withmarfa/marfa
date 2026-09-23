@@ -1,5 +1,5 @@
 {
-  "name": "@withmarfa/sdk",
+  "name": "@withmarfa/client",
   "version": "0.0.0",
   "license": "Apache-2.0",
   "type": "module",
@@ -18,16 +18,16 @@
   ],
   "scripts": {
     "build": "tsup",
+    "generate": "openapi-typescript ../../openapi.json -o src/schema.ts && tsx scripts/generate-contract.ts",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
-    "test:watch": "vitest"
+    "test": "vitest run"
   },
   "dependencies": {
-    "@withmarfa/shared": "workspace:^"
+    "openapi-fetch": "0.17.0"
   },
   "devDependencies": {
     "@types/node": "^26.2.0",
-    "@withmarfa/server": "workspace:*",
+    "openapi-typescript": "7.13.0",
     "tsup": "^8.5.1",
     "tsx": "^4.23.12",
     "typescript": "^6.0.3"

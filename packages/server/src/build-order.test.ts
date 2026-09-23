@@ -2,7 +2,7 @@
  * The server's workspace dependencies must stay acyclic.
  *
  * A prod dependency on a workspace package that itself depends on the
- * server (`@withmarfa/sdk`, whose tests boot the server) closes a cycle.
+ * server closes a cycle.
  * pnpm installs it happily, and every warm local build passes because the
  * dependency's `dist` is already on disk — but the topological ordering
  * behind `pnpm --filter @withmarfa/server... build` stops guaranteeing the
@@ -38,7 +38,6 @@ function readPackage(dir: string): PackageJson {
 const WORKSPACE_DIRS: Record<string, string> = {
   "@withmarfa/shared": "packages/shared",
   "@withmarfa/types": "packages/types",
-  "@withmarfa/sdk": "packages/sdk",
 };
 
 describe("server workspace dependencies", () => {
