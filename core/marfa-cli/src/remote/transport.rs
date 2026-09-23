@@ -1,10 +1,11 @@
-//! The binary's way to the server: the client generated from the document
-//! carries every call, and every answer is read for the contract version it
-//! names, which the caller holds to the one the crate was generated for.
+//! The binary's way to the server. Every answer is read for the contract
+//! version it names, which the caller holds to the one the generated crate
+//! was generated for.
 //!
 //! The binary's commands build their requests from their arguments and read
-//! the answers as they came, so what it takes from the generated crate is
-//! the configuration a call rides on and the contract version.
+//! the answers as they came, so what it takes from the generated crate is its
+//! configuration (the client, the user agent and the bearer) and the contract
+//! version, not its typed operations.
 
 use std::time::Duration;
 
@@ -26,15 +27,12 @@ const WHOLE_ANSWER_BUDGET: Duration = Duration::from_secs(90);
 /// idle stream is not given up on.
 const READ_BUDGET: Duration = Duration::from_secs(45);
 
-/// How often a connection carrying a file is probed, so a peer that has gone
-/// is noticed. An upload has no time budget: reqwest's bound on a call covers
-/// sending its body as well, and a file's length is not one a fixed budget
-/// could be sized for, so a slow link would cut off a good upload.
-const UPLOAD_KEEPALIVE: Duration = Duration::from_secs(30);
-
 pub struct Transport {
     config: Configuration,
-    /// The client a file rides on, with no time budget.
+    /// The client a file rides on, with no time budget: reqwest's bound on a
+    /// call covers sending its body as well, and a file's length is not one a
+    /// fixed budget could be sized for, so a slow link would cut off a good
+    /// upload. reqwest's own TCP keepalive notices a peer that has gone.
     upload: Client,
     base: Url,
     whole_answer_budget: Duration,
@@ -117,7 +115,6 @@ impl Transport {
             .map_err(|error| network(&error))?;
         let upload = builder()
             .timeout(None)
-            .tcp_keepalive(UPLOAD_KEEPALIVE)
             .build()
             .map_err(|error| network(&error))?;
         let config = Configuration {
@@ -205,6 +202,7 @@ impl Transport {
         let retry_after_seconds = retry_after_seconds(header("Retry-After"), header("Date"));
         let content_type = header("Content-Type").unwrap_or("").to_string();
         let contract = header(CONTRACT_HEADER).map(str::to_string);
+        let location = header("Location").map(str::to_string);
         // A refusal is read whole even on a streamed call, so the envelope
         // reaches the classification; only a success is handed back as a
         // reader.
@@ -220,6 +218,7 @@ impl Transport {
             content_type,
             retry_after_seconds,
             contract,
+            location,
             body,
         })
     }

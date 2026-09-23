@@ -191,7 +191,9 @@ pub struct KeyUpdateArgs {
 pub fn bootstrap_request() -> Request {
     // The operator key's label and source are the door's convention; the
     // secret rides as the bearer, which `run` below sets on the transport.
-    Request::post(&["keys"]).json(json!({ "label": "operator", "source": "operator" }))
+    Request::post(&["keys"])
+        .json(json!({ "label": "operator", "source": "operator" }))
+        .minting()
 }
 
 pub fn create_request(args: &KeyCreateArgs) -> Result<Request, CliError> {
@@ -213,7 +215,7 @@ pub fn create_request(args: &KeyCreateArgs) -> Result<Request, CliError> {
     if args.operator {
         body.insert("is_operator".into(), Value::Bool(true));
     }
-    Ok(Request::post(&["keys"]).json(Value::Object(body)))
+    Ok(Request::post(&["keys"]).json(Value::Object(body)).minting())
 }
 
 pub fn list_request() -> Request {

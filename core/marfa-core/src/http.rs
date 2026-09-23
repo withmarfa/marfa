@@ -130,6 +130,8 @@ pub struct Reply {
     /// The contract version the answer names in `X-Marfa-Contract`, when it
     /// names one: the caller decides whether it can read the body.
     pub contract: Option<String>,
+    /// Where a redirect points, so the refusal of one can say.
+    pub location: Option<String>,
     pub body: ReplyBody,
 }
 
@@ -394,11 +396,15 @@ impl Http {
             .and_then(|value| value.to_str().ok())
             .unwrap_or("")
             .to_string();
-        let contract = response
-            .headers()
-            .get(CONTRACT_HEADER)
-            .and_then(|value| value.to_str().ok())
-            .map(str::to_string);
+        let header = |name: &str| {
+            response
+                .headers()
+                .get(name)
+                .and_then(|value| value.to_str().ok())
+                .map(str::to_string)
+        };
+        let contract = header(CONTRACT_HEADER);
+        let location = header("Location");
         let body = ReplyBody::Text(
             response
                 .into_body()
@@ -410,6 +416,7 @@ impl Http {
             content_type,
             retry_after_seconds,
             contract,
+            location,
             body,
         })
     }

@@ -9,7 +9,7 @@ mod drain;
 mod error;
 pub mod folder;
 /// The working copy's transport, public for the call shapes it shares with
-/// the binary's own transport and for the bindings' use of the same doors.
+/// the binary's own transport.
 pub mod http;
 mod hydrate;
 mod lock;

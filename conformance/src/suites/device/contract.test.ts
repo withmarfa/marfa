@@ -50,12 +50,16 @@ function listItems(url: string) {
   return marfa(["--json", "--url", url, "--key", KEY, "items", "list"]);
 }
 
+/**
+ * `/items` scripted, on the given contract, or on the server's default one
+ * when left out, which is the binary's.
+ */
 async function scriptItems(
-  contract: string | null,
+  contract?: string | null,
   status = 200,
 ): Promise<ScriptedServer> {
   const started = await ScriptedServer.start();
-  started.contract = contract;
+  if (contract !== undefined) started.contract = contract;
   started.answer("GET", "/items", {
     kind: "json",
     status,
@@ -95,7 +99,7 @@ describe("the contract the binary was built for", () => {
   it("reads an answer on its own contract, sending only the call", async () => {
     // The witness: the same command, the same script, the contract it was
     // built for.
-    server = await scriptItems(String(builtFor));
+    server = await scriptItems();
     const outcome = await listItems(server.url);
     expect(outcome.code, outcome.stderr).toBe(0);
     expect(JSON.parse(outcome.stdout)).toEqual({ data: [], next_cursor: null });
@@ -147,5 +151,51 @@ describe("the contract the binary was built for", () => {
     });
     expect(report.stats).toBeNull();
     expect(sent(server)).toEqual(["GET /", "GET /health"]);
+  });
+
+  it("refuses an event stream on another contract, and reads one on its own", async () => {
+    const events = async (contract?: string) => {
+      const started = await ScriptedServer.start();
+      if (contract !== undefined) started.contract = contract;
+      started.answer("GET", "/events", {
+        kind: "sse",
+        frames: [{ id: "1", event: "item.created", data: { id: "i" } }],
+      });
+      server = started;
+      return marfa([
+        "--json",
+        "--url",
+        started.url,
+        "--key",
+        KEY,
+        "events",
+        "--for",
+        "1",
+      ]);
+    };
+    const refused = await events(String(builtFor + 1));
+    expect(refused.code, refused.stderr).toBe(1);
+    expect(refusal(refused.stderr).error.code).toBe("contract_mismatch");
+    await server?.stop();
+    // The witness: the same stream on the server's default contract, which
+    // is the binary's, is read.
+    const read = await events();
+    expect(read.code, read.stderr).toBe(0);
+    expect(read.stdout).toContain("item.created");
+  });
+
+  it("says in words that the server speaks another contract", async () => {
+    server = await ScriptedServer.start();
+    server.contract = String(builtFor + 1);
+    server.answer("GET", "/health", {
+      kind: "json",
+      status: 200,
+      body: { status: "ok" },
+    });
+    const outcome = await marfa(["--url", server.url, "status"]);
+    expect(outcome.code, outcome.stderr).toBe(0);
+    expect(outcome.stdout).toContain(
+      `contract ${String(builtFor + 1)}; this marfa was built for contract ${String(builtFor)}`,
+    );
   });
 });

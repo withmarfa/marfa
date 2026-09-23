@@ -15,24 +15,36 @@ pub fn run(named: &Named, out: &Printer) -> Result<(), CliError> {
             // The keychain decides the sign-out: the token is forgotten
             // whether or not the server took the revocation, and the
             // answer says which.
-            let not_revoked = match auth::revoke(&kept) {
+            // `None` is revoked; otherwise why not, and whether it is known
+            // not to have been: a revocation answered on another contract
+            // was sent and its answer not read, so it may have taken effect.
+            let not_revoked: Option<(&str, bool)> = match auth::revoke(&kept) {
                 Ok(()) => None,
-                Err(CliError::Refused { .. }) => Some("the server did not accept the revocation"),
-                Err(CliError::ContractMismatch { .. }) => Some(
-                    "the server speaks another contract, so its answer to the revocation was not read",
-                ),
-                Err(_) => Some("the server could not be reached to revoke it"),
+                Err(CliError::Refused { .. }) => {
+                    Some(("the server did not accept the revocation", true))
+                }
+                Err(CliError::ContractMismatch { .. }) => Some((
+                    "the server speaks another contract, so whether it took the revocation is unknown",
+                    false,
+                )),
+                Err(_) => Some(("the server could not be reached to revoke it", true)),
             };
             credentials::forget(&origin)?;
+            let revoked = match not_revoked {
+                None => json!(true),
+                Some((_, true)) => json!(false),
+                Some((_, false)) => json!(null),
+            };
             out.report(
-                &json!({ "server": origin, "signed_out": true, "revoked": not_revoked.is_none() }),
+                &json!({ "server": origin, "signed_out": true, "revoked": revoked }),
                 || match not_revoked {
                     None => format!("signed out of {origin}"),
-                    Some(why) => {
+                    Some((why, true)) => {
                         format!(
                             "signed out of {origin}; {why}, so the token stands until it expires"
                         )
                     }
+                    Some((why, false)) => format!("signed out of {origin}; {why}"),
                 },
             )
         }

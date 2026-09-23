@@ -809,10 +809,21 @@ mod dispatch {
 
     #[test]
     fn bootstrap_sends_the_secret_as_the_bearer_and_nowhere_else() {
-        let door = Door::open(vec![Answer::json(
-            "201 Created",
-            r#"{"key":"marfa_k1_new","id":"k","label":"operator"}"#,
-        )]);
+        // The minted key is answered once, so the root is read first, with
+        // no credential, and the mint goes out only on this contract.
+        let door = Door::open(vec![
+            Answer::json(
+                "200 OK",
+                &format!(
+                    r#"{{"name":"marfa","contract":{}}}"#,
+                    marfa_client::CONTRACT_VERSION
+                ),
+            ),
+            Answer::json(
+                "201 Created",
+                r#"{"key":"marfa_k1_new","id":"k","label":"operator"}"#,
+            ),
+        ]);
         keys::run(
             keys::KeysCommand::Bootstrap {
                 secret: "the-secret".into(),
@@ -822,12 +833,38 @@ mod dispatch {
         )
         .unwrap();
         let received = door.received();
-        assert_eq!(received.len(), 1);
-        assert_eq!(received[0].path(), "/keys");
+        assert_eq!(received.len(), 2);
+        assert_eq!(received[0].path(), "/");
+        assert_eq!(received[0].header("authorization"), None);
+        assert_eq!(received[1].path(), "/keys");
         assert_eq!(
-            received[0].header("authorization"),
+            received[1].header("authorization"),
             Some("Bearer the-secret")
         );
-        assert!(!received[0].body.contains("the-secret"));
+        assert!(!received[1].body.contains("the-secret"));
+    }
+
+    #[test]
+    fn bootstrap_sends_nothing_past_the_root_of_a_server_on_another_contract() {
+        // A mint answered on another contract would not be read, and the
+        // secret it spent cannot be spent twice.
+        let door = Door::open(vec![
+            Answer::json("200 OK", r#"{"name":"marfa","contract":2}"#).on_contract(Some("2")),
+        ]);
+        match keys::run(
+            keys::KeysCommand::Bootstrap {
+                secret: "the-secret".into(),
+            },
+            &remote_at(&door),
+            &QUIET,
+        ) {
+            Err(CliError::ContractMismatch {
+                write_sent: false, ..
+            }) => {}
+            other => panic!("{other:?}"),
+        }
+        let received = door.received();
+        assert_eq!(received.len(), 1);
+        assert_eq!(received[0].path(), "/");
     }
 }

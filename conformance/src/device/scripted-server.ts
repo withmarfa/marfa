@@ -43,18 +43,8 @@ export type Answer =
       status: number;
       body: unknown;
       headers?: Record<string, string>;
-      /**
-       * The contract the answer names, `null` for none; the server's own
-       * when left out, as every real answer names one.
-       */
-      contract?: string | null;
     }
-  | {
-      kind: "sse";
-      frames: SseFrame[];
-      hold?: boolean;
-      contract?: string | null;
-    }
+  | { kind: "sse"; frames: SseFrame[]; hold?: boolean }
   /** Bytes as they are, which is what a blob's link serves. */
   | {
       kind: "bytes";
@@ -293,10 +283,8 @@ export class ScriptedServer {
     });
   }
 
-  private named(answer: { contract?: string | null }): Record<string, string> {
-    const contract =
-      answer.contract === undefined ? this.contract : answer.contract;
-    return contract === null ? {} : { [CONTRACT_HEADER]: contract };
+  private named(): Record<string, string> {
+    return this.contract === null ? {} : { [CONTRACT_HEADER]: this.contract };
   }
 
   private send(answer: Answer, response: ServerResponse): void {
@@ -323,7 +311,7 @@ export class ScriptedServer {
       const body = JSON.stringify(answer.body);
       response.writeHead(answer.status, {
         "content-type": "application/json",
-        ...this.named(answer),
+        ...this.named(),
         ...answer.headers,
       });
       response.end(body);
@@ -333,7 +321,7 @@ export class ScriptedServer {
       "content-type": "text/event-stream",
       "cache-control": "no-cache",
       connection: "keep-alive",
-      ...this.named(answer),
+      ...this.named(),
     });
     for (const frame of answer.frames) response.write(renderFrame(frame));
     // `hold` leaves the stream open, which is what a live subscription looks

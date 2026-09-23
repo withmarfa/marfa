@@ -35,6 +35,12 @@ pub struct Request {
     /// Hand the body back as a reader rather than reading it as text: the
     /// stream, an export, a blob's bytes.
     pub stream: bool,
+    /// The answer carries something the server mints once and never shows
+    /// again, a key or a signing secret. The contract a server speaks is
+    /// named on its answer, which for this write is too late: an answer on
+    /// another contract is not read, and what it carried would be lost. So
+    /// the root is read first.
+    pub mints: bool,
 }
 
 impl Request {
@@ -47,6 +53,7 @@ impl Request {
             body: Body::None,
             credential: true,
             stream: false,
+            mints: false,
         }
     }
 
@@ -133,6 +140,11 @@ impl Request {
 
     pub fn streamed(mut self) -> Request {
         self.stream = true;
+        self
+    }
+
+    pub fn minting(mut self) -> Request {
+        self.mints = true;
         self
     }
 

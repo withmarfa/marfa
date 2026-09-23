@@ -28,7 +28,7 @@ The refresh is the direct commands'. `device` and `folders` take the credential 
 | Exit | Meaning                                                                                                   |
 | ---- | --------------------------------------------------------------------------------------------------------- |
 | 0    | Done.                                                                                                     |
-| 1    | The request was refused, by the server or by the binary before sending; a retry does not change it.      |
+| 1    | The request was refused, by the server, by the binary before sending, or for an answer on another contract; a retry does not change it. |
 | 2    | The command line was wrong, or named no store or server. clap's own refusals print its usage text.        |
 | 3    | The environment failed: unreachable, timed out, a 5xx, a 429. Try again; `retry_after_seconds` says when. |
 | 4    | The working copy or the queue refused under the device rules, or this system has no keychain.             |

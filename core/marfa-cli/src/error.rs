@@ -68,6 +68,20 @@ pub enum CliError {
         /// Whether the refused answer was to a write, which the server acted
         /// on before the answer could say it speaks another contract.
         write_sent: bool,
+        /// The refused answer's status, when there was one: for a write, a
+        /// 201 and a 409 say different things about whether it took effect.
+        status: Option<u16>,
+    },
+    /// The server answered with a redirect, which the binary does not follow:
+    /// the credential stays with the address it was given for.
+    #[error(
+        "{origin} answered {status}, a redirect to {}: name that address instead",
+        location.as_deref().unwrap_or("nowhere it named")
+    )]
+    Redirected {
+        origin: String,
+        status: u16,
+        location: Option<String>,
     },
 }
 
@@ -76,8 +90,8 @@ pub enum CliError {
 pub enum Exit {
     /// Done.
     Done = 0,
-    /// The request was wrong: refused by the server, or by the binary before
-    /// sending, for something a retry does not change.
+    /// The request was refused: by the server, by the binary before sending,
+    /// or for an answer on another contract, and a retry does not change it.
     Refused = 1,
     /// The command line was wrong. clap's own code, shared by the binary's
     /// own refusals of an incomplete one.
@@ -138,6 +152,7 @@ impl CliError {
             CliError::SignedOut { .. } => "signed_out",
             CliError::Invalid(_) => "invalid",
             CliError::ContractMismatch { .. } => "contract_mismatch",
+            CliError::Redirected { .. } => "redirect",
         }
     }
 
@@ -166,9 +181,10 @@ impl CliError {
                 | CoreError::WrongServer { .. } => Exit::Local,
             },
             CliError::Io(_) | CliError::Watch(_) => Exit::Environment,
-            CliError::NotHeld(_) | CliError::Invalid(_) | CliError::ContractMismatch { .. } => {
-                Exit::Refused
-            }
+            CliError::NotHeld(_)
+            | CliError::Invalid(_)
+            | CliError::ContractMismatch { .. }
+            | CliError::Redirected { .. } => Exit::Refused,
             CliError::ClosedOutput => Exit::Done,
             CliError::Refused { status, .. } => match status {
                 401 => Exit::Credential,
@@ -182,20 +198,20 @@ impl CliError {
         }
     }
 
-    /// The server's answer, where there was one: its status, its own code,
-    /// and its details.
-    fn server(&self) -> Option<(Option<u16>, &str, Option<&serde_json::Value>)> {
+    /// The server's answer, where there was one: its status, and its own code
+    /// and details where its body was read.
+    fn server(&self) -> Option<(Option<u16>, Option<&str>, Option<&serde_json::Value>)> {
         match self {
             CliError::Core(core) => match core {
-                CoreError::NotFound { code, .. } => Some((Some(404), code, None)),
-                CoreError::Unauthorized { code, .. } => Some((Some(401), code, None)),
-                CoreError::Forbidden { code, .. } => Some((Some(403), code, None)),
+                CoreError::NotFound { code, .. } => Some((Some(404), Some(code), None)),
+                CoreError::Unauthorized { code, .. } => Some((Some(401), Some(code), None)),
+                CoreError::Forbidden { code, .. } => Some((Some(403), Some(code), None)),
                 // The variant folds 400 and 422 together, so the status is
                 // not known here and is not invented.
-                CoreError::Validation { code, .. } => Some((None, code, None)),
-                CoreError::UnknownType { .. } => Some((Some(400), "unknown_type", None)),
-                CoreError::RateLimited { code, .. } => Some((Some(429), code, None)),
-                CoreError::Server { status, code, .. } => Some((Some(*status), code, None)),
+                CoreError::Validation { code, .. } => Some((None, Some(code), None)),
+                CoreError::UnknownType { .. } => Some((Some(400), Some("unknown_type"), None)),
+                CoreError::RateLimited { code, .. } => Some((Some(429), Some(code), None)),
+                CoreError::Server { status, code, .. } => Some((Some(*status), Some(code), None)),
                 _ => None,
             },
             CliError::Refused {
@@ -203,7 +219,14 @@ impl CliError {
                 code,
                 details,
                 ..
-            } => Some((Some(*status), code, details.as_deref())),
+            } => Some((Some(*status), Some(code), details.as_deref())),
+            // An answer came back, and its status is the server's; its body,
+            // and so its code, was not read.
+            CliError::ContractMismatch {
+                status: Some(status),
+                ..
+            }
+            | CliError::Redirected { status, .. } => Some((Some(*status), None, None)),
             _ => None,
         }
     }
@@ -281,7 +304,7 @@ where error.code is one of: invalid, not_found, unauthorized, forbidden, validat
 too_large, unknown_type, rate_limited, server, network, decoding, io, watch, store, no_store,
 no_server, no_credential, no_keychain, signed_out, no_cursor, hydration_incomplete,
 reading_handle, wrong_schema, catch_up_too_old, stream_incomplete, wrong_server, not_held,
-contract_mismatch.";
+contract_mismatch, redirect.";
 
 #[cfg(test)]
 mod tests {
@@ -393,6 +416,13 @@ mod tests {
                 served: String::new(),
                 expected: 1,
                 write_sent: false,
+                status: None,
+            }
+            .code(),
+            CliError::Redirected {
+                origin: String::new(),
+                status: 302,
+                location: None,
             }
             .code(),
         ];
