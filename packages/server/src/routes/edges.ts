@@ -97,8 +97,7 @@ const listEdgesRoute = createRoute({
     "Each row is held to the two permissions `GET /edges/{id}` asks for: read on the source item's type, and read on the edge type. A row failing either is left out rather than refused, so a page can come back shorter than `limit` and can come back empty with a `next_cursor` still to follow. The cursor describes the whole listing rather than the page, so paging still walks it: stop on `next_cursor: null`, never on an empty page.\n\n" +
     "Edges carry no lifecycle state of their own and are never hidden by the state of the items they join, so this listing has no `state` parameter and needs none: an edge whose endpoints are in the bin is returned like any other. That is deliberate — a client reconciling its copy has to see those edges rather than watch them disappear.\n\n" +
     "Removals are a different question and this read cannot answer it. A deleted edge leaves no row and no tombstone, so nothing here distinguishes one that was removed from one that never existed. The event stream carries the deletions; a client that reconciles completely needs both channels.\n\n" +
-    UNKNOWN_PARAM_NOTE +
-    " The two retired time-filter names are refused here too, naming their replacements, even though this door never carried them — the published rename says it covers this listing, and an absence discovered at `200` over the whole corpus is the failure that refusal exists to prevent.",
+    UNKNOWN_PARAM_NOTE,
   security: [{ bearerAuth: [] }],
   request: {
     query: z.object({
@@ -150,10 +149,7 @@ const listEdgesRoute = createRoute({
         },
       },
       description:
-        "Too many edge types in the filter, an unrecognized query " +
-        "parameter, or one of the two retired time-filter names. This " +
-        "door already answered the first; the change that made it answer " +
-        "the other two is the reason the sentence names all three.",
+        "Too many edge types in the filter, or an unrecognized query parameter.",
     },
     401: {
       content: {
@@ -902,17 +898,17 @@ export function itemEdgeListingRoutes(storage: Storage) {
     // The trashed-inclusive read, matching the write doors above. Edges
     // carry no lifecycle of their own, and the collection-level listing
     // returns one whether or not an endpoint is in the bin — so the plain
-    // read made the same edge reachable through one door and absent
+    // read would make the same edge reachable through one door and absent
     // through another, decided by the state of a row the edge does not
     // belong to. A client reconciling its copy has to see a trashed
     // item's edges; not-found tells it the item never existed, which is a
     // different thing and leads it to the wrong repair. A genuinely
     // absent item still answers not-found.
     //
-    // **The swap admits exactly one more state, not every non-active
-    // one.** `get` filters `trashed` and nothing else, so an archived or
-    // a revoked anchor was already served through this door and still
-    // is; only a trashed one is new. Worth stating because the two method
+    // **`getIncludingTrashed` admits exactly one more state than `get`,
+    // not every non-active one.** `get` filters `trashed` and nothing
+    // else, so an archived or a revoked anchor is served either way; only
+    // a trashed one is added. Worth stating because the two method
     // names invite reading `get` as "active only", and a reader who
     // believes that will look for a widening here that is not present.
     const item = await storage.items.getIncludingTrashed(id);
@@ -963,17 +959,17 @@ export function itemEdgeListingRoutes(storage: Storage) {
     // The trashed-inclusive read, matching the write doors above. Edges
     // carry no lifecycle of their own, and the collection-level listing
     // returns one whether or not an endpoint is in the bin — so the plain
-    // read made the same edge reachable through one door and absent
+    // read would make the same edge reachable through one door and absent
     // through another, decided by the state of a row the edge does not
     // belong to. A client reconciling its copy has to see a trashed
     // item's edges; not-found tells it the item never existed, which is a
     // different thing and leads it to the wrong repair. A genuinely
     // absent item still answers not-found.
     //
-    // **The swap admits exactly one more state, not every non-active
-    // one.** `get` filters `trashed` and nothing else, so an archived or
-    // a revoked anchor was already served through this door and still
-    // is; only a trashed one is new. Worth stating because the two method
+    // **`getIncludingTrashed` admits exactly one more state than `get`,
+    // not every non-active one.** `get` filters `trashed` and nothing
+    // else, so an archived or a revoked anchor is served either way; only
+    // a trashed one is added. Worth stating because the two method
     // names invite reading `get` as "active only", and a reader who
     // believes that will look for a widening here that is not present.
     const item = await storage.items.getIncludingTrashed(id);

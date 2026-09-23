@@ -217,7 +217,7 @@ public protocol APIProtocol: Sendable {
     ///
     /// Removals are a different question and this read cannot answer it. A deleted edge leaves no row and no tombstone, so nothing here distinguishes one that was removed from one that never existed. The event stream carries the deletions; a client that reconciles completely needs both channels.
     ///
-    /// Unrecognized query parameters are refused with `400` rather than ignored, so a misspelled filter cannot silently return an unfiltered page. A parameter of your own — a cache-buster, an analytics tag — must start with `_`, which is always ignored. The two retired time-filter names are refused here too, naming their replacements, even though this door never carried them — the published rename says it covers this listing, and an absence discovered at `200` over the whole corpus is the failure that refusal exists to prevent.
+    /// Unrecognized query parameters are refused with `400` rather than ignored, so a misspelled filter cannot silently return an unfiltered page. A parameter of your own — a cache-buster, an analytics tag — must start with `_`, which is always ignored.
     ///
     /// - Remark: HTTP `GET /edges`.
     /// - Remark: Generated from `#/paths//edges/get(listEdges)`.
@@ -1056,7 +1056,7 @@ extension APIProtocol {
     ///
     /// Removals are a different question and this read cannot answer it. A deleted edge leaves no row and no tombstone, so nothing here distinguishes one that was removed from one that never existed. The event stream carries the deletions; a client that reconciles completely needs both channels.
     ///
-    /// Unrecognized query parameters are refused with `400` rather than ignored, so a misspelled filter cannot silently return an unfiltered page. A parameter of your own — a cache-buster, an analytics tag — must start with `_`, which is always ignored. The two retired time-filter names are refused here too, naming their replacements, even though this door never carried them — the published rename says it covers this listing, and an absence discovered at `200` over the whole corpus is the failure that refusal exists to prevent.
+    /// Unrecognized query parameters are refused with `400` rather than ignored, so a misspelled filter cannot silently return an unfiltered page. A parameter of your own — a cache-buster, an analytics tag — must start with `_`, which is always ignored.
     ///
     /// - Remark: HTTP `GET /edges`.
     /// - Remark: Generated from `#/paths//edges/get(listEdges)`.
