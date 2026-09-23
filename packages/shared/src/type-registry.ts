@@ -1117,13 +1117,14 @@ const SYSTEM_STATES: ReadonlySet<ItemState> = new Set([
 ]);
 
 /**
- * Validates whether a state transition is allowed. Universal — types do not
- * declare their own state machines, so the typeId is only kept for API
- * parity and potential future use. It is NOT used to reject transitions on
- * custom (registered) types: the server-side item-store enforces type
- * existence at create time, so by the time `validateTransition` is called
- * the type is already known, and custom types share the same state graph
- * as core types.
+ * Validates whether a state transition is allowed, answering `null` when it
+ * is and the reason when it is not. Types do not declare their own state
+ * machines, so `typeId` picks between the two graphs there are and nothing
+ * more: `hasBoundedLifecycle(typeId)` selects `SYSTEM_TYPE_TRANSITIONS` for
+ * a platform record and `SYSTEM_TRANSITIONS` for everything else, core and
+ * registered types alike. It does not check that the type exists: the item
+ * store refuses an unknown type when the item is created, so the item being
+ * transitioned already has a known one.
  */
 export function validateTransition(
   typeId: string,
@@ -1138,8 +1139,6 @@ export function validateTransition(
     return `Invalid target state "${nextState}"`;
   }
 
-  // `system.*` items use the bounded active → revoked lifecycle. All other
-  // types follow the canonical three-state graph.
   const transitions = hasBoundedLifecycle(typeId)
     ? SYSTEM_TYPE_TRANSITIONS
     : SYSTEM_TRANSITIONS;
