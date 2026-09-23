@@ -706,54 +706,6 @@ export function isValidScope(scope: string): boolean {
 }
 
 // ---------------------------------------------------------------------------
-// Wildcard expansion
-// ---------------------------------------------------------------------------
-
-/**
- * Expands subtree-wildcard scopes against a list of known type identifiers, so
- * the consent screen can name what a grant actually covers.
- * "core.media.*:read" → ["core.media:read", "core.media.book:read", ...]
- * Non-wildcard scopes pass through unchanged.
- *
- * Expansion keys on the pattern rather than on the kind, and stays that way:
- * what a wildcard covers is a question about the pattern. A permission
- * needs no arm of its own because the set is closed and holds no wildcard, so
- * every one of them takes the pass-through branch and reaches consent as
- * itself.
- */
-export function expandWildcardScopes(
-  requested: string[],
-  knownTypes: string[],
-): string[] {
-  const result: string[] = [];
-  const seen = new Set<string>();
-
-  for (const scope of requested) {
-    const parsed = parseScope(scope);
-    if (!parsed) continue;
-
-    if (subtreeWildcardRoot(parsed.typePattern) !== null) {
-      for (const type of knownTypes) {
-        if (typeMatchesPattern(type, parsed.typePattern)) {
-          const expanded = `${type}:${parsed.operation}`;
-          if (!seen.has(expanded)) {
-            seen.add(expanded);
-            result.push(expanded);
-          }
-        }
-      }
-    } else {
-      if (!seen.has(scope)) {
-        seen.add(scope);
-        result.push(scope);
-      }
-    }
-  }
-
-  return result;
-}
-
-// ---------------------------------------------------------------------------
 // Scope ↔ TypePermission conversion
 // ---------------------------------------------------------------------------
 

@@ -2,7 +2,6 @@ import { describe, it, expect } from "vitest";
 import {
   parseScope,
   isValidScope,
-  expandWildcardScopes,
   expandBundlesToScopes,
   scopesToTypePermissions,
   scopesToEdgePermissions,
@@ -135,45 +134,6 @@ describe("isValidScope", () => {
   it("rejects invalid scopes", () => {
     expect(isValidScope("bad")).toBe(false);
     expect(isValidScope("")).toBe(false);
-  });
-});
-
-describe("expandWildcardScopes", () => {
-  const knownTypes = [
-    "core.media",
-    "core.media.book",
-    "core.media.article",
-    "core.note",
-    "core.bookmark",
-  ];
-
-  it("expands wildcard to matching types", () => {
-    const result = expandWildcardScopes(["core.media.*:read"], knownTypes);
-    expect(result).toContain("core.media:read");
-    expect(result).toContain("core.media.book:read");
-    expect(result).toContain("core.media.article:read");
-    expect(result).not.toContain("core.note:read");
-  });
-
-  it("passes non-wildcard scopes through", () => {
-    const result = expandWildcardScopes(["core.note:write"], knownTypes);
-    expect(result).toEqual(["core.note:write"]);
-  });
-
-  it("deduplicates", () => {
-    const result = expandWildcardScopes(
-      ["core.note:read", "core.note:read"],
-      knownTypes,
-    );
-    expect(result).toEqual(["core.note:read"]);
-  });
-
-  it("skips invalid scopes", () => {
-    const result = expandWildcardScopes(
-      ["invalid", "core.note:read"],
-      knownTypes,
-    );
-    expect(result).toEqual(["core.note:read"]);
   });
 });
 
@@ -583,17 +543,6 @@ describe("permissions", () => {
     expect(scopesToMetadataPermissions(held)).toEqual({ types: "write" });
   });
 
-  it("passes through wildcard expansion unchanged", () => {
-    // The set holds no wildcard, so expansion has nothing to do here and
-    // must not drop the literal on its way to the consent screen.
-    expect(
-      expandWildcardScopes(
-        ["webhooks.manage", "core.media.*:read"],
-        ["core.media", "core.media.book"],
-      ),
-    ).toEqual(["webhooks.manage", "core.media:read", "core.media.book:read"]);
-  });
-
   it("keeps the root out of the type grammar", () => {
     // The reservation is what stops a publisher registering a type whose
     // identifier is a capability literal. Without it the grant and the type
@@ -683,7 +632,7 @@ describe("expandBundlesToScopes", () => {
 // is measurable rather than theoretical: making either one grant when the
 // permission map is absent leaves every test in this file green and the
 // server's edge, type and scope-enforcement suites green too. The mainline
-// is well covered by those integration suites (making `edgePermissionCovers`
+// is well covered by those server suites (making `edgePermissionCovers`
 // return true unconditionally fails eight of them), so what these cases add
 // is specifically the deny direction, which is the half a permission check
 // exists for.

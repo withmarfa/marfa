@@ -13,13 +13,11 @@ import {
   type TypeSchema,
 } from "./type-registry.js";
 import { matchesTypePattern, resolveTypePermission } from "./validation.js";
-import { expandWildcardScopes } from "./scopes.js";
 
-// One table, four consumers. Each of these gates used to answer the
-// parent-inclusion question on its own, and they did not agree: a credential
-// holding `core.media.*` was admitted to `core.media` by the consent screen's
-// expansion and denied by the permission map. The table is the contract; every
-// consumer is asserted against it.
+// One table, three consumers. Each gate answers the parent-inclusion question,
+// whether `core.media.*` reaches `core.media`, and a credential admitted by one
+// and denied by another would read as a grant that works on some doors only.
+// The table is the contract; every consumer is asserted against it.
 const CASES: {
   pattern: string;
   type: string;
@@ -101,21 +99,8 @@ describe("wildcard semantics are the same in every consumer", () => {
       expect(resolveTypePermission(c.type, { [c.pattern]: "read" })).toBe(
         c.matches ? "read" : "none",
       );
-
-      // The consent screen's scope expansion. The global wildcard is
-      // deliberately not enumerated — it projects to a `{ "*": verb }`
-      // permission so it keeps covering runtime types the consent screen has
-      // never heard of — so only subtree patterns are compared here.
-      if (c.pattern !== "*") {
-        const expanded = expandWildcardScopes([`${c.pattern}:read`], [c.type]);
-        expect(expanded.includes(`${c.type}:read`)).toBe(c.matches);
-      }
     });
   }
-
-  it("passes the global wildcard through unexpanded", () => {
-    expect(expandWildcardScopes(["*:read"], ["core.note"])).toEqual(["*:read"]);
-  });
 });
 
 describe("subtreeWildcardRoot", () => {
