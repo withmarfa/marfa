@@ -321,10 +321,8 @@ lines.push("];");
 lines.push("");
 
 // The identifier set as literal types, so a consumer that keys a map or a
-// switch by type id can be checked by the compiler rather than by whoever
-// remembers to look. Four sibling repositories carried maps naming types
-// this package had already deleted; nothing failed, because a plain
-// `Record<string, …>` cannot tell a live identifier from a dead one.
+// switch by type id is checked by the compiler: a plain `Record<string, …>`
+// cannot tell a live identifier from a dead one.
 const allTypeIds = [...coreTypes, ...connectorTypes, ...systemTypes]
   .map((schema) => schema.id)
   .sort();
@@ -334,6 +332,73 @@ lines.push("] as const;");
 lines.push("");
 lines.push("export type PlatformTypeId = (typeof ALL_TYPE_IDS)[number];");
 lines.push("");
+
+/**
+ * A shipped definition as literal types: every key sorted by code unit, the
+ * prose (`label`, `description`) and the id left out. The consts above are
+ * annotated with the schema interfaces, which widen every value to `string`
+ * and every list to `string[]`, so the shapes of fields, enum values,
+ * parents, roles, constraints and cardinalities reach a built declaration
+ * through these instead, and they are what the published-surface lock sees
+ * move when a shipped definition does. Prose is left out because it moves
+ * nothing a consumer compiles against.
+ */
+function shapeLiteral(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(shapeLiteral);
+  if (value === null || typeof value !== "object") return value;
+  const out: Record<string, unknown> = {};
+  for (const key of Object.keys(value).sort()) {
+    if (PROSE_KEYS.has(key)) continue;
+    const child = (value as Record<string, unknown>)[key];
+    out[key] = NAMED_MAPS.has(key) ? namedMap(child) : shapeLiteral(child);
+  }
+  return out;
+}
+
+/** Keys a definition carries only for a person reading it. */
+const PROSE_KEYS = new Set(["label", "description", "id"]);
+
+/**
+ * Keys whose value maps a name the definition chose to what it names. A field
+ * can be called `description` or `label`, so these keys are kept whatever
+ * they read, and only the definitions under them lose their prose.
+ */
+const NAMED_MAPS = new Set(["fields", "property_schema"]);
+
+function namedMap(value: unknown): unknown {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return shapeLiteral(value);
+  }
+  const out: Record<string, unknown> = {};
+  for (const key of Object.keys(value).sort()) {
+    out[key] = shapeLiteral((value as Record<string, unknown>)[key]);
+  }
+  return out;
+}
+
+function shapesConst(
+  name: string,
+  definitions: readonly { id: string }[],
+): string[] {
+  const shapes: Record<string, unknown> = {};
+  for (const definition of [...definitions].sort((a, b) =>
+    a.id < b.id ? -1 : a.id > b.id ? 1 : 0,
+  )) {
+    shapes[definition.id] = shapeLiteral(definition);
+  }
+  return [
+    `export const ${name} = ${JSON.stringify(shapes, null, 2)} as const;`,
+    "",
+  ];
+}
+
+lines.push(
+  ...shapesConst("SHIPPED_TYPE_SHAPES", [
+    ...coreTypes,
+    ...connectorTypes,
+    ...systemTypes,
+  ]),
+);
 
 mkdirSync(outDir, { recursive: true });
 const outPath = join(outDir, "type-registry.ts");
@@ -414,6 +479,7 @@ edgeLines.push("export const ALL_EDGE_TYPES: EdgeTypeSchema[] = [");
 for (const edge of edgeSchemas) edgeLines.push(`  ${edgeVarName(edge.id)},`);
 edgeLines.push("];");
 edgeLines.push("");
+edgeLines.push(...shapesConst("SHIPPED_EDGE_TYPE_SHAPES", edgeSchemas));
 
 const edgeOutPath = join(outDir, "edge-type-registry.ts");
 writeFileSync(edgeOutPath, edgeLines.join("\n") + "\n");

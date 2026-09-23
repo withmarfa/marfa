@@ -41,6 +41,10 @@ export {
   ALL_CONNECTOR_TYPES,
   ALL_SYSTEM_TYPES,
   ALL_TYPE_IDS,
+  SHIPPED_TYPE_SHAPES,
 } from "../generated/type-registry.js";
 export type { PlatformTypeId } from "../generated/type-registry.js";
-export { ALL_EDGE_TYPES } from "../generated/edge-type-registry.js";
+export {
+  ALL_EDGE_TYPES,
+  SHIPPED_EDGE_TYPE_SHAPES,
+} from "../generated/edge-type-registry.js";

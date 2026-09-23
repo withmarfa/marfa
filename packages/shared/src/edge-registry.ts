@@ -1,5 +1,6 @@
 import {
   ALL_EDGE_TYPES,
+  SHIPPED_EDGE_TYPE_SHAPES,
   isRoleConstraint,
   roleFromConstraint,
 } from "@withmarfa/types";
@@ -13,7 +14,7 @@ import { getTypeSchema, isSubtypeOf, typeHasRole } from "./type-registry.js";
 // Re-export types so consumers of @withmarfa/shared can reach them without
 // depending on @withmarfa/types directly.
 export type { EdgeCardinality, EdgeCascade, EdgeTypeSchema };
-export { ALL_EDGE_TYPES };
+export { ALL_EDGE_TYPES, SHIPPED_EDGE_TYPE_SHAPES };
 
 // Core edge types are shipped with @withmarfa/types and resolve for every
 // caller. This map is read-only after construction.
