@@ -187,6 +187,28 @@ describe("the instance", () => {
     expect(root.data.version).not.toBe(String(root.data.contract));
   });
 
+  it("sends its contract version on every answer, a refusal included", async () => {
+    // Read against the root rather than a literal, so the fixture holds the
+    // header to the number the deployment states and not to today's value.
+    const root = await client.root();
+    const contract = String(root.data.contract);
+    const answers = [
+      ["the root", root],
+      ["a read", await client.rawRequest("/items?limit=1")],
+      ["a validation refusal", await client.rawRequest("/items?limit=banana")],
+      [
+        "a door with no credential",
+        await client.rawRequest("/items", { headers: { Authorization: "" } }),
+      ],
+      ["an unmatched route", await client.rawRequest("/no-such-door")],
+    ] as const;
+    const statuses = answers.map(([, answer]) => answer.status);
+    expect(statuses).toEqual([200, 200, 400, 401, 404]);
+    for (const [label, answer] of answers) {
+      expect(answer.headers.get("X-Marfa-Contract"), label).toBe(contract);
+    }
+  });
+
   it("names itself the same way at the root, at /config and in an archive", async () => {
     // One identity, three doors, and the third is the one the first two
     // cannot stand in for: the manifest is written into a file nothing

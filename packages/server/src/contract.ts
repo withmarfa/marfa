@@ -1,7 +1,9 @@
 /**
- * The contract version: one integer the root answers as `contract` and the
- * document carries as `info.version`, which a generated client can check
- * before it trusts an answer. It is not the build: the root's `version` is.
+ * The contract version: one integer the root answers as `contract`, every
+ * response carries as `X-Marfa-Contract`, and the document carries as
+ * `info.version`, so a generated client can check it on whatever answer
+ * arrives before it trusts that answer. It is not the build: the root's
+ * `version` is.
  *
  * **It moves when a client generated for the old number cannot read the new
  * answers**: a path, a method, an operation, a field, an enum member, a status
@@ -13,9 +15,17 @@
  * does not move it. One change moves it by one, however many breaks it
  * carries.
  *
- * The number is guarded; the decision to move it is not. The root and the
- * document read this one constant, and the committed document is compared to
- * the source, so the two cannot drift apart. Whether it moved when the wire
- * did is a judgment, stated here so it is applied without one.
+ * The number is guarded; the decision to move it is not. The root, the
+ * header and the document read this one constant, and the committed
+ * document is compared to the source, so none of them can drift from the
+ * others. Whether it moved when the wire did is a judgment, stated here so
+ * it is applied without one.
  */
 export const CONTRACT_VERSION = 1;
+
+/**
+ * The response header that carries the contract version. On every answer
+ * rather than only the root, so a client checks the answer it is about to
+ * read instead of spending a round trip on the root first.
+ */
+export const CONTRACT_HEADER = "X-Marfa-Contract";

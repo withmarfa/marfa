@@ -197,6 +197,11 @@ const IDEMPOTENT_OPERATIONS = new Set(
  * meaning is written once rather than restated on every operation.
  */
 const RESPONSE_HEADER_COMPONENTS: Record<string, unknown> = {
+  "X-Marfa-Contract": {
+    description:
+      "The contract version this server speaks, the same integer as the document's `info.version` and the root's `contract`. Sent on every response, refusals included, so a client can check the answer it is about to read rather than reading the root first. A client generated for another number cannot trust the body.",
+    schema: { type: "integer", minimum: 1 },
+  },
   "X-Request-ID": {
     description:
       "This request's identifier, the same one written to the server's request log. Echoes the caller's own `X-Request-ID` when it sends one matching `[A-Za-z0-9_-]{1,128}`, and is a generated UUIDv7 otherwise, so a client can either adopt the server's id or impose its own. Quote it when reporting a problem: it is the one value that finds the request again.",
@@ -235,7 +240,7 @@ const RESPONSE_HEADER_COMPONENTS: Record<string, unknown> = {
 };
 
 /** Headers on every response, whatever the operation or the status. */
-const UNIVERSAL_RESPONSE_HEADERS = ["X-Request-ID"];
+const UNIVERSAL_RESPONSE_HEADERS = ["X-Marfa-Contract", "X-Request-ID"];
 
 /** Headers the rate limiter sets on every response that passes through it. */
 const RATE_LIMIT_HEADERS = [

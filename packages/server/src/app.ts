@@ -58,7 +58,7 @@ import { authErrorRoutes } from "./routes/auth-error.js";
 import { loggerMiddleware } from "./middleware/logger.js";
 import { otelCorrelationMiddleware } from "./middleware/otel-correlation.js";
 import { bodyCapFor } from "./middleware/body-cap.js";
-import { CONTRACT_VERSION } from "./contract.js";
+import { CONTRACT_HEADER, CONTRACT_VERSION } from "./contract.js";
 import {
   idempotencyMiddleware,
   IDEMPOTENT_WRITE_DOORS,
@@ -130,6 +130,16 @@ export function createApp(
       return c.html(renderHttpErrorPage(404), 404);
     }
     return c.json(body, 404);
+  });
+
+  // The contract version on every answer, set on the way out by the first
+  // middleware so it reaches responses no later layer shapes: the body
+  // cap's refusal, the limiter's, an unmatched route, a thrown error, and
+  // the sign-in library's own responses, which the prepared bag misses.
+  const contract = String(CONTRACT_VERSION);
+  app.use("*", async (c, next) => {
+    await next();
+    c.res.headers.set(CONTRACT_HEADER, contract);
   });
 
   // Expose the resolved AppConfig on the request context so handlers and
