@@ -228,8 +228,8 @@ describe("scopeCovers", () => {
     expect(scopeCovers(["openid"], "openid", "read")).toBe(false);
   });
 
-  // The load-bearing non-regression for the new matcher: a bare identifier is
-  // exact, not a subtree. A later swap to subtree semantics has to fail here.
+  // A bare identifier is exact, not a subtree, so a swap to subtree
+  // semantics has to fail here.
   it("a bare identifier does not reach its descendants", () => {
     expect(scopeCovers(["core.note:read"], "core.note.private", "read")).toBe(
       false,
@@ -717,11 +717,11 @@ describe("edgePermissionCovers", () => {
     );
   });
 
-  // The three stages are individually covered above, and each was green
-  // while the whole chain was broken: parsing accepted `edge.user.*:write`,
-  // projection stored it, and matching then failed to resolve it, so a
-  // token that reported the scope was refused the write. Only a test
-  // spanning all three sees that.
+  // The three stages are individually covered above, and each can be green
+  // while the whole chain is broken: parsing accepts `edge.user.*:write`,
+  // projection stores it, and matching fails to resolve it, so a token that
+  // reports the scope is refused the write. Only a test spanning all three
+  // sees that.
   it("carries a granted namespace scope through to the write decision", () => {
     const granted = ["edge.user.*:write", "edge.parent-of:write"];
     const perms = scopesToEdgePermissions(granted);
@@ -809,11 +809,11 @@ describe("the global type wildcard stays in its own map", () => {
 // A scope reaches the item-type axis because it was identified as a type
 // scope, never because it was not identified as anything else.
 //
-// Naming the families they skip reads the same as the rule on today's union
-// and inverts on tomorrow's: a family nobody adds to the list falls through
-// to "must be an item type", and being treated as one means having the
-// pattern matched against the live type registry, where a `*` anywhere in it
-// reaches every registered type.
+// Naming the families they skip reads the same as the rule on the current
+// union and inverts on a wider one: a family nobody adds to the list falls
+// through to "must be an item type", and being treated as one means having
+// the pattern matched against the live type registry, where a `*` anywhere
+// in it reaches every registered type.
 //
 // These cases are written against the union itself rather than against a
 // hand-kept list of families, so a kind that does not exist yet is measured
@@ -1075,8 +1075,8 @@ describe("grantCoversScope", () => {
      * by precedence — exact, then the longest matching subtree wildcard, then
      * the global one — so the narrower pattern genuinely holds the broader one
      * down. A helper that returns on the first pattern to match with a
-     * sufficient verb answers the opposite way, and this function delegated to
-     * one until a review found it.
+     * sufficient verb answers the opposite way, so delegating to one would
+     * make this function fail-open.
      *
      * The direction matters: answering yes here skips a consent screen, and
      * the token minted from the request then carries the concrete literal,
@@ -1119,8 +1119,8 @@ describe("grantCoversScope", () => {
      * Every resolver on every axis takes a concrete identifier and looks at
      * the entries at or above it. Handed a pattern, it therefore never sees a
      * held entry BENEATH that pattern — and an entry beneath is exactly what
-     * narrows a grant. The first version of this function asked the resolver
-     * anyway, and a review caught it.
+     * narrows a grant, so asking the resolver would say yes to a grant the
+     * entry beneath holds down.
      */
     it("refuses a wildcard requirement that something under it narrows", () => {
       // `*:write` sits above `core`, so the resolver finds it and says yes,
@@ -1170,13 +1170,12 @@ describe("grantCoversScope", () => {
    * reading the audit log — and the kind exists precisely so that no breadth
    * expression reaches one.
    *
-   * **These pin the intent; they are not what stops a regression, and an
-   * earlier version of this comment claimed otherwise.** The property is
-   * guarded three times over in the code — the verb-less arm, the operation
-   * refusal behind it, and the exhaustiveness binding — so deleting any one
-   * of them leaves every assertion here green, and deleting the arm itself
-   * fails the build rather than a test. That is the right amount of guard
-   * and the wrong thing to describe as a test.
+   * **These pin the intent; they are not what stops a regression.** The
+   * property is guarded three times over in the code — the verb-less arm,
+   * the operation refusal behind it, and the exhaustiveness binding — so
+   * deleting any one of them leaves every assertion here green, and
+   * deleting the arm itself fails the build rather than a test. That is the
+   * right amount of guard and the wrong thing to describe as a test.
    *
    * What they are worth is saying, in one place a person will read, what the
    * answer has to be. The routes gate on these through
@@ -1344,9 +1343,9 @@ describe("grantCoversScope", () => {
 
   describe("what it does with a literal it cannot read", () => {
     it("covers an unparseable requirement the grant names verbatim", () => {
-      // Both sides carrying a scope this build has stopped understanding is
-      // not a narrowing, and reading it as one would revoke live tokens
-      // over a grammar change.
+      // Both sides carrying a scope this build cannot read is not a
+      // narrowing, and reading it as one would revoke live tokens over a
+      // grammar change.
       expect(
         grantCoversScope(["from-a-later-build"], "from-a-later-build"),
       ).toBe(true);
@@ -1557,10 +1556,9 @@ describe("the content category projection", () => {
 
 describe("adding the content category to a wildcard grant can narrow it", () => {
   // Four resolutions, asserted rather than described. The comment on
-  // `scopesToTypePermissions` states them as measured fact, and until this
-  // block existed nothing held any of them: the tests above cover the
-  // projection on its own and never the wildcard-plus-category combination
-  // the claim is actually about.
+  // `scopesToTypePermissions` states them as measured fact, and the tests
+  // above cover the projection on its own and never the wildcard-plus-
+  // category combination the claim is actually about.
   //
   // The property is that a strictly larger scope set covers strictly less.
   // `resolveTypePermission` puts an exact key ahead of any wildcard, and the

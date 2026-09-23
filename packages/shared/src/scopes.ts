@@ -226,17 +226,16 @@ export function isPermission(scope: string): scope is Permission {
  * rather than offering it pre-ticked or granting it alongside everything
  * else.
  *
- * **One predicate because two surfaces answer, and they disagreed.** The
- * code-flow consent screen gives a permission its own unticked row and
- * says why at the site: it is authority over the instance itself rather than
- * over a resource in it, so arriving pre-ticked would hand it over by
- * silence. The device-approval screen could not reach that reasoning at all —
- * its only withholding input was derived from the configured bundles, and a
- * permission no bundle names is offered by no bundle, so it was in no
- * withheld set. The two screens therefore held opposite opinions about
- * administrative authority, and which one a person met decided what they
- * handed over. Stating the rule once, here, is what stops that recurring for
- * the next scope family that needs it.
+ * **One predicate because two surfaces answer.** The code-flow consent
+ * screen gives a permission its own unticked row: it is authority over the
+ * instance itself rather than over a resource in it, so arriving pre-ticked
+ * would hand it over by silence. The device-approval screen's other
+ * withholding input is derived from the configured bundles, and a
+ * permission no bundle names is offered by no bundle, so that input alone
+ * would put it in no withheld set. Were the two screens to hold opposite
+ * opinions about administrative authority, which one a person met would
+ * decide what they handed over; stating the rule once, here, keeps them to
+ * one, including for the next scope family that needs it.
  *
  * **Distinct from `default_on`, which is a bundle's opinion about its own
  * contents.** This is the platform's opinion about a scope, so it holds
@@ -389,11 +388,12 @@ export interface ParsedScope {
    * ordinary item-type scope, which reads as `"type"` rather than as the
    * absence of a kind.
    *
-   * An absent discriminant made "not one of the families I recognize" the
-   * same value as "an item-type grant", so every projection that had to tell
-   * them apart was written as a list of kinds to skip. That shape admits
-   * whatever nobody has thought of yet, and on the item-type axis being
-   * admitted means having a pattern matched against the live type registry.
+   * An absent discriminant would make "not one of the families I
+   * recognize" the same value as "an item-type grant", so every projection
+   * that has to tell them apart would be a list of kinds to skip. That shape
+   * admits whatever nobody has thought of yet, and on the item-type axis
+   * being admitted means having a pattern matched against the live type
+   * registry.
    */
   kind:
     | "type"
@@ -426,8 +426,8 @@ export interface ParsedScope {
  *
  * Positive identification, deliberately: the caller admits a scope because
  * the parser said it is a type scope, never because it failed to be anything
- * else. Skipping a named list of other kinds reads the same on today's union
- * and behaves in the opposite direction on tomorrow's, because a family
+ * else. Skipping a named list of other kinds reads the same on the current
+ * union and behaves in the opposite direction on a wider one, because a family
  * nobody has added to the list falls through to "must be an item type" and
  * has its pattern matched against the real registry by `typeMatchesPattern`,
  * where a `*` anywhere in it reaches every registered type.
@@ -530,7 +530,7 @@ const EDGE_SCOPE_RE =
 const METADATA_SUB_SCOPE_RE = /^metadata\.([a-z][a-z0-9_-]*):(read|write)$/;
 
 /**
- * The rows Category 2 contains today. Closed rather than open, unlike the
+ * The rows Category 2 contains. Closed rather than open, unlike the
  * metadata sub-resource class it is otherwise a clone of, because this
  * category is defined by enumeration in the permission design: your name,
  * your email address and your avatar, and nothing else.
@@ -716,7 +716,7 @@ export function isValidScope(scope: string): boolean {
  * of types to build, therefore nothing that could carry one instance's
  * vocabulary into a grant issued elsewhere. Which types the wildcard actually
  * reaches is decided per request by {@link resolveTypePermission}, exactly as
- * it is for `*:read` today.
+ * it is for `*:read`.
  *
  * Four deliberate entries:
  *
@@ -731,9 +731,8 @@ export function isValidScope(scope: string): boolean {
  *   `system.` type that is not in `SYSTEM_TYPE_IDS` cannot exist. It costs
  *   one entry and it is here for the build that somehow ships one. Deleting
  *   `SYSTEM_TYPE_IDS` and keeping this string is the change to refuse: every
- *   system type ships under `system.` today, so the swap looks equivalent
- *   and stops being so the moment a system-family type is named anything
- *   else.
+ *   system type ships under `system.`, so the swap looks equivalent and
+ *   stops being so the moment a system-family type is named anything else.
  * - **`marfa.*` reads but does not write.** Those types are family
  *   `connector`, so they are squarely in the category and their reads are
  *   unrestricted. But the middleware refuses every `marfa.*` write from a
@@ -798,13 +797,11 @@ export function scopesToTypePermissions(
     if (!isTypeScope(parsed)) continue;
 
     const current = perms[parsed.typePattern];
-    // The stronger of the two wins, which is the rule this loop already
-    // applied — `current === "none"` is the only clause added, and it can
-    // only be reached by an entry the category put there. A scope literal is
-    // never `"none"`: the grammar has no way to spell one, so no key this
-    // loop writes ends up below the level a literal named. A set holding no
-    // content literal never sees a `"none"` and projects exactly as it did
-    // before.
+    // The stronger of the two wins. `current === "none"` can only be
+    // reached by an entry the category put there: a scope literal is never
+    // `"none"`, since the grammar has no way to spell one, so no key this
+    // loop writes ends up below the level a literal named, and a set holding
+    // no content literal never sees a `"none"`.
     //
     // **That is a statement about keys, and it is NOT the statement that
     // adding the category to a grant can only widen it.** Do not read it as
@@ -830,8 +827,7 @@ export function scopesToTypePermissions(
     // `scopes.test.ts` holds them under "adding the content category to a
     // wildcard grant can narrow it", so a change that stops one of them
     // being true reddens there instead of leaving this comment standing
-    // over a measurement nobody rechecks. The previous version of this
-    // comment was wrong for exactly as long as it took somebody to read it.
+    // over a measurement nobody rechecks.
     if (
       parsed.operation === "write" ||
       current === undefined ||
@@ -860,20 +856,19 @@ export function scopesToTypePermissions(
  * So it is right about breadth on one pattern and wrong about precedence
  * across several, which makes it safe for "does any grant here mention this
  * type at this verb" and unsafe for "may this credential do this". Ask
- * {@link grantCoversScope} for the second. That function delegated here at
- * first, on the strength of this being the neighboring helper with the right
- * shape and a careful docblock, and was fail-open for exactly the grant above
- * until a review caught it.
+ * {@link grantCoversScope} for the second: delegating it here, on the
+ * strength of this being the neighboring helper with the right shape,
+ * would make it fail-open for exactly the grant above.
  *
- * **It has no production caller anywhere, and is kept for its tests rather
- * than as API.** Its one irreplaceable role is the differential check at
- * `scopes.test.ts:895`, where it is the independent second opinion on
- * {@link scopesToTypePermissions}, which is live. The fourteen cases above
- * that check test this function for its own sake and would go with it. It is
- * exported because this package has a single entrypoint and no way to publish
- * a symbol to its own tests alone, not because a consumer is meant to reach
- * for it — and the sentence below about exports with no production caller is
- * about this one.
+ * **It has no production caller, and is kept for its tests rather than as
+ * API.** Its one irreplaceable role is the differential check in
+ * `scopes.test.ts`, "the two projections agree about ${kind} scopes" under
+ * "only type scopes reach the item-type axis", where it is the independent
+ * second opinion on {@link scopesToTypePermissions}, which is live. The
+ * fourteen cases under its own describe test it for its own sake and would
+ * go with it. It is exported because this package has a single entrypoint
+ * and no way to publish a symbol to its own tests alone, not because a
+ * consumer is meant to reach for it.
  */
 export function scopeCovers(
   held: readonly string[],
@@ -884,13 +879,14 @@ export function scopeCovers(
   // function about one is a category error, and the honest answer to a
   // category error is no.
   //
-  // Answering at all was the hazard. `*:read` and `*:write` are the
+  // Answering at all would be the hazard. `*:read` and `*:write` are the
   // full-access path the consent screen offers under "Customize", and a
-  // pattern match admits them against any string shaped like a type — so this
-  // returned true for a token that holds no permission, and false for
-  // one that holds exactly the permission being asked about. A gate reaching
-  // for the nearest helper would have inherited a fail-open one level above
-  // the one the permission kind exists to remove. Ask {@link hasPermission}.
+  // pattern match admits them against any string shaped like a type, so a
+  // pattern answer would be true for a token that holds no permission and
+  // false for one that holds exactly the permission being asked about. A
+  // gate reaching for the nearest helper would inherit a fail-open one level
+  // above the one the permission kind exists to remove. Ask
+  // {@link hasPermission}.
   if (PERMISSION_ROOT_SET.has(requiredType.split(".", 1)[0] ?? "")) {
     return false;
   }
@@ -1067,11 +1063,11 @@ export function metadataPermissionCovers(
  * Namespace wildcards matter here for a reason that does not arise on the
  * item side. A custom edge type is registered at runtime, so it
  * cannot be named in any list built before the request — `edge.user.*` is
- * the only expression that reaches a runtime-registered relation edge short of
- * the global wildcard, which grants every edge type on the instance.
- * Resolving exact ids alone meant such a grant was issued and reported and
- * then matched nothing, so the narrow ask failed where the total ask
- * worked.
+ * the only expression that reaches a runtime-registered relation edge short
+ * of the global wildcard, which grants every edge type on the instance.
+ * Resolving exact ids alone would issue and report such a grant and then
+ * match nothing with it, so the narrow ask would fail where the total ask
+ * works.
  */
 function resolveEdgePermission(
   perms: Record<string, "read" | "write">,
@@ -1160,16 +1156,16 @@ export function edgePermissionCovers(
  * **That is a stricter requirement than "reuse a helper that looks right",
  * and the difference is not cosmetic.** {@link scopeCovers} sits beside this
  * function, refuses permissions, is well tested, and answers a genuinely
- * different question: first match wins rather than longest match wins. This
- * delegated to it and was fail-open for one shape of grant until a review
- * found it. The test is not whether a helper is correct, it is whether it is
- * the one the request path runs.
+ * different question: first match wins rather than longest match wins, so
+ * delegating to it would be fail-open for one shape of grant. The test is
+ * not whether a helper is correct, it is whether it is the one the request
+ * path runs.
  *
  * **A permission is covered by naming it and by nothing else, and that
  * is the property to break first when testing this.** The permission kind exists
  * because a wildcard must not reach an administrative surface; a coverage
  * helper answering otherwise would reinstate the fail-open one level above the
- * one that kind was added to remove. {@link scopeCovers} refuses to answer
+ * one that kind exists to remove. {@link scopeCovers} refuses to answer
  * about a permission at all, and this function never asks it — the
  * permission arm is the membership test at the top and nothing further.
  *
@@ -1180,14 +1176,12 @@ export function edgePermissionCovers(
  * A `held` entry this build cannot parse contributes nothing on any axis. A
  * `required` this build cannot parse is refused — an unrecognized literal
  * must not be waved through a consent skip — but only after the membership
- * test, so a grant naming it verbatim still covers it, and a scope the server
- * has stopped understanding does not read as a narrowing while both sides
- * carry it.
+ * test, so a grant naming it verbatim still covers it, and a scope this
+ * build cannot parse does not read as a narrowing while both sides carry it.
  *
- * Deliberately singular. A plural `missingScopes` reads well and had no
- * caller that needed the list, and an export with no production caller is
- * exactly how {@link scopeCovers} came to sit unused while five comparisons
- * beside it compared text.
+ * Deliberately singular. A plural `missingScopes` would read well, but no
+ * caller needs the list, and an export with no production caller is held
+ * to nothing the request path runs.
  */
 export function grantCoversScope(
   held: readonly string[],
@@ -1196,8 +1190,8 @@ export function grantCoversScope(
   const need = parseScope(required);
 
   // A literal this build cannot read is covered by naming it and by nothing
-  // else. Both sides carrying a scope the grammar has stopped understanding
-  // is not a narrowing, and reading it as one would revoke live tokens over a
+  // else. Both sides carrying a scope this build's grammar cannot read is
+  // not a narrowing, and reading it as one would revoke live tokens over a
   // grammar change.
   if (!need) return held.includes(required);
 
@@ -1224,9 +1218,8 @@ export function grantCoversScope(
   // that is the point rather than a limitation.** A row grant is a statement
   // about named things and a parent grant is a statement about the category,
   // so promoting the first to the second would hand an application types
-  // nobody approved. Every existing grant is therefore filed as new at the
-  // next consent and the person is asked once — the migration cost the
-  // design rules for, not a regression.
+  // nobody approved. A grant that names types row by row is therefore
+  // asked for the parent once, at the next consent that requests it.
   //
   // Only this direction is special. Held `content:read`, asked about
   // `core.note:read`, is answered by the `type` arm below through the
@@ -1239,10 +1232,10 @@ export function grantCoversScope(
   }
 
   // Note what is deliberately NOT here: a `held.includes(required)`
-  // short-circuit ahead of the axis logic. It was, and it was unsound on
-  // every verb-carrying axis. A grant of `*:write core.*:read` contains the
-  // literal `*:write`, so a request for `*:write` matched verbatim and read
-  // as covered — while the grant it was measured against cannot write
+  // short-circuit ahead of the axis logic, which is unsound on every
+  // verb-carrying axis. A grant of `*:write core.*:read` contains the
+  // literal `*:write`, so a request for `*:write` would match verbatim and
+  // read as covered, while the grant it was measured against cannot write
   // `core.note`, because the narrower entry outranks the wildcard. Naming a
   // pattern is not the same as holding what the pattern claims, once a
   // sibling can hold it down.

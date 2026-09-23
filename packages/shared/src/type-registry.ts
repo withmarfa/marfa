@@ -149,13 +149,14 @@ export interface SeededPlatformType {
 
 /**
  * Where a registered type came from. Held as a row property rather than
- * decided by the build, so it can distinguish the cases that actually differ: the platform vocabulary is
- * locked, a type a connector published is updatable by that connector's
- * own package and nothing else, and a type a person registered is theirs.
+ * decided by the build, so it can distinguish the cases that actually
+ * differ: the platform vocabulary is locked, a type a connector published
+ * is updatable by that connector's own package and nothing else, and a type
+ * a person registered is theirs.
  *
- * **`unknown` is a real answer, not a missing one.** An archive taken before
- * archives carried provenance has none to replay, and the restore has to
- * write something. The three substantive values are all wrong for it: `user`
+ * **`unknown` is a real answer, not a missing one.** An archive entry that
+ * carries no provenance has none to replay, and the restore has to write
+ * something. The three substantive values are all wrong for it: `user`
  * is what the consent screen offers a read-and-write wildcard over, and
  * claiming it for a row that may be a connected service's mirror is the
  * laundering this value exists to stop; `connector` claims a publisher
@@ -414,9 +415,9 @@ export type NamespaceTier =
 /**
  * Returns true if the candidate is a reserved root prefix.
  *
- * The set is `validation.ts`'s, imported rather than restated. A second copy
- * lived here and the two were free to drift, which on this particular set is
- * a security question and not a tidiness one: `isReservedRoot` is what the
+ * The set is `validation.ts`'s, imported rather than restated, because two
+ * copies would be free to drift, which on this particular set is a security
+ * question and not a tidiness one: `isReservedRoot` is what the
  * registration paths ask, `RESERVED_ROOTS` is what the identifier grammar
  * asks, and a root present in one and absent from the other is a namespace
  * that refuses registration in one direction and admits it in the other.
@@ -1086,7 +1087,7 @@ export const SYSTEM_TYPE_TRANSITIONS: Readonly<Record<ItemState, ItemState[]>> =
  * `contentCategoryPermissions` in `scopes.ts` pairs the same two tests for
  * the same reason, and the warning there applies here: dropping the set and
  * keeping the name test looks equivalent only because every system type
- * ships under `system.` today, and stops being so the moment one does not.
+ * ships under `system.`, and stops being so the moment one does not.
  */
 export function hasBoundedLifecycle(typeId: string): boolean {
   return SYSTEM_TYPE_IDS.has(typeId) || isSystemType(typeId);
