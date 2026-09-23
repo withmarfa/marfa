@@ -1,8 +1,6 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { describe, it, expect, afterEach } from "vitest";
-import { newStore } from "../../device/cli-adapter.js";
-import { answers } from "../../device/marfa-answers.js";
 import { ScriptedServer } from "../../device/scripted-server.js";
 import { KEY, requireBinary } from "./harness.js";
 
@@ -57,94 +55,78 @@ function listItems(url: string) {
   return marfa(["--json", "--url", url, "--key", KEY, "items", "list"]);
 }
 
-function scriptRoot(contract: unknown): void {
-  server?.answer("GET", "/", answers.root(contract));
-  server?.answer("GET", "/items", {
+async function scriptItems(
+  contract: string | null,
+  status = 200,
+): Promise<ScriptedServer> {
+  const started = await ScriptedServer.start();
+  started.contract = contract;
+  started.answer("GET", "/items", {
     kind: "json",
-    status: 200,
-    body: { data: [], next_cursor: null },
+    status,
+    body:
+      status === 200
+        ? { data: [], next_cursor: null }
+        : { error: { code: "bad_gateway", message: "upstream" } },
   });
+  return started;
 }
 
+function refusal(stderr: string): {
+  error: { code: string; server: { status: number } | null };
+  exit: number;
+} {
+  return JSON.parse(stderr) as {
+    error: { code: string; server: { status: number } | null };
+    exit: number;
+  };
+}
+
+const sent = (scripted: ScriptedServer) =>
+  scripted.requests.map((r) => `${r.method} ${r.pathname}`);
+
 describe("the contract the binary was built for", () => {
-  it("refuses a server whose root answers another contract, and sends it nothing that carries the credential", async () => {
-    server = await ScriptedServer.start();
-    scriptRoot((await builtFor()) + 1);
+  it("refuses an answer on another contract rather than reading it", async () => {
+    server = await scriptItems(String((await builtFor()) + 1));
     const outcome = await listItems(server.url);
     expect(outcome.code, outcome.stderr).toBe(1);
-    const envelope = JSON.parse(outcome.stderr) as {
-      error: { code: string };
-      exit: number;
-    };
+    const envelope = refusal(outcome.stderr);
     expect(envelope.error.code).toBe("contract_mismatch");
     expect(envelope.exit).toBe(1);
-    expect(server.requests.map((r) => `${r.method} ${r.pathname}`)).toEqual([
-      "GET /",
-    ]);
-    expect(server.requests[0]?.headers.authorization).toBeUndefined();
+    expect(outcome.stdout).toBe("");
+    expect(sent(server)).toEqual(["GET /items"]);
   });
 
-  it("sends the call to a server on its contract, after reading the root without the credential", async () => {
+  it("reads an answer on its own contract, with no round trip to the root", async () => {
     // The witness: the same command, the same script, the contract it was
     // built for.
-    server = await ScriptedServer.start();
-    scriptRoot(await builtFor());
+    server = await scriptItems(String(await builtFor()));
     const outcome = await listItems(server.url);
     expect(outcome.code, outcome.stderr).toBe(0);
-    expect(server.requests.map((r) => `${r.method} ${r.pathname}`)).toEqual([
-      "GET /",
-      "GET /items",
-    ]);
-    expect(server.requests[0]?.headers.authorization).toBeUndefined();
-    expect(server.requests[1]?.headers.authorization).toBe(`Bearer ${KEY}`);
+    expect(sent(server)).toEqual(["GET /items"]);
+    expect(server.requests[0]?.headers.authorization).toBe(`Bearer ${KEY}`);
     expect(server.unmatchedRequests).toEqual([]);
   });
 
-  it("refuses a server whose root names no contract", async () => {
-    server = await ScriptedServer.start();
-    scriptRoot(undefined);
+  it("refuses a success that names no contract", async () => {
+    server = await scriptItems(null);
     const outcome = await listItems(server.url);
     expect(outcome.code, outcome.stderr).toBe(1);
-    expect(
-      (JSON.parse(outcome.stderr) as { error: { code: string } }).error.code,
-    ).toBe("contract_mismatch");
-    expect(server.requests.map((r) => `${r.method} ${r.pathname}`)).toEqual([
-      "GET /",
-    ]);
-    expect(server.requests[0]?.headers.authorization).toBeUndefined();
+    expect(refusal(outcome.stderr).error.code).toBe("contract_mismatch");
   });
 
-  it("holds the working copy to it before the key is handed over", async () => {
-    server = await ScriptedServer.start();
-    scriptRoot((await builtFor()) + 1);
-    const outcome = await marfa([
-      "--json",
-      "device",
-      "--db",
-      newStore("contract"),
-      "hydrate",
-      "--url",
-      server.url,
-      "--key",
-      KEY,
-      "--types",
-      "core.note",
-      "--tier",
-      "library",
-    ]);
-    expect(outcome.code, outcome.stderr).toBe(1);
-    expect(
-      (JSON.parse(outcome.stderr) as { error: { code: string } }).error.code,
-    ).toBe("contract_mismatch");
-    expect(server.requests.map((r) => `${r.method} ${r.pathname}`)).toEqual([
-      "GET /",
-    ]);
+  it("hands on a refusal that names no contract, as a proxy's would", async () => {
+    server = await scriptItems(null, 502);
+    const outcome = await listItems(server.url);
+    const envelope = refusal(outcome.stderr);
+    expect(envelope.error.code).not.toBe("contract_mismatch");
+    expect(envelope.error.server?.status).toBe(502);
   });
 
   it("still says which server this is, and that its contract is another", async () => {
     server = await ScriptedServer.start();
     const served = (await builtFor()) + 1;
-    scriptRoot(served);
+    server.contract = String(served);
     server.answer("GET", "/health", {
       kind: "json",
       status: 200,
@@ -168,8 +150,6 @@ describe("the contract the binary was built for", () => {
       built_for: await builtFor(),
     });
     expect(report.stats).toBeNull();
-    expect(
-      server.requests.every((r) => r.headers.authorization === undefined),
-    ).toBe(true);
+    expect(sent(server)).toEqual(["GET /", "GET /health"]);
   });
 });

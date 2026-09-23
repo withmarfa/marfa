@@ -4,13 +4,11 @@
 //!
 //! The binary's commands build their requests from their arguments and read
 //! the answers as they came, so what it takes from the generated crate is
-//! the configuration a call rides on, the one generated operation it calls
-//! typed (the root), and the contract version.
+//! the configuration a call rides on and the contract version.
 
 use std::time::Duration;
 
 use marfa_client::apis::configuration::Configuration;
-use marfa_client::apis::instance_api;
 use marfa_core::CoreError;
 use marfa_core::http::{CONTRACT_HEADER, Call, CallBody, Reply, ReplyBody, retry_after_seconds};
 use reqwest::blocking::{Body, Client};
@@ -34,41 +32,6 @@ pub struct Transport {
     config: Configuration,
     base: Url,
     whole_answer_budget: Duration,
-}
-
-/// What the root said about the contract it serves.
-#[derive(Debug, Clone)]
-pub enum Served {
-    /// The contract this binary was generated for.
-    Expected,
-    /// Another one, or no reading of one, as a person should hear it:
-    /// "answers contract 2", "has no root".
-    Other(String),
-    /// The root refused for a reason that is not about the contract: a
-    /// proxy's 502, a 429, a 503 while the server starts.
-    Refused {
-        status: u16,
-        text: String,
-        retry_after_seconds: Option<u64>,
-    },
-}
-
-impl Served {
-    /// Reads a root's answer: its `contract` against the one this binary was
-    /// generated for.
-    pub fn of(text: &str) -> Served {
-        let contract = serde_json::from_str::<serde_json::Value>(text)
-            .ok()
-            .and_then(|root| root.get("contract").cloned());
-        match contract.as_ref().and_then(serde_json::Value::as_u64) {
-            Some(served) if served == marfa_client::CONTRACT_VERSION => Served::Expected,
-            Some(served) => Served::Other(format!("answers contract {served}")),
-            None => Served::Other(match contract {
-                Some(other) => format!("answers an unreadable contract ({other})"),
-                None => "answers no contract at its root".to_string(),
-            }),
-        }
-    }
 }
 
 /// Scheme, host, port and path prefix: what identifies a server without
@@ -155,55 +118,6 @@ impl Transport {
 
     pub fn has_credential(&self) -> bool {
         self.config.bearer_access_token.is_some()
-    }
-
-    /// Reads the root through the generated operation and compares the
-    /// contract it answers with the one the crate was generated for. Only a
-    /// transport failure is an `Err`.
-    pub fn served(&self) -> Result<Served, CoreError> {
-        match instance_api::get_instance(&self.config) {
-            // The generated operation counts a 3xx as an answer. It is not
-            // one: nothing was read, and the fix is the address, which the
-            // refusal names.
-            Ok(answer) if !answer.status.is_success() => {
-                let location = answer
-                    .headers
-                    .get("Location")
-                    .and_then(|value| value.to_str().ok())
-                    .unwrap_or("nowhere");
-                Ok(Served::Refused {
-                    status: answer.status.as_u16(),
-                    text: format!("the root redirects to {location}; name that address instead"),
-                    retry_after_seconds: None,
-                })
-            }
-            Ok(answer) => Ok(Served::of(&answer.content)),
-            // A server with no root is not one speaking any contract, and nor
-            // is one whose root asks for a credential: a Marfa root answers
-            // without one, so what answered is something else.
-            Err(marfa_client::apis::Error::ResponseError(refused))
-                if matches!(refused.status.as_u16(), 401 | 403 | 404) =>
-            {
-                Ok(Served::Other(match refused.status.as_u16() {
-                    404 => "has no root (it answered 404)".to_string(),
-                    status => format!("has no open root (it answered {status})"),
-                }))
-            }
-            Err(marfa_client::apis::Error::ResponseError(refused)) => {
-                let header = |name: &str| {
-                    refused
-                        .headers
-                        .get(name)
-                        .and_then(|value| value.to_str().ok())
-                };
-                Ok(Served::Refused {
-                    status: refused.status.as_u16(),
-                    retry_after_seconds: retry_after_seconds(header("Retry-After"), header("Date")),
-                    text: refused.content,
-                })
-            }
-            Err(error) => Err(network(&error)),
-        }
     }
 
     /// Sends one call from the direct surface and reads whatever came back.

@@ -18,7 +18,11 @@ import {
   wireType,
   writeAnswers,
 } from "../../device/marfa-answers.js";
-import type { Answer } from "../../device/scripted-server.js";
+import {
+  BUILT_FOR,
+  CONTRACT_HEADER,
+  type Answer,
+} from "../../device/scripted-server.js";
 
 /**
  * The control on the scripted server.
@@ -658,7 +662,7 @@ describe("the scripted answers match the server's", () => {
     expect(Buffer.from(await fetched.arrayBuffer())).toEqual(bytes);
   });
 
-  it("matches the root a binary reads the contract off", async () => {
+  it("matches the root status reads, and the contract every answer names", async () => {
     const response = await fetch(`${apiUrl}/`);
     const body = (await response.json()) as { contract: number };
     expectFidelity(
@@ -670,6 +674,15 @@ describe("the scripted answers match the server's", () => {
         shape: ["version", "instance_id", "features"],
       },
     );
+    // The scripted server names the contract of the document the binary was
+    // generated from on every answer; the real one names the root's, on a
+    // success and a refusal alike.
+    const refused = await fetch(`${apiUrl}/items`);
+    expect(refused.status).toBe(401);
+    for (const answered of [response, refused]) {
+      expect(answered.headers.get(CONTRACT_HEADER)).toBe(String(body.contract));
+    }
+    expect(BUILT_FOR).toBe(String(body.contract));
   });
 
   it("matches the items page a hydration walks", async () => {

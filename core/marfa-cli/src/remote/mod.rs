@@ -3,7 +3,7 @@
 pub mod request;
 pub mod transport;
 
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use std::fs::File;
 use std::io::Read;
 
@@ -15,7 +15,6 @@ use crate::auth;
 use crate::credentials::{self, Kept};
 use crate::error::CliError;
 use request::{Body, Request};
-use transport::Served;
 pub use transport::Transport;
 
 /// Where the credential a call carries came from, for `whoami` to say.
@@ -42,12 +41,6 @@ pub struct Remote {
     /// Whether every answer is held to the contract this binary was built
     /// for. Not a door outside the document, which names no contract.
     checks_answers: bool,
-    /// Whether the root has answered the contract this binary was built
-    /// for, which the working copy asks before it is handed the key.
-    contract_held: Cell<bool>,
-    /// What a public read of the root already said, so the working copy's
-    /// question is not asked twice in one command.
-    root_read: RefCell<Option<Served>>,
     url: String,
     origin: String,
     credential: Option<CredentialSource>,
@@ -73,10 +66,6 @@ impl Named {
         let key = remote.bearer().ok_or_else(|| CliError::NoCredential {
             origin: remote.origin().to_string(),
         })?;
-        // The working copy talks to the server through the core's own
-        // transport, which reads no contract off its answers, so the root is
-        // read here, before the core is handed the key.
-        remote.hold_contract()?;
         Ok(Server {
             url: remote.url().to_string(),
             key,
@@ -133,8 +122,6 @@ impl Remote {
         Ok(Remote {
             http: RefCell::new(http),
             checks_answers: true,
-            contract_held: Cell::new(false),
-            root_read: RefCell::new(None),
             url,
             origin,
             credential,
@@ -202,9 +189,6 @@ impl Remote {
             url: url.to_string(),
             http: RefCell::new(http),
             checks_answers: true,
-            // The refresh path's tests script no root; the gate has its own.
-            contract_held: Cell::new(true),
-            root_read: RefCell::new(None),
             origin,
             credential: Some(CredentialSource::Keychain),
             bearer: RefCell::new(Some(kept.bearer().to_string())),
@@ -221,8 +205,6 @@ impl Remote {
             url: url.to_string(),
             http: RefCell::new(http),
             checks_answers: true,
-            contract_held: Cell::new(false),
-            root_read: RefCell::new(None),
             origin,
             credential: None,
             bearer: RefCell::new(None),
@@ -239,8 +221,6 @@ impl Remote {
             url: origin.clone(),
             http: RefCell::new(http),
             checks_answers: true,
-            contract_held: Cell::new(false),
-            root_read: RefCell::new(None),
             origin,
             credential: None,
             bearer: RefCell::new(None),
@@ -311,43 +291,6 @@ impl Remote {
         })
     }
 
-    /// Reads the root, once, and refuses a server whose root answers a
-    /// contract other than the one this binary was built for. For what does
-    /// not go through `call`: the working copy, which is handed the key and
-    /// talks through the core's own transport, and `status` and `whoami`,
-    /// which say what a server is.
-    pub fn hold_contract(&self) -> Result<(), CliError> {
-        if self.contract_held.get() {
-            return Ok(());
-        }
-        // No credential means no call will be sent; that refusal is the
-        // one to hear, not a question about the contract.
-        if !self.http.borrow().has_credential() {
-            return Ok(());
-        }
-        let read = self.root_read.borrow().clone();
-        let served = match read {
-            Some(served) => served,
-            None => self.http.borrow().served()?,
-        };
-        match served {
-            Served::Expected => {
-                self.contract_held.set(true);
-                Ok(())
-            }
-            Served::Other(served) => Err(CliError::ContractMismatch {
-                origin: self.origin.clone(),
-                served,
-                expected: marfa_client::CONTRACT_VERSION,
-            }),
-            Served::Refused {
-                status,
-                text,
-                retry_after_seconds,
-            } => Err(refused(status, &text, retry_after_seconds)),
-        }
-    }
-
     fn send(&self, request: &Request) -> Result<Reply, CliError> {
         let http = self.http.borrow();
         if request.credential && !http.has_credential() {
@@ -412,15 +355,36 @@ impl Remote {
 
     /// Reads a public door that describes the server, the root or health,
     /// whatever contract its answer names: saying which server this is, and
-    /// that it speaks another contract, is what reading one is for. A read of
-    /// the root is kept for the working copy's question.
+    /// that it speaks another contract, is what reading one is for.
+    ///
+    /// A root that redirects is refused as one, and one that is missing or asks
+    /// for a credential is not a Marfa root, whose answer is open, so it is
+    /// named as a server on no contract rather than as a refused key.
     pub fn describe(&self, request: &Request) -> Result<Value, CliError> {
         let reply = self.send(request)?;
-        if request.segments == [""]
-            && (200..300).contains(&reply.status)
-            && let ReplyBody::Text(text) = &reply.body
-        {
-            *self.root_read.borrow_mut() = Some(Served::of(text));
+        if request.segments == [""] {
+            let status = reply.status;
+            if (300..400).contains(&status) {
+                return Err(CliError::Refused {
+                    status,
+                    code: "redirect".into(),
+                    message: format!(
+                        "the root answered {status}, a redirect: name the address it points to instead"
+                    ),
+                    retry_after_seconds: None,
+                    details: None,
+                });
+            }
+            if matches!(status, 401 | 403 | 404) {
+                return Err(CliError::ContractMismatch {
+                    origin: self.origin.clone(),
+                    served: match status {
+                        404 => "has no root (it answered 404)".to_string(),
+                        _ => format!("has no open root (it answered {status})"),
+                    },
+                    expected: marfa_client::CONTRACT_VERSION,
+                });
+            }
         }
         read_json(reply, request)
     }
@@ -926,28 +890,12 @@ mod tests {
         door.received();
     }
 
-    /// The working copy's question: the root is read without the credential,
-    /// once, and a server on another contract is refused before the core is
-    /// handed the key.
+    /// A root that is missing, or asks for a credential, is not a Marfa
+    /// root, and is named as a server on no contract rather than read as a
+    /// refused key.
     #[test]
-    fn the_working_copy_reads_the_root_once_without_the_credential() {
-        let door = Door::open(vec![root(&marfa_client::CONTRACT_VERSION.to_string())]);
-        let remote = remote_at(&door, Some("marfa_k1_x"));
-        remote.hold_contract().unwrap();
-        remote.hold_contract().unwrap();
-        let received = door.received();
-        assert_eq!(received.len(), 1);
-        assert_eq!(received[0].path(), "/");
-        assert_eq!(received[0].header("authorization"), None);
-    }
-
-    /// Each way a root can fail to speak this binary's contract, named as a
-    /// person should hear it.
-    #[test]
-    fn a_root_on_another_contract_or_none_is_refused_and_named() {
+    fn a_root_missing_or_closed_is_named_as_no_contract() {
         let door = Door::open(vec![
-            root("2"),
-            Answer::json("200 OK", r#"{"name":"marfa"}"#),
             Answer::json(
                 "404 Not Found",
                 r#"{"error":{"code":"not_found","message":"no"}}"#,
@@ -958,24 +906,37 @@ mod tests {
             )
             .on_contract(None),
         ]);
-        let served: Vec<String> = (0..4)
-            .map(
-                |_| match remote_at(&door, Some("marfa_k1_x")).hold_contract() {
+        let served: Vec<String> = (0..2)
+            .map(|_| {
+                match remote_at(&door, Some("marfa_k1_x"))
+                    .describe(&crate::commands::status::root_request())
+                {
                     Err(CliError::ContractMismatch { served, .. }) => served,
                     other => panic!("{other:?}"),
-                },
-            )
+                }
+            })
             .collect();
         assert_eq!(
             served,
             vec![
-                "answers contract 2",
-                "answers no contract at its root",
                 "has no root (it answered 404)",
                 "has no open root (it answered 401)"
             ]
         );
         door.received();
+    }
+
+    /// The witness: a root on another contract is read and handed back, since
+    /// saying which contract a server speaks is what reading it is for.
+    #[test]
+    fn a_root_on_another_contract_is_described() {
+        let door = Door::open(vec![root("2").on_contract(Some("2"))]);
+        let instance = remote_at(&door, Some("marfa_k1_x"))
+            .describe(&crate::commands::status::root_request())
+            .unwrap();
+        assert_eq!(instance["contract"], 2);
+        let received = door.received();
+        assert_eq!(received[0].header("authorization"), None);
     }
 
     /// A redirect is the refusal it is, not a hop the credential follows:
@@ -1046,7 +1007,9 @@ mod tests {
             )
             .with_header("Retry-After", "7"),
         ]);
-        match remote_at(&door, Some("marfa_k1_x")).hold_contract() {
+        match remote_at(&door, Some("marfa_k1_x"))
+            .describe(&crate::commands::status::root_request())
+        {
             Err(CliError::Refused {
                 status,
                 code,
@@ -1061,36 +1024,22 @@ mod tests {
         door.received();
     }
 
-    /// A root that redirects says where to, rather than being read as a
+    /// A root that redirects is refused as a redirect, rather than read as a
     /// server with no contract.
     #[test]
-    fn a_root_that_redirects_names_where_to() {
+    fn a_root_that_redirects_is_refused_as_one() {
         let door = Door::open(vec![
             Answer::json("301 Moved Permanently", "")
                 .with_header("Location", "https://marfa.example/"),
         ]);
-        match remote_at(&door, Some("marfa_k1_x")).hold_contract() {
-            Err(CliError::Refused {
-                status, message, ..
-            }) => {
-                assert_eq!(status, 301);
-                assert!(message.contains("https://marfa.example/"), "{message}");
+        match remote_at(&door, Some("marfa_k1_x"))
+            .describe(&crate::commands::status::root_request())
+        {
+            Err(CliError::Refused { status, code, .. }) => {
+                assert_eq!((status, code.as_str()), (301, "redirect"));
             }
             other => panic!("{other:?}"),
         }
-        door.received();
-    }
-
-    /// A root the command already read publicly decides the working copy's
-    /// question, so the root is not asked twice.
-    #[test]
-    fn a_root_already_read_is_not_read_again() {
-        let door = Door::open(vec![root(&marfa_client::CONTRACT_VERSION.to_string())]);
-        let remote = remote_at(&door, Some("marfa_k1_x"));
-        remote
-            .describe(&crate::commands::status::root_request())
-            .unwrap();
-        remote.hold_contract().unwrap();
         assert_eq!(door.received().len(), 1);
     }
 
