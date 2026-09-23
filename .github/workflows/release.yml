@@ -4,10 +4,11 @@ name: Release
 # it plus 0.0.1, starting at 0.0.1. Pushing `v<version>` builds the artifacts
 # from that commit, uploads them to the run, and publishes them.
 #
-# A dispatch with a `version` is a dry run: it builds every artifact a tag
-# would, from the branch it is dispatched on, and publishes nothing. It is
-# how the workflow is exercised without a tag, which only the maintainer
-# makes; the tag path reads the version off the tag and never off an input.
+# A dispatch with a `version` is a dry run: it runs the same jobs a tag
+# would, against a commit that passed CI on `main`, and skips only the
+# publish job. It is how the workflow is exercised without a tag, which only
+# the maintainer makes; the tag path reads the version off the tag and never
+# off an input.
 #
 # The version is the tag's, and nowhere else: `scripts/release/stamp-version.sh`
 # writes it into every manifest in this checkout, which is why no manifest in
@@ -38,7 +39,9 @@ jobs:
       contents: read
       actions: read
     steps:
-      # A tag has to point at a commit that went through `ci.yml` on `main`.
+      # A tag has to point at a commit that went through `ci.yml` on `main`,
+      # and so does a dry run, which is dispatched on `main`: the two runs
+      # differ in their trigger and in the publish job, and in nothing else.
       # A pull request's head passes `ci.yml` too, and under squash merges it
       # never reaches `main`, so the run asked for is a push to `main`, not
       # any green run on the SHA. Verifying that run is stronger than
@@ -46,7 +49,6 @@ jobs:
       # own tree either way. This is why `ci.yml` does not cancel a
       # superseded run on `main`: a canceled run is not a successful one.
       - name: Require a green CI run on main for this commit
-        if: github.event_name == 'push'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -58,21 +60,6 @@ jobs:
             exit 1
           fi
           echo "ci.yml is green on main for $GITHUB_SHA"
-      # A dry run builds a branch that has not reached `main`, so it asks for
-      # a green run on the commit itself, from whatever event ran it.
-      - name: Require a green CI run for this commit
-        if: github.event_name == 'workflow_dispatch'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          runs=$(gh api \
-            "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$GITHUB_SHA&status=success" \
-            --jq '.total_count')
-          if [ "${runs:-0}" -lt 1 ]; then
-            echo "::error::No successful ci.yml run for $GITHUB_SHA. A dry run refuses a commit that has not passed CI."
-            exit 1
-          fi
-          echo "ci.yml is green for $GITHUB_SHA"
 
   build:
     name: Build the artifacts
