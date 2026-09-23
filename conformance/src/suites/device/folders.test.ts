@@ -19,7 +19,13 @@ import {
   replay,
   wireItem,
 } from "../../device/marfa-answers.js";
-import { folderHarness, scriptWrites } from "./harness.js";
+import {
+  acceptUploads,
+  folderHarness,
+  hashOf,
+  scriptBlob,
+  scriptWrites,
+} from "./harness.js";
 import type { FolderHarness } from "./harness.js";
 /**
  * "A folder is a view on a slice."
@@ -72,13 +78,18 @@ function scriptFolderWrites(
   // that moved two names and crossed the bodies over.
   const held = new Map<
     string,
-    { properties: Record<string, unknown>; source_id: string | null }
+    {
+      properties: Record<string, unknown>;
+      source_id: string | null;
+      type?: string;
+    }
   >();
   scriptWrites(harness.server, {
     create: [
       (request) => {
         const sent = JSON.parse(request.body) as {
           id: string;
+          type?: string;
           properties: Record<string, unknown>;
           source_id?: string;
         };
@@ -98,11 +109,13 @@ function scriptFolderWrites(
           held.set(id, {
             properties: sent.properties,
             source_id: sent.source_id ?? null,
+            type: sent.type,
           });
           return answers.created(
             wireItem({
               id,
               version: 2,
+              type: sent.type,
               properties: sent.properties,
               source_id: sent.source_id ?? null,
               ...(canned ?? {}),
@@ -112,11 +125,13 @@ function scriptFolderWrites(
         held.set(sent.id, {
           properties: sent.properties,
           source_id: sent.source_id ?? null,
+          type: sent.type,
         });
         return answers.created(
           wireItem({
             id: sent.id,
             version: 1,
+            type: sent.type,
             properties: sent.properties,
             source_id: sent.source_id ?? null,
             ...(canned ?? {}),
@@ -137,14 +152,19 @@ function scriptFolderWrites(
         // a scripted door that dropped it would leave the folder computing
         // the old path forever, which is the defect statement 23 is for.
         held.set(id, {
-          properties: sent.properties ?? held.get(id)?.properties ?? {},
+          properties: {
+            ...held.get(id)?.properties,
+            ...sent.properties,
+          },
           source_id: sent.source_id ?? held.get(id)?.source_id ?? null,
+          type: held.get(id)?.type,
         });
         const now = held.get(id)!;
         return answers.updated(
           wireItem({
             id,
             version: sent.version + 1,
+            type: now.type,
             properties: now.properties,
             source_id: now.source_id,
           }),
@@ -2571,5 +2591,148 @@ describe("what a pull does with a file whose item left the slice", () => {
     if (!scanned.ok) return;
     expect(scanned.value.created).toBe(0);
     expect(scanned.value.updated).toBe(1);
+  });
+});
+
+describe("a file that is not a document", () => {
+  const photo = Buffer.from([
+    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1,
+  ]);
+  const slice = {
+    types: ["core.note", "core.file"],
+    defaultType: "core.note",
+  };
+
+  it("pushes a file that is not a document as a file item, its bytes uploaded first", async () => {
+    harness = await folderHarness("folder-file-push", { slice });
+    scriptFolderWrites(harness);
+    acceptUploads(harness.server);
+    writeFileSync(join(harness.dir, "photo.png"), photo);
+    put(harness, "note.md", "---\ntitle: A note\n---\nbeside a photo\n");
+    const pushed = await harness.folder.push();
+    expect(
+      pushed.ok,
+      `the folder could not push: ${JSON.stringify(pushed)}`,
+    ).toBe(true);
+    if (!pushed.ok) return;
+    expect(
+      pushed.value.scan.created,
+      "the photo was not pushed, so a file dropped beside the notes never leaves the machine",
+    ).toBe(2);
+    expect(pushed.value.scan.skipped).toBe(0);
+
+    const file = sentCreates(harness).find(
+      (create) => create.source_id === "photo.png",
+    );
+    expect(
+      file,
+      "no item was created for the photo under its path",
+    ).toBeDefined();
+    expect(file?.type).toBe("core.file.image");
+    expect(file?.properties).toMatchObject({
+      blob_ref: hashOf(photo),
+      mime_type: "image/png",
+      title: "photo.png",
+    });
+    const order = harness.server.requests
+      .filter((request) => request.method === "POST")
+      .map((request) =>
+        request.pathname === "/items"
+          ? `/items ${String((JSON.parse(request.body) as { source_id?: string }).source_id)}`
+          : request.pathname,
+      );
+    expect(
+      order.indexOf("/blobs"),
+      "the file item went out before the bytes it names",
+    ).toBeLessThan(order.indexOf("/items photo.png"));
+    expect(
+      harness.server.requests.find((request) => request.pathname === "/blobs")
+        ?.raw,
+    ).toEqual(photo);
+    expect(
+      readFileSync(join(harness.dir, "photo.png")),
+      "the pull that ended the push rewrote the photo",
+    ).toEqual(photo);
+
+    // New bytes are a new upload and an update naming them.
+    const edited = Buffer.concat([photo, Buffer.from([2])]);
+    writeFileSync(join(harness.dir, "photo.png"), edited);
+    const again = await harness.folder.push();
+    expect(again.ok).toBe(true);
+    if (!again.ok) return;
+    expect(again.value.scan.updated).toBe(1);
+    const uploads = harness.server.requests.filter(
+      (request) => request.pathname === "/blobs",
+    );
+    expect(uploads.at(-1)?.raw).toEqual(edited);
+    const patch = harness.server.requests.find(
+      (request) =>
+        request.method === "PATCH" &&
+        request.pathname === `/items/${String(file?.id)}`,
+    );
+    expect(
+      (JSON.parse(patch?.body ?? "{}") as { properties?: unknown }).properties,
+      "the update did not name the new bytes, so the item still names the old file",
+    ).toMatchObject({ blob_ref: hashOf(edited) });
+  });
+
+  it("writes a file item's bytes as its file, and reports them absent where it cannot fetch them", async () => {
+    const bytes = photo;
+    const hash = hashOf(bytes);
+    harness = await folderHarness("folder-file-pull", {
+      slice,
+      rows: {
+        "core.file": [
+          {
+            item: {
+              id: "01a00000-0000-7000-8000-0000000000f1",
+              type: "core.file.image",
+              properties: {
+                title: "photo.png",
+                blob_ref: hash,
+                mime_type: "image/png",
+              },
+            },
+          },
+        ],
+      },
+    });
+    scriptBlob(harness.server, bytes);
+
+    await harness.server.offline();
+    const offline = await harness.folder.pull();
+    expect(
+      offline.ok,
+      `a pull that could not fetch one file's bytes failed as a whole: ${JSON.stringify(offline)}`,
+    ).toBe(true);
+    if (!offline.ok) return;
+    expect(
+      offline.value.absent,
+      "a file item whose bytes could not be had was not reported",
+    ).toBe(1);
+    expect(
+      existsSync(join(harness.dir, "photo.png")),
+      "the pull wrote a file for bytes it does not have",
+    ).toBe(false);
+
+    // The witness: the same pull with the server back writes the bytes, so
+    // the absence above was the bytes and not a pull that writes no files.
+    await harness.server.online();
+    const pulled = await harness.folder.pull();
+    expect(pulled.ok).toBe(true);
+    if (!pulled.ok) return;
+    expect(pulled.value.written).toBe(1);
+    expect(pulled.value.absent).toBe(0);
+    expect(readFileSync(join(harness.dir, "photo.png"))).toEqual(bytes);
+
+    // Its own write is not read back as a change (`folders.md` 14).
+    const scanned = await harness.folder.scan();
+    expect(scanned.ok).toBe(true);
+    if (!scanned.ok) return;
+    expect(
+      scanned.value.unchanged,
+      "the file the pull wrote was read back as a change to push",
+    ).toBe(1);
+    expect(scanned.value.created + scanned.value.updated).toBe(0);
   });
 });

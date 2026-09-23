@@ -9,6 +9,7 @@ import type { DeviceUnderTest, QueuedWrite } from "../../device/protocol.js";
 import type { Responder } from "../../device/scripted-server.js";
 import { existsSync, rmSync } from "node:fs";
 import {
+  acceptUploads,
   fileOf,
   hashOf,
   hydratedHarness,
@@ -1449,19 +1450,12 @@ describe("an answer the device applies keeps what it has not had answered", () =
 describe("an upload is a queued write", () => {
   /** An answer to `POST /blobs` naming what it was sent, or `named`. */
   function uploaded(named?: string): Responder {
-    return (request) => ({
-      kind: "json",
-      status: 201,
-      body: {
-        hash: named ?? hashOf(request.raw),
-        mime_type: request.headers["content-type"] ?? "",
-        size_bytes: request.raw.length,
-      },
-    });
-  }
-
-  function acceptUploads(harnessUnderTest: Harness): void {
-    harnessUnderTest.server.answer("POST", "/blobs", uploaded());
+    return (request) =>
+      writeAnswers.uploaded(
+        named ?? hashOf(request.raw),
+        request.headers["content-type"] ?? "",
+        request.raw.length,
+      );
   }
 
   it("queues an upload and sends its bytes when it drains", async () => {
@@ -1485,7 +1479,7 @@ describe("an upload is a queued write", () => {
     // The bytes were held when the upload was queued: the file the person
     // named is gone before the drain, and the upload still sends them.
     rmSync(file);
-    acceptUploads(harness);
+    acceptUploads(harness.server);
     const drained = await device.drain();
     expect(drained.ok).toBe(true);
     if (!drained.ok) return;
@@ -1538,7 +1532,7 @@ describe("an upload is a queued write", () => {
       title: "scan.pdf",
     });
 
-    acceptUploads(harness);
+    acceptUploads(harness.server);
     scriptWrites(server, {
       create: [
         (request) => {
@@ -1610,7 +1604,7 @@ describe("an upload is a queued write", () => {
     ).toBe(true);
     rmSync(heldAt);
 
-    acceptUploads(harness);
+    acceptUploads(harness.server);
     const drained = await device.drain();
     expect(drained.ok).toBe(true);
     if (!drained.ok) return;

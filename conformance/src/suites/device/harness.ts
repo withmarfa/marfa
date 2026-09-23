@@ -16,6 +16,7 @@ import {
   itemsPage,
   typeCatalog,
   wireItem,
+  writeAnswers,
   type WireItemOptions,
 } from "../../device/marfa-answers.js";
 
@@ -364,11 +365,11 @@ export function scriptBlob(
 ): string {
   const hash = hashOf(bytes);
   const hex = hash.slice("sha256:".length);
-  server.answer("GET", `/blobs/${hash}/url`, {
-    kind: "json",
-    status: 200,
-    body: { url: `${server.url}/links/${hex}`, expires_in: 3600 },
-  });
+  server.answer(
+    "GET",
+    `/blobs/${hash}/url`,
+    writeAnswers.link(`${server.url}/links/${hex}`),
+  );
   server.answer("GET", `/links/${hex}`, {
     kind: "bytes",
     status: 200,
@@ -382,4 +383,15 @@ export function fileOf(name: string, contents: string | Buffer): string {
   const path = join(mkdtempSync(join(tmpdir(), "marfa-file-")), name);
   writeFileSync(path, contents);
   return path;
+}
+
+/** `POST /blobs` answered as the server answers it, naming what it was sent. */
+export function acceptUploads(server: ScriptedServer): void {
+  server.answer("POST", "/blobs", (request) =>
+    writeAnswers.uploaded(
+      hashOf(request.raw),
+      request.headers["content-type"] ?? "",
+      request.raw.length,
+    ),
+  );
 }

@@ -615,6 +615,49 @@ describe("the scripted answers match the server's", () => {
     );
   });
 
+  it("matches an upload, and the link to the bytes it names", async () => {
+    const bytes = Buffer.from(`fidelity ${ctx.source}\n`);
+    const sent = await fetch(`${apiUrl}/blobs`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "text/plain",
+      },
+      body: bytes,
+    });
+    const uploaded = (await sent.json()) as { hash: string };
+    expect(
+      sent.status,
+      `the fixture could not upload bytes: ${JSON.stringify(uploaded)}`,
+    ).toBe(201);
+    expectFidelity(
+      "an upload",
+      { status: sent.status, body: uploaded },
+      writeAnswers.uploaded(uploaded.hash, "text/plain", bytes.length),
+      { same: ["hash", "mime_type", "size_bytes"] },
+    );
+
+    const linked = await client.rawRequest(`/blobs/${uploaded.hash}/url`, {
+      method: "GET",
+    });
+    expect(
+      linked.ok,
+      `the fixture could not ask for a link: ${JSON.stringify(linked.error)}`,
+    ).toBe(true);
+    expectFidelity(
+      "a link to a blob's bytes",
+      { status: linked.status, body: linked.data },
+      writeAnswers.link("http://127.0.0.1/links/fidelity"),
+      { same: ["expires_in"], shape: ["url"] },
+    );
+    // What the scripted link does, the real one does: it serves the bytes
+    // with no credential at all.
+    const url = (linked.data as { url: string }).url;
+    const fetched = await fetch(url);
+    expect(fetched.status).toBe(200);
+    expect(Buffer.from(await fetched.arrayBuffer())).toEqual(bytes);
+  });
+
   it("matches the items page a hydration walks", async () => {
     const seeded = await note({ title: "page shape", body: "page shape" });
     const page = await client.rawRequest(

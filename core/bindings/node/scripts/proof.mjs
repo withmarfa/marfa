@@ -2,7 +2,8 @@
 // Three phases, run in order with the server stopped between the first and
 // the last: `hydrate` pulls a slice, `write` queues writes while nothing can
 // be sent, and `drain` sends them once the server is back.
-import { MarfaCore, Tier } from "../index.js";
+import { readFileSync, writeFileSync } from "node:fs";
+import { MarfaCore, Tier, WriteKind } from "../index.js";
 
 const { MARFA_API_URL: url, MARFA_API_KEY: key, MARFA_DB: path } = process.env;
 if (!url || !key || !path) {
@@ -88,6 +89,13 @@ if (phase === "hydrate") {
     tier: Tier.Feed,
   });
   core.deleteItem(third.itemId ?? "");
+  const attachment = `${path}.attachment.txt`;
+  writeFileSync(attachment, "bytes attached with the server away\n");
+  const attached = core.attach(firstId, attachment);
+  expect(
+    attached.item.dependsOn.includes(attached.upload.id),
+    "the attached file item does not wait on its upload",
+  );
   core.createItem({
     type: "system.device",
     properties: { name: "not the device's to write" },
@@ -145,6 +153,18 @@ if (phase === "hydrate") {
   expect(
     !notes.some((note) => title(note) === "Node third"),
     "the note deleted offline is still listed",
+  );
+  // The bytes, fetched into a store that has never held them, through the
+  // link the server gives.
+  const upload = report.verdicts.find((entry) => entry.kind === WriteKind.UploadBlob);
+  const hash = core.queue().find((write) => write.id === upload?.id)?.blob;
+  expect(hash !== undefined, "no upload was drained");
+  const fresh = MarfaCore.open(`${path}.fresh`, url, key);
+  const fetched = await fresh.blob(hash ?? "");
+  console.log(`fetched ${hash} into a fresh store`);
+  expect(
+    readFileSync(fetched, "utf8") === "bytes attached with the server away\n",
+    "the bytes fetched are not the bytes attached",
   );
   const cleared = core.forgetAnswered();
   console.log(

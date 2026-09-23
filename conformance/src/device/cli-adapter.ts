@@ -496,6 +496,8 @@ export interface PullReport {
   removed: number;
   /** The same, left where they are because the person changed them. */
   kept: number;
+  /** File items whose bytes could not be had, so no file was written (`folders.md` 29). */
+  absent: number;
 }
 
 export interface PushReport {
@@ -558,7 +560,12 @@ export class CliFolder {
   }
 
   async pull(): Promise<Outcome<PullReport>> {
-    return this.run<PullReport>(["folders", "pull", this.dir]);
+    return this.run<PullReport>([
+      "folders",
+      "pull",
+      this.dir,
+      ...this.server(),
+    ]);
   }
 
   async push(): Promise<Outcome<PushReport>> {
