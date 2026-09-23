@@ -6,6 +6,7 @@ import {
   createTestContext,
   trackEdge,
   trackItem,
+  trackKey,
   trackWebhook,
 } from "../../utils/setup.js";
 import { createNote } from "../../generators/items.js";
@@ -161,6 +162,51 @@ describe("one envelope for every list and search", () => {
     );
   });
 
+  it("answers a null cursor from every door that takes none", async () => {
+    // A door that declares no cursor has no way to be asked for a second
+    // page, so it answers its whole set and says so. Derived from the
+    // document rather than listed, and counted, so a door that starts or
+    // stops taking a cursor turns this red.
+    const document = await servedDocument();
+    const whole = doors.filter(
+      (door) =>
+        !(document.paths[door.template]?.get?.parameters ?? []).some(
+          (parameter) =>
+            parameter.in === "query" && parameter.name === "cursor",
+        ),
+    );
+    expect(whole).toHaveLength(13);
+    for (const door of whole) {
+      const body = (await read(
+        door.path(),
+        door.operator ? operatorKey : apiKey,
+      )) as Record<string, unknown>;
+      expect(body.next_cursor, door.template).toBeNull();
+    }
+  });
+
+  it("answers GET /auth/grants, which the document does not publish, in the same envelope", async () => {
+    // Outside the twenty-one: the owner's approved-apps list is served
+    // beside the document rather than in it, and answers the same two keys.
+    expect((await servedDocument()).paths["/auth/grants"]).toBeUndefined();
+    const minted = await client.createKey({
+      label: "envelope-grants",
+      source: `${ctx.source}-grants`,
+      permissions: ["grants.manage"],
+      type_permissions: { "*": "read" },
+    });
+    expect(minted.ok, JSON.stringify(minted.error)).toBe(true);
+    trackKey(ctx, minted.data.id);
+    const body = (await read("/auth/grants", minted.data.key)) as Record<
+      string,
+      unknown
+    >;
+    expect(Object.keys(body).sort()).toEqual(["data", "next_cursor"]);
+    expect(Array.isArray(body.data)).toBe(true);
+    // The whole set in one answer: the door takes no cursor.
+    expect(body.next_cursor).toBeNull();
+  });
+
   for (const door of doors) {
     it(`GET ${door.template} answers data and next_cursor`, async () => {
       const body = (await read(
@@ -240,12 +286,11 @@ describe("an item's neighbors stand outside the envelope", () => {
     expect(detail.neighbors_truncated).toBe(false);
   });
 
-  it("flags neighbors_truncated when the far ends across edge types pass the cap", async () => {
-    // Three edge types of 34 each: every block is whole, with no cursor to
-    // follow, and only their combined 102 far ends pass the cap. That is
-    // the case the flag exists for, since no block's cursor can say it.
-    const edgeTypes = ["about", "references", "derived-from"];
-    const perType = 34;
+  /**
+   * A hub with `perType` far ends under each of `edgeTypes`, all of them
+   * notes the fixture's own key reads, read back with its neighbors.
+   */
+  async function hubWith(edgeTypes: string[], perType: number) {
     const created = await client.bulkItems({
       items: Array.from({ length: 1 + edgeTypes.length * perType }, () =>
         createNote({ source: ctx.source }),
@@ -272,12 +317,38 @@ describe("an item's neighbors stand outside the envelope", () => {
       expect(detail.item.edges[type]?.data, type).toHaveLength(perType);
       expect(detail.item.edges[type]?.next_cursor, type).toBeNull();
     }
-    // The blocks still name every far end the flag says was left out.
+    // The blocks name every far end, whatever the list beside them holds.
     expect(
       Object.values(detail.item.edges)
         .flatMap((block) => block.data.map((edge) => edge.target_id))
         .sort(),
     ).toEqual([...farEnds].sort());
+    return { detail, farEnds };
+  }
+
+  it("hydrates every far end at the cap, flagging no truncation", async () => {
+    // Exactly the cap of 100, as four edge types of 25 rather than two of
+    // 50, so no block sits at its own per-type cap of 50 and the combined
+    // cap is the only bound in reach.
+    const { detail, farEnds } = await hubWith(
+      ["about", "references", "derived-from", "attached-to"],
+      25,
+    );
+    expect(farEnds).toHaveLength(100);
+    expect(detail.neighbors_truncated).toBe(false);
+    expect((detail.neighbors?.map((n) => n.item.id) ?? []).sort()).toEqual(
+      [...farEnds].sort(),
+    );
+  });
+
+  it("flags neighbors_truncated when the far ends across edge types pass the cap", async () => {
+    // Three edge types of 34 each: every block is whole, with no cursor to
+    // follow, and only their combined 102 far ends pass the cap. That is
+    // the case the flag exists for, since no block's cursor can say it.
+    const { detail, farEnds } = await hubWith(
+      ["about", "references", "derived-from"],
+      34,
+    );
     expect(detail.neighbors_truncated).toBe(true);
     const hydrated = detail.neighbors?.map((n) => n.item.id) ?? [];
     expect(hydrated.length).toBeGreaterThan(0);
