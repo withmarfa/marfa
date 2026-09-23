@@ -212,9 +212,8 @@ describe("scopeCovers", () => {
 
   // Kind confusion. `edge` and `metadata` are not reserved roots, so
   // `edge.foo` is a registrable item type, and `edge.*:write` is a scope the
-  // server both advertises and issues. The exact comparison this replaced
-  // happened to contain that; a pattern match does not, so the guard is
-  // explicit and these pin it.
+  // server both advertises and issues. A pattern match reaches it, so the
+  // guard is explicit and these pin it.
   it("an edge grant does not satisfy an item-type requirement", () => {
     expect(scopeCovers(["edge.*:write"], "edge.foo", "write")).toBe(false);
   });
@@ -457,10 +456,9 @@ describe("permissions", () => {
     // root, and the wildcard that `isValidTypePattern` would otherwise
     // accept as an item-type pattern.
     expect(parseScope("webhooks.everything")).toBeNull();
-    // The names the previous draft of this set used. A retired member has to
-    // fail rather than linger as a literal nothing enforces, and `space` is
-    // the root the family was named after before it was named for what it
-    // permits.
+    // Names outside the closed set, `space` among them as the word
+    // `GLOSSARY.md` bans: a literal that parsed would linger as a grant
+    // nothing enforces.
     expect(parseScope("schema.types")).toBeNull();
     expect(parseScope("space.webhooks")).toBeNull();
     expect(parseScope("space.usage")).toBeNull();
@@ -556,7 +554,7 @@ describe("permissions", () => {
       expect(isValidTypeIdentifier(literal)).toBe(false);
       expect(isValidTypePattern(literal)).toBe(false);
     }
-    // The retired root stays reserved although nothing is named for it: were
+    // `space` stays reserved although nothing is named for it: were
     // it claimable, a publisher could take the one word `GLOSSARY.md` bans
     // and register types beneath it. It is also claimed whole by the parser,
     // which reservation does not buy — `isValidTypePattern` never consults
@@ -1031,21 +1029,19 @@ describe("scopesOfferedOffByDefaultOnly", () => {
 });
 
 /**
- * Coverage, which is the question every consent comparison was asking and
- * none of them was answering.
+ * Coverage, which is the question every consent comparison asks.
  *
- * These pin behavior that partly already held — exact membership always
- * worked — so there is no red phase to notice and each guard is worth
+ * Exact membership is the easy half and passes whether or not a guard is
+ * sound, so there is no red phase to notice and each guard is worth
  * breaking on purpose. The capability arm is the one to break first: it is
  * the only one whose failure is a fail-open rather than a re-prompt.
  */
 describe("grantCoversScope", () => {
   describe("item types, where breadth is the whole point", () => {
     it("covers a named type from a namespace wildcard", () => {
-      // The fix, in one line. A person who granted "all your core content"
-      // has already answered the question a later request for `core.note`
-      // asks, and the string comparison this replaces asked it again on
-      // every launch.
+      // A person who granted "all your core content" has already answered
+      // the question a later request for `core.note` asks, and a string
+      // comparison would ask it again on every launch.
       expect(grantCoversScope(["core.*:read"], "core.note:read")).toBe(true);
     });
 
@@ -1183,14 +1179,13 @@ describe("grantCoversScope", () => {
    * and the wrong thing to describe as a test.
    *
    * What they are worth is saying, in one place a person will read, what the
-   * answer has to be. The routes do gate on these — `requirePermission`
-   * runs at seventeen call sites across nine route files, covering `items.purge`,
-   * `keys.mint`, `config.manage`, `schema.write`, `webhooks.manage`,
-   * `grants.manage` and `audit.read`. What no bundle does yet is *offer*
-   * one, so a wrong answer today shows a consent screen no default grant
-   * can satisfy rather than opening a door, and the reason to hold the line
-   * now is that the bundles arrive later and will inherit whatever this
-   * says.
+   * answer has to be. The routes gate on these through
+   * `requirePermission`, covering `items.purge`, `keys.mint`,
+   * `config.manage`, `schema.write`, `webhooks.manage`, `grants.manage` and
+   * `audit.read`. No default bundle *offers* one, so a wrong answer shows a
+   * consent screen no default grant can satisfy rather than opening a door,
+   * and the line is held here so a bundle that offers one inherits the
+   * right answer.
    */
   describe("capabilities, reachable only by name", () => {
     it("covers a capability the grant names", () => {
@@ -1292,10 +1287,11 @@ describe("grantCoversScope", () => {
       // from the grant side. A type wildcard reaches no edge, and an edge
       // grant reaches no item type.
       //
-      // The first draft asserted the second half with `parent-of:read`,
-      // which is not a scope at all: a bare single-segment identifier is
-      // not a valid type, so the requirement was refused for being
-      // unparseable and the test passed without exercising the axis split.
+      // The second half names `edge.parent-of:read` rather than
+      // `parent-of:read`, which is not a scope at all: a bare single-segment
+      // identifier is not a valid type, so that requirement would be refused
+      // for being unparseable and the test would pass without exercising
+      // the axis split.
       expect(grantCoversScope(["*:write"], "edge.parent-of:read")).toBe(false);
       expect(grantCoversScope(["edge.*:write"], "core.note:read")).toBe(false);
     });

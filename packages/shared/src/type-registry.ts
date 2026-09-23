@@ -148,9 +148,8 @@ export interface SeededPlatformType {
 }
 
 /**
- * Where a registered type came from. Immutability used to be a compiled set —
- * a type was unmodifiable because the build said so. As a row property it can
- * distinguish the cases that actually differ: the platform vocabulary is
+ * Where a registered type came from. Held as a row property rather than
+ * decided by the build, so it can distinguish the cases that actually differ: the platform vocabulary is
  * locked, a type a connector published is updatable by that connector's
  * own package and nothing else, and a type a person registered is theirs.
  *
@@ -396,8 +395,8 @@ export function listTypes(): TypeSchema[] {
  * here.** It is `NAMESPACE_TIER_ROOTS` plus every scope-family root plus the
  * retired one, and `scope-roots.ts` composes it from exactly those lists — so
  * the arithmetic is the code that produces it rather than a sentence with a
- * number in it. A sentence is what rotted the last time the set grew, and it
- * rotted silently, because nothing compiles a docblock.
+ * number in it. Such a sentence rots silently when the set grows, because
+ * nothing compiles a docblock.
  *
  * What the extra roots have in common is that no type is ever registrable
  * under one, so no identifier reaching a classifier can carry them, and none
@@ -563,12 +562,10 @@ function declaredDescendants(rootId: string): string[] {
  *   merge-policy and role chain in `storage/policy.ts`, which imports it
  *   rather than declaring a second copy beside it.
  *
- * One name stood for both until now, held privately here and exported under
- * the same spelling from the server's own file, at different values. Nothing
- * broke while this one stayed private, and exporting it as it stood is what
- * would have broken: a file needing both could not have imported both without
- * renaming one at the import. Names that say which is which are the point of
- * this pair, and the reason neither is called `MAX_INHERITANCE_DEPTH` now.
+ * Each has a name that says which it is, and neither is called
+ * `MAX_INHERITANCE_DEPTH`: one name for both, at different values, would
+ * leave a file needing both unable to import both without renaming one at
+ * the import.
  *
  * Reaching this bound means a registration cap was bypassed or outgrown: a
  * schema entered by a path that runs no parent-chain check at all, or a chain
@@ -893,15 +890,12 @@ function fieldToZod(field: FieldDefinition): z.ZodType {
       // ruled explicitly — a whole day has no instant at all, and
       // `all_day` on the event is what says which reading applies. A
       // naive local time satisfies neither and is refused, so it cannot
-      // surface later as a parse error in whatever reads it. Measured
-      // against both live databases before enforcement: every stored
-      // value in a declared datetime field already conforms, so no
-      // migration accompanies this.
+      // surface later as a parse error in whatever reads it.
       schema = z.union([z.iso.datetime({ offset: true }), z.iso.date()]);
       break;
     case "date":
-      // A calendar date, YYYY-MM-DD. Same reasoning as datetime: the
-      // declared format used to collapse to an unchecked bounded string.
+      // A calendar date, YYYY-MM-DD. Same reasoning as datetime: a
+      // declared format is checked rather than read as a bounded string.
       schema = z.iso.date();
       break;
     case "enum":

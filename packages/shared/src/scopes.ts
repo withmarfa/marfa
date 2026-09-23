@@ -22,7 +22,7 @@ import {
 // ---------------------------------------------------------------------------
 
 /**
- * Parsed representation of a scope string. Seven shapes today:
+ * Parsed representation of a scope string. Seven shapes:
  *   - item-type scope:  "core.note:read"     → kind="type", typePattern="core.note"
  *                       ("*:read" / "*:write" are the global type wildcard)
  *   - content category: "content:read" / "content:write"
@@ -100,7 +100,8 @@ export { PERMISSION_FAMILY_ROOTS } from "./scope-roots.js";
  * **One per coherent surface, not one per route.** The list is what a
  * consent screen has to read as sentences — "manage your webhooks", "read
  * your audit log" — so a person can grant an app the one power it needs.
- * A single "administer everything" toggle is the thing this replaces.
+ * A single "administer everything" toggle would make a person grant every
+ * power to give an app one.
  *
  * Three boundaries in the set are decisions rather than groupings, and each
  * exists because the obvious grouping would hand a holder something wider
@@ -136,8 +137,7 @@ export { PERMISSION_FAMILY_ROOTS } from "./scope-roots.js";
  *   the app that minted it, so the key is recognizable later as an app's
  *   rather than a person's. Both halves, or the clamp lasts
  *   until the key is first used. `server/src/auth/mint-clamp.ts` carries the
- *   reasoning; the route used to refuse an OAuth bearer outright, and that
- *   refusal was doing this job by removing the surface.
+ *   reasoning.
  * - **`items.purge` covers both purge doors.** The bulk one asks for it as the
  *   single-row one does: the same act on more rows, and a caller that may
  *   destroy one row irrecoverably may destroy a hundred. A second, stricter
@@ -206,7 +206,7 @@ const PERMISSION_SET: ReadonlySet<string> = new Set(PERMISSIONS);
  * **`RETIRED_ROOT` is claimed here although it heads no member**, so the
  * membership test below refuses everything beneath it. Reservation alone
  * would not: `isValidTypePattern` consults the prefix grammar and not the
- * reserved roots, so an unclaimed retired root leaves `space.*:read` parsing
+ * reserved roots, so an unclaimed `space` root leaves `space.*:read` parsing
  * as an ordinary item-type grant over a namespace no type may ever occupy —
  * a literal a bundle could publish and a person could be asked to consent to,
  * naming the one word `GLOSSARY.md` bans and resolving against nothing.
@@ -273,8 +273,8 @@ export function requiresExplicitConsent(scope: string): boolean {
  * not to do, because the alternative is what a gate author reaches for.
  * `scopeCovers` is the neighboring helper and it answers about the item-type
  * axis, where `*:write` matches any pattern — so asked about a
- * permission it said yes to a token holding none at all. That function now
- * refuses one outright, and this one is what replaces it.
+ * permission it would say yes to a token holding none at all. It refuses
+ * one outright, and this one answers instead.
  *
  * **Both kinds of credential reach it through one carrier.** A key holds its
  * set on `permissions`; a sign-in holds it on the grant the request
@@ -487,32 +487,29 @@ const SCOPE_RE = /^(\*|[a-z][a-z0-9_.*-]*):(read|write)$/;
 // `edge.<type>:<verb>` — type can be kebab-case (parent-of, in-thread) or
 // namespaced (karakeep.list-member).
 //
-// **One wildcard, and only as the last segment.** This class used to admit a
-// second — `edge.*.*` parsed here where `isValidTypePattern` refuses
-// `core.*.*`, because the type axis routes a wildcard's root through
-// `TYPE_ID_PREFIX` and this had no equivalent. `isValidScope` is
+// **One wildcard, and only as the last segment**, matching
+// `isValidTypePattern`'s refusal of `core.*.*` on the type axis, which routes
+// a wildcard's root through `TYPE_ID_PREFIX`. `isValidScope` is
 // `parseScope(...) !== null`, so this regex is the whole authority on the
-// edge axis and the hole was reachable through any operator-configured
-// permission bundle.
+// edge axis, and whatever it admits is reachable through any
+// operator-configured permission bundle.
 //
-// **What made it worse than a grammar untidiness** is that the extra
-// asterisk answered for something. `subtreeWildcardRoot("*.*")` is `"*"`,
-// which matches the GLOBAL key while matching no concrete edge type, so a
-// stored `edge.*.*:write` looked redundant-with-nothing at the key level and
-// the prune deleted the `edge.*:write` beside it — a live grant over every
-// edge type on the instance. `subtreeWildcardRoot("user.*.*")` is `"user.*"`
-// and does the same to `edge.user.*`, which `resolveEdgePermission` says is
-// the only expression reaching the runtime-registered relation edges
-// short of the global wildcard.
+// **A second asterisk would answer for something.**
+// `subtreeWildcardRoot("*.*")` is `"*"`, which matches the GLOBAL key while
+// matching no concrete edge type, so a stored `edge.*.*:write` would look
+// redundant-with-nothing at the key level and the prune would delete the
+// `edge.*:write` beside it — a live grant over every edge type on the
+// instance. `subtreeWildcardRoot("user.*.*")` is `"user.*"` and would do the
+// same to `edge.user.*`, which `resolveEdgePermission` says is the only
+// expression reaching the runtime-registered relation edges short of the
+// global wildcard.
 //
-// **Narrowing was held up on what a merge owes a literal a validator
-// refuses but a stored grant still carries, and that question has an
-// answer.** A stored literal is carried by membership: the device approval
-// unions the ticked set into the standing grant and prunes nothing, and a
-// candidate is measured against the map only after it parses. So a stored
-// `edge.*.*:write` does not stop being reasoned about when it stops parsing —
-// it is carried whole, which is strictly safer than being reasoned about
-// wrongly.
+// **A stored grant carrying a literal this refuses is carried, not
+// reasoned about.** A stored literal is carried by membership: the device
+// approval unions the ticked set into the standing grant and prunes nothing,
+// and a candidate is measured against the map only after it parses. So a
+// stored `edge.*.*:write` is carried whole, which is strictly safer than
+// being reasoned about wrongly.
 const EDGE_SCOPE_RE =
   /^edge\.(\*|[a-z][a-z0-9_-]*(?:\.[a-z0-9_-]+)*(?:\.\*)?):(read|write)$/;
 // `metadata.<subresource>:<verb>` — sub-resource is a single dot-free
@@ -729,7 +726,7 @@ export function isValidScope(scope: string): boolean {
  *   this build cannot read to `system`. So it answers correctly for a type
  *   the build has retired and after a rollback, neither of which a name test
  *   can do.
- * - **`system.*` is a BELT, not the authority.** It catches nothing today:
+ * - **`system.*` is a BELT, not the authority.** It catches nothing:
  *   registration under a reserved root is refused for every credential, so a
  *   `system.` type that is not in `SYSTEM_TYPE_IDS` cannot exist. It costs
  *   one entry and it is here for the build that somehow ships one. Deleting
@@ -910,15 +907,15 @@ export function scopeCovers(
     // advertises and issues. Without the guard a pattern match would let an
     // edge grant satisfy an item-type requirement.
     //
-    // The exact string comparison this replaced happened to contain that,
-    // because `edge.*` never equaled `edge.foo`. A pattern match does not,
-    // so the guard has to be explicit.
+    // A string comparison would contain that for free, because `edge.*`
+    // never equals `edge.foo`. A pattern match does not, so the guard has
+    // to be explicit.
     if (!isTypeScope(parsed)) continue;
 
     // `typeMatchesPattern`, not `!==`. The held scope carries a *pattern*
     // (`core.*`, `*`) and the requirement carries a concrete type, so string
-    // inequality reported every wildcard grant as covering nothing: failing
-    // closed, but wrongly, and silently.
+    // inequality would report every wildcard grant as covering nothing:
+    // failing closed, but wrongly, and silently.
     //
     // Note the neighbor: `matchesTypePattern` takes a list of patterns and
     // `typeMatchesPattern` takes one. Type first, pattern second.
@@ -1547,9 +1544,8 @@ export function expandBundlesToScopes(bundles: PermissionBundle[]): string[] {
  *
  * `default_on: false` means the toggle starts unticked, and the whole of
  * what it grants is that a person ticked it. Both consent surfaces read this
- * to decide which rows arrive unticked. The device flow used to have no tick
- * to make, so it refused these at initiation instead; it has per-scope
- * toggles now and withholds them the same way the authorize screen does.
+ * to decide which rows arrive unticked. The device flow has per-scope
+ * toggles and withholds them the same way the authorize screen does.
  *
  * Claimed by at least one bundle and reached by no on-by-default one, so a
  * scope the user already gets by default is not withheld, and a scope no
