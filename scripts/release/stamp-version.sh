@@ -25,7 +25,7 @@ fi
 # A release is major.minor.patch and nothing more: every version is the one
 # before it plus 0.0.1, so a pre-release has no place, and the placeholder
 # is what a build that was never stamped carries, so it is never a release.
-if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+if ! [[ "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
   echo "stamp-version: '$version' is not major.minor.patch" >&2
   exit 2
 fi
@@ -50,12 +50,20 @@ while IFS= read -r manifest; do
   packages+=("$manifest")
 done < <(git ls-files -- '*package.json')
 
+# The crate's own version line: the first `version` key under `[package]` or
+# `[workspace.package]`, never one under a dependency table.
+package_version_line() {
+  awk '/^\[/ { own = ($0 == "[package]" || $0 == "[workspace.package]") }
+       own && /^version[ .]/ { print; exit }' "$1"
+}
+
 crates=()
 while IFS= read -r manifest; do
-  if grep -q '^version\.workspace = true' "$manifest"; then
+  line="$(package_version_line "$manifest")"
+  if [ "$line" = "version.workspace = true" ]; then
     continue
   fi
-  if ! grep -q "^version = \"$placeholder\"$" "$manifest"; then
+  if [ "$line" != "version = \"$placeholder\"" ]; then
     echo "stamp-version: $manifest carries no placeholder version line; nothing stamped" >&2
     exit 1
   fi
@@ -76,8 +84,11 @@ for manifest in "${packages[@]}"; do
 done
 
 for manifest in "${crates[@]}"; do
-  sed -i.stamp "s/^version = \"$placeholder\"$/version = \"$version\"/" "$manifest"
-  rm "$manifest.stamp"
+  awk -v from="version = \"$placeholder\"" -v to="version = \"$version\"" '
+    /^\[/ { own = ($0 == "[package]" || $0 == "[workspace.package]") }
+    own && !done && $0 == from { print to; done = 1; next }
+    { print }' "$manifest" > "$manifest.stamp"
+  mv "$manifest.stamp" "$manifest"
   echo "$manifest: $version"
 done
 

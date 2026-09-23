@@ -13,8 +13,8 @@ on:
     tags:
       - "v*"
 
-# Never cancel a release in flight. The key is per ref, so two tags queue
-# rather than cancel each other.
+# Never cancel a release in flight. The key is per ref, so a second push of
+# the same tag queues behind the first; two different tags run side by side.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
@@ -28,24 +28,25 @@ jobs:
       contents: read
       actions: read
     steps:
-      # A tag points at a commit that already went through `ci.yml` on
-      # main. Verifying that run is stronger than recomputing it here: the
-      # steps below would pass against the tag's own tree either way, and
-      # nothing else stops a tag being cut on a commit CI never saw. This is
-      # why `ci.yml` does not cancel a superseded run on `main`: a canceled
-      # run is not a successful one.
-      - name: Require a green CI run for this commit
+      # A tag has to point at a commit that went through `ci.yml` on `main`.
+      # A pull request's head passes `ci.yml` too, and under squash merges it
+      # never reaches `main`, so the run asked for is a push to `main`, not
+      # any green run on the SHA. Verifying that run is stronger than
+      # recomputing it here: the steps below would pass against the tag's
+      # own tree either way. This is why `ci.yml` does not cancel a
+      # superseded run on `main`: a canceled run is not a successful one.
+      - name: Require a green CI run on main for this commit
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           runs=$(gh api \
-            "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$GITHUB_SHA&status=success" \
+            "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$GITHUB_SHA&status=success&event=push&branch=main" \
             --jq '.total_count')
           if [ "${runs:-0}" -lt 1 ]; then
-            echo "::error::No successful ci.yml run for $GITHUB_SHA. A release refuses a commit CI has not passed."
+            echo "::error::No successful ci.yml run on main for $GITHUB_SHA. A release refuses a commit that has not passed CI on main."
             exit 1
           fi
-          echo "ci.yml is green for $GITHUB_SHA"
+          echo "ci.yml is green on main for $GITHUB_SHA"
 
   build:
     name: Build the artifacts
@@ -57,6 +58,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # Read through the environment and held to the version grammar before
+      # anything uses it: a ref name may carry characters a shell would act
+      # on if it were substituted into a script.
       - name: Read the version off the tag
         id: version
         run: |
@@ -66,6 +70,10 @@ jobs:
             exit 1
           fi
           version="${ref#v}"
+          if ! [[ "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "::error::The tag names no major.minor.patch version."
+            exit 1
+          fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "building $version from $GITHUB_SHA"
 
@@ -85,7 +93,9 @@ jobs:
       - run: pnpm install --frozen-lockfile
 
       - name: Stamp the version into every manifest
-        run: bash scripts/release/stamp-version.sh "${{ steps.version.outputs.version }}"
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: bash scripts/release/stamp-version.sh "$VERSION"
 
       - run: pnpm build
 
@@ -99,10 +109,11 @@ jobs:
 
       - name: Build the binary for macOS
         working-directory: core
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
           cargo build --release -p marfa-cli
-          version="${{ steps.version.outputs.version }}"
-          tar -czf "$RUNNER_TEMP/artifacts/marfa-$version-darwin-arm64.tar.gz" -C target/release marfa
+          tar -czf "$RUNNER_TEMP/artifacts/marfa-$VERSION-darwin-arm64.tar.gz" -C target/release marfa
           target/release/marfa --version
 
       - uses: actions/upload-artifact@v7

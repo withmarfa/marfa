@@ -84,11 +84,26 @@ function cargoLockVersions(m: Manifest): VersionHeld[] {
   return held;
 }
 
+/** The crate's own version line, as the stamp reads it: the first `version`
+ *  key under `[package]` or `[workspace.package]`, never a dependency's. */
+function packageVersionLine(text: string): string | undefined {
+  let own = false;
+  for (const line of text.split("\n")) {
+    if (line.startsWith("[")) {
+      own = line === "[package]" || line === "[workspace.package]";
+    } else if (own && /^version[ .]/.test(line)) {
+      return line;
+    }
+  }
+  return undefined;
+}
+
 /** A `Cargo.toml` without the line the stamp rewrites. */
 function cargoTomlLine(m: Manifest): VersionHeld[] {
-  if (/^version\.workspace = true$/m.test(m.text)) return [];
-  if (new RegExp(`^version = "${PLACEHOLDER}"$`, "m").test(m.text)) return [];
-  return [{ path: m.path, version: "(no placeholder line)" }];
+  const line = packageVersionLine(m.text);
+  if (line === "version.workspace = true") return [];
+  if (line === `version = "${PLACEHOLDER}"`) return [];
+  return [{ path: m.path, version: line ?? "(no placeholder line)" }];
 }
 
 /** Every version a manifest holds that is not the placeholder, and every
@@ -146,10 +161,11 @@ function trackedManifests(): Manifest[] {
   }));
 }
 
-/** A cargo workspace root is a tracked `Cargo.lock`'s directory. */
-function cargoWorkspaces(manifests: readonly Manifest[]): string[] {
+/** Every directory holding a tracked `Cargo.toml`: each is asked of cargo,
+ *  so a crate outside every tracked lock is read too. */
+function cargoDirs(manifests: readonly Manifest[]): string[] {
   return manifests
-    .filter((m) => m.path.endsWith("Cargo.lock"))
+    .filter((m) => m.path.endsWith("Cargo.toml"))
     .map((m) => dirname(join(ROOT, m.path)));
 }
 
@@ -170,7 +186,7 @@ describe("no file holds a version", () => {
       "Cargo.toml",
       "package.json",
     ]);
-    expect(cargoWorkspaces(manifests).length).toBeGreaterThan(0);
+    expect(cargoDirs(manifests).length).toBeGreaterThan(0);
   });
 
   it("every tracked manifest carries the placeholder", () => {
@@ -178,8 +194,8 @@ describe("no file holds a version", () => {
   });
 
   it("every crate cargo reads off the tree carries the placeholder", () => {
-    for (const dir of cargoWorkspaces(manifests)) {
-      expect(cargoVersionsHeld(dir, ROOT)).toEqual([]);
+    for (const dir of cargoDirs(manifests)) {
+      expect(cargoVersionsHeld(dir, ROOT), dir).toEqual([]);
     }
   });
 
@@ -210,6 +226,17 @@ describe("no file holds a version", () => {
       { path: "package.json", version: "0.1.0" },
       { path: "core/Cargo.lock (example)", version: "0.1.0" },
     ]);
+  });
+
+  it("reads a crate's own version line, never a dependency's", () => {
+    expect(
+      versionsHeld([
+        {
+          path: "d/Cargo.toml",
+          text: '[package]\nname = "d"\npackage.version = "1.2.3"\n\n[dependencies.foo]\nversion = "0.0.0"\n',
+        },
+      ]),
+    ).toEqual([{ path: "d/Cargo.toml", version: "(no placeholder line)" }]);
   });
 
   it("would refuse a Cargo.toml without the line the stamp rewrites", () => {
