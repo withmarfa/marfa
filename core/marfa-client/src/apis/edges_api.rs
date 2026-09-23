@@ -22,7 +22,7 @@ pub struct BulkUpsertEdgesParams {
 /// struct for passing parameters to the method [`create_edge`]
 #[derive(Clone, Debug)]
 pub struct CreateEdgeParams {
-    /// A client-chosen key identifying this write. The server records the status and body it returns against the key and answers a repeat carrying the same key with that stored result, performing no second write. A conflict is recorded like any other outcome, so a retry is told its first attempt collided rather than left to re-derive it. Scoped to this instance; a key replayed with a different request is refused with `idempotency_key_reused`.
+    /// A client-chosen key identifying this write. The server records the status and body it returns against the key and answers a repeat carrying the same key with that stored result, performing no second write. A conflict is recorded like any other outcome, so a retry is told its first attempt collided rather than left to re-derive it. Scoped to this instance; a key replayed with a different request, or with the same one after the instance has moved to another contract version, is refused with `idempotency_key_reused`, since the stored answer is shaped for the contract it was written under.
     pub idempotency_key: Option<String>,
     pub create_edge_request: Option<models::CreateEdgeRequest>,
 }
@@ -32,7 +32,7 @@ pub struct CreateEdgeParams {
 pub struct DeleteEdgeParams {
     /// Edge id.
     pub id: String,
-    /// A client-chosen key identifying this write. The server records the status and body it returns against the key and answers a repeat carrying the same key with that stored result, performing no second write. A conflict is recorded like any other outcome, so a retry is told its first attempt collided rather than left to re-derive it. Scoped to this instance; a key replayed with a different request is refused with `idempotency_key_reused`.
+    /// A client-chosen key identifying this write. The server records the status and body it returns against the key and answers a repeat carrying the same key with that stored result, performing no second write. A conflict is recorded like any other outcome, so a retry is told its first attempt collided rather than left to re-derive it. Scoped to this instance; a key replayed with a different request, or with the same one after the instance has moved to another contract version, is refused with `idempotency_key_reused`, since the stored answer is shaped for the contract it was written under.
     pub idempotency_key: Option<String>,
 }
 
@@ -89,7 +89,7 @@ pub struct ListItemEdgesParams {
 pub struct UpdateEdgeParams {
     /// Edge id.
     pub id: String,
-    /// A client-chosen key identifying this write. The server records the status and body it returns against the key and answers a repeat carrying the same key with that stored result, performing no second write. A conflict is recorded like any other outcome, so a retry is told its first attempt collided rather than left to re-derive it. Scoped to this instance; a key replayed with a different request is refused with `idempotency_key_reused`.
+    /// A client-chosen key identifying this write. The server records the status and body it returns against the key and answers a repeat carrying the same key with that stored result, performing no second write. A conflict is recorded like any other outcome, so a retry is told its first attempt collided rather than left to re-derive it. Scoped to this instance; a key replayed with a different request, or with the same one after the instance has moved to another contract version, is refused with `idempotency_key_reused`, since the stored answer is shaped for the contract it was written under.
     pub idempotency_key: Option<String>,
     pub update_edge_request: Option<models::UpdateEdgeRequest>,
 }
