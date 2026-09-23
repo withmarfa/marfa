@@ -1074,13 +1074,10 @@ describe("the expansion budget bounds the walking that contributes nothing", () 
     // whole history on every read, which is the ordinary shape of a
     // long-lived calendar rather than a contrived one.
     //
-    // This test cannot stop anyone writing that the budget bounds a
-    // request's total work — no test fails when prose is edited, and
-    // this file's own history proves it, because the suite above carried
-    // an overstated name for a whole commit while staying green. What it
-    // does is hold a counterexample in the exact unit the bound is
-    // denominated in, so a reader who doubts the claim has a number to
-    // cite rather than a stopwatch to argue about.
+    // No test fails when prose overstates the budget as a bound on a
+    // request's total work. This one holds a counterexample in the exact
+    // unit the bound is denominated in, so a reader who doubts the claim
+    // has a number to cite rather than a stopwatch to argue about.
     const daily = (anchor: string, prefix: string): SyntheticRow[] =>
       Array.from({ length: 100 }, (_, i) => ({
         id: `${prefix}-${String(i)}`,
