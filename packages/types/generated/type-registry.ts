@@ -1133,6 +1133,9 @@ export const SHIPPED_TYPE_SHAPES = {
       "body": {
         "type": "string"
       },
+      "description": {
+        "type": "string"
+      },
       "image_url": {
         "type": "url"
       },
@@ -1173,6 +1176,9 @@ export const SHIPPED_TYPE_SHAPES = {
       "title_field": "name"
     },
     "fields": {
+      "description": {
+        "type": "string"
+      },
       "email": {
         "type": "email"
       },
@@ -1216,6 +1222,9 @@ export const SHIPPED_TYPE_SHAPES = {
         "type": "date"
       },
       "department": {
+        "type": "string"
+      },
+      "description": {
         "type": "string"
       },
       "email": {
@@ -1292,6 +1301,9 @@ export const SHIPPED_TYPE_SHAPES = {
         "format": "iso3166",
         "type": "string"
       },
+      "description": {
+        "type": "string"
+      },
       "email": {
         "type": "email"
       },
@@ -1356,6 +1368,9 @@ export const SHIPPED_TYPE_SHAPES = {
     "fields": {
       "all_day": {
         "type": "boolean"
+      },
+      "description": {
+        "type": "string"
       },
       "duration": {
         "type": "number"
@@ -1431,6 +1446,9 @@ export const SHIPPED_TYPE_SHAPES = {
         "required": true,
         "type": "string"
       },
+      "description": {
+        "type": "string"
+      },
       "extracted_text": {
         "type": "string"
       },
@@ -1470,6 +1488,9 @@ export const SHIPPED_TYPE_SHAPES = {
       },
       "blob_ref": {
         "required": true,
+        "type": "string"
+      },
+      "description": {
         "type": "string"
       },
       "duration": {
@@ -1518,6 +1539,9 @@ export const SHIPPED_TYPE_SHAPES = {
       },
       "blob_ref": {
         "required": true,
+        "type": "string"
+      },
+      "description": {
         "type": "string"
       },
       "extracted_text": {
@@ -1575,6 +1599,9 @@ export const SHIPPED_TYPE_SHAPES = {
       },
       "blob_ref": {
         "required": true,
+        "type": "string"
+      },
+      "description": {
         "type": "string"
       },
       "duration": {
@@ -1684,6 +1711,9 @@ export const SHIPPED_TYPE_SHAPES = {
       "body": {
         "type": "string"
       },
+      "description": {
+        "type": "string"
+      },
       "image_url": {
         "type": "url"
       },
@@ -1727,6 +1757,9 @@ export const SHIPPED_TYPE_SHAPES = {
         "type": "string"
       },
       "body": {
+        "type": "string"
+      },
+      "description": {
         "type": "string"
       },
       "image_url": {
@@ -1785,6 +1818,9 @@ export const SHIPPED_TYPE_SHAPES = {
         "required": true,
         "type": "string"
       },
+      "description": {
+        "type": "string"
+      },
       "image_url": {
         "type": "url"
       },
@@ -1835,6 +1871,9 @@ export const SHIPPED_TYPE_SHAPES = {
         "type": "string"
       },
       "body": {
+        "type": "string"
+      },
+      "description": {
         "type": "string"
       },
       "edition": {
@@ -1890,6 +1929,9 @@ export const SHIPPED_TYPE_SHAPES = {
         "type": "string"
       },
       "body": {
+        "type": "string"
+      },
+      "description": {
         "type": "string"
       },
       "duration": {
@@ -1966,6 +2008,9 @@ export const SHIPPED_TYPE_SHAPES = {
       "content_rating": {
         "type": "string"
       },
+      "description": {
+        "type": "string"
+      },
       "director": {
         "type": "string"
       },
@@ -2022,6 +2067,9 @@ export const SHIPPED_TYPE_SHAPES = {
         "type": "string"
       },
       "body": {
+        "type": "string"
+      },
+      "description": {
         "type": "string"
       },
       "image_url": {
@@ -2092,6 +2140,9 @@ export const SHIPPED_TYPE_SHAPES = {
         "type": "string"
       },
       "body": {
+        "type": "string"
+      },
+      "description": {
         "type": "string"
       },
       "duration": {
@@ -2211,6 +2262,9 @@ export const SHIPPED_TYPE_SHAPES = {
       "completed_at": {
         "type": "datetime"
       },
+      "description": {
+        "type": "string"
+      },
       "due_at": {
         "type": "datetime"
       },
@@ -2277,6 +2331,9 @@ export const SHIPPED_TYPE_SHAPES = {
         "type": "string"
       },
       "creator_email": {
+        "type": "string"
+      },
+      "description": {
         "type": "string"
       },
       "end_timezone": {
@@ -2541,6 +2598,9 @@ export const SHIPPED_TYPE_SHAPES = {
       "custom_url": {
         "type": "string"
       },
+      "description": {
+        "type": "string"
+      },
       "html_link": {
         "type": "url"
       },
@@ -2576,6 +2636,9 @@ export const SHIPPED_TYPE_SHAPES = {
     },
     "fields": {
       "channel_id": {
+        "type": "string"
+      },
+      "description": {
         "type": "string"
       },
       "etag": {
@@ -2631,6 +2694,9 @@ export const SHIPPED_TYPE_SHAPES = {
         "type": "string"
       },
       "default_audio_language": {
+        "type": "string"
+      },
+      "description": {
         "type": "string"
       },
       "duration_iso8601": {
@@ -2733,6 +2799,9 @@ export const SHIPPED_TYPE_SHAPES = {
       "content_encoded": {
         "type": "string"
       },
+      "description": {
+        "type": "string"
+      },
       "duration_raw": {
         "type": "string"
       },
@@ -2816,6 +2885,9 @@ export const SHIPPED_TYPE_SHAPES = {
         "type": "boolean"
       },
       "copyright": {
+        "type": "string"
+      },
+      "description": {
         "type": "string"
       },
       "episode_count": {
@@ -3325,6 +3397,10 @@ export const SHIPPED_TYPE_SHAPES = {
         "required": true,
         "type": "enum"
       },
+      "label": {
+        "required": true,
+        "type": "string"
+      },
       "last_used_at": {
         "type": "datetime"
       },
@@ -3400,6 +3476,9 @@ export const SHIPPED_TYPE_SHAPES = {
       },
       "completed": {
         "type": "boolean"
+      },
+      "description": {
+        "type": "string"
       },
       "due": {
         "type": "object"

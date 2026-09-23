@@ -8,14 +8,21 @@ import {
   SHIPPED_TYPE_SHAPES,
 } from "./index.js";
 
-/** A definition as the shapes carry it: prose and the id left out. */
-function withoutProse(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(withoutProse);
+/**
+ * A definition as the shapes carry it: prose and the id left out of each
+ * definition, and every name under `fields` and `property_schema` kept, since
+ * a field may be called `description` or `label`.
+ */
+function withoutProse(value: unknown, named = false): unknown {
+  if (Array.isArray(value)) return value.map((v) => withoutProse(v));
   if (value === null || typeof value !== "object") return value;
   return Object.fromEntries(
     Object.entries(value)
-      .filter(([key]) => !["label", "description", "id"].includes(key))
-      .map(([key, v]) => [key, withoutProse(v)]),
+      .filter(([key]) => named || !["label", "description", "id"].includes(key))
+      .map(([key, v]) => [
+        key,
+        withoutProse(v, !named && ["fields", "property_schema"].includes(key)),
+      ]),
   );
 }
 
@@ -31,6 +38,21 @@ describe("the shipped shapes", () => {
         schema.id,
       ).toEqual(withoutProse(schema));
     }
+  });
+
+  it("keep a field named for prose, which only its definition's prose leaves", () => {
+    // Witnesses: the registry has these fields, so a filter that dropped
+    // them by name would pass the comparisons above by agreeing with itself.
+    expect(
+      ALL_TYPES.find((t) => t.id === "core.task")?.fields.description,
+    ).toBeDefined();
+    expect(SHIPPED_TYPE_SHAPES["core.task"].fields.description).toEqual({
+      type: "string",
+    });
+    expect(
+      ALL_SYSTEM_TYPES.find((t) => t.id === "system.credential")?.fields.label,
+    ).toBeDefined();
+    expect(SHIPPED_TYPE_SHAPES["system.credential"].fields.label).toBeDefined();
   });
 
   it("carry every shipped edge type the same way", () => {
@@ -56,5 +78,8 @@ describe("the shipped shapes", () => {
     expectTypeOf(
       SHIPPED_EDGE_TYPE_SHAPES["parent-of"].cardinality,
     ).toEqualTypeOf<"one-to-many">();
+    expectTypeOf(
+      SHIPPED_TYPE_SHAPES["core.task"].fields.description.type,
+    ).toEqualTypeOf<"string">();
   });
 });

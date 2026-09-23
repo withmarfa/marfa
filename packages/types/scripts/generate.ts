@@ -335,20 +335,42 @@ lines.push("");
 
 /**
  * A shipped definition as literal types: every key sorted by code unit, the
- * prose (`label`, `description`) left out. The consts above are annotated
- * with the schema interfaces, which widen every value to `string` and every
- * list to `string[]`, so no field, enum value, parent, role, constraint or
- * cardinality reaches a built declaration through them. These do, and they
- * are what the published-surface lock sees move when a shipped definition
- * does. Prose is left out because it moves nothing a consumer compiles
- * against.
+ * prose (`label`, `description`) and the id left out. The consts above are
+ * annotated with the schema interfaces, which widen every value to `string`
+ * and every list to `string[]`, so the shapes of fields, enum values,
+ * parents, roles, constraints and cardinalities reach a built declaration
+ * through these instead, and they are what the published-surface lock sees
+ * move when a shipped definition does. Prose is left out because it moves
+ * nothing a consumer compiles against.
  */
 function shapeLiteral(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(shapeLiteral);
   if (value === null || typeof value !== "object") return value;
   const out: Record<string, unknown> = {};
   for (const key of Object.keys(value).sort()) {
-    if (key === "label" || key === "description" || key === "id") continue;
+    if (PROSE_KEYS.has(key)) continue;
+    const child = (value as Record<string, unknown>)[key];
+    out[key] = NAMED_MAPS.has(key) ? namedMap(child) : shapeLiteral(child);
+  }
+  return out;
+}
+
+/** Keys a definition carries only for a person reading it. */
+const PROSE_KEYS = new Set(["label", "description", "id"]);
+
+/**
+ * Keys whose value maps a name the definition chose to what it names. A field
+ * can be called `description` or `label`, so these keys are kept whatever
+ * they read, and only the definitions under them lose their prose.
+ */
+const NAMED_MAPS = new Set(["fields", "property_schema"]);
+
+function namedMap(value: unknown): unknown {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return shapeLiteral(value);
+  }
+  const out: Record<string, unknown> = {};
+  for (const key of Object.keys(value).sort()) {
     out[key] = shapeLiteral((value as Record<string, unknown>)[key]);
   }
   return out;
