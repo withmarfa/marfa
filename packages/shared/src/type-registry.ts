@@ -2,6 +2,7 @@ import { z } from "zod";
 import {
   ALL_TYPES,
   ALL_CONNECTOR_TYPES,
+  ALWAYS_SEARCHED_FIELDS,
   ALL_SYSTEM_TYPES,
   ALL_TYPE_IDS,
   FIELD_FORMATS,
@@ -624,7 +625,7 @@ export function getResolvedFields(
   return fields;
 }
 
-const CORE_SEARCH_FIELDS = new Set(["title", "body", "description", "name"]);
+const CORE_SEARCH_FIELDS = new Set(ALWAYS_SEARCHED_FIELDS);
 
 /**
  * Returns the names of string-typed fields for a type that are not already
@@ -861,6 +862,52 @@ const DEFAULT_MAX_ARRAY_ITEMS = 10_000;
 const boundedString = (field: FieldDefinition): z.ZodType =>
   noNullByte(z.string().max(field.maxLength ?? DEFAULT_MAX_STRING_LENGTH));
 
+/**
+ * The most a thumbnail may decode to. It travels inside its item on every
+ * read, list and event, so it is sized for a phone holding a library's worth:
+ * ten thousand items at the cap is 160 MiB.
+ */
+export const THUMBNAIL_MAX_BYTES = 16 * 1024;
+
+const THUMBNAIL_URI =
+  /^data:image\/(png|jpeg|webp);base64,([A-Za-z0-9+/]+={0,2})$/;
+
+// What each accepted image's bytes begin with, so a data URI labelled as an
+// image that holds something else is refused rather than carried.
+const THUMBNAIL_SIGNATURES: Record<string, (bytes: string) => boolean> = {
+  png: (bytes) => bytes.startsWith("\x89PNG\r\n\x1a\n"),
+  jpeg: (bytes) => bytes.startsWith("\xff\xd8\xff"),
+  webp: (bytes) => bytes.startsWith("RIFF") && bytes.slice(8, 12) === "WEBP",
+};
+
+const thumbnail = z.string().superRefine((value, ctx) => {
+  const match = THUMBNAIL_URI.exec(value);
+  const [, kind, data] = match ?? [];
+  if (!kind || !data || data.length % 4 !== 0) {
+    ctx.addIssue({
+      code: "custom",
+      message:
+        "Must be a data URI of a PNG, JPEG or WebP image: data:image/png;base64,...",
+    });
+    return;
+  }
+  const padding = data.endsWith("==") ? 2 : data.endsWith("=") ? 1 : 0;
+  const size = (data.length / 4) * 3 - padding;
+  if (size > THUMBNAIL_MAX_BYTES) {
+    ctx.addIssue({
+      code: "custom",
+      message: `Must decode to at most ${THUMBNAIL_MAX_BYTES} bytes; this is ${size}`,
+    });
+    return;
+  }
+  if (!THUMBNAIL_SIGNATURES[kind]?.(atob(data.slice(0, 16)))) {
+    ctx.addIssue({
+      code: "custom",
+      message: `Must hold a ${kind.toUpperCase()} image, as its data URI says`,
+    });
+  }
+});
+
 function fieldToZod(field: FieldDefinition): z.ZodType {
   let schema: z.ZodType;
 
@@ -913,6 +960,9 @@ function fieldToZod(field: FieldDefinition): z.ZodType {
       break;
     case "object":
       schema = z.record(z.string(), z.unknown());
+      break;
+    case "thumbnail":
+      schema = thumbnail;
       break;
   }
 

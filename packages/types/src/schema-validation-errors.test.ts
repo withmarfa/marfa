@@ -179,6 +179,22 @@ const CLASSES: { name: string; input: unknown; atField: string }[] = [
     },
     atField: "compatible_with.nope.nothing",
   },
+  {
+    name: "thumbnail named for a field search always indexes",
+    input: { id: "acme.t", fields: { title: { type: "thumbnail" } } },
+    atField: "fields.title",
+  },
+  {
+    name: "a second thumbnail",
+    input: {
+      id: "acme.u",
+      fields: {
+        thumbnail: { type: "thumbnail" },
+        cover: { type: "string", format: "thumbnail" },
+      },
+    },
+    atField: "fields.cover",
+  },
 ];
 
 describe("every validation error explains itself", () => {

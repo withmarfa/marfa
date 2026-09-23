@@ -53,6 +53,7 @@ export const FIELD_TYPES: readonly FieldType[] = [
   "enum",
   "array",
   "object",
+  "thumbnail",
 ];
 
 export const FIELD_FORMATS: readonly FieldFormat[] = [
@@ -60,6 +61,7 @@ export const FIELD_FORMATS: readonly FieldFormat[] = [
   "email",
   "datetime",
   "date",
+  "thumbnail",
   "bcp47",
   "iso3166",
 ];
@@ -80,7 +82,19 @@ const FORMAT_TO_FIELD_TYPE: Readonly<Partial<Record<FieldFormat, FieldType>>> =
     email: "email",
     datetime: "datetime",
     date: "date",
+    thumbnail: "thumbnail",
   };
+
+/**
+ * The property names full-text search indexes whatever their field type. A
+ * thumbnail may not take one, because its base64 would then be searchable.
+ */
+export const ALWAYS_SEARCHED_FIELDS: readonly string[] = [
+  "title",
+  "body",
+  "description",
+  "name",
+];
 
 export const MERGE_STRATEGIES: readonly string[] = [
   "last_writer_wins",
@@ -749,6 +763,8 @@ export function validateTypeSchema(
     ...ancestorFields.keys(),
   ]);
 
+  if (fields) validateThumbnails(fields, ancestorFields, errors);
+
   for (const name of requiredNames) {
     if (!visibleFields.has(name)) {
       errors.push(
@@ -879,6 +895,54 @@ function validateRoles(
         }),
       );
     }
+  }
+}
+
+/**
+ * A type carries at most one thumbnail, counting what it inherits, so a device
+ * reading "the item's thumbnail" is never choosing between two.
+ */
+function validateThumbnails(
+  fields: Record<string, unknown>,
+  ancestorFields: ReadonlyMap<
+    string,
+    { owner: string; definition: FieldDefinition }
+  >,
+  errors: SchemaValidationIssue[],
+): void {
+  const isThumbnail = (def: unknown): boolean => {
+    const raw = asRecord(def);
+    return raw?.type === "thumbnail" || raw?.format === "thumbnail";
+  };
+  const own = Object.keys(fields).filter((name) => isThumbnail(fields[name]));
+  for (const name of own) {
+    if (ALWAYS_SEARCHED_FIELDS.includes(name)) {
+      errors.push(
+        issue({
+          field: `fields.${name}`,
+          expected: `a thumbnail named other than ${ALWAYS_SEARCHED_FIELDS.join(", ")}`,
+          actual: `a thumbnail named "${name}"`,
+          hint: `Search indexes "${name}" whatever its type, which would make the image's base64 searchable. Name it "thumbnail".`,
+        }),
+      );
+    }
+  }
+  const inherited = [...ancestorFields.entries()]
+    .filter(
+      ([name, { definition }]) =>
+        definition.type === "thumbnail" && !own.includes(name),
+    )
+    .map(([name, { owner }]) => `"${name}" from "${owner}"`);
+  const all = [...own.map((name) => `"${name}"`), ...inherited];
+  if (all.length > 1 && own.length > 0) {
+    errors.push(
+      issue({
+        field: `fields.${own[own.length - 1]}`,
+        expected: "at most one thumbnail field, counting inherited ones",
+        actual: `${all.length}: ${all.join(", ")}`,
+        hint: "Keep one thumbnail field.",
+      }),
+    );
   }
 }
 
@@ -1192,8 +1256,8 @@ function validateCompatibleWith(
  *
  * Every entry is a containment fact about the values themselves, matching how
  * each type is compiled for write-time validation: `url`, `email`,
- * `datetime`, `date` and `enum` all hold strings, and every `integer` is a
- * `number`. Each relation is one-way — a reader expecting a URL that is
+ * `datetime`, `date`, `thumbnail` and `enum` all hold strings, and every
+ * `integer` is a `number`. Each relation is one-way — a reader expecting a URL that is
  * handed an arbitrary string has no such guarantee — which is why this is a
  * table rather than a symmetric comparison.
  */
@@ -1204,6 +1268,7 @@ const FIELD_TYPES_READABLE_AS: Partial<
   email: ["string"],
   datetime: ["string"],
   date: ["string"],
+  thumbnail: ["string"],
   enum: ["string"],
   integer: ["number"],
 };
