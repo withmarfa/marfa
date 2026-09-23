@@ -346,7 +346,7 @@ function syntheticCalendar(
         // Only one of the two event types exists here; the other answers
         // empty, as an instance with no Google calendar would.
         if (filters.type !== "core.event") {
-          return Promise.resolve({ data: [], cursor: null, has_more: false });
+          return Promise.resolve({ data: [], next_cursor: null });
         }
         const eligible = items.filter((item) => matches(item, filters));
         const offset =
@@ -358,8 +358,7 @@ function syntheticCalendar(
         );
         return Promise.resolve({
           data: eligible.slice(offset, end),
-          cursor: end < eligible.length ? String(end) : null,
-          has_more: end < eligible.length,
+          next_cursor: end < eligible.length ? String(end) : null,
         });
       },
       getMany: (ids: string[]) => {

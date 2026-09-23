@@ -126,17 +126,33 @@ export const EdgeSchema = z
   .openapi("Edge");
 
 /**
- * A single edge type's hydrated block on an item response. Per-type cap is
- * 50 by default; has_more + next_cursor signal that more edges exist and the
- * caller should paginate via GET /items/:id/edges?edge_type=X&cursor=...
+ * One page of rows, the shape of every list and search: the rows, and the
+ * cursor that continues past them, `null` on the last page. Registered under
+ * its own name so each list's page is one component a generated client
+ * names, and every page is the same two keys.
  */
-export const ItemEdgesBlockSchema = z
-  .object({
-    edges: z.array(EdgeSchema),
-    has_more: z.boolean(),
-    next_cursor: z.string().optional(),
-  })
-  .openapi("ItemEdgesBlock");
+export function pageOf<T extends z.ZodType>(row: T, name: string) {
+  return z
+    .object({ data: z.array(row), next_cursor: NextCursorSchema })
+    .openapi(name);
+}
+
+/** The continuation every page carries: a cursor to the next page, `null`
+ *  on the last. Declared once so a page that carries a sibling beside it,
+ *  as the stores and occurrences doors do, carries the same field. */
+export const NextCursorSchema = z
+  .string()
+  .nullable()
+  .describe(
+    "Pass as `cursor` for the next page; `null` on the last. A page can be short, or empty, with a cursor still to follow, so a walk stops on `null` and never on a short page.",
+  );
+
+/**
+ * A page of edges. Also a single edge type's hydrated block on an item
+ * response, which is the first page of that type's edges, cut at 50 by
+ * default, that `GET /items/{id}/edges?edge_type=X&cursor=...` continues.
+ */
+export const EdgePageSchema = pageOf(EdgeSchema, "EdgePage");
 
 export const ItemSchema = z
   .object({
@@ -160,7 +176,7 @@ export const ItemSchema = z
      * opt-in on list GETs via ?include=edges. An empty object means no edges
      * or hydration was skipped.
      */
-    edges: z.record(z.string(), ItemEdgesBlockSchema).optional(),
+    edges: z.record(z.string(), EdgePageSchema).optional(),
     /**
      * Hydrated extension namespaces. Opt-in on list GETs via
      * ?include=extensions; filtered by caller permissions (same rule as
@@ -316,6 +332,10 @@ export const VersionSchema = z
   })
   .openapi("Version");
 
+/** An item's history, newest first: the whole of it, so `next_cursor` is
+ *  always `null`. The same page `GET /items/{id}/versions` answers. */
+export const VersionPageSchema = pageOf(VersionSchema, "VersionPage");
+
 /**
  * The single-item read response. The base shape (`item` with outbound `edges`
  * hydrated, plus `metadata`) is always present; the three optional blocks are
@@ -329,7 +349,7 @@ export const VersionSchema = z
  *   and permission-filtered. Opt in with `include=neighbors`. Paired with
  *   `neighbors_truncated`: the combined neighbor set is capped, and when the cap
  *   bites this flag is `true` — the only signal for that case, since the
- *   per-type edge-block `has_more` does not cover a combined-set overflow.
+ *   per-type edge block's `next_cursor` does not cover a combined-set overflow.
  *   Consumers must page the per-type edge/backref endpoints when it is set.
  * - `neighbors_omitted` — how many of the item's neighbors were left out
  *   because the caller may not read them. Distinct from `neighbors_truncated`,
@@ -337,18 +357,18 @@ export const VersionSchema = z
  *   a partial neighborhood indistinguishable from a complete one, so an app
  *   missing an edge scope rendered a ticket with none of its relations and
  *   looked correct doing it.
- * - `versions` — the item's version snapshots, newest-first. Opt in with
- *   `include=versions`.
+ * - `versions` — the item's version snapshots, newest first, as the same page
+ *   `GET /items/{id}/versions` answers. Opt in with `include=versions`.
  */
 export const ItemDetailSchema = z
   .object({
     item: ItemSchema,
     metadata: MetadataSchema,
-    backrefs: z.record(z.string(), ItemEdgesBlockSchema).optional(),
+    backrefs: z.record(z.string(), EdgePageSchema).optional(),
     neighbors: z.array(ItemWithMetadataSchema).optional(),
     neighbors_truncated: z.boolean().optional(),
     neighbors_omitted: z.number().int().optional(),
-    versions: z.array(VersionSchema).optional(),
+    versions: VersionPageSchema.optional(),
   })
   .openapi("ItemDetail");
 

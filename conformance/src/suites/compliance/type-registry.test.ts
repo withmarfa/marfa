@@ -35,9 +35,9 @@ describe("type registry", () => {
     const r = await client.listTypes();
     expect(r.ok).toBe(true);
     await expectMatchesSchema("GET", "/types", 200, r.data);
-    expect(r.data.length).toBeGreaterThanOrEqual(1);
+    expect(r.data.data.length).toBeGreaterThanOrEqual(1);
 
-    const typeIds = r.data.map((t) => t.id);
+    const typeIds = r.data.data.map((t) => t.id);
     expect(typeIds).toContain("core.note");
     expect(typeIds).toContain("core.bookmark");
   });

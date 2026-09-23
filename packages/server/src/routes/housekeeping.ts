@@ -4,7 +4,7 @@ import type { AppEnv } from "../middleware/auth.js";
 import { requireOperatorKey } from "../middleware/auth.js";
 import type { Housekeeping } from "../housekeeping/scheduler.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
-import { nullableRef } from "./_schemas.js";
+import { nullableRef, pageOf } from "./_schemas.js";
 
 // ---------------------------------------------------------------------------
 // Schemas
@@ -93,7 +93,7 @@ const listHousekeepingRoute = createRoute({
     200: {
       content: {
         "application/json": {
-          schema: z.object({ data: z.array(HousekeepingJobSchema) }),
+          schema: pageOf(HousekeepingJobSchema, "HousekeepingJobPage"),
         },
       },
       description: "The housekeeping jobs",
@@ -155,7 +155,7 @@ export function housekeepingRoutes(housekeeping: Housekeeping) {
   router.openapi(listHousekeepingRoute, async (c) => {
     requireOperatorKey(c);
     const data = await housekeeping.list();
-    return c.json({ data }, 200);
+    return c.json({ data, next_cursor: null }, 200);
   });
 
   router.openapi(runHousekeepingRoute, async (c) => {

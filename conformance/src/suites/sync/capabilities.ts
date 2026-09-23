@@ -1044,8 +1044,7 @@ export async function trackSourceScopedItems(args: {
     if (cursor !== undefined) query.set("cursor", cursor);
     const listing = await client.rawRequest<{
       data?: Array<{ id: string }>;
-      has_more?: boolean;
-      cursor?: string | null;
+      next_cursor?: string | null;
     }>(`/items?${query.toString()}`);
     if (!listing.ok) {
       throw new Error(
@@ -1053,8 +1052,8 @@ export async function trackSourceScopedItems(args: {
       );
     }
     for (const item of listing.data.data ?? []) trackItem(ctx, item.id);
-    if (!listing.data.has_more || !listing.data.cursor) return;
-    cursor = listing.data.cursor;
+    if (!listing.data.next_cursor) return;
+    cursor = listing.data.next_cursor;
   }
   throw new Error(`listing the rows written under ${ctx.source} did not end`);
 }

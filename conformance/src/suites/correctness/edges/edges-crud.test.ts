@@ -291,10 +291,10 @@ describe("edges CRUD", () => {
 
     const hydrated = created.data.item.edges;
     expect(hydrated).toBeDefined();
-    expect(hydrated!.about.edges.length).toBe(1);
-    expect(hydrated!.about.edges[0].target_id).toBe(aboutTarget);
-    expect(hydrated!["parent-of"].edges.length).toBe(1);
-    expect(hydrated!["parent-of"].edges[0].target_id).toBe(parentTarget);
+    expect(hydrated!.about.data.length).toBe(1);
+    expect(hydrated!.about.data[0].target_id).toBe(aboutTarget);
+    expect(hydrated!["parent-of"].data.length).toBe(1);
+    expect(hydrated!["parent-of"].data[0].target_id).toBe(parentTarget);
 
     const list = await client.listItemEdges(created.data.item.id);
     expect(list.ok).toBe(true);
@@ -321,7 +321,7 @@ describe("edges CRUD", () => {
     trackItem(ctx, itemId);
 
     for (const edge of Object.values(created.data.item.edges ?? {}).flatMap(
-      (section) => section.edges,
+      (section) => section.data,
     )) {
       trackEdge(ctx, edge.id);
     }

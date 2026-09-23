@@ -1,4 +1,5 @@
 import { createRoute, z } from "@hono/zod-openapi";
+import { pageOf } from "./_schemas.js";
 import { DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT } from "../page-limits.js";
 import { MarfaError, ErrorCode, GLOBAL_TYPE_WILDCARD } from "@withmarfa/shared";
 import type { ApiKey } from "@withmarfa/shared";
@@ -193,9 +194,7 @@ const listWebhooksRoute = createRoute({
     200: {
       content: {
         "application/json": {
-          schema: z.object({
-            webhooks: z.array(WebhookSchema),
-          }),
+          schema: pageOf(WebhookSchema, "WebhookPage"),
         },
       },
       description: "List of webhooks (secrets redacted)",
@@ -424,15 +423,17 @@ const listDeliveriesRoute = createRoute({
         .optional()
         .default(DEFAULT_PAGE_LIMIT)
         .describe("Maximum number of delivery attempts to return."),
+      cursor: z
+        .string()
+        .optional()
+        .describe("Opaque cursor from a previous page's `next_cursor`."),
     }),
   },
   responses: {
     200: {
       content: {
         "application/json": {
-          schema: z.object({
-            deliveries: z.array(DeliverySchema),
-          }),
+          schema: pageOf(DeliverySchema, "WebhookDeliveryPage"),
         },
       },
       description: "List of delivery attempts",
@@ -567,10 +568,11 @@ export function webhookRoutes(storage: Storage) {
     const webhooks = await storage.outboundWebhooks.list();
     return c.json(
       {
-        webhooks: webhooks.map((w) => ({
+        data: webhooks.map((w) => ({
           ...w,
           secret: redactSecret(w.secret),
         })),
+        next_cursor: null,
       },
       200,
     );
@@ -661,15 +663,17 @@ export function webhookRoutes(storage: Storage) {
     requireAuth(c);
     requirePermission(c, "webhooks.manage");
     const { id } = c.req.valid("param");
-    const { limit } = c.req.valid("query");
+    const { limit, cursor } = c.req.valid("query");
 
     const existing = await storage.outboundWebhooks.get(id);
     if (!existing) {
       throw new MarfaError(ErrorCode.WEBHOOK_NOT_FOUND, "Webhook not found");
     }
 
-    const deliveries = await storage.outboundWebhookDeliveries.list(id, limit);
-    return c.json({ deliveries }, 200);
+    return c.json(
+      await storage.outboundWebhookDeliveries.list(id, { limit, cursor }),
+      200,
+    );
   });
 
   return router;

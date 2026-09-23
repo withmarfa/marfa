@@ -30,8 +30,8 @@ async function search(query: string): Promise<SearchHit[]> {
     { key: ctx.workingKey },
   );
   expect(res.status).toBe(200);
-  const body = (await res.json()) as { results: SearchHit[] };
-  return body.results;
+  const body = (await res.json()) as { data: SearchHit[] };
+  return body.data;
 }
 
 describe("what reaches the full-text index", () => {

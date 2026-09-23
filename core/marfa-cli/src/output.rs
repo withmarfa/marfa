@@ -289,29 +289,13 @@ fn describe(value: &Value) -> Result<String, CliError> {
             if let Some(Value::Array(rows)) = map.get("data") {
                 return lines(rows, map);
             }
-            // A listing under its own noun: `keys`, `webhooks`, `versions`,
-            // `extensions`, `types`.
+            // A bulk write's per-entry outcomes, `{counts, results}`, and
+            // `items bulk-get`'s `{items, metadata}`.
             if map.len() <= 2
                 && let Some((_, Value::Array(rows))) =
                     map.iter().find(|(_, value)| value.is_array())
             {
                 return lines(rows, map);
-            }
-            if let Some(Value::Array(hits)) = map.get("results") {
-                let mut text = Vec::new();
-                for hit in hits {
-                    let item = hit.get("item").unwrap_or(hit);
-                    let score = hit
-                        .get("score")
-                        .and_then(Value::as_f64)
-                        .map(|score| format!("{score:>7.3}  "))
-                        .unwrap_or_default();
-                    text.push(format!("{score}{}", record_line(item)));
-                }
-                if text.is_empty() {
-                    text.push("(no matches)".into());
-                }
-                return Ok(text.join("\n"));
             }
             if map.contains_key("id") && map.contains_key("type") {
                 let mut text = record_line(value);
@@ -329,20 +313,6 @@ fn describe(value: &Value) -> Result<String, CliError> {
             }
             Ok(serde_json::to_string_pretty(value)?)
         }
-        Value::Array(rows) => {
-            if rows.is_empty() {
-                return Ok("(none)".into());
-            }
-            let mut text = Vec::new();
-            for row in rows {
-                if row.get("id").is_some() {
-                    text.push(record_line(row));
-                } else {
-                    text.push(serde_json::to_string_pretty(row)?);
-                }
-            }
-            Ok(text.join("\n"))
-        }
         Value::Null => Ok("done".into()),
         other => Ok(other.to_string()),
     }
@@ -353,6 +323,27 @@ fn lines(rows: &[Value], page: &serde_json::Map<String, Value>) -> Result<String
     for row in rows {
         if row.get("id").is_some() {
             text.push(record_line(row));
+        } else if let (Some(starts), Some(item)) = (row.get("starts_at"), row.get("item")) {
+            // An occurrence: when it falls is the point of the view.
+            let ends = row
+                .get("ends_at")
+                .and_then(Value::as_str)
+                .map(|ends| format!(" to {ends}"))
+                .unwrap_or_default();
+            text.push(format!(
+                "{}{ends}  {}",
+                starts.as_str().unwrap_or(""),
+                record_line(item)
+            ));
+        } else if let Some(item) = row.get("item") {
+            // A search hit or a listing row carrying its metadata; a hit
+            // leads with its score.
+            let score = row
+                .get("relevance_score")
+                .and_then(Value::as_f64)
+                .map(|score| format!("{score:>7.3}  "))
+                .unwrap_or_default();
+            text.push(format!("{score}{}", record_line(item)));
         } else {
             text.push(serde_json::to_string(row)?);
         }
@@ -360,7 +351,7 @@ fn lines(rows: &[Value], page: &serde_json::Map<String, Value>) -> Result<String
     if text.is_empty() {
         text.push("(none)".into());
     }
-    if let Some(cursor) = page.get("cursor").and_then(Value::as_str) {
+    if let Some(cursor) = page.get("next_cursor").and_then(Value::as_str) {
         text.push(format!("more: --cursor {cursor}"));
     }
     Ok(text.join("\n"))
@@ -406,4 +397,61 @@ fn record_line(record: &Value) -> String {
         line.push_str(&format!("  [{state}]"));
     }
     line
+}
+
+#[cfg(test)]
+mod tests {
+    use super::describe;
+    use serde_json::json;
+
+    #[test]
+    fn a_page_with_a_cursor_names_how_to_continue() {
+        let text = describe(&json!({
+            "data": [{"id": "i1", "type": "core.note", "created_at": "2026-01-01T00:00:00Z"}],
+            "next_cursor": "c2",
+        }))
+        .unwrap();
+        assert_eq!(
+            text,
+            "i1  core.note  2026-01-01T00:00:00Z\nmore: --cursor c2"
+        );
+    }
+
+    #[test]
+    fn the_last_page_names_no_cursor() {
+        let text = describe(&json!({"data": [], "next_cursor": null})).unwrap();
+        assert_eq!(text, "(none)");
+    }
+
+    #[test]
+    fn an_occurrence_leads_with_when_it_falls() {
+        let text = describe(&json!({
+            "data": [{
+                "starts_at": "2026-01-02T09:00:00Z",
+                "ends_at": "2026-01-02T10:00:00Z",
+                "item": {"id": "e1", "type": "core.event", "properties": {"title": "Standup"}},
+            }],
+            "next_cursor": null,
+            "window": {},
+            "scan": {},
+        }))
+        .unwrap();
+        assert_eq!(
+            text,
+            "2026-01-02T09:00:00Z to 2026-01-02T10:00:00Z  e1  core.event    Standup"
+        );
+    }
+
+    #[test]
+    fn a_search_hit_leads_with_its_score() {
+        let text = describe(&json!({
+            "data": [{
+                "item": {"id": "n1", "type": "core.note", "properties": {"title": "Wombat"}},
+                "relevance_score": 1.5,
+            }],
+            "next_cursor": null,
+        }))
+        .unwrap();
+        assert_eq!(text, "  1.500  n1  core.note    Wombat");
+    }
 }

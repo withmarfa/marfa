@@ -16,7 +16,7 @@ import {
   OkResponseSchema,
 } from "../openapi.js";
 import { DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT } from "../page-limits.js";
-import { nullableRef } from "./_schemas.js";
+import { nullableRef, pageOf } from "./_schemas.js";
 
 // ---------------------------------------------------------------------------
 // Schemas
@@ -156,7 +156,7 @@ const listConnectorsRoute = createRoute({
     200: {
       content: {
         "application/json": {
-          schema: z.object({ data: z.array(ConnectorSchema) }),
+          schema: pageOf(ConnectorSchema, "ConnectorPage"),
         },
       },
       description: "The registrations",
@@ -277,13 +277,17 @@ const listRunsRoute = createRoute({
         .describe(
           `How many runs, newest first: at most ${String(MAX_PAGE_LIMIT)}, ${String(DEFAULT_PAGE_LIMIT)} unless given.`,
         ),
+      cursor: z
+        .string()
+        .optional()
+        .describe("Opaque cursor from a previous page's `next_cursor`."),
     }),
   },
   responses: {
     200: {
       content: {
         "application/json": {
-          schema: z.object({ data: z.array(ConnectorRunSchema) }),
+          schema: pageOf(ConnectorRunSchema, "ConnectorRunPage"),
         },
       },
       description: "The runs",
@@ -348,7 +352,10 @@ export function connectorRoutes(storage: Storage) {
 
   router.openapi(listConnectorsRoute, async (c) => {
     requireAuth(c);
-    return c.json({ data: await storage.connectors.list() }, 200);
+    return c.json(
+      { data: await storage.connectors.list(), next_cursor: null },
+      200,
+    );
   });
 
   router.openapi(getConnectorRoute, async (c) => {
@@ -416,9 +423,9 @@ export function connectorRoutes(storage: Storage) {
   router.openapi(listRunsRoute, async (c) => {
     requireAuth(c);
     const connector = await connectorOrRefuse(c.req.valid("param").id);
-    const { limit } = c.req.valid("query");
+    const { limit, cursor } = c.req.valid("query");
     return c.json(
-      { data: await storage.connectors.listRuns(connector.id, limit) },
+      await storage.connectors.listRuns(connector.id, { limit, cursor }),
       200,
     );
   });

@@ -73,15 +73,14 @@ export function withMetadata(
 
 export function itemsPage(
   rows: Array<{ item: Record<string, unknown>; tags?: string[] }>,
-  options: { cursor?: string; hasMore?: boolean } = {},
+  options: { nextCursor?: string } = {},
 ): Answer {
   return {
     kind: "json",
     status: 200,
     body: {
       data: rows.map((row) => withMetadata(row.item, row.tags ?? [])),
-      cursor: options.cursor ?? null,
-      has_more: options.hasMore ?? false,
+      next_cursor: options.nextCursor ?? null,
     },
   };
 }
@@ -173,7 +172,11 @@ export function scriptedType(id: string): Record<string, unknown> {
 }
 
 export function typeCatalog(): Answer {
-  return { kind: "json", status: 200, body: [...SCRIPTED_TYPES] };
+  return {
+    kind: "json",
+    status: 200,
+    body: { data: [...SCRIPTED_TYPES], next_cursor: null },
+  };
 }
 
 export function refusal(

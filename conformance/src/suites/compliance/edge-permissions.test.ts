@@ -502,9 +502,9 @@ describe("the edge listing answers only what the credential may read", () => {
 
   it("pages to the end of the listing though whole pages are dropped", async () => {
     // What "shorter than the limit" turns into at a page boundary: a
-    // page of nothing, with `has_more` still true. The cursor and
-    // `has_more` are the store's reading of the whole listing rather
-    // than of what survived the gate, which is what makes the walk
+    // page of nothing, with a cursor still to follow. The cursor is the
+    // store's reading of the whole listing rather than of what survived
+    // the gate, which is what makes the walk
     // terminate — and a client that stopped on an empty page would
     // truncate its copy silently and never learn it had.
     const edgeType = `mock.disclosure.paged.${ctx.runId}`;
@@ -570,12 +570,13 @@ describe("the edge listing answers only what the credential may read", () => {
       });
       expect(answer.ok, JSON.stringify(answer.error)).toBe(true);
       seen.push(...answer.data.data.map((e) => e.id));
-      if (answer.data.data.length === 0 && answer.data.has_more) emptyPages++;
-      if (!answer.data.has_more) {
+      if (answer.data.data.length === 0 && answer.data.next_cursor !== null)
+        emptyPages++;
+      if (answer.data.next_cursor === null) {
         cursor = undefined;
         break;
       }
-      cursor = answer.data.cursor ?? undefined;
+      cursor = answer.data.next_cursor ?? undefined;
       expect(
         cursor,
         "the listing says there is more and names no cursor",
@@ -774,7 +775,7 @@ describe("the doors under an item answer only what the credential may read", () 
     expect(read.ok, JSON.stringify(read.error)).toBe(true);
     const blocks = read.data.item.edges ?? {};
     expect(
-      blocks[seen]?.edges.map((e) => e.id),
+      blocks[seen]?.data.map((e) => e.id),
       "the item read dropped an edge of a kind the credential holds",
     ).toContain(visibleEdge);
     expect(
@@ -787,7 +788,7 @@ describe("the doors under an item answer only what the credential may read", () 
     const withBackrefs = await narrowClient.getItemWithBackrefs(anchor);
     expect(withBackrefs.ok, JSON.stringify(withBackrefs.error)).toBe(true);
     const backIds = Object.values(withBackrefs.data.backrefs ?? {}).flatMap(
-      (b) => b.edges.map((e) => e.id),
+      (b) => b.data.map((e) => e.id),
     );
     expect(
       backIds,
@@ -814,7 +815,7 @@ describe("the doors under an item answer only what the credential may read", () 
     const listedBlocks =
       listed.data.data.find((i) => i.id === anchor)?.edges ?? {};
     expect(
-      listedBlocks[seen]?.edges.map((e) => e.id),
+      listedBlocks[seen]?.data.map((e) => e.id),
       "the item listing dropped an edge of a kind the credential holds",
     ).toContain(visibleEdge);
     expect(
@@ -827,7 +828,7 @@ describe("the doors under an item answer only what the credential may read", () 
     expect(bulk.ok, JSON.stringify(bulk.error)).toBe(true);
     const bulkBlocks = bulk.data.items[0]?.edges ?? {};
     expect(
-      bulkBlocks[seen]?.edges.map((e) => e.id),
+      bulkBlocks[seen]?.data.map((e) => e.id),
       "the bulk read dropped an edge of a kind the credential holds",
     ).toContain(visibleEdge);
     expect(
@@ -845,18 +846,18 @@ describe("the doors under an item answer only what the credential may read", () 
     const wideRead = await wideClient.getItemWithBackrefs(anchor);
     expect(wideRead.ok, JSON.stringify(wideRead.error)).toBe(true);
     const wideOut = Object.values(wideRead.data.item.edges ?? {}).flatMap((b) =>
-      b.edges.map((e) => e.id),
+      b.data.map((e) => e.id),
     );
     expect(wideOut.sort()).toEqual([visibleEdge, hiddenKindEdge].sort());
     expect(
       Object.values(wideRead.data.backrefs ?? {})
-        .flatMap((b) => b.edges.map((e) => e.id))
+        .flatMap((b) => b.data.map((e) => e.id))
         .sort(),
     ).toEqual([hiddenSourceEdge, visibleBackref].sort());
   });
   it("pages a per-item door to the end though whole pages are dropped", async () => {
     // The two per-item doors publish the same paging rule the edge
-    // listing does — short pages, an empty page while `has_more` is true,
+    // listing does — short pages, an empty page with a cursor to follow,
     // and a cursor that still reaches the end — so one of them asserts
     // it. The backref door, because it is the one whose rows are dropped
     // by the source's type rather than by their own kind, so a page can
@@ -905,12 +906,13 @@ describe("the doors under an item answer only what the credential may read", () 
       });
       expect(answer.ok, JSON.stringify(answer.error)).toBe(true);
       seen.push(...answer.data.data.map((e) => e.id));
-      if (answer.data.data.length === 0 && answer.data.has_more) emptyPages++;
-      if (!answer.data.has_more) {
+      if (answer.data.data.length === 0 && answer.data.next_cursor !== null)
+        emptyPages++;
+      if (answer.data.next_cursor === null) {
         cursor = undefined;
         break;
       }
-      cursor = answer.data.cursor ?? undefined;
+      cursor = answer.data.next_cursor ?? undefined;
       expect(
         cursor,
         "the door says there is more and names no cursor",
@@ -1015,7 +1017,7 @@ describe("the doors under an item answer only what the credential may read", () 
     });
     expect(searchWitness.ok, JSON.stringify(searchWitness.error)).toBe(true);
     expect(
-      searchWitness.data.results.map((r) => r.item.id),
+      searchWitness.data.data.map((r) => r.item.id),
       "search dropped a row matching a term the credential may read",
     ).toContain(source);
 

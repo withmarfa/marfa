@@ -1,6 +1,6 @@
 use clap::Args;
 
-use super::{StateFilter, TierFilter};
+use super::{PageArgs, StateFilter, TierFilter};
 use crate::error::CliError;
 use crate::output::Printer;
 use crate::remote::Remote;
@@ -35,12 +35,8 @@ pub struct SearchArgs {
     /// Extra to hydrate onto each hit: `edges`, `metadata`.
     #[arg(long, value_name = "NAME")]
     pub include: Vec<String>,
-    /// How many hits at most.
-    #[arg(long)]
-    pub limit: Option<u32>,
-    /// How many hits to skip first.
-    #[arg(long)]
-    pub offset: Option<u32>,
+    #[command(flatten)]
+    pub page: PageArgs,
 }
 
 pub fn request(args: &SearchArgs) -> Request {
@@ -54,8 +50,8 @@ pub fn request(args: &SearchArgs) -> Request {
         .query_opt("occurred_after", args.occurred_after.clone())
         .query_opt("occurred_before", args.occurred_before.clone())
         .query_list("include", &args.include)
-        .query_opt("limit", args.limit.map(|limit| limit.to_string()))
-        .query_opt("offset", args.offset.map(|offset| offset.to_string()))
+        .query_opt("limit", args.page.limit.map(|limit| limit.to_string()))
+        .query_opt("cursor", args.page.cursor.clone())
 }
 
 pub fn run(args: SearchArgs, remote: &Remote, out: &Printer) -> Result<(), CliError> {

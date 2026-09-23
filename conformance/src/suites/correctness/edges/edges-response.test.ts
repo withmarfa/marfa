@@ -31,7 +31,7 @@ async function makeItem(label: string = ""): Promise<string> {
 }
 
 describe("edge response hydration + pagination", () => {
-  it("GET /items/:id returns hydrated edges keyed by edge_type with has_more", async () => {
+  it("GET /items/:id returns hydrated edges keyed by edge_type, each block a page", async () => {
     const subject = await makeItem("subject");
     const t1 = await makeItem("t1");
     const t2 = await makeItem("t2");
@@ -66,12 +66,12 @@ describe("edge response hydration + pagination", () => {
     expect(edges).toBeDefined();
     expect(Object.keys(edges!).sort()).toContain("about");
     expect(Object.keys(edges!).sort()).toContain("authored-by");
-    expect(edges!.about.edges.length).toBe(2);
-    expect(edges!.about.has_more).toBe(false);
-    expect(edges!["authored-by"].edges.length).toBe(1);
+    expect(edges!.about.data.length).toBe(2);
+    expect(edges!.about.next_cursor).toBeNull();
+    expect(edges!["authored-by"].data.length).toBe(1);
   });
 
-  it("per-type hydration caps with has_more=true when over limit", async () => {
+  it("per-type hydration caps a block and carries a next_cursor when over the limit", async () => {
     const subject = await makeItem("big");
 
     // The server hydrates at most 50 edges per type on an item read.
@@ -91,12 +91,15 @@ describe("edge response hydration + pagination", () => {
     const fetched = await client.getItem(subject);
     expect(fetched.ok).toBe(true);
     const about = fetched.data.item.edges!.about;
-    expect(about.edges.length).toBe(HYDRATION_CAP);
-    expect(about.has_more).toBe(true);
+    expect(about.data.length).toBe(HYDRATION_CAP);
+    expect(about.next_cursor).not.toBeNull();
     expect(typeof about.next_cursor).toBe("string");
 
-    const collected = new Set<string>();
-    let cursor: string | undefined;
+    // The block is the first page of the listing: its cursor continues it
+    // at the same door, narrowed to the block's edge type, and the two
+    // together deliver every edge once.
+    const collected = new Set<string>(about.data.map((e) => e.id));
+    let cursor: string | undefined = about.next_cursor!;
     for (let iter = 0; iter < 20; iter++) {
       const page = await client.listItemEdges(subject, {
         edge_type: "about",
@@ -106,10 +109,42 @@ describe("edge response hydration + pagination", () => {
       expect(page.ok).toBe(true);
       await expectMatchesSchema("GET", "/items/{id}/edges", 200, page.data);
       for (const e of page.data.data) collected.add(e.id);
-      if (!page.data.has_more || !page.data.cursor) break;
-      cursor = page.data.cursor;
+      if (page.data.next_cursor === null) break;
+      cursor = page.data.next_cursor;
     }
     expect(collected.size).toBe(SEED);
+  });
+
+  it("continues a hydrated inbound block at the backrefs listing", async () => {
+    const target = await makeItem("inbound");
+    const SEED = 51;
+    for (let i = 0; i < SEED; i++) {
+      const e = await client.createEdge({
+        source_id: await makeItem(`s${String(i)}`),
+        target_id: target,
+        edge_type: "about",
+      });
+      expect(e.ok).toBe(true);
+      trackEdge(ctx, e.data.edge.id);
+    }
+    const detail = await client.rawRequest<{
+      backrefs: Record<
+        string,
+        { data: { id: string }[]; next_cursor: string | null }
+      >;
+    }>(`/items/${target}?include=backrefs`);
+    expect(detail.ok).toBe(true);
+    const block = detail.data.backrefs.about!;
+    expect(block.data).toHaveLength(50);
+    expect(block.next_cursor).not.toBeNull();
+    const rest = await client.listItemBackrefs(target, {
+      edge_type: "about",
+      cursor: block.next_cursor!,
+    });
+    expect(rest.ok).toBe(true);
+    expect(rest.data.next_cursor).toBeNull();
+    const ids = new Set([...block.data, ...rest.data.data].map((e) => e.id));
+    expect(ids.size).toBe(SEED);
   });
 
   it("answers 404 for an unknown item and 400 for a malformed id", async () => {

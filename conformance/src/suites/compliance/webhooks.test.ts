@@ -57,7 +57,7 @@ describe("outbound webhooks", () => {
     const listed = await client.listWebhooks();
     expect(listed.ok).toBe(true);
     await expectMatchesSchema("GET", "/webhooks", 200, listed.data);
-    const mine = listed.data.webhooks.find((w) => w.id === created.data.id);
+    const mine = listed.data.data.find((w) => w.id === created.data.id);
     expect(mine).toBeDefined();
     expect(mine?.secret).not.toBe(created.data.secret);
   });
@@ -100,13 +100,63 @@ describe("outbound webhooks", () => {
       200,
       deliveries.data,
     );
-    const row = deliveries.data.deliveries.find(
+    const row = deliveries.data.data.find(
       (d) => d.event_type === "item.created",
     );
     expect(row).toBeDefined();
     expect(row?.succeeded).toBe(true);
     expect(row?.status_code).toBe(200);
     expect(row?.attempt).toBe(1);
+  });
+
+  it("pages its delivery log by cursor, every attempt once", async () => {
+    const created = await client.createWebhook({
+      url: receiver.hookUrl("paged"),
+      events: ["item.created"],
+    });
+    expect(created.status).toBe(201);
+    trackWebhook(ctx, created.data.id, client);
+    const ids: string[] = [];
+    for (let i = 0; i < 3; i++) {
+      const item = await client.createItem(
+        createNote({
+          source: ctx.source,
+          properties: { body: `paged ${String(i)}` },
+        }),
+      );
+      expect(item.ok).toBe(true);
+      trackItem(ctx, item.data.item.id);
+      ids.push(item.data.item.id);
+    }
+    for (const id of ids) {
+      await receiver.waitFor(
+        (r) => r.path === "/hook/paged" && r.body.includes(id),
+      );
+    }
+    // The delivery is logged after the receiver answers, so the log is
+    // read until it holds all three.
+    let seen = 0;
+    for (let attempt = 0; attempt < 40 && seen < 3; attempt++) {
+      seen = (await client.listWebhookDeliveries(created.data.id)).data.data
+        .length;
+      if (seen < 3) await new Promise((r) => setTimeout(r, 250));
+    }
+    expect(seen).toBe(3);
+
+    const first = await client.listWebhookDeliveries(created.data.id, {
+      limit: 2,
+    });
+    expect(first.data.data).toHaveLength(2);
+    expect(first.data.next_cursor).not.toBeNull();
+    const rest = await client.listWebhookDeliveries(created.data.id, {
+      limit: 2,
+      cursor: first.data.next_cursor!,
+    });
+    expect(rest.data.data).toHaveLength(1);
+    expect(rest.data.next_cursor).toBeNull();
+    expect(
+      new Set([...first.data.data, ...rest.data.data].map((d) => d.id)).size,
+    ).toBe(3);
   });
 
   it("refuses a wildcard subscription while a named one on the same event is delivered", async () => {
@@ -154,10 +204,8 @@ describe("outbound webhooks", () => {
 
     const rows = await client.listWebhookDeliveries(named.data.id);
     expect(rows.ok).toBe(true);
-    expect(rows.data.deliveries.map((d) => d.event_type)).toEqual([
-      "item.created",
-    ]);
-    expect(rows.data.deliveries.every((d) => d.succeeded)).toBe(true);
+    expect(rows.data.data.map((d) => d.event_type)).toEqual(["item.created"]);
+    expect(rows.data.data.every((d) => d.succeeded)).toBe(true);
   });
 
   it("refuses a wildcard on the update door, leaving the stored events alone", async () => {
@@ -251,7 +299,7 @@ describe("outbound webhooks", () => {
     const deliveries = await client.listWebhookDeliveries(created.data.id);
     expect(deliveries.ok).toBe(true);
     expect(
-      deliveries.data.deliveries.filter((d) => d.event_type === "item.created")
+      deliveries.data.data.filter((d) => d.event_type === "item.created")
         .length,
     ).toBe(1);
 
@@ -293,9 +341,7 @@ describe("outbound webhooks", () => {
     ]);
     const rows = await client.listWebhookDeliveries(created.data.id);
     expect(rows.ok).toBe(true);
-    expect(rows.data.deliveries.map((d) => d.event_type)).toEqual([
-      "item.deleted",
-    ]);
+    expect(rows.data.data.map((d) => d.event_type)).toEqual(["item.deleted"]);
   });
 
   it("updates the url, events, type filter and active flag in place", async () => {

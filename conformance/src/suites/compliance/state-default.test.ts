@@ -99,9 +99,7 @@ async function searched(filters: { state?: string } = {}): Promise<string[]> {
     res.ok,
     `the search door refused this read, so the case that called it is about a refusal rather than a selection: ${JSON.stringify(res)}`,
   ).toBe(true);
-  return res.data.results
-    .map((hit) => hit.item.id)
-    .filter((id) => mine.has(id));
+  return res.data.data.map((hit) => hit.item.id).filter((id) => mine.has(id));
 }
 
 async function exported(filters: { state?: string } = {}): Promise<string[]> {

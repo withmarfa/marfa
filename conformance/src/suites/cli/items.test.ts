@@ -94,9 +94,9 @@ describe("items from the terminal", () => {
     expect(untagged.metadata.tags.sort()).toEqual(["beta", "cli"]);
 
     const found = await c.cli.json<{
-      results: Array<{ item: { id: string } }>;
+      data: Array<{ item: { id: string } }>;
     }>(["search", title]);
-    expect(found.results.map((hit) => hit.item.id)).toContain(created.item.id);
+    expect(found.data.map((hit) => hit.item.id)).toContain(created.item.id);
 
     const listed = await c.cli.json<{ data: Array<{ id: string }> }>([
       "items",
@@ -123,10 +123,10 @@ describe("items from the terminal", () => {
     // The history holds the state before the update: one snapshot, at
     // version 1, without the property the update added.
     const versions = await c.cli.json<{
-      versions: Array<{ version: number; properties: Record<string, unknown> }>;
+      data: Array<{ version: number; properties: Record<string, unknown> }>;
     }>(["items", "versions", created.item.id]);
-    expect(versions.versions.map((row) => row.version)).toEqual([1]);
-    expect(versions.versions[0]!.properties.status).toBeUndefined();
+    expect(versions.data.map((row) => row.version)).toEqual([1]);
+    expect(versions.data[0]!.properties.status).toBeUndefined();
 
     // Grouped by type, the answer is a count per type id; grouped by
     // state it would be per state, so the key is what proves the flag.

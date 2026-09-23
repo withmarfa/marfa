@@ -701,11 +701,14 @@ describe("catch-up keeps the copy to its slice", () => {
       {
         kind: "json",
         status: 200,
-        body: [
-          wireType("core.note"),
-          wireType("core.file"),
-          wireType("acme.field-note", { parent: "core.note" }),
-        ],
+        body: {
+          data: [
+            wireType("core.note"),
+            wireType("core.file"),
+            wireType("acme.field-note", { parent: "core.note" }),
+          ],
+          next_cursor: null,
+        },
       },
     );
     server.answer("GET", "/items", itemsPage([]));

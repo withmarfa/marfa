@@ -130,8 +130,9 @@ describe("the document and the routes", () => {
   });
 
   it("sees a HEAD door registered on its own", () => {
-    // Hono answers HEAD from the GET handler, so no such door exists today;
-    // one registered explicitly is a door the document has to carry.
+    // Hono answers HEAD from the GET handler, so the served table carries
+    // no HEAD door; one registered explicitly is a door the document has to
+    // carry.
     const served = servedDoors([
       ...ctx.app.routes,
       { method: "HEAD", path: "/items/:id" },

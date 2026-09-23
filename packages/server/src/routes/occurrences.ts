@@ -101,7 +101,8 @@ import type { AppEnv } from "../middleware/auth.js";
 import { requireAuth, getTypeFilter } from "../middleware/auth.js";
 import type { ItemFilters, Storage } from "../storage/interface.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
-import { ItemSchema } from "./_schemas.js";
+import { ItemSchema, NextCursorSchema } from "./_schemas.js";
+import { MAX_PAGE_LIMIT } from "../page-limits.js";
 import { assertTypeFilter } from "./_type-filter.js";
 import {
   expandSeries,
@@ -212,17 +213,9 @@ export const MAX_SERIES_ERRORS = 500;
  */
 const MAX_SERIES_ERROR_MESSAGE_CHARS = 200;
 
-/**
- * Rows read per page while gathering the events to expand.
- *
- * 200 because that is the storage layer's own ceiling — `items.list`
- * silently clamps any larger `limit`. This route previously asked for
- * 1000 and read one page, so it saw 200 events and reported the result
- * as the whole calendar: the 201st event simply was not on it.
- * Naming the real number here is what stops the next reader believing
- * the request.
- */
-const EVENT_PAGE_SIZE = 200;
+/** Rows read per page while gathering the events to expand: the storage
+ *  layer's own ceiling, which `items.list` clamps any larger `limit` to. */
+const EVENT_PAGE_SIZE = MAX_PAGE_LIMIT;
 
 /**
  * Ids handed to one batched storage call.
@@ -486,7 +479,7 @@ async function scanEvents<T>(
         const projected = project(item);
         if (projected !== undefined) kept.push(projected);
       }
-      cursor = page.has_more ? (page.cursor ?? undefined) : undefined;
+      cursor = page.next_cursor ?? undefined;
       // Between pages for the same reason the expansion yields between
       // batches. On a driver that answers over a socket the await above
       // already returns the loop; on an embedded one it does not, and a
@@ -731,17 +724,19 @@ async function groupExceptionsBySeries(
   return bySeries;
 }
 
-const OccurrenceSchema = z.object({
-  starts_at: z.string(),
-  ends_at: z.string().optional(),
-  item: ItemSchema,
-  /** Present when this came from expanding a rule rather than from the
-   *  item's own times. */
-  series_id: z.string().optional(),
-  /** Present when a stored exception replaced a computed occurrence;
-   *  carries the start of the occurrence it replaced. */
-  replaces: z.string().optional(),
-});
+const OccurrenceSchema = z
+  .object({
+    starts_at: z.string(),
+    ends_at: z.string().optional(),
+    item: ItemSchema,
+    /** Present when this came from expanding a rule rather than from the
+     *  item's own times. */
+    series_id: z.string().optional(),
+    /** Present when a stored exception replaced a computed occurrence;
+     *  carries the start of the occurrence it replaced. */
+    replaces: z.string().optional(),
+  })
+  .openapi("Occurrence");
 
 const SeriesErrorSchema = z.object({
   item_id: z.string(),
@@ -797,50 +792,53 @@ const ScanSchema = z.object({
     ),
 });
 
-const OccurrencesResponseSchema = z.object({
-  data: z.array(OccurrenceSchema),
-  window: z.object({ from: z.string(), to: z.string() }),
-  /** What this read cost and what would stop it. Always present: a bound
-   *  that is only mentioned when it fires announces itself too late to
-   *  act on. */
-  scan: ScanSchema,
-  /** One entry per failure found in a rule — malformed, flooding the
-   *  window, no start to unfold from, an unresolvable timezone, or a
-   *  `recurrence` holding something that is not a property line. One row
-   *  can produce two, so entries are the unit here and in the count
-   *  beside it. The rest of the calendar still returns; failing the
-   *  whole read for one bad series would make a single six-year-old
-   *  meeting take the calendar down. Capped at `MAX_SERIES_ERRORS`
-   *  entries, past which `series_errors_truncated` is set and
-   *  `scan.series_errors` carries the real total. */
-  series_errors: z
-    .array(SeriesErrorSchema)
-    .optional()
-    .describe(
-      "One entry per failure found in a recurrence rule: a malformed rule, one that floods the window, one with no start to unfold from, a timezone that does not resolve, or a `recurrence` holding something that is not an RFC 5545 property line. Absent when there were none. `item_id` names the row, and one row can appear more than once — a dropped rule line and a failure expanding what was left are two entries against the same id. A reported row may still appear in `data`: a rule that could not be applied leaves the row rendering as the single event its own times describe, and a rule missing one unreadable line still contributes every occurrence the rest of it produces. This reports on rules rather than on which rows are missing.",
-    ),
-  /** Present and true when `series_errors` lists fewer failures than the
-   *  request found. The array is capped rather than the read refused, so
-   *  this is how the response says the list is partial — see
-   *  `scan.series_errors` for how many there actually were. */
-  series_errors_truncated: z
-    .boolean()
-    .optional()
-    .describe(
-      "Present and true when `series_errors` lists fewer failures than the request found. Both are counted in entries, so the comparison is exact. The array is capped at `scan.max_series_errors` rather than the read refused, so this is how the response says the list is partial; `scan.series_errors` carries the real total.",
-    ),
-  /** Present and true when the request stopped expanding series before
-   *  it had walked them all, having spent `scan.max_unproductive_iterations`
-   *  on expansions that returned no occurrence. `data` may be missing
-   *  occurrences the unexpanded series held, and
-   *  `scan.series_unexpanded` says how many there were. */
-  expansion_incomplete: z
-    .boolean()
-    .optional()
-    .describe(
-      "Present and true when the request stopped expanding series before it had walked them all, having spent `scan.max_unproductive_iterations` on expansions that returned no occurrence. `data` may be missing occurrences the unexpanded series held, and `scan.series_unexpanded` says how many were left. A narrower window does not recover it — the budget is spent walking rules from their own start, before the window is reached — so the moves are narrowing by `type` or fixing the rules `series_errors` names.",
-    ),
-});
+const OccurrencesResponseSchema = z
+  .object({
+    data: z.array(OccurrenceSchema),
+    next_cursor: NextCursorSchema,
+    window: z.object({ from: z.string(), to: z.string() }),
+    /** What this read cost and what would stop it. Always present: a bound
+     *  that is only mentioned when it fires announces itself too late to
+     *  act on. */
+    scan: ScanSchema,
+    /** One entry per failure found in a rule — malformed, flooding the
+     *  window, no start to unfold from, an unresolvable timezone, or a
+     *  `recurrence` holding something that is not a property line. One row
+     *  can produce two, so entries are the unit here and in the count
+     *  beside it. The rest of the calendar still returns; failing the
+     *  whole read for one bad series would make a single six-year-old
+     *  meeting take the calendar down. Capped at `MAX_SERIES_ERRORS`
+     *  entries, past which `series_errors_truncated` is set and
+     *  `scan.series_errors` carries the real total. */
+    series_errors: z
+      .array(SeriesErrorSchema)
+      .optional()
+      .describe(
+        "One entry per failure found in a recurrence rule: a malformed rule, one that floods the window, one with no start to unfold from, a timezone that does not resolve, or a `recurrence` holding something that is not an RFC 5545 property line. Absent when there were none. `item_id` names the row, and one row can appear more than once — a dropped rule line and a failure expanding what was left are two entries against the same id. A reported row may still appear in `data`: a rule that could not be applied leaves the row rendering as the single event its own times describe, and a rule missing one unreadable line still contributes every occurrence the rest of it produces. This reports on rules rather than on which rows are missing.",
+      ),
+    /** Present and true when `series_errors` lists fewer failures than the
+     *  request found. The array is capped rather than the read refused, so
+     *  this is how the response says the list is partial — see
+     *  `scan.series_errors` for how many there actually were. */
+    series_errors_truncated: z
+      .boolean()
+      .optional()
+      .describe(
+        "Present and true when `series_errors` lists fewer failures than the request found. Both are counted in entries, so the comparison is exact. The array is capped at `scan.max_series_errors` rather than the read refused, so this is how the response says the list is partial; `scan.series_errors` carries the real total.",
+      ),
+    /** Present and true when the request stopped expanding series before
+     *  it had walked them all, having spent `scan.max_unproductive_iterations`
+     *  on expansions that returned no occurrence. `data` may be missing
+     *  occurrences the unexpanded series held, and
+     *  `scan.series_unexpanded` says how many there were. */
+    expansion_incomplete: z
+      .boolean()
+      .optional()
+      .describe(
+        "Present and true when the request stopped expanding series before it had walked them all, having spent `scan.max_unproductive_iterations` on expansions that returned no occurrence. `data` may be missing occurrences the unexpanded series held, and `scan.series_unexpanded` says how many were left. A narrower window does not recover it — the budget is spent walking rules from their own start, before the window is reached — so the moves are narrowing by `type` or fixing the rules `series_errors` names.",
+      ),
+  })
+  .openapi("OccurrencePage");
 
 const occurrencesRoute = createRoute({
   operationId: "listOccurrences",
@@ -1024,6 +1022,7 @@ export function occurrenceRoutes(
       return c.json(
         {
           data: [],
+          next_cursor: null,
           window: { from: from.toISOString(), to: to.toISOString() },
           scan: {
             events_read: 0,
@@ -1432,6 +1431,7 @@ export function occurrenceRoutes(
     return c.json(
       {
         data: results,
+        next_cursor: null,
         window: { from: from.toISOString(), to: to.toISOString() },
         scan: {
           events_read: budget.scanned,

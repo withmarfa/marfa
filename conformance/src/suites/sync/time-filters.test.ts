@@ -65,8 +65,7 @@ async function edgesModifiedSince(boundary: string): Promise<Set<string>> {
   for (;;) {
     const page = await client.rawRequest<{
       data?: Array<{ id: string }>;
-      cursor?: string | null;
-      has_more?: boolean;
+      next_cursor?: string | null;
     }>(
       `/edges?limit=500&updated_after=${encodeURIComponent(boundary)}` +
         (cursor === undefined ? "" : `&cursor=${encodeURIComponent(cursor)}`),
@@ -76,8 +75,8 @@ async function edgesModifiedSince(boundary: string): Promise<Set<string>> {
       `the edge catch-up read was refused (${page.status}), so a reconnecting client has to re-read every edge in the dataset`,
     ).toBe(true);
     for (const edge of page.data.data ?? []) ids.add(edge.id);
-    if (!page.data.has_more || !page.data.cursor) return ids;
-    cursor = page.data.cursor;
+    if (!page.data.next_cursor) return ids;
+    cursor = page.data.next_cursor;
   }
 }
 
@@ -240,16 +239,16 @@ describe("the catch-up window, at both ends", () => {
     const ids = async (bound: string): Promise<string[]> => {
       const page = await client.rawRequest<{
         data?: { id: string }[];
-        has_more?: boolean;
+        next_cursor?: string | null;
       }>(`/items?${scope}&${bound}`);
       expect(
         page.ok,
         `the bound was refused: ${JSON.stringify(page.error)}`,
       ).toBe(true);
       expect(
-        page.data.has_more,
+        page.data.next_cursor,
         "the page was truncated, so a row missing from it proves nothing about the bound",
-      ).toBe(false);
+      ).toBeNull();
       return (page.data.data ?? []).map((row) => row.id);
     };
 
@@ -293,7 +292,7 @@ describe("the catch-up window, at both ends", () => {
 
     const page = await client.rawRequest<{
       data?: { id: string }[];
-      has_more?: boolean;
+      next_cursor?: string | null;
     }>(
       `/items?source=${encodeURIComponent(ctx.source)}&limit=200&updated_after=${encodeURIComponent(
         new Date(onBound.at).toISOString(),
@@ -304,9 +303,9 @@ describe("the catch-up window, at both ends", () => {
       `the catch-up bound was refused: ${JSON.stringify(page.error)}`,
     ).toBe(true);
     expect(
-      page.data.has_more,
+      page.data.next_cursor,
       "the page was truncated, so a row missing from it proves nothing about the bound",
-    ).toBe(false);
+    ).toBeNull();
     const ids = (page.data.data ?? []).map((row) => row.id);
 
     expect(
@@ -370,16 +369,16 @@ describe("the catch-up window, at both ends", () => {
     const ids = async (bound: string): Promise<string[]> => {
       const page = await client.rawRequest<{
         data?: { id: string }[];
-        has_more?: boolean;
+        next_cursor?: string | null;
       }>(`/edges?limit=500&updated_after=${encodeURIComponent(from)}&${bound}`);
       expect(
         page.ok,
         `the bound was refused: ${JSON.stringify(page.error)}`,
       ).toBe(true);
       expect(
-        page.data.has_more,
+        page.data.next_cursor,
         "the page was truncated, so a row missing from it proves nothing about the bound",
-      ).toBe(false);
+      ).toBeNull();
       return (page.data.data ?? []).map((row) => row.id);
     };
 

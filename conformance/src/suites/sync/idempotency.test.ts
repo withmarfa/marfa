@@ -484,7 +484,7 @@ describe("a create that resolves an existing row", () => {
     expect(afterAtomic.ok).toBe(true);
     // Asserting an absence, so the page has to be the whole of it: a
     // truncated one makes `.some(...)` false for free and stops looking.
-    expect(afterAtomic.data.has_more).toBe(false);
+    expect(afterAtomic.data.next_cursor).toBeNull();
     expect(
       afterAtomic.data.data.some((i) => i.source_id === freshId),
       "the good entry was written and not rolled back",
@@ -596,15 +596,15 @@ describe("a create that resolves an existing row", () => {
     // writing a second row under the same natural key would pass everything
     // above while leaving the library with a duplicate.
     //
-    // `has_more` is checked first because the count below is only a count of
+    // `next_cursor` is checked first because the count below is only a count of
     // the whole set when the listing was not a page of it — a truncated page
     // would make this assertion quietly stop looking at everything.
     const listed = await client.listItems({ source: ctx.source, limit: 100 });
     expect(listed.ok).toBe(true);
     expect(
-      listed.data.has_more,
+      listed.data.next_cursor,
       "the listing was truncated, so a duplicate row could be sitting on a page this assertion never read",
-    ).toBe(false);
+    ).toBeNull();
     expect(
       listed.data.data.filter((item) => item.source_id === sourceId).length,
       "the refused upsert wrote a second row under the same natural key",

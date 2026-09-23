@@ -25,7 +25,7 @@ interface EdgeType {
 }
 
 interface EdgeTypeListResponse {
-  edge_types: EdgeType[];
+  data: EdgeType[];
 }
 
 interface ErrorBody {
@@ -34,7 +34,7 @@ interface ErrorBody {
 
 /**
  * A key that reaches items and edges freely but holds nothing on the two doors
- * that guard the edge-type registry: no `metadata.edge_types:write` for
+ * that guard the edge-type registry: no `metadata.data:write` for
  * registration, and no `schema.write` for deletion. `permissions` is
  * named explicitly because omitting it mints a copy of the caller's set, which
  * here is all eleven.
@@ -70,7 +70,7 @@ describe("Edge-type endpoints — auth gate", () => {
 });
 
 describe("Edge-type endpoints — schema gate", () => {
-  it("POST /edge-types rejects a key without metadata.edge_types:write", async () => {
+  it("POST /edge-types rejects a key without metadata.data:write", async () => {
     const memberKey = await createNarrowKey("et-post-member");
     const res = await request(ctx.app, "POST", "/edge-types", {
       key: memberKey,
@@ -159,7 +159,7 @@ describe("GET /edge-types — list", () => {
     });
     expect(res.status).toBe(200);
     const data = (await res.json()) as EdgeTypeListResponse;
-    const ids = data.edge_types.map((t) => t.id);
+    const ids = data.data.map((t) => t.id);
     expect(ids).toContain("about"); // core
     expect(ids).toContain("parent-of"); // core
     expect(ids).toContain(id); // custom, just created
@@ -186,7 +186,7 @@ describe("DELETE /edge-types/:id — happy path and errors", () => {
       key: ctx.workingKey,
     });
     const data = (await list.json()) as EdgeTypeListResponse;
-    expect(data.edge_types.map((t) => t.id)).not.toContain(id);
+    expect(data.data.map((t) => t.id)).not.toContain(id);
   });
 
   it("400 when attempting to delete a core edge type", async () => {

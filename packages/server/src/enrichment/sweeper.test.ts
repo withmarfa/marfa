@@ -146,9 +146,9 @@ describe("extraction", () => {
     });
     expect(search.status).toBe(200);
     const found = (await search.json()) as {
-      results: { item: { id: string } }[];
+      data: { item: { id: string } }[];
     };
-    expect(found.results.map((r) => r.item.id)).toContain(id);
+    expect(found.data.map((r) => r.item.id)).toContain(id);
   });
 
   // A PDF is the one uploaded shape that reaches a reader with a history of
@@ -173,9 +173,9 @@ describe("extraction", () => {
     });
     expect(search.status).toBe(200);
     const found = (await search.json()) as {
-      results: { item: { id: string } }[];
+      data: { item: { id: string } }[];
     };
-    expect(found.results.map((r) => r.item.id)).toContain(id);
+    expect(found.data.map((r) => r.item.id)).toContain(id);
   });
 
   it("extracts from a subtype of file", async () => {

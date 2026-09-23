@@ -364,11 +364,22 @@ describe("heartbeats and runs", () => {
     expect(Date.parse(runs.data.data[0]?.reported_at ?? "")).toBeGreaterThan(
       Date.parse(runs.data.data[1]?.reported_at ?? ""),
     );
-    const two = await other.listConnectorRuns(mine.data.id, 2);
+    const two = await other.listConnectorRuns(mine.data.id, { limit: 2 });
     expect(two.data.data.map((run) => run.summary)).toEqual([
       "reported late",
       "run 1",
     ]);
+    // A page the limit cut says so, and its cursor reaches the rest.
+    expect(two.data.next_cursor).not.toBeNull();
+    const rest = await other.listConnectorRuns(mine.data.id, {
+      limit: 2,
+      cursor: two.data.next_cursor!,
+    });
+    expect(rest.data.data.map((run) => run.summary)).toEqual([
+      "run 2",
+      "run 3",
+    ]);
+    expect(rest.data.next_cursor).toBeNull();
     const listed = await other.getConnector(mine.data.id);
     expect(listed.data.last_run?.summary).toBe("reported late");
     expect(
@@ -420,7 +431,7 @@ describe("heartbeats and runs", () => {
       });
       expect(res.status).toBe(201);
     }
-    const runs = await client.listConnectorRuns(mine.data.id, 200);
+    const runs = await client.listConnectorRuns(mine.data.id, { limit: 200 });
     expect(runs.data.data).toHaveLength(100);
     const summaries = runs.data.data.map((run) => run.summary);
     expect(summaries).toContain("run 101");
@@ -431,10 +442,12 @@ describe("heartbeats and runs", () => {
     expect(unlimited.status).toBe(200);
     expect(unlimited.data.data).toHaveLength(50);
     expect(unlimited.data.data[0]?.summary).toBe("run 101");
-    const past = await client.listConnectorRuns(mine.data.id, 201);
+    const past = await client.listConnectorRuns(mine.data.id, { limit: 201 });
     expect(past.status).toBe(400);
     expect(past.error?.error.code).toBe("validation_error");
-    expect((await client.listConnectorRuns(mine.data.id, 0)).status).toBe(400);
+    expect(
+      (await client.listConnectorRuns(mine.data.id, { limit: 0 })).status,
+    ).toBe(400);
     expect((await client.deleteConnector(mine.data.id)).status).toBe(200);
   });
 

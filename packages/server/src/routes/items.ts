@@ -89,6 +89,7 @@ import {
   TierEnum,
   VersionConflictErrorSchema,
   ALL_STATES,
+  pageOf,
   resolveStateFilter,
 } from "./_schemas.js";
 import { filterMetadataForCaller } from "./util.js";
@@ -527,18 +528,15 @@ const listItemsRoute = createRoute({
     200: {
       content: {
         "application/json": {
-          schema: z.union([
-            z.object({
-              data: z.array(ItemSchema),
-              cursor: z.string().nullable(),
-              has_more: z.boolean(),
-            }),
-            z.object({
-              data: z.array(ItemWithMetadataSchema),
-              cursor: z.string().nullable(),
-              has_more: z.boolean(),
-            }),
-          ]),
+          schema: pageOf(
+            z
+              .union([ItemSchema, ItemWithMetadataSchema])
+              .describe(
+                "An `Item`, or, when `include` names `metadata`, an `ItemWithMetadata`; every row of one page is the same shape.",
+              )
+              .openapi("ItemListRow"),
+            "ItemPage",
+          ),
         },
       },
       description: "Paginated list of items",
@@ -2048,8 +2046,7 @@ export function itemRoutes(storage: Storage) {
               apiKey,
             ),
           })),
-          cursor: result.cursor,
-          has_more: result.has_more,
+          next_cursor: result.next_cursor,
         },
         200,
       );
@@ -2058,8 +2055,7 @@ export function itemRoutes(storage: Storage) {
     return c.json(
       {
         data: result.data.map(decorate),
-        cursor: result.cursor,
-        has_more: result.has_more,
+        next_cursor: result.next_cursor,
       },
       200,
     );
@@ -2107,7 +2103,7 @@ export function itemRoutes(storage: Storage) {
 
     let neighbors: { item: Item; metadata: Metadata }[] | undefined;
     // True when the 1-hop neighbor set was capped (more neighbors exist than
-    // were hydrated). Distinct from the per-type edge-block `has_more`: several
+    // were hydrated). Distinct from the per-type edge block's `next_cursor`: several
     // edge types can each sit below their per-type cap while their COMBINED
     // neighbor set exceeds the bound, so this is the only signal that catches
     // that case. Consumers must treat every neighbor-derived view as
@@ -2139,18 +2135,18 @@ export function itemRoutes(storage: Storage) {
       // neighbor the caller cannot read is silently omitted, never leaked.
       const neighborIds = new Set<string>();
       for (const block of Object.values(edges)) {
-        for (const e of block.edges) neighborIds.add(e.target_id);
+        for (const e of block.data) neighborIds.add(e.target_id);
       }
       if (backrefs) {
         for (const block of Object.values(backrefs)) {
-          for (const e of block.edges) neighborIds.add(e.source_id);
+          for (const e of block.data) neighborIds.add(e.source_id);
         }
       }
       neighborIds.delete(id);
 
       // Bound the hydration so a pathological fan-out can't pin the worker. When
       // the bound bites, `neighbors_truncated` flags it — the per-block
-      // `has_more` does NOT cover this, since the cap is on the combined set
+      // `next_cursor` does NOT cover this, since the cap is on the combined set
       // across types, not any single type.
       neighborsTruncated = neighborIds.size > MAX_NEIGHBOR_IDS;
       const ids = [...neighborIds].slice(0, MAX_NEIGHBOR_IDS);
@@ -2217,7 +2213,9 @@ export function itemRoutes(storage: Storage) {
               neighbors_omitted: neighborsOmitted,
             }
           : {}),
-        ...(includeVersions && versions ? { versions } : {}),
+        ...(includeVersions && versions
+          ? { versions: { data: versions, next_cursor: null } }
+          : {}),
       },
       200,
     );

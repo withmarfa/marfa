@@ -93,7 +93,7 @@ describe("key management", () => {
     expect(list.ok).toBe(true);
     await expectMatchesSchema("GET", "/keys", 200, list.data);
 
-    const found = list.data.keys.find((k) => k.id === keyResp.data.id);
+    const found = list.data.data.find((k) => k.id === keyResp.data.id);
     expect(found).toBeDefined();
     expect(found!.label).toBe(label);
   });
@@ -185,7 +185,7 @@ describe("key management", () => {
     const list = await client.listKeys();
     expect(list.ok).toBe(true);
 
-    const found = list.data.keys.find((k) => k.id === keyResp.data.id);
+    const found = list.data.data.find((k) => k.id === keyResp.data.id);
     expect(found).toBeDefined();
     expect(found!.key).toBeUndefined();
   });
@@ -216,7 +216,7 @@ describe("key management", () => {
 
     const list = await client.listKeys();
     expect(list.ok).toBe(true);
-    const rows = list.data.keys;
+    const rows = list.data.data;
 
     const creator = rows.find((k) => k.id === ownKeyId);
     expect(creator).toBeDefined();
@@ -465,7 +465,7 @@ describe("key management", () => {
 
       const rows = await operator.listKeys();
       expect(rows.ok).toBe(true);
-      const own = rows.data.keys.find((k) => k.is_operator === true);
+      const own = rows.data.data.find((k) => k.is_operator === true);
       expect(own).toBeDefined();
       expect(own!.type_permissions).toEqual({});
       expect(own!.edge_permissions).toEqual({});

@@ -62,7 +62,7 @@ async function cleanupLoadData(
       else errorCount++;
     }
 
-    hasMore = response.data.has_more;
+    hasMore = response.data.next_cursor !== null;
 
     if (deleted % 1000 === 0 && deleted > 0) {
       console.log(`  Deleted ${deleted.toLocaleString()} items...`);

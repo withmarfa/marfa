@@ -180,8 +180,8 @@ describe(`volume performance (scale: ${scale})`, () => {
         perPosition[position] ??= [];
         perPosition[position].push(durationMs);
         position++;
-        if (!result.data.has_more || !result.data.cursor) break;
-        cursor = result.data.cursor;
+        if (result.data.next_cursor === null) break;
+        cursor = result.data.next_cursor;
       }
     }
 

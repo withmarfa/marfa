@@ -83,7 +83,7 @@ describe("validation edge cases", () => {
   it("accepts quotes, ampersands and parentheses in a search query", async () => {
     const r = await client.search('hello "world" & (test)');
     expect(r.status).toBe(200);
-    expect(Array.isArray(r.data.results)).toBe(true);
+    expect(Array.isArray(r.data.data)).toBe(true);
   });
 });
 

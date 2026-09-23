@@ -52,7 +52,7 @@ describe("API key last_used_at compliance", () => {
     const list = await client.listKeys();
     expect(list.ok).toBe(true);
 
-    const found = list.data.keys.find((k) => k.id === keyResp.data.id);
+    const found = list.data.data.find((k) => k.id === keyResp.data.id);
     expect(found).toBeDefined();
     expect(typeof found!.last_used_at).toBe("string");
   });
@@ -77,7 +77,7 @@ describe("API key last_used_at compliance", () => {
     const list = await client.listKeys();
     expect(list.ok).toBe(true);
 
-    const found = list.data.keys.find((k) => k.id === keyResp.data.id);
+    const found = list.data.data.find((k) => k.id === keyResp.data.id);
     expect(found).toBeDefined();
     expect(found!.last_used_at).toBeDefined();
 
@@ -105,7 +105,7 @@ describe("API key last_used_at compliance", () => {
     const list = await client.listKeys();
     expect(list.ok).toBe(true);
 
-    const found = list.data.keys.find((k) => k.id === keyResp.data.id);
+    const found = list.data.data.find((k) => k.id === keyResp.data.id);
     expect(found).toBeDefined();
     expect("last_used_at" in found!).toBe(true);
   });

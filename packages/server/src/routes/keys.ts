@@ -35,6 +35,7 @@ import {
   EnforcementOverrideSchema,
   KeyResponseSchema,
   nullableRef,
+  pageOf,
   PermissionEnum,
   PermissionLevelEnum,
   TierEnum,
@@ -234,9 +235,7 @@ const listKeysRoute = createRoute({
     200: {
       content: {
         "application/json": {
-          schema: z.object({
-            keys: z.array(ApiKeySchema),
-          }),
+          schema: pageOf(ApiKeySchema, "ApiKeyPage"),
         },
       },
       description: "List of API keys",
@@ -1100,7 +1099,7 @@ export function keyRoutes(storage: Storage, salt: string) {
     requireAuth(c);
     requireKeysMintOrOperator(c);
     const keys = await storage.keys.list();
-    return c.json({ keys }, 200);
+    return c.json({ data: keys, next_cursor: null }, 200);
   });
 
   router.openapi(revokeKeyRoute, async (c) => {

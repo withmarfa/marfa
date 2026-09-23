@@ -24,6 +24,7 @@ import {
   verifyBlobLink,
 } from "../storage/blob-link.js";
 import { withBlobUploadLock } from "../storage/blob-upload-lock.js";
+import { NextCursorSchema, pageOf } from "./_schemas.js";
 import type { Housekeeping } from "../housekeeping/scheduler.js";
 import {
   CopiesBelowMinimum,
@@ -52,30 +53,36 @@ const BlobUrlResponseSchema = z.object({
   expires_in: z.number(),
 });
 
-const BlobStoreSchema = z.object({
-  id: z.string(),
-  kind: z.enum(["disk", "s3"]),
-  locator: z.string(),
-  policy: z.string(),
-  attached_at: z.string(),
-  detached_at: z.string().nullable(),
-});
+const BlobStoreSchema = z
+  .object({
+    id: z.string(),
+    kind: z.enum(["disk", "s3"]),
+    locator: z.string(),
+    policy: z.string(),
+    attached_at: z.string(),
+    detached_at: z.string().nullable(),
+  })
+  .openapi("BlobStore");
 
-const BlobLocationSchema = z.object({
-  store_id: z.string(),
-  kind: z.enum(["disk", "s3"]),
-  policy: z.string(),
-  detached: z.boolean(),
-  recorded_at: z.string(),
-  verified_at: z.string().nullable(),
-});
+const BlobLocationSchema = z
+  .object({
+    store_id: z.string(),
+    kind: z.enum(["disk", "s3"]),
+    policy: z.string(),
+    detached: z.boolean(),
+    recorded_at: z.string(),
+    verified_at: z.string().nullable(),
+  })
+  .openapi("BlobLocation");
 
-const BlobOrphanSchema = z.object({
-  hash: z.string(),
-  mime_type: z.string(),
-  size_bytes: z.number().int(),
-  reported_at: z.string(),
-});
+const BlobOrphanSchema = z
+  .object({
+    hash: z.string(),
+    mime_type: z.string(),
+    size_bytes: z.number().int(),
+    reported_at: z.string(),
+  })
+  .openapi("BlobOrphan");
 
 const HashParam = z.object({
   hash: z.string().describe("Content-addressed `sha256:<hex>` blob hash."),
@@ -219,10 +226,13 @@ const listBlobStoresRoute = createRoute({
     200: {
       content: {
         "application/json": {
-          schema: z.object({
-            data: z.array(BlobStoreSchema),
-            min_copies: z.number().int(),
-          }),
+          schema: z
+            .object({
+              data: z.array(BlobStoreSchema),
+              next_cursor: NextCursorSchema,
+              min_copies: z.number().int(),
+            })
+            .openapi("BlobStorePage"),
         },
       },
       description: "The stores",
@@ -399,7 +409,7 @@ const listBlobLocationsRoute = createRoute({
     200: {
       content: {
         "application/json": {
-          schema: z.object({ data: z.array(BlobLocationSchema) }),
+          schema: pageOf(BlobLocationSchema, "BlobLocationPage"),
         },
       },
       description: "The locations",
@@ -507,7 +517,7 @@ const listBlobOrphansRoute = createRoute({
     200: {
       content: {
         "application/json": {
-          schema: z.object({ data: z.array(BlobOrphanSchema) }),
+          schema: pageOf(BlobOrphanSchema, "BlobOrphanPage"),
         },
       },
       description: "The report, oldest first",
@@ -737,7 +747,7 @@ export function blobRoutes(
   router.openapi(listBlobOrphansRoute, async (c) => {
     requireOperatorKey(c);
     const data = await storage.blobs.listOrphans();
-    return c.json({ data }, 200);
+    return c.json({ data, next_cursor: null }, 200);
   });
 
   // GET /blobs/stores — the attached stores (operator key only). Registered
@@ -745,7 +755,7 @@ export function blobRoutes(
   router.openapi(listBlobStoresRoute, async (c) => {
     requireOperatorKey(c);
     const data = await storage.blobs.listStores();
-    return c.json({ data, min_copies: minCopies }, 200);
+    return c.json({ data, next_cursor: null, min_copies: minCopies }, 200);
   });
 
   // GET /blobs/:hash — the bytes; HEAD — the headers
@@ -817,7 +827,7 @@ export function blobRoutes(
       throw new MarfaError(ErrorCode.BLOB_NOT_FOUND, "Blob not found");
     }
     const data = await storage.blobs.listLocations(hash);
-    return c.json({ data }, 200);
+    return c.json({ data, next_cursor: null }, 200);
   });
 
   // DELETE /blobs/:hash/locations/:store — drop one store's copy

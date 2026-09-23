@@ -60,14 +60,14 @@ describe("GET /admin/platform-types/drift", () => {
     });
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
-      types: {
+      data: {
         id: string;
         item_count: number;
         child_types: string[];
         removable: boolean;
       }[];
     };
-    expect(body.types).toEqual([
+    expect(body.data).toEqual([
       { id, item_count: 0, child_types: [], removable: true },
     ]);
   });
@@ -86,10 +86,10 @@ describe("GET /admin/platform-types/drift", () => {
       key: ctx.operatorKey,
     });
     const body = (await res.json()) as {
-      types: { item_count: number; removable: boolean }[];
+      data: { item_count: number; removable: boolean }[];
     };
-    expect(body.types[0]?.item_count).toBe(1);
-    expect(body.types[0]?.removable).toBe(false);
+    expect(body.data[0]?.item_count).toBe(1);
+    expect(body.data[0]?.removable).toBe(false);
   });
 });
 
@@ -136,8 +136,8 @@ describe("DELETE /admin/platform-types/{id}", () => {
     // The seeded row is the witness. An empty listing would satisfy the
     // status on its own, so the assertion below is what shows the GET was
     // still reaching its own handler rather than answering vacuously.
-    const seen = (await listed.json()) as { types: { id: string }[] };
-    expect(seen.types.map((t) => t.id)).toEqual([id]);
+    const seen = (await listed.json()) as { data: { id: string }[] };
+    expect(seen.data.map((t) => t.id)).toEqual([id]);
   });
 
   it("removes a drifted row", async () => {
@@ -191,7 +191,9 @@ describe("DELETE /admin/platform-types/{id}", () => {
       key: ctx.operatorKey,
     });
     expect(listed.status).toBe(200);
-    const ids = ((await listed.json()) as { id: string }[]).map((t) => t.id);
+    const ids = ((await listed.json()) as { data: { id: string }[] }).data.map(
+      (t) => t.id,
+    );
     expect(ids).not.toContain(id);
   });
 
@@ -266,9 +268,9 @@ describe("DELETE /admin/platform-types/{id}", () => {
       key: ctx.operatorKey,
     });
     const body = (await res.json()) as {
-      types: { id: string; child_types: string[]; removable: boolean }[];
+      data: { id: string; child_types: string[]; removable: boolean }[];
     };
-    const row = body.types.find((t) => t.id === parent);
+    const row = body.data.find((t) => t.id === parent);
     expect(row?.child_types).toEqual([child]);
     expect(row?.removable).toBe(false);
   });

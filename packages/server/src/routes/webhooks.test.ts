@@ -132,9 +132,9 @@ describe("GET /webhooks", () => {
       key: ctx.workingKey,
     });
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { webhooks: WebhookResponse[] };
-    expect(body.webhooks.length).toBeGreaterThan(0);
-    for (const w of body.webhooks) {
+    const body = (await res.json()) as { data: WebhookResponse[] };
+    expect(body.data.length).toBeGreaterThan(0);
+    for (const w of body.data) {
       // redactSecret() prefixes with "****" when secret length > 4.
       expect(w.secret.startsWith("****")).toBe(true);
       expect(w.secret.length).toBe(8);
@@ -275,9 +275,9 @@ describe("GET /webhooks/:id/deliveries", () => {
       { key: ctx.workingKey },
     );
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { deliveries: unknown[] };
-    expect(Array.isArray(body.deliveries)).toBe(true);
-    expect(body.deliveries.length).toBe(0);
+    const body = (await res.json()) as { data: unknown[] };
+    expect(Array.isArray(body.data)).toBe(true);
+    expect(body.data.length).toBe(0);
   });
 
   it("respects the limit query parameter", async () => {
@@ -303,8 +303,26 @@ describe("GET /webhooks/:id/deliveries", () => {
       { key: ctx.workingKey },
     );
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { deliveries: unknown[] };
-    expect(body.deliveries.length).toBe(2);
+    const body = (await res.json()) as {
+      data: { id: string }[];
+      next_cursor: string | null;
+    };
+    expect(body.data.length).toBe(2);
+    // A page cut by the limit says so, and the cursor reaches the rest.
+    expect(body.next_cursor).not.toBeNull();
+    const rest = await request(
+      ctx.app,
+      "GET",
+      `/webhooks/${created.id}/deliveries?limit=2&cursor=${body.next_cursor!}`,
+      { key: ctx.workingKey },
+    );
+    const next = (await rest.json()) as {
+      data: { id: string }[];
+      next_cursor: string | null;
+    };
+    expect(next.data).toHaveLength(1);
+    expect(next.next_cursor).toBeNull();
+    expect(new Set([...body.data, ...next.data].map((d) => d.id)).size).toBe(3);
   });
 
   it("returns 404 when the webhook does not exist", async () => {

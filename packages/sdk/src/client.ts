@@ -1,7 +1,6 @@
 import type {
   Item,
   ItemWithMetadata,
-  ItemEdgesBlock,
   CreateItemInput,
   Metadata,
   Version,
@@ -249,7 +248,7 @@ export type ItemWithExtensions = Item & {
 
 /** Hydrated edges grouped by edge type — the shape carried on `item.edges`
  *  (outbound) and on a detail read's `backrefs` (inbound). */
-export type HydratedEdges = Record<string, ItemEdgesBlock>;
+export type HydratedEdges = Record<string, PaginatedResult<Edge>>;
 
 /** Opt-in blocks for {@link MarfaClient.items.getDetail}. Each widens the
  *  single-item read with one more slice of the item's 1-hop neighborhood,
@@ -271,13 +270,14 @@ export interface ItemDetail {
   /**
    * `true` when the 1-hop neighbor set was capped — more neighbors exist than
    * were hydrated into `neighbors`. Present only when `neighbors` is requested.
-   * Distinct from the per-type edge-block `has_more`: several edge types can
+   * Distinct from the per-type edge block's `next_cursor`: several edge types can
    * each sit below their per-type cap while their COMBINED set overflows, and
    * only this flag catches that. Treat every neighbor-derived view as
    * incomplete when it is set and page the per-type edge/backref reads.
    */
   neighbors_truncated?: boolean;
-  versions?: Version[];
+  /** The item's history, newest first, whole: `next_cursor` is always `null`. */
+  versions?: PaginatedResult<Version>;
 }
 
 export interface SearchFilters {
@@ -294,6 +294,8 @@ export interface SearchFilters {
   tags?: string[];
   filter?: string;
   limit?: number;
+  /** The previous page's `next_cursor`. */
+  cursor?: string;
   /**
    * Comma-separated opt-in inclusions, the same parameter `ListFilters` takes.
    *
@@ -819,6 +821,8 @@ export interface OccurrencesScan {
 
 export interface OccurrencesResult {
   data: Occurrence[];
+  /** Always `null`: the window is the whole answer. */
+  next_cursor: null;
   /** The window actually read, normalized to UTC. */
   window: { from: string; to: string };
   /** What this read cost and what would stop it. */
@@ -1271,11 +1275,11 @@ export class MarfaClient {
     },
 
     versions: async (id: string): Promise<Version[]> => {
-      const res = await this.transport.request<{ versions: Version[] }>(
+      const res = await this.transport.request<PaginatedResult<Version>>(
         "GET",
         path`/items/${id}/versions`,
       );
-      return res.versions;
+      return res.data;
     },
 
     stats: async (): Promise<Record<string, number>> => {
@@ -1668,10 +1672,10 @@ export class MarfaClient {
      * Returns tags with usage counts, sorted by count desc then tag asc.
      */
     listTags: async (): Promise<{ tag: string; count: number }[]> => {
-      const res = await this.transport.request<{
-        tags: { tag: string; count: number }[];
-      }>("GET", "/metadata/tags");
-      return res.tags;
+      const res = await this.transport.request<
+        PaginatedResult<{ tag: string; count: number }>
+      >("GET", "/metadata/tags");
+      return res.data;
     },
 
     getExtensions: async (
@@ -1715,16 +1719,16 @@ export class MarfaClient {
 
   // ---- Search ----
 
+  /** One page of hits; pass `next_cursor` back as `filters.cursor`. */
   async search(
     query: string,
     filters?: SearchFilters,
-  ): Promise<SearchResult[]> {
-    const res = await this.transport.request<{ results: SearchResult[] }>(
+  ): Promise<PaginatedResult<SearchResult>> {
+    return this.transport.request<PaginatedResult<SearchResult>>(
       "GET",
       "/search",
       { query: { q: query, ...filters } },
     );
-    return res.results;
   }
 
   // ---- Edges ----
@@ -1969,10 +1973,10 @@ export class MarfaClient {
         return res.edge_type;
       },
       list: async (): Promise<EdgeTypeSchema[]> => {
-        const res = await this.transport.request<{
-          edge_types: EdgeTypeSchema[];
-        }>("GET", "/edge-types");
-        return res.edge_types;
+        const res = await this.transport.request<
+          PaginatedResult<EdgeTypeSchema>
+        >("GET", "/edge-types");
+        return res.data;
       },
       delete: async (id: string): Promise<void> => {
         await this.transport.request<{ ok: true }>(
@@ -2061,7 +2065,11 @@ export class MarfaClient {
 
   readonly types = {
     list: async (): Promise<TypeSchema[]> => {
-      return this.transport.request<TypeSchema[]>("GET", "/types");
+      const res = await this.transport.request<PaginatedResult<TypeSchema>>(
+        "GET",
+        "/types",
+      );
+      return res.data;
     },
 
     get: async (id: string): Promise<TypeSchema> => {
@@ -2121,11 +2129,11 @@ export class MarfaClient {
     },
 
     list: async (): Promise<ApiKey[]> => {
-      const res = await this.transport.request<{ keys: ApiKey[] }>(
+      const res = await this.transport.request<PaginatedResult<ApiKey>>(
         "GET",
         "/keys",
       );
-      return res.keys;
+      return res.data;
     },
 
     /** Update mutable fields on an existing key (PATCH semantics —
@@ -2157,11 +2165,11 @@ export class MarfaClient {
     },
 
     list: async (): Promise<Webhook[]> => {
-      const res = await this.transport.request<{ webhooks: Webhook[] }>(
+      const res = await this.transport.request<PaginatedResult<Webhook>>(
         "GET",
         "/webhooks",
       );
-      return res.webhooks;
+      return res.data;
     },
 
     get: async (id: string): Promise<Webhook> => {
@@ -2186,10 +2194,10 @@ export class MarfaClient {
       options?: { limit?: number },
     ): Promise<WebhookDelivery[]> => {
       const query = options?.limit ? { limit: String(options.limit) } : {};
-      const res = await this.transport.request<{
-        deliveries: WebhookDelivery[];
-      }>("GET", path`/webhooks/${id}/deliveries`, { query });
-      return res.deliveries;
+      const res = await this.transport.request<
+        PaginatedResult<WebhookDelivery>
+      >("GET", path`/webhooks/${id}/deliveries`, { query });
+      return res.data;
     },
   };
 
@@ -2247,14 +2255,13 @@ export class MarfaClient {
        * the older build simply does not know about rows the newer one
        * wrote. Removing is a separate, deliberate act.
        *
-       * The route returns no cursor, so this returns a bare array and
-       * callers wanting the listing envelope build it themselves.
+       * The route answers its whole set, so this returns the rows.
        */
       drift: async (): Promise<DriftedPlatformType[]> => {
-        const res = await this.transport.request<{
-          types: DriftedPlatformType[];
-        }>("GET", "/admin/platform-types/drift");
-        return res.types;
+        const res = await this.transport.request<
+          PaginatedResult<DriftedPlatformType>
+        >("GET", "/admin/platform-types/drift");
+        return res.data;
       },
 
       /**
@@ -2314,9 +2321,8 @@ export class MarfaClient {
      *
      * Returns the envelope rather than a bare array, because
      * `series_errors` is part of the answer: a calendar quietly missing a
-     * weekly meeting is the failure nobody sees. Not paginated, unlike
-     * every other `list` here — the window is the bound, and a window
-     * needing pages is one the server refuses.
+     * weekly meeting is the failure nobody sees. One page always: the window
+     * is the bound, and a window needing pages is one the server refuses.
      *
      * The window is required and capped at both ends, and the caps are
      * the server's to apply: a span past its limit and a result past its

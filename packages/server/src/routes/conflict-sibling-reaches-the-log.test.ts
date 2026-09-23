@@ -204,8 +204,8 @@ describe("a conflicted copy is findable", () => {
     );
     expect(found.status).toBe(200);
     const ids = (
-      (await found.json()) as { results: { item: { id: string } }[] }
-    ).results.map((r) => r.item.id);
+      (await found.json()) as { data: { item: { id: string } }[] }
+    ).data.map((r) => r.item.id);
     // The control proves the query and the harness work, so a missing
     // sibling is the sibling's problem rather than the search's.
     expect(ids).toContain(controlId);

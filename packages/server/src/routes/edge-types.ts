@@ -1,4 +1,5 @@
 import { createRoute, z } from "@hono/zod-openapi";
+import { pageOf } from "./_schemas.js";
 import {
   ErrorCode,
   MarfaError,
@@ -174,9 +175,7 @@ const listEdgeTypesRoute = createRoute({
     200: {
       content: {
         "application/json": {
-          schema: z.object({
-            edge_types: z.array(EdgeTypeResponseSchema),
-          }),
+          schema: pageOf(EdgeTypeResponseSchema, "EdgeTypePage"),
         },
       },
       description: "Edge types",
@@ -319,7 +318,7 @@ export function edgeTypeRoutes(storage: Storage) {
   router.openapi(listEdgeTypesRoute, async (c) => {
     requireAuth(c);
     const { listEdgeTypes } = await import("@withmarfa/shared");
-    return c.json({ edge_types: listEdgeTypes() }, 200);
+    return c.json({ data: listEdgeTypes(), next_cursor: null }, 200);
   });
 
   router.openapi(deleteEdgeTypeRoute, async (c) => {

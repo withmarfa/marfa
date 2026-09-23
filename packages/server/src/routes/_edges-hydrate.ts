@@ -1,4 +1,4 @@
-import type { ApiKey, Edge } from "@withmarfa/shared";
+import type { ApiKey, Edge, PaginatedResult } from "@withmarfa/shared";
 import type { CursorSortKey, Storage } from "../storage/interface.js";
 import {
   ITEM_BACKREFS_CURSOR_KEY,
@@ -8,16 +8,12 @@ import {
 import { readableEdges } from "./_edge-visibility.js";
 
 /** The most edges of one type an item response carries inline; a block
- *  cut here says so with `has_more` and a cursor for the rest. */
+ *  cut here carries a `next_cursor` for the rest. */
 export const HYDRATE_PER_TYPE_CAP = 50;
 
-export interface HydratedEdgeBlock {
-  edges: Edge[];
-  has_more: boolean;
-  next_cursor?: string;
-}
-
-export type HydratedEdges = Record<string, HydratedEdgeBlock>;
+/** An item's edges keyed by edge type, each block the first page of that
+ *  type's edges from the listing its cursor continues at. */
+export type HydratedEdges = Record<string, PaginatedResult<Edge>>;
 
 /**
  * The ids of these edges the credential may read, in one query for the
@@ -38,8 +34,8 @@ async function visibleEdgeIds(
  *
  * **After the cut rather than before it**, matching `GET /edges`: the cap
  * and the cursor come from the store's own window and are left alone, so
- * a block can come back shorter than the cap while `has_more` still says
- * there is more to page for. Filtering first would move `has_more` onto
+ * a block can come back shorter than the cap while `next_cursor` still says
+ * there is more to page for. Filtering first would move the cursor onto
  * the readable rows of one window, and a client would stop on a block
  * that had simply been thinned.
  *
@@ -47,7 +43,7 @@ async function visibleEdgeIds(
  * of a block is an edge type, so an empty block named `about` says this
  * item has `about` edges the caller may not see — the disclosure the
  * filter exists to close, in the shape of a map key. It takes the
- * block's `has_more` and cursor with it: an item whose first fifty edges
+ * block's cursor with it: an item whose first fifty edges
  * of a kind are all unreadable carries no block for that kind and no
  * cursor into it, and the readable ones behind them are reached through
  * `GET /items/{id}/edges?edge_type=X`, which pages the whole relation
@@ -60,9 +56,9 @@ function applyVisibility(
 ): HydratedEdges {
   const out: HydratedEdges = {};
   for (const [type, block] of Object.entries(blocks)) {
-    const edges = block.edges.filter((edge) => visible.has(edge.id));
-    if (edges.length === 0) continue;
-    out[type] = { ...block, edges };
+    const data = block.data.filter((edge) => visible.has(edge.id));
+    if (data.length === 0) continue;
+    out[type] = { ...block, data };
   }
   return out;
 }
@@ -85,7 +81,7 @@ export async function hydrateEdgesForItem(
   const visible = await visibleEdgeIds(
     storage,
     key,
-    Object.values(blocks).flatMap((b) => b.edges),
+    Object.values(blocks).flatMap((b) => b.data),
   );
   return applyVisibility(blocks, visible);
 }
@@ -110,7 +106,7 @@ export async function hydrateEdgesForItems(
       ITEM_EDGES_CURSOR_KEY,
     );
     capped.set(id, blocks);
-    for (const block of Object.values(blocks)) all.push(...block.edges);
+    for (const block of Object.values(blocks)) all.push(...block.data);
   }
   const visible = await visibleEdgeIds(storage, key, all);
   const out = new Map<string, HydratedEdges>();
@@ -141,14 +137,15 @@ export async function hydrateBackrefsForItem(
   const visible = await visibleEdgeIds(
     storage,
     key,
-    Object.values(blocks).flatMap((b) => b.edges),
+    Object.values(blocks).flatMap((b) => b.data),
   );
   return applyVisibility(blocks, visible);
 }
 
 /**
  * Group edges already in a listing's order by type and cut each block at
- * the cap. A cut block's cursor is the last visible edge's position under
+ * the cap. A cut block's cursor is the last in-window edge's position,
+ * readable or not, under
  * `cursorKey`, the key of the listing the caller will continue at, so it
  * is read there like a cursor that listing minted itself.
  */
@@ -159,16 +156,15 @@ export function groupAndCap(
 ): HydratedEdges {
   const out: HydratedEdges = {};
   for (const edge of edges) {
-    const block = out[edge.edge_type] ?? { edges: [], has_more: false };
-    block.edges.push(edge);
+    const block = out[edge.edge_type] ?? { data: [], next_cursor: null };
+    block.data.push(edge);
     out[edge.edge_type] = block;
   }
   for (const type of Object.keys(out)) {
     const block = out[type];
     if (!block) continue;
-    if (block.edges.length > cap) {
-      block.has_more = true;
-      const last = block.edges[cap - 1];
+    if (block.data.length > cap) {
+      const last = block.data[cap - 1];
       if (last) {
         block.next_cursor = encodeKeyedCursor(
           last.created_at,
@@ -176,7 +172,7 @@ export function groupAndCap(
           cursorKey,
         );
       }
-      block.edges = block.edges.slice(0, cap);
+      block.data = block.data.slice(0, cap);
     }
   }
   return out;

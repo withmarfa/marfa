@@ -142,7 +142,7 @@ export class SqliteEdgeStore implements EdgeStore {
       const last = slice.at(-1);
       if (last) cursor = encodeKeyedCursor(last.created_at, last.id, cursorKey);
     }
-    return { data: slice.map(rowToEdge), cursor, has_more: hasMore };
+    return { data: slice.map(rowToEdge), next_cursor: cursor };
   }
 
   listFromSource(
@@ -253,11 +253,7 @@ export class SqliteEdgeStore implements EdgeStore {
           key,
         );
     }
-    return {
-      data: slice.map(rowToEdge),
-      cursor,
-      has_more: hasMore,
-    };
+    return { data: slice.map(rowToEdge), next_cursor: cursor };
   }
 
   async updateProperties(

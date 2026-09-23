@@ -233,10 +233,15 @@ describe("an edge carries a version", () => {
     );
     const blocks = (
       (await hydrated.json()) as {
-        item: { edges?: Record<string, { edges: WireEdge[] }> };
+        item: {
+          edges?: Record<
+            string,
+            { data: WireEdge[]; next_cursor: string | null }
+          >;
+        };
       }
     ).item.edges;
-    expect(first(blocks?.references?.edges).version).toBe(1);
+    expect(first(blocks?.references?.data).version).toBe(1);
   });
 });
 

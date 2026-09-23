@@ -20,16 +20,12 @@ afterAll(async () => {
 /**
  * The bound, and the line that says it cannot be reached.
  *
- * `ItemStore.list` guards its pagination with `throw new Error("unreachable:
- * hasMore but data is empty")`. That line was reachable: the clamp did not
- * floor, `0` is not nullish so the default never fired, `LIMIT 1` returned a
- * row, and the page sliced to nothing. It had never fired because thirteen
- * separate restatements of the bound all happened to refuse `0` upstream —
- * which is a property of the callers, not of the guard.
- *
- * These assert the door's refusal and the store's floor separately, because
- * they are different guarantees and the first is what has been hiding the
- * second.
+ * `ItemStore.list` guards its pagination with a throw for a page that has
+ * more to follow and no rows. A `limit` of `0` would reach it if the store's
+ * clamp did not floor, since `0` is not nullish and `LIMIT 1` still returns a
+ * row. The doors refuse `0` upstream, which is a property of the callers and
+ * not of the guard, so these assert the door's refusal and the store's floor
+ * separately.
  */
 describe("the page bound", () => {
   it("refuses a zero limit at the door rather than clamping it", async () => {
@@ -83,7 +79,7 @@ describe("the page bound", () => {
     // One row rather than a throw, and rather than an empty page claiming
     // there is more.
     expect(page.data).toHaveLength(MIN_PAGE_LIMIT);
-    expect(page.has_more).toBe(true);
+    expect(page.next_cursor).not.toBeNull();
   });
 
   it("uses the default when the caller names no limit", async () => {

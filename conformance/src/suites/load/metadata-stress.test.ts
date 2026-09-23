@@ -160,9 +160,11 @@ describe("metadata operations at scale", () => {
       expect(page.ok).toBe(true);
       if (!page.ok) break;
       observed += page.data.data.length;
-      // `has_more`, not the cursor: a cursor echoed on the final page would
-      // loop forever, and this test would hang rather than fail.
-      cursor = page.data.has_more ? (page.data.cursor ?? undefined) : undefined;
+      // A cursor echoed back would loop forever, and this test would hang
+      // rather than fail.
+      const next = page.data.next_cursor ?? undefined;
+      expect(next === undefined || next !== cursor).toBe(true);
+      cursor = next;
     } while (cursor);
 
     await record({

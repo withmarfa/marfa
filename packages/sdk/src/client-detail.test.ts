@@ -42,7 +42,7 @@ describe("items.getDetail", () => {
     const detail = await client.items.getDetail(parent.id);
     expect(detail.item.id).toBe(parent.id);
     expect(detail.metadata.tags).toEqual(["root-tag"]);
-    expect(detail.item.edges?.["parent-of"]?.edges.length).toBe(1);
+    expect(detail.item.edges?.["parent-of"]?.data.length).toBe(1);
     // Opt-in blocks absent unless requested.
     expect(detail.backrefs).toBeUndefined();
     expect(detail.neighbors).toBeUndefined();
@@ -85,14 +85,15 @@ describe("items.getDetail", () => {
       include: ["backrefs", "neighbors", "versions"],
     });
     // Outbound + inbound edges.
-    expect(detail.item.edges?.["parent-of"]?.edges.length).toBe(1);
-    expect(detail.backrefs?.["in-thread"]?.edges.length).toBe(1);
+    expect(detail.item.edges?.["parent-of"]?.data.length).toBe(1);
+    expect(detail.backrefs?.["in-thread"]?.data.length).toBe(1);
     // Both neighbors hydrated as full { item, metadata }.
     const neighborIds = (detail.neighbors ?? []).map((n) => n.item.id).sort();
     expect(neighborIds).toEqual([child.id, comment.id].sort());
     // A small neighborhood is complete, not truncated.
     expect(detail.neighbors_truncated).toBe(false);
     // Versions present.
-    expect((detail.versions ?? []).length).toBeGreaterThanOrEqual(1);
+    expect(detail.versions?.data.length).toBeGreaterThanOrEqual(1);
+    expect(detail.versions?.next_cursor).toBeNull();
   });
 });

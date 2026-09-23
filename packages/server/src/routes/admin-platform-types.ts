@@ -27,6 +27,7 @@
  * silent no-op.
  */
 import { createRoute, z } from "@hono/zod-openapi";
+import { pageOf } from "./_schemas.js";
 import { MarfaError, ErrorCode } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { requireOperatorKey } from "../middleware/auth.js";
@@ -34,17 +35,19 @@ import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import type { Storage } from "../storage/interface.js";
 import { platformDrift } from "../storage/platform-drift.js";
 
-const DriftedTypeSchema = z.object({
-  id: z.string(),
-  /** Items carrying this identifier. */
-  item_count: z.number(),
-  /** Types inheriting from this one. A parent supplies their fields, so a
-   *  removal is declined while any exist. */
-  child_types: z.array(z.string()),
-  /** Whether a delete would be accepted: no items carry it and nothing
-   *  inherits from it. */
-  removable: z.boolean(),
-});
+const DriftedTypeSchema = z
+  .object({
+    id: z.string(),
+    /** Items carrying this identifier. */
+    item_count: z.number(),
+    /** Types inheriting from this one. A parent supplies their fields, so a
+     *  removal is declined while any exist. */
+    child_types: z.array(z.string()),
+    /** Whether a delete would be accepted: no items carry it and nothing
+     *  inherits from it. */
+    removable: z.boolean(),
+  })
+  .openapi("DriftedPlatformType");
 
 const listDriftRoute = createRoute({
   operationId: "adminListPlatformTypeDrift",
@@ -62,7 +65,7 @@ const listDriftRoute = createRoute({
     200: {
       content: {
         "application/json": {
-          schema: z.object({ types: z.array(DriftedTypeSchema) }),
+          schema: pageOf(DriftedTypeSchema, "DriftedPlatformTypePage"),
         },
       },
       description: "The drifted rows, with their live item counts",
@@ -187,7 +190,7 @@ export function adminPlatformTypeRoutes(storage: Storage) {
         };
       }),
     );
-    return c.json({ types }, 200);
+    return c.json({ data: types, next_cursor: null }, 200);
   });
 
   router.openapi(removeDriftedTypeRoute, async (c) => {

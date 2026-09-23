@@ -163,7 +163,7 @@ describe("POST /webhooks and a credential that cannot read everything", () => {
     // 403 just the same.
     const listed = await request(ctx.app, "GET", "/webhooks", { key: raw });
     expect(
-      ((await listed.json()) as { webhooks: { id: string }[] }).webhooks.map(
+      ((await listed.json()) as { data: { id: string }[] }).data.map(
         (w) => w.id,
       ),
     ).toContain(webhookId);

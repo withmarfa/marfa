@@ -41,7 +41,7 @@ describe("platform type maintenance", () => {
       200,
       r.data,
     );
-    expect(r.data.types).toEqual([]);
+    expect(r.data.data).toEqual([]);
   });
 
   it("serves no type this repository's vocabulary retired", async () => {
@@ -54,7 +54,7 @@ describe("platform type maintenance", () => {
     // half of the problem a black-box run can reach.
     const listed = await client.listTypes();
     expect(listed.ok).toBe(true);
-    const ids = listed.data.map((t) => t.id);
+    const ids = listed.data.data.map((t) => t.id);
     expect(ids).toContain("system.connection");
     expect(ids).not.toContain("system.integration");
     const missing = await client.getType("system.integration");

@@ -75,8 +75,7 @@ export class BlobOrphanReporter {
     const candidates = await this.storage.blobs.listAll();
     const referenced = new Set<string>();
     let cursor: string | undefined;
-    let hasMore = true;
-    while (hasMore) {
+    do {
       const page = await this.storage.items.list({
         all_states: true,
         limit: SCAN_PAGE,
@@ -91,9 +90,8 @@ export class BlobOrphanReporter {
       for (const meta of metadataList) {
         collectBlobHashes(meta.extensions, referenced);
       }
-      cursor = page.cursor ?? undefined;
-      hasMore = page.has_more;
-    }
+      cursor = page.next_cursor ?? undefined;
+    } while (cursor !== undefined);
     let versionCursor: string | undefined;
     for (;;) {
       const page = await this.storage.versions.scanProperties(

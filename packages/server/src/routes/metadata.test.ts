@@ -44,15 +44,15 @@ describe("GET /metadata/tags", () => {
     });
     expect(res.status).toBe(200);
     const data = (await res.json()) as {
-      tags: { tag: string; count: number }[];
+      data: { tag: string; count: number }[];
     };
-    const lookup = new Map(data.tags.map((t) => [t.tag, t.count]));
+    const lookup = new Map(data.data.map((t) => [t.tag, t.count]));
     expect(lookup.get("alpha") ?? 0).toBeGreaterThanOrEqual(3);
     expect(lookup.get("beta") ?? 0).toBeGreaterThanOrEqual(1);
     expect(lookup.get("gamma") ?? 0).toBeGreaterThanOrEqual(1);
     // Sorted by count desc; alpha should appear before its single-use peers.
-    const alphaIdx = data.tags.findIndex((t) => t.tag === "alpha");
-    const betaIdx = data.tags.findIndex((t) => t.tag === "beta");
+    const alphaIdx = data.data.findIndex((t) => t.tag === "alpha");
+    const betaIdx = data.data.findIndex((t) => t.tag === "beta");
     expect(alphaIdx).toBeGreaterThanOrEqual(0);
     expect(betaIdx).toBeGreaterThanOrEqual(0);
     expect(alphaIdx).toBeLessThan(betaIdx);
@@ -71,8 +71,8 @@ describe("GET /metadata/tags", () => {
         res.status,
         "the facet door stopped answering, so every reading below is taken from an error body and means nothing",
       ).toBe(200);
-      const data = (await res.json()) as { tags: { tag: string }[] };
-      return data.tags.some((t) => t.tag === tag);
+      const data = (await res.json()) as { data: { tag: string }[] };
+      return data.data.some((t) => t.tag === tag);
     };
 
     const binned = await createItemWithTags(["only-on-trashed-item"]);

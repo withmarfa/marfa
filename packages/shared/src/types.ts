@@ -236,17 +236,6 @@ export interface UpdateEdgeInput {
   version: number;
 }
 
-/**
- * Hydrated edges block attached to an item response — one entry per edge
- * type pointing out from (or into) this item. Truncated per-type with
- * a pagination cursor.
- */
-export interface ItemEdgesBlock {
-  edges: Edge[];
-  has_more: boolean;
-  next_cursor?: string;
-}
-
 /** Per-edge-type permission levels. */
 export type EdgePermission = "read" | "write";
 
@@ -408,11 +397,15 @@ export interface UpdateKeyInput {
 // Response types
 // ---------------------------------------------------------------------------
 
-/** Cursor-based paginated response. */
+/**
+ * One page of a list or a search: the rows, and the cursor that continues
+ * past them, `null` on the last page. A page can be short, or empty, with a
+ * cursor still to follow, so a walk stops on `null` and never on a short
+ * page.
+ */
 export interface PaginatedResult<T> {
   data: T[];
-  cursor: string | null;
-  has_more: boolean;
+  next_cursor: string | null;
 }
 
 /** A search result with relevance scoring. */

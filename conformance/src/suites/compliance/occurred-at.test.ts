@@ -193,9 +193,9 @@ describe("occurred_at compliance", () => {
       // The page has to be whole, or an absence below is a truncation
       // rather than a bound.
       expect(
-        page.data.has_more,
+        page.data.next_cursor,
         "the page was truncated, so a row missing from it proves nothing about the bound",
-      ).toBe(false);
+      ).toBeNull();
       return page.data.data.map((i) => i.id);
     };
 

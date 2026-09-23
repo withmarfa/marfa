@@ -169,8 +169,28 @@ impl Http {
         )
     }
 
+    /// Every registered type, following `next_cursor` to its end.
     pub fn types(&self) -> Result<Vec<WireType>, CoreError> {
-        self.get_json(&["types"], &[])
+        let mut types = Vec::new();
+        let mut cursor: Option<String> = None;
+        loop {
+            let params: Vec<(&str, &str)> = cursor
+                .as_deref()
+                .map(|cursor| vec![("cursor", cursor)])
+                .unwrap_or_default();
+            let page: WirePage<WireType> = self.get_json(&["types"], &params)?;
+            types.extend(page.data);
+            match page.next_cursor {
+                None => return Ok(types),
+                Some(next) if Some(&next) == cursor.as_ref() => {
+                    return Err(CoreError::Decoding(
+                        "the server kept answering with the same cursor while reporting more types"
+                            .into(),
+                    ));
+                }
+                Some(next) => cursor = Some(next),
+            }
+        }
     }
 
     pub fn items_page(

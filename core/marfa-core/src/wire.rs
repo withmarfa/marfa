@@ -54,15 +54,8 @@ pub struct WireEdge {
     pub updated_at: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
-pub struct WireEdgeBlock {
-    #[serde(default)]
-    pub edges: Vec<WireEdge>,
-    #[serde(default)]
-    pub has_more: bool,
-    #[serde(default)]
-    pub next_cursor: Option<String>,
-}
+/// The first page of one edge type's edges, inline on an item.
+pub type WireEdgeBlock = WirePage<WireEdge>;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct WireMetadata {
@@ -76,13 +69,18 @@ pub struct WireItemWithMetadata {
     pub metadata: WireMetadata,
 }
 
+/// One page of a list: `next_cursor` continues it and is `None` on the last.
+/// A page can be short or empty with a cursor still to follow, so a walk
+/// stops on `None` and never on a short page.
+///
+/// The key is required, `null` included: serde would otherwise read a page
+/// that dropped it as the last one, and a walk would stop after its first
+/// page without a word.
 #[derive(Debug, Clone, Deserialize)]
 pub struct WirePage<T> {
     pub data: Vec<T>,
-    #[serde(default)]
-    pub cursor: Option<String>,
-    #[serde(default)]
-    pub has_more: bool,
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub next_cursor: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -167,4 +165,20 @@ pub struct WireWriteAnswer {
 #[derive(Debug, Clone, Deserialize)]
 pub struct WireEdgeAnswer {
     pub edge: WireEdge,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::WirePage;
+
+    #[test]
+    fn a_page_without_a_cursor_key_is_refused_and_a_null_one_is_the_last() {
+        assert!(serde_json::from_str::<WirePage<u32>>(r#"{"data":[1]}"#).is_err());
+        let last: WirePage<u32> =
+            serde_json::from_str(r#"{"data":[1],"next_cursor":null}"#).unwrap();
+        assert_eq!(last.next_cursor, None);
+        let more: WirePage<u32> =
+            serde_json::from_str(r#"{"data":[],"next_cursor":"c1"}"#).unwrap();
+        assert_eq!(more.next_cursor.as_deref(), Some("c1"));
+    }
 }

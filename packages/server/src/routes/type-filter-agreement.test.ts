@@ -126,9 +126,7 @@ const SURFACES: Surface[] = [
           { key: ctx.workingKey },
         ),
         (b: never) =>
-          (b as { results: { item: { type: string } }[] }).results.map(
-            (r) => r.item,
-          ),
+          (b as { data: { item: { type: string } }[] }).data.map((r) => r.item),
       ),
   },
   {

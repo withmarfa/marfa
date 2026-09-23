@@ -1447,9 +1447,7 @@ export function bulkRoutes(storage: Storage) {
         if (matched.length > cap) break;
       }
       cursor =
-        page.has_more && matched.length <= cap
-          ? (page.cursor ?? undefined)
-          : undefined;
+        matched.length <= cap ? (page.next_cursor ?? undefined) : undefined;
     } while (cursor);
 
     if (matched.length > cap) {

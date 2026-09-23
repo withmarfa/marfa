@@ -16,6 +16,7 @@ import {
 } from "../openapi.js";
 import {
   EdgeResponseSchema,
+  EdgePageSchema,
   EdgeSchema,
   VersionConflictErrorSchema,
 } from "./_schemas.js";
@@ -56,14 +57,6 @@ const EdgeConflictSchema = z
   })
   .openapi("EdgeVersionConflict");
 
-const EdgeListSchema = z
-  .object({
-    data: z.array(EdgeSchema),
-    cursor: z.string().nullable(),
-    has_more: z.boolean(),
-  })
-  .openapi("EdgePage");
-
 const MAX_EDGE_TYPE_FILTER = 10;
 
 // ---------------------------------------------------------------------------
@@ -101,7 +94,7 @@ const listEdgesRoute = createRoute({
   summary: "List edges",
   description:
     "Returns a paginated list of edges the credential may read, optionally filtered by edge type. Pass `edge_type` as a comma-separated list (up to 10 entries) to scope, or omit it to list every edge this credential reaches.\n\n" +
-    "Each row is held to the two permissions `GET /edges/{id}` asks for: read on the source item's type, and read on the edge type. A row failing either is left out rather than refused, so a page can come back shorter than `limit` and can come back empty while `has_more` is true. The cursor and `has_more` describe the whole listing rather than the page, so paging still walks it: stop on `has_more`, never on an empty page.\n\n" +
+    "Each row is held to the two permissions `GET /edges/{id}` asks for: read on the source item's type, and read on the edge type. A row failing either is left out rather than refused, so a page can come back shorter than `limit` and can come back empty with a `next_cursor` still to follow. The cursor describes the whole listing rather than the page, so paging still walks it: stop on `next_cursor: null`, never on an empty page.\n\n" +
     "Edges carry no lifecycle state of their own and are never hidden by the state of the items they join, so this listing has no `state` parameter and needs none: an edge whose endpoints are in the bin is returned like any other. That is deliberate — a client reconciling its copy has to see those edges rather than watch them disappear.\n\n" +
     "Removals are a different question and this read cannot answer it. A deleted edge leaves no row and no tombstone, so nothing here distinguishes one that was removed from one that never existed. The event stream carries the deletions; a client that reconciles completely needs both channels.\n\n" +
     UNKNOWN_PARAM_NOTE +
@@ -147,7 +140,7 @@ const listEdgesRoute = createRoute({
   },
   responses: {
     200: {
-      content: { "application/json": { schema: EdgeListSchema } },
+      content: { "application/json": { schema: EdgePageSchema } },
       description: "Edges, paginated",
     },
     400: {
@@ -471,9 +464,9 @@ export function edgeRoutes(storage: Storage) {
 
     // The two questions `GET /edges/{id}` asks, asked of every row through
     // the one function every plural door calls. The
-    // cursor and `has_more` are the store's and are untouched, so a page
-    // can come back short — empty, even, while `has_more` is true — and
-    // paging still walks the whole listing.
+    // cursor is the store's and is untouched, so a page can come back
+    // short — empty, even, with a cursor still to follow — and paging still
+    // walks the whole listing.
     const key = requireAuth(c);
     const visible = await readableEdges(storage, key, result.data);
     return c.json({ ...result, data: visible }, 200);
@@ -758,7 +751,7 @@ const listFromSourceRoute = createRoute({
   operationId: "listItemEdges",
   tags: ["Edges"],
   summary: "List outbound edges from an item",
-  description: `Returns the edges where this item is the source, paginated and optionally filtered by edge type. Use the backrefs endpoint for edges pointing at the item. An item in the trash still answers with its edges, because an edge carries no lifecycle of its own: a 404 here means no such item, not a deleted one. Requires read access to the item's type. Each row is held to the two permissions \`GET /edges/{id}\` asks for: read on the source item's type, and read on the edge type. A row failing either is left out rather than refused, so a page can come back shorter than \`limit\` and can come back empty while \`has_more\` is true. The cursor and \`has_more\` describe the whole listing rather than the page: stop on \`has_more\`, never on an empty page. ${UNKNOWN_PARAM_NOTE}`,
+  description: `Returns the edges where this item is the source, paginated and optionally filtered by edge type. Use the backrefs endpoint for edges pointing at the item. An item in the trash still answers with its edges, because an edge carries no lifecycle of its own: a 404 here means no such item, not a deleted one. Requires read access to the item's type. Each row is held to the two permissions \`GET /edges/{id}\` asks for: read on the source item's type, and read on the edge type. A row failing either is left out rather than refused, so a page can come back shorter than \`limit\` and can come back empty with a \`next_cursor\` still to follow. The cursor describes the whole listing rather than the page: stop on \`next_cursor: null\`, never on an empty page. ${UNKNOWN_PARAM_NOTE}`,
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({ id: z.string().describe("Item id.") }),
@@ -782,7 +775,7 @@ const listFromSourceRoute = createRoute({
   },
   responses: {
     200: {
-      content: { "application/json": { schema: EdgeListSchema } },
+      content: { "application/json": { schema: EdgePageSchema } },
       description: "Outbound edges",
     },
     400: {
@@ -829,7 +822,7 @@ const listBackrefsRoute = createRoute({
   operationId: "listItemBackrefs",
   tags: ["Edges"],
   summary: "List inbound edges to an item",
-  description: `Returns the edges where this item is the target (backrefs), paginated and optionally filtered by edge type. Use the edges endpoint for edges pointing away from the item. An item in the trash still answers with its edges, because an edge carries no lifecycle of its own: a 404 here means no such item, not a deleted one. Requires read access to the item's type. Each row is held to the two permissions \`GET /edges/{id}\` asks for: read on the source item's type, and read on the edge type. A row failing either is left out rather than refused, so a page can come back shorter than \`limit\` and can come back empty while \`has_more\` is true. The cursor and \`has_more\` describe the whole listing rather than the page: stop on \`has_more\`, never on an empty page. ${UNKNOWN_PARAM_NOTE}`,
+  description: `Returns the edges where this item is the target (backrefs), paginated and optionally filtered by edge type. Use the edges endpoint for edges pointing away from the item. An item in the trash still answers with its edges, because an edge carries no lifecycle of its own: a 404 here means no such item, not a deleted one. Requires read access to the item's type. Each row is held to the two permissions \`GET /edges/{id}\` asks for: read on the source item's type, and read on the edge type. A row failing either is left out rather than refused, so a page can come back shorter than \`limit\` and can come back empty with a \`next_cursor\` still to follow. The cursor describes the whole listing rather than the page: stop on \`next_cursor: null\`, never on an empty page. ${UNKNOWN_PARAM_NOTE}`,
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({ id: z.string().describe("Item id.") }),
@@ -853,7 +846,7 @@ const listBackrefsRoute = createRoute({
   },
   responses: {
     200: {
-      content: { "application/json": { schema: EdgeListSchema } },
+      content: { "application/json": { schema: EdgePageSchema } },
       description: "Inbound edges",
     },
     400: {

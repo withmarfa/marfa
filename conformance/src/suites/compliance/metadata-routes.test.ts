@@ -79,12 +79,12 @@ describe("metadata doors", () => {
     const tags = await client.listTags();
     expect(tags.ok).toBe(true);
     await expectMatchesSchema("GET", "/metadata/tags", 200, tags.data);
-    const counts = new Map(tags.data.tags.map((t) => [t.tag, t.count]));
+    const counts = new Map(tags.data.data.map((t) => [t.tag, t.count]));
     expect(counts.get(shared)).toBe(2);
     expect(counts.get(lone)).toBe(1);
     expect(counts.get(`md-absent-${ctx.runId}`)).toBeUndefined();
 
-    const order = tags.data.tags.map((t) => t.tag);
+    const order = tags.data.data.map((t) => t.tag);
     expect(order.indexOf(shared)).toBeLessThan(order.indexOf(lone));
 
     expect(counts.get(tieEarly)).toBe(1);

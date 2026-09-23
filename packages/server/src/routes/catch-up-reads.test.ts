@@ -73,8 +73,7 @@ async function seedNote(body: string): Promise<string> {
 
 interface Page {
   data: { id: string }[];
-  cursor: string | null;
-  has_more: boolean;
+  next_cursor: string | null;
 }
 
 async function listItems(query: string): Promise<Page> {
@@ -152,7 +151,7 @@ describe("updated_after on GET /items", () => {
         (cursor ? `&cursor=${encodeURIComponent(cursor)}` : "");
       const page: Page = await listItems(q);
       seen.push(...page.data.map((i) => i.id));
-      cursor = page.has_more ? page.cursor : null;
+      cursor = page.next_cursor;
       if (!cursor) break;
     }
 
@@ -378,12 +377,12 @@ describe("an item cursor knows which ordering issued it", () => {
     const first = await listItems(
       `updated_after=${encodeURIComponent("2007-01-01T00:00:00.000Z")}&limit=1`,
     );
-    expect(first.cursor).toBeTruthy();
+    expect(first.next_cursor).toBeTruthy();
 
     const replayed = await request(
       ctx.app,
       "GET",
-      `/items?limit=1&cursor=${encodeURIComponent(first.cursor ?? "")}`,
+      `/items?limit=1&cursor=${encodeURIComponent(first.next_cursor ?? "")}`,
       { key: ctx.workingKey },
     );
 
@@ -400,12 +399,12 @@ describe("an item cursor knows which ordering issued it", () => {
 
   it("refuses a default-ordering cursor replayed under the filter", async () => {
     const first = await listItems("limit=1");
-    expect(first.cursor).toBeTruthy();
+    expect(first.next_cursor).toBeTruthy();
 
     const replayed = await request(
       ctx.app,
       "GET",
-      `/items?updated_after=${encodeURIComponent(EPOCH)}&limit=1&cursor=${encodeURIComponent(first.cursor ?? "")}`,
+      `/items?updated_after=${encodeURIComponent(EPOCH)}&limit=1&cursor=${encodeURIComponent(first.next_cursor ?? "")}`,
       { key: ctx.workingKey },
     );
 
@@ -599,7 +598,7 @@ describe("updated_after on GET /edges", () => {
         (cursor ? `&cursor=${encodeURIComponent(cursor)}` : "");
       const page: Page = await listEdges(q);
       seen.push(...page.data.map((e) => e.id));
-      cursor = page.has_more ? page.cursor : null;
+      cursor = page.next_cursor;
       if (!cursor) break;
     }
 

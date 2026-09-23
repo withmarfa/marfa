@@ -37,9 +37,9 @@ describe("type registration and listing", () => {
   it("lists registered types", async () => {
     const r = await client.listTypes();
     expect(r.ok).toBe(true);
-    expect(r.data.length).toBeGreaterThanOrEqual(1);
+    expect(r.data.data.length).toBeGreaterThanOrEqual(1);
 
-    const typeIds = r.data.map((t) => t.id);
+    const typeIds = r.data.data.map((t) => t.id);
     expect(typeIds).toContain("core.note");
     expect(typeIds).toContain("core.bookmark");
   });
@@ -65,7 +65,7 @@ describe("type registration and listing", () => {
 
     const r = await client.listTypes();
     expect(r.ok).toBe(true);
-    const byId = new Map(r.data.map((t) => [t.id, t]));
+    const byId = new Map(r.data.data.map((t) => [t.id, t]));
 
     for (const id of shipped) {
       const entry = byId.get(id);

@@ -25,8 +25,7 @@ interface AuditRow {
 
 interface AuditPage {
   data: AuditRow[];
-  cursor: string | null;
-  has_more: boolean;
+  next_cursor: string | null;
 }
 
 /** An audit row for this context to read back. */
@@ -63,7 +62,7 @@ describe("GET /audit", () => {
     expect(res.status).toBe(401);
   });
 
-  it("returns the paginated shape { data, cursor, has_more }", async () => {
+  it("returns the paginated shape { data, next_cursor }", async () => {
     await seedAudit("test.shape", "test", "shape-1");
 
     const res = await request(ctx.app, "GET", "/audit", {
@@ -72,9 +71,10 @@ describe("GET /audit", () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as AuditPage;
     expect(Array.isArray(body.data)).toBe(true);
-    // cursor is nullable per the route schema; has_more is a boolean.
-    expect(typeof body.has_more).toBe("boolean");
-    expect(body.cursor === null || typeof body.cursor === "string").toBe(true);
+    expect(Object.keys(body).sort()).toEqual(["data", "next_cursor"]);
+    expect(
+      body.next_cursor === null || typeof body.next_cursor === "string",
+    ).toBe(true);
   });
 
   it("filters by action", async () => {
@@ -161,9 +161,9 @@ describe("GET /audit", () => {
       // The page has to be whole, or an absence below is a truncation
       // rather than a bound.
       expect(
-        body.has_more,
+        body.next_cursor,
         "the page was truncated, so a row missing from it proves nothing",
-      ).toBe(false);
+      ).toBeNull();
       return body.data.map((e) => e.id);
     };
 
@@ -249,10 +249,10 @@ describe("GET /audit", () => {
     expect(page1Res.status).toBe(200);
     const page1 = (await page1Res.json()) as AuditPage;
     expect(page1.data.length).toBe(2);
-    expect(page1.has_more).toBe(true);
-    expect(page1.cursor).not.toBeNull();
+    expect(page1.next_cursor).not.toBeNull();
+    expect(page1.next_cursor).not.toBeNull();
 
-    const cursor = page1.cursor;
+    const cursor = page1.next_cursor;
     expect(cursor).toBeTruthy();
 
     const page2Res = await request(

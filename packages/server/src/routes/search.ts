@@ -1,5 +1,6 @@
+import { createHash } from "node:crypto";
 import { createRoute, z } from "@hono/zod-openapi";
-import { resolveEnforcement } from "@withmarfa/shared";
+import { ErrorCode, MarfaError, resolveEnforcement } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { assertTypeFilter } from "./_type-filter.js";
 import { assertFilterEdgeTermsReadable } from "./_edge-visibility.js";
@@ -8,13 +9,19 @@ import {
   requireTypeAccess,
   getTypeFilter,
 } from "../middleware/auth.js";
-import type { Storage } from "../storage/interface.js";
+import {
+  SEARCH_CURSOR_KEY,
+  decodeKeyedCursor,
+  encodeKeyedCursor,
+  type Storage,
+} from "../storage/interface.js";
 import { readInstanceConfig } from "../storage/instance-config.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import {
   ALL_STATES,
   ItemSchema,
   MetadataSchema,
+  pageOf,
   resolveStateFilter,
 } from "./_schemas.js";
 import { filterMetadataForCaller } from "./util.js";
@@ -23,6 +30,46 @@ import {
   refuseUnknownQueryParams,
   UNKNOWN_PARAM_NOTE,
 } from "./_unknown-query-keys.js";
+
+/** How deep the ranking is read; a cursor past it is refused. */
+const MAX_SEARCH_DEPTH = 10_000;
+
+/**
+ * The position a search cursor carries, refused unless it was minted for
+ * this same query. A position is only meaningful in the ranking it came
+ * from, so the cursor carries a fingerprint of everything that decides the
+ * ranking, and one from another query is refused rather than read as an
+ * offset into this one.
+ */
+function searchOffset(cursor: string | undefined, query: string): number {
+  if (cursor === undefined) return 0;
+  const { v, id } = decodeKeyedCursor(cursor, SEARCH_CURSOR_KEY);
+  if (id !== query) {
+    throw new MarfaError(
+      ErrorCode.VALIDATION_ERROR,
+      "This cursor was issued for a different search and cannot be continued here. Re-read the first page with the same parameters.",
+    );
+  }
+  const offset = /^\d+$/.test(v) ? Number(v) : Number.NaN;
+  if (!Number.isInteger(offset) || offset >= MAX_SEARCH_DEPTH) {
+    throw new MarfaError(
+      ErrorCode.VALIDATION_ERROR,
+      "Invalid pagination cursor",
+    );
+  }
+  return offset;
+}
+
+/** Everything that decides a search's ranking, as one short string. */
+function searchFingerprint(query: Record<string, unknown>): string {
+  const ranking = { ...query };
+  delete ranking.cursor;
+  delete ranking.limit;
+  return createHash("sha256")
+    .update(JSON.stringify(ranking, Object.keys(ranking).sort()))
+    .digest("base64url")
+    .slice(0, 22);
+}
 
 // A search row carries the shared shapes rather than a loosened copy of
 // them: `rowToItem` and `rowToMetadata` build both, the same two builders
@@ -44,7 +91,7 @@ const searchRoute = createRoute({
   path: "/",
   tags: ["Search"],
   summary: "Search items",
-  description: `Full-text search across every item the caller can read, indexing textual properties and tags, ranked by relevance with a configurable recency boost. Accepts the same filters as \`GET /items\` — including its two time bounds, which read the item's own time — and uses \`limit\` / \`offset\` paging rather than a cursor; absolute scores aren't stable across index rebuilds. ${UNKNOWN_PARAM_NOTE}`,
+  description: `Full-text search across every item the caller can read, indexing textual properties and tags, ranked by relevance with a configurable recency boost. Accepts the same filters as \`GET /items\` — including its two time bounds, which read the item's own time — and pages by cursor like every list: pass \`next_cursor\` back as \`cursor\`. The ranking is recomputed on every page, so a row whose score moves between two reads can be seen twice or missed; absolute scores aren't stable across index rebuilds. The ranking is read at most 10,000 rows deep, and the page that reaches that depth answers \`next_cursor: null\`. ${UNKNOWN_PARAM_NOTE}`,
   security: [{ bearerAuth: [] }],
   request: {
     query: z.object({
@@ -93,14 +140,10 @@ const searchRoute = createRoute({
         .optional()
         .default(20)
         .describe("Maximum results to return."),
-      offset: z.coerce
-        .number()
-        .int()
-        .min(0)
-        .max(10000)
+      cursor: z
+        .string()
         .optional()
-        .default(0)
-        .describe("Number of results to skip for paging."),
+        .describe("Opaque cursor from a previous page's `next_cursor`."),
       filter: z
         .string()
         .describe(
@@ -132,9 +175,7 @@ const searchRoute = createRoute({
     200: {
       content: {
         "application/json": {
-          schema: z.object({
-            results: z.array(SearchResultSchema),
-          }),
+          schema: pageOf(SearchResultSchema, "SearchResultPage"),
         },
       },
       description: "Search results",
@@ -197,7 +238,7 @@ export function searchRoutes(storage: Storage) {
       tier,
       tags,
       limit,
-      offset,
+      cursor,
       filter,
       include,
       occurred_after: occurredAfter,
@@ -251,6 +292,8 @@ export function searchRoutes(storage: Storage) {
       instanceConfigForSearch,
       callerKeyForSearch,
     );
+    const fingerprint = searchFingerprint(c.req.valid("query"));
+    const offset = searchOffset(cursor, fingerprint);
     const results = await storage.search.search(q.trim(), {
       type,
       state: resolvedState,
@@ -265,16 +308,27 @@ export function searchRoutes(storage: Storage) {
       occurred_before: occurredBefore,
       allowed_types,
       excluded_types,
-      limit,
+      // One past the page, so the answer knows whether another follows.
+      limit: Math.min(limit + 1, MAX_SEARCH_DEPTH - offset),
       offset: offset > 0 ? offset : undefined,
     });
 
     const apiKey = c.get("apiKey");
-    const filtered = results.map((r) => ({
+    const filtered = results.slice(0, limit).map((r) => ({
       ...r,
       metadata: filterMetadataForCaller(r.metadata, apiKey),
     }));
-    return c.json({ results: filtered }, 200);
+    const next = offset + limit;
+    return c.json(
+      {
+        data: filtered,
+        next_cursor:
+          results.length > limit && next < MAX_SEARCH_DEPTH
+            ? encodeKeyedCursor(String(next), fingerprint, SEARCH_CURSOR_KEY)
+            : null,
+      },
+      200,
+    );
   });
 
   return router;

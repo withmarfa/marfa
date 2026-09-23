@@ -128,7 +128,6 @@ export type {
 export type {
   Item,
   ItemWithMetadata,
-  ItemEdgesBlock,
   CreateItemInput,
   Edge,
   Metadata,

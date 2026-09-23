@@ -374,8 +374,8 @@ describe("OAuth scope grammar enforcement on the data plane", () => {
         key: seeder,
       });
       expect(tags.status).toBe(200);
-      const tagsBody = (await tags.json()) as { tags: { tag: string }[] };
-      expect(tagsBody.tags.map((t) => t.tag)).toContain(
+      const tagsBody = (await tags.json()) as { data: { tag: string }[] };
+      expect(tagsBody.data.map((t) => t.tag)).toContain(
         "nonsense-scope-canary",
       );
     });
