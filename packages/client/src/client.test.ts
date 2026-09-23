@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 import {
   CONTRACT_HEADER,
@@ -10,7 +11,7 @@ import {
 
 interface Answer {
   status?: number;
-  body?: string;
+  body?: string | null;
   /** The contract header's value, or `null` to send none. */
   contract?: string | null;
 }
@@ -92,7 +93,43 @@ describe("the contract check", () => {
     }));
     const answered = await make(server).GET("/edge-types");
     expect(answered.response.status).toBe(502);
-    expect(answered.data).toBeUndefined();
+    expect(answered.error).toBe("<html>bad gateway</html>");
+  });
+
+  it("hands on a refusal on its own contract as the server's envelope", async () => {
+    const envelope = { error: { code: "item_not_found", message: "gone" } };
+    const server = stubServer(() => ({
+      status: 404,
+      body: JSON.stringify(envelope),
+    }));
+    const answered = await make(server).GET("/items/{id}", {
+      params: { path: { id: "i" } },
+    });
+    expect(answered.response.status).toBe(404);
+    expect(answered.error).toEqual(envelope);
+  });
+
+  it("reads a bodiless answer on its own contract, and refuses one on another", async () => {
+    const empty = stubServer(() => ({ status: 204, body: null }));
+    const deleted = await make(empty).DELETE("/items/{id}", {
+      params: { path: { id: "i" } },
+    });
+    expect(deleted.response.status).toBe(204);
+    const other = stubServer(() => ({
+      status: 204,
+      body: null,
+      contract: String(CONTRACT_VERSION + 1),
+    }));
+    await expect(
+      make(other).DELETE("/items/{id}", { params: { path: { id: "i" } } }),
+    ).rejects.toBeInstanceOf(ContractMismatchError);
+  });
+
+  it("names the header the document declares", async () => {
+    const document = JSON.parse(
+      await readFile(new URL("../../../openapi.json", import.meta.url), "utf8"),
+    ) as { components: { headers: Record<string, unknown> } };
+    expect(Object.keys(document.components.headers)).toContain(CONTRACT_HEADER);
   });
 
   it("reads a contract spelled any other way as another contract", async () => {
@@ -122,12 +159,14 @@ describe("the contract check", () => {
 describe("where the credential goes", () => {
   it("sends nothing to a base URL other than its own", async () => {
     const server = stubServer();
+    const client = make(server);
     await expect(
-      make(server).GET("/edge-types", {
-        baseUrl: "https://elsewhere.example",
-      }),
+      client.GET("/edge-types", { baseUrl: "https://elsewhere.example" }),
     ).rejects.toThrow(/refuses to send/);
     expect(server.seen).toEqual([]);
+    // The witness: the same client does send under its own base URL.
+    await client.GET("/edge-types");
+    expect(server.seen.map((r) => r.url)).toEqual(["/edge-types"]);
   });
 
   it("follows no redirect", async () => {
@@ -162,6 +201,9 @@ describe("where the credential goes", () => {
       ).rejects.toThrow(/names no resource/);
     }
     expect(server.seen).toEqual([]);
+    // The witness: an ordinary identifier on the same door is sent.
+    await client.GET("/items/{id}", { params: { path: { id: "i" } } });
+    expect(server.seen.map((r) => r.url)).toEqual(["/items/i"]);
   });
 
   it("types its calls from the document", () => {

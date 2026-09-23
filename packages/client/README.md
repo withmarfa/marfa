@@ -28,7 +28,7 @@ for await (const item of everyItem) {
 
 ## The contract
 
-The client carries the contract version it was generated for as `CONTRACT_VERSION`, and every answer the server sends carries its own as the `X-Marfa-Contract` header. The client checks that header on each answer before handing it on: one that names another contract, or a success that names none, is refused with `ContractMismatchError`. An error answer with no header is handed on as it came, since a proxy in front of the server answers without one and its status is still the truth. There is no separate round trip to the root. The credential is sent only under the `baseUrl` the client was made for, and never after a redirect.
+The client carries the contract version it was generated for as `CONTRACT_VERSION`, and every answer the server sends carries its own as the `X-Marfa-Contract` header. The client checks that header on each answer before handing it on: one that names another contract, or a success that names none, is refused with `ContractMismatchError`. An error answer with no header is handed on as it came, since a proxy in front of the server answers without one and its status is still the truth. The credential is sent only under the `baseUrl` the client was made for, and never after a redirect. Middleware added with `client.use` runs after these checks and sees the credential, so it is trusted as the caller's own code.
 
 ## Pages
 

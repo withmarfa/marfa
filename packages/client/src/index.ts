@@ -50,7 +50,8 @@ export type MarfaClient = Client<paths>;
  * rather than read. An error answer with no header is handed on as it
  * came, since a proxy in front of the server answers without one and its
  * status is still the truth. The credential is sent only under the
- * configured `baseUrl`, and never after a redirect.
+ * configured `baseUrl`, and never after a redirect. Middleware a caller adds
+ * with `use` runs after these checks and sees the credential.
  */
 export function createClient(options: ClientOptions): MarfaClient {
   const fetcher = options.fetch ?? globalThis.fetch;
@@ -92,10 +93,13 @@ export function createClient(options: ClientOptions): MarfaClient {
       headers.set("Authorization", `Bearer ${options.credential}`);
       return new Request(request, { headers, redirect: "error" });
     },
-    onResponse({ response }) {
+    async onResponse({ response }) {
       const served = response.headers.get(CONTRACT_HEADER);
       if (served === expected) return undefined;
       if (served === null && !response.ok) return undefined;
+      // Released rather than left for the collector, which would hold the
+      // connection until it ran.
+      await response.body?.cancel();
       throw new ContractMismatchError(served, response.status);
     },
   };
