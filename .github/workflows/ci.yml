@@ -443,3 +443,35 @@ jobs:
       # cargo how it reads the manifests rather than parsing TOML itself.
       - name: Every manifest carries the placeholder
         run: pnpm vitest run ci/version-fields.test.ts
+
+  # The clients generated from `openapi.json` are committed beside it, so a
+  # consumer reads the same types the document declares without generating
+  # anything. This regenerates each from the committed document and refuses a
+  # difference: a change to the document that did not regenerate its clients,
+  # or a hand edit to a generated file.
+  clients-freshness:
+    name: Generated clients are fresh
+    timeout-minutes: 15
+    runs-on: self-hosted
+    env:
+      NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          dest: ${{ runner.temp }}/setup-pnpm
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: Configure registry auth
+        env:
+          NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > .npmrc
+      - run: pnpm install --frozen-lockfile
+      - name: Regenerate each client and check for drift
+        run: |
+          pnpm --filter @withmarfa/client run generate
+          if ! git diff --exit-code packages/client/src; then
+            echo "A generated client is out of date with openapi.json. Run 'pnpm generate' and commit."
+            exit 1
+          fi

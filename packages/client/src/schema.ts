@@ -1204,7 +1204,7 @@ export interface paths {
         };
         /**
          * Describe the instance
-         * @description Answers without a credential: the instance's name, the build it runs as `version`, the `instance_id` that tells two instances answering the same shape apart, the contract version as `contract`, and the surfaces it carries as `features`. `contract` equals this document's `info.version`; a generated client reads it before its first request and refuses a server advertising a contract it was not generated for.
+         * @description Answers without a credential: the instance's name, the build it runs as `version`, the `instance_id` that tells two instances answering the same shape apart, the contract version as `contract`, and the surfaces it carries as `features`. `contract` equals this document's `info.version`, so a client generated from this document can tell whether a server speaks the contract it was generated for.
          */
         get: operations["getInstance"];
         put?: never;
@@ -1447,7 +1447,12 @@ export interface components {
             neighbors?: components["schemas"]["ItemWithMetadata"][];
             neighbors_truncated?: boolean;
             neighbors_omitted?: number;
-            versions?: components["schemas"]["Version"][];
+            versions?: components["schemas"]["VersionPage"];
+        };
+        VersionPage: {
+            data: components["schemas"]["Version"][];
+            /** @description Pass as `cursor` for the next page; `null` on the last. A page can be short, or empty, with a cursor still to follow, so a walk stops on `null` and never on a short page. */
+            next_cursor: string | null;
         };
         Version: {
             id: string;
@@ -1550,11 +1555,6 @@ export interface components {
                     [key: string]: unknown;
                 };
             };
-        };
-        VersionPage: {
-            data: components["schemas"]["Version"][];
-            /** @description Pass as `cursor` for the next page; `null` on the last. A page can be short, or empty, with a cursor still to follow, so a walk stops on `null` and never on a short page. */
-            next_cursor: string | null;
         };
         MetadataResponse: {
             metadata: components["schemas"]["Metadata"];
@@ -1977,6 +1977,16 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        InvalidSchemaOrValidationErrorRefusal: {
+            error: {
+                /** @enum {string} */
+                code: "invalid_schema" | "validation_error";
+                message: string;
+                details?: {
+                    [key: string]: unknown;
+                };
+            };
+        };
         CoreTypeImmutableOrForbiddenRefusal: {
             error: {
                 /** @enum {string} */
@@ -2050,13 +2060,7 @@ export interface components {
             };
         };
         OccurrencePage: {
-            data: {
-                starts_at: string;
-                ends_at?: string;
-                item: components["schemas"]["Item"];
-                series_id?: string;
-                replaces?: string;
-            }[];
+            data: components["schemas"]["Occurrence"][];
             /** @description Pass as `cursor` for the next page; `null` on the last. A page can be short, or empty, with a cursor still to follow, so a walk stops on `null` and never on a short page. */
             next_cursor: string | null;
             window: {
@@ -2090,6 +2094,13 @@ export interface components {
             series_errors_truncated?: boolean;
             /** @description Present and true when the request stopped expanding series before it had walked them all, having spent `scan.max_unproductive_iterations` on expansions that returned no occurrence. `data` may be missing occurrences the unexpanded series held, and `scan.series_unexpanded` says how many were left. A narrower window does not recover it — the budget is spent walking rules from their own start, before the window is reached — so the moves are narrowing by `type` or fixing the rules `series_errors` names. */
             expansion_incomplete?: boolean;
+        };
+        Occurrence: {
+            starts_at: string;
+            ends_at?: string;
+            item: components["schemas"]["Item"];
+            series_id?: string;
+            replaces?: string;
         };
         TagCountPage: {
             data: components["schemas"]["TagCount"][];
@@ -2677,20 +2688,6 @@ export interface operations {
                     "application/json": components["schemas"]["TypeNotPermittedRefusal"];
                 };
             };
-            /** @description The request body is over the cap this deployment sets. Refused by the body-size guard before the handler reads anything, from `Content-Length` when the request declares one and from a streaming counter when it does not. */
-            413: {
-                headers: {
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RequestTooLargeRefusal"];
-                };
-            };
             /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
             429: {
                 headers: {
@@ -2704,6 +2701,20 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
+                };
+            };
+            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            503: {
+                headers: {
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WriteContentionRefusal"];
                 };
             };
         };
@@ -2833,11 +2844,7 @@ export interface operations {
             413: {
                 headers: {
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
-                    "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -2947,20 +2954,6 @@ export interface operations {
                     "application/json": components["schemas"]["TypeNotPermittedRefusal"];
                 };
             };
-            /** @description The request body is over the cap this deployment sets. Refused by the body-size guard before the handler reads anything, from `Content-Length` when the request declares one and from a streaming counter when it does not. */
-            413: {
-                headers: {
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RequestTooLargeRefusal"];
-                };
-            };
             /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
             429: {
                 headers: {
@@ -2974,6 +2967,20 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
+                };
+            };
+            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            503: {
+                headers: {
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WriteContentionRefusal"];
                 };
             };
         };
@@ -3062,20 +3069,6 @@ export interface operations {
                     "application/json": components["schemas"]["ItemNotFoundRefusal"];
                 };
             };
-            /** @description The request body is over the cap this deployment sets. Refused by the body-size guard before the handler reads anything, from `Content-Length` when the request declares one and from a streaming counter when it does not. */
-            413: {
-                headers: {
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RequestTooLargeRefusal"];
-                };
-            };
             /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
             429: {
                 headers: {
@@ -3089,6 +3082,20 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
+                };
+            };
+            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            503: {
+                headers: {
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WriteContentionRefusal"];
                 };
             };
         };
@@ -3199,11 +3206,7 @@ export interface operations {
             413: {
                 headers: {
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
-                    "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -3396,11 +3399,7 @@ export interface operations {
             413: {
                 headers: {
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
-                    "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -3547,11 +3546,7 @@ export interface operations {
             413: {
                 headers: {
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
-                    "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -3705,11 +3700,7 @@ export interface operations {
             413: {
                 headers: {
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
-                    "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -3831,20 +3822,6 @@ export interface operations {
                     "application/json": components["schemas"]["ItemNotFoundRefusal"];
                 };
             };
-            /** @description The request body is over the cap this deployment sets. Refused by the body-size guard before the handler reads anything, from `Content-Length` when the request declares one and from a streaming counter when it does not. */
-            413: {
-                headers: {
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RequestTooLargeRefusal"];
-                };
-            };
             /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
             429: {
                 headers: {
@@ -3858,6 +3835,20 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
+                };
+            };
+            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            503: {
+                headers: {
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WriteContentionRefusal"];
                 };
             };
         };
@@ -3915,20 +3906,6 @@ export interface operations {
                     "application/json": components["schemas"]["ItemNotFoundRefusal"];
                 };
             };
-            /** @description The request body is over the cap this deployment sets. Refused by the body-size guard before the handler reads anything, from `Content-Length` when the request declares one and from a streaming counter when it does not. */
-            413: {
-                headers: {
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RequestTooLargeRefusal"];
-                };
-            };
             /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
             429: {
                 headers: {
@@ -3942,6 +3919,20 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
+                };
+            };
+            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            503: {
+                headers: {
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WriteContentionRefusal"];
                 };
             };
         };
@@ -4024,9 +4015,6 @@ export interface operations {
             413: {
                 headers: {
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -4142,9 +4130,6 @@ export interface operations {
             413: {
                 headers: {
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -4260,9 +4245,6 @@ export interface operations {
             413: {
                 headers: {
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -4407,11 +4389,7 @@ export interface operations {
             413: {
                 headers: {
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
-                    "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -4525,9 +4503,6 @@ export interface operations {
             413: {
                 headers: {
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -4662,9 +4637,6 @@ export interface operations {
             413: {
                 headers: {
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -4841,9 +4813,6 @@ export interface operations {
             413: {
                 headers: {
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -4949,20 +4918,6 @@ export interface operations {
                     "application/json": components["schemas"]["BulkJobNotFoundRefusal"];
                 };
             };
-            /** @description The request body is over the cap this deployment sets. Refused by the body-size guard before the handler reads anything, from `Content-Length` when the request declares one and from a streaming counter when it does not. */
-            413: {
-                headers: {
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RequestTooLargeRefusal"];
-                };
-            };
             /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
             429: {
                 headers: {
@@ -4976,6 +4931,20 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
+                };
+            };
+            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            503: {
+                headers: {
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WriteContentionRefusal"];
                 };
             };
         };
@@ -5051,9 +5020,6 @@ export interface operations {
             413: {
                 headers: {
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -5172,9 +5138,6 @@ export interface operations {
             413: {
                 headers: {
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -5195,6 +5158,20 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
+                };
+            };
+            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            503: {
+                headers: {
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WriteContentionRefusal"];
                 };
             };
         };
@@ -5266,20 +5243,6 @@ export interface operations {
                     "application/json": components["schemas"]["ItemNotFoundRefusal"];
                 };
             };
-            /** @description The request body is over the cap this deployment sets. Refused by the body-size guard before the handler reads anything, from `Content-Length` when the request declares one and from a streaming counter when it does not. */
-            413: {
-                headers: {
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RequestTooLargeRefusal"];
-                };
-            };
             /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
             429: {
                 headers: {
@@ -5293,6 +5256,20 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
+                };
+            };
+            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            503: {
+                headers: {
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WriteContentionRefusal"];
                 };
             };
         };
@@ -5385,20 +5362,6 @@ export interface operations {
                     "application/json": components["schemas"]["ItemNotFoundRefusal"];
                 };
             };
-            /** @description The request body is over the cap this deployment sets. Refused by the body-size guard before the handler reads anything, from `Content-Length` when the request declares one and from a streaming counter when it does not. */
-            413: {
-                headers: {
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RequestTooLargeRefusal"];
-                };
-            };
             /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
             429: {
                 headers: {
@@ -5412,6 +5375,20 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
+                };
+            };
+            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            503: {
+                headers: {
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WriteContentionRefusal"];
                 };
             };
         };
@@ -5509,9 +5486,6 @@ export interface operations {
             413: {
                 headers: {
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -5637,9 +5611,6 @@ export interface operations {
             413: {
                 headers: {
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -5766,20 +5737,6 @@ export interface operations {
                     "application/json": components["schemas"]["ItemNotFoundRefusal"];
                 };
             };
-            /** @description The request body is over the cap this deployment sets. Refused by the body-size guard before the handler reads anything, from `Content-Length` when the request declares one and from a streaming counter when it does not. */
-            413: {
-                headers: {
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RequestTooLargeRefusal"];
-                };
-            };
             /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
             429: {
                 headers: {
@@ -5793,6 +5750,20 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
+                };
+            };
+            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            503: {
+                headers: {
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WriteContentionRefusal"];
                 };
             };
         };
@@ -5885,20 +5856,6 @@ export interface operations {
                     "application/json": components["schemas"]["ItemNotFoundRefusal"];
                 };
             };
-            /** @description The request body is over the cap this deployment sets. Refused by the body-size guard before the handler reads anything, from `Content-Length` when the request declares one and from a streaming counter when it does not. */
-            413: {
-                headers: {
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RequestTooLargeRefusal"];
-                };
-            };
             /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
             429: {
                 headers: {
@@ -5912,6 +5869,20 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
+                };
+            };
+            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            503: {
+                headers: {
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WriteContentionRefusal"];
                 };
             };
         };
@@ -5991,20 +5962,6 @@ export interface operations {
                     "application/json": components["schemas"]["TypeNotPermittedRefusal"];
                 };
             };
-            /** @description The request body is over the cap this deployment sets. Refused by the body-size guard before the handler reads anything, from `Content-Length` when the request declares one and from a streaming counter when it does not. */
-            413: {
-                headers: {
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RequestTooLargeRefusal"];
-                };
-            };
             /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
             429: {
                 headers: {
@@ -6018,6 +5975,20 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
+                };
+            };
+            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            503: {
+                headers: {
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WriteContentionRefusal"];
                 };
             };
         };
@@ -6155,11 +6126,7 @@ export interface operations {
             413: {
                 headers: {
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
-                    "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -6281,20 +6248,6 @@ export interface operations {
                     "application/json": components["schemas"]["EdgeNotFoundRefusal"];
                 };
             };
-            /** @description The request body is over the cap this deployment sets. Refused by the body-size guard before the handler reads anything, from `Content-Length` when the request declares one and from a streaming counter when it does not. */
-            413: {
-                headers: {
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RequestTooLargeRefusal"];
-                };
-            };
             /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
             429: {
                 headers: {
@@ -6308,6 +6261,20 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
+                };
+            };
+            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            503: {
+                headers: {
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WriteContentionRefusal"];
                 };
             };
         };
@@ -6418,11 +6385,7 @@ export interface operations {
             413: {
                 headers: {
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
-                    "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -6593,11 +6556,7 @@ export interface operations {
             413: {
                 headers: {
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
-                    "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -6740,9 +6699,6 @@ export interface operations {
             413: {
                 headers: {
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -6817,20 +6773,6 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description The request body is over the cap this deployment sets. Refused by the body-size guard before the handler reads anything, from `Content-Length` when the request declares one and from a streaming counter when it does not. */
-            413: {
-                headers: {
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RequestTooLargeRefusal"];
-                };
-            };
             /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
             429: {
                 headers: {
@@ -6844,6 +6786,20 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
+                };
+            };
+            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            503: {
+                headers: {
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WriteContentionRefusal"];
                 };
             };
         };
@@ -6936,9 +6892,6 @@ export interface operations {
             413: {
                 headers: {
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -7079,9 +7032,6 @@ export interface operations {
             413: {
                 headers: {
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -7156,20 +7106,6 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description The request body is over the cap this deployment sets. Refused by the body-size guard before the handler reads anything, from `Content-Length` when the request declares one and from a streaming counter when it does not. */
-            413: {
-                headers: {
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RequestTooLargeRefusal"];
-                };
-            };
             /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
             429: {
                 headers: {
@@ -7183,6 +7119,20 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
+                };
+            };
+            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            503: {
+                headers: {
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WriteContentionRefusal"];
                 };
             };
         };
@@ -7273,9 +7223,6 @@ export interface operations {
             413: {
                 headers: {
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -7395,20 +7342,6 @@ export interface operations {
                     "application/json": components["schemas"]["TypeChainUnresolvableRefusal"];
                 };
             };
-            /** @description The request body is over the cap this deployment sets. Refused by the body-size guard before the handler reads anything, from `Content-Length` when the request declares one and from a streaming counter when it does not. */
-            413: {
-                headers: {
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RequestTooLargeRefusal"];
-                };
-            };
             /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
             429: {
                 headers: {
@@ -7422,6 +7355,20 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
+                };
+            };
+            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            503: {
+                headers: {
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WriteContentionRefusal"];
                 };
             };
         };
@@ -7453,6 +7400,20 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TypeResponse"];
+                };
+            };
+            /** @description `validation_error` for a malformed identifier, a body of the wrong shape, or a parent chain that is circular, too deep or unresolved; `invalid_schema` for a schema the validator refuses. */
+            400: {
+                headers: {
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InvalidSchemaOrValidationErrorRefusal"];
                 };
             };
             /** @description Unauthorized */
@@ -7501,9 +7462,6 @@ export interface operations {
             413: {
                 headers: {
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -7644,9 +7602,6 @@ export interface operations {
             413: {
                 headers: {
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -7772,20 +7727,6 @@ export interface operations {
                     "application/json": components["schemas"]["EdgePermissionDeniedOrTypeNotPermittedRefusal"];
                 };
             };
-            /** @description The request body is over the cap this deployment sets. Refused by the body-size guard before the handler reads anything, from `Content-Length` when the request declares one and from a streaming counter when it does not. */
-            413: {
-                headers: {
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RequestTooLargeRefusal"];
-                };
-            };
             /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
             429: {
                 headers: {
@@ -7799,6 +7740,20 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
+                };
+            };
+            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            503: {
+                headers: {
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WriteContentionRefusal"];
                 };
             };
         };
@@ -7874,20 +7829,6 @@ export interface operations {
                     "application/json": components["schemas"]["TypeNotPermittedRefusal"];
                 };
             };
-            /** @description The request body is over the cap this deployment sets. Refused by the body-size guard before the handler reads anything, from `Content-Length` when the request declares one and from a streaming counter when it does not. */
-            413: {
-                headers: {
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RequestTooLargeRefusal"];
-                };
-            };
             /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
             429: {
                 headers: {
@@ -7901,6 +7842,20 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
+                };
+            };
+            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            503: {
+                headers: {
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WriteContentionRefusal"];
                 };
             };
         };
@@ -7955,20 +7910,6 @@ export interface operations {
                     "application/json": components["schemas"]["TypeNotPermittedRefusal"];
                 };
             };
-            /** @description The request body is over the cap this deployment sets. Refused by the body-size guard before the handler reads anything, from `Content-Length` when the request declares one and from a streaming counter when it does not. */
-            413: {
-                headers: {
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RequestTooLargeRefusal"];
-                };
-            };
             /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
             429: {
                 headers: {
@@ -7982,6 +7923,20 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
+                };
+            };
+            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            503: {
+                headers: {
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WriteContentionRefusal"];
                 };
             };
         };
@@ -8140,6 +8095,20 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
+            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            503: {
+                headers: {
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WriteContentionRefusal"];
+                };
+            };
         };
     };
     listBlobStores: {
@@ -8205,6 +8174,20 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
+                };
+            };
+            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            503: {
+                headers: {
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WriteContentionRefusal"];
                 };
             };
         };
@@ -8330,6 +8313,20 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
+            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            503: {
+                headers: {
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WriteContentionRefusal"];
+                };
+            };
         };
     };
     getBlobUrl: {
@@ -8420,6 +8417,20 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
+            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            503: {
+                headers: {
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WriteContentionRefusal"];
+                };
+            };
         };
     };
     listBlobLocations: {
@@ -8502,6 +8513,20 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
+                };
+            };
+            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            503: {
+                headers: {
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WriteContentionRefusal"];
                 };
             };
         };
@@ -8684,20 +8709,6 @@ export interface operations {
                     "application/json": components["schemas"]["ForbiddenRefusal"];
                 };
             };
-            /** @description The request body is over the cap this deployment sets. Refused by the body-size guard before the handler reads anything, from `Content-Length` when the request declares one and from a streaming counter when it does not. */
-            413: {
-                headers: {
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RequestTooLargeRefusal"];
-                };
-            };
             /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
             429: {
                 headers: {
@@ -8711,6 +8722,20 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
+                };
+            };
+            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            503: {
+                headers: {
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WriteContentionRefusal"];
                 };
             };
         };
@@ -8814,9 +8839,6 @@ export interface operations {
             413: {
                 headers: {
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -8891,20 +8913,6 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description The request body is over the cap this deployment sets. Refused by the body-size guard before the handler reads anything, from `Content-Length` when the request declares one and from a streaming counter when it does not. */
-            413: {
-                headers: {
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RequestTooLargeRefusal"];
-                };
-            };
             /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
             429: {
                 headers: {
@@ -8918,6 +8926,20 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
+                };
+            };
+            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            503: {
+                headers: {
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WriteContentionRefusal"];
                 };
             };
         };
@@ -9010,9 +9032,6 @@ export interface operations {
             413: {
                 headers: {
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -9104,20 +9123,6 @@ export interface operations {
                     "application/json": components["schemas"]["ConnectorNotFoundRefusal"];
                 };
             };
-            /** @description The request body is over the cap this deployment sets. Refused by the body-size guard before the handler reads anything, from `Content-Length` when the request declares one and from a streaming counter when it does not. */
-            413: {
-                headers: {
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RequestTooLargeRefusal"];
-                };
-            };
             /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
             429: {
                 headers: {
@@ -9131,6 +9136,20 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
+                };
+            };
+            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            503: {
+                headers: {
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WriteContentionRefusal"];
                 };
             };
         };
@@ -9206,9 +9225,6 @@ export interface operations {
             413: {
                 headers: {
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -9320,9 +9336,6 @@ export interface operations {
             413: {
                 headers: {
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -9366,6 +9379,8 @@ export interface operations {
             query?: {
                 /** @description How many runs, newest first: at most 200, 50 unless given. */
                 limit?: number;
+                /** @description Opaque cursor from a previous page's `next_cursor`. */
+                cursor?: string;
             };
             header?: never;
             path: {
@@ -9431,20 +9446,6 @@ export interface operations {
                     "application/json": components["schemas"]["ConnectorNotFoundRefusal"];
                 };
             };
-            /** @description The request body is over the cap this deployment sets. Refused by the body-size guard before the handler reads anything, from `Content-Length` when the request declares one and from a streaming counter when it does not. */
-            413: {
-                headers: {
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RequestTooLargeRefusal"];
-                };
-            };
             /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
             429: {
                 headers: {
@@ -9458,6 +9459,20 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
+                };
+            };
+            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            503: {
+                headers: {
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WriteContentionRefusal"];
                 };
             };
         };
@@ -9558,9 +9573,6 @@ export interface operations {
             413: {
                 headers: {
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -9649,20 +9661,6 @@ export interface operations {
                     "application/json": components["schemas"]["ForbiddenRefusal"];
                 };
             };
-            /** @description The request body is over the cap this deployment sets. Refused by the body-size guard before the handler reads anything, from `Content-Length` when the request declares one and from a streaming counter when it does not. */
-            413: {
-                headers: {
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RequestTooLargeRefusal"];
-                };
-            };
             /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
             429: {
                 headers: {
@@ -9676,6 +9674,20 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
+                };
+            };
+            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            503: {
+                headers: {
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WriteContentionRefusal"];
                 };
             };
         };
@@ -9788,9 +9800,6 @@ export interface operations {
             413: {
                 headers: {
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -9914,9 +9923,6 @@ export interface operations {
             413: {
                 headers: {
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -10067,9 +10073,6 @@ export interface operations {
             413: {
                 headers: {
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -10158,20 +10161,6 @@ export interface operations {
                     "application/json": components["schemas"]["ForbiddenRefusal"];
                 };
             };
-            /** @description The request body is over the cap this deployment sets. Refused by the body-size guard before the handler reads anything, from `Content-Length` when the request declares one and from a streaming counter when it does not. */
-            413: {
-                headers: {
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RequestTooLargeRefusal"];
-                };
-            };
             /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
             429: {
                 headers: {
@@ -10185,6 +10174,20 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
+                };
+            };
+            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            503: {
+                headers: {
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WriteContentionRefusal"];
                 };
             };
         };
@@ -10272,9 +10275,6 @@ export interface operations {
             413: {
                 headers: {
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -10489,20 +10489,6 @@ export interface operations {
                     "application/json": components["schemas"]["ForbiddenRefusal"];
                 };
             };
-            /** @description The request body is over the cap this deployment sets. Refused by the body-size guard before the handler reads anything, from `Content-Length` when the request declares one and from a streaming counter when it does not. */
-            413: {
-                headers: {
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RequestTooLargeRefusal"];
-                };
-            };
             /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
             429: {
                 headers: {
@@ -10516,6 +10502,20 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
+                };
+            };
+            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            503: {
+                headers: {
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WriteContentionRefusal"];
                 };
             };
         };
@@ -10608,9 +10608,6 @@ export interface operations {
             413: {
                 headers: {
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -10713,20 +10710,6 @@ export interface operations {
                     "application/json": components["schemas"]["OwnerNotFoundRefusal"];
                 };
             };
-            /** @description The request body is over the cap this deployment sets. Refused by the body-size guard before the handler reads anything, from `Content-Length` when the request declares one and from a streaming counter when it does not. */
-            413: {
-                headers: {
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RequestTooLargeRefusal"];
-                };
-            };
             /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
             429: {
                 headers: {
@@ -10740,6 +10723,20 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
+                };
+            };
+            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            503: {
+                headers: {
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WriteContentionRefusal"];
                 };
             };
         };
@@ -10836,9 +10833,6 @@ export interface operations {
             413: {
                 headers: {
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -10954,20 +10948,6 @@ export interface operations {
                     "application/json": components["schemas"]["TypeNotPermittedRefusal"];
                 };
             };
-            /** @description The request body is over the cap this deployment sets. Refused by the body-size guard before the handler reads anything, from `Content-Length` when the request declares one and from a streaming counter when it does not. */
-            413: {
-                headers: {
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RequestTooLargeRefusal"];
-                };
-            };
             /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
             429: {
                 headers: {
@@ -10981,6 +10961,20 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
+                };
+            };
+            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            503: {
+                headers: {
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WriteContentionRefusal"];
                 };
             };
         };
@@ -11035,20 +11029,6 @@ export interface operations {
                     "application/json": components["schemas"]["ForbiddenRefusal"];
                 };
             };
-            /** @description The request body is over the cap this deployment sets. Refused by the body-size guard before the handler reads anything, from `Content-Length` when the request declares one and from a streaming counter when it does not. */
-            413: {
-                headers: {
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RequestTooLargeRefusal"];
-                };
-            };
             /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
             429: {
                 headers: {
@@ -11062,6 +11042,20 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
+                };
+            };
+            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            503: {
+                headers: {
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WriteContentionRefusal"];
                 };
             };
         };
@@ -11143,9 +11137,6 @@ export interface operations {
             413: {
                 headers: {
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -11251,20 +11242,6 @@ export interface operations {
                     "application/json": components["schemas"]["WebhookNotFoundRefusal"];
                 };
             };
-            /** @description The request body is over the cap this deployment sets. Refused by the body-size guard before the handler reads anything, from `Content-Length` when the request declares one and from a streaming counter when it does not. */
-            413: {
-                headers: {
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RequestTooLargeRefusal"];
-                };
-            };
             /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
             429: {
                 headers: {
@@ -11278,6 +11255,20 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
+                };
+            };
+            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            503: {
+                headers: {
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WriteContentionRefusal"];
                 };
             };
         };
@@ -11353,9 +11344,6 @@ export interface operations {
             413: {
                 headers: {
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -11488,9 +11476,6 @@ export interface operations {
             413: {
                 headers: {
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -11534,6 +11519,8 @@ export interface operations {
             query?: {
                 /** @description Maximum number of delivery attempts to return. */
                 limit?: number;
+                /** @description Opaque cursor from a previous page's `next_cursor`. */
+                cursor?: string;
             };
             header?: never;
             path: {
@@ -11599,20 +11586,6 @@ export interface operations {
                     "application/json": components["schemas"]["WebhookNotFoundRefusal"];
                 };
             };
-            /** @description The request body is over the cap this deployment sets. Refused by the body-size guard before the handler reads anything, from `Content-Length` when the request declares one and from a streaming counter when it does not. */
-            413: {
-                headers: {
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RequestTooLargeRefusal"];
-                };
-            };
             /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
             429: {
                 headers: {
@@ -11626,6 +11599,20 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
+                };
+            };
+            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            503: {
+                headers: {
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WriteContentionRefusal"];
                 };
             };
         };
@@ -11709,20 +11696,6 @@ export interface operations {
                     "application/json": components["schemas"]["ForbiddenRefusal"];
                 };
             };
-            /** @description The request body is over the cap this deployment sets. Refused by the body-size guard before the handler reads anything, from `Content-Length` when the request declares one and from a streaming counter when it does not. */
-            413: {
-                headers: {
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RequestTooLargeRefusal"];
-                };
-            };
             /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
             429: {
                 headers: {
@@ -11736,6 +11709,20 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
+                };
+            };
+            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            503: {
+                headers: {
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WriteContentionRefusal"];
                 };
             };
         };
@@ -11753,51 +11740,19 @@ export interface operations {
             200: {
                 headers: {
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
                     "application/json": {
                         /** @constant */
                         name: "marfa";
-                        /** @description The build, which moves on every deploy. */
+                        /** @description The deployed build. */
                         version: string;
                         instance_id: string;
                         /** @description The contract version, which moves only when the wire changes in a way a client generated for the old number cannot read. */
                         contract: number;
                         features: string[];
                     };
-                };
-            };
-            /** @description The request body is over the cap this deployment sets. Refused by the body-size guard before the handler reads anything, from `Content-Length` when the request declares one and from a streaming counter when it does not. */
-            413: {
-                headers: {
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RequestTooLargeRefusal"];
-                };
-            };
-            /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
-            429: {
-                headers: {
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    "Retry-After": components["headers"]["Retry-After"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
         };
@@ -11872,20 +11827,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TypeNotPermittedRefusal"];
-                };
-            };
-            /** @description The request body is over the cap this deployment sets. Refused by the body-size guard before the handler reads anything, from `Content-Length` when the request declares one and from a streaming counter when it does not. */
-            413: {
-                headers: {
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RequestTooLargeRefusal"];
                 };
             };
             /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
@@ -11996,9 +11937,6 @@ export interface operations {
             413: {
                 headers: {
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };

@@ -37,7 +37,7 @@ We use [Conventional Commits](https://www.conventionalcommits.org/) with package
 
 ```
 feat(server): serve a blob by a signed link
-fix(sdk): handle timeout on large exports
+fix(client): handle timeout on large exports
 chore(shared): bump zod dependency
 ```
 
