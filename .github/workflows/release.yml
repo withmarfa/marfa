@@ -1,10 +1,8 @@
 name: Release
 
-# A release is a tag. Pushing `v<version>` builds the artefacts from that
-# commit and uploads them to the run, and publishes nothing: publishing is a
-# second, deliberate act, the workflow dispatched at the tag's ref with
-# `publish` ticked, and no job here publishes yet. The tag push is the dry
-# run every release gets first.
+# A release is a tag, and tags are the maintainer's. Pushing `v<version>`
+# builds the artifacts from that commit and uploads them to the run. Nothing
+# here publishes.
 #
 # The version is the tag's, and nowhere else: `scripts/release/stamp-version.sh`
 # writes it into every manifest in this checkout, which is why no manifest in
@@ -14,12 +12,6 @@ on:
   push:
     tags:
       - "v*"
-  workflow_dispatch:
-    inputs:
-      publish:
-        description: "Publish what this run builds. Off, the run is a dry run."
-        type: boolean
-        default: false
 
 # Never cancel a release in flight. The key is per ref, so two tags queue
 # rather than cancel each other.
@@ -56,7 +48,7 @@ jobs:
           echo "ci.yml is green for $GITHUB_SHA"
 
   build:
-    name: Build the artefacts
+    name: Build the artifacts
     needs: require-green-ci
     runs-on: self-hosted
     timeout-minutes: 60
@@ -100,21 +92,21 @@ jobs:
       - name: Build and pack @withmarfa/core
         working-directory: core/bindings/node
         run: |
-          mkdir -p "$RUNNER_TEMP/artefacts"
+          mkdir -p "$RUNNER_TEMP/artifacts"
           pnpm --ignore-workspace install --frozen-lockfile
           pnpm --ignore-workspace run build
-          pnpm --ignore-workspace pack --pack-destination "$RUNNER_TEMP/artefacts"
+          pnpm --ignore-workspace pack --pack-destination "$RUNNER_TEMP/artifacts"
 
       - name: Build the binary for macOS
         working-directory: core
         run: |
           cargo build --release -p marfa-cli
           version="${{ steps.version.outputs.version }}"
-          tar -czf "$RUNNER_TEMP/artefacts/marfa-$version-darwin-arm64.tar.gz" -C target/release marfa
+          tar -czf "$RUNNER_TEMP/artifacts/marfa-$version-darwin-arm64.tar.gz" -C target/release marfa
           target/release/marfa --version
 
       - uses: actions/upload-artifact@v7
         with:
           name: release-${{ steps.version.outputs.version }}
-          path: ${{ runner.temp }}/artefacts/
+          path: ${{ runner.temp }}/artifacts/
           if-no-files-found: error

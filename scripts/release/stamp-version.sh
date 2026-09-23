@@ -22,8 +22,15 @@ if [ -z "$version" ]; then
   echo "usage: stamp-version.sh <version>" >&2
   exit 2
 fi
-if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
-  echo "stamp-version: '$version' is not a semver version" >&2
+# A release is major.minor.patch and nothing more: every version is the one
+# before it plus 0.0.1, so a pre-release has no place, and the placeholder
+# is what a build that was never stamped carries, so it is never a release.
+if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  echo "stamp-version: '$version' is not major.minor.patch" >&2
+  exit 2
+fi
+if [ "$version" = "0.0.0" ]; then
+  echo "stamp-version: 0.0.0 is the placeholder, never a release" >&2
   exit 2
 fi
 

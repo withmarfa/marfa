@@ -14,7 +14,7 @@ A typed data layer for structured personal data: items under custom type schemas
 | [`conformance/`](./conformance)          | The contract: black-box fixtures and the written specification under `conformance/spec/`                                 |
 | [`deploy/`](./deploy)                    | The container recipe: the server with Litestream streaming its database to the bucket its blobs are replicated to        |
 
-No manifest here carries a version: every package's `package.json` and every `Cargo.toml` holds the placeholder `0.0.0` (the root `package.json` is the workspace, not a package, and holds none), a release is a tag, and `.github/workflows/release.yml` stamps the tag into every manifest in its own checkout when it builds. `ci/version-fields.test.ts` refuses a pull request that moves a manifest off the placeholder. A package publishes when its `package.json` is not private.
+No manifest here carries a version: every package's `package.json` holds the placeholder `0.0.0`, and every `Cargo.toml` holds it or inherits the workspace's (the root `package.json` is the workspace, not a package, and holds none). A release is a tag, the maintainer's, and `.github/workflows/release.yml` stamps the tag into every manifest in its own checkout when it builds. `ci/version-fields.test.ts` refuses a pull request that moves a manifest off the placeholder.
 
 ## Quick start
 

@@ -1,7 +1,8 @@
 /**
- * The published surface lock: what every publishable package exports, in
- * what shape, recorded so a surface cannot change without the record
- * changing with it.
+ * The published surface lock: what every publishable package in the pnpm
+ * workspace exports, in what shape, recorded so a surface cannot change
+ * without the record changing with it. The Node binding is outside it; see
+ * `read-surfaces.ts`.
  *
  * A version is not recorded. A version is a tag, so no version exists on a
  * branch for a surface to stand under; what the lock holds is the surface
@@ -173,7 +174,7 @@ export type SurfaceViolation =
  * a stale lock is refused, because regenerating is the act that records
  * having looked, and it is the half a reviewer can see.
  *
- * Every kind blocks, and the remedy for all three is the same one command.
+ * Every kind blocks, and the remedy for all four is the same one command.
  * There is no violation here a reader can decide to ignore, because a
  * violation that could be ignored is a guard that blocks nothing.
  */

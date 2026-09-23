@@ -18,14 +18,15 @@
  * entries for the workspace's own crates, the ones with no `source`, are
  * cargo's own formatting and are read directly. `Package.swift` holds no
  * version by construction: SwiftPM versions a package by its tag. The API
- * document's `info.version` is the contract version, an integer that moves
- * when the wire breaks, and is not a product version.
+ * document's `info.version` is the contract version, not a product version.
  *
  * The placeholder has to be present, not merely not-something-else: the
  * stamp sets the version wherever it finds the placeholder, so a manifest
- * that dropped the field would build unversioned. The manifests are read
- * from `git ls-files`, the same listing the stamp walks, so the two cannot
- * disagree about which files are manifests.
+ * that dropped the field would build unversioned. A `Cargo.toml` is also
+ * held to the line the stamp rewrites, `version = "0.0.0"` or
+ * `version.workspace = true`, because cargo reads a crate with no version as
+ * `0.0.0` and the stamp would then refuse it at the tag. The manifests are
+ * read from `git ls-files`, the same listing the stamp walks.
  */
 import { execFileSync } from "node:child_process";
 import {
@@ -83,12 +84,21 @@ function cargoLockVersions(m: Manifest): VersionHeld[] {
   return held;
 }
 
-/** Every version a `package.json` or `Cargo.lock` holds that is not the placeholder. */
+/** A `Cargo.toml` without the line the stamp rewrites. */
+function cargoTomlLine(m: Manifest): VersionHeld[] {
+  if (/^version\.workspace = true$/m.test(m.text)) return [];
+  if (new RegExp(`^version = "${PLACEHOLDER}"$`, "m").test(m.text)) return [];
+  return [{ path: m.path, version: "(no placeholder line)" }];
+}
+
+/** Every version a manifest holds that is not the placeholder, and every
+ *  `Cargo.toml` the stamp could not rewrite. */
 export function versionsHeld(manifests: readonly Manifest[]): VersionHeld[] {
   const held: VersionHeld[] = [];
   for (const m of manifests) {
     if (m.path.endsWith("package.json")) held.push(...packageJsonVersions(m));
     else if (m.path.endsWith("Cargo.lock")) held.push(...cargoLockVersions(m));
+    else if (m.path.endsWith("Cargo.toml")) held.push(...cargoTomlLine(m));
   }
   return held;
 }
@@ -163,7 +173,7 @@ describe("no file holds a version", () => {
     expect(cargoWorkspaces(manifests).length).toBeGreaterThan(0);
   });
 
-  it("every tracked package.json and Cargo.lock carries the placeholder", () => {
+  it("every tracked manifest carries the placeholder", () => {
     expect(versionsHeld(manifests)).toEqual([]);
   });
 
@@ -200,6 +210,24 @@ describe("no file holds a version", () => {
       { path: "package.json", version: "0.1.0" },
       { path: "core/Cargo.lock (example)", version: "0.1.0" },
     ]);
+  });
+
+  it("would refuse a Cargo.toml without the line the stamp rewrites", () => {
+    // cargo reads a crate with no version as 0.0.0, so the cargo check below
+    // passes it; the stamp would refuse it at the tag.
+    expect(
+      versionsHeld([
+        { path: "a/Cargo.toml", text: '[package]\nname = "a"\n' },
+        {
+          path: "b/Cargo.toml",
+          text: '[package]\nname = "b"\nversion.workspace = true\n',
+        },
+        {
+          path: "c/Cargo.toml",
+          text: '[package]\nname = "c"\nversion = "0.0.0"\n',
+        },
+      ]),
+    ).toEqual([{ path: "a/Cargo.toml", version: "(no placeholder line)" }]);
   });
 
   it("would refuse a crate whose manifest holds a version, however spelled", () => {

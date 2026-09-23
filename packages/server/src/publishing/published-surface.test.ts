@@ -482,7 +482,7 @@ describe("the tree against the committed lock", () => {
     }
   });
 
-  it("locks every publishable package and nothing else", () => {
+  it("locks every publishable workspace package and nothing else", () => {
     expect(Object.keys(lock).sort()).toEqual(
       surfaces.map((s) => s.name).sort(),
     );
