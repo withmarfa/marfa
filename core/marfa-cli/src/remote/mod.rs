@@ -1,19 +1,22 @@
 //! The server a direct command talks to, and how it talks to it.
 
 pub mod request;
+pub mod transport;
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::fs::File;
 use std::io::Read;
 
 use marfa_core::Server;
-use marfa_core::http::{Call, CallBody, Http, Reply, ReplyBody};
+use marfa_core::http::{Call, CallBody, Reply, ReplyBody};
 use serde_json::Value;
 
 use crate::auth;
 use crate::credentials::{self, Kept};
 use crate::error::CliError;
 use request::{Body, Request};
+use transport::Served;
+pub use transport::Transport;
 
 /// Where the credential a call carries came from, for `whoami` to say.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -35,7 +38,10 @@ impl CredentialSource {
 
 pub struct Remote {
     /// Rebuilt when a kept token is refreshed mid-command.
-    http: RefCell<Http>,
+    http: RefCell<Transport>,
+    /// Whether the root has answered the contract this binary was built
+    /// for. Asked once, before the first call that carries a credential.
+    contract_held: Cell<bool>,
     url: String,
     origin: String,
     credential: Option<CredentialSource>,
@@ -89,7 +95,7 @@ impl Remote {
                 Err(error) => return Err(error),
             },
         };
-        let origin = Http::new(&url, None)?.origin();
+        let origin = Transport::new(&url, None)?.origin();
         let mut kept = None;
         let (key, credential) = match named.key.clone() {
             Some(key) => (Some(key), Some(CredentialSource::Flag)),
@@ -113,9 +119,10 @@ impl Remote {
                 },
             },
         };
-        let http = Http::new(&url, key.as_deref())?;
+        let http = Transport::new(&url, key.as_deref())?;
         Ok(Remote {
             http: RefCell::new(http),
+            contract_held: Cell::new(false),
             url,
             origin,
             credential,
@@ -167,7 +174,7 @@ impl Remote {
         let refused = self.bearer.borrow().clone().unwrap_or_default();
         let next = auth::refresh(&self.origin, Some(&refused))?;
         let bearer = next.bearer().to_string();
-        *self.http.borrow_mut() = Http::new(&self.url, Some(&bearer))?;
+        *self.http.borrow_mut() = Transport::new(&self.url, Some(&bearer))?;
         *self.bearer.borrow_mut() = Some(bearer);
         *self.kept.borrow_mut() = Some(next);
         Ok(())
@@ -177,11 +184,13 @@ impl Remote {
     /// path, which `resolve` reaches only through the real keychain.
     #[cfg(test)]
     pub(crate) fn holding(url: &str, kept: Kept) -> Result<Remote, CliError> {
-        let http = Http::new(url, Some(kept.bearer()))?;
+        let http = Transport::new(url, Some(kept.bearer()))?;
         let origin = http.origin();
         Ok(Remote {
             url: url.to_string(),
             http: RefCell::new(http),
+            // The refresh path's tests script no root; the gate has its own.
+            contract_held: Cell::new(true),
             origin,
             credential: Some(CredentialSource::Keychain),
             bearer: RefCell::new(Some(kept.bearer().to_string())),
@@ -192,11 +201,12 @@ impl Remote {
     /// A remote at a URL with no credential: the sign-in surface's doors,
     /// which take a client id or a token in the body rather than a bearer.
     pub fn public_at(url: &str) -> Result<Remote, CliError> {
-        let http = Http::new(url, None)?;
+        let http = Transport::new(url, None)?;
         let origin = http.origin();
         Ok(Remote {
             url: url.to_string(),
             http: RefCell::new(http),
+            contract_held: Cell::new(false),
             origin,
             credential: None,
             bearer: RefCell::new(None),
@@ -207,16 +217,37 @@ impl Remote {
     /// A remote over a transport built for one call, such as the bootstrap
     /// mint, which carries the printed secret rather than a key, so it
     /// names no credential source.
-    pub fn with(http: Http) -> Remote {
+    pub fn with(http: Transport) -> Remote {
         let origin = http.origin();
         Remote {
             url: origin.clone(),
             http: RefCell::new(http),
+            contract_held: Cell::new(false),
             origin,
             credential: None,
             bearer: RefCell::new(None),
             kept: RefCell::new(None),
         }
+    }
+
+    /// A remote whose server is taken to speak this binary's contract, for
+    /// the tests of what a command sends, which script no root. The gate
+    /// itself is held by its own tests below.
+    #[cfg(test)]
+    pub(crate) fn held(http: Transport) -> Remote {
+        let remote = Remote::with(http);
+        remote.contract_held.set(true);
+        remote
+    }
+
+    /// A remote over a transport to a door outside the document, such as
+    /// the identity door a sign-in names. It answers no contract, and the
+    /// server that named it was held to one on the way there, so it is not
+    /// asked again.
+    pub fn beside_the_document(http: Transport) -> Remote {
+        let remote = Remote::with(http);
+        remote.contract_held.set(true);
+        remote
     }
 
     /// The server as it was named, for building a second transport to it.
@@ -241,12 +272,42 @@ impl Remote {
     /// this one read the keychain, or have run out between the read and
     /// the call.
     pub fn call(&self, request: &Request) -> Result<Reply, CliError> {
+        if request.credential {
+            self.hold_contract()?;
+        }
         let reply = self.send(request)?;
         if reply.status == 401 && request.credential && self.can_refresh() {
             self.refreshed()?;
             return self.send(request);
         }
         Ok(reply)
+    }
+
+    /// Refuses a server whose root answers a contract other than the one
+    /// this binary was built for, before anything that carries a credential
+    /// is sent to it. A public call is not held to it: `status` and `whoami`
+    /// read the root to say what a server is, which is how a person finds
+    /// out that it is the wrong one.
+    fn hold_contract(&self) -> Result<(), CliError> {
+        if self.contract_held.get() {
+            return Ok(());
+        }
+        // No credential means no call will be sent; that refusal is the
+        // one to hear, not a question about the contract.
+        if !self.http.borrow().has_credential() {
+            return Ok(());
+        }
+        match self.http.borrow().served()? {
+            Served::Expected => {
+                self.contract_held.set(true);
+                Ok(())
+            }
+            Served::Other(served) => Err(CliError::ContractMismatch {
+                origin: self.origin.clone(),
+                served,
+                expected: marfa_client::CONTRACT_VERSION,
+            }),
+        }
     }
 
     fn send(&self, request: &Request) -> Result<Reply, CliError> {
@@ -409,7 +470,7 @@ mod tests {
     use crate::door::{Answer, Door};
 
     fn remote_at(door: &Door, key: Option<&str>) -> Remote {
-        Remote::with(Http::new(&door.url, key).unwrap())
+        Remote::held(Transport::new(&door.url, key).unwrap())
     }
 
     #[test]
@@ -534,7 +595,7 @@ mod tests {
         };
         // The refresh reads the keychain by the remote's origin, which is
         // the door's.
-        let origin = Http::new(&door.url, None).unwrap().origin();
+        let origin = Transport::new(&door.url, None).unwrap().origin();
         let _keychain = credentials::hold(&origin);
         match credentials::keep(&origin, &kept) {
             Ok(()) => {}
@@ -671,5 +732,93 @@ mod tests {
             .collect();
         assert_eq!(types, vec!["image/png"]);
         assert_eq!(received[0].body, "PNG raw bytes");
+    }
+
+    fn unheld_at(door: &Door) -> Remote {
+        Remote::with(Transport::new(&door.url, Some("marfa_k1_x")).unwrap())
+    }
+
+    fn root(contract: &str) -> Answer {
+        Answer::json(
+            "200 OK",
+            &format!(r#"{{"name":"marfa","version":"dev","contract":{contract},"features":[]}}"#),
+        )
+    }
+
+    /// A server on another contract is refused at its root: the root is
+    /// read without the credential, and nothing that carries one is sent.
+    #[test]
+    fn a_server_on_another_contract_is_refused_before_the_credential_is_sent() {
+        let door = Door::open(vec![root("2")]);
+        match unheld_at(&door).json(&Request::get(&["items"])) {
+            Err(CliError::ContractMismatch {
+                served, expected, ..
+            }) => {
+                assert_eq!(served, "2");
+                assert_eq!(expected, marfa_client::CONTRACT_VERSION);
+            }
+            other => panic!("{other:?}"),
+        }
+        let received = door.received();
+        assert_eq!(received.len(), 1);
+        assert_eq!(received[0].path(), "/");
+        assert_eq!(received[0].header("authorization"), None);
+    }
+
+    /// The witness: the same call to a server on this binary's contract is
+    /// sent, the root is read once, and later calls do not read it again.
+    #[test]
+    fn a_server_on_this_contract_is_asked_once_and_then_trusted() {
+        let door = Door::open(vec![
+            root(&marfa_client::CONTRACT_VERSION.to_string()),
+            Answer::json("200 OK", r#"{"data":[],"next_cursor":null}"#),
+            Answer::json("200 OK", r#"{"data":[],"next_cursor":null}"#),
+        ]);
+        let remote = unheld_at(&door);
+        remote.json(&Request::get(&["items"])).unwrap();
+        remote.json(&Request::get(&["edges"])).unwrap();
+        let received = door.received();
+        let paths: Vec<&str> = received.iter().map(|r| r.path()).collect();
+        assert_eq!(paths, vec!["/", "/items", "/edges"]);
+        assert_eq!(
+            received[1].header("authorization"),
+            Some("Bearer marfa_k1_x")
+        );
+    }
+
+    /// A root that names no contract, or answers a refusal, is not one this
+    /// binary can trust either, and says what stood in its place.
+    #[test]
+    fn a_root_with_no_contract_is_refused_and_named() {
+        let door = Door::open(vec![
+            Answer::json("200 OK", r#"{"name":"marfa"}"#),
+            Answer::json(
+                "404 Not Found",
+                r#"{"error":{"code":"not_found","message":"no"}}"#,
+            ),
+        ]);
+        let first = unheld_at(&door).json(&Request::get(&["items"]));
+        let second = unheld_at(&door).json(&Request::get(&["items"]));
+        match (first, second) {
+            (
+                Err(CliError::ContractMismatch { served: a, .. }),
+                Err(CliError::ContractMismatch { served: b, .. }),
+            ) => {
+                assert_eq!(a, "no contract");
+                assert_eq!(b, "no contract (its root answered 404)");
+            }
+            other => panic!("{other:?}"),
+        }
+        door.received();
+    }
+
+    /// A call that carries no credential is not held to the contract: the
+    /// root itself is how a person learns which contract a server speaks.
+    #[test]
+    fn a_public_call_is_not_held_to_the_contract() {
+        let door = Door::open(vec![root("2")]);
+        let answered = unheld_at(&door).json(&Request::get(&[]).public()).unwrap();
+        assert_eq!(answered["contract"], 2);
+        assert_eq!(door.received().len(), 1);
     }
 }

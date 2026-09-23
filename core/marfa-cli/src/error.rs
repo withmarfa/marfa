@@ -52,6 +52,18 @@ pub enum CliError {
     /// An argument the binary judged wrong before anything was sent.
     #[error("{0}")]
     Invalid(String),
+    /// The server speaks a contract this binary was not built for, so its
+    /// answers may be shaped in ways this binary cannot read. Nothing past
+    /// the root was sent.
+    #[error(
+        "{origin} serves contract {served}; this binary was built for contract {expected}: use a marfa built for the server's contract"
+    )]
+    ContractMismatch {
+        origin: String,
+        /// What the root answered as `contract`, or what stood in its place.
+        served: String,
+        expected: u64,
+    },
 }
 
 /// The six ways out, and what each means to a caller.
@@ -120,6 +132,7 @@ impl CliError {
             CliError::NoKeychain(_) => "no_keychain",
             CliError::SignedOut { .. } => "signed_out",
             CliError::Invalid(_) => "invalid",
+            CliError::ContractMismatch { .. } => "contract_mismatch",
         }
     }
 
@@ -148,7 +161,9 @@ impl CliError {
                 | CoreError::WrongServer { .. } => Exit::Local,
             },
             CliError::Io(_) | CliError::Watch(_) => Exit::Environment,
-            CliError::NotHeld(_) | CliError::Invalid(_) => Exit::Refused,
+            CliError::NotHeld(_) | CliError::Invalid(_) | CliError::ContractMismatch { .. } => {
+                Exit::Refused
+            }
             CliError::ClosedOutput => Exit::Done,
             CliError::Refused { status, .. } => match status {
                 401 => Exit::Credential,
@@ -260,7 +275,8 @@ With --json a refusal is one JSON object on stderr:
 where error.code is one of: invalid, not_found, unauthorized, forbidden, validation, conflict,
 too_large, unknown_type, rate_limited, server, network, decoding, io, watch, store, no_store,
 no_server, no_credential, no_keychain, signed_out, no_cursor, hydration_incomplete,
-reading_handle, wrong_schema, catch_up_too_old, stream_incomplete, wrong_server, not_held.";
+reading_handle, wrong_schema, catch_up_too_old, stream_incomplete, wrong_server, not_held,
+contract_mismatch.";
 
 #[cfg(test)]
 mod tests {
@@ -367,6 +383,12 @@ mod tests {
             })
             .code(),
             CliError::NotHeld(String::new()).code(),
+            CliError::ContractMismatch {
+                origin: String::new(),
+                served: String::new(),
+                expected: 1,
+            }
+            .code(),
         ];
         let mut sorted_listed = listed.clone();
         sorted_listed.sort_unstable();

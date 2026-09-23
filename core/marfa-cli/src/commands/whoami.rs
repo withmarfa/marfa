@@ -1,11 +1,10 @@
-use marfa_core::http::Http;
 use serde_json::{Value, json};
 
 use crate::auth;
 use crate::error::CliError;
 use crate::output::Printer;
 use crate::remote::request::Request;
-use crate::remote::{CredentialSource, Remote};
+use crate::remote::{CredentialSource, Remote, Transport};
 
 /// Which server, which instance, and which credential a bare command would
 /// use, and where that credential came from.
@@ -39,7 +38,8 @@ pub fn run(remote: &Remote, out: &Printer) -> Result<(), CliError> {
                 // identity claims is refused there (401 or 403) and reported
                 // without a person; any other refusal is this command's.
                 if let Some(endpoint) = auth::discover(remote)?.userinfo_endpoint {
-                    let door = Remote::with(Http::new(&endpoint, Some(&bearer))?);
+                    let door =
+                        Remote::beside_the_document(Transport::new(&endpoint, Some(&bearer))?);
                     match door.json(&Request::get(&[])) {
                         Ok(person) => record["person"] = person,
                         Err(CliError::Refused {

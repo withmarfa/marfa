@@ -500,22 +500,30 @@ impl Http {
 /// one, so a clock that disagrees with the server's does not turn a short
 /// wait into a long one.
 fn retry_after<B>(response: &ureq::http::Response<B>) -> Option<u64> {
-    let raw = response.headers().get("Retry-After")?.to_str().ok()?.trim();
+    let header = |name: &str| {
+        response
+            .headers()
+            .get(name)
+            .and_then(|value| value.to_str().ok())
+    };
+    retry_after_seconds(header("Retry-After"), header("Date"))
+}
+
+/// A `Retry-After` value as seconds from now, given the response's `Date`
+/// where it had one. Shared with the binary's transport, which reads the
+/// same headers off a different HTTP stack.
+pub fn retry_after_seconds(retry_after: Option<&str>, date: Option<&str>) -> Option<u64> {
+    let raw = retry_after?.trim();
     if let Ok(seconds) = raw.parse::<u64>() {
         return Some(seconds);
     }
     let until = http_date(raw)?;
-    let from = response
-        .headers()
-        .get("Date")
-        .and_then(|value| value.to_str().ok())
-        .and_then(http_date)
-        .unwrap_or_else(|| {
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|since| since.as_secs() as i64)
-                .unwrap_or(0)
-        });
+    let from = date.and_then(http_date).unwrap_or_else(|| {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|since| since.as_secs() as i64)
+            .unwrap_or(0)
+    });
     Some(until.saturating_sub(from).max(0) as u64)
 }
 
