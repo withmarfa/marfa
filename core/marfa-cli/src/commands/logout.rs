@@ -18,6 +18,9 @@ pub fn run(named: &Named, out: &Printer) -> Result<(), CliError> {
             let not_revoked = match auth::revoke(&kept) {
                 Ok(()) => None,
                 Err(CliError::Refused { .. }) => Some("the server did not accept the revocation"),
+                Err(CliError::ContractMismatch { .. }) => Some(
+                    "the server speaks another contract, so its answer to the revocation was not read",
+                ),
                 Err(_) => Some("the server could not be reached to revoke it"),
             };
             credentials::forget(&origin)?;

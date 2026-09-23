@@ -45,8 +45,7 @@ pub fn run(remote: &Remote, out: &Printer) -> Result<(), CliError> {
                 if !held {
                     record["person"] = json!(null);
                 } else if let Some(endpoint) = auth::discover(remote)?.userinfo_endpoint {
-                    let door =
-                        Remote::beside_the_document(Transport::new(&endpoint, Some(&bearer))?);
+                    let door = Remote::with(Transport::new(&endpoint, Some(&bearer))?);
                     match door.json(&Request::get(&[])) {
                         Ok(person) => record["person"] = person,
                         Err(CliError::Refused {

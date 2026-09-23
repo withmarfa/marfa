@@ -227,14 +227,12 @@ pub fn delete_connector(
     let resp = configuration.client.execute(req)?;
 
     let status = resp.status();
-    let headers = resp.headers().clone();
 
     if !status.is_client_error() && !status.is_server_error() {
         let content = resp.text()?;
         let entity: Option<DeleteConnectorSuccess> = serde_json::from_str(&content).ok();
         Ok(ResponseContent {
             status,
-            headers,
             content,
             entity,
         })
@@ -243,7 +241,6 @@ pub fn delete_connector(
         let entity: Option<DeleteConnectorError> = serde_json::from_str(&content).ok();
         Err(Error::ResponseError(ResponseContent {
             status,
-            headers,
             content,
             entity,
         }))
@@ -272,14 +269,12 @@ pub fn get_connector(
     let resp = configuration.client.execute(req)?;
 
     let status = resp.status();
-    let headers = resp.headers().clone();
 
     if !status.is_client_error() && !status.is_server_error() {
         let content = resp.text()?;
         let entity: Option<GetConnectorSuccess> = serde_json::from_str(&content).ok();
         Ok(ResponseContent {
             status,
-            headers,
             content,
             entity,
         })
@@ -288,7 +283,6 @@ pub fn get_connector(
         let entity: Option<GetConnectorError> = serde_json::from_str(&content).ok();
         Err(Error::ResponseError(ResponseContent {
             status,
-            headers,
             content,
             entity,
         }))
@@ -320,14 +314,12 @@ pub fn heartbeat_connector(
     let resp = configuration.client.execute(req)?;
 
     let status = resp.status();
-    let headers = resp.headers().clone();
 
     if !status.is_client_error() && !status.is_server_error() {
         let content = resp.text()?;
         let entity: Option<HeartbeatConnectorSuccess> = serde_json::from_str(&content).ok();
         Ok(ResponseContent {
             status,
-            headers,
             content,
             entity,
         })
@@ -336,7 +328,6 @@ pub fn heartbeat_connector(
         let entity: Option<HeartbeatConnectorError> = serde_json::from_str(&content).ok();
         Err(Error::ResponseError(ResponseContent {
             status,
-            headers,
             content,
             entity,
         }))
@@ -372,14 +363,12 @@ pub fn list_connector_runs(
     let resp = configuration.client.execute(req)?;
 
     let status = resp.status();
-    let headers = resp.headers().clone();
 
     if !status.is_client_error() && !status.is_server_error() {
         let content = resp.text()?;
         let entity: Option<ListConnectorRunsSuccess> = serde_json::from_str(&content).ok();
         Ok(ResponseContent {
             status,
-            headers,
             content,
             entity,
         })
@@ -388,7 +377,6 @@ pub fn list_connector_runs(
         let entity: Option<ListConnectorRunsError> = serde_json::from_str(&content).ok();
         Err(Error::ResponseError(ResponseContent {
             status,
-            headers,
             content,
             entity,
         }))
@@ -413,14 +401,12 @@ pub fn list_connectors(
     let resp = configuration.client.execute(req)?;
 
     let status = resp.status();
-    let headers = resp.headers().clone();
 
     if !status.is_client_error() && !status.is_server_error() {
         let content = resp.text()?;
         let entity: Option<ListConnectorsSuccess> = serde_json::from_str(&content).ok();
         Ok(ResponseContent {
             status,
-            headers,
             content,
             entity,
         })
@@ -429,7 +415,6 @@ pub fn list_connectors(
         let entity: Option<ListConnectorsError> = serde_json::from_str(&content).ok();
         Err(Error::ResponseError(ResponseContent {
             status,
-            headers,
             content,
             entity,
         }))
@@ -458,14 +443,12 @@ pub fn register_connector(
     let resp = configuration.client.execute(req)?;
 
     let status = resp.status();
-    let headers = resp.headers().clone();
 
     if !status.is_client_error() && !status.is_server_error() {
         let content = resp.text()?;
         let entity: Option<RegisterConnectorSuccess> = serde_json::from_str(&content).ok();
         Ok(ResponseContent {
             status,
-            headers,
             content,
             entity,
         })
@@ -474,7 +457,6 @@ pub fn register_connector(
         let entity: Option<RegisterConnectorError> = serde_json::from_str(&content).ok();
         Err(Error::ResponseError(ResponseContent {
             status,
-            headers,
             content,
             entity,
         }))
@@ -507,14 +489,12 @@ pub fn report_connector_run(
     let resp = configuration.client.execute(req)?;
 
     let status = resp.status();
-    let headers = resp.headers().clone();
 
     if !status.is_client_error() && !status.is_server_error() {
         let content = resp.text()?;
         let entity: Option<ReportConnectorRunSuccess> = serde_json::from_str(&content).ok();
         Ok(ResponseContent {
             status,
-            headers,
             content,
             entity,
         })
@@ -523,7 +503,6 @@ pub fn report_connector_run(
         let entity: Option<ReportConnectorRunError> = serde_json::from_str(&content).ok();
         Err(Error::ResponseError(ResponseContent {
             status,
-            headers,
             content,
             entity,
         }))

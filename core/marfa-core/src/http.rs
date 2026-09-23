@@ -87,7 +87,7 @@ impl Answer {
     }
 }
 
-/// What a call from the direct surface sends.
+/// What one call sends, through the core's transport or the binary's.
 ///
 /// A body is JSON text, sized text under a type the headers name (a form),
 /// or a reader the request streams from, because a blob upload must not
@@ -114,7 +114,8 @@ pub struct Call<'a> {
     /// refused for a credential it never needed.
     pub credential: bool,
     /// Read the whole body as text (the JSON doors) or hand the reader back
-    /// (the stream, an export, a blob's bytes).
+    /// (the stream, an export, a blob's bytes). Only the binary's transport
+    /// hands a reader back; the core's own calls read every answer whole.
     pub stream: bool,
 }
 
@@ -354,20 +355,13 @@ impl Http {
         Ok(Box::new(response.into_body().into_reader()))
     }
 
-    /// Sends one call from the direct surface and reads whatever came back.
+    /// Sends one call and reads its answer whole.
     pub fn call(&self, call: Call<'_>) -> Result<Reply, CoreError> {
         let url = self.url(call.segments, call.params);
         let mut builder = ureq::http::Request::builder()
             .method(call.method.as_str())
             .uri(url.as_str())
-            .header(
-                "Accept",
-                if call.stream {
-                    "*/*"
-                } else {
-                    "application/json"
-                },
-            );
+            .header("Accept", "application/json");
         if call.credential {
             builder = builder.header("Authorization", &self.authorization);
         }
@@ -380,25 +374,16 @@ impl Http {
         let cannot_send = |error: ureq::http::Error| {
             CoreError::Invalid(format!("this call cannot be sent: {error}"))
         };
-        // The agent's body budget is a minute, sized for a JSON answer. A
-        // streamed body is the event stream, an export or a blob, none of
-        // which has a length a budget could be sized for, so a streamed call
-        // has none; `events --for` bounds its own reading.
         let response = match call.body {
-            CallBody::None => {
-                let request = builder.body(()).map_err(cannot_send)?;
-                self.run_call(request, call.stream)
-            }
+            CallBody::None => self.agent.run(builder.body(()).map_err(cannot_send)?),
             CallBody::Json(text) | CallBody::Text(text) => {
-                let request = builder.body(text).map_err(cannot_send)?;
-                self.run_call(request, call.stream)
+                self.agent.run(builder.body(text).map_err(cannot_send)?)
             }
-            CallBody::Reader(reader) => {
-                let request = builder
+            CallBody::Reader(reader) => self.agent.run(
+                builder
                     .body(ureq::SendBody::from_owned_reader(reader))
-                    .map_err(cannot_send)?;
-                self.run_call(request, call.stream)
-            }
+                    .map_err(cannot_send)?,
+            ),
         }
         .map_err(|error| CoreError::Network(error.to_string()))?;
         let status = response.status().as_u16();
@@ -414,19 +399,12 @@ impl Http {
             .get(CONTRACT_HEADER)
             .and_then(|value| value.to_str().ok())
             .map(str::to_string);
-        // A refusal is read whole even on a streaming call, so the envelope
-        // reaches the classification; only a success is handed back as a
-        // reader.
-        let body = if call.stream && (200..300).contains(&status) {
-            ReplyBody::Stream(Box::new(response.into_body().into_reader()))
-        } else {
-            ReplyBody::Text(
-                response
-                    .into_body()
-                    .read_to_string()
-                    .map_err(|error| CoreError::Network(error.to_string()))?,
-            )
-        };
+        let body = ReplyBody::Text(
+            response
+                .into_body()
+                .read_to_string()
+                .map_err(|error| CoreError::Network(error.to_string()))?,
+        );
         Ok(Reply {
             status,
             content_type,
@@ -434,23 +412,6 @@ impl Http {
             contract,
             body,
         })
-    }
-
-    fn run_call<B: ureq::AsSendBody>(
-        &self,
-        request: ureq::http::Request<B>,
-        stream: bool,
-    ) -> Result<ureq::http::Response<ureq::Body>, ureq::Error> {
-        if stream {
-            let request = self
-                .agent
-                .configure_request(request)
-                .timeout_recv_body(None)
-                .build();
-            self.agent.run(request)
-        } else {
-            self.agent.run(request)
-        }
     }
 
     fn url(&self, segments: &[&str], params: &[(&str, &str)]) -> Url {

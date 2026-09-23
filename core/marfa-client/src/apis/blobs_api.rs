@@ -215,7 +215,6 @@ pub fn download_blob(
     let resp = configuration.client.execute(req)?;
 
     let status = resp.status();
-    let headers = resp.headers().clone();
 
     if !status.is_client_error() && !status.is_server_error() {
         Ok(resp)
@@ -224,7 +223,6 @@ pub fn download_blob(
         let entity: Option<DownloadBlobError> = serde_json::from_str(&content).ok();
         Err(Error::ResponseError(ResponseContent {
             status,
-            headers,
             content,
             entity,
         }))
@@ -257,14 +255,12 @@ pub fn drop_blob_location(
     let resp = configuration.client.execute(req)?;
 
     let status = resp.status();
-    let headers = resp.headers().clone();
 
     if !status.is_client_error() && !status.is_server_error() {
         let content = resp.text()?;
         let entity: Option<DropBlobLocationSuccess> = serde_json::from_str(&content).ok();
         Ok(ResponseContent {
             status,
-            headers,
             content,
             entity,
         })
@@ -273,7 +269,6 @@ pub fn drop_blob_location(
         let entity: Option<DropBlobLocationError> = serde_json::from_str(&content).ok();
         Err(Error::ResponseError(ResponseContent {
             status,
-            headers,
             content,
             entity,
         }))
@@ -306,14 +301,12 @@ pub fn get_blob_url(
     let resp = configuration.client.execute(req)?;
 
     let status = resp.status();
-    let headers = resp.headers().clone();
 
     if !status.is_client_error() && !status.is_server_error() {
         let content = resp.text()?;
         let entity: Option<GetBlobUrlSuccess> = serde_json::from_str(&content).ok();
         Ok(ResponseContent {
             status,
-            headers,
             content,
             entity,
         })
@@ -322,7 +315,6 @@ pub fn get_blob_url(
         let entity: Option<GetBlobUrlError> = serde_json::from_str(&content).ok();
         Err(Error::ResponseError(ResponseContent {
             status,
-            headers,
             content,
             entity,
         }))
@@ -352,14 +344,12 @@ pub fn list_blob_locations(
     let resp = configuration.client.execute(req)?;
 
     let status = resp.status();
-    let headers = resp.headers().clone();
 
     if !status.is_client_error() && !status.is_server_error() {
         let content = resp.text()?;
         let entity: Option<ListBlobLocationsSuccess> = serde_json::from_str(&content).ok();
         Ok(ResponseContent {
             status,
-            headers,
             content,
             entity,
         })
@@ -368,7 +358,6 @@ pub fn list_blob_locations(
         let entity: Option<ListBlobLocationsError> = serde_json::from_str(&content).ok();
         Err(Error::ResponseError(ResponseContent {
             status,
-            headers,
             content,
             entity,
         }))
@@ -393,14 +382,12 @@ pub fn list_blob_orphans(
     let resp = configuration.client.execute(req)?;
 
     let status = resp.status();
-    let headers = resp.headers().clone();
 
     if !status.is_client_error() && !status.is_server_error() {
         let content = resp.text()?;
         let entity: Option<ListBlobOrphansSuccess> = serde_json::from_str(&content).ok();
         Ok(ResponseContent {
             status,
-            headers,
             content,
             entity,
         })
@@ -409,7 +396,6 @@ pub fn list_blob_orphans(
         let entity: Option<ListBlobOrphansError> = serde_json::from_str(&content).ok();
         Err(Error::ResponseError(ResponseContent {
             status,
-            headers,
             content,
             entity,
         }))
@@ -434,14 +420,12 @@ pub fn list_blob_stores(
     let resp = configuration.client.execute(req)?;
 
     let status = resp.status();
-    let headers = resp.headers().clone();
 
     if !status.is_client_error() && !status.is_server_error() {
         let content = resp.text()?;
         let entity: Option<ListBlobStoresSuccess> = serde_json::from_str(&content).ok();
         Ok(ResponseContent {
             status,
-            headers,
             content,
             entity,
         })
@@ -450,7 +434,6 @@ pub fn list_blob_stores(
         let entity: Option<ListBlobStoresError> = serde_json::from_str(&content).ok();
         Err(Error::ResponseError(ResponseContent {
             status,
-            headers,
             content,
             entity,
         }))
@@ -479,14 +462,12 @@ pub fn upload_blob(
     let resp = configuration.client.execute(req)?;
 
     let status = resp.status();
-    let headers = resp.headers().clone();
 
     if !status.is_client_error() && !status.is_server_error() {
         let content = resp.text()?;
         let entity: Option<UploadBlobSuccess> = serde_json::from_str(&content).ok();
         Ok(ResponseContent {
             status,
-            headers,
             content,
             entity,
         })
@@ -495,7 +476,6 @@ pub fn upload_blob(
         let entity: Option<UploadBlobError> = serde_json::from_str(&content).ok();
         Err(Error::ResponseError(ResponseContent {
             status,
-            headers,
             content,
             entity,
         }))

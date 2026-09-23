@@ -292,14 +292,12 @@ pub fn bulk_upsert_edges(
     let resp = configuration.client.execute(req)?;
 
     let status = resp.status();
-    let headers = resp.headers().clone();
 
     if !status.is_client_error() && !status.is_server_error() {
         let content = resp.text()?;
         let entity: Option<BulkUpsertEdgesSuccess> = serde_json::from_str(&content).ok();
         Ok(ResponseContent {
             status,
-            headers,
             content,
             entity,
         })
@@ -308,7 +306,6 @@ pub fn bulk_upsert_edges(
         let entity: Option<BulkUpsertEdgesError> = serde_json::from_str(&content).ok();
         Err(Error::ResponseError(ResponseContent {
             status,
-            headers,
             content,
             entity,
         }))
@@ -340,14 +337,12 @@ pub fn create_edge(
     let resp = configuration.client.execute(req)?;
 
     let status = resp.status();
-    let headers = resp.headers().clone();
 
     if !status.is_client_error() && !status.is_server_error() {
         let content = resp.text()?;
         let entity: Option<CreateEdgeSuccess> = serde_json::from_str(&content).ok();
         Ok(ResponseContent {
             status,
-            headers,
             content,
             entity,
         })
@@ -356,7 +351,6 @@ pub fn create_edge(
         let entity: Option<CreateEdgeError> = serde_json::from_str(&content).ok();
         Err(Error::ResponseError(ResponseContent {
             status,
-            headers,
             content,
             entity,
         }))
@@ -391,14 +385,12 @@ pub fn delete_edge(
     let resp = configuration.client.execute(req)?;
 
     let status = resp.status();
-    let headers = resp.headers().clone();
 
     if !status.is_client_error() && !status.is_server_error() {
         let content = resp.text()?;
         let entity: Option<DeleteEdgeSuccess> = serde_json::from_str(&content).ok();
         Ok(ResponseContent {
             status,
-            headers,
             content,
             entity,
         })
@@ -407,7 +399,6 @@ pub fn delete_edge(
         let entity: Option<DeleteEdgeError> = serde_json::from_str(&content).ok();
         Err(Error::ResponseError(ResponseContent {
             status,
-            headers,
             content,
             entity,
         }))
@@ -437,14 +428,12 @@ pub fn get_edge(
     let resp = configuration.client.execute(req)?;
 
     let status = resp.status();
-    let headers = resp.headers().clone();
 
     if !status.is_client_error() && !status.is_server_error() {
         let content = resp.text()?;
         let entity: Option<GetEdgeSuccess> = serde_json::from_str(&content).ok();
         Ok(ResponseContent {
             status,
-            headers,
             content,
             entity,
         })
@@ -453,7 +442,6 @@ pub fn get_edge(
         let entity: Option<GetEdgeError> = serde_json::from_str(&content).ok();
         Err(Error::ResponseError(ResponseContent {
             status,
-            headers,
             content,
             entity,
         }))
@@ -494,14 +482,12 @@ pub fn list_edges(
     let resp = configuration.client.execute(req)?;
 
     let status = resp.status();
-    let headers = resp.headers().clone();
 
     if !status.is_client_error() && !status.is_server_error() {
         let content = resp.text()?;
         let entity: Option<ListEdgesSuccess> = serde_json::from_str(&content).ok();
         Ok(ResponseContent {
             status,
-            headers,
             content,
             entity,
         })
@@ -510,7 +496,6 @@ pub fn list_edges(
         let entity: Option<ListEdgesError> = serde_json::from_str(&content).ok();
         Err(Error::ResponseError(ResponseContent {
             status,
-            headers,
             content,
             entity,
         }))
@@ -549,14 +534,12 @@ pub fn list_item_backrefs(
     let resp = configuration.client.execute(req)?;
 
     let status = resp.status();
-    let headers = resp.headers().clone();
 
     if !status.is_client_error() && !status.is_server_error() {
         let content = resp.text()?;
         let entity: Option<ListItemBackrefsSuccess> = serde_json::from_str(&content).ok();
         Ok(ResponseContent {
             status,
-            headers,
             content,
             entity,
         })
@@ -565,7 +548,6 @@ pub fn list_item_backrefs(
         let entity: Option<ListItemBackrefsError> = serde_json::from_str(&content).ok();
         Err(Error::ResponseError(ResponseContent {
             status,
-            headers,
             content,
             entity,
         }))
@@ -604,14 +586,12 @@ pub fn list_item_edges(
     let resp = configuration.client.execute(req)?;
 
     let status = resp.status();
-    let headers = resp.headers().clone();
 
     if !status.is_client_error() && !status.is_server_error() {
         let content = resp.text()?;
         let entity: Option<ListItemEdgesSuccess> = serde_json::from_str(&content).ok();
         Ok(ResponseContent {
             status,
-            headers,
             content,
             entity,
         })
@@ -620,7 +600,6 @@ pub fn list_item_edges(
         let entity: Option<ListItemEdgesError> = serde_json::from_str(&content).ok();
         Err(Error::ResponseError(ResponseContent {
             status,
-            headers,
             content,
             entity,
         }))
@@ -656,14 +635,12 @@ pub fn update_edge(
     let resp = configuration.client.execute(req)?;
 
     let status = resp.status();
-    let headers = resp.headers().clone();
 
     if !status.is_client_error() && !status.is_server_error() {
         let content = resp.text()?;
         let entity: Option<UpdateEdgeSuccess> = serde_json::from_str(&content).ok();
         Ok(ResponseContent {
             status,
-            headers,
             content,
             entity,
         })
@@ -672,7 +649,6 @@ pub fn update_edge(
         let entity: Option<UpdateEdgeError> = serde_json::from_str(&content).ok();
         Err(Error::ResponseError(ResponseContent {
             status,
-            headers,
             content,
             entity,
         }))

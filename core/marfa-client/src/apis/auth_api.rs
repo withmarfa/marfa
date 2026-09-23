@@ -56,14 +56,12 @@ pub fn register_o_auth_client(
     let resp = configuration.client.execute(req)?;
 
     let status = resp.status();
-    let headers = resp.headers().clone();
 
     if !status.is_client_error() && !status.is_server_error() {
         let content = resp.text()?;
         let entity: Option<RegisterOAuthClientSuccess> = serde_json::from_str(&content).ok();
         Ok(ResponseContent {
             status,
-            headers,
             content,
             entity,
         })
@@ -72,7 +70,6 @@ pub fn register_o_auth_client(
         let entity: Option<RegisterOAuthClientError> = serde_json::from_str(&content).ok();
         Err(Error::ResponseError(ResponseContent {
             status,
-            headers,
             content,
             entity,
         }))

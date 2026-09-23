@@ -56,14 +56,18 @@ pub enum CliError {
     /// answers may be shaped in ways this binary cannot read. The answer
     /// that said so was not read.
     #[error(
-        "{origin} {served}; this binary was built for contract {expected}: use a marfa built for the server's contract"
+        "{origin} {served}; this binary was built for contract {expected}: use a marfa built for the server's contract{}",
+        if *write_sent { ". The write was sent, and may have taken effect before its answer was refused" } else { "" }
     )]
     ContractMismatch {
         origin: String,
         /// What the server said about its contract, as a phrase: "answers
-        /// contract 2", "has no root".
+        /// contract 2", "answered 200 naming no contract".
         served: String,
         expected: u64,
+        /// Whether the refused answer was to a write, which the server acted
+        /// on before the answer could say it speaks another contract.
+        write_sent: bool,
     },
 }
 
@@ -265,7 +269,7 @@ impl From<serde_json::Error> for CliError {
 pub const EXIT_CODES_HELP: &str = "\
 Exit codes:
   0  done
-  1  the request was refused, by the server or by the binary before sending; a retry does not change it
+  1  the request was refused, by the server, by the binary before sending, or for an answer on another contract; a retry does not change it
   2  the command line was wrong, or named no store or server; clap's own refusals print its usage text
   3  the environment failed (unreachable, timed out, a 5xx, a 429); try again
   4  the working copy or the queue refused under the device rules, or this system has no keychain
@@ -388,6 +392,7 @@ mod tests {
                 origin: String::new(),
                 served: String::new(),
                 expected: 1,
+                write_sent: false,
             }
             .code(),
         ];

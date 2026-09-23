@@ -113,14 +113,12 @@ pub fn create_edge_type(
     let resp = configuration.client.execute(req)?;
 
     let status = resp.status();
-    let headers = resp.headers().clone();
 
     if !status.is_client_error() && !status.is_server_error() {
         let content = resp.text()?;
         let entity: Option<CreateEdgeTypeSuccess> = serde_json::from_str(&content).ok();
         Ok(ResponseContent {
             status,
-            headers,
             content,
             entity,
         })
@@ -129,7 +127,6 @@ pub fn create_edge_type(
         let entity: Option<CreateEdgeTypeError> = serde_json::from_str(&content).ok();
         Err(Error::ResponseError(ResponseContent {
             status,
-            headers,
             content,
             entity,
         }))
@@ -164,14 +161,12 @@ pub fn delete_edge_type(
     let resp = configuration.client.execute(req)?;
 
     let status = resp.status();
-    let headers = resp.headers().clone();
 
     if !status.is_client_error() && !status.is_server_error() {
         let content = resp.text()?;
         let entity: Option<DeleteEdgeTypeSuccess> = serde_json::from_str(&content).ok();
         Ok(ResponseContent {
             status,
-            headers,
             content,
             entity,
         })
@@ -180,7 +175,6 @@ pub fn delete_edge_type(
         let entity: Option<DeleteEdgeTypeError> = serde_json::from_str(&content).ok();
         Err(Error::ResponseError(ResponseContent {
             status,
-            headers,
             content,
             entity,
         }))
@@ -205,14 +199,12 @@ pub fn list_edge_types(
     let resp = configuration.client.execute(req)?;
 
     let status = resp.status();
-    let headers = resp.headers().clone();
 
     if !status.is_client_error() && !status.is_server_error() {
         let content = resp.text()?;
         let entity: Option<ListEdgeTypesSuccess> = serde_json::from_str(&content).ok();
         Ok(ResponseContent {
             status,
-            headers,
             content,
             entity,
         })
@@ -221,7 +213,6 @@ pub fn list_edge_types(
         let entity: Option<ListEdgeTypesError> = serde_json::from_str(&content).ok();
         Err(Error::ResponseError(ResponseContent {
             status,
-            headers,
             content,
             entity,
         }))

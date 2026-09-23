@@ -4,7 +4,6 @@ use std::fmt;
 #[derive(Debug, Clone)]
 pub struct ResponseContent<T> {
     pub status: reqwest::StatusCode,
-    pub headers: reqwest::header::HeaderMap,
     pub content: String,
     pub entity: Option<T>,
 }

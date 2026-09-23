@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { describe, it, expect, afterEach } from "vitest";
-import { ScriptedServer } from "../../device/scripted-server.js";
+import { BUILT_FOR, ScriptedServer } from "../../device/scripted-server.js";
 import { KEY, requireBinary } from "./harness.js";
 
 /**
@@ -22,12 +22,7 @@ afterEach(async () => {
   server = undefined;
 });
 
-async function builtFor(): Promise<number> {
-  const document = (await import("../../../../openapi.json", {
-    with: { type: "json" },
-  })) as { default: { info: { version: string } } };
-  return Number(document.default.info.version);
-}
+const builtFor = Number(BUILT_FOR);
 
 /** The binary against the scripted server, with nothing inherited. */
 async function marfa(args: string[]) {
@@ -87,7 +82,7 @@ const sent = (scripted: ScriptedServer) =>
 
 describe("the contract the binary was built for", () => {
   it("refuses an answer on another contract rather than reading it", async () => {
-    server = await scriptItems(String((await builtFor()) + 1));
+    server = await scriptItems(String(builtFor + 1));
     const outcome = await listItems(server.url);
     expect(outcome.code, outcome.stderr).toBe(1);
     const envelope = refusal(outcome.stderr);
@@ -97,12 +92,13 @@ describe("the contract the binary was built for", () => {
     expect(sent(server)).toEqual(["GET /items"]);
   });
 
-  it("reads an answer on its own contract, with no round trip to the root", async () => {
+  it("reads an answer on its own contract, sending only the call", async () => {
     // The witness: the same command, the same script, the contract it was
     // built for.
-    server = await scriptItems(String(await builtFor()));
+    server = await scriptItems(String(builtFor));
     const outcome = await listItems(server.url);
     expect(outcome.code, outcome.stderr).toBe(0);
+    expect(JSON.parse(outcome.stdout)).toEqual({ data: [], next_cursor: null });
     expect(sent(server)).toEqual(["GET /items"]);
     expect(server.requests[0]?.headers.authorization).toBe(`Bearer ${KEY}`);
     expect(server.unmatchedRequests).toEqual([]);
@@ -125,7 +121,7 @@ describe("the contract the binary was built for", () => {
 
   it("still says which server this is, and that its contract is another", async () => {
     server = await ScriptedServer.start();
-    const served = (await builtFor()) + 1;
+    const served = builtFor + 1;
     server.contract = String(served);
     server.answer("GET", "/health", {
       kind: "json",
@@ -147,7 +143,7 @@ describe("the contract the binary was built for", () => {
     };
     expect(report.contract).toEqual({
       served,
-      built_for: await builtFor(),
+      built_for: builtFor,
     });
     expect(report.stats).toBeNull();
     expect(sent(server)).toEqual(["GET /", "GET /health"]);

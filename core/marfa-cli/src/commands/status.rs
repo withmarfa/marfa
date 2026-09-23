@@ -5,8 +5,8 @@ use crate::output::Printer;
 use crate::remote::Remote;
 use crate::remote::request::Request;
 
-/// The root with its slash, under a path prefix too: where the generated
-/// operation the working copy's contract read calls reads it.
+/// The root with its slash: under a path prefix, the root is the prefix's own
+/// directory, and the bare prefix is a different address to a proxy.
 pub fn root_request() -> Request {
     Request::get(&[""]).public()
 }

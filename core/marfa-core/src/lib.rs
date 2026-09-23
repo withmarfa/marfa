@@ -8,8 +8,8 @@ mod catch_up;
 mod drain;
 mod error;
 pub mod folder;
-/// The transport, public for the binary's direct surface: every published
-/// operation is a call through it, beside the working copy's own doors.
+/// The working copy's transport, public for the call shapes it shares with
+/// the binary's own transport and for the bindings' use of the same doors.
 pub mod http;
 mod hydrate;
 mod lock;

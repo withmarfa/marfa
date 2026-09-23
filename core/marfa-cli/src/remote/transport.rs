@@ -15,23 +15,39 @@ use reqwest::blocking::{Body, Client};
 use url::Url;
 
 /// How long a call that sends no file and is read whole may take, from the
-/// request to the last byte of the answer. Neither a streamed answer nor an
-/// uploaded file has one: the event stream, an export and a blob's bytes have
-/// no length a budget could be sized for, and `events --for` bounds its own
-/// reading.
+/// request to the last byte of the answer.
 const WHOLE_ANSWER_BUDGET: Duration = Duration::from_secs(90);
 
-/// How long a call with no whole-answer budget may wait on the server between
-/// one read and the next, so a server that accepts a connection and never
-/// answers is given up on. Above the event stream's 30-second keepalive, so
-/// an idle stream is not. A call that has the whole-answer budget is bounded
-/// by that instead, because a request's own timeout replaces the client's.
+/// How long a streamed call may wait for its answer to begin, and then for
+/// each next read of it, so a server that accepts a connection and never
+/// answers is given up on. The event stream, an export and a blob's bytes have
+/// no length a whole-answer budget could be sized for, and `events --for`
+/// bounds its own reading. Above the event stream's 30-second keepalive, so an
+/// idle stream is not given up on.
 const READ_BUDGET: Duration = Duration::from_secs(45);
+
+/// How often a connection carrying a file is probed, so a peer that has gone
+/// is noticed. An upload has no time budget: reqwest's bound on a call covers
+/// sending its body as well, and a file's length is not one a fixed budget
+/// could be sized for, so a slow link would cut off a good upload.
+const UPLOAD_KEEPALIVE: Duration = Duration::from_secs(30);
 
 pub struct Transport {
     config: Configuration,
+    /// The client a file rides on, with no time budget.
+    upload: Client,
     base: Url,
     whole_answer_budget: Duration,
+}
+
+/// Whether an answer can be read by this binary: one naming the contract it
+/// was built for, or a refusal naming none, since a proxy in front of the
+/// server answers without one and its status is still the truth.
+pub fn speaks_this_contract(contract: Option<&str>, status: u16) -> bool {
+    match contract {
+        Some(served) => served == marfa_client::CONTRACT_VERSION.to_string(),
+        None => !(200..300).contains(&status),
+    }
 }
 
 /// Scheme, host, port and path prefix: what identifies a server without
@@ -87,13 +103,21 @@ impl Transport {
         whole_answer_budget: Duration,
     ) -> Result<Transport, CoreError> {
         let base = base_of(url)?;
-        let client = Client::builder()
-            .connect_timeout(Duration::from_secs(10))
+        // A redirect is not followed: reqwest keeps the bearer on a
+        // same-origin hop, and nothing the binary calls redirects. The 3xx
+        // comes back as the answer, and the caller refuses it.
+        let builder = || {
+            Client::builder()
+                .connect_timeout(Duration::from_secs(10))
+                .redirect(reqwest::redirect::Policy::none())
+        };
+        let client = builder()
             .timeout(read_budget)
-            // A redirect is not followed: reqwest keeps the bearer on a
-            // same-origin hop, and nothing the binary calls redirects. The
-            // 3xx comes back as the answer, and the caller refuses it.
-            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .map_err(|error| network(&error))?;
+        let upload = builder()
+            .timeout(None)
+            .tcp_keepalive(UPLOAD_KEEPALIVE)
             .build()
             .map_err(|error| network(&error))?;
         let config = Configuration {
@@ -107,6 +131,7 @@ impl Transport {
         };
         Ok(Transport {
             config,
+            upload,
             base,
             whole_answer_budget,
         })
@@ -120,15 +145,24 @@ impl Transport {
         self.config.bearer_access_token.is_some()
     }
 
-    /// Sends one call from the direct surface and reads whatever came back.
-    /// **The only `Err` is a transport failure**: every status the server
-    /// answers is a `Reply`, classified by the caller on the status and the
-    /// envelope together.
-    pub fn call(&self, call: Call<'_>) -> Result<Reply, CoreError> {
+    /// Sends one call and reads whatever came back. **The only `Err` is a
+    /// transport failure**: every status the server answers is a `Reply`,
+    /// classified by the caller on the status and the envelope together.
+    ///
+    /// A `held` call's answer is read only when it is on this binary's
+    /// contract (`speaks_this_contract`): on another, only its status and
+    /// headers come back, since the caller refuses it and its body may be
+    /// shaped, and sized, for a contract this binary cannot read.
+    pub fn call(&self, call: Call<'_>, held: bool) -> Result<Reply, CoreError> {
         let url = self.url(call.segments, call.params);
         let method = reqwest::Method::from_bytes(call.method.as_str().as_bytes())
             .map_err(|error| CoreError::Invalid(format!("this call cannot be sent: {error}")))?;
-        let mut request = self.config.client.request(method, url).header(
+        let client = if matches!(call.body, CallBody::Reader(_)) {
+            &self.upload
+        } else {
+            &self.config.client
+        };
+        let mut request = client.request(method, url).header(
             "Accept",
             if call.stream {
                 "*/*"
@@ -174,7 +208,9 @@ impl Transport {
         // A refusal is read whole even on a streamed call, so the envelope
         // reaches the classification; only a success is handed back as a
         // reader.
-        let body = if call.stream && (200..300).contains(&status) {
+        let body = if held && !speaks_this_contract(contract.as_deref(), status) {
+            ReplyBody::Text(String::new())
+        } else if call.stream && (200..300).contains(&status) {
             ReplyBody::Stream(Box::new(response))
         } else {
             ReplyBody::Text(response.text().map_err(|error| network(&error))?)

@@ -668,7 +668,7 @@ describe("the scripted answers match the server's", () => {
     expectFidelity(
       "the root",
       { status: response.status, body },
-      answers.root(body.contract),
+      answers.root(Number(BUILT_FOR)),
       {
         same: ["name", "contract"],
         shape: ["version", "instance_id", "features"],
