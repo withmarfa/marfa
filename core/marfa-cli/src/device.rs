@@ -58,6 +58,12 @@ pub enum DeviceCommand {
         /// Every state, not just the active one.
         #[arg(long)]
         all_states: bool,
+        /// A type identifier; its subtypes are included.
+        #[arg(long = "type", value_name = "TYPE")]
+        type_: Option<String>,
+        /// Hits must carry every tag given.
+        #[arg(long = "tag", value_name = "TAG")]
+        tags: Vec<String>,
         /// How many hits at most.
         #[arg(long, default_value_t = 20)]
         limit: usize,
@@ -84,8 +90,8 @@ pub enum DeviceCommand {
         )]
         id: Option<String>,
         /// Release every write blocked for this reason instead of one by id.
-        #[arg(long, value_name = "REASON")]
-        reason: Option<String>,
+        #[arg(long, value_name = "REASON", value_parser = blocked_reason())]
+        reason: Option<marfa_core::BlockedReason>,
     },
     /// What the local copy holds and where it came from.
     Status,
@@ -146,6 +152,11 @@ pub enum ItemsCommand {
 
 #[derive(Debug, Subcommand)]
 pub enum EdgesCommand {
+    /// The edges the copy holds from one item.
+    List {
+        /// The item the edges start from.
+        item: String,
+    },
     /// Link two items, and queue the edge.
     Create {
         /// The item the edge starts from.
@@ -421,11 +432,15 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<(), CliError> 
             query,
             state,
             all_states,
+            type_,
+            tags,
             limit,
         } => {
             let filters = SearchFilters {
                 state: state.map(Into::into),
                 all_states,
+                r#type: type_,
+                tags,
             };
             output::hits(
                 &open(&args.db, None)?.search(&query, &filters, limit)?,
@@ -435,6 +450,25 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<(), CliError> 
         DeviceCommand::Edges { command } => {
             let core = open(&args.db, None)?;
             match command {
+                EdgesCommand::List { item } => {
+                    let edges = core.edges_from(&item)?;
+                    output::report(&edges, json, || {
+                        edges
+                            .iter()
+                            .map(|edge| {
+                                format!(
+                                    "{}  {} -> {}  {}  v{}",
+                                    edge.id,
+                                    edge.source_id,
+                                    edge.target_id,
+                                    edge.edge_type,
+                                    edge.version
+                                )
+                            })
+                            .collect::<Vec<_>>()
+                            .join("\n")
+                    })
+                }
                 EdgesCommand::Create {
                     source,
                     target,
@@ -515,7 +549,7 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<(), CliError> 
         DeviceCommand::Release { id, reason } => {
             let core = open(&args.db, None)?;
             let released = match (&id, &reason) {
-                (_, Some(reason)) => core.release_reason(reason)?,
+                (_, Some(reason)) => core.release_reason(*reason)?,
                 (Some(id), None) => usize::from(core.release(id)?),
                 // clap refuses this combination, so reaching it means the
                 // argument rules and this branch have drifted apart.
@@ -557,6 +591,16 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<(), CliError> 
             })
         }
     }
+}
+
+/// The five reasons, read at the flag, so anything else is refused before
+/// the store opens and `--help` lists what may be named.
+fn blocked_reason() -> impl clap::builder::TypedValueParser<Value = marfa_core::BlockedReason> {
+    use clap::builder::TypedValueParser;
+    clap::builder::PossibleValuesParser::new(
+        marfa_core::BlockedReason::ALL.map(marfa_core::BlockedReason::as_str),
+    )
+    .try_map(|reason| reason.parse::<marfa_core::BlockedReason>())
 }
 
 /// A working copy is named by `--db` or `MARFA_DB` or it does not exist:

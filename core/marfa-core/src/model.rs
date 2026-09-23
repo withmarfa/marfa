@@ -160,7 +160,7 @@ impl Edge {
             properties: self.properties.clone(),
             version: self.version,
             created_at: self.created_at.clone(),
-            updated_at: crate::store::now_iso(),
+            updated_at: self.updated_at.clone(),
         }
     }
 }
@@ -185,14 +185,15 @@ pub struct ListFilters {
     pub offset: Option<u32>,
 }
 
-/// Narrowing for a local search. The same state rule the list takes, and
-/// the only axis a search narrows on: the rest of the listing grammar is
-/// answered by a list, and a search that took half of it would advertise a
-/// parity it does not have.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+/// Narrowing for a local search: the state rule the list takes, a type
+/// with its subtree, and tags, each read exactly as the list reads it. The
+/// rest of the listing grammar is a list's, and has no field here.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SearchFilters {
     pub state: Option<ItemState>,
     pub all_states: bool,
+    pub r#type: Option<String>,
+    pub tags: Vec<String>,
 }
 
 // Every sortable column is a verb plus `_at`, so the shared `At` suffix the
@@ -422,6 +423,31 @@ impl Draft {
         Ok(serde_json::to_string(&Value::Object(body))?)
     }
 
+    /// The create a queued body describes, and the id it names: the row a
+    /// copy holds again for a create still waiting when a hydration has
+    /// cleared it (`queue-and-verdicts.md` 35).
+    pub(crate) fn from_payload(body: &str) -> std::result::Result<(String, Draft), CoreError> {
+        let body: Value = serde_json::from_str(body)?;
+        let text = |key: &str| body.get(key).and_then(Value::as_str).map(str::to_string);
+        let id = text("id").ok_or_else(|| {
+            CoreError::Store("a queued create carries no id, so its row cannot be held".into())
+        })?;
+        let draft = Draft {
+            r#type: text("type").unwrap_or_default(),
+            properties: body
+                .get("properties")
+                .and_then(Value::as_object)
+                .cloned()
+                .unwrap_or_default(),
+            tier: text("tier").map(|tier| tier.parse()).transpose()?,
+            source: text("source"),
+            source_id: text("source_id"),
+            occurred_at: text("occurred_at"),
+            ..Default::default()
+        };
+        Ok((id, draft))
+    }
+
     /// The row the working copy holds until the server answers.
     ///
     /// Version 0, which is not a version the server ever mints: every row it
@@ -451,6 +477,259 @@ impl Draft {
     }
 }
 
+/// The kinds of write a queue holds (`queue-and-verdicts.md` 32).
+///
+/// A purge is not among them (`device.md` 25), and neither is a bulk door
+/// or a bulk action: those are the server's way of doing many things in one
+/// request rather than a thing a device holds a write for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WriteKind {
+    CreateItem,
+    UpdateItem,
+    DeleteItem,
+    RestoreItem,
+    TransitionItem,
+    CreateEdge,
+    UpdateEdge,
+    DeleteEdge,
+    ReplaceMetadata,
+    MergeMetadata,
+    AddTag,
+    RemoveTag,
+    WriteExtension,
+    DeleteExtension,
+    UploadBlob,
+}
+
+impl WriteKind {
+    pub const ALL: [WriteKind; 15] = [
+        WriteKind::CreateItem,
+        WriteKind::UpdateItem,
+        WriteKind::DeleteItem,
+        WriteKind::RestoreItem,
+        WriteKind::TransitionItem,
+        WriteKind::CreateEdge,
+        WriteKind::UpdateEdge,
+        WriteKind::DeleteEdge,
+        WriteKind::ReplaceMetadata,
+        WriteKind::MergeMetadata,
+        WriteKind::AddTag,
+        WriteKind::RemoveTag,
+        WriteKind::WriteExtension,
+        WriteKind::DeleteExtension,
+        WriteKind::UploadBlob,
+    ];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            WriteKind::CreateItem => "create_item",
+            WriteKind::UpdateItem => "update_item",
+            WriteKind::DeleteItem => "delete_item",
+            WriteKind::RestoreItem => "restore_item",
+            WriteKind::TransitionItem => "transition_item",
+            WriteKind::CreateEdge => "create_edge",
+            WriteKind::UpdateEdge => "update_edge",
+            WriteKind::DeleteEdge => "delete_edge",
+            WriteKind::ReplaceMetadata => "replace_metadata",
+            WriteKind::MergeMetadata => "merge_metadata",
+            WriteKind::AddTag => "add_tag",
+            WriteKind::RemoveTag => "remove_tag",
+            WriteKind::WriteExtension => "write_extension",
+            WriteKind::DeleteExtension => "delete_extension",
+            WriteKind::UploadBlob => "upload_blob",
+        }
+    }
+}
+
+impl FromStr for WriteKind {
+    type Err = CoreError;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        WriteKind::ALL
+            .into_iter()
+            .find(|kind| kind.as_str() == text)
+            .ok_or_else(|| CoreError::Store(format!("{text:?} is not a kind a queue holds")))
+    }
+}
+
+impl fmt::Display for WriteKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// The six verdicts (`queue-and-verdicts.md` 7). The set is closed: an
+/// answer a device cannot classify is a defect in the device, not a seventh.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Verdict {
+    Accepted,
+    Merged,
+    Conflicted,
+    Refused,
+    Blocked,
+    Dead,
+}
+
+impl Verdict {
+    pub const ALL: [Verdict; 6] = [
+        Verdict::Accepted,
+        Verdict::Merged,
+        Verdict::Conflicted,
+        Verdict::Refused,
+        Verdict::Blocked,
+        Verdict::Dead,
+    ];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Verdict::Accepted => "accepted",
+            Verdict::Merged => "merged",
+            Verdict::Conflicted => "conflicted",
+            Verdict::Refused => "refused",
+            Verdict::Blocked => "blocked",
+            Verdict::Dead => "dead",
+        }
+    }
+}
+
+impl FromStr for Verdict {
+    type Err = CoreError;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        Verdict::ALL
+            .into_iter()
+            .find(|verdict| verdict.as_str() == text)
+            .ok_or_else(|| {
+                CoreError::Store(format!(
+                    "{text:?} is not one of the six verdicts a write is answered with"
+                ))
+            })
+    }
+}
+
+impl fmt::Display for Verdict {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// A verdict with what it carries: the fields a resolution names, the
+/// sibling a conflict wrote, the reason a refusal or a block gives. `Verdict`
+/// is the six as the queue stores them; this is what a caller reads.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Outcome {
+    Accepted,
+    Merged {
+        fields: Vec<String>,
+    },
+    Conflicted {
+        sibling_id: String,
+        fields: Vec<String>,
+    },
+    /// The server's code verbatim, or the sentence naming the write this one
+    /// waited on where that write was refused (`queue-and-verdicts.md` 16).
+    Refused {
+        reason: String,
+    },
+    Blocked {
+        reason: BlockedReason,
+    },
+    Dead,
+}
+
+impl Outcome {
+    /// Reads a stored verdict and its columns as one value. A blocked row
+    /// whose reason is not one of the five is refused, not guessed at.
+    pub fn of(
+        verdict: Option<Verdict>,
+        reason: Option<&str>,
+        sibling_id: Option<&str>,
+        fields: Vec<String>,
+    ) -> Result<Option<Outcome>, CoreError> {
+        Ok(Some(match verdict {
+            None => return Ok(None),
+            Some(Verdict::Accepted) => Outcome::Accepted,
+            Some(Verdict::Merged) => Outcome::Merged { fields },
+            Some(Verdict::Conflicted) => Outcome::Conflicted {
+                sibling_id: sibling_id.unwrap_or_default().to_string(),
+                fields,
+            },
+            Some(Verdict::Refused) => Outcome::Refused {
+                reason: reason.unwrap_or_default().to_string(),
+            },
+            Some(Verdict::Blocked) => Outcome::Blocked {
+                reason: reason.unwrap_or_default().parse()?,
+            },
+            Some(Verdict::Dead) => Outcome::Dead,
+        }))
+    }
+}
+
+/// Why a `blocked` write has stopped (`queue-and-verdicts.md` 26).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BlockedReason {
+    CredentialRefused,
+    KeySpent,
+    AncestorUnavailable,
+    ConflictUnresolved,
+    AwaitingDependency,
+}
+
+impl BlockedReason {
+    pub const ALL: [BlockedReason; 5] = [
+        BlockedReason::CredentialRefused,
+        BlockedReason::KeySpent,
+        BlockedReason::AncestorUnavailable,
+        BlockedReason::ConflictUnresolved,
+        BlockedReason::AwaitingDependency,
+    ];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            BlockedReason::CredentialRefused => "credential_refused",
+            BlockedReason::KeySpent => "key_spent",
+            BlockedReason::AncestorUnavailable => "ancestor_unavailable",
+            BlockedReason::ConflictUnresolved => "conflict_unresolved",
+            BlockedReason::AwaitingDependency => "awaiting_dependency",
+        }
+    }
+
+    /// The two that clear without a caller (`queue-and-verdicts.md` 24 and
+    /// 27): a drain returns these rows to unanswered before it starts, so the
+    /// block is the last drain's finding rather than a state that sticks.
+    pub fn clears_itself(self) -> bool {
+        matches!(
+            self,
+            BlockedReason::AwaitingDependency | BlockedReason::CredentialRefused
+        )
+    }
+}
+
+impl FromStr for BlockedReason {
+    type Err = CoreError;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        BlockedReason::ALL
+            .into_iter()
+            .find(|reason| reason.as_str() == text)
+            .ok_or_else(|| {
+                CoreError::Invalid(format!(
+                    "{text:?} is not one of the five reasons a write is blocked: {}",
+                    BlockedReason::ALL.map(BlockedReason::as_str).join(", ")
+                ))
+            })
+    }
+}
+
+impl fmt::Display for BlockedReason {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 /// One queued write, as the queue reports it.
 ///
 /// A verdict of `None` is a write the server has not answered: the six are
@@ -460,7 +739,7 @@ impl Draft {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct QueuedWrite {
     pub id: String,
-    pub kind: String,
+    pub kind: WriteKind,
     pub item_id: Option<String>,
     pub target_id: Option<String>,
     pub edge_id: Option<String>,
@@ -471,7 +750,11 @@ pub struct QueuedWrite {
     /// The queue rows this one waits for. Empty when nothing holds it; more
     /// than one when an edge waits on both of its endpoints.
     pub depends_on: Vec<String>,
-    pub verdict: Option<String>,
+    pub verdict: Option<Verdict>,
+    /// In whichever vocabulary the verdict speaks: one of the five blocked
+    /// reasons under `blocked` (read as one by `blocked_reason`), and under
+    /// `refused` the server's code verbatim, or for a write held behind one
+    /// that was refused, the sentence naming it (`queue-and-verdicts.md` 16).
     pub reason: Option<String>,
     /// The server's answer, kept whole. A device reports a verdict and never
     /// acts on one (`queue-and-verdicts.md` 15), so what it reports has to be
@@ -481,6 +764,57 @@ pub struct QueuedWrite {
     pub refusals: i64,
     pub queued_at: String,
     pub answered_at: Option<String>,
+}
+
+impl QueuedWrite {
+    /// What became of this write, with what its verdict carries; nothing
+    /// while it is unanswered.
+    pub fn outcome(&self) -> Result<Option<Outcome>, CoreError> {
+        Outcome::of(
+            self.verdict,
+            self.reason.as_deref(),
+            self.conflicted_copy_id.as_deref(),
+            self.resolved_fields(),
+        )
+    }
+
+    /// The reason a `blocked` row carries, as one of the five. The store
+    /// refuses a row whose blocked reason is outside the set when it reads
+    /// the queue, so a blocked row always has one.
+    pub fn blocked_reason(&self) -> Option<BlockedReason> {
+        match self.verdict {
+            Some(Verdict::Blocked) => self
+                .reason
+                .as_deref()
+                .and_then(|reason| reason.parse().ok()),
+            _ => None,
+        }
+    }
+
+    /// The fields a `merged` or `conflicted` answer says the server
+    /// resolved, read from the answer kept on the row. Empty on every other
+    /// verdict, because nothing was resolved.
+    fn resolved_fields(&self) -> Vec<String> {
+        if !matches!(self.verdict, Some(Verdict::Merged | Verdict::Conflicted)) {
+            return Vec::new();
+        }
+        self.answer
+            .as_deref()
+            .and_then(|answer| serde_json::from_str::<Value>(answer).ok())
+            .and_then(|answer| {
+                answer
+                    .get("conflict_resolution")?
+                    .get("fields")?
+                    .as_array()
+                    .map(|fields| {
+                        fields
+                            .iter()
+                            .filter_map(|field| field.as_str().map(str::to_string))
+                            .collect()
+                    })
+            })
+            .unwrap_or_default()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -517,6 +851,36 @@ impl EdgeDraft {
         body.insert("edge_type".into(), Value::String(self.edge_type.clone()));
         body.insert("properties".into(), Value::Object(self.properties.clone()));
         Ok(serde_json::to_string(&Value::Object(body))?)
+    }
+
+    /// The edge a queued body describes, and the id it names, for the
+    /// reason `Draft::from_payload` gives.
+    pub(crate) fn from_payload(body: &str) -> std::result::Result<(String, EdgeDraft), CoreError> {
+        let body: Value = serde_json::from_str(body)?;
+        let text = |key: &str| {
+            body.get(key)
+                .and_then(Value::as_str)
+                .map(str::to_string)
+                .unwrap_or_default()
+        };
+        let id = text("id");
+        if id.is_empty() {
+            return Err(CoreError::Store(
+                "a queued edge create carries no id, so its edge cannot be held".into(),
+            ));
+        }
+        let draft = EdgeDraft {
+            source_id: text("source_id"),
+            target_id: text("target_id"),
+            edge_type: text("edge_type"),
+            properties: body
+                .get("properties")
+                .and_then(Value::as_object)
+                .cloned()
+                .unwrap_or_default(),
+            id: None,
+        };
+        Ok((id, draft))
     }
 
     /// The edge the working copy holds until the server answers. Version 0,
@@ -567,5 +931,110 @@ impl MetadataWrite {
             Value::Array(self.tags.iter().cloned().map(Value::String).collect()),
         );
         Ok(serde_json::to_string(&Value::Object(body))?)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn row(verdict: Option<Verdict>, reason: Option<&str>, answer: Option<&str>) -> QueuedWrite {
+        QueuedWrite {
+            id: "q".into(),
+            kind: WriteKind::UpdateItem,
+            item_id: Some("i".into()),
+            target_id: None,
+            edge_id: None,
+            namespace: None,
+            tag: None,
+            base_version: Some(1),
+            idempotency_key: "k".into(),
+            depends_on: Vec::new(),
+            verdict,
+            reason: reason.map(str::to_string),
+            answer: answer.map(str::to_string),
+            conflicted_copy_id: Some("sibling".into()),
+            refusals: 0,
+            queued_at: "2026-01-01T00:00:00Z".into(),
+            answered_at: None,
+        }
+    }
+
+    /// Each of the six read with what it carries, and nothing for a write
+    /// still waiting.
+    #[test]
+    fn a_stored_verdict_reads_as_one_outcome_with_what_it_carries() {
+        let resolution = r#"{"conflict_resolution":{"fields":["title","body"]}}"#;
+        assert_eq!(row(None, None, None).outcome().unwrap(), None);
+        assert_eq!(
+            row(Some(Verdict::Accepted), None, None).outcome().unwrap(),
+            Some(Outcome::Accepted)
+        );
+        assert_eq!(
+            row(Some(Verdict::Merged), None, Some(resolution))
+                .outcome()
+                .unwrap(),
+            Some(Outcome::Merged {
+                fields: vec!["title".into(), "body".into()]
+            })
+        );
+        assert_eq!(
+            row(Some(Verdict::Conflicted), None, Some(resolution))
+                .outcome()
+                .unwrap(),
+            Some(Outcome::Conflicted {
+                sibling_id: "sibling".into(),
+                fields: vec!["title".into(), "body".into()]
+            })
+        );
+        assert_eq!(
+            row(Some(Verdict::Refused), Some("type_not_permitted"), None)
+                .outcome()
+                .unwrap(),
+            Some(Outcome::Refused {
+                reason: "type_not_permitted".into()
+            })
+        );
+        assert_eq!(
+            row(Some(Verdict::Blocked), Some("key_spent"), None)
+                .outcome()
+                .unwrap(),
+            Some(Outcome::Blocked {
+                reason: BlockedReason::KeySpent
+            })
+        );
+        assert_eq!(
+            row(Some(Verdict::Dead), None, None).outcome().unwrap(),
+            Some(Outcome::Dead)
+        );
+        // An accepted answer carries no resolution, so no fields are read
+        // off it even where its answer happens to name some.
+        assert_eq!(
+            row(Some(Verdict::Accepted), None, Some(resolution))
+                .outcome()
+                .unwrap(),
+            Some(Outcome::Accepted)
+        );
+        assert!(
+            row(Some(Verdict::Blocked), Some("resolver_missing"), None)
+                .outcome()
+                .is_err()
+        );
+    }
+
+    /// Every member of the three closed sets round-trips through its text.
+    #[test]
+    fn the_closed_sets_round_trip_through_their_text() {
+        for kind in WriteKind::ALL {
+            assert_eq!(kind.as_str().parse::<WriteKind>().unwrap(), kind);
+        }
+        for verdict in Verdict::ALL {
+            assert_eq!(verdict.as_str().parse::<Verdict>().unwrap(), verdict);
+        }
+        for reason in BlockedReason::ALL {
+            assert_eq!(reason.as_str().parse::<BlockedReason>().unwrap(), reason);
+        }
+        assert!("seventh".parse::<Verdict>().is_err());
+        assert!("resolver_missing".parse::<BlockedReason>().is_err());
     }
 }

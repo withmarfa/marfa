@@ -1,8 +1,15 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { startHarness, scriptHydration, type Harness } from "./harness.js";
 import {
+  startHarness,
+  scriptHydration,
+  scriptWrites,
+  type Harness,
+} from "./harness.js";
+import {
+  answers,
   catchupTooOld,
   connected,
+  edgeEvent,
   headRead,
   itemEvent,
   itemsPage,
@@ -322,6 +329,220 @@ describe("catch-up replays from the cursor", () => {
         "a tag write that did not move the version was skipped, so a device's tags drift from the server's with nothing to say so",
       ).toContain("filed");
     }
+  });
+
+  it("applies an event beneath a write it has not had answered", async () => {
+    harness = await startHarness("event-beneath-write");
+    const { server, device } = harness;
+    scriptHydration(server, {
+      head: "10",
+      rows: {
+        "core.note": [
+          {
+            item: {
+              id: "row",
+              version: 1,
+              properties: { title: "as hydrated", body: "as hydrated" },
+            },
+          },
+        ],
+      },
+    });
+    server.answer(
+      "GET",
+      "/events",
+      replay("11", [
+        // Another device changed the body. This one has a title edit queued
+        // and unanswered.
+        itemEvent(
+          "11",
+          "item.updated",
+          wireItem({
+            id: "row",
+            version: 2,
+            properties: { title: "as hydrated", body: "changed elsewhere" },
+          }),
+          { tags: ["from elsewhere"] },
+        ),
+      ]),
+    );
+
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    expect(
+      (
+        await device.update("row", {
+          properties: { title: "edited here, not yet sent" },
+          version: 1,
+        })
+      ).ok,
+    ).toBe(true);
+    expect((await device.catchUp()).ok).toBe(true);
+
+    const held = await device.get("row");
+    expect(held.ok).toBe(true);
+    if (!held.ok) return;
+    // The witness: the event was applied, so the title below is the edit
+    // surviving an applied event rather than an event that never landed.
+    expect(
+      held.value.properties.body,
+      "the event was not applied at all, so nothing here is about applying one beneath a waiting write",
+    ).toBe("changed elsewhere");
+    expect(held.value.version).toBe(2);
+    expect(
+      held.value.properties.title,
+      "the event erased an edit the device has not had answered, so the copy shows the write as undone while the queue still sends it",
+    ).toBe("edited here, not yet sent");
+  });
+
+  it("applies an edge event beneath an edge edit it has not had answered", async () => {
+    harness = await startHarness("edge-event-beneath-write");
+    const { server, device } = harness;
+    const edge = {
+      id: "link",
+      source_id: "from",
+      target_id: "to",
+      edge_type: "references",
+      properties: { weight: 1 },
+      version: 1,
+      created_at: "2026-09-18T00:00:00.000Z",
+      updated_at: "2026-09-18T00:00:00.000Z",
+    };
+    scriptHydration(server, {
+      head: "10",
+      rows: {
+        "core.note": [
+          {
+            item: {
+              id: "from",
+              edges: {
+                references: {
+                  edges: [edge],
+                  has_more: false,
+                  next_cursor: null,
+                },
+              },
+            },
+          },
+          { item: { id: "to" } },
+        ],
+      },
+    });
+    server.answer(
+      "GET",
+      "/events",
+      replay("11", [
+        edgeEvent("11", "edge.updated", {
+          ...edge,
+          version: 2,
+          properties: { weight: 1, note: "changed elsewhere" },
+        }),
+      ]),
+    );
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    expect(
+      (
+        await device.updateEdge("link", {
+          properties: { weight: 2 },
+          version: 1,
+        })
+      ).ok,
+    ).toBe(true);
+    expect((await device.catchUp()).ok).toBe(true);
+
+    const edges = await device.edgesFrom("from");
+    expect(edges.ok).toBe(true);
+    const held = edges.ok
+      ? edges.value.find((row) => row.id === "link")
+      : undefined;
+    // The witness: the event was applied.
+    expect(
+      held?.properties.note,
+      "the edge event was not applied at all, so nothing here is about applying one beneath a waiting edit",
+    ).toBe("changed elsewhere");
+    expect(held?.version).toBe(2);
+    expect(
+      held?.properties.weight,
+      "the edge event erased an edit the device has not had answered",
+    ).toBe(2);
+  });
+
+  it("applies an event beneath a blocked write, which a release sends again", async () => {
+    harness = await startHarness("event-beneath-blocked-write");
+    const { server, device } = harness;
+    const hydrated = {
+      id: "row",
+      version: 1,
+      properties: { title: "as hydrated", body: "as hydrated" },
+    };
+    scriptHydration(server, {
+      head: "10",
+      rows: { "core.note": [{ item: hydrated }] },
+    });
+    // The server holds a later version and will not resolve this edit
+    // itself, so the edit is blocked `conflict_unresolved` and stays in the
+    // queue for a release.
+    const snapshot = {
+      version: 2,
+      properties: { title: "as hydrated", body: "changed elsewhere" },
+      tier: "library" as const,
+      occurred_at: "2026-01-01T00:00:00.000Z",
+      source_id: null,
+    };
+    scriptWrites(server, {
+      update: [
+        answers.versionConflict(
+          snapshot,
+          { ...snapshot, version: 1 },
+          ["title"],
+          { fields: {}, default: "last_writer_wins" },
+        ),
+      ],
+    });
+    server.answer(
+      "GET",
+      "/events",
+      replay("11", [
+        itemEvent(
+          "11",
+          "item.updated",
+          wireItem({
+            id: "row",
+            version: 2,
+            properties: { title: "as hydrated", body: "changed elsewhere" },
+          }),
+        ),
+      ]),
+    );
+
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    expect(
+      (
+        await device.update("row", {
+          properties: { title: "edited here" },
+          version: 1,
+        })
+      ).ok,
+    ).toBe(true);
+    const drained = await device.drain();
+    expect(drained.ok).toBe(true);
+    if (!drained.ok) return;
+    expect(
+      drained.value.verdicts[0]?.verdict,
+      "the edit was not blocked, so nothing here is about a blocked write",
+    ).toBe("blocked");
+    expect((await device.catchUp()).ok).toBe(true);
+
+    const held = await device.get("row");
+    expect(held.ok).toBe(true);
+    if (!held.ok) return;
+    expect(
+      held.value.properties.body,
+      "the event was not applied at all, so nothing here is about applying one beneath a blocked write",
+    ).toBe("changed elsewhere");
+    expect(
+      held.value.properties.title,
+      "the event erased a blocked edit, which is still in the queue for a release to send again, so the copy shows it undone while the queue holds it",
+    ).toBe("edited here");
   });
 
   it("leaves the cursor at the last applied event when the stream ends early", async () => {

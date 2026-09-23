@@ -1,10 +1,15 @@
 #!/usr/bin/env bash
-# Boots the monorepo server on SQLite in a throwaway directory, mints the
-# first key from the bootstrap secret the server prints, and writes an env
-# file naming the server, a working key and the process to stop.
+# Boots the monorepo server on SQLite, mints the first key from the
+# bootstrap secret the server prints, and writes an env file naming the
+# server, a working key and the process to stop.
 #
-#   eval "$(scripts/server-up.sh)"      # exports MARFA_TEST_URL, MARFA_TEST_KEY, MARFA_SERVER_ENV
-#   scripts/server-down.sh              # stops it and removes the directory
+#   env_text="$(scripts/server-up.sh)" && eval "${env_text}"
+#                                       # exports MARFA_TEST_URL, MARFA_TEST_KEY, MARFA_SERVER_ENV
+#   scripts/server-down.sh              # stops it, and removes a directory it made
+#
+# Assigned and then evaluated, never `eval "$(…)"` alone: `eval` of an empty
+# string succeeds, so a boot that failed would leave the caller running on
+# whatever the last boot exported.
 #
 # Set MARFA_SERVER_ENV first to choose where the env file goes. A caller that
 # wants to clean up after a boot that failed has to, because the default sits
@@ -12,6 +17,14 @@
 #
 # MARFA_SERVER_REPO points at the monorepo checkout to boot; the default is
 # the checkout this script lives in.
+#
+# MARFA_SERVER_KEEP names a directory to keep the instance in. The first
+# boot there records its port, its secrets and the working key beside the
+# database, and a later boot on the same directory reuses all four: the same
+# origin, the same data, the same key. That is how a proof stops a server and
+# brings it back. `server-down.sh` leaves that directory in place. It is an
+# input only: the env file names the directory in MARFA_SERVER_STATE, which a
+# second boot in the same shell does not read.
 #
 # PORT defaults to one the kernel says is free, because a fixed default
 # cannot be right for both callers: the runner pool runs on a developer's own
@@ -30,9 +43,26 @@ s.bind(("127.0.0.1", 0))
 print(s.getsockname()[1])
 s.close()'
 }
+keep=""
+if [[ -n "${MARFA_SERVER_KEEP:-}" ]]; then
+  state="${MARFA_SERVER_KEEP}"
+  keep=1
+  mkdir -p "${state}"
+else
+  state="$(mktemp -d "${TMPDIR:-/tmp}/marfa-core-server.XXXXXX")"
+fi
+boot="${state}/boot.env"
+kept_key=""
+if [[ -f "${boot}" ]]; then
+  # shellcheck disable=SC1090
+  source "${boot}"
+  PORT="${BOOT_PORT}"
+  MARFA_AUTH_SECRET="${BOOT_AUTH_SECRET}"
+  API_KEY_SALT="${BOOT_KEY_SALT}"
+  kept_key="${BOOT_KEY}"
+fi
 port="${PORT:-$(free_port)}"
 url="http://127.0.0.1:${port}"
-state="$(mktemp -d "${TMPDIR:-/tmp}/marfa-core-server.XXXXXX")"
 log="${state}/server.log"
 
 export SQLITE_PATH="${state}/marfa.db"
@@ -61,7 +91,6 @@ fi
 # this script is routinely run inside a command substitution, where it does
 # not: the job then shares the script's group, `kill -- -$pid` names a group
 # that is not the server's, and the fallback kills pnpm and orphans node.
-# Measured after that shape had already shipped.
 (
   cd "${repo}"
   exec pnpm --filter @withmarfa/server exec tsx --import ./src/instrumentation.ts src/index.ts
@@ -86,6 +115,7 @@ write_env() {
     echo "export MARFA_SERVER_ENV='${env_file}'"
     echo "export MARFA_SERVER_PID='${pid}'"
     echo "export MARFA_SERVER_STATE='${state}'"
+    echo "export MARFA_SERVER_KEPT='${keep}'"
   } >"${env_file}"
 }
 write_env ""
@@ -108,6 +138,12 @@ for _ in $(seq 1 120); do
   sleep 0.5
 done
 curl -fsS "${url}/health" >/dev/null 2>&1 || fail "no answer from ${url}/health"
+
+if [[ -n "${kept_key}" ]]; then
+  write_env "${kept_key}"
+  cat "${env_file}"
+  exit 0
+fi
 
 secret=""
 for _ in $(seq 1 40); do
@@ -142,4 +178,12 @@ key="$(read_key <<<"${working}")"
 [[ -n "${key}" ]] || fail "the operator key could not mint a working key: ${working}"
 
 write_env "${key}"
+if [[ -n "${keep}" ]]; then
+  {
+    echo "BOOT_PORT='${port}'"
+    echo "BOOT_AUTH_SECRET='${MARFA_AUTH_SECRET}'"
+    echo "BOOT_KEY_SALT='${API_KEY_SALT}'"
+    echo "BOOT_KEY='${key}'"
+  } >"${boot}"
+fi
 cat "${env_file}"

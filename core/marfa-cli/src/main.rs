@@ -423,7 +423,7 @@ mod tests {
         match device(&["release", "--reason", "key_spent"]) {
             DeviceCommand::Release { id, reason } => {
                 assert_eq!(id, None);
-                assert_eq!(reason.as_deref(), Some("key_spent"));
+                assert_eq!(reason, Some(marfa_core::BlockedReason::KeySpent));
             }
             other => panic!("`release --reason` parsed as {other:?}"),
         }
@@ -446,6 +446,13 @@ mod tests {
             .is_err(),
             "`release` took a row and a reason together, and the two select \
              different sets: whichever the dispatch reads, the other was ignored"
+        );
+        assert!(
+            Cli::try_parse_from([
+                "marfa", "device", "--db", "s", "release", "--reason", "stuck"
+            ])
+            .is_err(),
+            "`release` took a reason outside the five, so it opens the store to be told what the flag could have said"
         );
     }
 

@@ -89,7 +89,9 @@ pub fn queued(writes: &[QueuedWrite], json: bool) -> Result<(), CliError> {
         // blank column. It is the absence of an answer, not a seventh
         // verdict, and a person reading a blank space fills it in with
         // whichever of the six they were expecting.
-        let verdict = write.verdict.as_deref().unwrap_or("unanswered");
+        let verdict = write
+            .verdict
+            .map_or("unanswered", marfa_core::Verdict::as_str);
         let reason = match &write.reason {
             Some(reason) => format!(" ({reason})"),
             None => String::new(),
@@ -175,7 +177,9 @@ pub fn drained(drain: &DrainReport, json: bool) -> Result<(), CliError> {
             // sign that anything was attempted.
             let mut line = format!(
                 "{} {} {}",
-                verdict.verdict.as_deref().unwrap_or("unanswered"),
+                verdict
+                    .verdict
+                    .map_or("unanswered", marfa_core::Verdict::as_str),
                 verdict.kind,
                 verdict.item_id.as_deref().unwrap_or(verdict.id.as_str())
             );

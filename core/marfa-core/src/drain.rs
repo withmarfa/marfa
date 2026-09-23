@@ -13,7 +13,7 @@ use serde::Serialize;
 use crate::catalog::Catalog;
 use crate::error::CoreError;
 use crate::http::{Answer, Http, Method, Outgoing};
-use crate::model::QueuedWrite;
+use crate::model::{BlockedReason, QueuedWrite, Verdict, WriteKind};
 use crate::store;
 use crate::wire::{WireEdgeAnswer, WireWriteAnswer};
 use crate::{Core, Result};
@@ -44,12 +44,12 @@ pub struct DrainReport {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct DrainVerdict {
     pub id: String,
-    pub kind: String,
+    pub kind: WriteKind,
     pub item_id: Option<String>,
     /// One of the six, or absent where the write was sent and not answered —
     /// which is the absence of a verdict rather than a seventh
     /// (`queue-and-verdicts.md` 6).
-    pub verdict: Option<String>,
+    pub verdict: Option<Verdict>,
     pub reason: Option<String>,
     pub conflicted_copy_id: Option<String>,
     pub refusals: i64,
@@ -67,6 +67,19 @@ pub struct DrainVerdict {
     /// Whole fields (`queue-and-verdicts.md` 34). Empty on every other
     /// verdict, because nothing was resolved.
     pub merged_fields: Vec<String>,
+}
+
+impl DrainVerdict {
+    /// What became of this write, with what its verdict carries; nothing
+    /// where it was sent and not answered.
+    pub fn outcome(&self) -> Result<Option<crate::model::Outcome>> {
+        crate::model::Outcome::of(
+            self.verdict,
+            self.reason.as_deref(),
+            self.conflicted_copy_id.as_deref(),
+            self.merged_fields.clone(),
+        )
+    }
 }
 
 /// What one answer means for the write that got it.
@@ -88,9 +101,9 @@ enum Classified {
     Counted,
     /// This write stops, under one of the three reasons it carries
     /// (21, 22, 23).
-    Block(&'static str),
+    Block(BlockedReason),
     /// Every write stops and the drain ends (20).
-    BlockQueue(&'static str),
+    BlockQueue(BlockedReason),
 }
 
 /// Reads an answer, or the lack of one, into its class.
@@ -113,17 +126,17 @@ fn classify(answer: &std::result::Result<Answer, CoreError>) -> Classified {
     match (answer.status, answer.code.as_str()) {
         // The one refusal that looks environmental and is not: it clears when
         // a person replaces the credential and never on its own (20).
-        (401, _) => Classified::BlockQueue("credential_refused"),
+        (401, _) => Classified::BlockQueue(BlockedReason::CredentialRefused),
         // The key has been answered for a different body, so it is the key
         // that is spent rather than the write (21).
-        (422, "idempotency_key_reused") => Classified::Block("key_spent"),
+        (422, "idempotency_key_reused") => Classified::Block(BlockedReason::KeySpent),
         // The snapshot the write names is gone, and settling means rebasing
         // on the version the server holds — a new write, not this one (22).
-        (409, "ancestor_unavailable") => Classified::Block("ancestor_unavailable"),
+        (409, "ancestor_unavailable") => Classified::Block(BlockedReason::AncestorUnavailable),
         // A server that did not resolve a write that asked it to. A device
         // cannot resolve it itself (`device.md` 21) and re-sending is the
         // same request (23).
-        (409, "version_conflict") => Classified::Block("conflict_unresolved"),
+        (409, "version_conflict") => Classified::Block(BlockedReason::ConflictUnresolved),
         // The server holds the key and has not finished answering it. A
         // further attempt might clear it and nothing clears it on its own,
         // which is the third class exactly (19).
@@ -174,25 +187,6 @@ enum Shape {
     Plain,
 }
 
-/// Which shape a kind's door answers with.
-///
-/// A kind is matched by name, so the compiler cannot make this exhaustive
-/// over `store::WRITE_KINDS` and a default arm is unavoidable. A kind added
-/// to the set and not named here answers `None`, which the drain reads as a
-/// door this build does not know — and a write the server took would come
-/// back as a failure with nothing saying so. What keeps that from happening
-/// quietly is a test rather than the compiler:
-/// `the_shape_of_every_write_kind_is_decided` below.
-fn shape_of(kind: &str) -> Option<Shape> {
-    Some(match kind {
-        "create_item" | "update_item" | "restore_item" | "transition_item" => Shape::Item,
-        "create_edge" | "update_edge" => Shape::Edge,
-        "delete_item" | "delete_edge" | "replace_metadata" | "merge_metadata" | "add_tag"
-        | "remove_tag" | "write_extension" | "delete_extension" => Shape::Plain,
-        _ => return None,
-    })
-}
-
 /// Whether a row can go out yet.
 enum Readiness {
     Ready,
@@ -206,7 +200,7 @@ enum Readiness {
 fn readiness(
     row: &QueuedWrite,
     rows: &HashMap<&str, &QueuedWrite>,
-    verdicts: &HashMap<String, Option<String>>,
+    verdicts: &HashMap<String, Option<Verdict>>,
 ) -> Readiness {
     for dependency in &row.depends_on {
         // The verdict as this pass has it, which is not the verdict the pass
@@ -218,9 +212,9 @@ fn readiness(
             // go, and a queue that has lost it has not answered it either.
             return Readiness::Held;
         };
-        match verdict.as_deref() {
-            Some("accepted") | Some("merged") | Some("conflicted") => {}
-            Some(terminal @ ("refused" | "dead")) => {
+        match verdict {
+            Some(Verdict::Accepted | Verdict::Merged | Verdict::Conflicted) => {}
+            Some(terminal @ (Verdict::Refused | Verdict::Dead)) => {
                 let kind = rows
                     .get(dependency.as_str())
                     .map(|write| write.kind.as_str())
@@ -233,13 +227,14 @@ fn readiness(
     Readiness::Ready
 }
 
-/// Where a queued write goes and what it carries.
+/// Where a queued write goes, what it carries, and the shape its door
+/// answers a success with.
 ///
-/// Every kind in `store::WRITE_KINDS` either addresses here or names itself
+/// Every kind in `WriteKind` either addresses here or names itself
 /// in the refusal. No kind falls through to a default: a write sent to the
 /// wrong door is a write the server takes and the device reads as something
 /// else.
-fn address<'a>(row: &'a QueuedWrite, payload: &'a str) -> Result<Outgoing<'a>> {
+fn address<'a>(row: &'a QueuedWrite, payload: &'a str) -> Result<(Outgoing<'a>, Shape)> {
     let item_id = || -> Result<&str> {
         row.item_id.as_deref().ok_or_else(|| {
             CoreError::Store(format!(
@@ -272,92 +267,107 @@ fn address<'a>(row: &'a QueuedWrite, payload: &'a str) -> Result<Outgoing<'a>> {
             ))
         })
     };
-    let item = |segments: Vec<String>, method: Method| -> Result<Outgoing<'a>> {
-        Ok(Outgoing {
-            method,
-            segments,
-            params: Vec::new(),
-            body: payload,
-            idempotency_key: &row.idempotency_key,
-        })
+    let to = |method: Method, segments: Vec<String>, shape: Shape| {
+        Ok((
+            Outgoing {
+                method,
+                segments,
+                params: Vec::new(),
+                body: payload,
+                idempotency_key: &row.idempotency_key,
+            },
+            shape,
+        ))
     };
-    match row.kind.as_str() {
-        "create_item" => Ok(Outgoing {
-            method: Method::Post,
-            segments: vec!["items".into()],
-            params: Vec::new(),
-            body: payload,
-            idempotency_key: &row.idempotency_key,
-        }),
-        "update_item" => Ok(Outgoing {
-            method: Method::Patch,
-            segments: vec!["items".into(), item_id()?.into()],
+    match row.kind {
+        WriteKind::CreateItem => to(Method::Post, vec!["items".into()], Shape::Item),
+        WriteKind::UpdateItem => {
+            let (mut outgoing, shape) = to(
+                Method::Patch,
+                vec!["items".into(), item_id()?.into()],
+                Shape::Item,
+            )?;
             // On every update this device sends (`queue-and-verdicts.md` 5).
             // The device resolves nothing itself; this asks the server to
             // resolve inside its own transaction rather than refusing and
             // leaving two writes where one is atomic.
-            params: vec![("conflict".into(), "auto".into())],
-            body: payload,
-            idempotency_key: &row.idempotency_key,
-        }),
-        "delete_item" => item(vec!["items".into(), item_id()?.into()], Method::Delete),
-        "restore_item" => item(
+            outgoing.params = vec![("conflict".into(), "auto".into())];
+            Ok((outgoing, shape))
+        }
+        WriteKind::DeleteItem => to(
+            Method::Delete,
+            vec!["items".into(), item_id()?.into()],
+            Shape::Plain,
+        ),
+        WriteKind::RestoreItem => to(
+            Method::Post,
             vec!["items".into(), item_id()?.into(), "restore".into()],
-            Method::Post,
+            Shape::Item,
         ),
-        "transition_item" => item(
+        WriteKind::TransitionItem => to(
+            Method::Post,
             vec!["items".into(), item_id()?.into(), "transition".into()],
-            Method::Post,
+            Shape::Item,
         ),
-        "create_edge" => item(vec!["edges".into()], Method::Post),
-        "update_edge" => item(vec!["edges".into(), edge_id()?.into()], Method::Patch),
-        "delete_edge" => item(vec!["edges".into(), edge_id()?.into()], Method::Delete),
-        "replace_metadata" => item(
-            vec!["items".into(), item_id()?.into(), "metadata".into()],
-            Method::Put,
-        ),
-        "merge_metadata" => item(
-            vec!["items".into(), item_id()?.into(), "metadata".into()],
+        WriteKind::CreateEdge => to(Method::Post, vec!["edges".into()], Shape::Edge),
+        WriteKind::UpdateEdge => to(
             Method::Patch,
+            vec!["edges".into(), edge_id()?.into()],
+            Shape::Edge,
         ),
-        "add_tag" => item(
-            vec!["items".into(), item_id()?.into(), "tags".into()],
+        WriteKind::DeleteEdge => to(
+            Method::Delete,
+            vec!["edges".into(), edge_id()?.into()],
+            Shape::Plain,
+        ),
+        WriteKind::ReplaceMetadata => to(
+            Method::Put,
+            vec!["items".into(), item_id()?.into(), "metadata".into()],
+            Shape::Plain,
+        ),
+        WriteKind::MergeMetadata => to(
+            Method::Patch,
+            vec!["items".into(), item_id()?.into(), "metadata".into()],
+            Shape::Plain,
+        ),
+        WriteKind::AddTag => to(
             Method::Post,
+            vec!["items".into(), item_id()?.into(), "tags".into()],
+            Shape::Plain,
         ),
-        "remove_tag" => item(
+        WriteKind::RemoveTag => to(
+            Method::Delete,
             vec![
                 "items".into(),
                 item_id()?.into(),
                 "tags".into(),
                 tag()?.into(),
             ],
-            Method::Delete,
+            Shape::Plain,
         ),
-        "write_extension" => item(
-            vec![
-                "items".into(),
-                item_id()?.into(),
-                "extensions".into(),
-                namespace()?.into(),
-            ],
+        WriteKind::WriteExtension => to(
             Method::Put,
-        ),
-        "delete_extension" => item(
             vec![
                 "items".into(),
                 item_id()?.into(),
                 "extensions".into(),
                 namespace()?.into(),
             ],
-            Method::Delete,
+            Shape::Plain,
         ),
-        // `upload_blob` alone. It is a kind the queue holds
-        // (`queue-and-verdicts.md` 32) and its door arrives with blob work,
-        // which is outside this milestone: a device may hold the write and
-        // cannot yet send it.
-        other => Err(CoreError::Invalid(format!(
-            "this build has no door for a queued {other}; it is a kind the queue holds and the drain cannot yet send"
-        ))),
+        WriteKind::DeleteExtension => to(
+            Method::Delete,
+            vec![
+                "items".into(),
+                item_id()?.into(),
+                "extensions".into(),
+                namespace()?.into(),
+            ],
+            Shape::Plain,
+        ),
+        WriteKind::UploadBlob => Err(CoreError::Invalid(
+            "this build has no door for a queued upload_blob; it is a kind the queue holds and the drain cannot yet send".into(),
+        )),
     }
 }
 
@@ -391,9 +401,9 @@ pub fn drain(core: &Core, http: &Http) -> Result<DrainReport> {
         let conn = core.conn()?;
         store::queued_writes(&conn)?
     };
-    let mut answers: HashMap<String, Option<String>> = all
+    let mut answers: HashMap<String, Option<Verdict>> = all
         .iter()
-        .map(|row| (row.id.clone(), row.verdict.clone()))
+        .map(|row| (row.id.clone(), row.verdict))
         .collect();
 
     let rows: HashMap<&str, &QueuedWrite> = all.iter().map(|row| (row.id.as_str(), row)).collect();
@@ -410,13 +420,13 @@ pub fn drain(core: &Core, http: &Http) -> Result<DrainReport> {
                     &conn,
                     &row.id,
                     &store::Answered {
-                        verdict: "blocked",
-                        reason: Some("awaiting_dependency"),
+                        verdict: Verdict::Blocked,
+                        reason: Some(BlockedReason::AwaitingDependency.as_str()),
                         answer: None,
                         conflicted_copy_id: None,
                     },
                 )?;
-                answers.insert(row.id.clone(), Some("blocked".into()));
+                answers.insert(row.id.clone(), Some(Verdict::Blocked));
                 report.held += 1;
                 continue;
             }
@@ -426,20 +436,20 @@ pub fn drain(core: &Core, http: &Http) -> Result<DrainReport> {
                     &conn,
                     &row.id,
                     &store::Answered {
-                        verdict: "refused",
+                        verdict: Verdict::Refused,
                         reason: Some(&reason),
                         answer: None,
                         conflicted_copy_id: None,
                     },
                 )?;
                 drop(conn);
-                answers.insert(row.id.clone(), Some("refused".into()));
+                answers.insert(row.id.clone(), Some(Verdict::Refused));
                 // Reconciled like any other refusal: the server never took
                 // the write, so the copy must not go on holding it.
                 reconcile(core, row);
                 report.verdicts.push(verdict_of(
                     row,
-                    &Settled::plain(Some("refused"), Some(reason), row.refusals),
+                    &Settled::plain(Some(Verdict::Refused), Some(reason), row.refusals),
                 ));
                 continue;
             }
@@ -448,9 +458,12 @@ pub fn drain(core: &Core, http: &Http) -> Result<DrainReport> {
 
         let payload = {
             let conn = core.conn()?;
+            if let Some(version) = own_create_version(&conn, row)? {
+                store::rebase(&conn, &row.id, version)?;
+            }
             store::payload_of(&conn, &row.id)?
         };
-        let outgoing = address(row, &payload)?;
+        let (outgoing, shape) = address(row, &payload)?;
         // The connection is not held across the send. A drain is the one
         // call that waits on a network, and holding the store shut for the
         // length of a queue's worth of requests would make `queue` — the
@@ -474,13 +487,13 @@ pub fn drain(core: &Core, http: &Http) -> Result<DrainReport> {
             );
         }
 
-        let settled = settle(core, row, &answer, classify(&answer))?;
-        answers.insert(row.id.clone(), settled.verdict.clone());
+        let settled = settle(core, row, &answer, classify(&answer), shape)?;
+        answers.insert(row.id.clone(), settled.verdict);
         let stop = settled.stops_the_drain;
         report.verdicts.push(verdict_of(row, &settled));
         if stop {
             let conn = core.conn()?;
-            let parked = store::block_unanswered(&conn, "credential_refused")?;
+            let parked = store::block_unanswered(&conn, BlockedReason::CredentialRefused)?;
             report.stopped = Some(format!(
                 "the server refused the credential, so every queued write is blocked and the drain stopped; {parked} row(s) parked"
             ));
@@ -491,12 +504,58 @@ pub fn drain(core: &Core, http: &Http) -> Result<DrainReport> {
     Ok(report)
 }
 
+/// The version a write should be sent on where it was based on this
+/// device's own create (`queue-and-verdicts.md` 36): the local row of an
+/// unanswered create is at 0, and the create's answer says what the server
+/// made of it. Nothing where the write was based on anything else.
+fn own_create_version(conn: &rusqlite::Connection, row: &QueuedWrite) -> Result<Option<i64>> {
+    let (created, field, subject) = match row.kind {
+        WriteKind::UpdateItem => (WriteKind::CreateItem, "item", row.item_id.as_deref()),
+        WriteKind::UpdateEdge => (WriteKind::CreateEdge, "edge", row.edge_id.as_deref()),
+        _ => return Ok(None),
+    };
+    if row.base_version != Some(0) {
+        return Ok(None);
+    }
+    for dependency in &row.depends_on {
+        let Some(create) = store::queued_write(conn, dependency)? else {
+            continue;
+        };
+        if create.kind != created
+            || !matches!(
+                create.verdict,
+                Some(Verdict::Accepted | Verdict::Merged | Verdict::Conflicted)
+            )
+        {
+            continue;
+        }
+        // Only an answer about the row this write addresses. A create the
+        // server took as an upsert onto another row answers with that row,
+        // and its version is not one this write was ever based on.
+        let answered = create
+            .answer
+            .as_deref()
+            .and_then(|answer| serde_json::from_str::<serde_json::Value>(answer).ok())
+            .and_then(|answer| answer.get(field).cloned());
+        let Some(answered) = answered else {
+            continue;
+        };
+        if answered.get("id").and_then(serde_json::Value::as_str) != subject {
+            continue;
+        }
+        if let Some(version) = answered.get("version").and_then(serde_json::Value::as_i64) {
+            return Ok(Some(version));
+        }
+    }
+    Ok(None)
+}
+
 fn verdict_of(row: &QueuedWrite, settled: &Settled) -> DrainVerdict {
     DrainVerdict {
         id: row.id.clone(),
-        kind: row.kind.clone(),
+        kind: row.kind,
         item_id: row.item_id.clone(),
-        verdict: settled.verdict.clone(),
+        verdict: settled.verdict,
         reason: settled.reason.clone(),
         conflicted_copy_id: settled.conflicted_copy_id.clone(),
         refusals: settled.refusals,
@@ -506,7 +565,7 @@ fn verdict_of(row: &QueuedWrite, settled: &Settled) -> DrainVerdict {
 }
 
 struct Settled {
-    verdict: Option<String>,
+    verdict: Option<Verdict>,
     reason: Option<String>,
     conflicted_copy_id: Option<String>,
     refusals: i64,
@@ -518,9 +577,9 @@ struct Settled {
 impl Settled {
     /// A settlement that reports nothing the server resolved, which is every
     /// one but a successful write.
-    fn plain(verdict: Option<&str>, reason: Option<String>, refusals: i64) -> Settled {
+    fn plain(verdict: Option<Verdict>, reason: Option<String>, refusals: i64) -> Settled {
         Settled {
-            verdict: verdict.map(str::to_string),
+            verdict,
             reason,
             conflicted_copy_id: None,
             refusals,
@@ -537,6 +596,7 @@ fn settle(
     row: &QueuedWrite,
     answer: &std::result::Result<Answer, CoreError>,
     class: Classified,
+    shape: Shape,
 ) -> Result<Settled> {
     let envelope = answer.as_ref().ok().map(|answer| answer.body.clone());
     match class {
@@ -550,14 +610,6 @@ fn settle(
                 .as_ref()
                 .map(|answer| answer.replayed)
                 .unwrap_or(false);
-            let Some(shape) = shape_of(&row.kind) else {
-                // A kind whose door this build does not know. Counted rather
-                // than accepted: the device cannot say what the server took.
-                let conn = core.conn()?;
-                let refusals = store::count_refusal(&conn, &row.id)?;
-                drop(conn);
-                return finish_counted(core, row, refusals, envelope);
-            };
             match shape {
                 Shape::Item => {
                     let Ok(parsed) = serde_json::from_str::<WireWriteAnswer>(&body) else {
@@ -577,11 +629,11 @@ fn settle(
                     // (`queue-and-verdicts.md` 8).
                     let (verdict, conflicted_copy_id, merged_fields) =
                         match &parsed.conflict_resolution {
-                            None => ("accepted", None, Vec::new()),
+                            None => (Verdict::Accepted, None, Vec::new()),
                             Some(resolution) => match &resolution.conflicted_copy_id {
-                                None => ("merged", None, resolution.fields.clone()),
+                                None => (Verdict::Merged, None, resolution.fields.clone()),
                                 Some(sibling) => (
-                                    "conflicted",
+                                    Verdict::Conflicted,
                                     Some(sibling.clone()),
                                     resolution.fields.clone(),
                                 ),
@@ -609,9 +661,10 @@ fn settle(
                             conflicted_copy_id: conflicted_copy_id.as_deref(),
                         },
                     )?;
+                    store::lay_waiting_writes_over(&tx, &parsed.item.id, title_field)?;
                     tx.commit()?;
                     Ok(Settled {
-                        verdict: Some(verdict.into()),
+                        verdict: Some(verdict),
                         reason: None,
                         conflicted_copy_id,
                         refusals: row.refusals,
@@ -637,16 +690,17 @@ fn settle(
                         &tx,
                         &row.id,
                         &store::Answered {
-                            verdict: "accepted",
+                            verdict: Verdict::Accepted,
                             reason: None,
                             answer: envelope.as_deref(),
                             conflicted_copy_id: None,
                         },
                     )?;
+                    store::lay_waiting_edge_writes_over(&tx, &parsed.edge.id)?;
                     tx.commit()?;
                     Ok(Settled {
                         replayed: replayed_header,
-                        ..Settled::plain(Some("accepted"), None, row.refusals)
+                        ..Settled::plain(Some(Verdict::Accepted), None, row.refusals)
                     })
                 }
                 Shape::Plain => {
@@ -659,7 +713,7 @@ fn settle(
                         &conn,
                         &row.id,
                         &store::Answered {
-                            verdict: "accepted",
+                            verdict: Verdict::Accepted,
                             reason: None,
                             answer: envelope.as_deref(),
                             conflicted_copy_id: None,
@@ -667,7 +721,7 @@ fn settle(
                     )?;
                     Ok(Settled {
                         replayed: replayed_header,
-                        ..Settled::plain(Some("accepted"), None, row.refusals)
+                        ..Settled::plain(Some(Verdict::Accepted), None, row.refusals)
                     })
                 }
             }
@@ -695,7 +749,7 @@ fn settle(
                     &conn,
                     &row.id,
                     &store::Answered {
-                        verdict: "refused",
+                        verdict: Verdict::Refused,
                         // The server's code verbatim (12). Not translated: a
                         // device reports what it was told.
                         reason: Some(&code),
@@ -705,7 +759,11 @@ fn settle(
                 )?;
             }
             reconcile(core, row);
-            Ok(Settled::plain(Some("refused"), Some(code), row.refusals))
+            Ok(Settled::plain(
+                Some(Verdict::Refused),
+                Some(code),
+                row.refusals,
+            ))
         }
         Classified::Counted => {
             let conn = core.conn()?;
@@ -719,15 +777,19 @@ fn settle(
                 &conn,
                 &row.id,
                 &store::Answered {
-                    verdict: "blocked",
-                    reason: Some(reason),
+                    verdict: Verdict::Blocked,
+                    reason: Some(reason.as_str()),
                     answer: envelope.as_deref(),
                     conflicted_copy_id: None,
                 },
             )?;
             Ok(Settled {
                 stops_the_drain: matches!(class, Classified::BlockQueue(_)),
-                ..Settled::plain(Some("blocked"), Some(reason.into()), row.refusals)
+                ..Settled::plain(
+                    Some(Verdict::Blocked),
+                    Some(reason.as_str().into()),
+                    row.refusals,
+                )
             })
         }
     }
@@ -748,13 +810,13 @@ fn finish_counted(
         &conn,
         &row.id,
         &store::Answered {
-            verdict: "dead",
+            verdict: Verdict::Dead,
             reason: None,
             answer: envelope.as_deref(),
             conflicted_copy_id: None,
         },
     )?;
-    Ok(Settled::plain(Some("dead"), None, refusals))
+    Ok(Settled::plain(Some(Verdict::Dead), None, refusals))
 }
 
 /// Puts the working copy back to what the server holds, after a refusal
@@ -784,8 +846,8 @@ fn reconcile_inner(core: &Core, row: &QueuedWrite) -> Result<()> {
     // delete's edge still gone. A refusal produces no event, so catch-up
     // never corrects any of it.
     if matches!(
-        row.kind.as_str(),
-        "create_edge" | "update_edge" | "delete_edge"
+        row.kind,
+        WriteKind::CreateEdge | WriteKind::UpdateEdge | WriteKind::DeleteEdge
     ) {
         let Some(source) = row.item_id.as_deref() else {
             return Ok(());
@@ -859,7 +921,12 @@ fn reconcile_inner(core: &Core, row: &QueuedWrite) -> Result<()> {
         }
         let conn = core.conn()?;
         match found {
-            Some(edge) => store::upsert_edge(&conn, &edge)?,
+            // Nothing is laid back over it: every later write to an edge
+            // waits on the earlier ones, so a refused edge write refuses
+            // them too (`queue-and-verdicts.md` 16) and none is left waiting.
+            Some(edge) => {
+                store::upsert_edge(&conn, &edge)?;
+            }
             // The server holds no such edge, which for a refused create is
             // the honest answer and for a refused update means it went
             // elsewhere.
@@ -880,6 +947,7 @@ fn reconcile_inner(core: &Core, row: &QueuedWrite) -> Result<()> {
             let title_field = catalog.title_field(&held.item.r#type);
             let tx = conn.transaction()?;
             store::upsert_item(&tx, &held.item, Some(&held.metadata.tags), title_field)?;
+            store::lay_waiting_writes_over(&tx, &held.item.id, title_field)?;
             tx.commit()?;
         }
         None => {
@@ -894,42 +962,93 @@ fn reconcile_inner(core: &Core, row: &QueuedWrite) -> Result<()> {
 mod tests {
     use super::*;
 
-    /// The kinds in `store::WRITE_KINDS` with no door yet. `address` refuses
-    /// one before a body can be read, so the drain never asks `shape_of`
-    /// about it — and the test below needs that written down to tell a kind
-    /// nobody has built a door for from one somebody forgot.
-    const NO_DOOR_YET: &[&str] = &["upload_blob"];
+    fn write<'a>(
+        kind: WriteKind,
+        item_id: &'a str,
+        edge_id: Option<&'a str>,
+        base_version: Option<i64>,
+        depends_on: &'a [String],
+    ) -> store::NewWrite<'a> {
+        store::NewWrite {
+            kind,
+            item_id: Some(item_id),
+            target_id: None,
+            edge_id,
+            namespace: None,
+            tag: None,
+            base_version,
+            payload: "{}",
+            depends_on,
+        }
+    }
 
-    /// Every kind the queue accepts either has a shape or is declared as
-    /// having no door.
-    ///
-    /// The compiler cannot say this: `shape_of` matches a name, so it needs
-    /// a default arm, and a kind added to `WRITE_KINDS` and not named there
-    /// falls into it in silence. What that costs is a door whose success the
-    /// device cannot read: the server does the work, the drain counts a
-    /// refusal, and the write dies on the fifth pass with nothing said.
+    /// The version comes from an answer about the row the edit addresses and
+    /// no other. The witness is the same edit rebased once the answer names
+    /// its row, so the first `None` is the id check and not a rebase that
+    /// never fires.
     #[test]
-    fn the_shape_of_every_write_kind_is_decided() {
-        let undecided: Vec<&str> = crate::store::WRITE_KINDS
-            .iter()
-            .copied()
-            .filter(|kind| shape_of(kind).is_none() && !NO_DOOR_YET.contains(kind))
-            .collect();
-        assert!(
-            undecided.is_empty(),
-            "{undecided:?} can be queued and the drain cannot read what the \
-             server answers them with, so a write the server took comes back \
-             as a refusal and the fifth one kills it"
-        );
-        let unreachable: Vec<&str> = NO_DOOR_YET
-            .iter()
-            .copied()
-            .filter(|kind| !crate::store::WRITE_KINDS.contains(kind))
-            .collect();
-        assert!(
-            unreachable.is_empty(),
-            "{unreachable:?} is excused from having a shape and is not a kind \
-             anything can queue, so the excuse is about nothing"
-        );
+    fn only_an_answer_about_the_row_itself_rebases_an_edit_of_it() {
+        let conn = store::open_in_memory().unwrap();
+        for (created, edited, field, subject, edge) in [
+            (
+                WriteKind::CreateItem,
+                WriteKind::UpdateItem,
+                "item",
+                "mine",
+                None,
+            ),
+            (
+                WriteKind::CreateEdge,
+                WriteKind::UpdateEdge,
+                "edge",
+                "link",
+                Some("link"),
+            ),
+        ] {
+            let create = store::enqueue(&conn, &write(created, "mine", edge, None, &[])).unwrap();
+            let depends_on = [create.id.clone()];
+            let edit =
+                store::enqueue(&conn, &write(edited, "mine", edge, Some(0), &depends_on)).unwrap();
+            let answer =
+                |id: &str| serde_json::json!({ field: { "id": id, "version": 5 } }).to_string();
+            let answered = |id: &str| {
+                store::record_verdict(
+                    &conn,
+                    &create.id,
+                    &store::Answered {
+                        verdict: Verdict::Accepted,
+                        reason: None,
+                        answer: Some(&answer(id)),
+                        conflicted_copy_id: None,
+                    },
+                )
+                .unwrap();
+                store::queued_write(&conn, &edit.id).unwrap().unwrap()
+            };
+            assert_eq!(
+                own_create_version(&conn, &answered("theirs")).unwrap(),
+                None,
+                "an answer about another {field} rebased an edit of this one"
+            );
+            assert_eq!(
+                own_create_version(&conn, &answered(subject)).unwrap(),
+                Some(5)
+            );
+
+            // Rebased, the write reports what it was sent on in both places.
+            store::rebase(&conn, &edit.id, 5).unwrap();
+            let rebased = store::queued_write(&conn, &edit.id).unwrap().unwrap();
+            assert_eq!(rebased.base_version, Some(5));
+            let payload: serde_json::Value =
+                serde_json::from_str(&store::payload_of(&conn, &edit.id).unwrap()).unwrap();
+            assert_eq!(payload["version"], 5);
+
+            // And only a write based on the placeholder: one based on a
+            // version the server issued waits on the same create and is not
+            // moved.
+            let issued =
+                store::enqueue(&conn, &write(edited, "mine", edge, Some(3), &depends_on)).unwrap();
+            assert_eq!(own_create_version(&conn, &issued).unwrap(), None);
+        }
     }
 }

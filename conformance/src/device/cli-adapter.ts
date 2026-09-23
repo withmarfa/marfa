@@ -8,6 +8,7 @@ import {
   type DeviceUnderTest,
   type Draft,
   type DrainReport,
+  type Edge,
   type EdgeDraft,
   type Edit,
   type HydrateReport,
@@ -132,6 +133,8 @@ export class CliDevice implements DeviceUnderTest {
     const args = ["search", query];
     if (filters.state !== undefined) args.push("--state", filters.state);
     if (filters.allStates === true) args.push("--all-states");
+    if (filters.type !== undefined) args.push("--type", filters.type);
+    for (const tag of filters.tags ?? []) args.push("--tag", tag);
     if (limit !== undefined) args.push("--limit", String(limit));
     return this.json<SearchHit[]>(args);
   }
@@ -311,6 +314,10 @@ export class CliDevice implements DeviceUnderTest {
 
   async deleteEdge(id: string): Promise<Outcome<QueuedWrite>> {
     return this.json<QueuedWrite>(["edges", "delete", id]);
+  }
+
+  async edgesFrom(item: string): Promise<Outcome<Edge[]>> {
+    return this.json<Edge[]>(["edges", "list", item]);
   }
 
   async addTag(item: string, tag: string): Promise<Outcome<QueuedWrite>> {

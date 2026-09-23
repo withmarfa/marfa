@@ -75,13 +75,16 @@ pub struct Edge {
     pub updated_at: String,
 }
 
-/// Narrowing for a search. The state rule a list takes, and only that: the
-/// rest of the listing grammar is answered by a list.
+/// Narrowing for a search: the state rule a list takes, a type with its
+/// subtree, and tags, each read as the list reads it.
 #[napi(object)]
 #[derive(Default)]
 pub struct SearchFilters {
     pub state: Option<ItemState>,
     pub all_states: Option<bool>,
+    #[napi(js_name = "type")]
+    pub type_: Option<String>,
+    pub tags: Option<Vec<String>>,
 }
 
 /// Narrowing for a list. Leaving `state` unset answers the active state, as
@@ -144,6 +147,165 @@ pub struct Status {
     pub edges: i64,
 }
 
+/// The kinds of write a queue holds.
+#[napi(string_enum = "snake_case")]
+pub enum WriteKind {
+    CreateItem,
+    UpdateItem,
+    DeleteItem,
+    RestoreItem,
+    TransitionItem,
+    CreateEdge,
+    UpdateEdge,
+    DeleteEdge,
+    ReplaceMetadata,
+    MergeMetadata,
+    AddTag,
+    RemoveTag,
+    WriteExtension,
+    DeleteExtension,
+    UploadBlob,
+}
+
+/// Why a `blocked` write has stopped.
+#[napi(string_enum = "snake_case")]
+pub enum BlockedReason {
+    CredentialRefused,
+    KeySpent,
+    AncestorUnavailable,
+    ConflictUnresolved,
+    AwaitingDependency,
+}
+
+/// Which handle this process holds on the store.
+#[napi(string_enum = "snake_case")]
+pub enum Handle {
+    Writer,
+    Reader,
+}
+
+/// What the server made of a write: one of six, and absent while the write
+/// is unanswered.
+#[napi(discriminant = "verdict", discriminant_case = "camelCase")]
+pub enum Verdict {
+    Accepted,
+    /// The server applied the write over changes made since, field by field.
+    Merged {
+        fields: Vec<String>,
+    },
+    /// The server kept its own value and wrote the losing one to a sibling.
+    Conflicted {
+        sibling_id: String,
+        fields: Vec<String>,
+    },
+    /// The server's code verbatim, or the sentence naming the write this one
+    /// waited on where that write was refused.
+    Refused {
+        reason: String,
+    },
+    Blocked {
+        reason: BlockedReason,
+    },
+    /// Refused until the ceiling; released by id. The row's `answer` holds
+    /// the last answer it got.
+    Dead,
+}
+
+/// A create, before it is queued.
+#[napi(object)]
+pub struct Draft {
+    #[napi(js_name = "type")]
+    pub type_: String,
+    pub id: Option<String>,
+    #[napi(ts_type = "Record<string, unknown>")]
+    pub properties: Option<serde_json::Value>,
+    /// Each queued as a write of its own, waiting on the create.
+    pub tags: Option<Vec<String>>,
+    pub tier: Option<Tier>,
+    pub source: Option<String>,
+    pub source_id: Option<String>,
+    pub occurred_at: Option<String>,
+    /// The version this create is conditional on, where its natural key
+    /// resolves a row the server holds.
+    pub base_version: Option<i64>,
+}
+
+/// A change to an item, and the version it was read at.
+#[napi(object)]
+pub struct Edit {
+    /// Whole field values; a device never merges inside a field.
+    #[napi(ts_type = "Record<string, unknown>")]
+    pub properties: serde_json::Value,
+    /// Required: an update naming no version is refused before it is sent.
+    pub base_version: Option<i64>,
+    /// The natural key to move the row to.
+    pub source_id: Option<String>,
+}
+
+/// An edge, before it is queued.
+#[napi(object)]
+pub struct EdgeDraft {
+    pub source_id: String,
+    pub target_id: String,
+    pub edge_type: String,
+    #[napi(ts_type = "Record<string, unknown>")]
+    pub properties: Option<serde_json::Value>,
+    pub id: Option<String>,
+}
+
+/// A change to an edge's properties, and the version it was read at.
+#[napi(object)]
+pub struct EdgeEdit {
+    #[napi(ts_type = "Record<string, unknown>")]
+    pub properties: serde_json::Value,
+    pub base_version: Option<i64>,
+}
+
+/// One queued write and what became of it.
+#[napi(object)]
+pub struct QueuedWrite {
+    pub id: String,
+    pub kind: WriteKind,
+    pub item_id: Option<String>,
+    pub target_id: Option<String>,
+    pub edge_id: Option<String>,
+    pub namespace: Option<String>,
+    pub tag: Option<String>,
+    pub base_version: Option<i64>,
+    pub idempotency_key: String,
+    pub depends_on: Vec<String>,
+    pub verdict: Option<Verdict>,
+    /// The server's answer, whole, as it arrived.
+    pub answer: Option<String>,
+    pub refusals: i64,
+    pub queued_at: String,
+    pub answered_at: Option<String>,
+}
+
+/// What became of one write a drain sent.
+#[napi(object)]
+pub struct DrainVerdict {
+    pub id: String,
+    pub kind: WriteKind,
+    pub item_id: Option<String>,
+    pub verdict: Option<Verdict>,
+    pub refusals: i64,
+    /// The server answered from its record of this idempotency key rather
+    /// than writing again.
+    pub replayed: bool,
+}
+
+/// What a drain did.
+#[napi(object)]
+pub struct DrainReport {
+    pub sent: i64,
+    pub held: i64,
+    pub verdicts: Vec<DrainVerdict>,
+    /// Why the drain stopped before the queue was empty, where it did.
+    pub stopped: Option<String>,
+    pub retry_after_seconds: Option<i64>,
+}
+
 impl From<Tier> for marfa_core::Tier {
     fn from(tier: Tier) -> Self {
         match tier {
@@ -192,6 +354,136 @@ impl From<marfa_core::Hydration> for Hydration {
             marfa_core::Hydration::Complete => Hydration::Complete,
             marfa_core::Hydration::Expired => Hydration::Expired,
         }
+    }
+}
+
+impl From<marfa_core::WriteKind> for WriteKind {
+    fn from(kind: marfa_core::WriteKind) -> Self {
+        use marfa_core::WriteKind as K;
+        match kind {
+            K::CreateItem => WriteKind::CreateItem,
+            K::UpdateItem => WriteKind::UpdateItem,
+            K::DeleteItem => WriteKind::DeleteItem,
+            K::RestoreItem => WriteKind::RestoreItem,
+            K::TransitionItem => WriteKind::TransitionItem,
+            K::CreateEdge => WriteKind::CreateEdge,
+            K::UpdateEdge => WriteKind::UpdateEdge,
+            K::DeleteEdge => WriteKind::DeleteEdge,
+            K::ReplaceMetadata => WriteKind::ReplaceMetadata,
+            K::MergeMetadata => WriteKind::MergeMetadata,
+            K::AddTag => WriteKind::AddTag,
+            K::RemoveTag => WriteKind::RemoveTag,
+            K::WriteExtension => WriteKind::WriteExtension,
+            K::DeleteExtension => WriteKind::DeleteExtension,
+            K::UploadBlob => WriteKind::UploadBlob,
+        }
+    }
+}
+
+impl From<marfa_core::BlockedReason> for BlockedReason {
+    fn from(reason: marfa_core::BlockedReason) -> Self {
+        use marfa_core::BlockedReason as R;
+        match reason {
+            R::CredentialRefused => BlockedReason::CredentialRefused,
+            R::KeySpent => BlockedReason::KeySpent,
+            R::AncestorUnavailable => BlockedReason::AncestorUnavailable,
+            R::ConflictUnresolved => BlockedReason::ConflictUnresolved,
+            R::AwaitingDependency => BlockedReason::AwaitingDependency,
+        }
+    }
+}
+
+impl From<BlockedReason> for marfa_core::BlockedReason {
+    fn from(reason: BlockedReason) -> Self {
+        use marfa_core::BlockedReason as R;
+        match reason {
+            BlockedReason::CredentialRefused => R::CredentialRefused,
+            BlockedReason::KeySpent => R::KeySpent,
+            BlockedReason::AncestorUnavailable => R::AncestorUnavailable,
+            BlockedReason::ConflictUnresolved => R::ConflictUnresolved,
+            BlockedReason::AwaitingDependency => R::AwaitingDependency,
+        }
+    }
+}
+
+impl From<SearchFilters> for marfa_core::SearchFilters {
+    fn from(filters: SearchFilters) -> Self {
+        marfa_core::SearchFilters {
+            state: filters.state.map(Into::into),
+            all_states: filters.all_states.unwrap_or(false),
+            r#type: filters.type_,
+            tags: filters.tags.unwrap_or_default(),
+        }
+    }
+}
+
+impl From<marfa_core::Outcome> for Verdict {
+    fn from(outcome: marfa_core::Outcome) -> Self {
+        use marfa_core::Outcome as O;
+        match outcome {
+            O::Accepted => Verdict::Accepted,
+            O::Merged { fields } => Verdict::Merged { fields },
+            O::Conflicted { sibling_id, fields } => Verdict::Conflicted { sibling_id, fields },
+            O::Refused { reason } => Verdict::Refused { reason },
+            O::Blocked { reason } => Verdict::Blocked {
+                reason: reason.into(),
+            },
+            O::Dead => Verdict::Dead,
+        }
+    }
+}
+
+fn queued(write: marfa_core::QueuedWrite) -> Result<QueuedWrite> {
+    Ok(QueuedWrite {
+        verdict: write.outcome().map_err(failure)?.map(Into::into),
+        id: write.id,
+        kind: write.kind.into(),
+        item_id: write.item_id,
+        target_id: write.target_id,
+        edge_id: write.edge_id,
+        namespace: write.namespace,
+        tag: write.tag,
+        base_version: write.base_version,
+        idempotency_key: write.idempotency_key,
+        depends_on: write.depends_on,
+        answer: write.answer,
+        refusals: write.refusals,
+        queued_at: write.queued_at,
+        answered_at: write.answered_at,
+    })
+}
+
+fn drained(report: marfa_core::DrainReport) -> Result<DrainReport> {
+    let mut verdicts = Vec::with_capacity(report.verdicts.len());
+    for entry in report.verdicts {
+        verdicts.push(DrainVerdict {
+            verdict: entry.outcome().map_err(failure)?.map(Into::into),
+            id: entry.id,
+            kind: entry.kind.into(),
+            item_id: entry.item_id,
+            refusals: entry.refusals,
+            replayed: entry.replayed,
+        });
+    }
+    Ok(DrainReport {
+        sent: count(report.sent as u64),
+        held: count(report.held as u64),
+        verdicts,
+        stopped: report.stopped,
+        retry_after_seconds: report.retry_after_seconds.map(count),
+    })
+}
+
+/// A property bag from JavaScript. Absent is empty; anything but an object
+/// is refused rather than coerced, since a device sends what it was given.
+fn object(value: Option<serde_json::Value>) -> Result<serde_json::Map<String, serde_json::Value>> {
+    match value {
+        None => Ok(serde_json::Map::new()),
+        Some(serde_json::Value::Object(map)) => Ok(map),
+        Some(_) => Err(Error::new(
+            napi::Status::InvalidArg,
+            "invalid: properties must be an object",
+        )),
     }
 }
 
@@ -347,6 +639,24 @@ impl Task for CatchUp {
     }
 }
 
+pub struct Drain {
+    core: Arc<marfa_core::Core>,
+}
+
+#[napi]
+impl Task for Drain {
+    type Output = marfa_core::DrainReport;
+    type JsValue = DrainReport;
+
+    fn compute(&mut self) -> Result<Self::Output> {
+        self.core.drain().map_err(failure)
+    }
+
+    fn resolve(&mut self, _: Env, report: Self::Output) -> Result<Self::JsValue> {
+        drained(report)
+    }
+}
+
 #[napi]
 impl MarfaCore {
     /// Opens the file at `path`, creating it when absent. `url` and `key` go
@@ -422,14 +732,7 @@ impl MarfaCore {
         let filters = filters.unwrap_or_default();
         let hits = self
             .inner
-            .search(
-                &query,
-                &marfa_core::SearchFilters {
-                    state: filters.state.map(Into::into),
-                    all_states: filters.all_states.unwrap_or(false),
-                },
-                limit.unwrap_or(20) as usize,
-            )
+            .search(&query, &filters.into(), limit.unwrap_or(20) as usize)
             .map_err(failure)?;
         Ok(hits
             .into_iter()
@@ -453,5 +756,249 @@ impl MarfaCore {
             items: count(status.items),
             edges: count(status.edges),
         })
+    }
+
+    /// Which handle this process holds: the one that may write, or a second
+    /// opener that reads and refuses every write.
+    #[napi]
+    pub fn held_handle(&self) -> Handle {
+        match self.inner.handle() {
+            marfa_core::Handle::Writer => Handle::Writer,
+            marfa_core::Handle::Reader => Handle::Reader,
+        }
+    }
+
+    /// Writes a new item into the local copy and queues it for the server.
+    #[napi]
+    pub fn create_item(&self, draft: Draft) -> Result<QueuedWrite> {
+        let draft = marfa_core::Draft {
+            r#type: draft.type_,
+            id: draft.id,
+            properties: object(draft.properties)?,
+            tags: draft.tags.unwrap_or_default(),
+            tier: draft.tier.map(Into::into),
+            source: draft.source,
+            source_id: draft.source_id,
+            occurred_at: draft.occurred_at,
+            base_version: draft.base_version,
+        };
+        queued(self.inner.create_item(&draft).map_err(failure)?)
+    }
+
+    /// Changes an item in the local copy and queues the change.
+    #[napi]
+    pub fn update_item(&self, id: String, edit: Edit) -> Result<QueuedWrite> {
+        let edit = marfa_core::Edit {
+            properties: object(Some(edit.properties))?,
+            base_version: edit.base_version,
+            source_id: edit.source_id,
+        };
+        queued(self.inner.update_item(&id, &edit).map_err(failure)?)
+    }
+
+    /// Moves an item to the bin locally and queues the delete.
+    #[napi]
+    pub fn delete_item(&self, id: String) -> Result<QueuedWrite> {
+        queued(self.inner.delete_item(&id).map_err(failure)?)
+    }
+
+    /// Takes an item out of the bin locally and queues the restore.
+    #[napi]
+    pub fn restore_item(&self, id: String) -> Result<QueuedWrite> {
+        queued(self.inner.restore_item(&id).map_err(failure)?)
+    }
+
+    /// Moves an item to another lifecycle state.
+    #[napi]
+    pub fn transition_item(&self, id: String, state: ItemState) -> Result<QueuedWrite> {
+        queued(
+            self.inner
+                .transition_item(&id, state.into())
+                .map_err(failure)?,
+        )
+    }
+
+    /// Links two items. An edge is its own write.
+    #[napi]
+    pub fn create_edge(&self, draft: EdgeDraft) -> Result<QueuedWrite> {
+        let draft = marfa_core::EdgeDraft {
+            source_id: draft.source_id,
+            target_id: draft.target_id,
+            edge_type: draft.edge_type,
+            properties: object(draft.properties)?,
+            id: draft.id,
+        };
+        queued(self.inner.create_edge(&draft).map_err(failure)?)
+    }
+
+    #[napi]
+    pub fn update_edge(&self, id: String, edit: EdgeEdit) -> Result<QueuedWrite> {
+        let edit = marfa_core::EdgeEdit {
+            properties: object(Some(edit.properties))?,
+            base_version: edit.base_version,
+        };
+        queued(self.inner.update_edge(&id, &edit).map_err(failure)?)
+    }
+
+    #[napi]
+    pub fn delete_edge(&self, id: String) -> Result<QueuedWrite> {
+        queued(self.inner.delete_edge(&id).map_err(failure)?)
+    }
+
+    /// Puts one tag on an item, as its own write.
+    #[napi]
+    pub fn add_tag(&self, id: String, tag: String) -> Result<QueuedWrite> {
+        queued(self.inner.add_tag(&id, &tag).map_err(failure)?)
+    }
+
+    #[napi]
+    pub fn remove_tag(&self, id: String, tag: String) -> Result<QueuedWrite> {
+        queued(self.inner.remove_tag(&id, &tag).map_err(failure)?)
+    }
+
+    /// Writes the item's tags whole, dropping any not named.
+    #[napi]
+    pub fn replace_metadata(&self, id: String, tags: Vec<String>) -> Result<QueuedWrite> {
+        let write = marfa_core::MetadataWrite { tags };
+        queued(
+            self.inner
+                .write_metadata(&id, &write, true)
+                .map_err(failure)?,
+        )
+    }
+
+    /// Adds the named tags, leaving the rest.
+    #[napi]
+    pub fn merge_metadata(&self, id: String, tags: Vec<String>) -> Result<QueuedWrite> {
+        let write = marfa_core::MetadataWrite { tags };
+        queued(
+            self.inner
+                .write_metadata(&id, &write, false)
+                .map_err(failure)?,
+        )
+    }
+
+    /// Writes one extension namespace, as its own write.
+    #[napi]
+    pub fn write_extension(
+        &self,
+        id: String,
+        namespace: String,
+        #[napi(ts_arg_type = "Record<string, unknown>")] body: serde_json::Value,
+    ) -> Result<QueuedWrite> {
+        let body = serde_json::Value::Object(object(Some(body))?).to_string();
+        queued(
+            self.inner
+                .write_extension(&id, &namespace, &body)
+                .map_err(failure)?,
+        )
+    }
+
+    #[napi]
+    pub fn delete_extension(&self, id: String, namespace: String) -> Result<QueuedWrite> {
+        queued(
+            self.inner
+                .delete_extension(&id, &namespace)
+                .map_err(failure)?,
+        )
+    }
+
+    /// Every queued write and what became of it.
+    #[napi]
+    pub fn queue(&self) -> Result<Vec<QueuedWrite>> {
+        self.inner
+            .queue()
+            .map_err(failure)?
+            .into_iter()
+            .map(queued)
+            .collect()
+    }
+
+    /// Sends what the queue holds and records what came back. One pass.
+    #[napi]
+    pub fn drain(&self) -> AsyncTask<Drain> {
+        AsyncTask::new(Drain {
+            core: Arc::clone(&self.inner),
+        })
+    }
+
+    /// Sends a blocked or dead write again, under a fresh idempotency key.
+    /// Answers whether the row was one a release applies to.
+    #[napi]
+    pub fn release(&self, id: String) -> Result<bool> {
+        self.inner.release(&id).map_err(failure)
+    }
+
+    /// Releases every write blocked for one reason, and says how many.
+    #[napi]
+    pub fn release_reason(&self, reason: BlockedReason) -> Result<i64> {
+        let released = self.inner.release_reason(reason.into()).map_err(failure)?;
+        Ok(count(released as u64))
+    }
+
+    /// Clears the writes the server has answered, and says how many went.
+    #[napi]
+    pub fn forget_answered(&self) -> Result<i64> {
+        Ok(count(self.inner.forget_answered().map_err(failure)? as u64))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_blocked_reason_crosses_as_itself_both_ways() {
+        for reason in marfa_core::BlockedReason::ALL {
+            let crossed: BlockedReason = reason.into();
+            assert_eq!(marfa_core::BlockedReason::from(crossed), reason);
+        }
+    }
+
+    /// Each outcome lands on its own variant carrying what it carries. The
+    /// variants hold no comparison, so each is matched out.
+    #[test]
+    fn every_outcome_crosses_with_what_it_carries() {
+        use marfa_core::Outcome as O;
+        assert!(matches!(Verdict::from(O::Accepted), Verdict::Accepted));
+        assert!(matches!(
+            Verdict::from(O::Merged { fields: vec!["title".into()] }),
+            Verdict::Merged { fields } if fields == ["title"]
+        ));
+        assert!(matches!(
+            Verdict::from(O::Conflicted { sibling_id: "s".into(), fields: vec!["body".into()] }),
+            Verdict::Conflicted { sibling_id, fields } if sibling_id == "s" && fields == ["body"]
+        ));
+        assert!(matches!(
+            Verdict::from(O::Refused { reason: "type_not_permitted".into() }),
+            Verdict::Refused { reason } if reason == "type_not_permitted"
+        ));
+        for reason in marfa_core::BlockedReason::ALL {
+            let Verdict::Blocked { reason: crossed } = Verdict::from(O::Blocked { reason }) else {
+                panic!("a blocked outcome crossed as another verdict");
+            };
+            assert_eq!(marfa_core::BlockedReason::from(crossed), reason);
+        }
+        assert!(matches!(Verdict::from(O::Dead), Verdict::Dead));
+    }
+
+    #[test]
+    fn search_filters_cross_whole() {
+        let crossed: marfa_core::SearchFilters = SearchFilters {
+            state: Some(ItemState::Archived),
+            all_states: Some(true),
+            type_: Some("core.note".into()),
+            tags: Some(vec!["a".into(), "b".into()]),
+        }
+        .into();
+        assert_eq!(
+            crossed,
+            marfa_core::SearchFilters {
+                state: Some(marfa_core::ItemState::Archived),
+                all_states: true,
+                r#type: Some("core.note".into()),
+                tags: vec!["a".into(), "b".into()],
+            }
+        );
     }
 }

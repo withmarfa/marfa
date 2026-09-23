@@ -9,11 +9,13 @@ import {
 } from "./harness.js";
 import { notWrittenYet, skipIfPending } from "./pending.js";
 import {
+  SCRIPTED_TYPES,
   connected,
   itemEvent,
   replay,
   streamCursor,
   wireItem,
+  wireType,
 } from "../../device/marfa-answers.js";
 
 /**
@@ -747,6 +749,93 @@ describe("a local read answers the active state unless asked otherwise", () => {
       binned.ok && binned.value !== null,
       "a row in the bin is readable by id, so a device hands back a row the server it copies answers 404 for",
     ).toBe(false);
+  });
+});
+
+describe("a local search narrows as a list does", () => {
+  it("narrows a local search by type and tags as a list does", async () => {
+    harness = await startHarness("search-narrowing");
+    // A subtype by declared parent alone: its name shares no prefix with
+    // `core.file`, so only the parent puts it in that subtree. Answered
+    // before the hydration's own catalog, which it replaces for the one read
+    // a hydration makes.
+    harness.server.answer("GET", "/types", {
+      kind: "json",
+      status: 200,
+      body: [
+        ...SCRIPTED_TYPES,
+        wireType("user.photo", { parent: "core.file", titleField: "title" }),
+      ],
+    });
+    scriptHydration(harness.server, {
+      head: "10",
+      rows: {
+        "core.note": [
+          {
+            item: { id: "note", properties: { title: "heron note" } },
+            tags: ["garden", "birds"],
+          },
+        ],
+        "core.file": [
+          {
+            item: {
+              id: "image",
+              type: "core.file.image",
+              properties: { title: "heron image" },
+            },
+            tags: ["birds"],
+          },
+          {
+            item: {
+              id: "file",
+              type: "core.file",
+              properties: { title: "heron file" },
+            },
+          },
+          {
+            item: {
+              id: "photo",
+              type: "user.photo",
+              properties: { title: "heron photo" },
+            },
+            tags: ["garden"],
+          },
+        ],
+      },
+    });
+    expect(
+      (await harness.device.hydrate(["core.note", "core.file"], "library")).ok,
+    ).toBe(true);
+    const ids = async (filters: {
+      type?: string;
+      tags?: string[];
+    }): Promise<string[]> => {
+      const hits = await harness!.device.search("heron", filters);
+      expect(
+        hits.ok,
+        `a narrowed local search was refused: ${JSON.stringify(hits)}`,
+      ).toBe(true);
+      return hits.ok ? hits.value.map((hit) => hit.item.id).sort() : [];
+    };
+    // The control: unnarrowed, the search finds all four, so every absence
+    // below is the narrowing.
+    expect(await ids({})).toEqual(["file", "image", "note", "photo"]);
+    expect(
+      await ids({ type: "core.file" }),
+      "a search narrowed to a type answered another type, or dropped a subtype a list would answer, by name or by declared parent",
+    ).toEqual(["file", "image", "photo"]);
+    expect(
+      await ids({ tags: ["birds"] }),
+      "a search narrowed to a tag answered a row without it",
+    ).toEqual(["image", "note"]);
+    expect(
+      await ids({ tags: ["birds", "garden"] }),
+      "a search narrowed by two tags answered a row carrying only one of them",
+    ).toEqual(["note"]);
+    expect(
+      await ids({ type: "core.note", tags: ["birds", "garden"] }),
+      "a search narrowed by a type and two tags answered a row lacking one of them",
+    ).toEqual(["note"]);
   });
 });
 

@@ -30,11 +30,11 @@ pub use error::CoreError;
 pub use folder::{Folder, PullReport, ScanReport, Slice};
 pub use lock::Handle;
 pub use model::{
-    CatchUpReport, Draft, Edge, EdgeDraft, EdgeEdit, Edit, HydrateReport, Hydration, Item,
-    ItemState, ListFilters, MetadataWrite, QueuedWrite, SearchFilters, SearchHit, Sort,
-    SortDirection, SortField, Status, Tier,
+    BlockedReason, CatchUpReport, Draft, Edge, EdgeDraft, EdgeEdit, Edit, HydrateReport, Hydration,
+    Item, ItemState, ListFilters, MetadataWrite, Outcome, QueuedWrite, SearchFilters, SearchHit,
+    Sort, SortDirection, SortField, Status, Tier, Verdict, WriteKind,
 };
-pub use store::{BLOCKED_REASONS, CEILING, VERDICTS, WRITE_KINDS};
+pub use store::CEILING;
 
 pub type Result<T> = std::result::Result<T, CoreError>;
 
@@ -143,7 +143,8 @@ impl Core {
         store::edges_from(&conn, id)
     }
 
-    /// Full-text search over titles, bodies and tags, best match first.
+    /// Full-text search over titles, bodies and tags, best match first,
+    /// narrowed as `SearchFilters` says.
     pub fn search(
         &self,
         query: &str,
@@ -152,7 +153,8 @@ impl Core {
     ) -> Result<Vec<SearchHit>> {
         let conn = self.conn()?;
         store::refuse_unless_hydrated(&conn)?;
-        search::search(&conn, query, filters, limit)
+        let catalog = catalog::Catalog::load(&conn)?;
+        search::search(&conn, &catalog, query, filters, limit)
     }
 
     /// Every queued write and what became of it.
@@ -202,15 +204,12 @@ impl Core {
     /// reason at a time", and a single refused credential parks a whole
     /// queue, so releasing them one id at a time would be the caller doing
     /// the queue's bookkeeping by hand.
-    pub fn release_reason(&self, reason: &str) -> Result<usize> {
+    pub fn release_reason(&self, reason: BlockedReason) -> Result<usize> {
         self.lock.refuse_unless_writer()?;
         let conn = self.conn()?;
         let ids: Vec<String> = store::queued_writes(&conn)?
             .into_iter()
-            .filter(|row| {
-                matches!(row.verdict.as_deref(), Some("blocked") | Some("dead"))
-                    && row.reason.as_deref() == Some(reason)
-            })
+            .filter(|row| row.blocked_reason() == Some(reason))
             .map(|row| row.id)
             .collect();
         drop(conn);
@@ -268,7 +267,7 @@ impl Core {
         let queued = store::enqueue(
             &tx,
             &store::NewWrite {
-                kind: "create_item",
+                kind: WriteKind::CreateItem,
                 item_id: Some(&id),
                 target_id: None,
                 edge_id: None,
@@ -290,7 +289,7 @@ impl Core {
             store::enqueue(
                 &tx,
                 &store::NewWrite {
-                    kind: "add_tag",
+                    kind: WriteKind::AddTag,
                     item_id: Some(&id),
                     target_id: None,
                     edge_id: None,
@@ -372,7 +371,7 @@ impl Core {
         let queued = store::enqueue(
             &tx,
             &store::NewWrite {
-                kind: "update_item",
+                kind: WriteKind::UpdateItem,
                 item_id: Some(id),
                 target_id: None,
                 edge_id: None,
@@ -399,12 +398,12 @@ impl Core {
     /// state the server would give it, so a caller reading it sees what the
     /// server will hold rather than a row that has already vanished.
     pub fn delete_item(&self, id: &str) -> Result<QueuedWrite> {
-        self.transition_locally(id, "delete_item", ItemState::Trashed, "{}")
+        self.transition_locally(id, WriteKind::DeleteItem, ItemState::Trashed, "{}")
     }
 
     /// Queues a restore, and takes the row out of the bin locally.
     pub fn restore_item(&self, id: &str) -> Result<QueuedWrite> {
-        self.transition_locally(id, "restore_item", ItemState::Active, "{}")
+        self.transition_locally(id, WriteKind::RestoreItem, ItemState::Active, "{}")
     }
 
     /// Queues a move to another lifecycle state.
@@ -419,7 +418,7 @@ impl Core {
             )));
         }
         let payload = serde_json::to_string(&serde_json::json!({ "state": state.as_str() }))?;
-        self.transition_locally(id, "transition_item", state, &payload)
+        self.transition_locally(id, WriteKind::TransitionItem, state, &payload)
     }
 
     /// The three item writes that move a row's state and leave its fields
@@ -427,7 +426,7 @@ impl Core {
     fn transition_locally(
         &self,
         id: &str,
-        kind: &str,
+        kind: WriteKind,
         state: ItemState,
         payload: &str,
     ) -> Result<QueuedWrite> {
@@ -492,7 +491,7 @@ impl Core {
         let queued = store::enqueue(
             &tx,
             &store::NewWrite {
-                kind: "create_edge",
+                kind: WriteKind::CreateEdge,
                 item_id: Some(&draft.source_id),
                 target_id: Some(&draft.target_id),
                 edge_id: Some(&id),
@@ -536,12 +535,13 @@ impl Core {
         for (key, value) in &edit.properties {
             next.properties.insert(key.clone(), value.clone());
         }
+        next.updated_at = store::now_iso();
         let tx = conn.transaction()?;
         store::upsert_edge(&tx, &next.as_wire())?;
         let queued = store::enqueue(
             &tx,
             &store::NewWrite {
-                kind: "update_edge",
+                kind: WriteKind::UpdateEdge,
                 item_id: Some(&held.source_id),
                 target_id: Some(&held.target_id),
                 edge_id: Some(id),
@@ -585,7 +585,7 @@ impl Core {
         let queued = store::enqueue(
             &tx,
             &store::NewWrite {
-                kind: "delete_edge",
+                kind: WriteKind::DeleteEdge,
                 item_id: Some(&held.source_id),
                 target_id: Some(&held.target_id),
                 edge_id: Some(id),
@@ -603,14 +603,14 @@ impl Core {
     /// Queues one tag onto a row, as its own write.
     pub fn add_tag(&self, id: &str, tag: &str) -> Result<QueuedWrite> {
         let payload = serde_json::to_string(&serde_json::json!({ "tags": [tag] }))?;
-        self.tag_write(id, "add_tag", Some(tag), &payload, |tx| {
+        self.tag_write(id, WriteKind::AddTag, Some(tag), &payload, |tx| {
             store::add_tags(tx, id, std::slice::from_ref(&tag.to_string()))
         })
     }
 
     /// Queues the removal of one tag, as its own write.
     pub fn remove_tag(&self, id: &str, tag: &str) -> Result<QueuedWrite> {
-        self.tag_write(id, "remove_tag", Some(tag), "{}", |tx| {
+        self.tag_write(id, WriteKind::RemoveTag, Some(tag), "{}", |tx| {
             store::remove_tag(tx, id, tag)
         })
     }
@@ -620,7 +620,7 @@ impl Core {
     fn tag_write(
         &self,
         id: &str,
-        kind: &str,
+        kind: WriteKind,
         tag: Option<&str>,
         payload: &str,
         apply: impl FnOnce(&rusqlite::Transaction<'_>) -> Result<()>,
@@ -667,9 +667,9 @@ impl Core {
     ) -> Result<QueuedWrite> {
         let payload = write.payload()?;
         let kind = if replace {
-            "replace_metadata"
+            WriteKind::ReplaceMetadata
         } else {
-            "merge_metadata"
+            WriteKind::MergeMetadata
         };
         // No tag named: the column says which tag a write is about, and a
         // metadata write is about all of them at once.
@@ -688,19 +688,19 @@ impl Core {
     /// and an extension namespace is none of those. The write is answered
     /// like any other and the copy has nothing to change.
     pub fn write_extension(&self, id: &str, namespace: &str, body: &str) -> Result<QueuedWrite> {
-        self.extension_write(id, namespace, "write_extension", body)
+        self.extension_write(id, namespace, WriteKind::WriteExtension, body)
     }
 
     /// Queues the removal of one extension namespace.
     pub fn delete_extension(&self, id: &str, namespace: &str) -> Result<QueuedWrite> {
-        self.extension_write(id, namespace, "delete_extension", "{}")
+        self.extension_write(id, namespace, WriteKind::DeleteExtension, "{}")
     }
 
     fn extension_write(
         &self,
         id: &str,
         namespace: &str,
-        kind: &str,
+        kind: WriteKind,
         payload: &str,
     ) -> Result<QueuedWrite> {
         self.lock.refuse_unless_writer()?;
@@ -980,7 +980,7 @@ mod tests {
             ("release", reader.release("x").unwrap_err()),
             (
                 "release_reason",
-                reader.release_reason("key_spent").unwrap_err(),
+                reader.release_reason(BlockedReason::KeySpent).unwrap_err(),
             ),
             // A drain writes verdicts and adopts rows, so it is a write door
             // like the rest. It refuses at the handle before it reaches the
@@ -1017,7 +1017,7 @@ mod tests {
         // The control: the writer is not refused, so the refusals above are
         // the handle rather than a store that refuses everybody.
         let queued = writer.create_item(&draft).unwrap();
-        assert_eq!(queued.kind, "create_item");
+        assert_eq!(queued.kind, WriteKind::CreateItem);
 
         // And a reading handle still reads, which is the whole point of it
         // being a handle rather than a refusal to open.
@@ -1025,6 +1025,31 @@ mod tests {
             reader
                 .list(&ListFilters::default(), Sort::default())
                 .is_ok()
+        );
+    }
+
+    #[test]
+    fn a_release_by_reason_releases_that_reason_and_no_other() {
+        let core = Core::open_in_memory(None).unwrap();
+        {
+            let conn = core.conn().unwrap();
+            for reason in [BlockedReason::KeySpent, BlockedReason::ConflictUnresolved] {
+                conn.execute(
+                    "INSERT INTO queue (id, kind, idempotency_key, payload, verdict, reason, sent, queued_at)
+                     VALUES (?1, 'update_item', ?1, '{}', 'blocked', ?1, 1, '2026-01-01T00:00:00Z')",
+                    [reason.as_str()],
+                )
+                .unwrap();
+            }
+        }
+        assert_eq!(core.release_reason(BlockedReason::KeySpent).unwrap(), 1);
+        let rows = core.queue().unwrap();
+        let still = |id: &str| rows.iter().find(|row| row.id == id).unwrap().verdict;
+        assert_eq!(still("key_spent"), None);
+        assert_eq!(
+            still("conflict_unresolved"),
+            Some(Verdict::Blocked),
+            "a release by one reason released a row blocked for another"
         );
     }
 

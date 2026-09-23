@@ -209,6 +209,9 @@ CREATE INDEX IF NOT EXISTS queue_verdict_seq ON queue (verdict, seq);
 -- A local read shows a row the device wrote and has not had answered
 -- (`queue-and-verdicts.md` 31), which is a lookup by item.
 CREATE INDEX IF NOT EXISTS queue_item ON queue (item_id);
+-- An edge's waiting writes are laid back over it after every answer and
+-- event that touches it (`queue-and-verdicts.md` 35), a lookup by edge.
+CREATE INDEX IF NOT EXISTS queue_edge ON queue (edge_id);
 -- No index on `depends_on`. It holds a JSON array, and releasing a held write
 -- means finding every row whose array *contains* an answered id — which an
 -- index on the serialized text cannot answer: `EXPLAIN QUERY PLAN` on a

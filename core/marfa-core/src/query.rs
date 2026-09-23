@@ -15,25 +15,12 @@ pub(crate) fn list(
     let mut clauses: Vec<String> = Vec::new();
     let mut values: Vec<Value> = Vec::new();
 
-    if let Some(declared) = filters
-        .r#type
-        .as_deref()
-        .filter(|declared| *declared != "*")
-    {
-        let root = Catalog::root(declared);
-        let mut alternatives = vec![
-            "type = ?".to_string(),
-            "type LIKE ? ESCAPE '\\'".to_string(),
-        ];
-        values.push(Value::String(root.to_string()));
-        values.push(Value::String(format!("{}.%", escape_like(root))));
-        let extra = catalog.declared_descendants(root);
-        if !extra.is_empty() {
-            alternatives.push(format!("type IN ({})", vec!["?"; extra.len()].join(", ")));
-            values.extend(extra.into_iter().map(Value::String));
-        }
-        clauses.push(format!("({})", alternatives.join(" OR ")));
-    }
+    narrow_by_type(
+        catalog,
+        filters.r#type.as_deref(),
+        &mut clauses,
+        &mut values,
+    );
     match filters.state {
         Some(state) => {
             clauses.push("state = ?".into());
@@ -46,12 +33,7 @@ pub(crate) fn list(
         clauses.push("tier = ?".into());
         values.push(Value::String(tier.as_str().into()));
     }
-    for tag in &filters.tags {
-        clauses.push(
-            "EXISTS (SELECT 1 FROM tags WHERE tags.item_id = items.id AND tags.tag = ?)".into(),
-        );
-        values.push(Value::String(tag.clone()));
-    }
+    narrow_by_tags(&filters.tags, &mut clauses, &mut values);
     // Both ends exclusive, matching the server: a device answering a
     // bounded list differently from the server it copied is a divergence a
     // caller cannot see.
@@ -83,6 +65,46 @@ pub(crate) fn list(
         ),
     };
     store::items_where(conn, &where_sql, &order_sql, &limit_sql, &values)
+}
+
+/// A declared type and its subtree, by name and by declared parent, the
+/// question `?type=` answers on the server. Shared by the list and the
+/// search, so the two cannot answer it differently.
+pub(crate) fn narrow_by_type(
+    catalog: &Catalog,
+    declared: Option<&str>,
+    clauses: &mut Vec<String>,
+    values: &mut Vec<Value>,
+) {
+    let Some(declared) = declared.filter(|declared| *declared != "*") else {
+        return;
+    };
+    let root = Catalog::root(declared);
+    let mut alternatives = vec![
+        "items.type = ?".to_string(),
+        "items.type LIKE ? ESCAPE '\\'".to_string(),
+    ];
+    values.push(Value::String(root.to_string()));
+    values.push(Value::String(format!("{}.%", escape_like(root))));
+    let extra = catalog.declared_descendants(root);
+    if !extra.is_empty() {
+        alternatives.push(format!(
+            "items.type IN ({})",
+            vec!["?"; extra.len()].join(", ")
+        ));
+        values.extend(extra.into_iter().map(Value::String));
+    }
+    clauses.push(format!("({})", alternatives.join(" OR ")));
+}
+
+/// Every tag given, each one required.
+pub(crate) fn narrow_by_tags(tags: &[String], clauses: &mut Vec<String>, values: &mut Vec<Value>) {
+    for tag in tags {
+        clauses.push(
+            "EXISTS (SELECT 1 FROM tags WHERE tags.item_id = items.id AND tags.tag = ?)".into(),
+        );
+        values.push(Value::String(tag.clone()));
+    }
 }
 
 fn escape_like(text: &str) -> String {

@@ -210,9 +210,7 @@ fn apply(
             //
             // What is left is a genuine tie: two events can share a version
             // when one of them changed no field, and the version cannot
-            // order them. The stream's order decides those, which is what
-            // `device.md` 13 now says rather than claiming the version
-            // decides every pair.
+            // order them. The stream's order decides those (`device.md` 13).
             if let Some(held) = store::held_version(tx, &item.id)?
                 && item.version < held
             {
@@ -229,7 +227,9 @@ fn apply(
                     .metadata
                     .as_ref()
                     .map(|metadata| metadata.tags.as_slice());
-                store::upsert_item(tx, item, tags, catalog.title_field(&item.r#type))?;
+                let title_field = catalog.title_field(&item.r#type);
+                store::upsert_item(tx, item, tags, title_field)?;
+                store::lay_waiting_writes_over(tx, &item.id, title_field)?;
                 Ok(true)
             } else {
                 store::delete_item(tx, &item.id)
@@ -241,6 +241,7 @@ fn apply(
             };
             if store::item_held(tx, &edge.source_id)? {
                 store::upsert_edge(tx, edge)?;
+                store::lay_waiting_edge_writes_over(tx, &edge.id)?;
                 Ok(true)
             } else {
                 Ok(false)
