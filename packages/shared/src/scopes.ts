@@ -351,12 +351,6 @@ export { PROFILE_ROOT } from "./scope-roots.js";
  */
 export type ContentScope = "content:read" | "content:write";
 
-/** Both content-category literals, weakest first. */
-export const CONTENT_SCOPES: readonly ContentScope[] = [
-  "content:read",
-  "content:write",
-];
-
 /** Returns true if the literal is one of the two content-category scopes. */
 export function isContentScope(scope: string): scope is ContentScope {
   return scope === "content:read" || scope === "content:write";
@@ -827,15 +821,14 @@ function contentCategoryPermissions(
  * pattern. Anything else, including a family this build has never heard of,
  * contributes nothing.
  *
- * **This function is registry-dependent, which it was not before.** It reads
- * `SYSTEM_TYPE_IDS`, and that set is data an instance holds rather than a
- * fact about the build: a server seeds it from `types` at boot, and
- * every caller of this function runs after seeding. In a browser bundle or
- * in the SDK there is no boot, so it resolves against the compiled shipped
- * set — the same contract {@link typeMatchesPattern} already has against
- * `TYPE_REGISTRY`, and the same one every other registry-reading helper in
- * this package carries. A scope list holding no content literal touches none
- * of this and projects exactly as it did.
+ * **This function is registry-dependent.** It reads `SYSTEM_TYPE_IDS`, and
+ * that set is data an instance holds rather than a fact about the build: a
+ * server seeds it from `types` at boot, and every caller of this function
+ * runs after seeding. Before a seed, as in this package's own tests, it
+ * resolves against the compiled shipped set: the same contract
+ * {@link typeMatchesPattern} has against `TYPE_REGISTRY`, and the same one
+ * every other registry-reading helper in this package carries. A scope list
+ * holding no content literal touches none of this.
  */
 export function scopesToTypePermissions(
   scopes: readonly string[],
@@ -1646,7 +1639,7 @@ export function scopesOfferedOffByDefaultOnly(
   // them on either surface.
   //
   // Without this the exemption asymmetry is not cosmetic. `offline_access`
-  // is what a client names to get a refresh token, every SDK device flow
+  // is what a client names to get a refresh token, every device flow
   // requests it, and an operator who put it in an off-by-default bundle
   // would have every one of them refused outright at initiation. A bundle
   // withholds a mechanism by not requesting it.

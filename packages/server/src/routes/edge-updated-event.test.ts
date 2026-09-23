@@ -1,10 +1,8 @@
 /**
  * An edge edit reaches another subscriber.
  *
- * The platform had `edge.created` and `edge.deleted` and nothing between
- * them, so `PATCH /edges/:id` changed an edge and told nobody. The SDK
- * exposes that route and carries an `updateEdge` mutation kind, so a client
- * could make the change and no second device ever heard about it.
+ * `PATCH /edges/:id` publishes `edge.updated`, so a change a client makes
+ * through that route reaches a second device as a create or a delete does.
  *
  * **Asserted through a live subscriber rather than through the enum.** The
  * union, the wire name, the webhook list and the emitter routing are four

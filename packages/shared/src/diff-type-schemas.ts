@@ -12,7 +12,7 @@ import type { TypeSchema, FieldDefinition } from "@withmarfa/types";
  *   compatibility claim withdrawn, or required tightened). Requires a bump.
  *
  * Integer versions collapse minor and major into "must bump", but the
- * classifier still returns the granular class so error messages and SDK
+ * classifier still returns the granular class so error messages and
  * telemetry can surface it.
  *
  * Every attribute the field model carries is compared. An attribute the diff

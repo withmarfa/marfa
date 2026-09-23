@@ -797,7 +797,7 @@ export function typeRoutes(storage: Storage) {
       // Server-side semver diff via a structural classifier: no-op
       // submissions are rejected, descriptive-only changes accept the existing
       // version, additive and breaking changes require an explicit bump. The
-      // classifier returns the diff class for telemetry / SDK error messages.
+      // classifier returns the diff class for telemetry and error messages.
       const diff = diffTypeSchemas(existing, schema);
       if (diff === "noop") {
         throw new MarfaError(
@@ -808,7 +808,7 @@ export function typeRoutes(storage: Storage) {
       }
       // A major diff (field removal) is permitted; the version-bump check below enforces
       // that the caller explicitly incremented the version, and the diff class surfaces
-      // in audit so SDK telemetry can warn consumers.
+      // in audit.
       if (!isValidVersionBump(diff, existing.version, schema.version)) {
         throw new MarfaError(
           ErrorCode.VERSION_BUMP_MISMATCH,

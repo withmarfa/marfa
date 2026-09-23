@@ -107,12 +107,11 @@ describe("POST /items/bulk", () => {
   });
 
   it("upsert mode updates existing rows matched by id (no source_id)", async () => {
-    // Offline-first clients (Swift / TS SDKs) assign UUIDs locally and
-    // expect `mode: upsert` to update by primary id when a row already
-    // exists server-side — e.g. migrating a local-mode Notes store whose
-    // items were seeded earlier. Before this path existed, the second
-    // call fell through to `items.create` and tripped a unique-
-    // constraint violation (opaque 500).
+    // Offline-first clients assign UUIDs locally and expect `mode: upsert`
+    // to update by primary id when a row already exists server-side, such
+    // as a local store whose items were seeded earlier. Without the
+    // primary-id path the second call would create, and trip the unique
+    // constraint as an opaque 500.
     const suffix = Math.random().toString(36).slice(2, 8);
 
     const first = await request(ctx.app, "POST", "/items/bulk", {

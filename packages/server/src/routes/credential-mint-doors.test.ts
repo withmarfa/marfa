@@ -387,7 +387,7 @@ const NOT_A_MINT_DOOR: Record<string, string> = {};
 
 /** Secret-bearing property names a mint's success response carries. A
  *  route that mints a bearer cannot hide it from its own response
- *  schema — the SDK reads it from there. */
+ *  schema: a generated client reads it from there. */
 const SECRET_PROPERTIES = new Set([
   "key",
   "api_key",

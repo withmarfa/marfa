@@ -1065,7 +1065,7 @@ describe("scopesOfferedOffByDefaultOnly", () => {
 
   it("never withholds a hidden mechanism", () => {
     // `offline_access` is what a client names to get a refresh token, and
-    // every SDK device flow requests it. Withholding it would refuse them
+    // every device flow requests it. Withholding it would refuse them
     // all at initiation over an operator's bundle layout.
     const out = scopesOfferedOffByDefaultOnly([
       bundle("odd", false, ["openid", "offline_access", "core.task:write"]),
@@ -1529,8 +1529,8 @@ describe("the content category projection", () => {
 
   it("excludes exactly the compiled system set when nothing has seeded a registry", () => {
     // The registry-dependence contract, named. This package resolves against
-    // the compiled shipped set wherever no server has booted — a browser
-    // bundle, the SDK, this file — and against the seeded set on a server.
+    // the compiled shipped set wherever no server has booted, this file
+    // among them, and against the seeded set on a server.
     // Both are the intended behavior; what would not be is the projection
     // silently holding a set from before a seed.
     const perms = scopesToTypePermissions(["content:read"]);

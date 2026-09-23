@@ -212,9 +212,9 @@ export function isValidTypeOrigin(value: unknown): value is TypeOrigin {
  * Refill the platform registry from seeded rows.
  *
  * The compiled arrays remain the map's contents until this is called, which is
- * what keeps every consumer that never boots a server — the SDK, a browser
- * bundle, the codegen — resolving the shipped vocabulary with no database in
- * sight. A server calls this once at boot so an instance's vocabulary is the
+ * what keeps anything that runs before a boot, this package's tests among
+ * them, resolving the shipped vocabulary with no database in sight. A server
+ * calls this once at boot so an instance's vocabulary is the
  * data it holds rather than the build it happens to be running.
  *
  * The Map and both Sets are mutated in place rather than replaced, because
@@ -367,26 +367,6 @@ export function getSourceAllowlist(
 }
 
 /**
- * Returns the source-filter list configured for exactly this type, or null
- * when the lever does not list it.
- *
- * This answers "which sources are approved for this identifier", which is a
- * question about configuration. It is deliberately NOT how a read narrows its
- * results: a list read must decide the lever from each row's own type, or a
- * caller switches the control off by broadening the query until it no longer
- * names the filtered type. The read predicate lives in the storage layer.
- */
-export function getSourceFilter(
-  enforcement: EnforcementSettings,
-  typeId: string,
-): string[] | null {
-  const list = enforcement.source_filter;
-  if (!list) return null;
-  if (!list.types.includes(typeId)) return null;
-  return list.sources;
-}
-
-/**
  * The core type registry — the shipped core + system type schemas by
  * identifier. Custom types are NOT exposed here; consumers that need the
  * full set call `listTypes()`, and lookups go through `getTypeSchema(id)`. The OAuth scope allow-list and consent
@@ -463,68 +443,9 @@ export function classifyNamespace(id: string): NamespaceTier {
   return "publisher";
 }
 
-/**
- * Which tiers the platform owns outright. Exhaustive over
- * {@link NamespaceTier} rather than a list of the three that answer `true`,
- * so a tier added to the union stops the package compiling here until
- * somebody has said which side it falls on. {@link seedPlatformTypes} makes
- * the same trade with a `switch` over the family union, for the same reason:
- * a value reaching neither branch is not inert.
- */
-const PLATFORM_TIER_MEMBERSHIP: Readonly<Record<NamespaceTier, boolean>> = {
-  core: true,
-  system: true,
-  marfa: true,
-  app: false,
-  user: false,
-  publisher: false,
-};
-
-/**
- * The tiers the platform owns outright: exactly the three that `POST /types`
- * and an archive restore refuse for every credential, the operator key
- * included. An id under one of them can only have arrived by being seeded,
- * never by being registered, which is what lets a caller classify one by
- * name alone.
- *
- * Exported for the reason {@link isReservedRoot} gives about its own set, and
- * the reason binds harder here because there is no second grammar to fall
- * back on. Three sites decided this independently — the registration door,
- * the archive-restore door, and the hydration helper — and a tier present in
- * one copy and absent from another is a namespace one door refuses while
- * another treats it as somebody's custom type, which is a security question
- * rather than a tidiness one. Adding a member to {@link NamespaceTier} is the
- * move that would have done it silently in every copy at once.
- */
-export const PLATFORM_TIERS: ReadonlySet<NamespaceTier> = new Set(
-  (Object.keys(PLATFORM_TIER_MEMBERSHIP) as NamespaceTier[]).filter(
-    (tier) => PLATFORM_TIER_MEMBERSHIP[tier],
-  ),
-);
-
-/** Returns true if the type identifier belongs to the core namespace. */
-export function isCoreType(id: string): boolean {
-  return classifyNamespace(id) === "core";
-}
-
 /** Returns true if the type identifier belongs to the system namespace. */
 export function isSystemType(id: string): boolean {
   return classifyNamespace(id) === "system";
-}
-
-/** Returns true if the type identifier belongs to the app namespace. */
-export function isAppType(id: string): boolean {
-  return classifyNamespace(id) === "app";
-}
-
-/** Returns true if the type identifier belongs to the user namespace. */
-export function isUserType(id: string): boolean {
-  return classifyNamespace(id) === "user";
-}
-
-/** Returns true if the type identifier is a publisher-published type. */
-export function isPublisherType(id: string): boolean {
-  return classifyNamespace(id) === "publisher";
 }
 
 /**

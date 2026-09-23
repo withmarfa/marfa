@@ -28,7 +28,7 @@ afterAll(async () => {
 
 /**
  * The keep-both resolution a client performs on a 409, driven through the raw
- * HTTP client rather than an SDK so the wire contract is what is exercised.
+ * HTTP client so the wire contract is what is exercised.
  */
 async function resolveConflictKeepBoth(
   laterClient: MarfaClient,

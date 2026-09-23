@@ -199,10 +199,9 @@ export class SqliteKeyStore implements KeyStore {
       patch.edge_permissions = JSON.stringify(input.edge_permissions);
     if (input.metadata_permissions !== undefined)
       patch.metadata_permissions = JSON.stringify(input.metadata_permissions);
-    // The two families the one permission model added. Declared on
-    // `UpdateKeyInput` and silently dropped here, so a caller narrowing a key
-    // through the SDK got a 200 and no change on exactly the two axes the
-    // model is about.
+    // The two families of the permission model, patched like the rest:
+    // dropping them here would answer 200 and change nothing on exactly the
+    // two axes the model is about.
     if (input.permissions !== undefined)
       patch.permissions = JSON.stringify(input.permissions);
     if (input.profile_permissions !== undefined)

@@ -1095,8 +1095,8 @@ export interface KeyStore {
    * `oauth_client_id` is an intersection rather than a field on
    * `CreateKeyInput` for the same reason `keyHash` is a separate parameter:
    * it is set by the server from who is calling, never from a request body,
-   * and `CreateKeyInput` is published — an SDK consumer can construct one, and
-   * a settable field there would read as something a caller may ask for. It
+   * and `CreateKeyInput` is the shape a route builds from a body, where a
+   * settable field would read as something a caller may ask for. It
    * records that an app minted this key rather than a person, which is what
    * ties the key to that app and what `extensionLabelOf` reads to refuse a
    * label claim.
@@ -2501,10 +2501,10 @@ export interface BetterAuthStorageAdapter {
 export type BulkActionJobStatus =
   "queued" | "in_progress" | "completed" | "failed" | "canceled";
 
-/** Server-side row shape for a `bulk_action_jobs` entry. The SDK-facing
- *  envelope (`BulkActionJob` in `@withmarfa/sdk/client`) is a strict subset
- *  — fields like `matched_ids`, `worker_id`, `worker_heartbeat_at`,
- *  `api_key_id`, and the original `input` are server-internal. */
+/** Server-side row shape for a `bulk_action_jobs` entry. The published
+ *  `BulkActionJob` is a strict subset — fields like `matched_ids`,
+ *  `worker_id`, `worker_heartbeat_at`, `api_key_id`, and the original
+ *  `input` are server-internal. */
 export interface BulkActionJobRow {
   id: string;
   api_key_id: string | null;

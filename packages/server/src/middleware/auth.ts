@@ -803,7 +803,7 @@ export function requireDeclaredTypeMatches(
  * level (write covers read), and nothing passes without one.
  *
  * Throws EDGE_PERMISSION_DENIED (403) on failure — the discriminator
- * code lets SDK clients route `forbidden` differently from
+ * code lets a client route `forbidden` differently from
  * specifically an edge-permission failure.
  */
 export function requireEdgePermission(
@@ -826,7 +826,7 @@ export function requireEdgePermission(
  * the requested level (write covers read), and nothing passes without one.
  *
  * Throws FORBIDDEN (403) on failure with the missing scope name in the
- * error details so SDK clients can surface a precise re-auth prompt.
+ * error details so a client can surface a precise re-auth prompt.
  */
 export function requireMetadataPermission(
   c: Context<AppEnv>,

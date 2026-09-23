@@ -71,44 +71,14 @@ export default [
     },
   },
   {
-    // The path tag is the mechanism, and a convention nobody enforces is the
-    // shape the tag was written to replace. The change that introduced it
-    // converted forty-seven request paths and missed the forty-eighth, which
-    // is the existence proof: `blobs.url` built its URL by plain
-    // interpolation and was found by review rather than by any check.
-    //
-    // The selector reads a template literal that has interpolations, is not
-    // tagged, and whose first chunk opens with `/` — which is what a request
-    // path looks like and what almost nothing else in this file does. It
-    // cannot see a path assembled in pieces or built from a variable, so it
-    // is a floor rather than a proof.
-    files: ["packages/sdk/src/client.ts"],
-    rules: {
-      "no-restricted-syntax": [
-        "error",
-        {
-          selector:
-            "TemplateLiteral[expressions.length>0][quasis.0.value.raw=/^\\//]:not(TaggedTemplateExpression > TemplateLiteral)",
-          message:
-            "Build a request path with the `path` tag from ./path.js, which percent-encodes every interpolated segment. An unescaped `/`, `?` or `#` in an identifier addresses a route the caller did not name, and nothing throws. A query string is not a segment: keep it outside the tag and concatenate, as types.delete does.",
-        },
-      ],
-    },
-  },
-  {
     ignores: [
       "**/dist/",
+      // The generated client, whose shape is openapi-typescript's.
+      "packages/client/src/schema.ts",
+      "packages/client/src/contract.ts",
       "**/coverage/",
       "**/node_modules/",
       "**/seed/",
-      // Wrangler's local cache and its mid-deploy scratch bundles. These are
-      // generated tool output, not source: `wrangler deploy` writes a rolled-up
-      // worker.js under .wrangler/tmp/ while it uploads. Linting them fails on
-      // a parse error, because a generated bundle is in no tsconfig project —
-      // so an unrelated deploy running in parallel breaks the lint gate.
-      "**/.wrangler/",
-      // Build scripts in plain JavaScript; they are in no tsconfig project.
-      "packages/*/scripts/*.mjs",
       // Nested worktrees are separate checkouts that run their own lint;
       // descending into them surfaces work in progress from other branches.
       "worktrees/",

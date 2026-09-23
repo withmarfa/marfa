@@ -12,8 +12,8 @@
 #
 # `build` runs first because cross-package typechecks resolve workspace
 # dependencies through each package's `dist/*.d.ts` — when those are stale
-# (e.g. the server's config grew a field that the SDK's tests now
-# reference), typecheck fires on the stale declaration instead of current
+# (e.g. `@withmarfa/types` grew an export that shared's source now
+# references), typecheck fires on the stale declaration instead of current
 # source. Building first keeps local typechecks aligned with what CI sees
 # on a fresh install.
 #

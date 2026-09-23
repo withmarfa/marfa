@@ -119,7 +119,7 @@ export interface TypeSchema {
     body_field?: string;
   };
   /**
-   * Per-field merge policy used by SDKs to drive conflict resolution.
+   * Per-field merge policy a client reads to drive conflict resolution.
    * Resolved-with-inheritance form is emitted by `GET /types/:id` and embedded
    * in 409 conflict responses.
    */

@@ -250,7 +250,7 @@ const bulkActionRoute = createRoute({
     202: {
       content: { "application/json": { schema: BulkActionJobSchema } },
       description:
-        "Job queued. Poll GET /items/bulk-actions/jobs/{id} until status is terminal (completed / failed / canceled). SDKs do this transparently for callers; the envelope is exposed for explicit-control use cases.",
+        "Job queued. Poll GET /items/bulk-actions/jobs/{id} until status is terminal (completed / failed / canceled). The envelope is exposed for explicit-control use cases.",
     },
     400: {
       content: {
@@ -639,7 +639,7 @@ async function processBulkItem(
   }
   // Fall back to primary-id lookup when no (source, source_id) match was
   // found AND the caller supplied an id. This is the path offline-first
-  // clients take: the Swift / TS SDKs assign UUIDs locally and expect
+  // clients take: they assign UUIDs locally and expect
   // `mode: upsert` to update by id when the row already exists
   // server-side (e.g. migrating a local-mode Notes store that was
   // partially synced earlier). Without this fallback the code below
@@ -1581,7 +1581,7 @@ function assertJobAuth(c: Context<AppEnv>, job: BulkActionJobRow): void {
   );
 }
 
-// Render a server-internal row as the SDK-facing envelope shape. Strips
+// Render a server-internal row as the envelope shape a caller reads. Strips
 // `matched_ids` (frozen list — large, not useful to callers), `input`
 // (already known to the caller), `worker_id`, `worker_heartbeat_at`,
 // `api_key_id`. Parses the JSON-encoded `result` if present.
