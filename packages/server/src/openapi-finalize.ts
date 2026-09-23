@@ -251,6 +251,13 @@ const RATE_LIMIT_HEADERS = [
 const AHEAD_OF_THE_LIMITER = new Set(["get /"]);
 
 /**
+ * Statuses answered ahead of the rate limiter and the idempotency claim: the
+ * body cap refuses before either sees the request, so its refusal carries
+ * neither's headers.
+ */
+const ANSWERED_AHEAD_OF_THE_LIMITER = new Set([413]);
+
+/**
  * A refusal middleware answers on behalf of the doors it is mounted over.
  *
  * No route declares these, so they are written out rather than reflected;
@@ -473,8 +480,10 @@ function withResponseHeaders(
     }
     const code = Number.parseInt(status, 10);
     const names = [...UNIVERSAL_RESPONSE_HEADERS];
-    if (!AHEAD_OF_THE_LIMITER.has(operationKey))
-      names.push(...RATE_LIMIT_HEADERS);
+    const passedTheLimiter =
+      !AHEAD_OF_THE_LIMITER.has(operationKey) &&
+      !ANSWERED_AHEAD_OF_THE_LIMITER.has(code);
+    if (passedTheLimiter) names.push(...RATE_LIMIT_HEADERS);
     // `default` and any other non-numeric key parses to NaN, and NaN fails
     // both comparisons — so an unrecognized key gets the universal set and
     // no claim this code cannot support.
@@ -485,7 +494,11 @@ function withResponseHeaders(
       names.push("X-Error-Code");
     }
     if (code === 429) names.push("Retry-After");
-    if (replays && !NEVER_REPLAYED_STATUSES.has(code)) {
+    if (
+      replays &&
+      !NEVER_REPLAYED_STATUSES.has(code) &&
+      !ANSWERED_AHEAD_OF_THE_LIMITER.has(code)
+    ) {
       names.push("Idempotency-Replayed");
     }
 
@@ -526,7 +539,7 @@ export const EXTRA_PATHS: Record<string, Record<string, unknown>> = {
                   name: { type: "string", const: "marfa" },
                   version: {
                     type: "string",
-                    description: "The build, which moves on every deploy.",
+                    description: "The deployed build.",
                   },
                   instance_id: { type: "string" },
                   contract: {

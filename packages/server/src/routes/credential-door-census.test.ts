@@ -96,12 +96,14 @@ function documentedDoors(): Set<string> {
 }
 
 /**
- * The published operations that take no credential, each with why.
+ * The documented operations, in the registry or the published document,
+ * that take no credential, each with why. The root and registration are
+ * published; the blob link's target is in the registry only, and carries its
+ * credential in the URL.
  *
  * A caller cannot be asked for a credential in order to learn how to obtain
  * one, or which contract a server speaks before choosing what to send, so
- * registration and the root are open by construction; the blob link carries
- * its credential in the URL.
+ * registration and the root are open by construction.
  */
 const OPEN_OPERATIONS: Record<string, string> = {
   "GET /":

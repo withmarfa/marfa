@@ -38,7 +38,7 @@ function concretePath(template: string): string {
     .replace(/\{[^}]+\}/g, UNKNOWN_ID);
 }
 
-describe("every published door refuses a request with no credential", () => {
+describe("every published door but the open ones refuses a request with no credential", () => {
   it("answers 401 unauthorized on each of them", async () => {
     const doors = (await publishedOperations()).filter(
       (op) => !OPEN_DOORS.has(`${op.method} ${op.path}`),
@@ -87,6 +87,9 @@ describe("the open doors", () => {
       });
       await response.body?.cancel();
       expect(response.status, door).not.toBe(401);
+      // The root answers outright; registration refuses the malformed body
+      // on its merits, which is still not a credential refusal.
+      if (door === "GET /") expect(response.status, door).toBe(200);
     }
   });
 });

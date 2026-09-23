@@ -50,7 +50,9 @@ describe("GET /", () => {
       info: { version: string };
     };
     expect(Number.isInteger(body.contract)).toBe(true);
-    expect(body.contract).toBe(Number(document.info.version));
+    // As strings, so a document version that is numerically equal but
+    // spelled differently, `1.0` for `1`, is caught here too.
+    expect(document.info.version).toBe(String(body.contract));
   });
 
   it("carries none of the rate limiter's headers, since it is mounted ahead of it", async () => {
@@ -64,7 +66,9 @@ describe("GET /", () => {
         headers: { Authorization: `Bearer ${limited.workingKey}` },
       });
       expect(behind.headers.get("X-RateLimit-Limit")).not.toBeNull();
-      for (let i = 0; i < 4; i++) {
+      // Past what the limiter would allow a GET, so a root moved behind it
+      // is refused here even with the header assertion gone.
+      for (let i = 0; i < 2 * 2 + 1; i++) {
         const res = await limited.app.request("/");
         expect(res.status).toBe(200);
         expect(res.headers.get("X-RateLimit-Limit")).toBeNull();

@@ -2352,6 +2352,37 @@
         ],
         "additionalProperties": {}
       },
+      "InvalidSchemaOrValidationErrorRefusal": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "invalid_schema",
+                  "validation_error"
+                ]
+              },
+              "message": {
+                "type": "string"
+              },
+              "details": {
+                "type": "object",
+                "additionalProperties": {}
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ]
+          }
+        },
+        "required": [
+          "error"
+        ]
+      },
       "CoreTypeImmutableOrForbiddenRefusal": {
         "type": "object",
         "properties": {
@@ -4761,20 +4792,8 @@
               "X-Request-ID": {
                 "$ref": "#/components/headers/X-Request-ID"
               },
-              "X-RateLimit-Limit": {
-                "$ref": "#/components/headers/X-RateLimit-Limit"
-              },
-              "X-RateLimit-Remaining": {
-                "$ref": "#/components/headers/X-RateLimit-Remaining"
-              },
-              "X-RateLimit-Reset": {
-                "$ref": "#/components/headers/X-RateLimit-Reset"
-              },
               "X-Error-Code": {
                 "$ref": "#/components/headers/X-Error-Code"
-              },
-              "Idempotency-Replayed": {
-                "$ref": "#/components/headers/Idempotency-Replayed"
               }
             }
           },
@@ -5963,20 +5982,8 @@
               "X-Request-ID": {
                 "$ref": "#/components/headers/X-Request-ID"
               },
-              "X-RateLimit-Limit": {
-                "$ref": "#/components/headers/X-RateLimit-Limit"
-              },
-              "X-RateLimit-Remaining": {
-                "$ref": "#/components/headers/X-RateLimit-Remaining"
-              },
-              "X-RateLimit-Reset": {
-                "$ref": "#/components/headers/X-RateLimit-Reset"
-              },
               "X-Error-Code": {
                 "$ref": "#/components/headers/X-Error-Code"
-              },
-              "Idempotency-Replayed": {
-                "$ref": "#/components/headers/Idempotency-Replayed"
               }
             }
           },
@@ -6294,20 +6301,8 @@
               "X-Request-ID": {
                 "$ref": "#/components/headers/X-Request-ID"
               },
-              "X-RateLimit-Limit": {
-                "$ref": "#/components/headers/X-RateLimit-Limit"
-              },
-              "X-RateLimit-Remaining": {
-                "$ref": "#/components/headers/X-RateLimit-Remaining"
-              },
-              "X-RateLimit-Reset": {
-                "$ref": "#/components/headers/X-RateLimit-Reset"
-              },
               "X-Error-Code": {
                 "$ref": "#/components/headers/X-Error-Code"
-              },
-              "Idempotency-Replayed": {
-                "$ref": "#/components/headers/Idempotency-Replayed"
               }
             }
           },
@@ -6600,20 +6595,8 @@
               "X-Request-ID": {
                 "$ref": "#/components/headers/X-Request-ID"
               },
-              "X-RateLimit-Limit": {
-                "$ref": "#/components/headers/X-RateLimit-Limit"
-              },
-              "X-RateLimit-Remaining": {
-                "$ref": "#/components/headers/X-RateLimit-Remaining"
-              },
-              "X-RateLimit-Reset": {
-                "$ref": "#/components/headers/X-RateLimit-Reset"
-              },
               "X-Error-Code": {
                 "$ref": "#/components/headers/X-Error-Code"
-              },
-              "Idempotency-Replayed": {
-                "$ref": "#/components/headers/Idempotency-Replayed"
               }
             }
           },
@@ -6928,20 +6911,8 @@
               "X-Request-ID": {
                 "$ref": "#/components/headers/X-Request-ID"
               },
-              "X-RateLimit-Limit": {
-                "$ref": "#/components/headers/X-RateLimit-Limit"
-              },
-              "X-RateLimit-Remaining": {
-                "$ref": "#/components/headers/X-RateLimit-Remaining"
-              },
-              "X-RateLimit-Reset": {
-                "$ref": "#/components/headers/X-RateLimit-Reset"
-              },
               "X-Error-Code": {
                 "$ref": "#/components/headers/X-Error-Code"
-              },
-              "Idempotency-Replayed": {
-                "$ref": "#/components/headers/Idempotency-Replayed"
               }
             }
           },
@@ -7556,15 +7527,6 @@
               "X-Request-ID": {
                 "$ref": "#/components/headers/X-Request-ID"
               },
-              "X-RateLimit-Limit": {
-                "$ref": "#/components/headers/X-RateLimit-Limit"
-              },
-              "X-RateLimit-Remaining": {
-                "$ref": "#/components/headers/X-RateLimit-Remaining"
-              },
-              "X-RateLimit-Reset": {
-                "$ref": "#/components/headers/X-RateLimit-Reset"
-              },
               "X-Error-Code": {
                 "$ref": "#/components/headers/X-Error-Code"
               }
@@ -7788,15 +7750,6 @@
             "headers": {
               "X-Request-ID": {
                 "$ref": "#/components/headers/X-Request-ID"
-              },
-              "X-RateLimit-Limit": {
-                "$ref": "#/components/headers/X-RateLimit-Limit"
-              },
-              "X-RateLimit-Remaining": {
-                "$ref": "#/components/headers/X-RateLimit-Remaining"
-              },
-              "X-RateLimit-Reset": {
-                "$ref": "#/components/headers/X-RateLimit-Reset"
               },
               "X-Error-Code": {
                 "$ref": "#/components/headers/X-Error-Code"
@@ -8027,15 +7980,6 @@
             "headers": {
               "X-Request-ID": {
                 "$ref": "#/components/headers/X-Request-ID"
-              },
-              "X-RateLimit-Limit": {
-                "$ref": "#/components/headers/X-RateLimit-Limit"
-              },
-              "X-RateLimit-Remaining": {
-                "$ref": "#/components/headers/X-RateLimit-Remaining"
-              },
-              "X-RateLimit-Reset": {
-                "$ref": "#/components/headers/X-RateLimit-Reset"
               },
               "X-Error-Code": {
                 "$ref": "#/components/headers/X-Error-Code"
@@ -8322,20 +8266,8 @@
               "X-Request-ID": {
                 "$ref": "#/components/headers/X-Request-ID"
               },
-              "X-RateLimit-Limit": {
-                "$ref": "#/components/headers/X-RateLimit-Limit"
-              },
-              "X-RateLimit-Remaining": {
-                "$ref": "#/components/headers/X-RateLimit-Remaining"
-              },
-              "X-RateLimit-Reset": {
-                "$ref": "#/components/headers/X-RateLimit-Reset"
-              },
               "X-Error-Code": {
                 "$ref": "#/components/headers/X-Error-Code"
-              },
-              "Idempotency-Replayed": {
-                "$ref": "#/components/headers/Idempotency-Replayed"
               }
             }
           },
@@ -8561,15 +8493,6 @@
             "headers": {
               "X-Request-ID": {
                 "$ref": "#/components/headers/X-Request-ID"
-              },
-              "X-RateLimit-Limit": {
-                "$ref": "#/components/headers/X-RateLimit-Limit"
-              },
-              "X-RateLimit-Remaining": {
-                "$ref": "#/components/headers/X-RateLimit-Remaining"
-              },
-              "X-RateLimit-Reset": {
-                "$ref": "#/components/headers/X-RateLimit-Reset"
               },
               "X-Error-Code": {
                 "$ref": "#/components/headers/X-Error-Code"
@@ -8853,15 +8776,6 @@
             "headers": {
               "X-Request-ID": {
                 "$ref": "#/components/headers/X-Request-ID"
-              },
-              "X-RateLimit-Limit": {
-                "$ref": "#/components/headers/X-RateLimit-Limit"
-              },
-              "X-RateLimit-Remaining": {
-                "$ref": "#/components/headers/X-RateLimit-Remaining"
-              },
-              "X-RateLimit-Reset": {
-                "$ref": "#/components/headers/X-RateLimit-Reset"
               },
               "X-Error-Code": {
                 "$ref": "#/components/headers/X-Error-Code"
@@ -9296,15 +9210,6 @@
               "X-Request-ID": {
                 "$ref": "#/components/headers/X-Request-ID"
               },
-              "X-RateLimit-Limit": {
-                "$ref": "#/components/headers/X-RateLimit-Limit"
-              },
-              "X-RateLimit-Remaining": {
-                "$ref": "#/components/headers/X-RateLimit-Remaining"
-              },
-              "X-RateLimit-Reset": {
-                "$ref": "#/components/headers/X-RateLimit-Reset"
-              },
               "X-Error-Code": {
                 "$ref": "#/components/headers/X-Error-Code"
               }
@@ -9703,15 +9608,6 @@
               "X-Request-ID": {
                 "$ref": "#/components/headers/X-Request-ID"
               },
-              "X-RateLimit-Limit": {
-                "$ref": "#/components/headers/X-RateLimit-Limit"
-              },
-              "X-RateLimit-Remaining": {
-                "$ref": "#/components/headers/X-RateLimit-Remaining"
-              },
-              "X-RateLimit-Reset": {
-                "$ref": "#/components/headers/X-RateLimit-Reset"
-              },
               "X-Error-Code": {
                 "$ref": "#/components/headers/X-Error-Code"
               }
@@ -9959,15 +9855,6 @@
             "headers": {
               "X-Request-ID": {
                 "$ref": "#/components/headers/X-Request-ID"
-              },
-              "X-RateLimit-Limit": {
-                "$ref": "#/components/headers/X-RateLimit-Limit"
-              },
-              "X-RateLimit-Remaining": {
-                "$ref": "#/components/headers/X-RateLimit-Remaining"
-              },
-              "X-RateLimit-Reset": {
-                "$ref": "#/components/headers/X-RateLimit-Reset"
               },
               "X-Error-Code": {
                 "$ref": "#/components/headers/X-Error-Code"
@@ -10658,15 +10545,6 @@
               "X-Request-ID": {
                 "$ref": "#/components/headers/X-Request-ID"
               },
-              "X-RateLimit-Limit": {
-                "$ref": "#/components/headers/X-RateLimit-Limit"
-              },
-              "X-RateLimit-Remaining": {
-                "$ref": "#/components/headers/X-RateLimit-Remaining"
-              },
-              "X-RateLimit-Reset": {
-                "$ref": "#/components/headers/X-RateLimit-Reset"
-              },
               "X-Error-Code": {
                 "$ref": "#/components/headers/X-Error-Code"
               }
@@ -10910,15 +10788,6 @@
             "headers": {
               "X-Request-ID": {
                 "$ref": "#/components/headers/X-Request-ID"
-              },
-              "X-RateLimit-Limit": {
-                "$ref": "#/components/headers/X-RateLimit-Limit"
-              },
-              "X-RateLimit-Remaining": {
-                "$ref": "#/components/headers/X-RateLimit-Remaining"
-              },
-              "X-RateLimit-Reset": {
-                "$ref": "#/components/headers/X-RateLimit-Reset"
               },
               "X-Error-Code": {
                 "$ref": "#/components/headers/X-Error-Code"
@@ -11995,20 +11864,8 @@
               "X-Request-ID": {
                 "$ref": "#/components/headers/X-Request-ID"
               },
-              "X-RateLimit-Limit": {
-                "$ref": "#/components/headers/X-RateLimit-Limit"
-              },
-              "X-RateLimit-Remaining": {
-                "$ref": "#/components/headers/X-RateLimit-Remaining"
-              },
-              "X-RateLimit-Reset": {
-                "$ref": "#/components/headers/X-RateLimit-Reset"
-              },
               "X-Error-Code": {
                 "$ref": "#/components/headers/X-Error-Code"
-              },
-              "Idempotency-Replayed": {
-                "$ref": "#/components/headers/Idempotency-Replayed"
               }
             }
           },
@@ -12560,20 +12417,8 @@
               "X-Request-ID": {
                 "$ref": "#/components/headers/X-Request-ID"
               },
-              "X-RateLimit-Limit": {
-                "$ref": "#/components/headers/X-RateLimit-Limit"
-              },
-              "X-RateLimit-Remaining": {
-                "$ref": "#/components/headers/X-RateLimit-Remaining"
-              },
-              "X-RateLimit-Reset": {
-                "$ref": "#/components/headers/X-RateLimit-Reset"
-              },
               "X-Error-Code": {
                 "$ref": "#/components/headers/X-Error-Code"
-              },
-              "Idempotency-Replayed": {
-                "$ref": "#/components/headers/Idempotency-Replayed"
               }
             }
           },
@@ -12891,20 +12736,8 @@
               "X-Request-ID": {
                 "$ref": "#/components/headers/X-Request-ID"
               },
-              "X-RateLimit-Limit": {
-                "$ref": "#/components/headers/X-RateLimit-Limit"
-              },
-              "X-RateLimit-Remaining": {
-                "$ref": "#/components/headers/X-RateLimit-Remaining"
-              },
-              "X-RateLimit-Reset": {
-                "$ref": "#/components/headers/X-RateLimit-Reset"
-              },
               "X-Error-Code": {
                 "$ref": "#/components/headers/X-Error-Code"
-              },
-              "Idempotency-Replayed": {
-                "$ref": "#/components/headers/Idempotency-Replayed"
               }
             }
           },
@@ -13197,15 +13030,6 @@
               "X-Request-ID": {
                 "$ref": "#/components/headers/X-Request-ID"
               },
-              "X-RateLimit-Limit": {
-                "$ref": "#/components/headers/X-RateLimit-Limit"
-              },
-              "X-RateLimit-Remaining": {
-                "$ref": "#/components/headers/X-RateLimit-Remaining"
-              },
-              "X-RateLimit-Reset": {
-                "$ref": "#/components/headers/X-RateLimit-Reset"
-              },
               "X-Error-Code": {
                 "$ref": "#/components/headers/X-Error-Code"
               }
@@ -13446,15 +13270,6 @@
             "headers": {
               "X-Request-ID": {
                 "$ref": "#/components/headers/X-Request-ID"
-              },
-              "X-RateLimit-Limit": {
-                "$ref": "#/components/headers/X-RateLimit-Limit"
-              },
-              "X-RateLimit-Remaining": {
-                "$ref": "#/components/headers/X-RateLimit-Remaining"
-              },
-              "X-RateLimit-Reset": {
-                "$ref": "#/components/headers/X-RateLimit-Reset"
               },
               "X-Error-Code": {
                 "$ref": "#/components/headers/X-Error-Code"
@@ -13856,15 +13671,6 @@
               "X-Request-ID": {
                 "$ref": "#/components/headers/X-Request-ID"
               },
-              "X-RateLimit-Limit": {
-                "$ref": "#/components/headers/X-RateLimit-Limit"
-              },
-              "X-RateLimit-Remaining": {
-                "$ref": "#/components/headers/X-RateLimit-Remaining"
-              },
-              "X-RateLimit-Reset": {
-                "$ref": "#/components/headers/X-RateLimit-Reset"
-              },
               "X-Error-Code": {
                 "$ref": "#/components/headers/X-Error-Code"
               }
@@ -14221,15 +14027,6 @@
               "X-Request-ID": {
                 "$ref": "#/components/headers/X-Request-ID"
               },
-              "X-RateLimit-Limit": {
-                "$ref": "#/components/headers/X-RateLimit-Limit"
-              },
-              "X-RateLimit-Remaining": {
-                "$ref": "#/components/headers/X-RateLimit-Remaining"
-              },
-              "X-RateLimit-Reset": {
-                "$ref": "#/components/headers/X-RateLimit-Reset"
-              },
               "X-Error-Code": {
                 "$ref": "#/components/headers/X-Error-Code"
               }
@@ -14570,6 +14367,33 @@
               }
             }
           },
+          "400": {
+            "description": "`validation_error` for a malformed identifier, a body of the wrong shape, or a parent chain that is circular, too deep or unresolved; `invalid_schema` for a schema the validator refuses.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvalidSchemaOrValidationErrorRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/X-RateLimit-Reset"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
           "401": {
             "description": "Unauthorized",
             "content": {
@@ -14663,15 +14487,6 @@
             "headers": {
               "X-Request-ID": {
                 "$ref": "#/components/headers/X-Request-ID"
-              },
-              "X-RateLimit-Limit": {
-                "$ref": "#/components/headers/X-RateLimit-Limit"
-              },
-              "X-RateLimit-Remaining": {
-                "$ref": "#/components/headers/X-RateLimit-Remaining"
-              },
-              "X-RateLimit-Reset": {
-                "$ref": "#/components/headers/X-RateLimit-Reset"
               },
               "X-Error-Code": {
                 "$ref": "#/components/headers/X-Error-Code"
@@ -14947,15 +14762,6 @@
             "headers": {
               "X-Request-ID": {
                 "$ref": "#/components/headers/X-Request-ID"
-              },
-              "X-RateLimit-Limit": {
-                "$ref": "#/components/headers/X-RateLimit-Limit"
-              },
-              "X-RateLimit-Remaining": {
-                "$ref": "#/components/headers/X-RateLimit-Remaining"
-              },
-              "X-RateLimit-Reset": {
-                "$ref": "#/components/headers/X-RateLimit-Reset"
               },
               "X-Error-Code": {
                 "$ref": "#/components/headers/X-Error-Code"
@@ -17461,15 +17267,6 @@
               "X-Request-ID": {
                 "$ref": "#/components/headers/X-Request-ID"
               },
-              "X-RateLimit-Limit": {
-                "$ref": "#/components/headers/X-RateLimit-Limit"
-              },
-              "X-RateLimit-Remaining": {
-                "$ref": "#/components/headers/X-RateLimit-Remaining"
-              },
-              "X-RateLimit-Reset": {
-                "$ref": "#/components/headers/X-RateLimit-Reset"
-              },
               "X-Error-Code": {
                 "$ref": "#/components/headers/X-Error-Code"
               }
@@ -17713,15 +17510,6 @@
             "headers": {
               "X-Request-ID": {
                 "$ref": "#/components/headers/X-Request-ID"
-              },
-              "X-RateLimit-Limit": {
-                "$ref": "#/components/headers/X-RateLimit-Limit"
-              },
-              "X-RateLimit-Remaining": {
-                "$ref": "#/components/headers/X-RateLimit-Remaining"
-              },
-              "X-RateLimit-Reset": {
-                "$ref": "#/components/headers/X-RateLimit-Reset"
               },
               "X-Error-Code": {
                 "$ref": "#/components/headers/X-Error-Code"
@@ -18216,15 +18004,6 @@
               "X-Request-ID": {
                 "$ref": "#/components/headers/X-Request-ID"
               },
-              "X-RateLimit-Limit": {
-                "$ref": "#/components/headers/X-RateLimit-Limit"
-              },
-              "X-RateLimit-Remaining": {
-                "$ref": "#/components/headers/X-RateLimit-Remaining"
-              },
-              "X-RateLimit-Reset": {
-                "$ref": "#/components/headers/X-RateLimit-Reset"
-              },
               "X-Error-Code": {
                 "$ref": "#/components/headers/X-Error-Code"
               }
@@ -18441,15 +18220,6 @@
             "headers": {
               "X-Request-ID": {
                 "$ref": "#/components/headers/X-Request-ID"
-              },
-              "X-RateLimit-Limit": {
-                "$ref": "#/components/headers/X-RateLimit-Limit"
-              },
-              "X-RateLimit-Remaining": {
-                "$ref": "#/components/headers/X-RateLimit-Remaining"
-              },
-              "X-RateLimit-Reset": {
-                "$ref": "#/components/headers/X-RateLimit-Reset"
               },
               "X-Error-Code": {
                 "$ref": "#/components/headers/X-Error-Code"
@@ -18723,15 +18493,6 @@
             "headers": {
               "X-Request-ID": {
                 "$ref": "#/components/headers/X-Request-ID"
-              },
-              "X-RateLimit-Limit": {
-                "$ref": "#/components/headers/X-RateLimit-Limit"
-              },
-              "X-RateLimit-Remaining": {
-                "$ref": "#/components/headers/X-RateLimit-Remaining"
-              },
-              "X-RateLimit-Reset": {
-                "$ref": "#/components/headers/X-RateLimit-Reset"
               },
               "X-Error-Code": {
                 "$ref": "#/components/headers/X-Error-Code"
@@ -19239,15 +19000,6 @@
               "X-Request-ID": {
                 "$ref": "#/components/headers/X-Request-ID"
               },
-              "X-RateLimit-Limit": {
-                "$ref": "#/components/headers/X-RateLimit-Limit"
-              },
-              "X-RateLimit-Remaining": {
-                "$ref": "#/components/headers/X-RateLimit-Remaining"
-              },
-              "X-RateLimit-Reset": {
-                "$ref": "#/components/headers/X-RateLimit-Reset"
-              },
               "X-Error-Code": {
                 "$ref": "#/components/headers/X-Error-Code"
               }
@@ -19634,15 +19386,6 @@
               "X-Request-ID": {
                 "$ref": "#/components/headers/X-Request-ID"
               },
-              "X-RateLimit-Limit": {
-                "$ref": "#/components/headers/X-RateLimit-Limit"
-              },
-              "X-RateLimit-Remaining": {
-                "$ref": "#/components/headers/X-RateLimit-Remaining"
-              },
-              "X-RateLimit-Reset": {
-                "$ref": "#/components/headers/X-RateLimit-Reset"
-              },
               "X-Error-Code": {
                 "$ref": "#/components/headers/X-Error-Code"
               }
@@ -19946,15 +19689,6 @@
             "headers": {
               "X-Request-ID": {
                 "$ref": "#/components/headers/X-Request-ID"
-              },
-              "X-RateLimit-Limit": {
-                "$ref": "#/components/headers/X-RateLimit-Limit"
-              },
-              "X-RateLimit-Remaining": {
-                "$ref": "#/components/headers/X-RateLimit-Remaining"
-              },
-              "X-RateLimit-Reset": {
-                "$ref": "#/components/headers/X-RateLimit-Reset"
               },
               "X-Error-Code": {
                 "$ref": "#/components/headers/X-Error-Code"
@@ -20349,15 +20083,6 @@
             "headers": {
               "X-Request-ID": {
                 "$ref": "#/components/headers/X-Request-ID"
-              },
-              "X-RateLimit-Limit": {
-                "$ref": "#/components/headers/X-RateLimit-Limit"
-              },
-              "X-RateLimit-Remaining": {
-                "$ref": "#/components/headers/X-RateLimit-Remaining"
-              },
-              "X-RateLimit-Reset": {
-                "$ref": "#/components/headers/X-RateLimit-Reset"
               },
               "X-Error-Code": {
                 "$ref": "#/components/headers/X-Error-Code"
@@ -21023,15 +20748,6 @@
               "X-Request-ID": {
                 "$ref": "#/components/headers/X-Request-ID"
               },
-              "X-RateLimit-Limit": {
-                "$ref": "#/components/headers/X-RateLimit-Limit"
-              },
-              "X-RateLimit-Remaining": {
-                "$ref": "#/components/headers/X-RateLimit-Remaining"
-              },
-              "X-RateLimit-Reset": {
-                "$ref": "#/components/headers/X-RateLimit-Reset"
-              },
               "X-Error-Code": {
                 "$ref": "#/components/headers/X-Error-Code"
               }
@@ -21461,15 +21177,6 @@
             "headers": {
               "X-Request-ID": {
                 "$ref": "#/components/headers/X-Request-ID"
-              },
-              "X-RateLimit-Limit": {
-                "$ref": "#/components/headers/X-RateLimit-Limit"
-              },
-              "X-RateLimit-Remaining": {
-                "$ref": "#/components/headers/X-RateLimit-Remaining"
-              },
-              "X-RateLimit-Reset": {
-                "$ref": "#/components/headers/X-RateLimit-Reset"
               },
               "X-Error-Code": {
                 "$ref": "#/components/headers/X-Error-Code"
@@ -21959,15 +21666,6 @@
             "headers": {
               "X-Request-ID": {
                 "$ref": "#/components/headers/X-Request-ID"
-              },
-              "X-RateLimit-Limit": {
-                "$ref": "#/components/headers/X-RateLimit-Limit"
-              },
-              "X-RateLimit-Remaining": {
-                "$ref": "#/components/headers/X-RateLimit-Remaining"
-              },
-              "X-RateLimit-Reset": {
-                "$ref": "#/components/headers/X-RateLimit-Reset"
               },
               "X-Error-Code": {
                 "$ref": "#/components/headers/X-Error-Code"
@@ -22586,15 +22284,6 @@
               "X-Request-ID": {
                 "$ref": "#/components/headers/X-Request-ID"
               },
-              "X-RateLimit-Limit": {
-                "$ref": "#/components/headers/X-RateLimit-Limit"
-              },
-              "X-RateLimit-Remaining": {
-                "$ref": "#/components/headers/X-RateLimit-Remaining"
-              },
-              "X-RateLimit-Reset": {
-                "$ref": "#/components/headers/X-RateLimit-Reset"
-              },
               "X-Error-Code": {
                 "$ref": "#/components/headers/X-Error-Code"
               }
@@ -22801,15 +22490,6 @@
             "headers": {
               "X-Request-ID": {
                 "$ref": "#/components/headers/X-Request-ID"
-              },
-              "X-RateLimit-Limit": {
-                "$ref": "#/components/headers/X-RateLimit-Limit"
-              },
-              "X-RateLimit-Remaining": {
-                "$ref": "#/components/headers/X-RateLimit-Remaining"
-              },
-              "X-RateLimit-Reset": {
-                "$ref": "#/components/headers/X-RateLimit-Reset"
               },
               "X-Error-Code": {
                 "$ref": "#/components/headers/X-Error-Code"
@@ -23366,7 +23046,7 @@
                     },
                     "version": {
                       "type": "string",
-                      "description": "The build, which moves on every deploy."
+                      "description": "The deployed build."
                     },
                     "instance_id": {
                       "type": "string"
@@ -23802,15 +23482,6 @@
             "headers": {
               "X-Request-ID": {
                 "$ref": "#/components/headers/X-Request-ID"
-              },
-              "X-RateLimit-Limit": {
-                "$ref": "#/components/headers/X-RateLimit-Limit"
-              },
-              "X-RateLimit-Remaining": {
-                "$ref": "#/components/headers/X-RateLimit-Remaining"
-              },
-              "X-RateLimit-Reset": {
-                "$ref": "#/components/headers/X-RateLimit-Reset"
               },
               "X-Error-Code": {
                 "$ref": "#/components/headers/X-Error-Code"

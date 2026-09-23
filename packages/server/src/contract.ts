@@ -1,7 +1,7 @@
 /**
  * The contract version: one integer the root answers as `contract` and the
- * document carries as `info.version`, which a generated client checks before
- * it trusts an answer. It is not the build: the root's `version` is.
+ * document carries as `info.version`, which a generated client can check
+ * before it trusts an answer. It is not the build: the root's `version` is.
  *
  * **It moves when a client generated for the old number cannot read the new
  * answers**: a path, a method, an operation, a field, an enum member, a status

@@ -309,10 +309,11 @@ export function createApp(
   app.use("*", authMiddleware(storage, config.apiKeySalt));
 
   // Rate limiting (defaults: 1000 req/min, configurable via RATE_LIMIT_REQUESTS,
-  // RATE_LIMIT_WINDOW_MS and RATE_LIMIT_KEYS_REQUESTS). Protects all
-  // endpoints. Configuration flows
-  // through AppConfig — the rate-limit middleware reads its settings from
-  // there rather than from `process.env`, so a deployment's limits are
+  // RATE_LIMIT_WINDOW_MS and RATE_LIMIT_KEYS_REQUESTS). Protects every door
+  // mounted below it; the root, `/health` and `/auth/static` sit above it,
+  // and `openapi-finalize.ts` declares the root that way. Configuration
+  // flows through AppConfig: the rate-limit middleware reads its settings
+  // from there rather than from `process.env`, so a deployment's limits are
   // whatever `loadConfig` resolved at boot.
   if (config.rateLimitEnabled) {
     app.use(
