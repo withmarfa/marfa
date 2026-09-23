@@ -126,8 +126,14 @@ pub struct Reply {
     pub status: u16,
     pub content_type: String,
     pub retry_after_seconds: Option<u64>,
+    /// The contract version the answer names in `X-Marfa-Contract`, when it
+    /// names one: the caller decides whether it can read the body.
+    pub contract: Option<String>,
     pub body: ReplyBody,
 }
+
+/// The response header every answer names its contract version in.
+pub const CONTRACT_HEADER: &str = "X-Marfa-Contract";
 
 pub enum ReplyBody {
     Text(String),
@@ -403,6 +409,11 @@ impl Http {
             .and_then(|value| value.to_str().ok())
             .unwrap_or("")
             .to_string();
+        let contract = response
+            .headers()
+            .get(CONTRACT_HEADER)
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_string);
         // A refusal is read whole even on a streaming call, so the envelope
         // reaches the classification; only a success is handed back as a
         // reader.
@@ -420,6 +431,7 @@ impl Http {
             status,
             content_type,
             retry_after_seconds,
+            contract,
             body,
         })
     }

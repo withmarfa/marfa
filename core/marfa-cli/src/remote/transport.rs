@@ -1,6 +1,6 @@
 //! The binary's way to the server: the client generated from the document
-//! carries every call, and the contract it was generated for is what the
-//! root is held to before anything that carries a credential is sent.
+//! carries every call, and every answer is read for the contract version it
+//! names, which the caller holds to the one the crate was generated for.
 //!
 //! The binary's commands build their requests from their arguments and read
 //! the answers as they came, so what it takes from the generated crate is
@@ -12,24 +12,28 @@ use std::time::Duration;
 use marfa_client::apis::configuration::Configuration;
 use marfa_client::apis::instance_api;
 use marfa_core::CoreError;
-use marfa_core::http::{Call, CallBody, Reply, ReplyBody, retry_after_seconds};
+use marfa_core::http::{CONTRACT_HEADER, Call, CallBody, Reply, ReplyBody, retry_after_seconds};
 use reqwest::blocking::{Body, Client};
 use url::Url;
 
-/// How long a call that is read whole may take, from the request to the last
-/// byte of the answer. A streamed call has no such budget: the event stream,
-/// an export and a blob's bytes have no length one could be sized for, and
-/// `events --for` bounds its own reading.
+/// How long a call that sends no file and is read whole may take, from the
+/// request to the last byte of the answer. Neither a streamed answer nor an
+/// uploaded file has one: the event stream, an export and a blob's bytes have
+/// no length a budget could be sized for, and `events --for` bounds its own
+/// reading.
 const WHOLE_ANSWER_BUDGET: Duration = Duration::from_secs(90);
 
-/// How long any read may wait for the next bytes, headers included, so a
-/// server that accepts a connection and never answers is given up on. Above
-/// the event stream's 30-second keepalive, so an idle stream is not.
+/// How long a call with no whole-answer budget may wait on the server between
+/// one read and the next, so a server that accepts a connection and never
+/// answers is given up on. Above the event stream's 30-second keepalive, so
+/// an idle stream is not. A call that has the whole-answer budget is bounded
+/// by that instead, because a request's own timeout replaces the client's.
 const READ_BUDGET: Duration = Duration::from_secs(45);
 
 pub struct Transport {
     config: Configuration,
     base: Url,
+    whole_answer_budget: Duration,
 }
 
 /// What the root said about the contract it serves.
@@ -37,7 +41,8 @@ pub struct Transport {
 pub enum Served {
     /// The contract this binary was generated for.
     Expected,
-    /// Another one, or no reading of one, as a person should hear it.
+    /// Another one, or no reading of one, as a person should hear it:
+    /// "answers contract 2", "has no root".
     Other(String),
     /// The root refused for a reason that is not about the contract: a
     /// proxy's 502, a 429, a 503 while the server starts.
@@ -57,10 +62,10 @@ impl Served {
             .and_then(|root| root.get("contract").cloned());
         match contract.as_ref().and_then(serde_json::Value::as_u64) {
             Some(served) if served == marfa_client::CONTRACT_VERSION => Served::Expected,
-            Some(served) => Served::Other(served.to_string()),
+            Some(served) => Served::Other(format!("answers contract {served}")),
             None => Served::Other(match contract {
-                Some(other) => format!("an unreadable contract ({other})"),
-                None => "no contract".to_string(),
+                Some(other) => format!("answers an unreadable contract ({other})"),
+                None => "answers no contract at its root".to_string(),
             }),
         }
     }
@@ -107,15 +112,24 @@ fn network(error: &dyn std::error::Error) -> CoreError {
 
 impl Transport {
     pub fn new(url: &str, key: Option<&str>) -> Result<Transport, CoreError> {
+        Transport::budgeted(url, key, READ_BUDGET, WHOLE_ANSWER_BUDGET)
+    }
+
+    /// A transport with its own budgets, so a test can reach one without
+    /// waiting it out.
+    pub(crate) fn budgeted(
+        url: &str,
+        key: Option<&str>,
+        read_budget: Duration,
+        whole_answer_budget: Duration,
+    ) -> Result<Transport, CoreError> {
         let base = base_of(url)?;
         let client = Client::builder()
             .connect_timeout(Duration::from_secs(10))
-            // The blocking client applies this to each read and write, which
-            // is the per-read bound `READ_BUDGET` names.
-            .timeout(READ_BUDGET)
-            // A redirect is answered as the refusal it is rather than
-            // followed: reqwest keeps the bearer on a same-origin hop, and
-            // nothing the binary calls redirects.
+            .timeout(read_budget)
+            // A redirect is not followed: reqwest keeps the bearer on a
+            // same-origin hop, and nothing the binary calls redirects. The
+            // 3xx comes back as the answer, and the caller refuses it.
             .redirect(reqwest::redirect::Policy::none())
             .build()
             .map_err(|error| network(&error))?;
@@ -128,7 +142,11 @@ impl Transport {
             bearer_access_token: key.map(str::to_string),
             api_key: None,
         };
-        Ok(Transport { config, base })
+        Ok(Transport {
+            config,
+            base,
+            whole_answer_budget,
+        })
     }
 
     pub fn origin(&self) -> String {
@@ -144,12 +162,32 @@ impl Transport {
     /// transport failure is an `Err`.
     pub fn served(&self) -> Result<Served, CoreError> {
         match instance_api::get_instance(&self.config) {
+            // The generated operation counts a 3xx as an answer. It is not
+            // one: nothing was read, and the fix is the address, which the
+            // refusal names.
+            Ok(answer) if !answer.status.is_success() => {
+                let location = answer
+                    .headers
+                    .get("Location")
+                    .and_then(|value| value.to_str().ok())
+                    .unwrap_or("nowhere");
+                Ok(Served::Refused {
+                    status: answer.status.as_u16(),
+                    text: format!("the root redirects to {location}; name that address instead"),
+                    retry_after_seconds: None,
+                })
+            }
             Ok(answer) => Ok(Served::of(&answer.content)),
-            // A server with no root is not one speaking any contract.
+            // A server with no root is not one speaking any contract, and nor
+            // is one whose root asks for a credential: a Marfa root answers
+            // without one, so what answered is something else.
             Err(marfa_client::apis::Error::ResponseError(refused))
-                if refused.status.as_u16() == 404 =>
+                if matches!(refused.status.as_u16(), 401 | 403 | 404) =>
             {
-                Ok(Served::Other("no contract (its root answered 404)".into()))
+                Ok(Served::Other(match refused.status.as_u16() {
+                    404 => "has no root (it answered 404)".to_string(),
+                    status => format!("has no open root (it answered {status})"),
+                }))
             }
             Err(marfa_client::apis::Error::ResponseError(refused)) => {
                 let header = |name: &str| {
@@ -187,8 +225,8 @@ impl Transport {
         if let Some(agent) = &self.config.user_agent {
             request = request.header("User-Agent", agent);
         }
-        if !call.stream {
-            request = request.timeout(WHOLE_ANSWER_BUDGET);
+        if !call.stream && !matches!(call.body, CallBody::Reader(_)) {
+            request = request.timeout(self.whole_answer_budget);
         }
         if call.credential
             && let Some(key) = &self.config.bearer_access_token
@@ -218,6 +256,7 @@ impl Transport {
         };
         let retry_after_seconds = retry_after_seconds(header("Retry-After"), header("Date"));
         let content_type = header("Content-Type").unwrap_or("").to_string();
+        let contract = header(CONTRACT_HEADER).map(str::to_string);
         // A refusal is read whole even on a streamed call, so the envelope
         // reaches the classification; only a success is handed back as a
         // reader.
@@ -230,6 +269,7 @@ impl Transport {
             status,
             content_type,
             retry_after_seconds,
+            contract,
             body,
         })
     }

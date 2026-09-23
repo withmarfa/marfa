@@ -1,6 +1,7 @@
 use serde_json::{Value, json};
 
 use crate::auth;
+use crate::commands::status;
 use crate::error::CliError;
 use crate::output::Printer;
 use crate::remote::request::Request;
@@ -12,7 +13,8 @@ use crate::remote::{CredentialSource, Remote, Transport};
 /// A key has no door that says whose it is, so for a key this reports the
 /// key's kind and its source; a token reports the person it was issued to.
 pub fn run(remote: &Remote, out: &Printer) -> Result<(), CliError> {
-    let instance = remote.json(&crate::commands::status::root_request())?;
+    let instance = remote.describe(&status::root_request())?;
+    let held = status::speaks_this_contract(&instance);
     let credential = match remote.credential() {
         None => json!(null),
         Some(source) => {
@@ -37,15 +39,9 @@ pub fn run(remote: &Remote, out: &Printer) -> Result<(), CliError> {
                 // names for it. A token whose scope does not reach the
                 // identity claims is refused there (401 or 403) and reported
                 // without a person; any other refusal is this command's.
-                // The token is sent on, so the server that issued it is held
-                // to the contract first; a server on another one is reported
-                // without a person rather than refused, since saying which
-                // server this is remains the command's job.
-                let held = match remote.hold_contract() {
-                    Ok(()) => true,
-                    Err(CliError::ContractMismatch { .. }) => false,
-                    Err(error) => return Err(error),
-                };
+                // A server on another contract is reported without a person
+                // rather than refused, and the token is not sent on to it,
+                // since saying which server this is remains the command's job.
                 if !held {
                     record["person"] = json!(null);
                 } else if let Some(endpoint) = auth::discover(remote)?.userinfo_endpoint {
@@ -66,6 +62,7 @@ pub fn run(remote: &Remote, out: &Printer) -> Result<(), CliError> {
     let report = json!({
         "server": remote.origin(),
         "instance": instance,
+        "contract": status::contract_report(&instance),
         "credential": credential,
     });
     out.report(&report, || {
@@ -85,6 +82,9 @@ pub fn run(remote: &Remote, out: &Printer) -> Result<(), CliError> {
                 field(&instance, "version")
             ),
         ];
+        if !held {
+            lines.push(status::contract_line(&instance));
+        }
         match remote.credential() {
             None => lines.push("no credential".into()),
             Some(source) => {

@@ -53,14 +53,15 @@ pub enum CliError {
     #[error("{0}")]
     Invalid(String),
     /// The server speaks a contract this binary was not built for, so its
-    /// answers may be shaped in ways this binary cannot read. Nothing past
-    /// the root was sent.
+    /// answers may be shaped in ways this binary cannot read. The answer
+    /// that said so was not read.
     #[error(
-        "{origin} serves contract {served}; this binary was built for contract {expected}: use a marfa built for the server's contract"
+        "{origin} {served}; this binary was built for contract {expected}: use a marfa built for the server's contract"
     )]
     ContractMismatch {
         origin: String,
-        /// What the root answered as `contract`, or what stood in its place.
+        /// What the server said about its contract, as a phrase: "answers
+        /// contract 2", "has no root".
         served: String,
         expected: u64,
     },

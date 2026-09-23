@@ -4,8 +4,7 @@ description = "The Rust client for a Marfa instance, generated from its openapi.
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-# Unlike the rest of the workspace this crate is published, by the release
-# workflow from a tag, so it does not inherit `publish = false`.
+publish.workspace = true
 
 [dependencies]
 serde.workspace = true

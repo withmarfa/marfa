@@ -737,7 +737,7 @@ mod dispatch {
     use crate::remote::Transport;
 
     fn remote_at(door: &Door) -> Remote {
-        Remote::held(Transport::new(&door.url, Some("marfa_k1_x")).unwrap())
+        Remote::with(Transport::new(&door.url, Some("marfa_k1_x")).unwrap())
     }
 
     const QUIET: Printer = Printer { json: true };
@@ -809,21 +809,10 @@ mod dispatch {
 
     #[test]
     fn bootstrap_sends_the_secret_as_the_bearer_and_nowhere_else() {
-        // The mint rides a remote of its own, which asks the root for the
-        // contract first, without the secret.
-        let door = Door::open(vec![
-            Answer::json(
-                "200 OK",
-                &format!(
-                    r#"{{"name":"marfa","contract":{}}}"#,
-                    marfa_client::CONTRACT_VERSION
-                ),
-            ),
-            Answer::json(
-                "201 Created",
-                r#"{"key":"marfa_k1_new","id":"k","label":"operator"}"#,
-            ),
-        ]);
+        let door = Door::open(vec![Answer::json(
+            "201 Created",
+            r#"{"key":"marfa_k1_new","id":"k","label":"operator"}"#,
+        )]);
         keys::run(
             keys::KeysCommand::Bootstrap {
                 secret: "the-secret".into(),
@@ -833,13 +822,12 @@ mod dispatch {
         )
         .unwrap();
         let received = door.received();
-        assert_eq!(received[0].path(), "/");
-        assert_eq!(received[0].header("authorization"), None);
-        assert_eq!(received[1].path(), "/keys");
+        assert_eq!(received.len(), 1);
+        assert_eq!(received[0].path(), "/keys");
         assert_eq!(
-            received[1].header("authorization"),
+            received[0].header("authorization"),
             Some("Bearer the-secret")
         );
-        assert!(!received[1].body.contains("the-secret"));
+        assert!(!received[0].body.contains("the-secret"));
     }
 }
