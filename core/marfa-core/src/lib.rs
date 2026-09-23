@@ -603,6 +603,7 @@ impl Core {
     /// Queues a file item for a file: its upload, and the create waiting on
     /// it, naming the bytes and their MIME type.
     pub(crate) fn create_file_item(&self, path: &Path, draft: &Draft) -> Result<QueuedWrite> {
+        self.refuse_unknown_type(&draft.r#type)?;
         let mime_type = blob::mime_type_for(path, None);
         self.with_upload(path, &mime_type, |tx, catalog, upload, hash| {
             let mut draft = draft.clone();
@@ -624,6 +625,19 @@ impl Core {
             let mut edit = edit.clone();
             name_bytes(&mut edit.properties, hash, &mime_type);
             queue_update(tx, catalog, id, &edit, std::slice::from_ref(&upload.id))
+        })
+    }
+
+    /// Refuses a type the copy does not hold before any bytes are taken in,
+    /// so a create the type would refuse leaves no bytes behind that nothing
+    /// names.
+    fn refuse_unknown_type(&self, r#type: &str) -> Result<()> {
+        let conn = self.conn()?;
+        if catalog::Catalog::load(&conn)?.known(r#type) {
+            return Ok(());
+        }
+        Err(CoreError::UnknownType {
+            message: format!("{type} is not a type this copy holds", type = r#type),
         })
     }
 
@@ -684,6 +698,7 @@ impl Core {
             tier: attachment.tier,
             ..Default::default()
         };
+        self.refuse_unknown_type(&draft.r#type)?;
         self.with_upload(path, &mime_type, |tx, catalog, upload, hash| {
             name_bytes(&mut draft.properties, hash, &mime_type);
             let item = queue_create(tx, catalog, &draft, std::slice::from_ref(&upload.id))?;
@@ -1297,6 +1312,52 @@ mod tests {
             Some(Verdict::Blocked),
             "a release by one reason released a row blocked for another"
         );
+    }
+
+    #[test]
+    fn the_writer_sweeps_old_half_written_copies_when_it_opens() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("core.sqlite");
+        let blobs = dir.path().join("core.sqlite.blobs");
+        std::fs::create_dir_all(&blobs).unwrap();
+        let old = blobs.join(".incoming-old");
+        let young = blobs.join(".incoming-young");
+        std::fs::write(&old, b"half").unwrap();
+        std::fs::write(&young, b"half").unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(&old)
+            .unwrap()
+            .set_modified(std::time::SystemTime::now() - 2 * INCOMING_GRACE)
+            .unwrap();
+        let _writer = Core::open(&path, None).unwrap();
+        assert!(
+            !old.exists(),
+            "a half-written copy older than the grace survived the writer's open"
+        );
+        assert!(
+            young.exists(),
+            "a copy something may still be writing was taken"
+        );
+    }
+
+    /// Bytes held beside the working copy are answered with no server at
+    /// all, and bytes not held are absent rather than a missing server.
+    #[test]
+    fn with_no_server_held_bytes_are_answered_and_the_rest_are_absent() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("core.sqlite");
+        let core = Core::open(&path, None).unwrap();
+        let file = dir.path().join("note.txt");
+        std::fs::write(&file, b"held here").unwrap();
+        let hash = core.cache().unwrap().take(&file).unwrap();
+        let held = core.blob(&hash).unwrap();
+        assert_eq!(std::fs::read(held).unwrap(), b"held here");
+        let other = blob::name_of(b"never held");
+        assert!(matches!(
+            core.blob(&other),
+            Err(CoreError::BytesAbsent { hash, .. }) if hash == other
+        ));
     }
 
     #[test]

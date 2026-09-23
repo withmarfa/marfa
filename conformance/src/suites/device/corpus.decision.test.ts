@@ -236,6 +236,36 @@ describe("every device statement is asserted by something", () => {
       "a device statement cites a fixture or a title that does not exist, so the statement is asserted by nothing at all",
     ).toEqual([]);
   });
+
+  it("cites every fixture of the device's behavior from some statement", () => {
+    // The suite's own controls are not the device's behavior: fidelity holds
+    // the scripting to the real server and the scripted server's own tests
+    // hold the harness. Everything else asserts a rule, and a fixture no
+    // statement cites is a rule written nowhere, whose citation could be
+    // dropped with nothing failing.
+    const CONTROLS = ["fidelity.test.ts", "scripted-server.test.ts"];
+    const cited = new Set(
+      allStatements.flatMap((statement) =>
+        citationsIn(statement.text).map(
+          (citation) => `${citation.file} › ${citation.title ?? ""}`,
+        ),
+      ),
+    );
+    const uncited = fixtureFiles
+      .filter((file) => !CONTROLS.includes(file))
+      .flatMap((file) =>
+        titlesIn(`device/${file}`)
+          .map((title) => `device/${file} › ${title}`)
+          .filter((key) => !cited.has(key)),
+      );
+    expect(
+      uncited,
+      "a fixture of the device's behavior is cited by no statement, so the rule it asserts is written nowhere",
+    ).toEqual([]);
+    // The witness: the files read are the fixtures, so an empty list above
+    // is every one of them cited and not nothing read.
+    expect(fixtureFiles).toContain("queue.test.ts");
+  });
 });
 
 describe("the pending list and the fixtures agree", () => {

@@ -381,9 +381,15 @@ export class CliDevice implements DeviceUnderTest {
   async attach(
     item: string,
     path: string,
-    options: { mimeType?: string; title?: string; type?: string } = {},
+    options: {
+      mimeType?: string;
+      title?: string;
+      type?: string;
+      tier?: Tier;
+    } = {},
   ): Promise<Outcome<QueuedWrite[]>> {
     const args = ["items", "attach", item, path];
+    if (options.tier !== undefined) args.push("--tier", options.tier);
     if (options.mimeType !== undefined)
       args.push("--mime-type", options.mimeType);
     if (options.title !== undefined) args.push("--title", options.title);

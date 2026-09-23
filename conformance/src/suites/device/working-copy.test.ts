@@ -263,6 +263,40 @@ describe("the working copy holds one slice", () => {
     if (fetched.ok) expect(readFileSync(fetched.value.path)).toEqual(bytes);
   });
 
+  it("says the bytes are absent when the link does not serve them", async () => {
+    harness = await startHarness("bytes-link-fails");
+    const { server, device } = harness;
+    const bytes = Buffer.from("behind a link that has expired\n");
+    const hash = hashOf(bytes);
+    const hex = hash.slice("sha256:".length);
+    server.answer(
+      "GET",
+      `/blobs/${hash}/url`,
+      writeAnswers.link(`${server.url}/links/${hex}`),
+    );
+    // An object store refusing a signature that has run out.
+    server.answer("GET", `/links/${hex}`, {
+      kind: "bytes",
+      status: 403,
+      body: Buffer.from("<Error><Code>AccessDenied</Code></Error>"),
+      contentType: "application/xml",
+    });
+    hydrateOneFile(server, hash);
+    expect((await device.hydrate(["core.file"], "library")).ok).toBe(true);
+    const fetched = await device.blob(hash);
+    expect(
+      server.requests.some((request) => request.pathname.startsWith("/links/")),
+      "the link was never followed, so nothing here is about what it answered",
+    ).toBe(true);
+    expect(fetched.ok).toBe(false);
+    if (!fetched.ok) {
+      expect(
+        fetched.refusal.code,
+        "a link that would not serve the bytes was reported as something other than absent bytes",
+      ).toBe("bytes_absent");
+    }
+  });
+
   it("answers a second ask for the same bytes from what it holds", async () => {
     harness = await startHarness("bytes-held");
     const { server, device } = harness;

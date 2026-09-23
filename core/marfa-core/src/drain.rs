@@ -836,7 +836,7 @@ fn settle(
                     let named = serde_json::from_str::<serde_json::Value>(&body)
                         .ok()
                         .and_then(|answer| Some(answer.get("hash")?.as_str()?.to_string()));
-                    if named.is_none() || named.as_deref() != row.blob.as_deref() {
+                    if named.as_deref() != row.blob.as_deref() {
                         let conn = core.conn()?;
                         let refusals = store::count_refusal(&conn, &row.id)?;
                         drop(conn);

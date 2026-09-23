@@ -271,7 +271,7 @@ export interface DeviceUnderTest {
   attach(
     item: string,
     path: string,
-    options?: { mimeType?: string; title?: string; type?: string },
+    options?: { mimeType?: string; title?: string; type?: string; tier?: Tier },
   ): Promise<Outcome<QueuedWrite[]>>;
 
   /** A second device over the same store, for the one-writer rule. */

@@ -9,6 +9,7 @@ import type { DeviceUnderTest, QueuedWrite } from "../../device/protocol.js";
 import type { Responder } from "../../device/scripted-server.js";
 import { chmodSync, existsSync, rmSync } from "node:fs";
 import {
+  KEY,
   acceptUploads,
   fileOf,
   hashOf,
@@ -1441,6 +1442,23 @@ describe("an answer the device applies keeps what it has not had answered", () =
   });
 });
 
+/**
+ * The reads a refusal by dependency reconciles against: the server holds no
+ * item the device made and never sent, and no edge from it.
+ */
+function holdsNoneOfIt(harnessUnderTest: Harness): void {
+  harnessUnderTest.server.answer(
+    "GET",
+    /^\/items\/[^/]+$/,
+    refusal(404, "item_not_found", "no such item"),
+  );
+  harnessUnderTest.server.answer("GET", /^\/items\/[^/]+\/edges$/, {
+    kind: "json",
+    status: 200,
+    body: { data: [], next_cursor: null },
+  });
+}
+
 describe("an upload is a queued write", () => {
   /** An answer to `POST /blobs` naming what it was sent, or `named`. */
   function uploaded(named?: string): Responder {
@@ -1499,6 +1517,10 @@ describe("an upload is a queued write", () => {
       "the upload did not send the bytes it was queued with",
     ).toEqual(bytes);
     expect(sent?.headers["content-type"]).toBe("text/plain");
+    expect(
+      sent?.headers.authorization,
+      "the upload went without the credential, so the server refuses every one",
+    ).toBe(`Bearer ${KEY}`);
   });
 
   it("attaches a file as an upload, a file item and an edge, each waiting on the one before", async () => {
@@ -1597,7 +1619,10 @@ describe("an upload is a queued write", () => {
     const { device, server } = harness;
     const gone = Buffer.from("taken away before the drain\n");
     const kept = Buffer.from("still held\n");
-    expect((await device.putBlob(fileOf("gone.txt", gone))).ok).toBe(true);
+    // Attached, so a file item and an edge wait on the upload that cannot go.
+    expect((await device.attach(HELD.id, fileOf("gone.txt", gone))).ok).toBe(
+      true,
+    );
     expect((await device.putBlob(fileOf("kept.txt", kept))).ok).toBe(true);
 
     // Beside the store, in the folder named for it (`device.md` 38).
@@ -1609,15 +1634,20 @@ describe("an upload is a queued write", () => {
     rmSync(heldAt);
 
     acceptUploads(harness.server);
+    holdsNoneOfIt(harness);
     const drained = await device.drain();
     expect(drained.ok).toBe(true);
     if (!drained.ok) return;
-    const [missing, present] = drained.value.verdicts;
+    const [missing, fileItem, link, present] = drained.value.verdicts;
     expect(
       missing?.verdict,
       "an upload whose bytes are gone was not refused, so it waits forever on bytes nothing can send",
     ).toBe("refused");
     expect(missing?.reason).toContain(hashOf(gone));
+    expect(
+      [fileItem?.verdict, link?.verdict],
+      "what waits on an upload that can never be sent was left waiting rather than refused in the same drain",
+    ).toEqual(["refused", "refused"]);
     // The witness: an upload whose bytes are held goes out in the same
     // drain, so the refusal is the missing bytes and not the door.
     expect(present?.verdict).toBe("accepted");
@@ -1657,6 +1687,92 @@ describe("an upload is a queued write", () => {
     expect(again.value.verdicts[0]?.verdict).toBe("accepted");
   });
 
+  it("refuses an attachment whose upload the server refuses, and what waits on it", async () => {
+    harness = await hydratedHarness("upload-refused", { rows: held() });
+    const { device, server } = harness;
+    expect(
+      (await device.attach(HELD.id, fileOf("refused.txt", "refused bytes\n")))
+        .ok,
+    ).toBe(true);
+    server.answer(
+      "POST",
+      "/blobs",
+      refusal(400, "validation_error", "Empty blob"),
+    );
+    holdsNoneOfIt(harness);
+    const drained = await device.drain();
+    expect(drained.ok).toBe(true);
+    if (!drained.ok) return;
+    expect(
+      drained.value.verdicts.map((entry) => [entry.kind, entry.verdict]),
+    ).toEqual([
+      ["upload_blob", "refused"],
+      ["create_item", "refused"],
+      ["create_edge", "refused"],
+    ]);
+    expect(
+      drained.value.verdicts[0]?.reason,
+      "the upload's refusal did not carry the server's code",
+    ).toBe("validation_error");
+    expect(
+      server.requests
+        .filter((request) => request.method === "POST")
+        .map((request) => request.pathname),
+      "a file item or an edge waiting on a refused upload was sent",
+    ).toEqual(["/blobs"]);
+  });
+
+  it("attaches under the title, type and tier it is given", async () => {
+    harness = await hydratedHarness("upload-attach-options", {
+      rows: held(),
+    });
+    const { device } = harness;
+    const attached = await device.attach(
+      HELD.id,
+      fileOf("lease.png", Buffer.from([0x89, 0x50, 0x4e, 0x47, 1])),
+      { title: "Lease, scanned", type: "core.file", tier: "feed" },
+    );
+    expect(attached.ok).toBe(true);
+    if (!attached.ok) return;
+    const file = await device.get(attached.value[1]?.item_id ?? "");
+    expect(file.ok).toBe(true);
+    if (!file.ok) return;
+    expect(
+      [file.value.type, file.value.properties.title, file.value.tier],
+      "an attachment dropped the title, type or tier it was given",
+    ).toEqual(["core.file", "Lease, scanned", "feed"]);
+    // The witness: with nothing given, the same file would be an image
+    // named for itself, so each value above is the one asked for.
+    expect(file.value.properties.mime_type).toBe("image/png");
+  });
+
+  it("attaches only to an item the copy holds outside the bin", async () => {
+    harness = await hydratedHarness("upload-attach-target", {
+      rows: held(),
+    });
+    const { device } = harness;
+    const file = fileOf("note.txt", "attached\n");
+    const absent = await device.attach("no-such-item", file);
+    expect(
+      absent.ok,
+      "a file was attached to an item the copy does not hold",
+    ).toBe(false);
+    if (!absent.ok) expect(absent.refusal.code).toBe("not_found");
+    // The witness: the same file attaches to the held item.
+    expect((await device.attach(HELD.id, file)).ok).toBe(true);
+    expect((await device.deleteItem(HELD.id)).ok).toBe(true);
+    const binned = await device.attach(HELD.id, file);
+    expect(
+      binned.ok,
+      "a file was attached to an item in the bin, which reads as absent",
+    ).toBe(false);
+    if (!binned.ok) expect(binned.refusal.code).toBe("not_found");
+    expect(
+      (await queueOf(device)).map((row) => row.kind),
+      "a refused attachment queued something",
+    ).toEqual(["upload_blob", "create_item", "create_edge", "delete_item"]);
+  });
+
   it("counts an upload whose answer names other bytes", async () => {
     harness = await hydratedHarness("upload-misnamed", { rows: held() });
     const { device } = harness;
@@ -1667,6 +1783,15 @@ describe("an upload is a queued write", () => {
       "POST",
       "/blobs",
       uploaded(`sha256:${"b".repeat(64)}`),
+      // A success that names nothing at all is no more readable.
+      (request) => ({
+        kind: "json",
+        status: 201,
+        body: {
+          mime_type: request.headers["content-type"] ?? "",
+          size_bytes: request.raw.length,
+        },
+      }),
       uploaded(),
     );
     const drained = await device.drain();
@@ -1677,9 +1802,17 @@ describe("an upload is a queued write", () => {
       "an upload answered under another name was accepted, so a file item naming the queued bytes would name nothing the server holds",
     ).toBeNull();
     expect(drained.value.verdicts[0]?.refusals).toBe(1);
+    const unnamed = await device.drain();
+    expect(unnamed.ok).toBe(true);
+    if (!unnamed.ok) return;
+    expect(
+      unnamed.value.verdicts[0]?.verdict,
+      "an upload answered with no name was accepted",
+    ).toBeNull();
+    expect(unnamed.value.verdicts[0]?.refusals).toBe(2);
 
     // The witness: the same upload, answered under its own name, is
-    // accepted, so the count above is the name and not the door.
+    // accepted, so the counts above are the name and not the door.
     const again = await device.drain();
     expect(again.ok).toBe(true);
     if (!again.ok) return;

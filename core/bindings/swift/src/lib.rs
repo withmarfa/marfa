@@ -1121,6 +1121,122 @@ mod tests {
         assert_eq!(Verdict::from(O::Dead), Verdict::Dead);
     }
 
+    /// Each of the core's refusals lands on the case of the same name, with
+    /// what it carries.
+    #[test]
+    fn every_core_error_crosses_as_its_own_case() {
+        use marfa_core::CoreError as E;
+        let text = || "x".to_string();
+        let crossed: Vec<(MarfaError, &str)> = vec![
+            (
+                E::NotFound {
+                    code: text(),
+                    message: text(),
+                }
+                .into(),
+                "NotFound",
+            ),
+            (
+                E::Unauthorized {
+                    code: text(),
+                    message: text(),
+                }
+                .into(),
+                "Unauthorized",
+            ),
+            (
+                E::Forbidden {
+                    code: text(),
+                    message: text(),
+                }
+                .into(),
+                "Forbidden",
+            ),
+            (
+                E::Validation {
+                    code: text(),
+                    message: text(),
+                }
+                .into(),
+                "Validation",
+            ),
+            (E::UnknownType { message: text() }.into(), "UnknownType"),
+            (
+                E::RateLimited {
+                    code: text(),
+                    message: text(),
+                    retry_after_seconds: Some(1),
+                }
+                .into(),
+                "RateLimited",
+            ),
+            (
+                E::Server {
+                    status: 500,
+                    code: text(),
+                    message: text(),
+                }
+                .into(),
+                "Server",
+            ),
+            (E::Network(text()).into(), "Network"),
+            (E::Decoding(text()).into(), "Decoding"),
+            (E::Store(text()).into(), "Store"),
+            (E::NoServer.into(), "NoServer"),
+            (E::NoCursor.into(), "NoCursor"),
+            (E::HydrationIncomplete.into(), "HydrationIncomplete"),
+            (E::ReadingHandle.into(), "ReadingHandle"),
+            (
+                E::WrongSchema {
+                    expected: text(),
+                    found: text(),
+                    path: text(),
+                }
+                .into(),
+                "WrongSchema",
+            ),
+            (
+                E::CatchUpTooOld {
+                    min_retained_id: text(),
+                }
+                .into(),
+                "CatchUpTooOld",
+            ),
+            (
+                E::StreamIncomplete { reason: text() }.into(),
+                "StreamIncomplete",
+            ),
+            (
+                E::WrongServer {
+                    expected: text(),
+                    got: text(),
+                }
+                .into(),
+                "WrongServer",
+            ),
+            (
+                E::BytesAbsent {
+                    hash: "sha256:h".into(),
+                    reason: text(),
+                }
+                .into(),
+                "BytesAbsent",
+            ),
+            (E::Invalid(text()).into(), "Invalid"),
+        ];
+        for (error, name) in &crossed {
+            let debug = format!("{error:?}");
+            assert!(
+                debug.starts_with(&format!("{name} ")) || debug.starts_with(&format!("{name} {{")),
+                "{name} crossed as {debug}"
+            );
+        }
+        assert!(matches!(
+            &crossed[18].0,
+            MarfaError::BytesAbsent { hash, .. } if hash == "sha256:h"
+        ));
+    }
+
     #[test]
     fn search_filters_cross_whole() {
         let crossed: marfa_core::SearchFilters = SearchFilters {

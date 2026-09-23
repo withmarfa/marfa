@@ -272,9 +272,9 @@ fn open(link: &str) -> std::result::Result<impl Read, String> {
     Ok(response.into_body().into_reader())
 }
 
-/// A refusal from the link door, with the server's code. The transport's
-/// own mapping cannot be reached from here while its file is held for the
-/// envelope change, and this goes when it can.
+/// A refusal from the link door, with the server's code, read as the
+/// transport reads the refusals it keeps to itself. A 404 never reaches
+/// here: the caller reads it as absent bytes.
 fn refused(status: u16, text: &str, retry_after_seconds: Option<u64>) -> CoreError {
     let (code, message) = match serde_json::from_str::<WireErrorEnvelope>(text) {
         Ok(envelope) => (
@@ -287,7 +287,6 @@ fn refused(status: u16, text: &str, retry_after_seconds: Option<u64>) -> CoreErr
         400 | 422 => CoreError::Validation { code, message },
         401 => CoreError::Unauthorized { code, message },
         403 => CoreError::Forbidden { code, message },
-        404 => CoreError::NotFound { code, message },
         429 => CoreError::RateLimited {
             code,
             message,
@@ -451,10 +450,15 @@ mod tests {
         fs::create_dir_all(&cache.dir).unwrap();
         let left = cache.dir.join(".incoming-left-by-a-crash");
         fs::write(&left, b"half").unwrap();
+        let held = cache.keep(EMPTY, &b""[..]).unwrap();
         // Young enough that something may still be writing it: kept.
         cache.sweep_incoming(Duration::from_secs(3600));
         assert!(left.exists());
         cache.sweep_incoming(Duration::ZERO);
         assert!(!left.exists());
+        assert!(
+            held.exists(),
+            "the sweep took held bytes, which only a half-written copy may lose"
+        );
     }
 }

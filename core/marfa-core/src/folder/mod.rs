@@ -620,7 +620,13 @@ impl Folder {
         if is_document(path) {
             return None;
         }
-        let file_type = crate::blob::file_type_for(&crate::blob::mime_type_for(path, None), None);
+        let named = crate::blob::file_type_for(&crate::blob::mime_type_for(path, None), None);
+        // A subtype the server does not register is a file all the same.
+        let file_type = if catalog.known(&named) {
+            named
+        } else {
+            FILE_TYPE.to_string()
+        };
         self.slice
             .types
             .iter()
