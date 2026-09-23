@@ -1503,6 +1503,7 @@ mod tests {
                     edge_id: Some("e1"),
                     namespace: None,
                     tag: None,
+                    blob: None,
                     base_version: None,
                     payload,
                     depends_on: &[],
