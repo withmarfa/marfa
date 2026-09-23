@@ -72,3 +72,7 @@ _archive/
 _tmp/
 _local/
 _ignore/
+
+# SwiftPM build output
+.build/
+.swiftpm/

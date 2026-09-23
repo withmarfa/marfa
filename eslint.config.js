@@ -18,6 +18,9 @@ export default [
             "vitest.shared.ts",
             "packages/*/tsup.config.ts",
             "packages/*/vitest.config.ts",
+            // Writes the Swift types' contract constant; the Swift package has
+            // no tsconfig of its own.
+            "swift/generate-contract.ts",
           ],
           // Default is 8. Every workspace package contributes a
           // tsup.config and a vitest.config that fall through to the

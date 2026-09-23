@@ -10,6 +10,7 @@ A typed data layer for structured personal data: items under custom type schemas
 | [`@withmarfa/shared`](./packages/shared) | Wire types, Zod validation schemas, error codes                                                                          |
 | [`@withmarfa/server`](./packages/server) | The Hono HTTP server, on SQLite                                                                                          |
 | [`@withmarfa/client`](./packages/client) | The TypeScript client, generated from `openapi.json`                                                                     |
+| [`swift/`](./swift)                      | `MarfaTypes`, the Swift types generated from `openapi.json`                                                              |
 | [`core/`](./core)                        | The Rust engine every native client embeds: a working copy, a queue, the `marfa` binary, and the Swift and Node bindings |
 | [`conformance/`](./conformance)          | The contract: black-box fixtures and the written specification under `conformance/spec/`                                 |
 | [`deploy/`](./deploy)                    | The container recipe: the server with Litestream streaming its database to the bucket its blobs are replicated to        |

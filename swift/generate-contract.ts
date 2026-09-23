@@ -1,0 +1,20 @@
+/**
+ * Write the contract version the Swift types are generated for, read off the
+ * document they are generated from, so the two cannot differ.
+ */
+import { readFileSync, writeFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+
+const document = JSON.parse(
+  readFileSync(new URL("../openapi.json", import.meta.url), "utf8"),
+) as { info: { version: string } };
+// Digits with no leading zero, as the root answers it.
+if (!/^[1-9][0-9]*$/.test(document.info.version)) {
+  throw new Error(
+    `openapi.json's info.version is "${document.info.version}", not a contract version`,
+  );
+}
+writeFileSync(
+  fileURLToPath(new URL("Sources/MarfaTypes/Contract.swift", import.meta.url)),
+  `// Generated from openapi.json by swift/generate-contract.ts — do not edit.\n\n/// The contract version these types were generated for: the document's\n/// \`info.version\`, which the instance's root answers as \`contract\`.\npublic let marfaContractVersion = ${document.info.version}\n`,
+);
