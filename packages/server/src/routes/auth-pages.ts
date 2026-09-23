@@ -1,6 +1,7 @@
 import type { Context } from "hono";
 import { Hono } from "hono";
 import { MarfaError, ErrorCode, parseScope } from "@withmarfa/shared";
+import type { Item } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { requirePermission, requireAuth } from "../middleware/auth.js";
 import { buildScopeDescriptions } from "./auth-consent.js";
@@ -30,6 +31,7 @@ import {
   renderDeviceDecisionPage,
 } from "./device-pages.js";
 import { setNoStore } from "./no-store.js";
+import { MAX_PAGE_LIMIT } from "../page-limits.js";
 import { forwardHeaders } from "./forward-headers.js";
 import { publish } from "../pubsub.js";
 
@@ -248,16 +250,6 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
   }
 
   // -----------------------------------------------------------------------
-  // /auth/tokens (GET / DELETE / PATCH) handlers are not present.
-  //
-  // Under @better-auth/oauth-provider tokens are short-lived (1h default),
-  // rotate on every refresh, and are revoked at the grant level
-  // (`/oauth2/revoke` for a single token-in-hand; `/auth/grants/:id/revoke`
-  // for the whole grant). Individual-token management had no CLI / SDK /
-  // sandbox consumers.
-  // -----------------------------------------------------------------------
-
-  // -----------------------------------------------------------------------
   // /auth/grants — typed query into system.connection items
   //
   // The user's "approved apps" surface. Reads system.connection items
@@ -276,10 +268,6 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
     // tick to grant it. There is nothing else to reach this on: no door admits
     // on rank, and a signed-in app holds what its grant carries.
     requirePermission(c, "grants.manage");
-    const items = await storage.items.list({
-      type: "system.connection",
-      state: "active",
-    });
     const grants: {
       id: string;
       kind: string;
@@ -289,7 +277,21 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
       granted_at: string;
       last_used_at: string | null;
     }[] = [];
-    for (const item of items.data) {
+    // Every page, so a grant past the first is listed: the answer is the
+    // whole set, and says so with a null cursor.
+    const rows: Item[] = [];
+    let cursor: string | undefined;
+    do {
+      const page = await storage.items.list({
+        type: "system.connection",
+        state: "active",
+        limit: MAX_PAGE_LIMIT,
+        cursor,
+      });
+      rows.push(...page.data);
+      cursor = page.next_cursor ?? undefined;
+    } while (cursor !== undefined);
+    for (const item of rows) {
       const props = item.properties;
       if (props.kind !== "app") continue;
       if (props.status !== "active") continue;
@@ -305,7 +307,7 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
           typeof props.last_used_at === "string" ? props.last_used_at : null,
       });
     }
-    return c.json(grants);
+    return c.json({ data: grants, next_cursor: null });
   });
 
   router.delete("/grants/:id", async (c) => {

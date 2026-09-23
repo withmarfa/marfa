@@ -236,13 +236,6 @@ export interface UpdateEdgeInput {
   version: number;
 }
 
-/**
- * Hydrated edges block attached to an item response — one entry per edge
- * type pointing out from (or into) this item: the first page of that type's
- * edges, which `GET /items/{id}/edges` continues from `next_cursor`.
- */
-export type ItemEdgesBlock = PaginatedResult<Edge>;
-
 /** Per-edge-type permission levels. */
 export type EdgePermission = "read" | "write";
 

@@ -74,7 +74,9 @@ export class SqliteSearchStore implements SearchStore {
 
   async search(query: string, filters: SearchFilters): Promise<SearchResult[]> {
     const escapedQuery = buildFtsQuery(query);
-    const limit = Math.min(filters.limit ?? 20, 100);
+    // The route bounds the page and asks for one row past it to learn
+    // whether another follows, so the store takes the number it is given.
+    const limit = filters.limit ?? 20;
     const offset = filters.offset ?? 0;
     const conditions: string[] = [];
     const params: unknown[] = [escapedQuery];

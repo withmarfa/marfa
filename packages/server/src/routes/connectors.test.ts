@@ -631,7 +631,9 @@ describe("POST /connectors/{id}/runs and GET /connectors/{id}/runs", () => {
       expect(res.status).toBe(201);
     }
     expect(RUNS_KEPT_PER_CONNECTOR).toBe(100);
-    const kept = await ctx.storage.connectors.listRuns(mine.connector.id, 500);
+    const kept = (
+      await ctx.storage.connectors.listRuns(mine.connector.id, { limit: 500 })
+    ).data;
     expect(kept).toHaveLength(RUNS_KEPT_PER_CONNECTOR);
     const byDefault = await json<{ data: ConnectorRun[] }>(
       await request(ctx.app, "GET", `/connectors/${mine.connector.id}/runs`, {
@@ -654,7 +656,51 @@ describe("POST /connectors/{id}/runs and GET /connectors/{id}/runs", () => {
     expect(summaries).not.toContain("run 1");
     expect(await remove(ctx.workingKey, mine.connector.id)).toBe(200);
     expect(
-      await ctx.storage.connectors.listRuns(mine.connector.id, 500),
+      (await ctx.storage.connectors.listRuns(mine.connector.id, { limit: 500 }))
+        .data,
     ).toEqual([]);
+  });
+});
+
+describe("GET /connectors/{id}/runs pages", () => {
+  it("answers a cursor when the limit cuts the list, and reaches every run once", async () => {
+    const { connector } = await register(ctx.workingKey, "paged runs");
+    for (let i = 0; i < 3; i++) {
+      const res = await request(
+        ctx.app,
+        "POST",
+        `/connectors/${connector.id}/runs`,
+        {
+          key: ctx.workingKey,
+          body: {
+            outcome: "succeeded",
+            started_at: at(10_000 - i),
+            finished_at: at(9_000 - i),
+            summary: `run ${String(i)}`,
+          },
+        },
+      );
+      expect(res.status).toBe(201);
+    }
+    const path = `/connectors/${connector.id}/runs?limit=2`;
+    const first = await json<{
+      data: ConnectorRun[];
+      next_cursor: string | null;
+    }>(await request(ctx.app, "GET", path, { key: ctx.workingKey }));
+    expect(first.data).toHaveLength(2);
+    expect(first.next_cursor).not.toBeNull();
+    const second = await json<{
+      data: ConnectorRun[];
+      next_cursor: string | null;
+    }>(
+      await request(ctx.app, "GET", `${path}&cursor=${first.next_cursor!}`, {
+        key: ctx.workingKey,
+      }),
+    );
+    expect(second.data).toHaveLength(1);
+    expect(second.next_cursor).toBeNull();
+    expect(
+      [...first.data, ...second.data].map((r) => r.summary).sort(),
+    ).toEqual(["run 0", "run 1", "run 2"]);
   });
 });

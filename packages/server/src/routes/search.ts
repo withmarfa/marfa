@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { createRoute, z } from "@hono/zod-openapi";
 import { ErrorCode, MarfaError, resolveEnforcement } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
@@ -34,17 +35,41 @@ import {
 const MAX_SEARCH_DEPTH = 10_000;
 
 /** The position a search cursor carries. */
-function searchOffset(cursor: string | undefined): number {
+/**
+ * The position a search cursor carries, refused unless it was minted for
+ * this same query. A position is only meaningful in the ranking it came
+ * from, so the cursor carries a fingerprint of everything that decides the
+ * ranking, and one from another query is refused rather than read as an
+ * offset into this one.
+ */
+function searchOffset(cursor: string | undefined, query: string): number {
   if (cursor === undefined) return 0;
-  const { v } = decodeKeyedCursor(cursor, SEARCH_CURSOR_KEY);
-  const offset = Number(v);
-  if (!Number.isInteger(offset) || offset < 0 || offset >= MAX_SEARCH_DEPTH) {
+  const { v, id } = decodeKeyedCursor(cursor, SEARCH_CURSOR_KEY);
+  if (id !== query) {
+    throw new MarfaError(
+      ErrorCode.VALIDATION_ERROR,
+      "This cursor was issued for a different search and cannot be continued here. Re-read the first page with the same parameters.",
+    );
+  }
+  const offset = /^\d+$/.test(v) ? Number(v) : Number.NaN;
+  if (!Number.isInteger(offset) || offset >= MAX_SEARCH_DEPTH) {
     throw new MarfaError(
       ErrorCode.VALIDATION_ERROR,
       "Invalid pagination cursor",
     );
   }
   return offset;
+}
+
+/** Everything that decides a search's ranking, as one short string. */
+function searchFingerprint(query: Record<string, unknown>): string {
+  const ranking = { ...query };
+  delete ranking.cursor;
+  delete ranking.limit;
+  return createHash("sha256")
+    .update(JSON.stringify(ranking, Object.keys(ranking).sort()))
+    .digest("base64url")
+    .slice(0, 22);
 }
 
 // A search row carries the shared shapes rather than a loosened copy of
@@ -268,7 +293,8 @@ export function searchRoutes(storage: Storage) {
       instanceConfigForSearch,
       callerKeyForSearch,
     );
-    const offset = searchOffset(cursor);
+    const fingerprint = searchFingerprint(c.req.valid("query"));
+    const offset = searchOffset(cursor, fingerprint);
     const results = await storage.search.search(q.trim(), {
       type,
       state: resolvedState,
@@ -299,7 +325,7 @@ export function searchRoutes(storage: Storage) {
         data: filtered,
         next_cursor:
           results.length > limit && next < MAX_SEARCH_DEPTH
-            ? encodeKeyedCursor(String(next), "", SEARCH_CURSOR_KEY)
+            ? encodeKeyedCursor(String(next), fingerprint, SEARCH_CURSOR_KEY)
             : null,
       },
       200,

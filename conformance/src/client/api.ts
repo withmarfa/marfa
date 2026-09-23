@@ -5,7 +5,6 @@ import type {
   MarfaMetadata,
   MarfaVersion,
   MarfaEdge,
-  HydratedEdgeSection,
   EdgeTypeRegistration,
   EdgeTypeDefinition,
   TypeSchema,
@@ -899,13 +898,13 @@ export class MarfaClient {
     ApiResponse<{
       item: MarfaItem;
       metadata: MarfaMetadata;
-      backrefs?: Record<string, HydratedEdgeSection>;
+      backrefs?: Record<string, PaginatedResult<MarfaEdge>>;
     }>
   > {
     return this.request<{
       item: MarfaItem;
       metadata: MarfaMetadata;
-      backrefs?: Record<string, HydratedEdgeSection>;
+      backrefs?: Record<string, PaginatedResult<MarfaEdge>>;
     }>(`/items/${id}?include=backrefs`);
   }
 

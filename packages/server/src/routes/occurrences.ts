@@ -102,6 +102,7 @@ import { requireAuth, getTypeFilter } from "../middleware/auth.js";
 import type { ItemFilters, Storage } from "../storage/interface.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import { ItemSchema, NextCursorSchema } from "./_schemas.js";
+import { MAX_PAGE_LIMIT } from "../page-limits.js";
 import { assertTypeFilter } from "./_type-filter.js";
 import {
   expandSeries,
@@ -212,17 +213,9 @@ export const MAX_SERIES_ERRORS = 500;
  */
 const MAX_SERIES_ERROR_MESSAGE_CHARS = 200;
 
-/**
- * Rows read per page while gathering the events to expand.
- *
- * 200 because that is the storage layer's own ceiling — `items.list`
- * silently clamps any larger `limit`. This route previously asked for
- * 1000 and read one page, so it saw 200 events and reported the result
- * as the whole calendar: the 201st event simply was not on it.
- * Naming the real number here is what stops the next reader believing
- * the request.
- */
-const EVENT_PAGE_SIZE = 200;
+/** Rows read per page while gathering the events to expand: the storage
+ *  layer's own ceiling, which `items.list` clamps any larger `limit` to. */
+const EVENT_PAGE_SIZE = MAX_PAGE_LIMIT;
 
 /**
  * Ids handed to one batched storage call.
@@ -731,17 +724,19 @@ async function groupExceptionsBySeries(
   return bySeries;
 }
 
-const OccurrenceSchema = z.object({
-  starts_at: z.string(),
-  ends_at: z.string().optional(),
-  item: ItemSchema,
-  /** Present when this came from expanding a rule rather than from the
-   *  item's own times. */
-  series_id: z.string().optional(),
-  /** Present when a stored exception replaced a computed occurrence;
-   *  carries the start of the occurrence it replaced. */
-  replaces: z.string().optional(),
-});
+const OccurrenceSchema = z
+  .object({
+    starts_at: z.string(),
+    ends_at: z.string().optional(),
+    item: ItemSchema,
+    /** Present when this came from expanding a rule rather than from the
+     *  item's own times. */
+    series_id: z.string().optional(),
+    /** Present when a stored exception replaced a computed occurrence;
+     *  carries the start of the occurrence it replaced. */
+    replaces: z.string().optional(),
+  })
+  .openapi("Occurrence");
 
 const SeriesErrorSchema = z.object({
   item_id: z.string(),

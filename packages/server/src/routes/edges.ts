@@ -57,8 +57,6 @@ const EdgeConflictSchema = z
   })
   .openapi("EdgeVersionConflict");
 
-const EdgeListSchema = EdgePageSchema;
-
 const MAX_EDGE_TYPE_FILTER = 10;
 
 // ---------------------------------------------------------------------------
@@ -142,7 +140,7 @@ const listEdgesRoute = createRoute({
   },
   responses: {
     200: {
-      content: { "application/json": { schema: EdgeListSchema } },
+      content: { "application/json": { schema: EdgePageSchema } },
       description: "Edges, paginated",
     },
     400: {
@@ -777,7 +775,7 @@ const listFromSourceRoute = createRoute({
   },
   responses: {
     200: {
-      content: { "application/json": { schema: EdgeListSchema } },
+      content: { "application/json": { schema: EdgePageSchema } },
       description: "Outbound edges",
     },
     400: {
@@ -848,7 +846,7 @@ const listBackrefsRoute = createRoute({
   },
   responses: {
     200: {
-      content: { "application/json": { schema: EdgeListSchema } },
+      content: { "application/json": { schema: EdgePageSchema } },
       description: "Inbound edges",
     },
     400: {

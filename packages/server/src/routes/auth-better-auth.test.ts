@@ -392,12 +392,16 @@ describe("better-auth /auth/* surface", () => {
       key: ctx.workingKey,
     });
     expect(listRes.status).toBe(200);
-    const list = (await listRes.json()) as {
-      id: string;
-      client_id: string;
-      scopes: string[];
-      status: string;
-    }[];
+    const list = (
+      (await listRes.json()) as {
+        data: {
+          id: string;
+          client_id: string;
+          scopes: string[];
+          status: string;
+        }[];
+      }
+    ).data;
     expect(list.some((g) => g.id === grant.id)).toBe(true);
     const found = list.find((g) => g.id === grant.id);
     expect(found?.client_id).toBe(fakeClientId);
@@ -418,7 +422,7 @@ describe("better-auth /auth/* surface", () => {
     const list2Res = await request(ctx.app, "GET", "/auth/grants", {
       key: ctx.workingKey,
     });
-    const list2 = (await list2Res.json()) as { id: string }[];
+    const list2 = ((await list2Res.json()) as { data: { id: string }[] }).data;
     expect(list2.some((g) => g.id === grant.id)).toBe(false);
   });
 

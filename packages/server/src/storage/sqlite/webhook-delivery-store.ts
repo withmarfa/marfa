@@ -1,6 +1,11 @@
-import { eq, desc, sql } from "drizzle-orm";
+import { and, eq, desc, lt, or, sql } from "drizzle-orm";
 import { generateId } from "@withmarfa/shared";
-import type { WebhookDelivery } from "@withmarfa/shared";
+import type { PaginatedResult, WebhookDelivery } from "@withmarfa/shared";
+import {
+  WEBHOOK_DELIVERIES_CURSOR_KEY,
+  decodeKeyedCursor,
+  encodeKeyedCursor,
+} from "../interface.js";
 import type {
   PendingWebhookDelivery,
   WebhookDeliveryStore,
@@ -50,15 +55,45 @@ export class SqliteWebhookDeliveryStore implements WebhookDeliveryStore {
       .run();
   }
 
-  async list(webhookId: string, limit = 50): Promise<WebhookDelivery[]> {
+  async list(
+    webhookId: string,
+    page: { limit: number; cursor?: string },
+  ): Promise<PaginatedResult<WebhookDelivery>> {
+    const after =
+      page.cursor === undefined
+        ? undefined
+        : decodeKeyedCursor(page.cursor, WEBHOOK_DELIVERIES_CURSOR_KEY);
+    const t = outboundWebhookDeliveries;
     const rows = await this.db
       .select()
-      .from(outboundWebhookDeliveries)
-      .where(eq(outboundWebhookDeliveries.webhook_id, webhookId))
-      .orderBy(desc(outboundWebhookDeliveries.created_at))
-      .limit(limit)
+      .from(t)
+      .where(
+        and(
+          eq(t.webhook_id, webhookId),
+          after === undefined
+            ? undefined
+            : or(
+                lt(t.created_at, after.v),
+                and(eq(t.created_at, after.v), lt(t.id, after.id)),
+              ),
+        ),
+      )
+      .orderBy(desc(t.created_at), desc(t.id))
+      .limit(page.limit + 1)
       .all();
-    return rows.map(rowToDelivery);
+    const slice = rows.slice(0, page.limit);
+    const last = slice.at(-1);
+    return {
+      data: slice.map(rowToDelivery),
+      next_cursor:
+        rows.length > page.limit && last
+          ? encodeKeyedCursor(
+              last.created_at,
+              last.id,
+              WEBHOOK_DELIVERIES_CURSOR_KEY,
+            )
+          : null,
+    };
   }
 
   async schedule(entry: {

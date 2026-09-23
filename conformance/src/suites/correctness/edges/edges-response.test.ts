@@ -95,8 +95,11 @@ describe("edge response hydration + pagination", () => {
     expect(about.next_cursor).not.toBeNull();
     expect(typeof about.next_cursor).toBe("string");
 
-    const collected = new Set<string>();
-    let cursor: string | undefined;
+    // The block is the first page of the listing: its cursor continues it
+    // at the same door, narrowed to the block's edge type, and the two
+    // together deliver every edge once.
+    const collected = new Set<string>(about.data.map((e) => e.id));
+    let cursor: string | undefined = about.next_cursor!;
     for (let iter = 0; iter < 20; iter++) {
       const page = await client.listItemEdges(subject, {
         edge_type: "about",

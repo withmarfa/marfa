@@ -371,7 +371,12 @@ export type CursorSortKey = string;
  *  An item's hydrated edge blocks mint under the listing their cursor
  *  continues at, `/items/{id}/edges` or `/items/{id}/backrefs`. */
 export type CursorListing =
-  "items" | "edges" | "item-edges" | "item-backrefs" | "audit";
+  | "items"
+  | "edges"
+  | "item-edges"
+  | "item-backrefs"
+  | "audit"
+  | "webhook-deliveries";
 
 /**
  * The identity a cursor carries. Every construction goes through here so
@@ -406,6 +411,15 @@ export const ITEM_BACKREFS_CURSOR_KEY = cursorSortKey(
   "desc",
 );
 export const AUDIT_CURSOR_KEY = cursorSortKey("audit", NEWEST_FIRST, "desc");
+export const WEBHOOK_DELIVERIES_CURSOR_KEY = cursorSortKey(
+  "webhook-deliveries",
+  NEWEST_FIRST,
+  "desc",
+);
+/** A connector's runs order by when they were reported, a column no item
+ *  listing sorts by, so the key is spelled here rather than built. */
+export const CONNECTOR_RUNS_CURSOR_KEY: CursorSortKey =
+  "connector-runs:reported_at:desc";
 /** Search ranks by relevance rather than by a column, so its cursor carries
  *  the position in the ranking and names the ranking as its key. */
 export const SEARCH_CURSOR_KEY: CursorSortKey = "search:relevance:desc";
@@ -1286,7 +1300,11 @@ export interface WebhookDeliveryStore {
     succeeded: boolean;
     error?: string;
   }): Promise<void>;
-  list(webhookId: string, limit?: number): Promise<WebhookDelivery[]>;
+  /** A subscription's deliveries, newest first, one page at a time. */
+  list(
+    webhookId: string,
+    page: { limit: number; cursor?: string },
+  ): Promise<PaginatedResult<WebhookDelivery>>;
   schedule(entry: {
     webhookId: string;
     eventType: string;
@@ -2760,8 +2778,11 @@ export interface ConnectorStore {
   heartbeat(id: string): Promise<string | null>;
   /** Record a run, keeping the connector's newest hundred. */
   recordRun(id: string, input: ConnectorRunInput): Promise<ConnectorRun>;
-  /** A connector's runs, newest first. */
-  listRuns(id: string, limit: number): Promise<ConnectorRun[]>;
+  /** A connector's runs, newest first, one page at a time. */
+  listRuns(
+    id: string,
+    page: { limit: number; cursor?: string },
+  ): Promise<PaginatedResult<ConnectorRun>>;
 }
 
 export interface Storage extends Partial<BetterAuthStorageAdapter> {

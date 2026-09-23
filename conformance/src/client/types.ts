@@ -18,11 +18,8 @@ export interface MarfaItem {
    * Hydrated relationships. Keyed by edge_type → the first page of that type.
    * Empty object `{}` when the item has no edges.
    */
-  edges?: Record<string, HydratedEdgeSection>;
+  edges?: Record<string, PaginatedResult<MarfaEdge>>;
 }
-
-/** Per-edge-type page on a hydrated item response, capped at 50 edges. */
-export type HydratedEdgeSection = PaginatedResult<MarfaEdge>;
 
 /** Mutable metadata sidecar — tags and extensions */
 export interface MarfaMetadata {
@@ -140,7 +137,7 @@ export interface SearchResult {
   item: MarfaItem;
   metadata: MarfaMetadata;
   relevance_score: number;
-  snippet?: string;
+  snippet_html?: string;
 }
 
 export interface PaginatedResult<T> {

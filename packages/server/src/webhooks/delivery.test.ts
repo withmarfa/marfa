@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createHmac } from "node:crypto";
-import type { Item, Webhook, WebhookDelivery } from "@withmarfa/shared";
+import type { Item, Webhook } from "@withmarfa/shared";
 import type {
   PendingWebhookDelivery,
   WebhookDeliveryStore,
@@ -121,7 +121,7 @@ function makeStubStore(pending: PendingDelivery[]): {
 
   const store: WebhookDeliveryStore = {
     log: () => Promise.resolve(),
-    list: () => Promise.resolve([] as WebhookDelivery[]),
+    list: () => Promise.resolve({ data: [], next_cursor: null }),
     schedule: () => Promise.resolve("del_x"),
     getPending: () => Promise.resolve(pending),
     // Tests that don't exercise the direct path leave this unused; the
@@ -414,7 +414,7 @@ describe("deliverWebhookAttempt (direct fast path)", () => {
     // got there first.
     const store: WebhookDeliveryStore = {
       log: () => Promise.resolve(),
-      list: () => Promise.resolve([] as WebhookDelivery[]),
+      list: () => Promise.resolve({ data: [], next_cursor: null }),
       schedule: () => Promise.resolve("del_raced"),
       getPending: () => Promise.resolve([]),
       claimById: () => Promise.resolve(null),
@@ -488,7 +488,7 @@ describe("deliverWebhookAttempt (direct fast path)", () => {
     };
     const store: WebhookDeliveryStore = {
       log: () => Promise.resolve(),
-      list: () => Promise.resolve([] as WebhookDelivery[]),
+      list: () => Promise.resolve({ data: [], next_cursor: null }),
       schedule: () => Promise.resolve(claimed.id),
       getPending: () => Promise.resolve([]),
       claimById: () => Promise.resolve(claimed),
@@ -609,7 +609,7 @@ describe("WebhookConsumer fan-out gate", () => {
     let scheduled = 0;
     const store: WebhookDeliveryStore = {
       log: () => Promise.resolve(),
-      list: () => Promise.resolve([] as WebhookDelivery[]),
+      list: () => Promise.resolve({ data: [], next_cursor: null }),
       schedule: () => {
         scheduled += 1;
         return Promise.resolve(`del_fan_${String(scheduled)}`);
@@ -760,7 +760,7 @@ describe("WebhookConsumer subscription matching", () => {
     const scheduledFor: string[] = [];
     const store: WebhookDeliveryStore = {
       log: () => Promise.resolve(),
-      list: () => Promise.resolve([] as WebhookDelivery[]),
+      list: () => Promise.resolve({ data: [], next_cursor: null }),
       schedule: (entry) => {
         scheduledFor.push(entry.webhookId);
         return Promise.resolve(`del_match_${String(scheduledFor.length)}`);

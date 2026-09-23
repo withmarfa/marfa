@@ -1,10 +1,16 @@
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, lt, or, sql } from "drizzle-orm";
 import { generateId } from "@withmarfa/shared";
+import type { PaginatedResult } from "@withmarfa/shared";
 import type {
   Connector,
   ConnectorRun,
   ConnectorRunInput,
   ConnectorStore,
+} from "../interface.js";
+import {
+  CONNECTOR_RUNS_CURSOR_KEY,
+  decodeKeyedCursor,
+  encodeKeyedCursor,
 } from "../interface.js";
 import { connectorRuns, connectors } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
@@ -163,14 +169,46 @@ export class SqliteConnectorStore implements ConnectorStore {
     return toRun(row);
   }
 
-  async listRuns(id: string, limit: number): Promise<ConnectorRun[]> {
+  async listRuns(
+    id: string,
+    page: { limit: number; cursor?: string },
+  ): Promise<PaginatedResult<ConnectorRun>> {
+    const after =
+      page.cursor === undefined
+        ? undefined
+        : decodeKeyedCursor(page.cursor, CONNECTOR_RUNS_CURSOR_KEY);
     const rows = await this.db
       .select()
       .from(connectorRuns)
-      .where(eq(connectorRuns.connector_id, id))
+      .where(
+        and(
+          eq(connectorRuns.connector_id, id),
+          after === undefined
+            ? undefined
+            : or(
+                lt(connectorRuns.reported_at, after.v),
+                and(
+                  eq(connectorRuns.reported_at, after.v),
+                  lt(connectorRuns.id, after.id),
+                ),
+              ),
+        ),
+      )
       .orderBy(desc(connectorRuns.reported_at), desc(connectorRuns.id))
-      .limit(limit)
+      .limit(page.limit + 1)
       .all();
-    return rows.map(toRun);
+    const slice = rows.slice(0, page.limit);
+    const last = slice.at(-1);
+    return {
+      data: slice.map(toRun),
+      next_cursor:
+        rows.length > page.limit && last
+          ? encodeKeyedCursor(
+              last.reported_at,
+              last.id,
+              CONNECTOR_RUNS_CURSOR_KEY,
+            )
+          : null,
+    };
   }
 }

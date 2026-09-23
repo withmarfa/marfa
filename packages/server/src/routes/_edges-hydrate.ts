@@ -1,4 +1,4 @@
-import type { ApiKey, Edge, ItemEdgesBlock } from "@withmarfa/shared";
+import type { ApiKey, Edge, PaginatedResult } from "@withmarfa/shared";
 import type { CursorSortKey, Storage } from "../storage/interface.js";
 import {
   ITEM_BACKREFS_CURSOR_KEY,
@@ -11,7 +11,9 @@ import { readableEdges } from "./_edge-visibility.js";
  *  cut here carries a `next_cursor` for the rest. */
 export const HYDRATE_PER_TYPE_CAP = 50;
 
-export type HydratedEdges = Record<string, ItemEdgesBlock>;
+/** An item's edges keyed by edge type, each block the first page of that
+ *  type's edges from the listing its cursor continues at. */
+export type HydratedEdges = Record<string, PaginatedResult<Edge>>;
 
 /**
  * The ids of these edges the credential may read, in one query for the
@@ -142,7 +144,8 @@ export async function hydrateBackrefsForItem(
 
 /**
  * Group edges already in a listing's order by type and cut each block at
- * the cap. A cut block's cursor is the last visible edge's position under
+ * the cap. A cut block's cursor is the last in-window edge's position,
+ * readable or not, under
  * `cursorKey`, the key of the listing the caller will continue at, so it
  * is read there like a cursor that listing minted itself.
  */

@@ -277,6 +277,10 @@ const listRunsRoute = createRoute({
         .describe(
           `How many runs, newest first: at most ${String(MAX_PAGE_LIMIT)}, ${String(DEFAULT_PAGE_LIMIT)} unless given.`,
         ),
+      cursor: z
+        .string()
+        .optional()
+        .describe("Opaque cursor from a previous page's `next_cursor`."),
     }),
   },
   responses: {
@@ -419,12 +423,9 @@ export function connectorRoutes(storage: Storage) {
   router.openapi(listRunsRoute, async (c) => {
     requireAuth(c);
     const connector = await connectorOrRefuse(c.req.valid("param").id);
-    const { limit } = c.req.valid("query");
+    const { limit, cursor } = c.req.valid("query");
     return c.json(
-      {
-        data: await storage.connectors.listRuns(connector.id, limit),
-        next_cursor: null,
-      },
+      await storage.connectors.listRuns(connector.id, { limit, cursor }),
       200,
     );
   });

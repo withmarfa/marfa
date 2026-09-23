@@ -327,3 +327,75 @@ describe("GET /search?include=system", () => {
     expect(ids).toContain(deviceId);
   });
 });
+
+describe("GET /search pages by cursor", () => {
+  type Page = { data: { item: { id: string } }[]; next_cursor: string | null };
+  const search = async (query: string) => {
+    const res = await request(ctx.app, "GET", `/search?${query}`, {
+      key: ctx.workingKey,
+    });
+    return { status: res.status, body: (await res.json()) as Page };
+  };
+  /** The cursor with its position replaced, as a client could forge it. */
+  const moved = (cursor: string, position: string) => {
+    const payload = JSON.parse(
+      Buffer.from(cursor, "base64url").toString("utf8"),
+    ) as { v: string };
+    payload.v = position;
+    return Buffer.from(JSON.stringify(payload)).toString("base64url");
+  };
+
+  beforeAll(async () => {
+    for (let i = 0; i < 101; i++) {
+      await request(ctx.app, "POST", "/items", {
+        key: ctx.workingKey,
+        body: {
+          type: "core.note",
+          properties: { body: `wombatcursor entry ${String(i)}` },
+        },
+      });
+    }
+  });
+
+  it("answers a cursor at the largest page it allows, and walks every hit once", async () => {
+    const first = await search("q=wombatcursor&limit=100");
+    expect(first.status).toBe(200);
+    expect(first.body.data).toHaveLength(100);
+    expect(first.body.next_cursor).not.toBeNull();
+    const second = await search(
+      `q=wombatcursor&limit=100&cursor=${first.body.next_cursor!}`,
+    );
+    expect(second.body.data).toHaveLength(1);
+    expect(second.body.next_cursor).toBeNull();
+    const ids = [...first.body.data, ...second.body.data].map((r) => r.item.id);
+    expect(new Set(ids).size).toBe(101);
+  });
+
+  it("refuses a cursor minted for another query", async () => {
+    const first = await search("q=wombatcursor&limit=1");
+    const other = await search(
+      `q=entry&limit=1&cursor=${first.body.next_cursor!}`,
+    );
+    expect(other.status).toBe(400);
+  });
+
+  it("reads the ranking at most 10,000 rows deep", async () => {
+    const first = await search("q=wombatcursor&limit=5");
+    const cursor = first.body.next_cursor!;
+    const near = await search(
+      `q=wombatcursor&limit=5&cursor=${moved(cursor, "9998")}`,
+    );
+    expect(near.status).toBe(200);
+    expect(near.body.next_cursor).toBeNull();
+    for (const position of ["10000", "", "-1", "1e3"]) {
+      const refused = await search(
+        `q=wombatcursor&limit=5&cursor=${moved(cursor, position)}`,
+      );
+      expect(refused.status, position).toBe(400);
+    }
+  });
+
+  it("refuses the offset it no longer takes", async () => {
+    expect((await search("q=wombatcursor&offset=5")).status).toBe(400);
+  });
+});

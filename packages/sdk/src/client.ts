@@ -1,7 +1,6 @@
 import type {
   Item,
   ItemWithMetadata,
-  ItemEdgesBlock,
   CreateItemInput,
   Metadata,
   Version,
@@ -249,7 +248,7 @@ export type ItemWithExtensions = Item & {
 
 /** Hydrated edges grouped by edge type — the shape carried on `item.edges`
  *  (outbound) and on a detail read's `backrefs` (inbound). */
-export type HydratedEdges = Record<string, ItemEdgesBlock>;
+export type HydratedEdges = Record<string, PaginatedResult<Edge>>;
 
 /** Opt-in blocks for {@link MarfaClient.items.getDetail}. Each widens the
  *  single-item read with one more slice of the item's 1-hop neighborhood,
@@ -294,6 +293,8 @@ export interface SearchFilters {
   tags?: string[];
   filter?: string;
   limit?: number;
+  /** The previous page's `next_cursor`. */
+  cursor?: string;
   /**
    * Comma-separated opt-in inclusions, the same parameter `ListFilters` takes.
    *
@@ -1717,16 +1718,16 @@ export class MarfaClient {
 
   // ---- Search ----
 
+  /** One page of hits; pass `next_cursor` back as `filters.cursor`. */
   async search(
     query: string,
     filters?: SearchFilters,
-  ): Promise<SearchResult[]> {
-    const res = await this.transport.request<PaginatedResult<SearchResult>>(
+  ): Promise<PaginatedResult<SearchResult>> {
+    return this.transport.request<PaginatedResult<SearchResult>>(
       "GET",
       "/search",
       { query: { q: query, ...filters } },
     );
-    return res.data;
   }
 
   // ---- Edges ----
@@ -2319,9 +2320,8 @@ export class MarfaClient {
      *
      * Returns the envelope rather than a bare array, because
      * `series_errors` is part of the answer: a calendar quietly missing a
-     * weekly meeting is the failure nobody sees. Not paginated, unlike
-     * every other `list` here — the window is the bound, and a window
-     * needing pages is one the server refuses.
+     * weekly meeting is the failure nobody sees. One page always: the window
+     * is the bound, and a window needing pages is one the server refuses.
      *
      * The window is required and capped at both ends, and the caps are
      * the server's to apply: a span past its limit and a result past its

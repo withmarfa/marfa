@@ -174,11 +174,11 @@ async function listedGrants(
 ): Promise<{ id: string; client_id: string; status: string }[]> {
   const res = await request(c.app, "GET", "/auth/grants", { key });
   expect(res.status).toBe(200);
-  return (await res.json()) as {
-    id: string;
-    client_id: string;
-    status: string;
-  }[];
+  return (
+    (await res.json()) as {
+      data: { id: string; client_id: string; status: string }[];
+    }
+  ).data;
 }
 
 /** Resolve the grant the way every production caller does. */

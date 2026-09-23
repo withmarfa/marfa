@@ -808,7 +808,7 @@ describe("search", () => {
       properties: { title: "Findable note", body: "Searchable body text" },
     });
 
-    const results = await client.search("Findable");
+    const results = (await client.search("Findable")).data;
     expect(results.length).toBeGreaterThanOrEqual(1);
 
     const found = results.find((r) => r.item.id === item.id);
@@ -1145,10 +1145,12 @@ describe("SDK round additions", () => {
       properties: { body: corpusToken },
       tags: ["red", "large"],
     });
-    const results = await client.search(corpusToken, {
-      tags: ["red", "small"],
-      limit: 100,
-    });
+    const results = (
+      await client.search(corpusToken, {
+        tags: ["red", "small"],
+        limit: 100,
+      })
+    ).data;
     expect(results.length).toBe(1);
   });
 
@@ -2342,10 +2344,10 @@ describe("the paging helpers and the system opt-in", () => {
 
     const without = await recorded
       .search(marker, { tags: [marker] })
-      .then((rows) => rows.map((row) => row.item.type));
+      .then((page) => page.data.map((row) => row.item.type));
     const with_ = await recorded
       .search(marker, { tags: [marker], include: "system" })
-      .then((rows) => rows.map((row) => row.item.type));
+      .then((page) => page.data.map((row) => row.item.type));
 
     expect(without).toContain("core.note");
     expect(without).not.toContain("system.device");

@@ -137,9 +137,9 @@ export function pageOf<T extends z.ZodType>(row: T, name: string) {
     .openapi(name);
 }
 
-/** The continuation every page carries, and the two doors whose page also
- *  carries a sibling about the answer rather than about the page. A door
- *  that answers its whole set answers `null`. */
+/** The continuation every page carries: a cursor to the next page, `null`
+ *  on the last. Declared once so a page that carries a sibling beside it,
+ *  as the stores and occurrences doors do, carries the same field. */
 export const NextCursorSchema = z
   .string()
   .nullable()

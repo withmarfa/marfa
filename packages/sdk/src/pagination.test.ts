@@ -54,6 +54,11 @@ describe("paginate", () => {
     expect(fetcher.calls).toEqual([undefined, "c1", "c2"]);
   });
 
+  it("refuses a cursor answered back unchanged", async () => {
+    const fetcher = stubPages([page(["a"], "c1"), page(["b"], "c1")]);
+    await expect(drain(paginate(fetcher))).rejects.toThrow(/would not end/);
+  });
+
   it("walks past an empty page that still carries a cursor", async () => {
     // A page thinned by what the credential may read can come back empty
     // with more to follow; stopping there would truncate the walk.

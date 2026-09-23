@@ -25,6 +25,7 @@ let apiKey: string;
 const operatorKey = process.env.MARFA_OPERATOR_KEY ?? "";
 
 let itemId: string;
+let targetId: string;
 let webhookId: string;
 let connectorId: string;
 let blobHash: string;
@@ -44,6 +45,7 @@ beforeAll(async () => {
   itemId = a.data.item.id;
   trackItem(ctx, itemId);
   trackItem(ctx, b.data.item.id);
+  targetId = b.data.item.id;
   const edge = await client.createEdge({
     source_id: itemId,
     target_id: b.data.item.id,
@@ -156,17 +158,14 @@ describe("one envelope for every list and search", () => {
       )) as Record<string, unknown>;
       await expectMatchesSchema("GET", door.template, 200, body);
       // The occurrence door adds its diagnostics only when there are any,
-      // so the siblings asserted are the ones it always carries.
+      // so on that door alone they are set aside from the key set.
+      const diagnostics =
+        door.template === "/occurrences"
+          ? ["series_errors", "series_errors_truncated", "expansion_incomplete"]
+          : [];
       expect(
         Object.keys(body)
-          .filter(
-            (key) =>
-              ![
-                "series_errors",
-                "series_errors_truncated",
-                "expansion_incomplete",
-              ].includes(key),
-          )
+          .filter((key) => !diagnostics.includes(key))
           .sort(),
       ).toEqual(["data", "next_cursor", ...(door.siblings ?? [])].sort());
       expect(Array.isArray(body.data)).toBe(true);
@@ -177,12 +176,23 @@ describe("one envelope for every list and search", () => {
   }
 
   it("carries each hydrated edge block as a page", async () => {
-    const body = (await read(`/items/${itemId}`)) as {
-      item: { edges: Record<string, Record<string, unknown>> };
+    type Blocks = Record<string, Record<string, unknown>>;
+    const isPage = (block: Record<string, unknown> | undefined) => {
+      expect(Object.keys(block ?? {}).sort()).toEqual(["data", "next_cursor"]);
+      expect(block?.next_cursor).toBeNull();
     };
-    const block = body.item.edges.about;
-    expect(Object.keys(block ?? {}).sort()).toEqual(["data", "next_cursor"]);
-    expect(block?.next_cursor).toBeNull();
+    const detail = (await read(`/items/${itemId}?include=backrefs`)) as {
+      item: { edges: Blocks };
+    };
+    isPage(detail.item.edges.about);
+    const target = (await read(`/items/${targetId}?include=backrefs`)) as {
+      backrefs: Blocks;
+    };
+    isPage(target.backrefs.about);
+    const listed = (await read(
+      `/items?source=${ctx.source}&include=edges`,
+    )) as { data: { id: string; edges?: Blocks }[] };
+    isPage(listed.data.find((row) => row.id === itemId)?.edges?.about);
   });
 });
 
@@ -213,6 +223,13 @@ describe("search pages by cursor", () => {
     }
     expect(seen).toHaveLength(5);
     expect(new Set(seen).size).toBe(5);
+  });
+
+  it("refuses the offset it no longer takes", async () => {
+    const response = await fetch(`${apiUrl}/search?q=${title}&offset=1`, {
+      headers: { Authorization: `Bearer ${apiKey}` },
+    });
+    expect(response.status).toBe(400);
   });
 
   it("refuses a cursor another listing issued, and one it cannot read", async () => {

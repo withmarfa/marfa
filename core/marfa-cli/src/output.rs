@@ -285,7 +285,8 @@ fn describe(value: &Value) -> Result<String, CliError> {
             if let Some(Value::Array(rows)) = map.get("data") {
                 return lines(rows, map);
             }
-            // A bulk write's per-entry outcomes, `{counts, results}`.
+            // A bulk write's per-entry outcomes, `{counts, results}`, and
+            // `items bulk-get`'s `{items, metadata}`.
             if map.len() <= 2
                 && let Some((_, Value::Array(rows))) =
                     map.iter().find(|(_, value)| value.is_array())
@@ -308,20 +309,6 @@ fn describe(value: &Value) -> Result<String, CliError> {
             }
             Ok(serde_json::to_string_pretty(value)?)
         }
-        Value::Array(rows) => {
-            if rows.is_empty() {
-                return Ok("(none)".into());
-            }
-            let mut text = Vec::new();
-            for row in rows {
-                if row.get("id").is_some() {
-                    text.push(record_line(row));
-                } else {
-                    text.push(serde_json::to_string_pretty(row)?);
-                }
-            }
-            Ok(text.join("\n"))
-        }
         Value::Null => Ok("done".into()),
         other => Ok(other.to_string()),
     }
@@ -332,6 +319,18 @@ fn lines(rows: &[Value], page: &serde_json::Map<String, Value>) -> Result<String
     for row in rows {
         if row.get("id").is_some() {
             text.push(record_line(row));
+        } else if let (Some(starts), Some(item)) = (row.get("starts_at"), row.get("item")) {
+            // An occurrence: when it falls is the point of the view.
+            let ends = row
+                .get("ends_at")
+                .and_then(Value::as_str)
+                .map(|ends| format!(" to {ends}"))
+                .unwrap_or_default();
+            text.push(format!(
+                "{}{ends}  {}",
+                starts.as_str().unwrap_or(""),
+                record_line(item)
+            ));
         } else if let Some(item) = row.get("item") {
             // A search hit or a listing row carrying its metadata; a hit
             // leads with its score.

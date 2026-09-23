@@ -423,6 +423,10 @@ const listDeliveriesRoute = createRoute({
         .optional()
         .default(DEFAULT_PAGE_LIMIT)
         .describe("Maximum number of delivery attempts to return."),
+      cursor: z
+        .string()
+        .optional()
+        .describe("Opaque cursor from a previous page's `next_cursor`."),
     }),
   },
   responses: {
@@ -659,15 +663,17 @@ export function webhookRoutes(storage: Storage) {
     requireAuth(c);
     requirePermission(c, "webhooks.manage");
     const { id } = c.req.valid("param");
-    const { limit } = c.req.valid("query");
+    const { limit, cursor } = c.req.valid("query");
 
     const existing = await storage.outboundWebhooks.get(id);
     if (!existing) {
       throw new MarfaError(ErrorCode.WEBHOOK_NOT_FOUND, "Webhook not found");
     }
 
-    const deliveries = await storage.outboundWebhookDeliveries.list(id, limit);
-    return c.json({ data: deliveries, next_cursor: null }, 200);
+    return c.json(
+      await storage.outboundWebhookDeliveries.list(id, { limit, cursor }),
+      200,
+    );
   });
 
   return router;

@@ -73,6 +73,12 @@ export async function* paginate<T>(
     // On `null`, never on a short or empty page: a page can be thinned by
     // what the credential may read and still have a cursor to follow.
     if (page.next_cursor === null) return;
+    // A cursor answered back unchanged would serve the same page forever.
+    if (page.next_cursor === cursor) {
+      throw new Error(
+        "The server answered the cursor it was given, so the walk would not end.",
+      );
+    }
     cursor = page.next_cursor;
   }
 }

@@ -104,7 +104,7 @@ describe("the bearer grants API refuses a key without `grants.manage`", () => {
       key: adminKey,
     });
     expect(list.status).toBe(200);
-    const body = (await list.json()) as { id: string }[];
+    const body = ((await list.json()) as { data: { id: string }[] }).data;
     expect(body.some((g) => g.id === grant.id)).toBe(true);
 
     const revoke = await request(
