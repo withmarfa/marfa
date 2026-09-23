@@ -206,9 +206,11 @@ A device holds a working copy: a local store of one slice of one instance, fille
 
 **Local reads.** A local list and a local search answer the active state when the caller names none, which is the server's default. A local read by id answers every state but the bin: an archived row is readable by id and a trashed one reads as absent, which is the server's rule on the same door. A local search never answers a row in the bin under any state value, because the server's own search cannot see a trashed row either. A local list narrows on the item's own time with both bounds exclusive, which is the one rule the whole API takes.
 
-**What the real server cannot be made to produce.** Seven answers a device has to cope with cannot be arranged against the suite's own server: a transport failure, a server that has stopped answering, a credential revoked mid-queue, a `409 version_conflict` answered to a write that asked the server to resolve, a `5xx`, a `429` and an aged-out cursor. Each is asserted against the scripted server, and the chapter says why each cannot be reached.
+**The server's contract.** The binary reads a server's root before its first call that carries a credential, and refuses one whose `contract` is not the one it was built for, with `contract_mismatch` and exit 1, sending nothing that carries the credential.
 
-References: `device.md` 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34.
+**What the real server cannot be made to produce.** Eight answers a device has to cope with cannot be arranged against the suite's own server: a transport failure, a server that has stopped answering, a credential revoked mid-queue, a `409 version_conflict` answered to a write that asked the server to resolve, a root on another contract, a `5xx`, a `429` and an aged-out cursor. Each is asserted against the scripted server, and the chapter says why each cannot be reached.
+
+References: `device.md` 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36.
 
 ## The queue and its verdicts
 
