@@ -1472,3 +1472,74 @@ export function validateEdgeTypeSchema(
 
   return { success: true, data };
 }
+
+// ---------------------------------------------------------------------------
+// Keys no validator reads
+// ---------------------------------------------------------------------------
+
+/**
+ * Every top-level key `validateTypeSchema` reads. Checked against
+ * `TypeSchema` in both directions, so a key added to the type without being
+ * listed here fails to compile rather than being refused in every file that
+ * uses it. `required` is the authoring form the validator folds into the
+ * fields, and so is read without being a key of the result.
+ */
+const TYPE_SCHEMA_KEYS: ReadonlySet<string> = new Set([
+  ...Object.keys({
+    id: true,
+    parent: true,
+    label: true,
+    description: true,
+    version: true,
+    fields: true,
+    roles: true,
+    display_hints: true,
+    version_policy: true,
+    merge_policy: true,
+    compatible_with: true,
+  } satisfies Record<keyof TypeSchema, true>),
+  "required",
+]);
+
+/** Every top-level key `validateEdgeTypeSchema` reads, held the same way. */
+const EDGE_TYPE_SCHEMA_KEYS: ReadonlySet<string> = new Set(
+  Object.keys({
+    id: true,
+    label: true,
+    description: true,
+    cardinality: true,
+    source_type_constraints: true,
+    target_type_constraints: true,
+    cascade_on_delete: true,
+    property_schema: true,
+  } satisfies Record<keyof EdgeTypeSchema, true>),
+);
+
+/**
+ * One issue per top-level key the validator for this kind of schema does
+ * not read.
+ *
+ * The validators ignore such a key, and the registration routes call them,
+ * so refusing it there would change what the wire accepts. An in-tree file
+ * is held tighter because it is the format people copy: a key nothing reads
+ * says something nothing enforces, and a copy carries it on as if it did.
+ * `scripts/validate.ts` asks this of every in-tree file.
+ */
+export function unreadTopLevelKeys(
+  input: unknown,
+  kind: "type" | "edge",
+): SchemaValidationIssue[] {
+  const obj = asRecord(input);
+  if (!obj) return [];
+  const read = kind === "type" ? TYPE_SCHEMA_KEYS : EDGE_TYPE_SCHEMA_KEYS;
+  return Object.keys(obj)
+    .filter((key) => !read.has(key))
+    .map((key) =>
+      issue({
+        field: key,
+        expected: `only the keys the ${kind} schema validator reads: ${[...read].sort().join(", ")}`,
+        actual: `an unread key "${key}"`,
+        hint: "Remove it: nothing reads it, so it changes nothing about the type.",
+      }),
+    );
+}
