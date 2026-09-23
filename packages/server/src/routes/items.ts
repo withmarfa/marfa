@@ -2110,11 +2110,11 @@ export function itemRoutes(storage: Storage) {
     // incomplete when this is set and page the per-type edge/backref endpoints.
     let neighborsTruncated = false;
     // How many neighbors the caller may not read, counted over the edge
-    // blocks this response carries. Omitting them is right — a neighbor
-    // outside the caller's scope must never leak — but omitting them
-    // *silently* made a partial neighborhood indistinguishable from a
-    // complete one. An app missing a type scope rendered a ticket with
-    // none of its relations and looked correct doing it.
+    // blocks this response carries. A neighbor outside the caller's scope
+    // is omitted, never leaked, and the count says so: without it a partial
+    // neighborhood reads as a complete one, and a caller missing a type
+    // scope renders an item with none of its relations as though it had
+    // none.
     //
     // **It counts what the item map hid, and cannot count what the edge
     // map hid.** A relationship the credential may not read is not in
