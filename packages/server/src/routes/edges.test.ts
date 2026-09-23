@@ -430,9 +430,10 @@ describe("GET /items/:id/edges + /backrefs", () => {
    * Edges carry no lifecycle column, and `GET /edges` returns an edge
    * whether or not either endpoint is in the bin. Answering not-found here
    * would make the same edge reachable through one door and invisible
-   * through another, decided by the state of a row the edge does not belong to. A
-   * client reconciling its copy needs the edges of a trashed item: that is
-   * how it learns the item went to the bin with its relationships intact.
+   * through another, decided by the state of a row the edge does not
+   * belong to. A client reconciling its copy needs the edges of a trashed
+   * item: that is how it learns the item went to the bin with its
+   * relationships intact.
    */
   it("lists a trashed item's edges rather than answering not-found", async () => {
     const a = await createItem();
@@ -1106,15 +1107,28 @@ describe("Edge permission matrix (all-granted / type-only / edge-only / both / n
     expect(res.status).toBe(403);
   });
 
-  it("type-only member succeeds on read listings (edges read uses no gate today)", async () => {
-    // Reads follow the item-type read permission; edges hydrated on
-    // outbound list don't add a second gate.
+  it("type-only member is answered on an edge listing, with the edges it may not read dropped", async () => {
+    // A listing drops a row the key's edge map does not cover rather than
+    // refusing the door, since a refusal would say the row exists.
     const key = await mkKey({ "*": "read" }, {});
     const a = await createItem();
-    const res = await request(ctx.app, "GET", `/items/${a}/edges`, {
-      key,
+    const b = await createItem();
+    const create = await request(ctx.app, "POST", "/edges", {
+      key: ctx.workingKey,
+      body: { source_id: a, target_id: b, edge_type: "about" },
     });
-    expect(res.status).toBe(200);
+    expect(create.status).toBe(201);
+    const targets = async (k: string) => {
+      const res = await request(ctx.app, "GET", `/items/${a}/edges`, {
+        key: k,
+      });
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { data: { target_id: string }[] };
+      return body.data.map((edge) => edge.target_id);
+    };
+    // The witness: a key holding the edge map is shown the edge.
+    expect(await targets(ctx.workingKey)).toEqual([b]);
+    expect(await targets(key)).toEqual([]);
   });
 });
 
