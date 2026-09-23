@@ -1,238 +1,171 @@
 import { describe, expect, it } from "vitest";
 import {
+  CONTRACT_HEADER,
   CONTRACT_VERSION,
   ContractMismatchError,
-  ContractUnreadableError,
   createClient,
   pages,
   type Page,
 } from "./index.js";
 
-/** A server that answers the root with `contract` and every other path
- *  with an empty page, recording what it was asked. */
-function stubServer(
-  contract: unknown,
-  root?: (init?: RequestInit) => Response | Promise<Response>,
-  rootPath = "/",
-) {
+interface Answer {
+  status?: number;
+  body?: string;
+  /** The contract header's value, or `null` to send none. */
+  contract?: string | null;
+}
+
+/** A server that answers every request with an empty page, stamped with
+ *  this client's contract unless told otherwise, recording what it was
+ *  asked. */
+function stubServer(answer: (path: string) => Answer = () => ({})) {
   const seen: { url: string; authorization: string | null }[] = [];
   const redirects: Request["redirect"][] = [];
   const fetch = (input: string | URL | Request, init?: RequestInit) => {
     const request = new Request(input, init);
+    const path = new URL(request.url).pathname;
     redirects.push(request.redirect);
     seen.push({
-      url: new URL(request.url).pathname,
+      url: path,
       authorization: request.headers.get("Authorization"),
     });
-    if (new URL(request.url).pathname === rootPath && root) {
-      return Promise.resolve(root(init));
-    }
-    const body =
-      new URL(request.url).pathname === rootPath
-        ? { name: "marfa", contract }
-        : { data: [], next_cursor: null };
-    return Promise.resolve(
-      new Response(JSON.stringify(body), {
-        headers: { "Content-Type": "application/json" },
-      }),
-    );
+    const {
+      status = 200,
+      body = JSON.stringify({ data: [], next_cursor: null }),
+      contract = String(CONTRACT_VERSION),
+    } = answer(path);
+    const headers = new Headers({ "Content-Type": "application/json" });
+    if (contract !== null) headers.set(CONTRACT_HEADER, contract);
+    return Promise.resolve(new Response(body, { status, headers }));
   };
   return { seen, redirects, fetch };
 }
 
-describe("the contract gate", () => {
-  it("refuses a server advertising another contract, and sends it nothing else", async () => {
-    const server = stubServer(CONTRACT_VERSION + 1);
-    const client = createClient({
-      baseUrl: "https://marfa.example",
-      credential: "k",
-      fetch: server.fetch,
+const make = (
+  server: ReturnType<typeof stubServer>,
+  baseUrl = "https://marfa.example",
+) => createClient({ baseUrl, credential: "k", fetch: server.fetch });
+
+describe("the contract check", () => {
+  it("refuses an answer on another contract rather than reading it", async () => {
+    const server = stubServer(() => ({
+      contract: String(CONTRACT_VERSION + 1),
+    }));
+    const refused = make(server).GET("/edge-types");
+    await expect(refused).rejects.toBeInstanceOf(ContractMismatchError);
+    await expect(refused).rejects.toMatchObject({
+      served: String(CONTRACT_VERSION + 1),
+      status: 200,
     });
-    await expect(client.GET("/edge-types")).rejects.toBeInstanceOf(
+  });
+
+  it("refuses a success that names no contract", async () => {
+    // A page from something that is not the server, answered 200: a
+    // captive portal, a misrouted proxy.
+    const server = stubServer(() => ({
+      contract: null,
+      body: "<html>sign in to the network</html>",
+    }));
+    await expect(make(server).GET("/edge-types")).rejects.toMatchObject({
+      name: "ContractMismatchError",
+      served: null,
+      status: 200,
+    });
+  });
+
+  it("refuses an error answer on another contract", async () => {
+    const server = stubServer(() => ({
+      status: 404,
+      contract: String(CONTRACT_VERSION + 1),
+      body: JSON.stringify({ error: { code: "not_found" } }),
+    }));
+    await expect(make(server).GET("/edge-types")).rejects.toBeInstanceOf(
       ContractMismatchError,
     );
-    expect(server.seen).toEqual([{ url: "/", authorization: null }]);
   });
 
-  it("reads the root without the credential, once for concurrent first requests", async () => {
-    const server = stubServer(CONTRACT_VERSION);
-    const client = createClient({
-      baseUrl: "https://marfa.example",
-      credential: "k",
-      fetch: server.fetch,
-    });
-    await Promise.all([
-      client.GET("/edge-types"),
-      client.GET("/edge-types"),
-      client.GET("/edge-types"),
+  it("hands on an error answer that names no contract, status intact", async () => {
+    const server = stubServer(() => ({
+      status: 502,
+      contract: null,
+      body: "<html>bad gateway</html>",
+    }));
+    const answered = await make(server).GET("/edge-types");
+    expect(answered.response.status).toBe(502);
+    expect(answered.data).toBeUndefined();
+  });
+
+  it("reads a contract spelled any other way as another contract", async () => {
+    const server = stubServer(() => ({
+      contract: `0${String(CONTRACT_VERSION)}`,
+    }));
+    await expect(make(server).GET("/edge-types")).rejects.toThrow(
+      `contract "0${String(CONTRACT_VERSION)}"`,
+    );
+  });
+
+  it("reads an answer on its own contract, with no round trip to the root", async () => {
+    // The witness: the same client against the contract it was generated for.
+    const server = stubServer();
+    const client = make(server, "https://marfa.example/");
+    const first = await client.GET("/edge-types");
+    const second = await client.GET("/edge-types");
+    expect(first.data).toEqual({ data: [], next_cursor: null });
+    expect(second.response.ok).toBe(true);
+    expect(server.seen).toEqual([
+      { url: "/edge-types", authorization: "Bearer k" },
+      { url: "/edge-types", authorization: "Bearer k" },
     ]);
-    expect(server.seen[0]).toEqual({ url: "/", authorization: null });
-    expect(server.seen.filter((r) => r.url === "/")).toHaveLength(1);
   });
+});
 
-  it("asks again after a check that failed, rather than remembering it as a pass", async () => {
-    let refusals = 1;
-    const server = stubServer(CONTRACT_VERSION, () =>
-      refusals-- > 0
-        ? new Response("<html>bad gateway</html>", { status: 502 })
-        : Response.json({ contract: CONTRACT_VERSION }),
-    );
-    const client = createClient({
-      baseUrl: "https://marfa.example",
-      credential: "k",
-      fetch: server.fetch,
-    });
-    const refused = client.GET("/edge-types");
-    await expect(refused).rejects.toBeInstanceOf(ContractUnreadableError);
-    await expect(refused).rejects.toMatchObject({ status: 502 });
-    const answered = await client.GET("/edge-types");
-    expect(answered.response.ok).toBe(true);
-    expect(server.seen.map((r) => r.url)).toEqual(["/", "/", "/edge-types"]);
-  });
-
-  it("reads a contract of another type as another contract", async () => {
-    const server = stubServer(String(CONTRACT_VERSION));
-    const client = createClient({
-      baseUrl: "https://marfa.example",
-      credential: "k",
-      fetch: server.fetch,
-    });
-    await expect(client.GET("/edge-types")).rejects.toThrow(
-      `serves contract "${String(CONTRACT_VERSION)}"`,
-    );
-  });
-
+describe("where the credential goes", () => {
   it("sends nothing to a base URL other than its own", async () => {
-    const server = stubServer(CONTRACT_VERSION);
-    const client = createClient({
-      baseUrl: "https://marfa.example",
-      credential: "k",
-      fetch: server.fetch,
-    });
+    const server = stubServer();
     await expect(
-      client.GET("/edge-types", { baseUrl: "https://elsewhere.example" }),
+      make(server).GET("/edge-types", {
+        baseUrl: "https://elsewhere.example",
+      }),
     ).rejects.toThrow(/refuses to send/);
     expect(server.seen).toEqual([]);
   });
 
-  it("holds every concurrent first request until the check refuses them", async () => {
-    const server = stubServer(
-      CONTRACT_VERSION + 1,
-      () =>
-        new Promise((resolve) =>
-          setTimeout(() => {
-            resolve(Response.json({ contract: CONTRACT_VERSION + 1 }));
-          }, 20),
-        ),
-    );
-    const client = createClient({
-      baseUrl: "https://marfa.example",
-      credential: "k",
-      fetch: server.fetch,
-    });
-    const answers = await Promise.allSettled([
-      client.GET("/edge-types"),
-      client.GET("/edge-types"),
-      client.GET("/edge-types"),
-    ]);
-    expect(answers.every((a) => a.status === "rejected")).toBe(true);
-    expect(server.seen).toEqual([{ url: "/", authorization: null }]);
+  it("follows no redirect", async () => {
+    const server = stubServer();
+    await make(server).GET("/edge-types");
+    expect(server.redirects).toEqual(["error"]);
   });
 
-  it("sends the root no credential when it is called directly", async () => {
-    const server = stubServer(CONTRACT_VERSION);
-    const client = createClient({
-      baseUrl: "https://marfa.example",
-      credential: "k",
-      fetch: server.fetch,
-    });
-    await client.GET("/");
-    expect(server.seen.map((r) => r.authorization)).toEqual([null, null]);
-  });
-
-  it("follows no redirect, on the root read or on a call", async () => {
-    const server = stubServer(CONTRACT_VERSION);
-    const client = createClient({
-      baseUrl: "https://marfa.example",
-      credential: "k",
-      fetch: server.fetch,
-    });
+  it("serves an instance under a path prefix, and nothing outside it", async () => {
+    const server = stubServer();
+    const client = make(server, "https://marfa.example/api/");
     await client.GET("/edge-types");
-    expect(server.redirects).toEqual(["error", "error"]);
-  });
-
-  it("lets a request's own abort release it from a root that never answers", async () => {
-    const server = stubServer(
-      CONTRACT_VERSION,
-      () => new Promise<Response>(() => undefined),
-    );
-    const client = createClient({
-      baseUrl: "https://marfa.example",
-      credential: "k",
-      fetch: server.fetch,
-    });
-    await expect(
-      client.GET("/edge-types", { signal: AbortSignal.timeout(50) }),
-    ).rejects.toThrow();
-    expect(server.seen.map((r) => r.url)).toEqual(["/"]);
-  });
-
-  it("reads a root that answers something other than JSON as unreadable", async () => {
-    const server = stubServer(
-      CONTRACT_VERSION,
-      () => new Response("<html>a page</html>", { status: 200 }),
-    );
-    const client = createClient({
-      baseUrl: "https://marfa.example",
-      credential: "k",
-      fetch: server.fetch,
-    });
-    const refused = client.GET("/edge-types");
-    await expect(refused).rejects.toBeInstanceOf(ContractUnreadableError);
-    await expect(refused).rejects.toMatchObject({ status: undefined });
-  });
-
-  it("serves an instance under a path prefix, reading the root there", async () => {
-    const server = stubServer(CONTRACT_VERSION, undefined, "/api/");
-    const client = createClient({
-      baseUrl: "https://marfa.example/api/",
-      credential: "k",
-      fetch: server.fetch,
-    });
-    await client.GET("/edge-types");
-    expect(server.seen.map((r) => r.url)).toEqual(["/api/", "/api/edge-types"]);
+    expect(server.seen.map((r) => r.url)).toEqual(["/api/edge-types"]);
     await expect(
       client.GET("/edge-types", { baseUrl: "https://marfa.example" }),
     ).rejects.toThrow(/refuses to send/);
   });
 
   it("refuses a base URL with a query, a fragment or another scheme", () => {
-    const make = (baseUrl: string) => () =>
-      createClient({ baseUrl, credential: "k", fetch: stubServer(1).fetch });
-    expect(make("https://marfa.example/?x=1")).toThrow(TypeError);
-    expect(make("https://marfa.example/#top")).toThrow(TypeError);
-    expect(make("ftp://marfa.example")).toThrow(TypeError);
+    const server = stubServer();
+    expect(() => make(server, "https://marfa.example/?x=1")).toThrow(TypeError);
+    expect(() => make(server, "https://marfa.example/#top")).toThrow(TypeError);
+    expect(() => make(server, "ftp://marfa.example")).toThrow(TypeError);
   });
 
   it("refuses a path parameter that would resolve to another route", async () => {
-    const server = stubServer(CONTRACT_VERSION);
-    const client = createClient({
-      baseUrl: "https://marfa.example",
-      credential: "k",
-      fetch: server.fetch,
-    });
-    await expect(
-      client.GET("/items/{id}", { params: { path: { id: ".." } } }),
-    ).rejects.toThrow(/names no resource/);
+    const server = stubServer();
+    const client = make(server);
+    for (const id of [".", ".."]) {
+      await expect(
+        client.GET("/items/{id}", { params: { path: { id } } }),
+      ).rejects.toThrow(/names no resource/);
+    }
     expect(server.seen).toEqual([]);
   });
 
   it("types its calls from the document", () => {
-    const client = createClient({
-      baseUrl: "https://marfa.example",
-      credential: "k",
-      fetch: stubServer(CONTRACT_VERSION).fetch,
-    });
+    const client = make(stubServer());
     // Checked by the compiler when the package typechecks.
     const typed = () => {
       // @ts-expect-error: no such path in the document
@@ -242,29 +175,6 @@ describe("the contract gate", () => {
       void client.GET("/items/{id}", { params: { path: { id: "i" } } });
     };
     expect(typeof typed).toBe("function");
-  });
-
-  it("proceeds against a server on its contract, reading the root once, with the bearer", async () => {
-    // The witness: the same client against the contract it was generated for.
-    const server = stubServer(CONTRACT_VERSION);
-    const client = createClient({
-      baseUrl: "https://marfa.example/",
-      credential: "k",
-      fetch: server.fetch,
-    });
-    const first = await client.GET("/edge-types");
-    const second = await client.GET("/edge-types");
-    expect(first.data).toEqual({ data: [], next_cursor: null });
-    expect(second.response.ok).toBe(true);
-    expect(server.seen.map((r) => r.url)).toEqual([
-      "/",
-      "/edge-types",
-      "/edge-types",
-    ]);
-    expect(server.seen.slice(1).map((r) => r.authorization)).toEqual([
-      "Bearer k",
-      "Bearer k",
-    ]);
   });
 });
 

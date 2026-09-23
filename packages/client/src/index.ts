@@ -5,35 +5,27 @@ import type { paths } from "./schema.js";
 export type { components, operations, paths } from "./schema.js";
 export { CONTRACT_VERSION };
 
+/** The response header every answer carries its contract version in. */
+export const CONTRACT_HEADER = "X-Marfa-Contract";
+
 /**
- * The server advertises a contract this client was not generated for. Its
- * answers may be shaped in ways this client cannot read, so nothing is sent
- * to it past the root.
+ * An answer came from a server on another contract, or named none. Its body
+ * may be shaped in ways this client cannot read, so it is not handed on.
  */
 export class ContractMismatchError extends Error {
   constructor(
-    readonly served: unknown,
+    /** The header as it arrived, or `null` when the answer carried none. */
+    readonly served: string | null,
+    /** The HTTP status of the answer that was refused. */
+    readonly status: number,
     readonly expected: number = CONTRACT_VERSION,
   ) {
     super(
-      `The server at this address serves contract ${served === undefined ? "none" : JSON.stringify(served)}; this client was generated for contract ${String(expected)}. Use a client generated for the server's contract.`,
+      served === null
+        ? `The server answered ${String(status)} with no contract version, so its body cannot be read by a client generated for contract ${String(expected)}.`
+        : `The server answered with contract ${JSON.stringify(served)}; this client was generated for contract ${String(expected)}. Use a client generated for the server's contract.`,
     );
     this.name = "ContractMismatchError";
-  }
-}
-
-/**
- * The root could not be read, so which contract the server speaks is
- * unknown. Nothing past the root was sent, and the next request asks again.
- */
-export class ContractUnreadableError extends Error {
-  constructor(readonly status: number | undefined) {
-    super(
-      status === undefined
-        ? "The server's root did not answer JSON, so which contract it speaks is unknown."
-        : `The server's root answered ${String(status)}, so which contract it speaks is unknown.`,
-    );
-    this.name = "ContractUnreadableError";
   }
 }
 
@@ -51,16 +43,14 @@ export interface ClientOptions {
 
 export type MarfaClient = Client<paths>;
 
-/** How long the root may take to answer before the check fails. */
-const ROOT_BUDGET_MS = 10_000;
-
 /**
- * A typed client for one instance. Before its first request it reads the
- * root once, without the credential, and refuses a server whose `contract`
- * is not the one this client was generated for with
- * {@link ContractMismatchError}, or one whose root cannot be read with
- * {@link ContractUnreadableError}. The credential is sent only under the
- * configured `baseUrl`, never to the root, and never after a redirect.
+ * A typed client for one instance. Every answer is checked for the contract
+ * version this client was generated for, and one that names another, or a
+ * success that names none, is refused with {@link ContractMismatchError}
+ * rather than read. An error answer with no header is handed on as it
+ * came, since a proxy in front of the server answers without one and its
+ * status is still the truth. The credential is sent only under the
+ * configured `baseUrl`, and never after a redirect.
  */
 export function createClient(options: ClientOptions): MarfaClient {
   const fetcher = options.fetch ?? globalThis.fetch;
@@ -74,53 +64,15 @@ export function createClient(options: ClientOptions): MarfaClient {
     );
   }
   const baseUrl = base.href.replace(/\/+$/, "");
-  // Normalized as a request's own URL is, so the comparisons below are
+  // Normalized as a request's own URL is, so the comparison below is
   // between two spellings of the same thing.
   const root = new URL(`${baseUrl}/`).href;
-  let checked: Promise<void> | undefined;
-  const checkContract = async (): Promise<void> => {
-    // A redirect is refused rather than followed: the contract read has to
-    // be the configured server's, not whatever it points at.
-    const response = await fetcher(root, {
-      redirect: "error",
-      signal: AbortSignal.timeout(ROOT_BUDGET_MS),
-    });
-    if (!response.ok) throw new ContractUnreadableError(response.status);
-    let served: unknown;
-    try {
-      served = ((await response.json()) as { contract?: unknown }).contract;
-    } catch {
-      throw new ContractUnreadableError(undefined);
-    }
-    if (served !== CONTRACT_VERSION) throw new ContractMismatchError(served);
-  };
-  /** The check, abandoned by this request if its own signal aborts first. */
-  const awaitCheck = (signal: AbortSignal): Promise<void> => {
-    checked ??= checkContract().catch((error: unknown) => {
-      // A failure is not remembered as a pass: the next request asks again.
-      checked = undefined;
-      throw error;
-    });
-    const reason = () =>
-      signal.reason instanceof Error
-        ? signal.reason
-        : new Error("The request was aborted before the contract was read.");
-    if (signal.aborted) return Promise.reject(reason());
-    return new Promise<void>((resolve, reject) => {
-      const abandon = () => {
-        reject(reason());
-      };
-      signal.addEventListener("abort", abandon, { once: true });
-      checked?.then(resolve, reject).finally(() => {
-        signal.removeEventListener("abort", abandon);
-      });
-    });
-  };
+  const expected = String(CONTRACT_VERSION);
   const gate: Middleware = {
-    async onRequest({ request, params }) {
-      // A per-request `baseUrl` would otherwise carry the credential to a
-      // server whose contract was never read.
-      if (request.url !== root && !request.url.startsWith(root)) {
+    onRequest({ request, params }) {
+      // A per-request `baseUrl` would otherwise carry the credential to
+      // another server.
+      if (!request.url.startsWith(root)) {
         throw new Error(
           `This client is for ${baseUrl}; it refuses to send ${request.url}.`,
         );
@@ -134,15 +86,17 @@ export function createClient(options: ClientOptions): MarfaClient {
           );
         }
       }
-      await awaitCheck(request.signal);
-      // The root answers without a credential, and is not sent one. A
-      // redirect is refused, so the credential never leaves the URL it was
-      // sent to.
+      // A redirect is refused, so the credential never leaves the URL it
+      // was sent to.
       const headers = new Headers(request.headers);
-      if (request.url.split(/[?#]/)[0] !== root) {
-        headers.set("Authorization", `Bearer ${options.credential}`);
-      }
+      headers.set("Authorization", `Bearer ${options.credential}`);
       return new Request(request, { headers, redirect: "error" });
+    },
+    onResponse({ response }) {
+      const served = response.headers.get(CONTRACT_HEADER);
+      if (served === expected) return undefined;
+      if (served === null && !response.ok) return undefined;
+      throw new ContractMismatchError(served, response.status);
     },
   };
   const client = createFetchClient<paths>({ baseUrl, fetch: fetcher });

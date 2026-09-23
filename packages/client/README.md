@@ -28,7 +28,7 @@ for await (const item of everyItem) {
 
 ## The contract
 
-The client carries the contract version it was generated for as `CONTRACT_VERSION`. Before its first request it reads the instance's root once, without the credential. A root whose `contract` differs is refused with `ContractMismatchError`, and one that cannot be read with `ContractUnreadableError`; either way nothing further is sent. A failed check is not remembered as a pass: the next request asks again. The credential is sent only under the `baseUrl` the client was made for, and never to the root.
+The client carries the contract version it was generated for as `CONTRACT_VERSION`, and every answer the server sends carries its own as the `X-Marfa-Contract` header. The client checks that header on each answer before handing it on: one that names another contract, or a success that names none, is refused with `ContractMismatchError`. An error answer with no header is handed on as it came, since a proxy in front of the server answers without one and its status is still the truth. There is no separate round trip to the root. The credential is sent only under the `baseUrl` the client was made for, and never after a redirect.
 
 ## Pages
 
