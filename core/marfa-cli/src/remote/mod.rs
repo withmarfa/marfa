@@ -1,19 +1,21 @@
 //! The server a direct command talks to, and how it talks to it.
 
 pub mod request;
+pub mod transport;
 
 use std::cell::RefCell;
 use std::fs::File;
 use std::io::Read;
 
 use marfa_core::Server;
-use marfa_core::http::{Call, CallBody, Http, Reply, ReplyBody};
+use marfa_core::http::{Call, CallBody, Reply, ReplyBody};
 use serde_json::Value;
 
 use crate::auth;
 use crate::credentials::{self, Kept};
 use crate::error::CliError;
 use request::{Body, Request};
+pub use transport::Transport;
 
 /// Where the credential a call carries came from, for `whoami` to say.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -35,7 +37,7 @@ impl CredentialSource {
 
 pub struct Remote {
     /// Rebuilt when a kept token is refreshed mid-command.
-    http: RefCell<Http>,
+    http: RefCell<Transport>,
     url: String,
     origin: String,
     credential: Option<CredentialSource>,
@@ -89,7 +91,7 @@ impl Remote {
                 Err(error) => return Err(error),
             },
         };
-        let origin = Http::new(&url, None)?.origin();
+        let origin = transport::origin_of(&url)?;
         let mut kept = None;
         let (key, credential) = match named.key.clone() {
             Some(key) => (Some(key), Some(CredentialSource::Flag)),
@@ -113,7 +115,7 @@ impl Remote {
                 },
             },
         };
-        let http = Http::new(&url, key.as_deref())?;
+        let http = Transport::new(&url, key.as_deref())?;
         Ok(Remote {
             http: RefCell::new(http),
             url,
@@ -167,7 +169,7 @@ impl Remote {
         let refused = self.bearer.borrow().clone().unwrap_or_default();
         let next = auth::refresh(&self.origin, Some(&refused))?;
         let bearer = next.bearer().to_string();
-        *self.http.borrow_mut() = Http::new(&self.url, Some(&bearer))?;
+        *self.http.borrow_mut() = Transport::new(&self.url, Some(&bearer))?;
         *self.bearer.borrow_mut() = Some(bearer);
         *self.kept.borrow_mut() = Some(next);
         Ok(())
@@ -177,7 +179,7 @@ impl Remote {
     /// path, which `resolve` reaches only through the real keychain.
     #[cfg(test)]
     pub(crate) fn holding(url: &str, kept: Kept) -> Result<Remote, CliError> {
-        let http = Http::new(url, Some(kept.bearer()))?;
+        let http = Transport::new(url, Some(kept.bearer()))?;
         let origin = http.origin();
         Ok(Remote {
             url: url.to_string(),
@@ -192,7 +194,7 @@ impl Remote {
     /// A remote at a URL with no credential: the sign-in surface's doors,
     /// which take a client id or a token in the body rather than a bearer.
     pub fn public_at(url: &str) -> Result<Remote, CliError> {
-        let http = Http::new(url, None)?;
+        let http = Transport::new(url, None)?;
         let origin = http.origin();
         Ok(Remote {
             url: url.to_string(),
@@ -207,7 +209,7 @@ impl Remote {
     /// A remote over a transport built for one call, such as the bootstrap
     /// mint, which carries the printed secret rather than a key, so it
     /// names no credential source.
-    pub fn with(http: Http) -> Remote {
+    pub fn with(http: Transport) -> Remote {
         let origin = http.origin();
         Remote {
             url: origin.clone(),
@@ -236,20 +238,77 @@ impl Remote {
     /// `Err` is a transport failure, a missing credential, or a refresh
     /// that could not be made.
     ///
+    /// An answer that names another contract, or a success that names none,
+    /// is refused before anything reads it: its body may be shaped in ways
+    /// this binary cannot read. A refusal that names none is handed on,
+    /// since a proxy in front of the server answers without one.
+    ///
     /// A `401` to a kept token is answered by one refresh and one retry,
     /// because the token may have been rotated by another process since
     /// this one read the keychain, or have run out between the read and
     /// the call.
     pub fn call(&self, request: &Request) -> Result<Reply, CliError> {
-        let reply = self.send(request)?;
+        if request.mints {
+            self.hold_root()?;
+        }
+        let reply = self.checked(self.send(request, true)?, request)?;
         if reply.status == 401 && request.credential && self.can_refresh() {
             self.refreshed()?;
-            return self.send(request);
+            return self.checked(self.send(request, true)?, request);
         }
         Ok(reply)
     }
 
-    fn send(&self, request: &Request) -> Result<Reply, CliError> {
+    fn checked(&self, reply: Reply, request: &Request) -> Result<Reply, CliError> {
+        if transport::speaks_this_contract(reply.contract.as_deref(), reply.status) {
+            return Ok(reply);
+        }
+        Err(CliError::ContractMismatch {
+            origin: self.origin.clone(),
+            served: match reply.contract {
+                Some(served) => format!("answers contract {served}"),
+                None => format!("answered {} naming no contract", reply.status),
+            },
+            expected: marfa_client::CONTRACT_VERSION,
+            // The answer is what names the contract, so it arrives after the
+            // server has acted on the request.
+            write_sent: request.method != request::Method::Get,
+            status: Some(reply.status),
+        })
+    }
+
+    /// Reads the root and refuses a server on another contract before
+    /// anything is sent to it: for a write whose answer is the only copy of
+    /// what it mints (`Request::minting`).
+    pub fn hold_root(&self) -> Result<(), CliError> {
+        let instance = self.describe(&crate::commands::status::root_request())?;
+        let served = instance.get("contract");
+        if served.and_then(Value::as_u64) == Some(marfa_client::CONTRACT_VERSION) {
+            return Ok(());
+        }
+        Err(CliError::ContractMismatch {
+            origin: self.origin.clone(),
+            served: match served {
+                Some(served) => format!("answers contract {served}"),
+                None => "answers no contract at its root".into(),
+            },
+            expected: marfa_client::CONTRACT_VERSION,
+            write_sent: false,
+            status: None,
+        })
+    }
+
+    fn redirected(&self, reply: &Reply) -> Option<CliError> {
+        (300..400)
+            .contains(&reply.status)
+            .then(|| CliError::Redirected {
+                origin: self.origin.clone(),
+                status: reply.status,
+                location: reply.location.clone(),
+            })
+    }
+
+    fn send(&self, request: &Request, held: bool) -> Result<Reply, CliError> {
         let http = self.http.borrow();
         if request.credential && !http.has_credential() {
             return Err(CliError::NoCredential {
@@ -294,44 +353,39 @@ impl Remote {
                 CallBody::Text(&form_text)
             }
         };
-        Ok(http.call(Call {
-            method: request.method,
-            segments: &segments,
-            params: &params,
-            headers: &headers,
-            body,
-            credential: request.credential,
-            stream: request.stream,
-        })?)
+        Ok(http.call(
+            Call {
+                method: request.method,
+                segments: &segments,
+                params: &params,
+                headers: &headers,
+                body,
+                credential: request.credential,
+                stream: request.stream,
+            },
+            held,
+        )?)
     }
 
     /// Sends a request and answers its JSON on a `2xx`; anything else is the
     /// server's refusal, carried whole.
     pub fn json(&self, request: &Request) -> Result<Value, CliError> {
         let reply = self.call(request)?;
-        let text = match reply.body {
-            ReplyBody::Text(text) => text,
-            // The transport hands back a reader only for a streamed call,
-            // which is `stream`'s to send.
-            ReplyBody::Stream(_) => {
-                return Err(CliError::Invalid(format!(
-                    "{} was sent as a stream and read as JSON",
-                    request.path()
-                )));
-            }
-        };
-        if !(200..300).contains(&reply.status) {
-            return Err(refused(reply.status, &text, reply.retry_after_seconds));
+        if let Some(redirect) = self.redirected(&reply) {
+            return Err(redirect);
         }
-        if text.trim().is_empty() {
-            return Ok(Value::Null);
+        read_json(reply, request)
+    }
+
+    /// Reads a public door that describes the server, the root or health,
+    /// whatever contract its answer names: saying which server this is, and
+    /// that it speaks another contract, is what reading one is for.
+    pub fn describe(&self, request: &Request) -> Result<Value, CliError> {
+        let reply = self.send(request, false)?;
+        if let Some(redirect) = self.redirected(&reply) {
+            return Err(redirect);
         }
-        serde_json::from_str(&text).map_err(|error| {
-            CliError::Core(marfa_core::CoreError::Decoding(format!(
-                "{}: {error}",
-                request.path()
-            )))
-        })
+        read_json(reply, request)
     }
 
     /// Sends a streamed request and hands back the body as a reader on a
@@ -339,11 +393,40 @@ impl Remote {
     /// so the envelope reaches the classification.
     pub fn stream(&self, request: &Request) -> Result<(String, Box<dyn Read + Send>), CliError> {
         let reply = self.call(request)?;
+        if let Some(redirect) = self.redirected(&reply) {
+            return Err(redirect);
+        }
         match reply.body {
             ReplyBody::Stream(reader) => Ok((reply.content_type, reader)),
             ReplyBody::Text(text) => Err(refused(reply.status, &text, reply.retry_after_seconds)),
         }
     }
+}
+
+fn read_json(reply: Reply, request: &Request) -> Result<Value, CliError> {
+    let text = match reply.body {
+        ReplyBody::Text(text) => text,
+        // The transport hands back a reader only for a streamed call,
+        // which is `stream`'s to send.
+        ReplyBody::Stream(_) => {
+            return Err(CliError::Invalid(format!(
+                "{} was sent as a stream and read as JSON",
+                request.path()
+            )));
+        }
+    };
+    if !(200..300).contains(&reply.status) {
+        return Err(refused(reply.status, &text, reply.retry_after_seconds));
+    }
+    if text.trim().is_empty() {
+        return Ok(Value::Null);
+    }
+    serde_json::from_str(&text).map_err(|error| {
+        CliError::Core(marfa_core::CoreError::Decoding(format!(
+            "{}: {error}",
+            request.path()
+        )))
+    })
 }
 
 fn non_empty(value: Option<String>) -> Option<String> {
@@ -409,7 +492,7 @@ mod tests {
     use crate::door::{Answer, Door};
 
     fn remote_at(door: &Door, key: Option<&str>) -> Remote {
-        Remote::with(Http::new(&door.url, key).unwrap())
+        Remote::with(Transport::new(&door.url, key).unwrap())
     }
 
     #[test]
@@ -509,6 +592,7 @@ mod tests {
                 "401 Unauthorized",
                 r#"{"error":{"code":"unauthorized","message":"expired"}}"#,
             ),
+            root(&marfa_client::CONTRACT_VERSION.to_string()),
             Answer::json(
                 "200 OK",
                 r#"{"access_token":"marfa_at_new","refresh_token":"marfa_rt_new","expires_in":3600,"token_type":"Bearer"}"#,
@@ -518,6 +602,7 @@ mod tests {
                 "401 Unauthorized",
                 r#"{"error":{"code":"unauthorized","message":"still"}}"#,
             ),
+            root(&marfa_client::CONTRACT_VERSION.to_string()),
             Answer::json(
                 "429 Too Many Requests",
                 r#"{"error":{"code":"rate_limited","message":"slow down"}}"#,
@@ -534,7 +619,7 @@ mod tests {
         };
         // The refresh reads the keychain by the remote's origin, which is
         // the door's.
-        let origin = Http::new(&door.url, None).unwrap().origin();
+        let origin = Transport::new(&door.url, None).unwrap().origin();
         let _keychain = credentials::hold(&origin);
         match credentials::keep(&origin, &kept) {
             Ok(()) => {}
@@ -556,30 +641,84 @@ mod tests {
             "the rotated set is the kept one, and the refused refresh left it"
         );
         let received = door.received();
-        assert_eq!(received.len(), 5);
-        assert_eq!(received[0].path(), "/items");
+        let paths: Vec<&str> = received.iter().map(|r| r.path()).collect();
+        // Each refresh reads the root first, since the answer it waits on is
+        // the only copy of the rotated pair.
+        assert_eq!(
+            paths,
+            vec![
+                "/items",
+                "/",
+                "/auth/oauth2/token",
+                "/items",
+                "/items",
+                "/",
+                "/auth/oauth2/token"
+            ]
+        );
         assert_eq!(
             received[0].header("authorization"),
             Some("Bearer marfa_at_old")
         );
-        assert_eq!(received[1].path(), "/auth/oauth2/token");
         assert!(
-            received[1].body.contains("refresh_token=marfa_rt_old"),
+            received[2].body.contains("refresh_token=marfa_rt_old"),
             "{}",
-            received[1].body
+            received[2].body
         );
-        assert_eq!(received[2].path(), "/items");
         assert_eq!(
-            received[2].header("authorization"),
+            received[3].header("authorization"),
             Some("Bearer marfa_at_new")
         );
-        assert_eq!(received[3].path(), "/items");
-        assert_eq!(received[4].path(), "/auth/oauth2/token");
         assert!(
-            received[4].body.contains("refresh_token=marfa_rt_new"),
+            received[6].body.contains("refresh_token=marfa_rt_new"),
             "{}",
-            received[4].body
+            received[6].body
         );
+    }
+
+    /// The call sent again after a refresh is held to the contract as the
+    /// first was.
+    #[test]
+    fn the_call_sent_again_after_a_refresh_is_held_to_the_contract() {
+        let door = Door::open(vec![
+            Answer::json(
+                "401 Unauthorized",
+                r#"{"error":{"code":"unauthorized","message":"expired"}}"#,
+            ),
+            root(&marfa_client::CONTRACT_VERSION.to_string()),
+            Answer::json(
+                "200 OK",
+                r#"{"access_token":"marfa_at_new","refresh_token":"marfa_rt_new","expires_in":3600,"token_type":"Bearer"}"#,
+            ),
+            Answer::json("200 OK", PAGE).on_contract(Some("2")),
+        ]);
+        let kept = Kept::Token {
+            access_token: "marfa_at_old".into(),
+            refresh_token: Some("marfa_rt_old".into()),
+            expires_at: Some(crate::auth::now_seconds() + 3600),
+            client_id: "client".into(),
+            scope: None,
+            token_endpoint: format!("{}/auth/oauth2/token", door.url),
+            revocation_endpoint: None,
+        };
+        let origin = Transport::new(&door.url, None).unwrap().origin();
+        let _keychain = credentials::hold(&origin);
+        match credentials::keep(&origin, &kept) {
+            Ok(()) => {}
+            Err(CliError::NoKeychain(reason)) => {
+                credentials::skipped(&reason);
+                return;
+            }
+            Err(error) => panic!("{error}"),
+        }
+        let remote = Remote::holding(&door.url, kept).unwrap();
+        match remote.json(&Request::get(&["items"])) {
+            Err(CliError::ContractMismatch { served, .. }) => {
+                assert_eq!(served, "answers contract 2");
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(door.received().len(), 4);
     }
 
     /// A refusal is the server's answer carried whole, and an empty
@@ -624,7 +763,9 @@ mod tests {
                 status: "200 OK",
                 content_type: "text/plain",
                 body: "hello".into(),
-            },
+                headers: Vec::new(),
+            }
+            .on_contract(Some(&marfa_client::CONTRACT_VERSION.to_string())),
             Answer::json(
                 "404 Not Found",
                 r#"{"error":{"code":"blob_not_found","message":"no such blob"}}"#,
@@ -671,5 +812,534 @@ mod tests {
             .collect();
         assert_eq!(types, vec!["image/png"]);
         assert_eq!(received[0].body, "PNG raw bytes");
+    }
+
+    fn root(contract: &str) -> Answer {
+        Answer::json(
+            "200 OK",
+            &format!(r#"{{"name":"marfa","version":"dev","contract":{contract},"features":[]}}"#),
+        )
+    }
+
+    const PAGE: &str = r#"{"data":[],"next_cursor":null}"#;
+
+    fn mismatch(result: Result<Value, CliError>) -> String {
+        match result {
+            Err(CliError::ContractMismatch {
+                served, expected, ..
+            }) => {
+                assert_eq!(expected, marfa_client::CONTRACT_VERSION);
+                served
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    /// An answer that names another contract is refused rather than read,
+    /// whatever its status, and without a round trip to the root first.
+    #[test]
+    fn an_answer_on_another_contract_is_refused() {
+        let door = Door::open(vec![
+            Answer::json("200 OK", PAGE).on_contract(Some("2")),
+            Answer::json(
+                "404 Not Found",
+                r#"{"error":{"code":"item_not_found","message":"no"}}"#,
+            )
+            .on_contract(Some("2")),
+        ]);
+        let remote = remote_at(&door, Some("marfa_k1_x"));
+        assert_eq!(
+            mismatch(remote.json(&Request::get(&["items"]))),
+            "answers contract 2"
+        );
+        assert_eq!(
+            mismatch(remote.json(&Request::get(&["items", "i"]))),
+            "answers contract 2"
+        );
+        let paths: Vec<String> = door
+            .received()
+            .iter()
+            .map(|r| r.path().to_string())
+            .collect();
+        assert_eq!(paths, vec!["/items", "/items/i"]);
+    }
+
+    /// A success that names no contract is not one this binary can trust;
+    /// a refusal that names none is handed on as it came, since a proxy in
+    /// front of the server answers without one.
+    #[test]
+    fn a_success_naming_no_contract_is_refused_and_a_refusal_handed_on() {
+        let door = Door::open(vec![
+            Answer::json("200 OK", PAGE).on_contract(None),
+            Answer::json(
+                "502 Bad Gateway",
+                r#"{"error":{"code":"bad_gateway","message":"upstream"}}"#,
+            )
+            .on_contract(None),
+        ]);
+        let remote = remote_at(&door, Some("marfa_k1_x"));
+        assert_eq!(
+            mismatch(remote.json(&Request::get(&["items"]))),
+            "answered 200 naming no contract"
+        );
+        match remote.json(&Request::get(&["items"])) {
+            Err(CliError::Refused { status, .. }) => assert_eq!(status, 502),
+            other => panic!("{other:?}"),
+        }
+        door.received();
+    }
+
+    /// The witness: answers on this binary's contract are read, with the
+    /// bearer, and nothing reads the root.
+    #[test]
+    fn answers_on_this_contract_are_read_and_the_root_is_not() {
+        let door = Door::open(vec![
+            Answer::json("200 OK", PAGE),
+            Answer::json("200 OK", PAGE),
+        ]);
+        let remote = remote_at(&door, Some("marfa_k1_x"));
+        remote.json(&Request::get(&["items"])).unwrap();
+        remote.json(&Request::get(&["edges"])).unwrap();
+        let received = door.received();
+        let paths: Vec<&str> = received.iter().map(|r| r.path()).collect();
+        assert_eq!(paths, vec!["/items", "/edges"]);
+        assert_eq!(
+            received[0].header("authorization"),
+            Some("Bearer marfa_k1_x")
+        );
+    }
+
+    /// A stream is held to the contract on its headers, before a byte of it
+    /// is handed back.
+    #[test]
+    fn a_stream_on_another_contract_is_refused() {
+        let door = Door::open(vec![
+            Answer {
+                status: "200 OK",
+                content_type: "text/event-stream",
+                body: ": keepalive\n\n".into(),
+                headers: Vec::new(),
+            }
+            .on_contract(Some("2")),
+        ]);
+        let remote = remote_at(&door, Some("marfa_k1_x"));
+        match remote.stream(&Request::get(&["events"]).streamed()) {
+            Err(CliError::ContractMismatch { served, .. }) => {
+                assert_eq!(served, "answers contract 2");
+            }
+            other => panic!("{:?}", other.map(|_| ())),
+        }
+        door.received();
+    }
+
+    /// A root that refuses is that refusal, handed on: a real server reached
+    /// under a mistyped prefix answers its own 404, and a proxy in front of
+    /// one answers 401, and neither is a question of contract.
+    #[test]
+    fn a_root_that_refuses_is_that_refusal() {
+        let door = Door::open(vec![
+            Answer::json(
+                "404 Not Found",
+                r#"{"error":{"code":"not_found","message":"no"}}"#,
+            ),
+            Answer::json(
+                "401 Unauthorized",
+                r#"{"error":{"code":"unauthorized","message":"sign in"}}"#,
+            )
+            .on_contract(None),
+        ]);
+        let statuses: Vec<u16> = (0..2)
+            .map(|_| {
+                match remote_at(&door, Some("marfa_k1_x"))
+                    .describe(&crate::commands::status::root_request())
+                {
+                    Err(CliError::Refused { status, .. }) => status,
+                    other => panic!("{other:?}"),
+                }
+            })
+            .collect();
+        assert_eq!(statuses, vec![404, 401]);
+        door.received();
+    }
+
+    /// A read refused on another contract says nothing about a write, and
+    /// carries the status the server answered.
+    #[test]
+    fn a_read_refused_on_another_contract_says_no_write_was_sent() {
+        let door = Door::open(vec![Answer::json("200 OK", PAGE).on_contract(Some("2"))]);
+        match remote_at(&door, Some("marfa_k1_x")).json(&Request::get(&["items"])) {
+            Err(
+                error @ CliError::ContractMismatch {
+                    write_sent: false, ..
+                },
+            ) => {
+                assert!(
+                    !error.to_string().contains("may have taken effect"),
+                    "{error}"
+                );
+                assert_eq!(error.envelope()["error"]["server"]["status"], 200);
+                assert!(error.envelope()["error"]["server"]["code"].is_null());
+            }
+            other => panic!("{other:?}"),
+        }
+        door.received();
+    }
+
+    /// A write answered on another contract is refused all the same, and the
+    /// refusal says the write was sent: the answer that names the contract
+    /// comes after the server acted.
+    #[test]
+    fn a_write_answered_on_another_contract_says_it_was_sent() {
+        let door = Door::open(vec![
+            Answer::json("201 Created", r#"{"item":{"id":"i"}}"#).on_contract(Some("2")),
+        ]);
+        match remote_at(&door, Some("marfa_k1_x"))
+            .json(&Request::post(&["items"]).json(serde_json::json!({})))
+        {
+            Err(
+                error @ CliError::ContractMismatch {
+                    write_sent: true, ..
+                },
+            ) => assert!(
+                error.to_string().contains("may have taken effect"),
+                "{error}"
+            ),
+            other => panic!("{other:?}"),
+        }
+        door.received();
+    }
+
+    /// An answer on another contract comes back with its status and headers
+    /// only: its body is not read. `describe` reads it, since saying what
+    /// the server is is what it is for.
+    #[test]
+    fn the_body_of_an_answer_on_another_contract_is_not_read() {
+        let door = Door::open(vec![
+            Answer::json("200 OK", PAGE).on_contract(Some("2")),
+            Answer::json("200 OK", PAGE).on_contract(Some("2")),
+        ]);
+        let transport = Transport::new(&door.url, Some("marfa_k1_x")).unwrap();
+        let call = || Call {
+            method: request::Method::Get,
+            segments: &["items"],
+            params: &[],
+            headers: &[],
+            body: CallBody::None,
+            credential: true,
+            stream: false,
+        };
+        let text = |reply: Reply| match reply.body {
+            ReplyBody::Text(text) => text,
+            ReplyBody::Stream(_) => panic!("a stream"),
+        };
+        assert_eq!(text(transport.call(call(), true).unwrap()), "");
+        // The witness: the same answer, not held, is read.
+        assert_eq!(text(transport.call(call(), false).unwrap()), PAGE);
+        door.received();
+    }
+
+    /// The witness: a root on another contract is read and handed back, since
+    /// saying which contract a server speaks is what reading it is for.
+    #[test]
+    fn a_root_on_another_contract_is_described() {
+        let door = Door::open(vec![root("2").on_contract(Some("2"))]);
+        let instance = remote_at(&door, Some("marfa_k1_x"))
+            .describe(&crate::commands::status::root_request())
+            .unwrap();
+        assert_eq!(instance["contract"], 2);
+        let received = door.received();
+        assert_eq!(received[0].header("authorization"), None);
+    }
+
+    /// A redirect is the refusal it is, not a hop the credential follows:
+    /// the door sees one request and the caller hears the status.
+    #[test]
+    fn a_redirect_is_not_followed() {
+        let door = Door::open(vec![
+            Answer::json("302 Found", "").with_header("Location", "/elsewhere"),
+        ]);
+        let remote = remote_at(&door, Some("marfa_k1_x"));
+        match remote.json(&Request::get(&["items"])) {
+            Err(error @ CliError::Redirected { status: 302, .. }) => {
+                assert_eq!(error.code(), "redirect");
+                assert!(error.to_string().contains("/elsewhere"), "{error}");
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(door.received().len(), 1);
+    }
+
+    /// `Retry-After` reaches the refusal off the wire, as seconds and as an
+    /// HTTP-date read against the response's own `Date`.
+    #[test]
+    fn retry_after_is_read_in_both_forms() {
+        let door = Door::open(vec![
+            Answer::json(
+                "429 Too Many Requests",
+                r#"{"error":{"code":"rate_limited","message":"slow"}}"#,
+            )
+            .with_header("Retry-After", "7"),
+            Answer::json(
+                "503 Service Unavailable",
+                r#"{"error":{"code":"write_contention","message":"busy"}}"#,
+            )
+            .with_header("Retry-After", "Sun, 06 Nov 1994 08:49:42 GMT")
+            .with_header("Date", "Sun, 06 Nov 1994 08:49:37 GMT"),
+        ]);
+        let remote = remote_at(&door, Some("marfa_k1_x"));
+        for expected in [7, 5] {
+            match remote.json(&Request::get(&["items"])) {
+                Err(CliError::Refused {
+                    retry_after_seconds,
+                    ..
+                }) => assert_eq!(retry_after_seconds, Some(expected)),
+                other => panic!("{other:?}"),
+            }
+        }
+        door.received();
+    }
+
+    /// A header a command names, such as the stream's `Last-Event-ID`,
+    /// arrives as it was given.
+    #[test]
+    fn a_named_header_reaches_the_wire() {
+        let door = Door::open(vec![Answer::json("200 OK", r#"{"data":[]}"#)]);
+        let remote = remote_at(&door, Some("marfa_k1_x"));
+        remote
+            .json(&Request::get(&["items"]).header("Last-Event-ID", "42"))
+            .unwrap();
+        assert_eq!(door.received()[0].header("last-event-id"), Some("42"));
+    }
+
+    /// A root that refuses for a reason that is not the contract, a 503
+    /// while a server starts, is that refusal, retryable, not a mismatch.
+    #[test]
+    fn a_root_refusing_for_another_reason_is_that_refusal() {
+        let door = Door::open(vec![
+            Answer::json(
+                "503 Service Unavailable",
+                r#"{"error":{"code":"write_contention","message":"busy"}}"#,
+            )
+            .with_header("Retry-After", "7"),
+        ]);
+        match remote_at(&door, Some("marfa_k1_x"))
+            .describe(&crate::commands::status::root_request())
+        {
+            Err(CliError::Refused {
+                status,
+                code,
+                retry_after_seconds,
+                ..
+            }) => {
+                assert_eq!((status, code.as_str()), (503, "write_contention"));
+                assert_eq!(retry_after_seconds, Some(7));
+            }
+            other => panic!("{other:?}"),
+        }
+        door.received();
+    }
+
+    /// A root that redirects is refused as a redirect, rather than read as a
+    /// server with no contract.
+    #[test]
+    fn a_root_that_redirects_is_refused_as_one() {
+        let door = Door::open(vec![
+            Answer::json("301 Moved Permanently", "")
+                .with_header("Location", "https://marfa.example/"),
+        ]);
+        match remote_at(&door, Some("marfa_k1_x"))
+            .describe(&crate::commands::status::root_request())
+        {
+            Err(CliError::Redirected {
+                status, location, ..
+            }) => {
+                assert_eq!(status, 301);
+                assert_eq!(location.as_deref(), Some("https://marfa.example/"));
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(door.received().len(), 1);
+    }
+
+    /// A server that sends an answer a byte at a time, each well inside the
+    /// read budget, over a longer time than the whole-answer budget.
+    fn trickling(stream: bool) -> String {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        std::thread::spawn(move || {
+            if let Ok((mut stream_to, _)) = listener.accept() {
+                let mut chunk = [0u8; 4096];
+                let _ = std::io::Read::read(&mut stream_to, &mut chunk);
+                let body = "0123456789";
+                let head = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: {}\r\n{}: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    if stream {
+                        "text/plain"
+                    } else {
+                        "application/json"
+                    },
+                    marfa_core::http::CONTRACT_HEADER,
+                    marfa_client::CONTRACT_VERSION,
+                    body.len()
+                );
+                let _ = std::io::Write::write_all(&mut stream_to, head.as_bytes());
+                for byte in body.bytes() {
+                    std::thread::sleep(std::time::Duration::from_millis(150));
+                    let _ = std::io::Write::write_all(&mut stream_to, &[byte]);
+                }
+            }
+        });
+        url
+    }
+
+    fn budgeted(url: &str, read_ms: u64, whole_ms: u64) -> Remote {
+        Remote::with(
+            Transport::budgeted(
+                url,
+                Some("marfa_k1_x"),
+                std::time::Duration::from_millis(read_ms),
+                std::time::Duration::from_millis(whole_ms),
+            )
+            .unwrap(),
+        )
+    }
+
+    /// A JSON answer is bounded as a whole: one that keeps arriving, each
+    /// byte inside the read budget, is given up on at the whole budget.
+    #[test]
+    fn a_json_answer_is_bounded_as_a_whole() {
+        match budgeted(&trickling(false), 2_000, 600).json(&Request::get(&["items"])) {
+            Err(CliError::Core(marfa_core::CoreError::Network(_))) => {}
+            other => panic!("{other:?}"),
+        }
+    }
+
+    /// A streamed answer has no whole budget: the same trickle is read to
+    /// its end, which the JSON call above was not.
+    #[test]
+    fn a_stream_outlasts_the_whole_answer_budget() {
+        let (_, mut reader) = budgeted(&trickling(true), 2_000, 600)
+            .stream(&Request::get(&["export"]).streamed())
+            .unwrap();
+        let mut text = String::new();
+        reader.read_to_string(&mut text).unwrap();
+        assert_eq!(text, "0123456789");
+    }
+
+    /// A server that accepts the connection and never answers is given up
+    /// on at the read budget, a stream included, rather than waited on
+    /// forever.
+    #[test]
+    fn a_server_that_never_answers_is_given_up_on() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        std::thread::spawn(move || {
+            let mut held = Vec::new();
+            for _ in 0..2 {
+                held.push(listener.accept());
+            }
+            std::thread::sleep(std::time::Duration::from_secs(10));
+            drop(held);
+        });
+        let started = std::time::Instant::now();
+        match budgeted(&url, 500, 60_000).stream(&Request::get(&["export"]).streamed()) {
+            Err(CliError::Core(marfa_core::CoreError::Network(_))) => {}
+            other => panic!("{:?}", other.map(|_| ())),
+        }
+        assert!(started.elapsed() < std::time::Duration::from_secs(5));
+    }
+
+    /// A file's upload has no time budget, since reqwest's bound on a call
+    /// covers sending its body too: the same slow server that runs a JSON
+    /// call out of both budgets answers the upload.
+    #[test]
+    fn an_upload_outlasts_the_budgets() {
+        let slow = || {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let url = format!("http://{}", listener.local_addr().unwrap());
+            std::thread::spawn(move || {
+                if let Ok((mut stream, _)) = listener.accept() {
+                    // Read the whole request, a chunked body included, so the
+                    // answer is not cut off by unread bytes when it closes.
+                    let mut seen = Vec::new();
+                    let mut chunk = [0u8; 4096];
+                    while !seen.ends_with(b"0\r\n\r\n") && !seen.ends_with(b"{}") {
+                        match std::io::Read::read(&mut stream, &mut chunk) {
+                            Ok(0) | Err(_) => break,
+                            Ok(n) => seen.extend_from_slice(&chunk[..n]),
+                        }
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(1500));
+                    let body = r#"{"hash":"sha256:h"}"#;
+                    let _ = std::io::Write::write_all(
+                        &mut stream,
+                        format!(
+                            "HTTP/1.1 201 Created\r\nContent-Type: application/json\r\n{}: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                            marfa_core::http::CONTRACT_HEADER,
+                            marfa_client::CONTRACT_VERSION,
+                            body.len()
+                        )
+                        .as_bytes(),
+                    );
+                }
+            });
+            let budget = std::time::Duration::from_millis(500);
+            Remote::with(Transport::budgeted(&url, Some("marfa_k1_x"), budget, budget).unwrap())
+        };
+        let dir = std::env::temp_dir().join(format!("marfa-upload-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("bytes.bin");
+        std::fs::write(&path, b"bytes").unwrap();
+        slow()
+            .json(&Request::post(&["blobs"]).file(path, "application/octet-stream"))
+            .unwrap();
+        std::fs::remove_dir_all(&dir).unwrap();
+        // The witness: a JSON call to the same server runs out of its budget.
+        match slow().json(&Request::post(&["items"]).json(serde_json::json!({}))) {
+            Err(CliError::Core(marfa_core::CoreError::Network(_))) => {}
+            other => panic!("{other:?}"),
+        }
+    }
+
+    /// A transport failure says why, not only that the request failed.
+    #[test]
+    fn a_transport_failure_carries_its_cause() {
+        let port = {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            listener.local_addr().unwrap().port()
+        };
+        let remote = Remote::with(
+            Transport::new(&format!("http://127.0.0.1:{port}"), Some("marfa_k1_x")).unwrap(),
+        );
+        match remote.json(&Request::get(&["items"])) {
+            Err(CliError::Core(marfa_core::CoreError::Network(text))) => {
+                assert!(text.to_lowercase().contains("refused"), "{text}");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    /// `whoami` against a server on another contract reports the contract
+    /// and no person, and sends the token nowhere past the description. The
+    /// witness is `cli/login.test.ts`: on the server's own contract the same
+    /// command goes on to the identity door and names the person.
+    #[test]
+    fn whoami_on_another_contract_names_no_person() {
+        let door = Door::open(vec![root("2").on_contract(Some("2"))]);
+        let kept = Kept::Token {
+            access_token: "marfa_at_x".into(),
+            refresh_token: None,
+            expires_at: None,
+            client_id: "c".into(),
+            scope: Some("openid".into()),
+            token_endpoint: format!("{}/auth/oauth2/token", door.url),
+            revocation_endpoint: None,
+        };
+        let remote = Remote::holding(&door.url, kept).unwrap();
+        crate::commands::whoami::run(&remote, &crate::output::Printer { json: true }).unwrap();
+        let received = door.received();
+        assert_eq!(received.len(), 1);
+        assert_eq!(received[0].path(), "/");
+        assert_eq!(received[0].header("authorization"), None);
     }
 }

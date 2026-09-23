@@ -4,7 +4,8 @@
 
 use std::io::{Read, Write};
 use std::net::TcpListener;
-use std::thread::JoinHandle;
+use std::sync::mpsc::{Receiver, channel};
+use std::time::Duration;
 
 /// One request as it arrived on the wire: the request line and headers,
 /// lowercased for lookup, and the body.
@@ -39,22 +40,49 @@ pub struct Answer {
     pub status: &'static str,
     pub content_type: &'static str,
     pub body: String,
+    /// Headers beyond the content type, such as a `Retry-After`.
+    pub headers: Vec<(&'static str, String)>,
 }
 
 impl Answer {
+    pub fn with_header(mut self, name: &'static str, value: impl Into<String>) -> Answer {
+        self.headers.push((name, value.into()));
+        self
+    }
+
+    /// An answer on the contract this binary was built for, as every answer
+    /// the server gives names its own.
     pub fn json(status: &'static str, body: &str) -> Answer {
         Answer {
             status,
             content_type: "application/json",
             body: body.to_string(),
+            headers: vec![(
+                marfa_core::http::CONTRACT_HEADER,
+                marfa_client::CONTRACT_VERSION.to_string(),
+            )],
         }
+    }
+
+    /// The same answer naming another contract, or with `None` naming none.
+    pub fn on_contract(mut self, contract: Option<&str>) -> Answer {
+        self.headers
+            .retain(|(name, _)| *name != marfa_core::http::CONTRACT_HEADER);
+        if let Some(contract) = contract {
+            self.headers
+                .push((marfa_core::http::CONTRACT_HEADER, contract.to_string()));
+        }
+        self
     }
 }
 
 pub struct Door {
     pub url: String,
-    handle: JoinHandle<Vec<Received>>,
+    served: Receiver<Vec<Received>>,
 }
+
+/// How long `received` waits for the door's last answer to go out.
+const SERVED_BUDGET: Duration = Duration::from_secs(20);
 
 impl Door {
     /// Opens the door with the answers it will give, in order, one per
@@ -70,14 +98,20 @@ impl Door {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap());
         let answers = answers(&url);
-        let handle = std::thread::spawn(move || {
+        let (done, served) = channel();
+        std::thread::spawn(move || {
             let mut received = Vec::new();
             for answer in answers {
                 let (mut stream, _) = listener.accept().unwrap();
                 received.push(read_request(&mut stream));
+                let extra: String = answer
+                    .headers
+                    .iter()
+                    .map(|(name, value)| format!("{name}: {value}\r\n"))
+                    .collect();
                 write!(
                     stream,
-                    "HTTP/1.1 {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    "HTTP/1.1 {}\r\nContent-Type: {}\r\nContent-Length: {}\r\n{extra}Connection: close\r\n\r\n{}",
                     answer.status,
                     answer.content_type,
                     answer.body.len(),
@@ -86,16 +120,19 @@ impl Door {
                 .unwrap();
                 stream.flush().unwrap();
             }
-            received
+            // The test may have given up on the door already.
+            let _ = done.send(received);
         });
-        Door { url, handle }
+        Door { url, served }
     }
 
     /// Everything the door was sent, once every answer has gone out. A
-    /// door with answers left is one a call never reached, which is a
-    /// failure this reports rather than a wait it sits out.
+    /// door with answers left is one a call never reached, which fails the
+    /// test after a bound rather than hanging it.
     pub fn received(self) -> Vec<Received> {
-        self.handle.join().unwrap()
+        self.served
+            .recv_timeout(SERVED_BUDGET)
+            .expect("the door still had answers no call reached")
     }
 }
 

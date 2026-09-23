@@ -94,12 +94,16 @@ const exportRoute = createRoute({
   responses: {
     200: {
       content: {
-        "text/x-ndjson": {
+        "application/x-ndjson": {
           schema: z.string(),
+        },
+        "application/gzip": {
+          // `format=archive`: a gzipped tarball, bytes as 3.1 spells them.
+          schema: { type: "string" as const, format: "binary" as const },
         },
       },
       description:
-        "Streaming NDJSON export of items with metadata (or archive when format=archive)",
+        "`format=ndjson`: items with their metadata, one JSON object per line, streamed. `format=archive`: the `marfa-archive-v2.tar.gz` that `POST /admin/restore-archive` reads.",
     },
     400: {
       content: {

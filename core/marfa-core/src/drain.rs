@@ -423,7 +423,7 @@ fn upload(http: &Http, bytes: File, mime_type: &str) -> std::result::Result<Answ
     })?;
     let body = match reply.body {
         ReplyBody::Text(text) => text,
-        ReplyBody::Stream(_) => String::new(),
+        ReplyBody::Stream(_) => unreachable!("the core's transport reads every answer whole"),
     };
     let code = match serde_json::from_str::<WireErrorEnvelope>(&body) {
         Ok(envelope) => envelope.error.code,

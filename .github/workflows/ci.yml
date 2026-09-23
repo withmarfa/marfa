@@ -475,3 +475,27 @@ jobs:
             echo "A generated client is out of date with openapi.json. Run 'pnpm generate' and commit."
             exit 1
           fi
+      # OpenAPI Generator is a Java program. The JDK comes from the action
+      # rather than from the machine, so any runner in the pool can take the
+      # job whether or not its host has one installed.
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "21"
+      # `generate:rust` formats what it writes with cargo; Homebrew's rustup
+      # is keg-only, so nothing it installs is on the default PATH.
+      - name: Put the Rust toolchain on PATH
+        run: |
+          echo "/opt/homebrew/opt/rustup/bin" >> "$GITHUB_PATH"
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+      # `git status` rather than `git diff`, so a file the generator writes
+      # that is not committed is caught too, and one it no longer writes is
+      # caught by its absence from `.openapi-generator/FILES`.
+      - name: Regenerate the Rust client and check for drift
+        run: |
+          pnpm run generate:rust
+          if [ -n "$(git status --porcelain core/marfa-client)" ]; then
+            git status --porcelain core/marfa-client
+            echo "marfa-client is out of date with openapi.json. Run 'pnpm generate' and commit."
+            exit 1
+          fi

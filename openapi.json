@@ -16462,6 +16462,7 @@
           }
         ],
         "requestBody": {
+          "required": true,
           "content": {
             "application/octet-stream": {
               "schema": {
@@ -21547,6 +21548,7 @@
           }
         ],
         "requestBody": {
+          "required": true,
           "content": {
             "application/gzip": {
               "schema": {
@@ -22810,11 +22812,17 @@
         ],
         "responses": {
           "200": {
-            "description": "Streaming NDJSON export of items with metadata (or archive when format=archive)",
+            "description": "`format=ndjson`: items with their metadata, one JSON object per line, streamed. `format=archive`: the `marfa-archive-v2.tar.gz` that `POST /admin/restore-archive` reads.",
             "content": {
-              "text/x-ndjson": {
+              "application/x-ndjson": {
                 "schema": {
                   "type": "string"
+                }
+              },
+              "application/gzip": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
                 }
               }
             },

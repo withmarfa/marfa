@@ -14,10 +14,9 @@ pub const PAGE_LIMIT: u32 = 200;
 pub struct Http {
     agent: Agent,
     base: Url,
-    /// Absent for a transport that carries no credential: the root document,
-    /// the health door and the sign-in doors answer without one, and a
-    /// device's transport always holds one.
-    authorization: Option<String>,
+    /// A device's transport always carries its key; a call says whether the
+    /// door it reaches needs it.
+    authorization: String,
 }
 
 pub struct ItemsQuery<'a> {
@@ -88,7 +87,7 @@ impl Answer {
     }
 }
 
-/// What a call from the direct surface sends.
+/// What one call sends, through the core's transport or the binary's.
 ///
 /// A body is JSON text, sized text under a type the headers name (a form),
 /// or a reader the request streams from, because a blob upload must not
@@ -115,7 +114,8 @@ pub struct Call<'a> {
     /// refused for a credential it never needed.
     pub credential: bool,
     /// Read the whole body as text (the JSON doors) or hand the reader back
-    /// (the stream, an export, a blob's bytes).
+    /// (the stream, an export, a blob's bytes). Only the binary's transport
+    /// hands a reader back; the core's own calls read every answer whole.
     pub stream: bool,
 }
 
@@ -127,8 +127,16 @@ pub struct Reply {
     pub status: u16,
     pub content_type: String,
     pub retry_after_seconds: Option<u64>,
+    /// The contract version the answer names in `X-Marfa-Contract`, when it
+    /// names one: the caller decides whether it can read the body.
+    pub contract: Option<String>,
+    /// Where a redirect points, so the refusal of one can say.
+    pub location: Option<String>,
     pub body: ReplyBody,
 }
+
+/// The response header every answer names its contract version in.
+pub const CONTRACT_HEADER: &str = "X-Marfa-Contract";
 
 pub enum ReplyBody {
     Text(String),
@@ -136,7 +144,7 @@ pub enum ReplyBody {
 }
 
 impl Http {
-    pub fn new(url: &str, key: Option<&str>) -> Result<Http, CoreError> {
+    pub fn new(url: &str, key: &str) -> Result<Http, CoreError> {
         let mut base = Url::parse(url)?;
         if base.cannot_be_a_base() {
             return Err(CoreError::Invalid(format!("not a server url: {url}")));
@@ -145,7 +153,14 @@ impl Http {
         base.set_path(&path);
         base.set_query(None);
         base.set_fragment(None);
+        // The operating system's trust store, as the binary's own client
+        // uses, so a server behind a CA the machine trusts is reachable from
+        // both.
+        let tls = ureq::tls::TlsConfig::builder()
+            .root_certs(ureq::tls::RootCerts::PlatformVerifier)
+            .build();
         let agent: Agent = Agent::config_builder()
+            .tls_config(tls)
             .http_status_as_error(false)
             .timeout_connect(Some(Duration::from_secs(10)))
             .timeout_recv_response(Some(Duration::from_secs(30)))
@@ -155,7 +170,7 @@ impl Http {
         Ok(Http {
             agent,
             base,
-            authorization: key.map(|key| format!("Bearer {key}")),
+            authorization: format!("Bearer {key}"),
         })
     }
 
@@ -271,9 +286,7 @@ impl Http {
             .header("Accept", "application/json")
             .header("Content-Type", "application/json")
             .header("Idempotency-Key", outgoing.idempotency_key);
-        if let Some(authorization) = &self.authorization {
-            builder = builder.header("Authorization", authorization);
-        }
+        builder = builder.header("Authorization", &self.authorization);
         let request = builder
             .body(outgoing.body)
             .map_err(|error| CoreError::Invalid(format!("this write cannot be sent: {error}")))?;
@@ -328,9 +341,7 @@ impl Http {
             .config()
             .timeout_recv_body(Some(body_timeout))
             .build();
-        if let Some(authorization) = &self.authorization {
-            request = request.header("Authorization", authorization);
-        }
+        request = request.header("Authorization", &self.authorization);
         if let Some(cursor) = last_event_id {
             request = request.header("Last-Event-ID", cursor);
         }
@@ -346,28 +357,15 @@ impl Http {
         Ok(Box::new(response.into_body().into_reader()))
     }
 
-    pub fn has_credential(&self) -> bool {
-        self.authorization.is_some()
-    }
-
-    /// Sends one call from the direct surface and reads whatever came back.
+    /// Sends one call and reads its answer whole.
     pub fn call(&self, call: Call<'_>) -> Result<Reply, CoreError> {
         let url = self.url(call.segments, call.params);
         let mut builder = ureq::http::Request::builder()
             .method(call.method.as_str())
             .uri(url.as_str())
-            .header(
-                "Accept",
-                if call.stream {
-                    "*/*"
-                } else {
-                    "application/json"
-                },
-            );
-        if call.credential
-            && let Some(authorization) = &self.authorization
-        {
-            builder = builder.header("Authorization", authorization);
+            .header("Accept", "application/json");
+        if call.credential {
+            builder = builder.header("Authorization", &self.authorization);
         }
         if matches!(call.body, CallBody::Json(_)) {
             builder = builder.header("Content-Type", "application/json");
@@ -378,25 +376,16 @@ impl Http {
         let cannot_send = |error: ureq::http::Error| {
             CoreError::Invalid(format!("this call cannot be sent: {error}"))
         };
-        // The agent's body budget is a minute, sized for a JSON answer. A
-        // streamed body is the event stream, an export or a blob, none of
-        // which has a length a budget could be sized for, so a streamed call
-        // has none; `events --for` bounds its own reading.
         let response = match call.body {
-            CallBody::None => {
-                let request = builder.body(()).map_err(cannot_send)?;
-                self.run_call(request, call.stream)
-            }
+            CallBody::None => self.agent.run(builder.body(()).map_err(cannot_send)?),
             CallBody::Json(text) | CallBody::Text(text) => {
-                let request = builder.body(text).map_err(cannot_send)?;
-                self.run_call(request, call.stream)
+                self.agent.run(builder.body(text).map_err(cannot_send)?)
             }
-            CallBody::Reader(reader) => {
-                let request = builder
+            CallBody::Reader(reader) => self.agent.run(
+                builder
                     .body(ureq::SendBody::from_owned_reader(reader))
-                    .map_err(cannot_send)?;
-                self.run_call(request, call.stream)
-            }
+                    .map_err(cannot_send)?,
+            ),
         }
         .map_err(|error| CoreError::Network(error.to_string()))?;
         let status = response.status().as_u16();
@@ -407,42 +396,29 @@ impl Http {
             .and_then(|value| value.to_str().ok())
             .unwrap_or("")
             .to_string();
-        // A refusal is read whole even on a streaming call, so the envelope
-        // reaches the classification; only a success is handed back as a
-        // reader.
-        let body = if call.stream && (200..300).contains(&status) {
-            ReplyBody::Stream(Box::new(response.into_body().into_reader()))
-        } else {
-            ReplyBody::Text(
-                response
-                    .into_body()
-                    .read_to_string()
-                    .map_err(|error| CoreError::Network(error.to_string()))?,
-            )
+        let header = |name: &str| {
+            response
+                .headers()
+                .get(name)
+                .and_then(|value| value.to_str().ok())
+                .map(str::to_string)
         };
+        let contract = header(CONTRACT_HEADER);
+        let location = header("Location");
+        let body = ReplyBody::Text(
+            response
+                .into_body()
+                .read_to_string()
+                .map_err(|error| CoreError::Network(error.to_string()))?,
+        );
         Ok(Reply {
             status,
             content_type,
             retry_after_seconds,
+            contract,
+            location,
             body,
         })
-    }
-
-    fn run_call<B: ureq::AsSendBody>(
-        &self,
-        request: ureq::http::Request<B>,
-        stream: bool,
-    ) -> Result<ureq::http::Response<ureq::Body>, ureq::Error> {
-        if stream {
-            let request = self
-                .agent
-                .configure_request(request)
-                .timeout_recv_body(None)
-                .build();
-            self.agent.run(request)
-        } else {
-            self.agent.run(request)
-        }
     }
 
     fn url(&self, segments: &[&str], params: &[(&str, &str)]) -> Url {
@@ -471,9 +447,7 @@ impl Http {
             .agent
             .get(url.as_str())
             .header("Accept", "application/json");
-        if let Some(authorization) = &self.authorization {
-            request = request.header("Authorization", authorization);
-        }
+        request = request.header("Authorization", &self.authorization);
         let response = request
             .call()
             .map_err(|error| CoreError::Network(error.to_string()))?;
@@ -500,22 +474,30 @@ impl Http {
 /// one, so a clock that disagrees with the server's does not turn a short
 /// wait into a long one.
 fn retry_after<B>(response: &ureq::http::Response<B>) -> Option<u64> {
-    let raw = response.headers().get("Retry-After")?.to_str().ok()?.trim();
+    let header = |name: &str| {
+        response
+            .headers()
+            .get(name)
+            .and_then(|value| value.to_str().ok())
+    };
+    retry_after_seconds(header("Retry-After"), header("Date"))
+}
+
+/// A `Retry-After` value as seconds from now, given the response's `Date`
+/// where it had one. Shared with the binary's transport, which reads the
+/// same headers off a different HTTP stack.
+pub fn retry_after_seconds(retry_after: Option<&str>, date: Option<&str>) -> Option<u64> {
+    let raw = retry_after?.trim();
     if let Ok(seconds) = raw.parse::<u64>() {
         return Some(seconds);
     }
     let until = http_date(raw)?;
-    let from = response
-        .headers()
-        .get("Date")
-        .and_then(|value| value.to_str().ok())
-        .and_then(http_date)
-        .unwrap_or_else(|| {
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|since| since.as_secs() as i64)
-                .unwrap_or(0)
-        });
+    let from = date.and_then(http_date).unwrap_or_else(|| {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|since| since.as_secs() as i64)
+            .unwrap_or(0)
+    });
     Some(until.saturating_sub(from).max(0) as u64)
 }
 
@@ -589,9 +571,9 @@ mod tests {
 
     #[test]
     fn origin_drops_the_key_the_query_and_a_trailing_slash() {
-        let http = Http::new("HTTP://Localhost:8600/?x=1#f", Some("marfa_k1_secret")).unwrap();
+        let http = Http::new("HTTP://Localhost:8600/?x=1#f", "marfa_k1_secret").unwrap();
         assert_eq!(http.origin(), "http://localhost:8600");
-        let gateway = Http::new("https://gw.example/TenantA/", Some("k")).unwrap();
+        let gateway = Http::new("https://gw.example/TenantA/", "k").unwrap();
         assert_eq!(gateway.origin(), "https://gw.example/TenantA");
         assert_eq!(
             gateway

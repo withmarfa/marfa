@@ -52,6 +52,37 @@ pub enum CliError {
     /// An argument the binary judged wrong before anything was sent.
     #[error("{0}")]
     Invalid(String),
+    /// The server speaks a contract this binary was not built for, so its
+    /// answers may be shaped in ways this binary cannot read. The answer
+    /// that said so was not read.
+    #[error(
+        "{origin} {served}; this binary was built for contract {expected}: use a marfa built for the server's contract{}",
+        if *write_sent { ". The write was sent, and may have taken effect before its answer was refused" } else { "" }
+    )]
+    ContractMismatch {
+        origin: String,
+        /// What the server said about its contract, as a phrase: "answers
+        /// contract 2", "answered 200 naming no contract".
+        served: String,
+        expected: u64,
+        /// Whether the refused answer was to a write, which the server acted
+        /// on before the answer could say it speaks another contract.
+        write_sent: bool,
+        /// The refused answer's status, when there was one: for a write, a
+        /// 201 and a 409 say different things about whether it took effect.
+        status: Option<u16>,
+    },
+    /// The server answered with a redirect, which the binary does not follow:
+    /// the credential stays with the address it was given for.
+    #[error(
+        "{origin} answered {status}, a redirect to {}: name that address instead",
+        location.as_deref().unwrap_or("nowhere it named")
+    )]
+    Redirected {
+        origin: String,
+        status: u16,
+        location: Option<String>,
+    },
 }
 
 /// The six ways out, and what each means to a caller.
@@ -59,8 +90,8 @@ pub enum CliError {
 pub enum Exit {
     /// Done.
     Done = 0,
-    /// The request was wrong: refused by the server, or by the binary before
-    /// sending, for something a retry does not change.
+    /// The request was refused: by the server, by the binary before sending,
+    /// or for an answer on another contract, and a retry does not change it.
     Refused = 1,
     /// The command line was wrong. clap's own code, shared by the binary's
     /// own refusals of an incomplete one.
@@ -120,6 +151,8 @@ impl CliError {
             CliError::NoKeychain(_) => "no_keychain",
             CliError::SignedOut { .. } => "signed_out",
             CliError::Invalid(_) => "invalid",
+            CliError::ContractMismatch { .. } => "contract_mismatch",
+            CliError::Redirected { .. } => "redirect",
         }
     }
 
@@ -148,7 +181,10 @@ impl CliError {
                 | CoreError::WrongServer { .. } => Exit::Local,
             },
             CliError::Io(_) | CliError::Watch(_) => Exit::Environment,
-            CliError::NotHeld(_) | CliError::Invalid(_) => Exit::Refused,
+            CliError::NotHeld(_)
+            | CliError::Invalid(_)
+            | CliError::ContractMismatch { .. }
+            | CliError::Redirected { .. } => Exit::Refused,
             CliError::ClosedOutput => Exit::Done,
             CliError::Refused { status, .. } => match status {
                 401 => Exit::Credential,
@@ -162,20 +198,20 @@ impl CliError {
         }
     }
 
-    /// The server's answer, where there was one: its status, its own code,
-    /// and its details.
-    fn server(&self) -> Option<(Option<u16>, &str, Option<&serde_json::Value>)> {
+    /// The server's answer, where there was one: its status, and its own code
+    /// and details where its body was read.
+    fn server(&self) -> Option<(Option<u16>, Option<&str>, Option<&serde_json::Value>)> {
         match self {
             CliError::Core(core) => match core {
-                CoreError::NotFound { code, .. } => Some((Some(404), code, None)),
-                CoreError::Unauthorized { code, .. } => Some((Some(401), code, None)),
-                CoreError::Forbidden { code, .. } => Some((Some(403), code, None)),
+                CoreError::NotFound { code, .. } => Some((Some(404), Some(code), None)),
+                CoreError::Unauthorized { code, .. } => Some((Some(401), Some(code), None)),
+                CoreError::Forbidden { code, .. } => Some((Some(403), Some(code), None)),
                 // The variant folds 400 and 422 together, so the status is
                 // not known here and is not invented.
-                CoreError::Validation { code, .. } => Some((None, code, None)),
-                CoreError::UnknownType { .. } => Some((Some(400), "unknown_type", None)),
-                CoreError::RateLimited { code, .. } => Some((Some(429), code, None)),
-                CoreError::Server { status, code, .. } => Some((Some(*status), code, None)),
+                CoreError::Validation { code, .. } => Some((None, Some(code), None)),
+                CoreError::UnknownType { .. } => Some((Some(400), Some("unknown_type"), None)),
+                CoreError::RateLimited { code, .. } => Some((Some(429), Some(code), None)),
+                CoreError::Server { status, code, .. } => Some((Some(*status), Some(code), None)),
                 _ => None,
             },
             CliError::Refused {
@@ -183,7 +219,14 @@ impl CliError {
                 code,
                 details,
                 ..
-            } => Some((Some(*status), code, details.as_deref())),
+            } => Some((Some(*status), Some(code), details.as_deref())),
+            // An answer came back, and its status is the server's; its body,
+            // and so its code, was not read.
+            CliError::ContractMismatch {
+                status: Some(status),
+                ..
+            }
+            | CliError::Redirected { status, .. } => Some((Some(*status), None, None)),
             _ => None,
         }
     }
@@ -249,7 +292,7 @@ impl From<serde_json::Error> for CliError {
 pub const EXIT_CODES_HELP: &str = "\
 Exit codes:
   0  done
-  1  the request was refused, by the server or by the binary before sending; a retry does not change it
+  1  the request was refused, by the server, by the binary before sending, or for an answer on another contract; a retry does not change it
   2  the command line was wrong, or named no store or server; clap's own refusals print its usage text
   3  the environment failed (unreachable, timed out, a 5xx, a 429); try again
   4  the working copy or the queue refused under the device rules, or this system has no keychain
@@ -260,7 +303,8 @@ With --json a refusal is one JSON object on stderr:
 where error.code is one of: invalid, not_found, unauthorized, forbidden, validation, conflict,
 too_large, unknown_type, rate_limited, server, network, decoding, io, watch, store, no_store,
 no_server, no_credential, no_keychain, signed_out, no_cursor, hydration_incomplete,
-reading_handle, wrong_schema, catch_up_too_old, stream_incomplete, wrong_server, not_held.";
+reading_handle, wrong_schema, catch_up_too_old, stream_incomplete, wrong_server, not_held,
+contract_mismatch, redirect.";
 
 #[cfg(test)]
 mod tests {
@@ -367,6 +411,20 @@ mod tests {
             })
             .code(),
             CliError::NotHeld(String::new()).code(),
+            CliError::ContractMismatch {
+                origin: String::new(),
+                served: String::new(),
+                expected: 1,
+                write_sent: false,
+                status: None,
+            }
+            .code(),
+            CliError::Redirected {
+                origin: String::new(),
+                status: 302,
+                location: None,
+            }
+            .code(),
         ];
         let mut sorted_listed = listed.clone();
         sorted_listed.sort_unstable();

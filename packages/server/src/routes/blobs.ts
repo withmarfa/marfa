@@ -178,6 +178,7 @@ const uploadBlobRoute = createRoute({
   security: [{ bearerAuth: [] }],
   request: {
     body: {
+      required: true,
       content: {
         "application/octet-stream": {
           schema: BINARY_BODY,

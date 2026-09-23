@@ -5,10 +5,9 @@ use super::{insert_opt, object, pairs};
 use crate::credentials::{self, Kept};
 use crate::error::CliError;
 use crate::output::Printer;
-use crate::remote::Remote;
 use crate::remote::request::Request;
+use crate::remote::{Remote, Transport};
 use crate::values::Tier;
-use marfa_core::http::Http;
 
 #[derive(Debug, Subcommand)]
 pub enum KeysCommand {
@@ -192,7 +191,9 @@ pub struct KeyUpdateArgs {
 pub fn bootstrap_request() -> Request {
     // The operator key's label and source are the door's convention; the
     // secret rides as the bearer, which `run` below sets on the transport.
-    Request::post(&["keys"]).json(json!({ "label": "operator", "source": "operator" }))
+    Request::post(&["keys"])
+        .json(json!({ "label": "operator", "source": "operator" }))
+        .minting()
 }
 
 pub fn create_request(args: &KeyCreateArgs) -> Result<Request, CliError> {
@@ -214,7 +215,7 @@ pub fn create_request(args: &KeyCreateArgs) -> Result<Request, CliError> {
     if args.operator {
         body.insert("is_operator".into(), Value::Bool(true));
     }
-    Ok(Request::post(&["keys"]).json(Value::Object(body)))
+    Ok(Request::post(&["keys"]).json(Value::Object(body)).minting())
 }
 
 pub fn list_request() -> Request {
@@ -242,7 +243,7 @@ pub fn run(command: KeysCommand, remote: &Remote, out: &Printer) -> Result<(), C
         KeysCommand::Bootstrap { secret } => {
             // The secret is the credential for this one call, whatever key
             // the environment holds: a fresh instance has no key yet.
-            let http = Http::new(remote.url(), Some(secret))?;
+            let http = Transport::new(remote.url(), Some(secret))?;
             let minted = Remote::with(http).json(&bootstrap_request())?;
             return print_minted(&minted, out);
         }
@@ -296,7 +297,7 @@ fn keep(remote: &Remote, out: &Printer) -> Result<(), CliError> {
             line
         }
     };
-    let checked = Remote::with(Http::new(remote.url(), Some(&key))?);
+    let checked = Remote::with(Transport::new(remote.url(), Some(&key))?);
     checked.json(&Request::get(&["items", "stats"]))?;
     credentials::keep(remote.origin(), &Kept::Key { key })?;
     out.report(&json!({ "origin": remote.origin(), "kept": "key" }), || {

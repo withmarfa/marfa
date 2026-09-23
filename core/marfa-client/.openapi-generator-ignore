@@ -1,0 +1,8 @@
+# The manifest inherits the workspace's version, edition and license, and the
+# rest is documentation the generator writes for a standalone repository.
+Cargo.toml
+README.md
+docs/**
+git_push.sh
+.gitignore
+.travis.yml

@@ -8266,7 +8266,7 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody?: {
+        requestBody: {
             content: {
                 "application/octet-stream": string;
             };
@@ -10781,7 +10781,7 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody?: {
+        requestBody: {
             content: {
                 "application/gzip": string;
             };
@@ -11388,7 +11388,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Streaming NDJSON export of items with metadata (or archive when format=archive) */
+            /** @description `format=ndjson`: items with their metadata, one JSON object per line, streamed. `format=archive`: the `marfa-archive-v2.tar.gz` that `POST /admin/restore-archive` reads. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -11399,7 +11399,8 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "text/x-ndjson": string;
+                    "application/x-ndjson": string;
+                    "application/gzip": string;
                 };
             };
             /** @description Validation error */

@@ -220,9 +220,7 @@ pub(crate) fn fetch(cache: &Cache, http: &Http, hash: &str) -> Result<PathBuf> {
             other => other,
         })?;
     let ReplyBody::Text(text) = reply.body else {
-        return Err(CoreError::Decoding(
-            "the link door answered a stream where it answers JSON".into(),
-        ));
+        unreachable!("the core's transport reads every answer whole")
     };
     if reply.status == 404 {
         // The server holds no bytes by this name. The item naming them is

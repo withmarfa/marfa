@@ -14,6 +14,7 @@ path = "src/main.rs"
 clap.workspace = true
 # The keychain on macOS and the secret service on Linux, which 4 carries by default.
 keyring = "4"
+marfa-client = { path = "../marfa-client" }
 marfa-core.workspace = true
 notify.workspace = true
 serde.workspace = true
@@ -27,3 +28,5 @@ rpassword = "7"
 # The user id the refresh lock's directory is named by and checked against.
 libc = "0.2"
 url = "2"
+# The generated client's HTTP stack, which every call the binary makes rides on.
+reqwest = { version = "0.13", default-features = false, features = ["blocking", "rustls"] }

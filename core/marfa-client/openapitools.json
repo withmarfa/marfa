@@ -1,0 +1,31 @@
+{
+  "$schema": "../../node_modules/@openapitools/openapi-generator-cli/config.schema.json",
+  "spaces": 2,
+  "generator-cli": {
+    "version": "7.25.0",
+    "generators": {
+      "marfa-client": {
+        "generatorName": "rust",
+        "inputSpec": "../../openapi.json",
+        "output": ".",
+        "templateDir": "templates",
+        "additionalProperties": {
+          "packageName": "marfa-client",
+          "library": "reqwest",
+          "supportAsync": false,
+          "useSingleRequestParameter": true,
+          "supportMultipleResponses": true
+        },
+        "typeMappings": {
+          "file": "Vec<u8>"
+        },
+        "modelNameMappings": {
+          "Ok": "Acknowledged"
+        },
+        "globalProperty": {
+          "skipFormModel": "true"
+        }
+      }
+    }
+  }
+}

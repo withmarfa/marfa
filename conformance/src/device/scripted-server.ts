@@ -5,6 +5,8 @@ import {
   type ServerResponse,
 } from "node:http";
 import type { AddressInfo } from "node:net";
+import document from "../../../openapi.json" with { type: "json" };
+import { answers } from "./marfa-answers.js";
 
 /**
  * A server the fixture writes the answers for.
@@ -17,6 +19,15 @@ import type { AddressInfo } from "node:net";
  * `fidelity.test.ts` holds the scripting to what the real server does for
  * every case the real server can produce.
  */
+
+/** The response header every real answer names its contract version in. */
+export const CONTRACT_HEADER = "X-Marfa-Contract";
+
+/**
+ * The contract the binary under test was generated for, read off the same
+ * document, so the scripted answers speak it unless a fixture says otherwise.
+ */
+export const BUILT_FOR = document.info.version;
 
 export interface SseFrame {
   /** A `:comment` line. The server sends one on connect and as a keepalive. */
@@ -105,6 +116,11 @@ export class ScriptedServer {
   ) {}
 
   private routes: Route[] = [];
+  /**
+   * The contract every answer names unless it says otherwise. A fixture
+   * sets it to script a server on another contract.
+   */
+  contract: string | null = BUILT_FOR;
   private recorded: RecordedRequest[] = [];
   private seq = 0;
   private unmatched: string[] = [];
@@ -231,6 +247,18 @@ export class ScriptedServer {
       const route = this.routes.find((candidate) =>
         matches(candidate, recorded.method, recorded.pathname),
       );
+      // Every real server answers its root, which `status` and `whoami`
+      // read; a fixture that scripts no root gets the one naming the
+      // server's contract.
+      if (!route && recorded.method === "GET" && recorded.pathname === "/") {
+        this.send(
+          answers.root(
+            this.contract === null ? undefined : Number(this.contract),
+          ),
+          response,
+        );
+        return;
+      }
       if (!route) {
         this.unmatched.push(`${recorded.method} ${recorded.pathname}`);
         response.writeHead(501, { "content-type": "application/json" });
@@ -253,6 +281,10 @@ export class ScriptedServer {
         typeof responder === "function" ? responder(recorded) : responder;
       this.send(answer, response);
     });
+  }
+
+  private named(): Record<string, string> {
+    return this.contract === null ? {} : { [CONTRACT_HEADER]: this.contract };
   }
 
   private send(answer: Answer, response: ServerResponse): void {
@@ -279,6 +311,7 @@ export class ScriptedServer {
       const body = JSON.stringify(answer.body);
       response.writeHead(answer.status, {
         "content-type": "application/json",
+        ...this.named(),
         ...answer.headers,
       });
       response.end(body);
@@ -288,6 +321,7 @@ export class ScriptedServer {
       "content-type": "text/event-stream",
       "cache-control": "no-cache",
       connection: "keep-alive",
+      ...this.named(),
     });
     for (const frame of answer.frames) response.write(renderFrame(frame));
     // `hold` leaves the stream open, which is what a live subscription looks

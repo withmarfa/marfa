@@ -285,6 +285,18 @@ export interface ConflictSnapshotBody {
  * case.
  */
 export const answers = {
+  /** The root, answering the contract it is given. */
+  root: (contract: unknown): Answer => ({
+    kind: "json",
+    status: 200,
+    body: {
+      name: "marfa",
+      version: "dev",
+      instance_id: "00000000-0000-7000-8000-000000000000",
+      contract,
+      features: ["items"],
+    },
+  }),
   created: (item: Record<string, unknown>, tags: string[] = []): Answer => ({
     kind: "json",
     status: 201,

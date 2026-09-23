@@ -5,6 +5,7 @@ The Rust engine every native client embeds: a local SQLite working copy of a dec
 What it does is written down in `conformance/spec/device.md`, `queue-and-verdicts.md` and `folders.md`, and the fixtures under `conformance/src/suites/device/` gate the binary against them.
 
 - `marfa-core`: the library.
+- `marfa-client`: the Rust client, generated from `openapi.json` by OpenAPI Generator under `pnpm generate` and never edited by hand. `openapitools.json` pins the generator and its settings, and `templates/lib.mustache` adds the `CONTRACT_VERSION` the crate was generated for. The generator is a Java program, so `pnpm generate` needs a Java runtime on the path, 11 or later; CI's freshness job installs Temurin 21.
 - `marfa-cli`: the `marfa` binary.
 - `bindings/swift`: UniFFI bindings packaged as an XCFramework and a Swift package, with an example target. Its own cargo workspace, for the reason `Cargo.toml` gives.
 - `bindings/node`: a napi-rs module with a proof script.
@@ -12,7 +13,7 @@ What it does is written down in `conformance/spec/device.md`, `queue-and-verdict
 
 ## The binary
 
-`marfa` is the reference client of one instance: every operation `openapi.json` publishes is a command, and `marfa operations` prints the table that maps them (the crate's own test holds it against the document). One root per area of the API, each leaf one operation, but `status`, which reads the root, the health door and the item counts together: `status`, `items`, `edges`, `edge-types`, `types`, `search`, `metadata`, `extensions`, `blobs`, `keys`, `config`, `export`, `restore`, `webhooks`, `audit`, `events`, `housekeeping`, `connectors`, `owner`, `login`. `whoami` reads the root as `status` does, and names the credential. Two roots reach no published operation and are commands all the same: `logout` for the keychain and `operations` for the table above. A command builds the request from its arguments, sends it, and prints the server's answer as it came: nothing mirrors the document's schemas in the binary.
+`marfa` is the reference client of one instance: every operation `openapi.json` publishes is a command, and `marfa operations` prints the table that maps them (the crate's own test holds it against the document). One root per area of the API, each leaf one operation, but `status`, which reads the root, the health door and the item counts together: `status`, `items`, `edges`, `edge-types`, `types`, `search`, `metadata`, `extensions`, `blobs`, `keys`, `config`, `export`, `restore`, `webhooks`, `audit`, `events`, `housekeeping`, `connectors`, `owner`, `login`. `whoami` reads the root as `status` does, and names the credential. Two roots reach no published operation and are commands all the same: `logout` for the keychain and `operations` for the table above. A command builds the request from its arguments, sends it through `marfa-client`'s configuration and client, and prints the server's answer as it came: nothing mirrors the document's schemas in the binary. Every answer names its contract version in `X-Marfa-Contract`, and the binary refuses one on another contract, or a success naming none, with `contract_mismatch` (`device.md` 39).
 
 The server is `--url` on any command, then `MARFA_API_URL`, then the server a kept credential made current; the credential is `--key`, then `MARFA_API_KEY`, then the operating system's keychain, where `marfa keys keep` puts a key, `marfa login` puts a token set, and `marfa keys forget` and `marfa logout` take them out. Never a file. A system with no keychain is told so and pointed at the flag, the environment, or `login --print-token`.
 
@@ -27,7 +28,7 @@ The refresh is the direct commands'. `device` and `folders` take the credential 
 | Exit | Meaning                                                                                                   |
 | ---- | --------------------------------------------------------------------------------------------------------- |
 | 0    | Done.                                                                                                     |
-| 1    | The request was refused, by the server or by the binary before sending; a retry does not change it.      |
+| 1    | The request was refused, by the server, by the binary before sending, or for an answer on another contract; a retry does not change it. |
 | 2    | The command line was wrong, or named no store or server. clap's own refusals print its usage text.        |
 | 3    | The environment failed: unreachable, timed out, a 5xx, a 429. Try again; `retry_after_seconds` says when. |
 | 4    | The working copy or the queue refused under the device rules, or this system has no keychain.             |

@@ -8,8 +8,8 @@ mod catch_up;
 mod drain;
 mod error;
 pub mod folder;
-/// The transport, public for the binary's direct surface: every published
-/// operation is a call through it, beside the working copy's own doors.
+/// The working copy's transport, public for the call shapes it shares with
+/// the binary's own transport.
 pub mod http;
 mod hydrate;
 mod lock;
@@ -107,7 +107,7 @@ impl Core {
         cache: Option<blob::Cache>,
     ) -> Result<Core> {
         let http = match server {
-            Some(server) => Some(http::Http::new(&server.url, Some(&server.key))?),
+            Some(server) => Some(http::Http::new(&server.url, &server.key)?),
             None => None,
         };
         if let Some(http) = &http

@@ -366,6 +366,10 @@ pub fn refresh(origin: &str, refused: Option<&str>) -> Result<Kept, CliError> {
     if !due {
         return Ok(current);
     }
+    // A refresh rotates the pair, and the answer holding the new one would
+    // not be read from a server on another contract, which would leave the
+    // kept refresh token spent. So the server's root is read first.
+    Remote::public_at(origin)?.hold_root()?;
     let door = Remote::public_at(&token_endpoint)?;
     let answer = door.json(&Request::post(&[]).public().form(&[
         ("grant_type", "refresh_token"),
@@ -519,8 +523,17 @@ mod tests {
     use crate::door::{Answer, Door};
 
     /// A token door with one answer, and the endpoint a kept token names.
+    /// A server that answers its root on this binary's contract, which a
+    /// refresh reads first, and then its token door.
     fn token_door(status: &'static str, body: &str) -> (String, Door) {
-        let door = Door::open(vec![Answer::json(status, body)]);
+        let root = format!(
+            r#"{{"name":"marfa","contract":{}}}"#,
+            marfa_client::CONTRACT_VERSION
+        );
+        let door = Door::open(vec![
+            Answer::json("200 OK", &root),
+            Answer::json(status, body),
+        ]);
         let endpoint = format!("{}/token", door.url);
         (endpoint, door)
     }
@@ -737,19 +750,22 @@ mod tests {
     /// sent replaces the one that was spent, sent once.
     #[test]
     fn a_refresh_keeps_the_rotated_pair_and_sends_the_spent_token_once() {
-        let origin = format!("https://refresh.invalid:{}", std::process::id());
-        let _keychain = credentials::hold(&origin);
         let (endpoint, door) = token_door(
             "200 OK",
             r#"{"access_token":"marfa_at_new","refresh_token":"marfa_rt_new","expires_in":3600,"token_type":"Bearer","scope":"*:read"}"#,
         );
+        let origin = door.url.clone();
+        let _keychain = credentials::hold(&origin);
         if !keep_or_skip(&origin, &stale_token(&endpoint)) {
             return;
         }
         let outcome = refresh(&origin, None);
         let received = door.received();
-        assert_eq!(received.len(), 1);
-        let sent = &received[0];
+        assert_eq!(received.len(), 2);
+        // The root first, without the spent token, then the token door.
+        assert_eq!(received[0].path(), "/");
+        assert_eq!(received[0].header("authorization"), None);
+        let sent = &received[1];
         assert_eq!(sent.method(), "POST");
         assert_eq!(sent.path(), "/token");
         assert_eq!(
@@ -818,17 +834,30 @@ mod tests {
     /// witness is the same entry surviving a 429.
     #[test]
     fn a_dead_grant_ends_the_sign_in_and_any_other_refusal_leaves_it() {
-        let origin = format!("https://refused.invalid:{}", std::process::id());
-        let _keychain = credentials::hold(&origin);
-        let (endpoint, door) = token_door(
-            "429 Too Many Requests",
-            r#"{"error":{"code":"rate_limited","message":"slow down"}}"#,
+        // One server for both refreshes, each reading its root first.
+        let root = format!(
+            r#"{{"name":"marfa","contract":{}}}"#,
+            marfa_client::CONTRACT_VERSION
         );
+        let door = Door::open(vec![
+            Answer::json("200 OK", &root),
+            Answer::json(
+                "429 Too Many Requests",
+                r#"{"error":{"code":"rate_limited","message":"slow down"}}"#,
+            ),
+            Answer::json("200 OK", &root),
+            Answer::json(
+                "400 Bad Request",
+                r#"{"error":"invalid_grant","error_description":"revoked"}"#,
+            ),
+        ]);
+        let endpoint = format!("{}/token", door.url);
+        let origin = door.url.clone();
+        let _keychain = credentials::hold(&origin);
         if !keep_or_skip(&origin, &stale_token(&endpoint)) {
             return;
         }
         let outcome = refresh(&origin, None);
-        door.received();
         assert!(
             matches!(outcome, Err(CliError::Refused { status: 429, .. })),
             "{outcome:?}"
@@ -839,11 +868,6 @@ mod tests {
             "a 429 is the server's answer to this call, not the end of the grant"
         );
 
-        let (endpoint, door) = token_door(
-            "400 Bad Request",
-            r#"{"error":"invalid_grant","error_description":"revoked"}"#,
-        );
-        credentials::keep(&origin, &stale_token(&endpoint)).unwrap();
         let outcome = refresh(&origin, None);
         door.received();
         assert!(

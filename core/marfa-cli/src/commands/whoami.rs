@@ -1,11 +1,11 @@
-use marfa_core::http::Http;
 use serde_json::{Value, json};
 
 use crate::auth;
+use crate::commands::status;
 use crate::error::CliError;
 use crate::output::Printer;
 use crate::remote::request::Request;
-use crate::remote::{CredentialSource, Remote};
+use crate::remote::{CredentialSource, Remote, Transport};
 
 /// Which server, which instance, and which credential a bare command would
 /// use, and where that credential came from.
@@ -13,7 +13,8 @@ use crate::remote::{CredentialSource, Remote};
 /// A key has no door that says whose it is, so for a key this reports the
 /// key's kind and its source; a token reports the person it was issued to.
 pub fn run(remote: &Remote, out: &Printer) -> Result<(), CliError> {
-    let instance = remote.json(&Request::get(&[]).public())?;
+    let instance = remote.describe(&status::root_request())?;
+    let held = status::speaks_this_contract(&instance);
     let credential = match remote.credential() {
         None => json!(null),
         Some(source) => {
@@ -38,8 +39,13 @@ pub fn run(remote: &Remote, out: &Printer) -> Result<(), CliError> {
                 // names for it. A token whose scope does not reach the
                 // identity claims is refused there (401 or 403) and reported
                 // without a person; any other refusal is this command's.
-                if let Some(endpoint) = auth::discover(remote)?.userinfo_endpoint {
-                    let door = Remote::with(Http::new(&endpoint, Some(&bearer))?);
+                // A server on another contract is reported without a person
+                // rather than refused, and the token is not sent on to it,
+                // since saying which server this is remains the command's job.
+                if !held {
+                    record["person"] = json!(null);
+                } else if let Some(endpoint) = auth::discover(remote)?.userinfo_endpoint {
+                    let door = Remote::with(Transport::new(&endpoint, Some(&bearer))?);
                     match door.json(&Request::get(&[])) {
                         Ok(person) => record["person"] = person,
                         Err(CliError::Refused {
@@ -55,6 +61,7 @@ pub fn run(remote: &Remote, out: &Printer) -> Result<(), CliError> {
     let report = json!({
         "server": remote.origin(),
         "instance": instance,
+        "contract": status::contract_report(&instance),
         "credential": credential,
     });
     out.report(&report, || {
@@ -74,6 +81,9 @@ pub fn run(remote: &Remote, out: &Printer) -> Result<(), CliError> {
                 field(&instance, "version")
             ),
         ];
+        if !held {
+            lines.push(status::contract_line(&instance));
+        }
         match remote.credential() {
             None => lines.push("no credential".into()),
             Some(source) => {
