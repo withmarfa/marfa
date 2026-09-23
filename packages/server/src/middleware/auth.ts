@@ -109,13 +109,13 @@ export function hashApiKey(raw: string, salt: string): string {
  *
  * Subtractive on purpose. Rebuilding the object field by field would drop
  * every field added to `ApiKey` afterwards until someone remembered to
- * extend the list, and drop it silently: the types agree either way because the missing fields are
- * optional. `oauth_client_id` is the field that shows what that costs —
- * it is optional, it is stamped by the server rather than asked for, and
- * `extensionLabelOf` refuses a label claim on it, so a rebuild that
- * forgot it would hand every app-minted key a label it may not have.
- * Naming what to remove fails closed on the next field; naming what to
- * keep fails open.
+ * extend the list, and drop it silently: the types agree either way
+ * because the missing fields are optional. `oauth_client_id` is the field
+ * that shows what that costs — it is optional, it is stamped by the server
+ * rather than asked for, and `extensionLabelOf` refuses a label claim on
+ * it, so a rebuild that forgot it would hand every app-minted key a label
+ * it may not have. Naming what to remove fails closed on the next field;
+ * naming what to keep fails open.
  */
 export function toRequestApiKey(
   stored: ApiKey & { key_hash: string; revoked_at: string | null },
@@ -734,41 +734,25 @@ export function itemProvenanceSource(
  * The type a write declares is the type it lands on, or the write is
  * refused.
  *
- * Most doors address a row by something other than its type — a natural
- * key, or an id — and carry a `type` in the body that played no part in
- * finding it. Those doors took the resolved row's type and merged the
- * submitted properties onto it, so a caller that declared one type and
- * resolved another was not refused, it was reinterpreted, with a 200 and
- * nothing said.
+ * Most doors address a row by something other than its type, a natural
+ * key or an id, and carry a `type` in the body that plays no part in
+ * finding it. Merging the submitted properties onto whatever the key
+ * resolved would reinterpret a caller that declared one type and resolved
+ * another, with a 200 and nothing said, rather than refuse it.
  *
  * Two doors are exempt and neither by omission. `POST /items` create
  * resolves no row, so the type it names IS the row. `bulk-actions`
  * selects by filter, where a type is a selector and cannot disagree with
  * what it selected.
  *
- * Refusing here rather than in each caller is the deliberate half, and
- * the reason is stronger than it first looked. Counted against the
- * connectors repository rather than recalled: **no inbound connector
- * reads the type of the row it is about to write.** Every `getItem` call
- * in every handler fetches either the connection's own configuration row
- * or, on the outbound path, the item an event names.
- *
- * Eight address the row by an id they cached from an earlier sync, which
- * is what lets them call the update route at all. That is an identity
- * cache, not a type check: it narrows the exposure without closing it.
- * Five cannot even do that — three hold a bounded delivery ring rather
- * than item ids, and two hand a whole page to a bulk upsert with no
- * per-record id to read by.
- *
- * Deliberately no fleet total here. It depends on whether the scaffold
- * package and the one write-only connector are counted, an earlier
- * draft of this comment asserted one, and it was wrong.
- *
- * So there is no caller-side defense to defer to. The door is the only
- * place the disagreement can be seen at all, which is also why it does
- * not care why the two types differ — a type a caller derives fresh on
- * every run from configuration the user can change is the likeliest
- * source, and no caller is in a position to notice.
+ * Refusing here rather than in each caller is deliberate. A caller that
+ * addresses a row by an id it cached, or hands a page to a bulk upsert,
+ * has no reason to read the row's type before writing, so there is no
+ * caller-side defense to defer to. The door is the only place the
+ * disagreement can be seen at all, which is also why it does not care why
+ * the two types differ: a type a caller derives fresh on every run from
+ * configuration the user can change is the likeliest source, and no
+ * caller is in a position to notice.
  *
  * Called from each door that resolves a row it did not create; the
  * door-coverage tests pin the set.
@@ -781,9 +765,9 @@ export function requireDeclaredTypeMatches(
   // oversight. Admitting an ancestor would soften the one failure this
   // causes — a write family moved from a specific type to the core one
   // it descends from would keep syncing — but it also makes the declared
-  // type unfalsifiable for every type with descendants, which is most of
-  // them. The claim is either the row's type or it is not, and a caller
-  // that means to move a corpus between types has an operation for it.
+  // type unfalsifiable for every type with descendants. The claim is either
+  // the row's type or it is not, and a caller that means to move a corpus
+  // between types has an operation for it.
   if (declared === row.type) return;
   throw new MarfaError(
     ErrorCode.TYPE_MISMATCH,
