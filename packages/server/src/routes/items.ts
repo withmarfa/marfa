@@ -103,7 +103,7 @@ import {
 /**
  * The `?edge[<type>]=<id>` / `?backref[<type>]=<id>` shorthand keys.
  *
- * Declared once because two things read it now: the clause builder that
+ * Declared once because two things read it: the clause builder that
  * compiles a match into the filter grammar, and the unknown-parameter
  * refusal, which would otherwise reject every one of them. Two copies of
  * this pattern would mean a working shorthand starting to answer 400 the
@@ -399,14 +399,11 @@ const getItemStatsRoute = createRoute({
     403: {
       content: {
         "application/json": {
-          schema: makeErrorResponseSchema([
-            "type_not_permitted",
-            "edge_permission_denied",
-          ]),
+          schema: makeErrorResponseSchema(["type_not_permitted"]),
         },
       },
       description:
-        "The credential's type permissions reach no type, so there is nothing on the data plane it may read. A credential that reaches some types reads this door narrowed to them rather than being refused. Also `edge_permission_denied` where a filter term names an edge type the credential may not read, and `type_not_permitted` where a `backref` term is anchored on an item whose type it may not read: a term naming a relationship is a question, and it is refused rather than answered or dropped.",
+        "The credential's type permissions reach no type, so there is nothing on the data plane it may read. A credential that reaches some types reads this door narrowed to them rather than being refused.",
     },
   },
 });

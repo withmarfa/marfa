@@ -47,29 +47,21 @@ import { withPreparedHeaders } from "../prepared-headers.js";
  *
  * That list is a snapshot and the query is the thing to keep: grep the six
  * methods across `packages/server/src` outside `storage/`, and trace each
- * hit back to whether a request drives it. The last version of this comment
- * named three writers that did not exist, and the version that replaced them
- * named two when there were three — the retirer is interval-driven from
- * `index.ts` and easy to miss because its write is two calls away.
+ * hit back to whether a request drives it. The retirer is the easy one to
+ * miss: it runs as a housekeeping job and its write is two calls away.
  * `routes/idempotent-write-doors.test.ts` holds the doors that do carry a
  * key against the app's own route table.
  *
  * **A door over a free-text PATH segment is safe here; the query is not
- * covered.** Every entry below carries a UUIDv7, which percent-encodes to
- * itself, so for a long time the fingerprint could hash the raw path and
- * nothing showed. It no longer does: `canonicalPath` re-spells each path
- * segment before the digest, so two encodings of one request are one
- * fingerprint and a retry that re-encodes is replayed rather than
- * refused. That is what lets a tag, an extension namespace or any other
- * free-text path segment join this list.
+ * covered.** `canonicalPath` re-spells each path segment before the digest,
+ * so two encodings of one request are one fingerprint and a retry that
+ * re-encodes is replayed rather than refused. That is what lets a tag, an
+ * extension namespace or any other free-text path segment join this list.
  *
  * **The query string is hashed as written**, so a door taking a free-text
- * query value reopens the same bug on that axis. It is safe today because
- * no door here takes one: nine carry no query parameter and the tenth
- * carries `conflict`, a closed enum. Both halves are stated because the
- * alternative was two lists that happened not to overlap, with nothing
- * recording the relationship — which is how this went unnoticed the first
- * time.
+ * query value would refuse a retry that re-encoded it. No door here takes
+ * one: `PATCH /items/:id` carries `conflict`, a closed enum, and the rest
+ * carry no query parameter.
  */
 export const IDEMPOTENT_WRITE_DOORS: readonly string[] = [
   "POST /items",
@@ -211,12 +203,11 @@ function credentialHandle(c: Context<AppEnv>): string {
  * the same.
  *
  * Percent-encoding is not canonical: `/items/abc` and `/items/%61bc` name
- * one resource and used to produce two fingerprints, and a fingerprint
- * that does not match the stored one is read as the same key being reused
- * for a *different* request. So a retry that re-encoded a single
- * character was refused `idempotency_key_reused` rather than replayed —
- * and a key cannot be un-spent by trying again, so the write could never
- * complete under it.
+ * one resource, and a fingerprint that does not match the stored one is
+ * read as the same key being reused for a *different* request. Without one
+ * spelling a retry that re-encoded a single character would be refused
+ * `idempotency_key_reused` rather than replayed — and a key cannot be
+ * un-spent by trying again, so the write could never complete under it.
  *
  * Segment by segment, and re-encoded rather than left decoded. Decoding
  * the pathname whole would turn `%2F` into a separator and collapse

@@ -20,6 +20,63 @@ function operationKeys(spec: Record<string, unknown>): Map<string, Operation> {
   return out;
 }
 
+/**
+ * Every refusal the document declares whose code is not a closed set.
+ *
+ * A refusal names its code under `error.code`, or, in the RFC shapes the
+ * OAuth doors answer, as a top-level `error`. Either position has to carry an
+ * `enum` or a `const`: an open string admits every code, so a generated client
+ * has nothing to branch on and no check can tell a new code from a declared
+ * one. A refusal with no code position at all is reported too.
+ */
+function openRefusals(document: Record<string, unknown>): string[] {
+  const out: string[] = [];
+  const closedCode = (schema: unknown): boolean => {
+    const record = (schema ?? {}) as { enum?: unknown[]; const?: unknown };
+    return Array.isArray(record.enum) || record.const !== undefined;
+  };
+  // What a body this schema admits can fail to say: every branch of a union
+  // is a body of its own, and the branches of an `allOf` are one body.
+  const problem = (schema: unknown): string | undefined => {
+    const record = (schema ?? {}) as Record<string, unknown>;
+    for (const key of ["anyOf", "oneOf"]) {
+      const branches = record[key];
+      if (Array.isArray(branches)) {
+        return branches.map(problem).find((p) => p !== undefined);
+      }
+    }
+    if (Array.isArray(record.allOf)) {
+      const found = (record.allOf as unknown[]).map(problem);
+      return found.some((p) => p === undefined) ? undefined : found[0];
+    }
+    const error = (
+      (record.properties ?? {}) as Record<
+        string,
+        { properties?: Record<string, unknown> }
+      >
+    ).error;
+    if (error === undefined) return "no code";
+    return closedCode(error.properties?.code ?? error) ? undefined : "open";
+  };
+  for (const [key, operation] of operationKeys(document)) {
+    const responses = (operation.responses ?? {}) as Record<
+      string,
+      { content?: Record<string, { schema?: unknown }> }
+    >;
+    for (const [status, response] of Object.entries(responses)) {
+      if (Number(status) < 400) continue;
+      const media = Object.values(response.content ?? {});
+      if (media.length === 0) out.push(`${key} ${status} (no content)`);
+      for (const { schema } of media) {
+        const found = problem(inlineOpenApiRefs(schema, document));
+        if (found === "open") out.push(`${key} ${status}`);
+        else if (found !== undefined) out.push(`${key} ${status} (${found})`);
+      }
+    }
+  }
+  return [...new Set(out)].sort();
+}
+
 describe("published OpenAPI spec", () => {
   let published: Map<string, Operation>;
   let document: Record<string, unknown>;
@@ -85,10 +142,6 @@ describe("published OpenAPI spec", () => {
     // description that does not say, and the somewhere else is a page
     // nothing in this repository can hold to the code.
     //
-    // This replaces a check that the links pointed at sections that exist.
-    // Every such link has since gone, so that check was asserting a
-    // property of an empty set — green whatever the descriptions said.
-    //
     // A floor rather than a proof. It catches the shapes that leave the
     // document — root-relative, protocol-relative, and anything carrying a
     // scheme — and lets a relative target or a bare anchor through, because
@@ -127,9 +180,8 @@ describe("published OpenAPI spec", () => {
     for (const [key, operation] of typeOperations) {
       const responses = (operation as { responses?: unknown }).responses;
       expect(responses, `${key} has no responses object`).toBeDefined();
-      // Followed through the registered components: the type shape is one
-      // of them now, so the field this pins is a reference away rather than
-      // written out on each operation.
+      // Followed through the registered components, because the type shape
+      // is one, so the field this pins is a reference away.
       const text = JSON.stringify(inlineOpenApiRefs(responses, document));
       if (!text.includes('"compatible_with"')) missing.push(key);
     }
@@ -238,16 +290,17 @@ describe("published OpenAPI spec", () => {
     const components = (
       document.components as { schemas: Record<string, unknown> }
     ).schemas;
+    const admitsNull = (schema: unknown): boolean => {
+      const declared = (schema as { type?: unknown }).type;
+      const values = (schema as { enum?: unknown[] }).enum;
+      return (
+        (Array.isArray(declared) && declared.includes("null")) ||
+        declared === "null" ||
+        (Array.isArray(values) && values.includes(null))
+      );
+    };
     const admitting = Object.entries(components)
-      .filter(([, schema]) => {
-        const declared = (schema as { type?: unknown; enum?: unknown[] }).type;
-        const values = (schema as { enum?: unknown[] }).enum;
-        return (
-          (Array.isArray(declared) && declared.includes("null")) ||
-          declared === "null" ||
-          (Array.isArray(values) && values.includes(null))
-        );
-      })
+      .filter(([, schema]) => admitsNull(schema))
       .map(([name]) => name);
     expect(Object.keys(components).length).toBeGreaterThan(20);
     expect(
@@ -255,8 +308,8 @@ describe("published OpenAPI spec", () => {
       "Carry the null at the position that has one, with `nullableRef`.",
     ).toEqual([]);
 
-    // The witness: the same shape, made nullable at one use, and what the
-    // generator then publishes.
+    // The witness: the same shape, made nullable at one use, is what the
+    // predicate above has to catch.
     const outcome = z.enum(["ok", "error"]).openapi("ProbeOutcome");
     const probe = new OpenAPIHono();
     probe.openapi(
@@ -283,7 +336,8 @@ describe("published OpenAPI spec", () => {
         info: { title: "probe", version: "1" },
       }).components as { schemas: Record<string, { enum?: unknown[] }> }
     ).schemas.ProbeOutcome;
-    expect(polluted?.enum).toContain(null);
+    expect(admitsNull(polluted), JSON.stringify(polluted)).toBe(true);
+    expect(admitsNull(components.ItemState)).toBe(false);
   });
 
   it("finds a shape written out twice", () => {
@@ -389,5 +443,61 @@ describe("published OpenAPI spec", () => {
       inlined.sort(),
       "Reference the component instead of writing the shape out again.",
     ).toEqual([]);
+  });
+
+  it("declares every refusal code as a closed set", () => {
+    expect(
+      openRefusals(document),
+      "Declare the codes this status answers with `makeErrorResponseSchema`.",
+    ).toEqual([]);
+
+    // The witness: one refusal component opened to any string, and a
+    // refusal declared with no code at all.
+    const opened = structuredClone(document) as {
+      components: { schemas: Record<string, Record<string, unknown>> };
+      paths: Record<string, Record<string, Operation>>;
+    };
+    const unauthorized = opened.components.schemas.UnauthorizedRefusal as {
+      properties: { error: { properties: { code: unknown } } };
+    };
+    unauthorized.properties.error.properties.code = { type: "string" };
+    const flagged = openRefusals(opened);
+    expect(flagged).toContain("GET /items 401");
+    expect(flagged.length).toBeGreaterThan(50);
+
+    const bare = structuredClone(document) as typeof opened;
+    (bare.paths["/items"]?.get?.responses as Record<string, unknown>)["401"] = {
+      description: "no code",
+      content: { "application/json": { schema: { type: "object" } } },
+    };
+    expect(openRefusals(bare as unknown as Record<string, unknown>)).toEqual([
+      "GET /items 401 (no code)",
+    ]);
+
+    // A union whose one branch says nothing about its code, and a refusal
+    // with no content at all.
+    const union = structuredClone(document) as typeof opened;
+    const itemsGet = union.paths["/items"]?.get?.responses as Record<
+      string,
+      unknown
+    >;
+    itemsGet["401"] = {
+      description: "one branch open",
+      content: {
+        "application/json": {
+          schema: {
+            anyOf: [
+              { $ref: "#/components/schemas/UnauthorizedRefusal" },
+              { type: "object", properties: { message: { type: "string" } } },
+            ],
+          },
+        },
+      },
+    };
+    itemsGet["400"] = { description: "no content" };
+    expect(openRefusals(union as unknown as Record<string, unknown>)).toEqual([
+      "GET /items 400 (no content)",
+      "GET /items 401 (no code)",
+    ]);
   });
 });

@@ -21,9 +21,8 @@ import type { Storage } from "../storage/interface.js";
  *
  * The pair is deliberately asymmetric: the edge type is the edge's own,
  * and readability is the **source item's** — an edge is a statement made
- * by its source about its target. A door anchored on the target
- * therefore answers a question about a row it never read, which is what
- * `GET /items/{id}/backrefs` got wrong.
+ * by its source about its target. A door anchored on the target, such as
+ * `GET /items/{id}/backrefs`, therefore reads the source before answering.
  */
 export function edgeKindReadable(key: ApiKey, edge: Edge): boolean {
   return edgePermissionCovers(key.edge_permissions, edge.edge_type, "read");

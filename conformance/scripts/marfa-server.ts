@@ -44,6 +44,7 @@ import {
   readBootstrapSecret,
   renderEnvFile,
 } from "../src/utils/target.js";
+import { FRESH_SERVER_LOGS } from "../src/utils/fresh-server.js";
 
 const HEALTH_BUDGET_MS = 180_000;
 const HEALTH_POLL_MS = 250;
@@ -99,6 +100,7 @@ function paths(state: string) {
     db: resolve(state, "marfa.db"),
     blobs: resolve(state, "blobs"),
     env: resolve(state, "env"),
+    statusLogs: resolve(state, FRESH_SERVER_LOGS),
   };
 }
 
@@ -307,6 +309,7 @@ export async function bootServer(args: BootOptions): Promise<void> {
           operatorKey: previous.MARFA_OPERATOR_KEY ?? "",
         },
         p.blobs,
+        p.statusLogs,
       ),
     );
     console.log(`[marfa-server] already bootstrapped; env file at ${p.env}`);
@@ -315,7 +318,7 @@ export async function bootServer(args: BootOptions): Promise<void> {
 
   const response = await mint(url, secret);
   const credentials = chooseCredentials(response);
-  writeFileSync(p.env, renderEnvFile(url, credentials, p.blobs));
+  writeFileSync(p.env, renderEnvFile(url, credentials, p.blobs, p.statusLogs));
   console.log(`[marfa-server] minted the first key; env file at ${p.env}`);
 }
 
@@ -386,6 +389,7 @@ function clearState(state: string): void {
     p.env,
     p.log,
     p.blobs,
+    p.statusLogs,
   ]) {
     rmSync(path, { recursive: true, force: true });
   }

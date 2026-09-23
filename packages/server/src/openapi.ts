@@ -21,8 +21,7 @@ import { requireDeclaredCredential } from "./middleware/auth.js";
  * The gate goes ahead of anything the route declares for itself, and
  * `OpenAPIHono.openapi` puts route middleware ahead of the validators it
  * derives from the request schemas. That ordering is the point: a validator
- * refusing first is how a bare request used to be told what was wrong with
- * its body.
+ * refusing first would tell a bare request what was wrong with its body.
  */
 function withCredentialGate<R extends RouteConfig>(route: R): R {
   if (route.security === undefined || route.security.length === 0) return route;
@@ -161,7 +160,8 @@ const refusalSchemas = new Map<string, ReturnType<typeof buildRefusalSchema>>();
  * client branches on an enum rather than on a string. Every door declares
  * the codes it answers on each status through this; there is no open
  * spelling of the envelope, because a door that cannot say what it answers
- * is a door whose refusals nothing can be held to.
+ * is a door whose refusals nothing can be held to. `openapi-published.test.ts`
+ * refuses a document that declares one.
  *
  * The order a door writes its codes in does not reach the document: the
  * name and the enum are both sorted, so one set is one component.

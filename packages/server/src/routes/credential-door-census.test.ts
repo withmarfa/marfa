@@ -79,19 +79,19 @@ function operationDoors(paths: Record<string, unknown>): Set<string> {
  * serves without publishing.
  */
 function documentedDoors(): Set<string> {
-  const registry = ctx.app.getOpenAPIDocument({
+  const registry = ctx.app.getOpenAPI31Document({
     openapi: "3.1.0",
     info: { title: "census", version: "0" },
   });
   const published = finalizeOpenAPISpec(
-    ctx.app.getOpenAPIDocument({
+    ctx.app.getOpenAPI31Document({
       openapi: "3.1.0",
       info: OPENAPI_DOCUMENT_INFO,
     }),
   );
   return new Set([
-    ...operationDoors(registry.paths),
-    ...operationDoors(published.paths),
+    ...operationDoors(registry.paths ?? {}),
+    ...operationDoors(published.paths ?? {}),
   ]);
 }
 
@@ -109,12 +109,12 @@ const OPEN_OPERATIONS: Record<string, string> = {
 };
 
 function declaredDoors(): Set<string> {
-  const doc = ctx.app.getOpenAPIDocument({
+  const doc = ctx.app.getOpenAPI31Document({
     openapi: "3.1.0",
     info: { title: "census", version: "0" },
   });
   const out = new Set<string>();
-  for (const [path, item] of Object.entries(doc.paths)) {
+  for (const [path, item] of Object.entries(doc.paths ?? {})) {
     for (const [method, operation] of Object.entries(
       item as Record<string, unknown>,
     )) {

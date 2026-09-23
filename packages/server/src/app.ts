@@ -57,6 +57,7 @@ import { authConsentRoutes } from "./routes/auth-consent.js";
 import { authErrorRoutes } from "./routes/auth-error.js";
 import { loggerMiddleware } from "./middleware/logger.js";
 import { otelCorrelationMiddleware } from "./middleware/otel-correlation.js";
+import { bodyCapFor } from "./middleware/body-cap.js";
 import {
   idempotencyMiddleware,
   IDEMPOTENT_WRITE_DOORS,
@@ -210,11 +211,7 @@ export function createApp(
   // typed 413 `request_too_large` (thrown so the global error handler
   // emits the correct code + status). Mounted after `secureHeaders` and
   // before auth so an oversized unauthenticated body is rejected cheaply.
-  //
-  // The blob upload route (`/blobs`) and the archive restore
-  // (`/admin/restore-archive`) are exempt and have no cap of their own:
-  // each body streams to disk as it arrives, so its size costs disk rather
-  // than memory, and a file, or an archive of files, is as large as it is.
+  // Which doors take which cap is `bodyCapFor`'s.
   const tooLarge = () => {
     throw new MarfaError(ErrorCode.REQUEST_TOO_LARGE, "Request body too large");
   };
@@ -222,11 +219,8 @@ export function createApp(
     maxSize: config.maxRequestBytes,
     onError: tooLarge,
   });
-  // Bulk write endpoints (`/items/bulk*`, `/edges/bulk`) carry up to 5000
-  // items/edges in a single body, so the tight per-request cap would reject
-  // legitimate batches. They get a higher dedicated cap
-  // (`MARFA_MAX_BULK_REQUEST_BYTES`, default 16 MB); the bulk routes still
-  // bound the item count (5000) and the per-field caps still apply.
+  // `MARFA_MAX_BULK_REQUEST_BYTES`, default 16 MB; `bodyCapFor` says which
+  // doors take it.
   const bulkBodyLimit = bodyLimit({
     maxSize: config.maxBulkRequestBytes ?? 16 * 1024 * 1024,
     onError: tooLarge,
@@ -234,13 +228,9 @@ export function createApp(
   app.use(
     "*",
     createMiddleware<AppEnv>(async (c, next) => {
-      const path = c.req.path;
-      if (path.startsWith("/blobs") || path === "/admin/restore-archive") {
-        return next();
-      }
-      if (path.startsWith("/items/bulk") || path.startsWith("/edges/bulk")) {
-        return bulkBodyLimit(c, next);
-      }
+      const cap = bodyCapFor(c.req.path);
+      if (cap === "none") return next();
+      if (cap === "bulk") return bulkBodyLimit(c, next);
       return requestBodyLimit(c, next);
     }),
   );

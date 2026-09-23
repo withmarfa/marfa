@@ -5,6 +5,7 @@ import { logs, SeverityNumber } from "@opentelemetry/api-logs";
 import type { AnyValue, AnyValueMap } from "@opentelemetry/api-logs";
 import type { Context } from "hono";
 import type { AppEnv } from "./auth.js";
+import { toOpenApiPath } from "../openapi-path.js";
 
 // ---------------------------------------------------------------------------
 // Structured log entry
@@ -529,11 +530,6 @@ export function serializeError(err: unknown, depth = 0): unknown {
 // ---------------------------------------------------------------------------
 // Hono middleware — logs every request as JSON to stdout at completion
 // ---------------------------------------------------------------------------
-
-/** `/items/:id/purge` as the document spells it: `/items/{id}/purge`. */
-function toOpenApiPath(honoPath: string): string {
-  return honoPath.replace(/:([A-Za-z0-9_]+)/g, "{$1}");
-}
 
 /** The pattern every universal middleware is mounted on, which names no door. */
 function isUniversal(path: string): boolean {

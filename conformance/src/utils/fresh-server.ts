@@ -1,7 +1,14 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseEnvFile } from "./target.js";
 
@@ -30,6 +37,12 @@ export interface FreshServer {
   /** Stops the server and removes its state. Safe to call twice. */
   stop(): void;
 }
+
+/**
+ * The folder under the run's state directory where a fixture's own server
+ * leaves its request log on the way out, for `check:statuses` to read.
+ */
+export const FRESH_SERVER_LOGS = "fresh-server-logs";
 
 const conformanceRoot = resolve(
   dirname(fileURLToPath(import.meta.url)),
@@ -118,6 +131,15 @@ export async function bootFreshServer(
   const stop = () => {
     if (stopped) return;
     stopped = true;
+    // Before `down`, which clears the log with the rest of the state. The
+    // run's server boots from the same checkout, so what this one answered
+    // is held to the same document.
+    const destination = process.env.MARFA_STATUS_LOGS;
+    const log = join(state, "server.log");
+    if (destination !== undefined && destination !== "" && existsSync(log)) {
+      mkdirSync(destination, { recursive: true });
+      copyFileSync(log, join(destination, `${basename(state)}.log`));
+    }
     const down = run("down");
     if (down.status !== 0) {
       throw new Error(

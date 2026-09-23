@@ -59,6 +59,7 @@
     "undici": "^8.10.0"
   },
   "devDependencies": {
+    "@asteasolutions/zod-to-openapi": "9.1.0",
     "@types/node": "^26.2.0",
     "@types/tar-stream": "^3.1.4",
     "drizzle-kit": "^0.31.10",

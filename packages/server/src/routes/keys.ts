@@ -548,10 +548,9 @@ function firstReachOnAnOperatorKey(
  * Refuse an operator key that would hold something.
  *
  * **Running the instance is not a permission, so the tier that runs it
- * carries none.** That used to be a property of how the operator key happened
- * to be minted rather than a rule any door asked about, and the row constraint
- * `api_keys_operator_holds_nothing` now holds it at the store. This is the
- * route's own answer, ahead of the database refusal.
+ * carries none.** The row constraint `api_keys_operator_holds_nothing` holds
+ * it at the store; this is the route's own answer, ahead of the database
+ * refusal.
  *
  * **Two doors could write it and both are here.** The creator ceiling exempts
  * the operator key, because measuring it against its own empty maps would
@@ -731,8 +730,8 @@ function refuseWideningAnAppsKey(
  * `settings.claim` is atomic and one-shot, which is what keeps two concurrent
  * unauthenticated mints from both succeeding. It is also the only thing
  * telling `authMiddleware` to stop admitting an unauthenticated `POST /keys`,
- * and nothing else clears it, so a claim followed by a failure used to be an
- * instance with no credential and no route that could make one.
+ * and nothing else clears it, so a claim followed by a failure left standing
+ * would be an instance with no credential and no route that could make one.
  *
  * **The release is conditional, and the condition is the whole safety of it.**
  * Releasing on any failure would reopen unauthenticated minting on an
@@ -796,13 +795,8 @@ export function keyRoutes(storage: Storage, salt: string) {
       // A session may mint, if it was granted the permission to and the key it
       // asks for does not reach past the session's own grant. Holding
       // `keys.mint` says a credential may mint; the clamp below says how far
-      // what it mints may reach.
-      //
-      // The blanket refusal that used to stand here was doing two jobs at once
-      // — withholding the permission, and preventing the escalation a mint
-      // makes possible. Both are still done, by two things that can be reasoned
-      // about separately: `requirePermission` here, and the breadth clamp
-      // below. Removing one without the other is the mistake to avoid; see
+      // what it mints may reach. The two are separate on purpose, and
+      // removing one without the other opens an escalation; see
       // `auth/mint-clamp.ts`.
       requireKeysMintOrOperator(c);
     }
@@ -854,8 +848,8 @@ export function keyRoutes(storage: Storage, salt: string) {
     // The claim has to come first or two concurrent callers both mint, but it
     // is also what tells the middleware to stop admitting an unauthenticated
     // mint. A throw between the two — a failed insert, a provisioning error,
-    // a dropped connection — used to leave a sentinel with no operator key
-    // behind it, which is an instance nobody can reach and no route can
+    // a dropped connection — would otherwise leave a sentinel with no operator
+    // key behind it, which is an instance nobody can reach and no route can
     // repair. Releasing on the way out makes the attempt retryable, so a
     // transient failure costs a retry rather than the instance.
     //
@@ -1178,7 +1172,7 @@ export function keyRoutes(storage: Storage, salt: string) {
     //
     // Asked of every editor rather than only of a session, for the reason the
     // mint states: a key holding `keys.mint` and read on one type is an
-    // ordinary credential now, and nothing about holding the permission to
+    // ordinary credential, and nothing about holding the permission to
     // edit says how far what it edits may reach.
     const requestedReach = {
       type_permissions: body.type_permissions,

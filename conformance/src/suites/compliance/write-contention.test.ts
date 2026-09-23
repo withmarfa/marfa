@@ -217,6 +217,56 @@ describe("contention on the write lock", () => {
     expect(served.ok, JSON.stringify(served.error)).toBe(true);
   }, 120_000);
 
+  it("refuses a read too, because the credential gate stamps a key's first use", async () => {
+    // Every credentialed door can meet the lock: the gate records when a
+    // key was last used, once per key per hour, before the handler runs.
+    // A key minted here has never been used, so its first read writes.
+    const minted = await fetch(`${impatient!.apiUrl}/keys`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${impatient!.operatorKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ label: "first-use", source: "first-use" }),
+    });
+    expect(minted.status).toBe(201);
+    const { key } = (await minted.json()) as { key: string };
+
+    const lock = await HeldLock.take(impatient!.sqlitePath);
+    try {
+      const refused = await fetch(`${impatient!.apiUrl}/items`, {
+        headers: { Authorization: `Bearer ${key}` },
+      });
+      expect(refused.status).toBe(503);
+      const body = (await refused.json()) as { error?: { code?: string } };
+      expect(body.error?.code).toBe("write_contention");
+    } finally {
+      await lock.release();
+    }
+  }, 120_000);
+
+  it("answers 500 at client registration, which the sign-in library writes", async () => {
+    // What the server does, recorded in `findings.md` 2: the registration
+    // door is the sign-in library's, whose write does not pass through the
+    // storage layer's busy budget, so contention reaches the caller as a
+    // `500` the document does not declare.
+    const lock = await HeldLock.take(impatient!.sqlitePath);
+    try {
+      const refused = await fetch(`${impatient!.apiUrl}/auth/oauth2/register`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          client_name: "contention",
+          redirect_uris: ["https://example.com/callback"],
+          token_endpoint_auth_method: "none",
+        }),
+      });
+      expect(refused.status).toBe(500);
+    } finally {
+      await lock.release();
+    }
+  }, 120_000);
+
   it("waits out a briefly held lock on the default budget", async () => {
     // The second witness, and the one that makes the budget the subject:
     // the same held lock against a server that waits is not a refusal at

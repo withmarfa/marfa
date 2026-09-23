@@ -469,8 +469,8 @@ export function edgeRoutes(storage: Storage) {
       cursor: q.cursor,
     });
 
-    // The two questions `GET /edges/{id}` asks, asked of every row, and
-    // asked through the one function every plural door now calls. The
+    // The two questions `GET /edges/{id}` asks, asked of every row through
+    // the one function every plural door calls. The
     // cursor and `has_more` are the store's and are untouched, so a page
     // can come back short — empty, even, while `has_more` is true — and
     // paging still walks the whole listing.
@@ -949,17 +949,11 @@ export function itemEdgeListingRoutes(storage: Storage) {
       limit: q.limit,
       cursor: q.cursor,
     });
-    // The anchor check above answers half of what `GET /edges/{id}` asks
-    // and the door used to stop there: the anchor is every row's source,
-    // so the source's type is settled, and the edge type was never asked
-    // at all. A credential holding `edge.about:read` and nothing else
-    // read every kind of relationship this item has, one door along from
-    // the one that refuses it each of them singly.
-    //
-    // Both questions go through the shared reading anyway, source
-    // included, rather than the half this door is missing. The
-    // redundant half is one keyed read; a parameter asserting the anchor
-    // was already authorized is a claim the next caller can get wrong.
+    // The anchor check above settles the source's type, since the anchor is
+    // every row's source, but not the edge type. Both questions go through
+    // the shared reading anyway: the redundant half is one keyed read, and a
+    // parameter asserting the anchor was already authorized is a claim the
+    // next caller can get wrong.
     const visible = await readableEdges(storage, key, result.data);
     return c.json({ ...result, data: visible }, 200);
   });

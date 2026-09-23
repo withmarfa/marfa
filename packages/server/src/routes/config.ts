@@ -55,7 +55,7 @@ const InstanceConfigSchema = z
  *
  * `PUT` is a full replacement, so stripping an unknown key is destructive
  * rather than merely useless: `{"activity_retention_day": 30}` is one missing
- * letter, and it used to answer 200 having erased every override the instance
+ * letter, and answering 200 to it would erase every override the instance
  * had. A caller cannot tell that from success.
  *
  * Read stays permissive, deliberately and all the way down. A client that

@@ -66,11 +66,8 @@ describe("a custom type follows the universal lifecycle", () => {
     expect(trashed.status).toBe(200);
     expect(trashed.data.item.state).toBe("trashed");
 
-    // The last leg the title names, and the one nothing asserted. A trashed
-    // row is read past the trashed-invisible getter, so the lifecycle graph
-    // judges the move and refuses it; `404 item_not_found`, which this door
-    // used to answer and which `findings.md` recorded, is the answer the
-    // graph never gets to give.
+    // A trashed row is read past the trashed-invisible getter, so the
+    // lifecycle graph judges the move rather than the door answering 404.
     const refused = await client.transitionItem(
       created.data.item.id,
       "archived",

@@ -38,9 +38,12 @@ describe("every covered operation is validated against the served document", () 
   const validated = new Set<string>();
   for (const file of testFiles(join(repoRoot, "src/suites"))) {
     const text = readFileSync(file, "utf8");
+    // Only a success body counts: a refusal validated on a door whose 2xx
+    // is not JSON says nothing about that 2xx.
     for (const m of text.matchAll(
-      /expectMatchesSchema\(\s*"([A-Z]+)",\s*"([^"]+)"/g,
+      /expectMatchesSchema\(\s*"([A-Z]+)",\s*"([^"]+)",\s*(\d{3})?/g,
     )) {
+      if (m[3] !== undefined && !m[3].startsWith("2")) continue;
       validated.add(`${m[1]} ${m[2]}`);
     }
   }
