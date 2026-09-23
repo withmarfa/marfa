@@ -3,22 +3,21 @@
  * the same credential.
  *
  * `computeTypeFilter` returns a grant and the exclusions that carve into it,
- * and **seven separate compilers turn that into a predicate**: the shared
- * `allowedTypesCondition` in both item stores, `stats` in both, an inlined
- * decomposition in both search stores, a third variant in both metadata
- * stores for the tag vocabulary, and — not SQL at all — `matchesTypeFilter`
- * over the SSE stream. A negative term that reached six of them and not the
- * seventh would leave two surfaces disagreeing about one grant, which is the
- * defect this whole change exists to close, reintroduced one layer down.
+ * and **four compilers turn that into a predicate**, each over the shared
+ * `typeFilterTerms`: `allowedTypesCondition` in the item store, which its
+ * listing and `stats` share; the search store's own clause; the metadata
+ * store's clause for the tag vocabulary; and, not SQL at all,
+ * `matchesTypeFilter` over the SSE stream. A negative term that reached some
+ * of them and not the others would leave two surfaces disagreeing about one
+ * grant.
  *
- * **The tag vocabulary is the sharp one and it is not obvious.** Both
- * metadata stores skip their type clause entirely when the allow-list holds
- * a global wildcard. That was safe only while `computeTypeFilter` enumerated
- * the wildcard into concrete ids before it arrived; the moment it stopped, a
- * grant of `{"*": "read", "<withheld>": "none"}` reaches the skip carrying a
- * wildcard, and the vocabulary is computed over every registered type
- * including the withheld one. Tag names leak what exists even when no item
- * behind them is readable.
+ * **The tag vocabulary is the sharp one and it is not obvious.** The
+ * metadata store skips its type clause when the allow-list holds a global
+ * wildcard and nothing is excluded beside it. A grant of
+ * `{"*": "read", "<withheld>": "none"}` reaches that check carrying a
+ * wildcard, so a skip keyed on the wildcard alone would compute the
+ * vocabulary over every registered type, the withheld one included. Tag
+ * names leak what exists even when no item behind them is readable.
  *
  * Every case names a type that must survive as well as one that must not: an
  * assertion that only checks the withheld type is absent passes on a surface
