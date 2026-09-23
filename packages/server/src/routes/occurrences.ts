@@ -334,8 +334,9 @@ const ITERATIONS_PER_YIELD = 20_000;
  *
  * The third is charged like the other two and should be: the expansion
  * returned nothing and the walk that made the discarded occurrences is
- * spent. Measured: one `FREQ=MINUTELY` rule over a two-day window is
- * refused at 2,000 occurrences and charges 2,001 iterations. So a charged
+ * spent. Measured: one `FREQ=MINUTELY` rule starting at the opening of a
+ * seven-day window is refused at 2,000 occurrences and charges 2,001
+ * iterations, which `occurrences.pagination.test.ts` pins. So a charged
  * series may well have produced occurrences; what is true by construction
  * is that its expansion returned none.
  *
