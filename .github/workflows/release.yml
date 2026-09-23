@@ -141,12 +141,25 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 22
-      - run: pnpm install --frozen-lockfile
 
+      # The stamp's `cargo update` runs offline, so it needs every crate the
+      # lockfiles name already in the cargo cache, which a runner new to the
+      # pool does not have. `--locked` refuses rather than resolving anew.
+      - name: Fetch the crates the lockfiles name
+        run: |
+          cargo fetch --locked --manifest-path core/Cargo.toml
+          cargo fetch --locked --manifest-path core/bindings/swift/Cargo.toml
+
+      # Before the install, because the install records every package's
+      # version and the workspace refuses a script once one differs from
+      # that record (`verifyDepsBeforeRun`). The lockfile holds no workspace
+      # version, so a frozen install passes over the stamped manifests.
       - name: Stamp the version into every manifest
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: bash scripts/release/stamp-version.sh "$VERSION"
+
+      - run: pnpm install --frozen-lockfile
 
       - run: pnpm build
 
