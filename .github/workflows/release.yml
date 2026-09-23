@@ -174,14 +174,15 @@ jobs:
           cp "target/package/marfa-client-$VERSION.crate" "$RUNNER_TEMP/artifacts/"
 
       # The Swift types as the source package a consumer depends on: the
-      # manifest, its resolution, and the generated sources.
+      # manifest, its resolution, the generated sources, and the tests the
+      # manifest declares, without which SwiftPM refuses the package.
       - name: Zip the Swift types
         working-directory: swift
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           swift build
-          zip -qr "$RUNNER_TEMP/artifacts/MarfaTypes-$VERSION.zip" Package.swift Package.resolved README.md Sources
+          zip -qr "$RUNNER_TEMP/artifacts/MarfaTypes-$VERSION.zip" Package.swift Package.resolved README.md Sources Tests
 
       # What the release moved on the published surface, against the lock
       # at the release before it. The first release has none to compare.
@@ -229,6 +230,9 @@ jobs:
         run: |
           echo "/opt/homebrew/opt/rustup/bin" >> "$GITHUB_PATH"
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+      # No `--provenance`: npm attests provenance only from a GitHub-hosted
+      # runner's OIDC identity, and every job here runs on the self-hosted
+      # pool.
       - name: Publish @withmarfa/client to npm
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
@@ -243,7 +247,10 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/crate"
           tar -xzf "artifacts/marfa-client-$VERSION.crate" -C "$RUNNER_TEMP/crate"
-          cargo publish --manifest-path "$RUNNER_TEMP/crate/marfa-client-$VERSION/Cargo.toml" --allow-dirty
+          # The package is the one the build job made and checked, published
+          # from where it was unpacked rather than from the checkout, which
+          # `cargo publish` would package again.
+          cargo publish --manifest-path "$RUNNER_TEMP/crate/marfa-client-$VERSION/Cargo.toml"
       - name: Create the GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
