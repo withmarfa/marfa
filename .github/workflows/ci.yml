@@ -499,3 +499,26 @@ jobs:
             echo "marfa-client is out of date with openapi.json. Run 'pnpm generate' and commit."
             exit 1
           fi
+      # The generator is a Swift package pinned in `swift/generator`; the
+      # runner's Xcode toolchain builds it.
+      - name: Regenerate the Swift types and check for drift
+        run: |
+          pnpm run generate:swift
+          if [ -n "$(git status --porcelain swift/Sources)" ]; then
+            git status --porcelain swift/Sources
+            echo "The Swift types are out of date with openapi.json. Run 'pnpm generate' and commit."
+            exit 1
+          fi
+
+  # The Swift types compile, and decode the answers they were generated for.
+  swift-types:
+    name: Swift types build
+    timeout-minutes: 30
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build and test
+        working-directory: swift
+        run: |
+          swift build
+          swift test
