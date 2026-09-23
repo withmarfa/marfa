@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use clap::{Args, Subcommand, ValueEnum};
+use marfa_core::{file_type_for, mime_type_for};
 use serde_json::{Map, Value, json};
 
 use super::{PageArgs, PropertyArgs, StateFilter, TierFilter, insert_opt, object};
@@ -710,55 +711,6 @@ pub fn bulk_action_request(command: &BulkActionCommand) -> Result<Request, CliEr
         }
     };
     Ok(Request::post(&["items", "bulk-actions"]).json(body))
-}
-
-/// The MIME type a file is sent under: the flag, else the extension's, else
-/// bytes.
-pub fn mime_type_for(path: &std::path::Path, given: Option<&str>) -> String {
-    if let Some(given) = given {
-        return given.to_string();
-    }
-    let extension = path
-        .extension()
-        .and_then(|extension| extension.to_str())
-        .unwrap_or("")
-        .to_ascii_lowercase();
-    match extension.as_str() {
-        "png" => "image/png",
-        "jpg" | "jpeg" => "image/jpeg",
-        "gif" => "image/gif",
-        "webp" => "image/webp",
-        "svg" => "image/svg+xml",
-        "heic" => "image/heic",
-        "pdf" => "application/pdf",
-        "txt" => "text/plain",
-        "md" | "markdown" => "text/markdown",
-        "html" | "htm" => "text/html",
-        "json" => "application/json",
-        "csv" => "text/csv",
-        "mp3" => "audio/mpeg",
-        "m4a" => "audio/mp4",
-        "wav" => "audio/wav",
-        "mp4" | "m4v" => "video/mp4",
-        "mov" => "video/quicktime",
-        "zip" => "application/zip",
-        _ => "application/octet-stream",
-    }
-    .to_string()
-}
-
-/// The file type an attachment becomes, from its MIME type.
-pub fn file_type_for(mime_type: &str, given: Option<&str>) -> String {
-    if let Some(given) = given {
-        return given.to_string();
-    }
-    match mime_type.split('/').next().unwrap_or("") {
-        "image" => "core.file.image",
-        "audio" => "core.file.audio",
-        "video" => "core.file.video",
-        _ => "core.file",
-    }
-    .to_string()
 }
 
 pub fn upload_request(path: &std::path::Path, mime_type: &str) -> Request {

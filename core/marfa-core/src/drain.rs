@@ -7,12 +7,13 @@
 //! to a caller who runs the drain again.
 
 use std::collections::HashMap;
+use std::fs::File;
 
 use serde::Serialize;
 
 use crate::catalog::Catalog;
 use crate::error::CoreError;
-use crate::http::{Answer, Http, Method, Outgoing};
+use crate::http::{Answer, Call, CallBody, Http, Method, Outgoing, ReplyBody};
 use crate::model::{BlockedReason, QueuedWrite, Verdict, WriteKind};
 use crate::store;
 use crate::wire::{WireEdgeAnswer, WireWriteAnswer};
@@ -185,6 +186,24 @@ enum Shape {
     /// Anything else a `2xx` carries. The write is taken and the working
     /// copy already holds the change, so there is nothing to adopt.
     Plain,
+    /// `{hash, mime_type, size_bytes}`: the name the server gave the bytes,
+    /// which must be the name they were queued under
+    /// (`queue-and-verdicts.md` 37).
+    Blob,
+}
+
+/// Where a queued write goes.
+enum Door<'a> {
+    /// A JSON body to a door, and the shape of its successful answer.
+    Json(Outgoing<'a>, Shape),
+    /// The bytes held beside the store under `hash`, streamed as the body.
+    Upload { hash: &'a str, mime_type: String },
+}
+
+/// A write ready for the wire, its body in hand.
+enum Sendable<'a> {
+    Json(Outgoing<'a>, Shape),
+    Upload { bytes: File, mime_type: String },
 }
 
 /// Whether a row can go out yet.
@@ -230,11 +249,10 @@ fn readiness(
 /// Where a queued write goes, what it carries, and the shape its door
 /// answers a success with.
 ///
-/// Every kind in `WriteKind` either addresses here or names itself
-/// in the refusal. No kind falls through to a default: a write sent to the
-/// wrong door is a write the server takes and the device reads as something
-/// else.
-fn address<'a>(row: &'a QueuedWrite, payload: &'a str) -> Result<(Outgoing<'a>, Shape)> {
+/// Every kind in `WriteKind` addresses here. No kind falls through to a
+/// default: a write sent to the wrong door is a write the server takes and
+/// the device reads as something else.
+fn address<'a>(row: &'a QueuedWrite, payload: &'a str) -> Result<Door<'a>> {
     let item_id = || -> Result<&str> {
         row.item_id.as_deref().ok_or_else(|| {
             CoreError::Store(format!(
@@ -268,7 +286,7 @@ fn address<'a>(row: &'a QueuedWrite, payload: &'a str) -> Result<(Outgoing<'a>, 
         })
     };
     let to = |method: Method, segments: Vec<String>, shape: Shape| {
-        Ok((
+        Ok(Door::Json(
             Outgoing {
                 method,
                 segments,
@@ -281,19 +299,20 @@ fn address<'a>(row: &'a QueuedWrite, payload: &'a str) -> Result<(Outgoing<'a>, 
     };
     match row.kind {
         WriteKind::CreateItem => to(Method::Post, vec!["items".into()], Shape::Item),
-        WriteKind::UpdateItem => {
-            let (mut outgoing, shape) = to(
-                Method::Patch,
-                vec!["items".into(), item_id()?.into()],
-                Shape::Item,
-            )?;
-            // On every update this device sends (`queue-and-verdicts.md` 5).
-            // The device resolves nothing itself; this asks the server to
-            // resolve inside its own transaction rather than refusing and
-            // leaving two writes where one is atomic.
-            outgoing.params = vec![("conflict".into(), "auto".into())];
-            Ok((outgoing, shape))
-        }
+        WriteKind::UpdateItem => Ok(Door::Json(
+            Outgoing {
+                method: Method::Patch,
+                segments: vec!["items".into(), item_id()?.into()],
+                // On every update this device sends (`queue-and-verdicts.md`
+                // 5). The device resolves nothing itself; this asks the
+                // server to resolve inside its own transaction rather than
+                // refusing and leaving two writes where one is atomic.
+                params: vec![("conflict".into(), "auto".into())],
+                body: payload,
+                idempotency_key: &row.idempotency_key,
+            },
+            Shape::Item,
+        )),
         WriteKind::DeleteItem => to(
             Method::Delete,
             vec!["items".into(), item_id()?.into()],
@@ -365,10 +384,53 @@ fn address<'a>(row: &'a QueuedWrite, payload: &'a str) -> Result<(Outgoing<'a>, 
             ],
             Shape::Plain,
         ),
-        WriteKind::UploadBlob => Err(CoreError::Invalid(
-            "this build has no door for a queued upload_blob; it is a kind the queue holds and the drain cannot yet send".into(),
-        )),
+        WriteKind::UploadBlob => {
+            let hash = row.blob.as_deref().ok_or_else(|| {
+                CoreError::Store(format!(
+                    "the queued upload {} names no blob, so there is nothing to send",
+                    row.id
+                ))
+            })?;
+            let mime_type = serde_json::from_str::<serde_json::Value>(payload)?
+                .get("mime_type")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("application/octet-stream")
+                .to_string();
+            Ok(Door::Upload { hash, mime_type })
+        }
     }
+}
+
+/// Streams an upload's bytes to `POST /blobs`, and reads what came back as
+/// the drain reads any answer.
+///
+/// No idempotency key: the door is idempotent by content, since bytes it
+/// already holds answer the hash they already have, and it reads no key.
+fn upload(http: &Http, bytes: File, mime_type: &str) -> std::result::Result<Answer, CoreError> {
+    let reply = http.call(Call {
+        method: Method::Post,
+        segments: &["blobs"],
+        params: &[],
+        headers: &[("Content-Type", mime_type)],
+        body: CallBody::Reader(Box::new(bytes)),
+        credential: true,
+        stream: false,
+    })?;
+    let body = match reply.body {
+        ReplyBody::Text(text) => text,
+        ReplyBody::Stream(_) => String::new(),
+    };
+    let code = serde_json::from_str::<serde_json::Value>(&body)
+        .ok()
+        .and_then(|envelope| Some(envelope.get("error")?.get("code")?.as_str()?.to_string()))
+        .unwrap_or_default();
+    Ok(Answer {
+        status: reply.status,
+        code,
+        body,
+        retry_after_seconds: reply.retry_after_seconds,
+        replayed: false,
+    })
 }
 
 /// Sends what the queue holds and records what came back.
@@ -463,7 +525,40 @@ pub fn drain(core: &Core, http: &Http) -> Result<DrainReport> {
             }
             store::payload_of(&conn, &row.id)?
         };
-        let (outgoing, shape) = address(row, &payload)?;
+        // An upload's bytes are opened before anything is marked sent: bytes
+        // gone from beside the store are a write that can never be sent, and
+        // it settles here as refused rather than failing the pass.
+        let sendable = match address(row, &payload)? {
+            Door::Json(outgoing, shape) => Sendable::Json(outgoing, shape),
+            Door::Upload { hash, mime_type } => {
+                let held = core.cache()?.held(hash)?;
+                match held.map(File::open) {
+                    Some(Ok(bytes)) => Sendable::Upload { bytes, mime_type },
+                    _ => {
+                        let reason = format!(
+                            "the bytes of {hash} are no longer held beside the store, so there is nothing to send"
+                        );
+                        let conn = core.conn()?;
+                        store::record_verdict(
+                            &conn,
+                            &row.id,
+                            &store::Answered {
+                                verdict: Verdict::Refused,
+                                reason: Some(&reason),
+                                answer: None,
+                                conflicted_copy_id: None,
+                            },
+                        )?;
+                        answers.insert(row.id.clone(), Some(Verdict::Refused));
+                        report.verdicts.push(verdict_of(
+                            row,
+                            &Settled::plain(Some(Verdict::Refused), Some(reason), row.refusals),
+                        ));
+                        continue;
+                    }
+                }
+            }
+        };
         // The connection is not held across the send. A drain is the one
         // call that waits on a network, and holding the store shut for the
         // length of a queue's worth of requests would make `queue` — the
@@ -475,7 +570,10 @@ pub fn drain(core: &Core, http: &Http) -> Result<DrainReport> {
             let conn = core.conn()?;
             store::mark_sent(&conn, &row.id)?;
         }
-        let answer = http.send(&outgoing);
+        let (answer, shape) = match sendable {
+            Sendable::Json(outgoing, shape) => (http.send(&outgoing), shape),
+            Sendable::Upload { bytes, mime_type } => (upload(http, bytes, &mime_type), Shape::Blob),
+        };
         report.sent += 1;
         if let Ok(answer) = &answer
             && let Some(wait) = answer.retry_after_seconds
@@ -702,6 +800,35 @@ fn settle(
                         replayed: replayed_header,
                         ..Settled::plain(Some(Verdict::Accepted), None, row.refusals)
                     })
+                }
+                Shape::Blob => {
+                    // The name the server gave the bytes, against the name
+                    // they were queued under. Any other is an answer this
+                    // device cannot read (19): accepting it would report an
+                    // upload landed whose bytes the server holds under
+                    // another name, and a file item naming the queued hash
+                    // would then name nothing.
+                    let named = serde_json::from_str::<serde_json::Value>(&body)
+                        .ok()
+                        .and_then(|answer| Some(answer.get("hash")?.as_str()?.to_string()));
+                    if named.is_none() || named.as_deref() != row.blob.as_deref() {
+                        let conn = core.conn()?;
+                        let refusals = store::count_refusal(&conn, &row.id)?;
+                        drop(conn);
+                        return finish_counted(core, row, refusals, envelope);
+                    }
+                    let conn = core.conn()?;
+                    store::record_verdict(
+                        &conn,
+                        &row.id,
+                        &store::Answered {
+                            verdict: Verdict::Accepted,
+                            reason: None,
+                            answer: envelope.as_deref(),
+                            conflicted_copy_id: None,
+                        },
+                    )?;
+                    Ok(Settled::plain(Some(Verdict::Accepted), None, row.refusals))
                 }
                 Shape::Plain => {
                     // The write is taken and the working copy already holds
@@ -964,6 +1091,7 @@ mod tests {
             edge_id,
             namespace: None,
             tag: None,
+            blob: None,
             base_version,
             payload: "{}",
             depends_on,

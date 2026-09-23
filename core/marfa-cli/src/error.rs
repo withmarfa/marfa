@@ -97,6 +97,7 @@ impl CliError {
                 CoreError::CatchUpTooOld { .. } => "catch_up_too_old",
                 CoreError::StreamIncomplete { .. } => "stream_incomplete",
                 CoreError::WrongServer { .. } => "wrong_server",
+                CoreError::BytesAbsent { .. } => "bytes_absent",
                 CoreError::Invalid(_) => "invalid",
             },
             CliError::Io(_) => "io",
@@ -135,7 +136,8 @@ impl CliError {
                 | CoreError::Server { .. }
                 | CoreError::Network(_)
                 | CoreError::Decoding(_)
-                | CoreError::StreamIncomplete { .. } => Exit::Environment,
+                | CoreError::StreamIncomplete { .. }
+                | CoreError::BytesAbsent { .. } => Exit::Environment,
                 CoreError::Store(_)
                 | CoreError::NoServer
                 | CoreError::NoCursor

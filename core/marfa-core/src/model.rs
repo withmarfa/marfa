@@ -745,6 +745,8 @@ pub struct QueuedWrite {
     pub edge_id: Option<String>,
     pub namespace: Option<String>,
     pub tag: Option<String>,
+    /// The blob an upload carries, by its hash.
+    pub blob: Option<String>,
     pub base_version: Option<i64>,
     pub idempotency_key: String,
     /// The queue rows this one waits for. Empty when nothing holds it; more
@@ -900,6 +902,25 @@ impl EdgeDraft {
     }
 }
 
+/// How a file is attached (`Core::attach`). Each field has a default: the
+/// MIME type from the file's extension, the title from its name, the type
+/// from the MIME type, the tier from the server.
+#[derive(Debug, Clone, Default)]
+pub struct Attachment {
+    pub mime_type: Option<String>,
+    pub title: Option<String>,
+    pub r#type: Option<String>,
+    pub tier: Option<Tier>,
+}
+
+/// The three writes an attachment is, in the order they go out.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Attached {
+    pub upload: QueuedWrite,
+    pub item: QueuedWrite,
+    pub edge: QueuedWrite,
+}
+
 /// A change to an edge's properties, and the version it was read at.
 #[derive(Debug, Clone, Default)]
 pub struct EdgeEdit {
@@ -947,6 +968,7 @@ mod tests {
             edge_id: None,
             namespace: None,
             tag: None,
+            blob: None,
             base_version: Some(1),
             idempotency_key: "k".into(),
             depends_on: Vec::new(),

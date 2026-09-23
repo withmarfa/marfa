@@ -246,7 +246,7 @@ fn an_attachment_is_an_upload_a_file_item_and_an_edge() {
         file: PathBuf::from("diagram.png"),
         ..Default::default()
     };
-    let mime_type = items::mime_type_for(&args.file, args.mime_type.as_deref());
+    let mime_type = marfa_core::mime_type_for(&args.file, args.mime_type.as_deref());
     assert_eq!(mime_type, "image/png");
     let upload = items::upload_request(&args.file, &mime_type);
     assert_eq!(upload.method, Method::Post);
@@ -270,12 +270,6 @@ fn an_attachment_is_an_upload_a_file_item_and_an_edge() {
     assert_eq!(
         body(&edge),
         &json!({ "source_id": "file-item", "target_id": "note", "edge_type": "attached-to" })
-    );
-    assert_eq!(items::file_type_for("application/pdf", None), "core.file");
-    assert_eq!(items::file_type_for("audio/mpeg", None), "core.file.audio");
-    assert_eq!(
-        items::file_type_for("image/png", Some("user.scan")),
-        "user.scan"
     );
 }
 

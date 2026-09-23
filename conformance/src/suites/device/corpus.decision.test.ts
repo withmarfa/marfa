@@ -243,17 +243,14 @@ describe("the pending list and the fixtures agree", () => {
     // The reason is the entry, not a comment beside it. Milestone one is
     // reached when `PENDING` is empty, so a statement that moved here without
     // the decision that put it here would let the milestone be declared by
-    // relabeling rather than by work. The device's blob work is the only
-    // thing the milestone deliberately leaves — the server's has landed, and
-    // these two are the device's half of it.
+    // relabeling rather than by work. The thumbnail is the only thing the
+    // milestone deliberately leaves.
     expect(
       PENDING_BEYOND_MILESTONE,
       "a statement was moved out of the milestone's list without the decision that allows it, so the list the milestone must empty is shrinking by bookkeeping",
     ).toEqual({
       "working-copy.test.ts › holds the thumbnail an item carries":
         "device.md 29 — the device has no thumbnail at all: no shipped type carries thumbnail bytes, nothing under core/ names one, and the local row holds an item's properties alone, so there is nothing for hydration to carry and nothing for a read to answer with",
-      "working-copy.test.ts › says the bytes are absent rather than the item":
-        "device.md 30 — the device has no door that reads a blob: upload_blob is the one queued kind the drain refuses to address and no local read takes a hash, so nothing can be asked for bytes and there is no answer to hold to absent bytes rather than an absent item",
     });
   });
 

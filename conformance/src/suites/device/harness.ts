@@ -1,4 +1,5 @@
-import { mkdtempSync, readdirSync, statSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { mkdtempSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -344,4 +345,41 @@ export async function folderHarness(
     }
   }
   return { server, folder, dir, stop };
+}
+
+/** The name a blob's bytes go by: `sha256:` and the hex of their digest. */
+export function hashOf(bytes: Buffer): string {
+  return `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
+}
+
+/**
+ * A blob the server holds: its link door answers a link on this server, and
+ * the link serves `served`, which is the blob's own bytes unless a fixture
+ * wants the link to lie. Answers the hash.
+ */
+export function scriptBlob(
+  server: ScriptedServer,
+  bytes: Buffer,
+  served: Buffer = bytes,
+): string {
+  const hash = hashOf(bytes);
+  const hex = hash.slice("sha256:".length);
+  server.answer("GET", `/blobs/${hash}/url`, {
+    kind: "json",
+    status: 200,
+    body: { url: `${server.url}/links/${hex}`, expires_in: 3600 },
+  });
+  server.answer("GET", `/links/${hex}`, {
+    kind: "bytes",
+    status: 200,
+    body: served,
+  });
+  return hash;
+}
+
+/** A file on disk, for a fixture that uploads or attaches one. */
+export function fileOf(name: string, contents: string | Buffer): string {
+  const path = join(mkdtempSync(join(tmpdir(), "marfa-file-")), name);
+  writeFileSync(path, contents);
+  return path;
 }

@@ -360,6 +360,37 @@ export class CliDevice implements DeviceUnderTest {
     return this.json<QueuedWrite>(["extensions", "delete", item, namespace]);
   }
 
+  async putBlob(
+    path: string,
+    mimeType?: string,
+  ): Promise<Outcome<QueuedWrite>> {
+    const args = ["blobs", "put", path];
+    if (mimeType !== undefined) args.push("--mime-type", mimeType);
+    return this.json<QueuedWrite>(args);
+  }
+
+  async blob(hash: string): Promise<Outcome<{ hash: string; path: string }>> {
+    return this.json<{ hash: string; path: string }>([
+      "blobs",
+      "get",
+      hash,
+      ...this.server(),
+    ]);
+  }
+
+  async attach(
+    item: string,
+    path: string,
+    options: { mimeType?: string; title?: string; type?: string } = {},
+  ): Promise<Outcome<QueuedWrite[]>> {
+    const args = ["items", "attach", item, path];
+    if (options.mimeType !== undefined)
+      args.push("--mime-type", options.mimeType);
+    if (options.title !== undefined) args.push("--title", options.title);
+    if (options.type !== undefined) args.push("--type", options.type);
+    return this.json<QueuedWrite[]>(args);
+  }
+
   private server(): string[] {
     const args: string[] = [];
     if (this.options.url !== undefined) args.push("--url", this.options.url);

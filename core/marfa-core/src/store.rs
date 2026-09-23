@@ -18,7 +18,7 @@ pub const META_SLICE_TIER: &str = "slice_tier";
 pub const META_EVENT_CURSOR: &str = "event_cursor";
 pub const META_HYDRATE_STATE: &str = "hydrate_state";
 pub const HYDRATE_IN_PROGRESS: &str = "in_progress";
-pub const SCHEMA_VERSION: &str = "7";
+pub const SCHEMA_VERSION: &str = "8";
 
 /// The schema the version above names, hashed as the folder mapping hashes
 /// bytes. A change to `schema.sql` without a new version would open a store
@@ -31,7 +31,7 @@ pub const SCHEMA_VERSION: &str = "7";
 /// on one would price every edit to the prose at a version bump that refuses
 /// every working copy on disk.
 #[cfg(test)]
-const SCHEMA_HASH: &str = "b0e4c59d5dbd0471";
+const SCHEMA_HASH: &str = "662310c80f2c6871";
 
 const ITEM_COLUMNS: &str = "id, type, state, tier, version, schema_version, source, source_id, occurred_at, created_at, updated_at, properties";
 const EDGE_COLUMNS: &str =
@@ -218,7 +218,7 @@ pub fn held_version(conn: &Connection, id: &str) -> Result<Option<i64>, CoreErro
 
 const QUEUE_COLUMNS: &str = "id, kind, item_id, target_id, edge_id, namespace, tag, \
      base_version, idempotency_key, depends_on, verdict, reason, answer, \
-     conflicted_copy_id, refusals, queued_at, answered_at";
+     conflicted_copy_id, refusals, queued_at, answered_at, blob";
 
 /// What a caller is asking the server to do, before it has been asked.
 pub struct NewWrite<'a> {
@@ -228,6 +228,7 @@ pub struct NewWrite<'a> {
     pub edge_id: Option<&'a str>,
     pub namespace: Option<&'a str>,
     pub tag: Option<&'a str>,
+    pub blob: Option<&'a str>,
     pub base_version: Option<i64>,
     pub payload: &'a str,
     pub depends_on: &'a [String],
@@ -251,9 +252,9 @@ pub fn enqueue(conn: &Connection, write: &NewWrite<'_>) -> Result<QueuedWrite, C
     };
     conn.execute(
         "INSERT INTO queue (
-             id, kind, item_id, target_id, edge_id, namespace, tag,
+             id, kind, item_id, target_id, edge_id, namespace, tag, blob,
              base_version, idempotency_key, payload, depends_on, queued_at
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
         params![
             id,
             write.kind.as_str(),
@@ -262,6 +263,7 @@ pub fn enqueue(conn: &Connection, write: &NewWrite<'_>) -> Result<QueuedWrite, C
             write.edge_id,
             write.namespace,
             write.tag,
+            write.blob,
             write.base_version,
             key,
             write.payload,
@@ -422,6 +424,7 @@ fn read_writes(
             refusals: row.get(14)?,
             queued_at: row.get(15)?,
             answered_at: row.get(16)?,
+            blob: row.get(17)?,
         })
     })?;
 
@@ -463,6 +466,7 @@ fn read_writes(
             edge_id: raw.edge_id,
             namespace: raw.namespace,
             tag: raw.tag,
+            blob: raw.blob,
             base_version: raw.base_version,
             idempotency_key: raw.idempotency_key,
             depends_on,
@@ -487,6 +491,7 @@ struct RawWrite {
     edge_id: Option<String>,
     namespace: Option<String>,
     tag: Option<String>,
+    blob: Option<String>,
     base_version: Option<i64>,
     idempotency_key: String,
     depends_on: Option<String>,
@@ -1284,12 +1289,12 @@ mod tests {
         // inserts a queue row.
         conn.execute(
             "INSERT INTO queue (
-                 id, kind, item_id, target_id, edge_id, namespace, tag,
+                 id, kind, item_id, target_id, edge_id, namespace, tag, blob,
                  base_version, idempotency_key, payload, depends_on, verdict, reason,
                  answer, conflicted_copy_id, refusals, queued_at, answered_at
              ) VALUES (
                  'q-id', 'update_item', 'the-item', 'the-target', 'the-edge',
-                 'the-namespace', 'the-tag', 7, 'the-key', '{}',
+                 'the-namespace', 'the-tag', 'the-blob', 7, 'the-key', '{}',
                  '[\"first\",\"second\"]', 'blocked', 'key_spent',
                  '{\"error\":\"as sent\"}', 'the-sibling', 3,
                  '2026-01-01T00:00:00Z', '2026-01-02T00:00:00Z'
@@ -1308,6 +1313,7 @@ mod tests {
         assert_eq!(write.edge_id.as_deref(), Some("the-edge"));
         assert_eq!(write.namespace.as_deref(), Some("the-namespace"));
         assert_eq!(write.tag.as_deref(), Some("the-tag"));
+        assert_eq!(write.blob.as_deref(), Some("the-blob"));
         assert_eq!(write.base_version, Some(7));
         assert_eq!(write.idempotency_key, "the-key");
         assert_eq!(write.depends_on, vec!["first", "second"]);
@@ -1340,6 +1346,7 @@ mod tests {
                     edge_id: None,
                     namespace: None,
                     tag: None,
+                    blob: None,
                     base_version: None,
                     payload: "{}",
                     depends_on: &[],
@@ -1419,6 +1426,7 @@ mod tests {
                     edge_id: None,
                     namespace: None,
                     tag,
+                    blob: None,
                     base_version: None,
                     payload,
                     depends_on: &[],
