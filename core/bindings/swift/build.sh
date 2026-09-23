@@ -2,8 +2,11 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-if ! cargo swift --version >/dev/null 2>&1; then
-  cargo install cargo-swift --locked
+# One cargo-swift, because each version writes different glue and the Swift
+# package checks its committed glue against what this script generates.
+cargo_swift=0.11.1
+if [[ "$(cargo swift --version 2>/dev/null)" != "cargo-swift ${cargo_swift}" ]]; then
+  cargo install cargo-swift --version "${cargo_swift}" --locked
 fi
 
 # The oldest systems an app embedding the core supports, in both places that
