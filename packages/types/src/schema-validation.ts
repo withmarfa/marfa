@@ -237,8 +237,9 @@ export function normalizeFieldDefinition(
     out.enum_values = raw.enum_values as string[];
   }
   if (typeof raw.items_type === "string") out.items_type = raw.items_type;
-  // Only the annotation-only formats survive; the rest are now carried by
-  // `type` and repeating them would give the same field two spellings.
+  // A format that collapses into a field type is carried by `type` alone,
+  // since keeping it too would give the same field two spellings. Only a
+  // format that annotates without changing the type is kept.
   if (declaredFormat && !collapsed) out.format = declaredFormat;
   if (raw.searchable === false) out.searchable = false;
   if (typeof raw.maxLength === "number") out.maxLength = raw.maxLength;

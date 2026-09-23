@@ -26,8 +26,7 @@ export const DEFAULT_PAGE_LIMIT = 50;
  * Smallest page a store will resolve to.
  *
  * The route schemas refuse `0` before a handler runs, so this is the floor for
- * callers that reach a store directly — every internal caller today passes a
- * module constant, which is why the item store's zero path had never been
- * reached rather than why it could not be.
+ * callers that reach a store directly, where no schema stands in front of the
+ * limit and nothing else stops a `0` reaching the guard described above.
  */
 export const MIN_PAGE_LIMIT = 1;
