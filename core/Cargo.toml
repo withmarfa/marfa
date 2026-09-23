@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["marfa-core", "marfa-cli", "bindings/node"]
+members = ["marfa-core", "marfa-client", "marfa-cli", "bindings/node"]
 # The Swift FFI crate is its own workspace: cargo-swift refuses to name a
 # package inside a multi-crate workspace.
 exclude = ["bindings/swift"]

@@ -124,6 +124,7 @@ const restoreArchiveRoute = createRoute({
   security: [{ bearerAuth: [] }],
   request: {
     body: {
+      required: true,
       content: {
         "application/gzip": {
           // The archive is a gzipped tarball: bytes, as 3.1 spells them.
