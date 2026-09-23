@@ -329,7 +329,10 @@ describe("GET /search?include=system", () => {
 });
 
 describe("GET /search pages by cursor", () => {
-  interface Page { data: { item: { id: string } }[]; next_cursor: string | null }
+  interface Page {
+    data: { item: { id: string } }[];
+    next_cursor: string | null;
+  }
   const search = async (query: string) => {
     const res = await request(ctx.app, "GET", `/search?${query}`, {
       key: ctx.workingKey,
