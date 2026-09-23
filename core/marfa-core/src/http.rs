@@ -169,8 +169,10 @@ impl Http {
         )
     }
 
+    /// The registry answers its whole set on one page.
     pub fn types(&self) -> Result<Vec<WireType>, CoreError> {
-        self.get_json(&["types"], &[])
+        let page: WirePage<WireType> = self.get_json(&["types"], &[])?;
+        Ok(page.data)
     }
 
     pub fn items_page(

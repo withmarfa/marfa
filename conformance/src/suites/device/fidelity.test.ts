@@ -656,12 +656,12 @@ describe("the scripted answers match the server's", () => {
   it("matches the type registry a device resolves a subtree with", async () => {
     const registry = await client.rawRequest("/types");
     expect(registry.ok).toBe(true);
-    const served = registry.data as unknown;
+    const served = registry.data as { data?: unknown; next_cursor?: unknown };
     expect(
-      Array.isArray(served),
-      "the registry is not a bare array, so a device decoding one would read nothing at all",
+      Array.isArray(served.data) && served.next_cursor === null,
+      "the registry is not one whole page, so a device decoding one would read nothing at all",
     ).toBe(true);
-    const rows = served as Array<Record<string, unknown>>;
+    const rows = served.data as Array<Record<string, unknown>>;
 
     const rootType = rows.find((row) => row.id === "core.note");
     const childType = rows.find((row) => row.id === "core.entity.person");

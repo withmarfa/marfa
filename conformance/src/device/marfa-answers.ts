@@ -172,7 +172,11 @@ export function scriptedType(id: string): Record<string, unknown> {
 }
 
 export function typeCatalog(): Answer {
-  return { kind: "json", status: 200, body: [...SCRIPTED_TYPES] };
+  return {
+    kind: "json",
+    status: 200,
+    body: { data: [...SCRIPTED_TYPES], next_cursor: null },
+  };
 }
 
 export function refusal(

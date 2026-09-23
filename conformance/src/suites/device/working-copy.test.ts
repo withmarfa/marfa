@@ -436,15 +436,18 @@ describe("the working copy says what it is", () => {
     server.answer("GET", "/types", {
       kind: "json",
       status: 200,
-      body: [
-        {
-          id: "core.note",
-          parent: null,
-          label: "note",
-          display_hints: {},
-          fields: {},
-        },
-      ],
+      body: {
+        data: [
+          {
+            id: "core.note",
+            parent: null,
+            label: "note",
+            display_hints: {},
+            fields: {},
+          },
+        ],
+        next_cursor: null,
+      },
     });
     // The snapshot dies partway: the first page lands, the second never
     // answers, which is what a device meets when a hydration is interrupted.

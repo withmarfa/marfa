@@ -259,11 +259,15 @@ describe("the script is the whole of what the server does", () => {
 
   it("records every request in the order it arrived", async () => {
     server = await ScriptedServer.start();
-    server.answer("GET", "/types", { kind: "json", status: 200, body: [] });
+    server.answer("GET", "/types", {
+      kind: "json",
+      status: 200,
+      body: { data: [], next_cursor: null },
+    });
     server.answer("GET", "/items", {
       kind: "json",
       status: 200,
-      body: { data: [] },
+      body: { data: [], next_cursor: null },
     });
 
     await read(`${server.url}/types`);
