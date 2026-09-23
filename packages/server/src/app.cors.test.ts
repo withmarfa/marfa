@@ -1,7 +1,7 @@
 import { describe, expect, it, afterEach } from "vitest";
 import { createApp } from "./app.js";
-import { CONTRACT_HEADER } from "./contract.js";
-import { EXPOSED_RESPONSE_HEADERS } from "./openapi-finalize.js";
+import { CONTRACT_HEADER, CONTRACT_VERSION } from "./contract.js";
+import { buildPublishedOpenAPISpec } from "./openapi-published.js";
 import { ensureInstanceId } from "./storage/instance-id.js";
 import { createSqliteStorage } from "./storage/sqlite/index.js";
 import { createBlobLayer } from "./storage/blob-layer.js";
@@ -142,10 +142,38 @@ describe("CORS localhost auto-reflect gating", () => {
     const exposed = (res.headers.get("access-control-expose-headers") ?? "")
       .split(",")
       .map((name) => name.trim().toLowerCase());
-    // The one a generated client cannot work without, then the rest.
+    // The one a generated client cannot work without, then every header
+    // the document says an answer carries.
     expect(exposed).toContain(CONTRACT_HEADER.toLowerCase());
-    for (const name of EXPOSED_RESPONSE_HEADERS) {
-      expect(exposed).toContain(name.toLowerCase());
+    const declared = new Set<string>();
+    const paths = (await buildPublishedOpenAPISpec()).paths ?? {};
+    for (const methods of Object.values(paths)) {
+      for (const operation of Object.values(
+        methods as Record<string, { responses?: Record<string, unknown> }>,
+      )) {
+        for (const response of Object.values(operation.responses ?? {})) {
+          const headers = (response as { headers?: Record<string, unknown> })
+            .headers;
+          for (const name of Object.keys(headers ?? {})) {
+            declared.add(name.toLowerCase());
+          }
+        }
+      }
     }
+    expect(declared.size).toBeGreaterThan(5);
+    expect([...declared].filter((name) => !exposed.includes(name))).toEqual([]);
+  });
+
+  it("names the contract on a preflight, which no route answers", async () => {
+    ctx = await buildCtx(true);
+    const res = await ctx.app.request("/items", {
+      method: "OPTIONS",
+      headers: {
+        Origin: ALLOWED_ORIGIN,
+        "Access-Control-Request-Method": "GET",
+      },
+    });
+    expect(res.status).toBe(204);
+    expect(res.headers.get(CONTRACT_HEADER)).toBe(String(CONTRACT_VERSION));
   });
 });

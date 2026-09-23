@@ -169,7 +169,7 @@ const IDEMPOTENCY_HEADER_PARAM = {
   required: false,
   schema: { type: "string", maxLength: 255 },
   description:
-    "A client-chosen key identifying this write. The server records the status and body it returns against the key and answers a repeat carrying the same key with that stored result, performing no second write. A conflict is recorded like any other outcome, so a retry is told its first attempt collided rather than left to re-derive it. Scoped to this instance; a key replayed with a different request is refused with `idempotency_key_reused`.",
+    "A client-chosen key identifying this write. The server records the status and body it returns against the key and answers a repeat carrying the same key with that stored result, performing no second write. A conflict is recorded like any other outcome, so a retry is told its first attempt collided rather than left to re-derive it. Scoped to this instance; a key replayed with a different request, or with the same one after the instance has moved to another contract version, is refused with `idempotency_key_reused`, since the stored answer is shaped for the contract it was written under.",
 };
 
 /** The doors, keyed the way the reflected document keys an operation. */
@@ -243,13 +243,19 @@ const RESPONSE_HEADER_COMPONENTS: Record<string, unknown> = {
 const UNIVERSAL_RESPONSE_HEADERS = [CONTRACT_HEADER, "X-Request-ID"];
 
 /**
- * Every header the chain sets that a browser hides from a page on another
- * origin unless CORS exposes it. None is on the safelist, and a client that
- * cannot see `X-Marfa-Contract` refuses every success it is sent.
+ * Every header an answer carries that a browser hides from a page on another
+ * origin unless CORS exposes it: the chain's, the blob doors' own, and the
+ * export's file name. None is on the safelist, and a client that cannot see
+ * `X-Marfa-Contract` refuses every success it is sent. `app.cors.test.ts`
+ * holds this to every header the document declares.
  */
-export const EXPOSED_RESPONSE_HEADERS: readonly string[] = Object.keys(
-  RESPONSE_HEADER_COMPONENTS,
-);
+export const EXPOSED_RESPONSE_HEADERS: readonly string[] = [
+  ...Object.keys(RESPONSE_HEADER_COMPONENTS),
+  "Accept-Ranges",
+  "Content-Range",
+  "ETag",
+  "Content-Disposition",
+];
 
 /** Headers the rate limiter sets on every response that passes through it. */
 const RATE_LIMIT_HEADERS = [

@@ -450,7 +450,7 @@ async function acquire(
     if (held.fingerprint !== digest) {
       throw new MarfaError(
         ErrorCode.IDEMPOTENCY_KEY_REUSED,
-        `${HEADER} "${key}" was already used for a different request`,
+        `${HEADER} "${key}" was already used for a different request, or under another contract version`,
       );
     }
 

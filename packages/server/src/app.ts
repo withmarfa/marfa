@@ -59,7 +59,8 @@ import { authErrorRoutes } from "./routes/auth-error.js";
 import { loggerMiddleware } from "./middleware/logger.js";
 import { otelCorrelationMiddleware } from "./middleware/otel-correlation.js";
 import { bodyCapFor } from "./middleware/body-cap.js";
-import { CONTRACT_HEADER, CONTRACT_VERSION } from "./contract.js";
+import { CONTRACT_VERSION } from "./contract.js";
+import { contractHeader } from "./middleware/contract-header.js";
 import {
   idempotencyMiddleware,
   IDEMPOTENT_WRITE_DOORS,
@@ -133,15 +134,9 @@ export function createApp(
     return c.json(body, 404);
   });
 
-  // The contract version on every answer, set on the way out by the first
-  // middleware so it reaches responses no later layer shapes: the body
-  // cap's refusal, the limiter's, an unmatched route, a thrown error, and
-  // the sign-in library's own responses, which the prepared bag misses.
-  const contract = String(CONTRACT_VERSION);
-  app.use("*", async (c, next) => {
-    await next();
-    c.res.headers.set(CONTRACT_HEADER, contract);
-  });
+  // Outermost, so every answer the application gives carries the contract
+  // version, the ones no later layer shapes included.
+  app.use("*", contractHeader());
 
   // Expose the resolved AppConfig on the request context so handlers and
   // middleware read env-derived values from the single config source
