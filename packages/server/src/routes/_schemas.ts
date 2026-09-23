@@ -353,10 +353,9 @@ export const VersionPageSchema = pageOf(VersionSchema, "VersionPage");
  *   Consumers must page the per-type edge/backref endpoints when it is set.
  * - `neighbors_omitted` — how many of the item's neighbors were left out
  *   because the caller may not read them. Distinct from `neighbors_truncated`,
- *   which is about a bound; this is about permission. Omitting silently made
- *   a partial neighborhood indistinguishable from a complete one, so an app
- *   missing an edge scope rendered a ticket with none of its relations and
- *   looked correct doing it.
+ *   which is about a bound; this is about permission. Without it a partial
+ *   neighborhood reads as a complete one, and a caller missing an edge scope
+ *   renders an item with none of its relations as though it had none.
  * - `versions` — the item's version snapshots, newest first, as the same page
  *   `GET /items/{id}/versions` answers. Opt in with `include=versions`.
  */
