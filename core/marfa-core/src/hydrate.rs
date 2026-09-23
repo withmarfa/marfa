@@ -71,8 +71,8 @@ pub(crate) fn hydrate(
             let mut conn = core.conn()?;
             let tx = conn.transaction()?;
             for row in &page.data {
-                let title_field = catalog.title_field(&row.item.r#type);
-                store::upsert_item(&tx, &row.item, Some(&row.metadata.tags), title_field)?;
+                let indexing = catalog.indexing(&row.item.r#type);
+                store::upsert_item(&tx, &row.item, Some(&row.metadata.tags), &indexing)?;
                 for block in row.item.edges.iter().flat_map(|blocks| blocks.values()) {
                     for edge in &block.data {
                         store::upsert_edge(&tx, edge)?;
@@ -153,7 +153,7 @@ fn lay_queue_over(conn: &rusqlite::Connection, catalog: &Catalog) -> Result<()> 
                         wire.created_at.clone_from(&row.queued_at);
                         wire.updated_at.clone_from(&row.queued_at);
                     }
-                    store::upsert_item(conn, &wire, Some(&[]), catalog.title_field(&draft.r#type))?;
+                    store::upsert_item(conn, &wire, Some(&[]), &catalog.indexing(&draft.r#type))?;
                 }
             }
             WriteKind::CreateEdge => {
@@ -181,7 +181,7 @@ fn lay_queue_over(conn: &rusqlite::Connection, catalog: &Catalog) -> Result<()> 
         let Some(held) = store::item_by_id(conn, id)? else {
             continue;
         };
-        store::lay_waiting_writes_over(conn, id, catalog.title_field(&held.r#type))?;
+        store::lay_waiting_writes_over(conn, id, &catalog.indexing(&held.r#type))?;
     }
     for id in edges {
         store::lay_waiting_edge_writes_over(conn, id)?;

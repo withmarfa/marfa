@@ -913,6 +913,38 @@ pub struct Attachment {
     pub tier: Option<Tier>,
 }
 
+/// An item's thumbnail, decoded from the data URI it travels as.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Thumbnail {
+    pub mime_type: String,
+    pub bytes: Vec<u8>,
+}
+
+impl Thumbnail {
+    /// `data:image/png;base64,...`, the only shape a server accepts for one.
+    pub fn from_data_uri(value: &str) -> Result<Thumbnail, CoreError> {
+        use base64::Engine;
+        let unreadable = || {
+            CoreError::Decoding(format!(
+                "a thumbnail that is not an image's data URI: {:.40}",
+                value
+            ))
+        };
+        let rest = value.strip_prefix("data:").ok_or_else(unreadable)?;
+        let (mime_type, data) = rest.split_once(";base64,").ok_or_else(unreadable)?;
+        if !mime_type.starts_with("image/") {
+            return Err(unreadable());
+        }
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(data)
+            .map_err(|_| unreadable())?;
+        Ok(Thumbnail {
+            mime_type: mime_type.to_string(),
+            bytes,
+        })
+    }
+}
+
 /// The three writes an attachment is, in the order they go out.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Attached {

@@ -94,6 +94,7 @@ fn fts_expression(query: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::catalog::Indexing;
     use crate::model::ItemState;
     use crate::store;
     use crate::store::testing::*;
@@ -111,21 +112,21 @@ mod tests {
                 "2026-01-01T00:00:00Z",
             ),
             None,
-            Some("title"),
+            &Indexing::titled("title"),
         )
         .unwrap();
         store::upsert_item(
             &conn,
             &note("title", "Zebra", "nothing here", "2026-01-01T00:00:00Z"),
             None,
-            Some("title"),
+            &Indexing::titled("title"),
         )
         .unwrap();
         store::upsert_item(
             &conn,
             &note("tag", "Plain", "plain", "2026-01-01T00:00:00Z"),
             Some(&["zebras".into()]),
-            Some("title"),
+            &Indexing::titled("title"),
         )
         .unwrap();
         // Both of the states a row can be put away in. A search that
@@ -133,10 +134,10 @@ mod tests {
         // question, and a case that seeded only the bin would not see it.
         let mut trashed = note("gone", "Zebra too", "zebra", "2026-01-01T00:00:00Z");
         trashed.state = "trashed".into();
-        store::upsert_item(&conn, &trashed, None, Some("title")).unwrap();
+        store::upsert_item(&conn, &trashed, None, &Indexing::titled("title")).unwrap();
         let mut archived = note("filed", "Zebra filed", "zebra", "2026-01-01T00:00:00Z");
         archived.state = "archived".into();
-        store::upsert_item(&conn, &archived, None, Some("title")).unwrap();
+        store::upsert_item(&conn, &archived, None, &Indexing::titled("title")).unwrap();
 
         let default = SearchFilters::default();
         let hits = search(&conn, &Catalog::load(&conn).unwrap(), "zeb", &default, 10).unwrap();
@@ -230,7 +231,7 @@ mod tests {
                 json!({ "title": format!("heron {id}") }),
             );
             let tags: Vec<String> = tags.iter().map(|tag| tag.to_string()).collect();
-            store::upsert_item(&conn, &item, Some(&tags), Some("title")).unwrap();
+            store::upsert_item(&conn, &item, Some(&tags), &Indexing::titled("title")).unwrap();
         };
         row("note", "core.note", &["garden", "birds"]);
         row("image", "core.file.image", &["birds"]);

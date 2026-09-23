@@ -1691,6 +1691,7 @@ dependencies = [
 name = "marfa-core"
 version = "0.0.0"
 dependencies = [
+ "base64",
  "rusqlite",
  "serde",
  "serde_json",

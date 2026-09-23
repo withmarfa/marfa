@@ -39,7 +39,8 @@ pub use lock::Handle;
 pub use model::{
     Attached, Attachment, BlockedReason, CatchUpReport, Draft, Edge, EdgeDraft, EdgeEdit, Edit,
     HydrateReport, Hydration, Item, ItemState, ListFilters, MetadataWrite, Outcome, QueuedWrite,
-    SearchFilters, SearchHit, Sort, SortDirection, SortField, Status, Tier, Verdict, WriteKind,
+    SearchFilters, SearchHit, Sort, SortDirection, SortField, Status, Thumbnail, Tier, Verdict,
+    WriteKind,
 };
 pub use store::CEILING;
 
@@ -230,6 +231,23 @@ impl Core {
         let conn = self.conn()?;
         store::refuse_unless_hydrated(&conn)?;
         store::item_by_id(&conn, id)
+    }
+
+    /// The thumbnail an item carries, from the held row with no request.
+    /// `None` when the item is not held, or its type declares no thumbnail,
+    /// or it carries none.
+    pub fn thumbnail(&self, id: &str) -> Result<Option<Thumbnail>> {
+        let conn = self.conn()?;
+        store::refuse_unless_hydrated(&conn)?;
+        let Some(item) = store::item_by_id(&conn, id)? else {
+            return Ok(None);
+        };
+        let catalog = catalog::Catalog::load(&conn)?;
+        let value = catalog
+            .thumbnail_field(&item.r#type)
+            .and_then(|field| item.properties.get(field))
+            .and_then(Value::as_str);
+        value.map(Thumbnail::from_data_uri).transpose()
     }
 
     pub fn edges_from(&self, id: &str) -> Result<Vec<Edge>> {
@@ -950,7 +968,7 @@ fn queue_create(
         tx,
         &draft.wire(&id),
         Some(&draft.tags),
-        catalog.title_field(&draft.r#type),
+        &catalog.indexing(&draft.r#type),
     )?;
     let queued = store::enqueue(
         tx,
@@ -1049,7 +1067,7 @@ fn queue_update(
         next.source_id = Some(source_id.clone());
     }
     next.updated_at = store::now_iso();
-    store::upsert_item(tx, &next.as_wire(), None, catalog.title_field(&next.r#type))?;
+    store::upsert_item(tx, &next.as_wire(), None, &catalog.indexing(&next.r#type))?;
     // The create and nothing else (`queue-and-verdicts.md` 4), besides what
     // the caller names. A write held for every unanswered row is a write a
     // refused tag can refuse, and statement 16 is about a row the server
@@ -1249,6 +1267,101 @@ mod tests {
             fresh.hydrate(&["*".into()], Tier::Library),
             Err(CoreError::Invalid(_))
         ));
+    }
+
+    /// A thumbnail is read from the held row with no request, through the
+    /// type that declares it or a parent that does, and the local index
+    /// leaves its base64 out as the server's own index does.
+    #[test]
+    fn a_thumbnail_is_read_from_the_held_row_and_never_searched() {
+        use base64::Engine;
+        let dir = tempfile::tempdir().unwrap();
+        let core = Core::open(&dir.path().join("core.sqlite"), None).unwrap();
+        {
+            let conn = core.conn().unwrap();
+            store::meta_set(&conn, store::META_EVENT_CURSOR, "10").unwrap();
+            store::meta_set(
+                &conn,
+                store::META_SLICE_TYPES,
+                "[\"core.note\",\"acme.photo\"]",
+            )
+            .unwrap();
+            store::meta_set(&conn, store::META_SLICE_TIER, "library").unwrap();
+            let mut photo = store::testing::wire_type("acme.photo", None, Some("title"));
+            photo.rest.insert(
+                "fields".into(),
+                serde_json::json!({ "thumbnail": { "type": "thumbnail" } }),
+            );
+            store::replace_types(
+                &conn,
+                &[
+                    store::testing::wire_type("core.note", None, Some("title")),
+                    photo,
+                    store::testing::wire_type("acme.photo.raw", Some("acme.photo"), None),
+                ],
+            )
+            .unwrap();
+        }
+        // A PNG's signature, then base64 that spells a word a search could
+        // find: `/` splits it into a token of its own.
+        let data = "iVBORw0KGgoA/unicornsXYZ";
+        let thumbnail = format!("data:image/png;base64,{data}");
+        let create = |r#type: &str, properties: Value| {
+            core.create_item(&Draft {
+                r#type: r#type.into(),
+                properties: properties.as_object().unwrap().clone(),
+                ..Default::default()
+            })
+            .unwrap()
+            .item_id
+            .unwrap()
+        };
+        let photo = create(
+            "acme.photo",
+            serde_json::json!({ "title": "Holiday", "thumbnail": thumbnail }),
+        );
+        let raw = create(
+            "acme.photo.raw",
+            serde_json::json!({ "title": "Raw", "thumbnail": thumbnail }),
+        );
+        let note = create(
+            "core.note",
+            serde_json::json!({ "title": "Plain", "body": "b" }),
+        );
+
+        let held = core
+            .thumbnail(&photo)
+            .unwrap()
+            .expect("the photo's thumbnail");
+        assert_eq!(held.mime_type, "image/png");
+        assert_eq!(
+            held.bytes,
+            base64::engine::general_purpose::STANDARD
+                .decode(data)
+                .unwrap()
+        );
+        assert_eq!(
+            core.thumbnail(&raw).unwrap().map(|found| found.bytes),
+            Some(held.bytes.clone()),
+            "a subtype's item lost the thumbnail its parent declares"
+        );
+        assert_eq!(core.thumbnail(&note).unwrap(), None);
+        assert_eq!(core.thumbnail("not-held").unwrap(), None);
+
+        let found = |query: &str| {
+            core.search(query, &SearchFilters::default(), 10)
+                .unwrap()
+                .into_iter()
+                .map(|hit| hit.item.id)
+                .collect::<Vec<_>>()
+        };
+        // The witness: the same token in a body is found.
+        let witness = create(
+            "core.note",
+            serde_json::json!({ "title": "Beside", "body": "unicornsXYZ" }),
+        );
+        assert_eq!(found("unicornsXYZ"), vec![witness]);
+        assert_eq!(found("Holiday"), vec![photo]);
     }
 
     /// A second opener is refused at the doors, not merely by the predicate.

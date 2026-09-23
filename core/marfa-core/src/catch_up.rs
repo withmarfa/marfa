@@ -510,9 +510,9 @@ fn apply(
                     .metadata
                     .as_ref()
                     .map(|metadata| metadata.tags.as_slice());
-                let title_field = catalog.title_field(&item.r#type);
-                store::upsert_item(tx, item, tags, title_field)?;
-                store::lay_waiting_writes_over(tx, &item.id, title_field)?;
+                let indexing = catalog.indexing(&item.r#type);
+                store::upsert_item(tx, item, tags, &indexing)?;
+                store::lay_waiting_writes_over(tx, &item.id, &indexing)?;
                 Ok(true)
             } else {
                 store::delete_item(tx, &item.id)

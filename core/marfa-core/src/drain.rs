@@ -764,7 +764,7 @@ fn settle(
                         };
                     let mut conn = core.conn()?;
                     let catalog = Catalog::load(&conn)?;
-                    let title_field = catalog.title_field(&parsed.item.r#type);
+                    let indexing = catalog.indexing(&parsed.item.r#type);
                     let tags = parsed
                         .metadata
                         .as_ref()
@@ -773,7 +773,7 @@ fn settle(
                     // The row the server returned, whole, including the
                     // version and the fields it stamps (9, 10, 11). The
                     // local row was minted at version 0 and this replaces it.
-                    store::upsert_item(&tx, &parsed.item, tags.as_deref(), title_field)?;
+                    store::upsert_item(&tx, &parsed.item, tags.as_deref(), &indexing)?;
                     store::record_verdict(
                         &tx,
                         &row.id,
@@ -784,7 +784,7 @@ fn settle(
                             conflicted_copy_id: conflicted_copy_id.as_deref(),
                         },
                     )?;
-                    store::lay_waiting_writes_over(&tx, &parsed.item.id, title_field)?;
+                    store::lay_waiting_writes_over(&tx, &parsed.item.id, &indexing)?;
                     tx.commit()?;
                     Ok(Settled {
                         verdict: Some(verdict),
@@ -1084,10 +1084,10 @@ fn reconcile_inner(core: &Core, row: &QueuedWrite) -> Result<()> {
         Some(held) => {
             let mut conn = core.conn()?;
             let catalog = Catalog::load(&conn)?;
-            let title_field = catalog.title_field(&held.item.r#type);
+            let indexing = catalog.indexing(&held.item.r#type);
             let tx = conn.transaction()?;
-            store::upsert_item(&tx, &held.item, Some(&held.metadata.tags), title_field)?;
-            store::lay_waiting_writes_over(&tx, &held.item.id, title_field)?;
+            store::upsert_item(&tx, &held.item, Some(&held.metadata.tags), &indexing)?;
+            store::lay_waiting_writes_over(&tx, &held.item.id, &indexing)?;
             tx.commit()?;
         }
         None => {

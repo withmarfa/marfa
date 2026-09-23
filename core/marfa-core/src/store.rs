@@ -5,6 +5,7 @@ use rusqlite::{Connection, OptionalExtension, named_params, params, params_from_
 use serde_json::{Map, Value};
 use uuid::Uuid;
 
+use crate::catalog::Indexing;
 use crate::error::CoreError;
 use crate::model::{BlockedReason, Edge, Item, ItemState, QueuedWrite, Tier, Verdict, WriteKind};
 use crate::wire::{WireEdge, WireItem, WireType};
@@ -640,7 +641,7 @@ pub fn upsert_item(
     conn: &Connection,
     item: &WireItem,
     tags: Option<&[String]>,
-    title_field: Option<&str>,
+    indexing: &Indexing,
 ) -> Result<(), CoreError> {
     ItemState::from_str_checked(&item.state)?;
     conn.execute(
@@ -679,7 +680,7 @@ pub fn upsert_item(
         }
         None => tags_for_one(conn, &item.id)?,
     };
-    let (title, body) = fts_text(&item.properties, title_field);
+    let (title, body) = fts_text(&item.properties, indexing);
     let seq: i64 = conn.query_row("SELECT seq FROM items WHERE id = ?1", [&item.id], |row| {
         row.get(0)
     })?;
@@ -909,8 +910,8 @@ fn invalid_row(column: usize, text: &str) -> rusqlite::Error {
 }
 
 /// The title column and everything else string-valued, for the FTS row.
-pub fn fts_text(properties: &Map<String, Value>, title_field: Option<&str>) -> (String, String) {
-    let title_key = title_field.unwrap_or("title");
+pub fn fts_text(properties: &Map<String, Value>, indexing: &Indexing) -> (String, String) {
+    let title_key = indexing.title_field.as_deref().unwrap_or("title");
     let title = properties
         .get(title_key)
         .and_then(Value::as_str)
@@ -918,7 +919,7 @@ pub fn fts_text(properties: &Map<String, Value>, title_field: Option<&str>) -> (
         .to_string();
     let mut body = Vec::new();
     for (key, value) in properties {
-        if key == title_key {
+        if key == title_key || indexing.thumbnail_field.as_deref() == Some(key.as_str()) {
             continue;
         }
         collect_strings(value, &mut body);
@@ -1109,7 +1110,7 @@ mod tests {
             updated_at: "2031-03-03T03:03:03Z".into(),
             edges: None,
         };
-        upsert_item(&conn, &row, None, Some("title")).unwrap();
+        upsert_item(&conn, &row, None, &Indexing::titled("title")).unwrap();
 
         let item = item_by_id(&conn, "positional-1").unwrap().unwrap();
         assert_eq!(item.id, "positional-1");
@@ -1133,7 +1134,13 @@ mod tests {
     fn an_item_round_trips_with_its_tags_and_keeps_them_when_none_are_sent() {
         let conn = conn();
         let note = note("n1", "Hello", "world", "2026-01-01T00:00:00Z");
-        upsert_item(&conn, &note, Some(&["a".into(), "b".into()]), Some("title")).unwrap();
+        upsert_item(
+            &conn,
+            &note,
+            Some(&["a".into(), "b".into()]),
+            &Indexing::titled("title"),
+        )
+        .unwrap();
         let item = item_by_id(&conn, "n1").unwrap().unwrap();
         assert_eq!(item.tags, vec!["a", "b"]);
         assert_eq!(item.title(Some("title")), Some("Hello"));
@@ -1145,7 +1152,7 @@ mod tests {
             .as_object()
             .unwrap()
             .clone();
-        upsert_item(&conn, &renamed, None, Some("title")).unwrap();
+        upsert_item(&conn, &renamed, None, &Indexing::titled("title")).unwrap();
         let item = item_by_id(&conn, "n1").unwrap().unwrap();
         assert_eq!(item.title(None), Some("Renamed"));
         assert_eq!(item.tags, vec!["a", "b"]);
@@ -1159,14 +1166,14 @@ mod tests {
             &conn,
             &note("n1", "a", "b", "2026-01-01T00:00:00Z"),
             Some(&["t".into()]),
-            None,
+            &Indexing::default(),
         )
         .unwrap();
         upsert_item(
             &conn,
             &note("n2", "c", "d", "2026-01-01T00:00:00Z"),
             None,
-            None,
+            &Indexing::default(),
         )
         .unwrap();
         upsert_edge(&conn, &wire_edge("e1", "n1", "n2", "references")).unwrap();
@@ -1185,7 +1192,7 @@ mod tests {
         let conn = conn();
         let item = wire_item("x", "core.note", "limbo", "2026-01-01T00:00:00Z", json!({}));
         assert!(matches!(
-            upsert_item(&conn, &item, None, None),
+            upsert_item(&conn, &item, None, &Indexing::default()),
             Err(CoreError::Decoding(_))
         ));
         assert_eq!(count(&conn, "items").unwrap(), 0);
@@ -1199,10 +1206,10 @@ mod tests {
             "nested": { "deep": ["x", 1, true, "y"] },
             "n": 5
         });
-        let (title, body) = fts_text(properties.as_object().unwrap(), Some("title"));
+        let (title, body) = fts_text(properties.as_object().unwrap(), &Indexing::titled("title"));
         assert_eq!(title, "T");
         assert_eq!(body, "B\nx\ny");
-        let (title, body) = fts_text(properties.as_object().unwrap(), Some("body"));
+        let (title, body) = fts_text(properties.as_object().unwrap(), &Indexing::titled("body"));
         assert_eq!(title, "B");
         // The order the copy holds them in, not the map type's. Nothing
         // reads it back — this is one blob to match against — and it is
@@ -1508,7 +1515,13 @@ mod tests {
             "server body",
             "2026-01-01T00:00:00Z",
         );
-        upsert_item(&conn, &server_row, Some(&["kept".into()]), Some("title")).unwrap();
+        upsert_item(
+            &conn,
+            &server_row,
+            Some(&["kept".into()]),
+            &Indexing::titled("title"),
+        )
+        .unwrap();
         let queue = |kind: WriteKind, payload: &str, tag: Option<&str>| {
             enqueue(
                 &conn,
@@ -1555,7 +1568,7 @@ mod tests {
         )
         .unwrap();
 
-        lay_waiting_writes_over(&conn, "n1", Some("title")).unwrap();
+        lay_waiting_writes_over(&conn, "n1", &Indexing::titled("title")).unwrap();
         let item = items_by_ids(&conn, &["n1".into()]).unwrap().pop().unwrap();
         assert_eq!(item.title(Some("title")), Some("edited"));
         assert_eq!(
@@ -1569,13 +1582,13 @@ mod tests {
 
         // A delete waiting after all of them leaves the row in the bin.
         queue(WriteKind::DeleteItem, "{}", None);
-        lay_waiting_writes_over(&conn, "n1", Some("title")).unwrap();
+        lay_waiting_writes_over(&conn, "n1", &Indexing::titled("title")).unwrap();
         let item = items_by_ids(&conn, &["n1".into()]).unwrap().pop().unwrap();
         assert_eq!(item.state, ItemState::Trashed);
 
         // And a move to another state after that takes it there.
         queue(WriteKind::TransitionItem, r#"{"state":"archived"}"#, None);
-        lay_waiting_writes_over(&conn, "n1", Some("title")).unwrap();
+        lay_waiting_writes_over(&conn, "n1", &Indexing::titled("title")).unwrap();
         let item = items_by_ids(&conn, &["n1".into()]).unwrap().pop().unwrap();
         assert_eq!(item.state, ItemState::Archived);
     }
@@ -1764,7 +1777,7 @@ mod tests {
                 &conn,
                 &note("n1", "a", "b", "2026-01-01T00:00:00Z"),
                 None,
-                None,
+                &Indexing::default(),
             )
             .unwrap();
         }
@@ -2054,7 +2067,7 @@ pub fn forget_item(conn: &Connection, id: &str) -> Result<(), CoreError> {
 pub fn lay_waiting_writes_over(
     conn: &Connection,
     item_id: &str,
-    title_field: Option<&str>,
+    indexing: &Indexing,
 ) -> Result<(), CoreError> {
     let waiting = waiting_writes_for_item(conn, item_id)?;
     if waiting.is_empty() {
@@ -2115,7 +2128,7 @@ pub fn lay_waiting_writes_over(
         }
     }
     tags.sort();
-    upsert_item(conn, &item.as_wire(), Some(&tags), title_field)
+    upsert_item(conn, &item.as_wire(), Some(&tags), indexing)
 }
 
 /// The same for an edge: an edit still waiting is laid back over the
