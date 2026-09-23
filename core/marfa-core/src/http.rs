@@ -14,10 +14,9 @@ pub const PAGE_LIMIT: u32 = 200;
 pub struct Http {
     agent: Agent,
     base: Url,
-    /// Absent for a transport that carries no credential: the root document,
-    /// the health door and the sign-in doors answer without one, and a
-    /// device's transport always holds one.
-    authorization: Option<String>,
+    /// A device's transport always carries its key; a call says whether the
+    /// door it reaches needs it.
+    authorization: String,
 }
 
 pub struct ItemsQuery<'a> {
@@ -136,7 +135,7 @@ pub enum ReplyBody {
 }
 
 impl Http {
-    pub fn new(url: &str, key: Option<&str>) -> Result<Http, CoreError> {
+    pub fn new(url: &str, key: &str) -> Result<Http, CoreError> {
         let mut base = Url::parse(url)?;
         if base.cannot_be_a_base() {
             return Err(CoreError::Invalid(format!("not a server url: {url}")));
@@ -145,7 +144,14 @@ impl Http {
         base.set_path(&path);
         base.set_query(None);
         base.set_fragment(None);
+        // The operating system's trust store, as the binary's own client
+        // uses, so a server behind a CA the machine trusts is reachable from
+        // both.
+        let tls = ureq::tls::TlsConfig::builder()
+            .root_certs(ureq::tls::RootCerts::PlatformVerifier)
+            .build();
         let agent: Agent = Agent::config_builder()
+            .tls_config(tls)
             .http_status_as_error(false)
             .timeout_connect(Some(Duration::from_secs(10)))
             .timeout_recv_response(Some(Duration::from_secs(30)))
@@ -155,7 +161,7 @@ impl Http {
         Ok(Http {
             agent,
             base,
-            authorization: key.map(|key| format!("Bearer {key}")),
+            authorization: format!("Bearer {key}"),
         })
     }
 
@@ -271,9 +277,7 @@ impl Http {
             .header("Accept", "application/json")
             .header("Content-Type", "application/json")
             .header("Idempotency-Key", outgoing.idempotency_key);
-        if let Some(authorization) = &self.authorization {
-            builder = builder.header("Authorization", authorization);
-        }
+        builder = builder.header("Authorization", &self.authorization);
         let request = builder
             .body(outgoing.body)
             .map_err(|error| CoreError::Invalid(format!("this write cannot be sent: {error}")))?;
@@ -328,9 +332,7 @@ impl Http {
             .config()
             .timeout_recv_body(Some(body_timeout))
             .build();
-        if let Some(authorization) = &self.authorization {
-            request = request.header("Authorization", authorization);
-        }
+        request = request.header("Authorization", &self.authorization);
         if let Some(cursor) = last_event_id {
             request = request.header("Last-Event-ID", cursor);
         }
@@ -344,10 +346,6 @@ impl Http {
             return Err(refusal(status, &text, retry_after));
         }
         Ok(Box::new(response.into_body().into_reader()))
-    }
-
-    pub fn has_credential(&self) -> bool {
-        self.authorization.is_some()
     }
 
     /// Sends one call from the direct surface and reads whatever came back.
@@ -364,10 +362,8 @@ impl Http {
                     "application/json"
                 },
             );
-        if call.credential
-            && let Some(authorization) = &self.authorization
-        {
-            builder = builder.header("Authorization", authorization);
+        if call.credential {
+            builder = builder.header("Authorization", &self.authorization);
         }
         if matches!(call.body, CallBody::Json(_)) {
             builder = builder.header("Content-Type", "application/json");
@@ -471,9 +467,7 @@ impl Http {
             .agent
             .get(url.as_str())
             .header("Accept", "application/json");
-        if let Some(authorization) = &self.authorization {
-            request = request.header("Authorization", authorization);
-        }
+        request = request.header("Authorization", &self.authorization);
         let response = request
             .call()
             .map_err(|error| CoreError::Network(error.to_string()))?;
@@ -597,9 +591,9 @@ mod tests {
 
     #[test]
     fn origin_drops_the_key_the_query_and_a_trailing_slash() {
-        let http = Http::new("HTTP://Localhost:8600/?x=1#f", Some("marfa_k1_secret")).unwrap();
+        let http = Http::new("HTTP://Localhost:8600/?x=1#f", "marfa_k1_secret").unwrap();
         assert_eq!(http.origin(), "http://localhost:8600");
-        let gateway = Http::new("https://gw.example/TenantA/", Some("k")).unwrap();
+        let gateway = Http::new("https://gw.example/TenantA/", "k").unwrap();
         assert_eq!(gateway.origin(), "https://gw.example/TenantA");
         assert_eq!(
             gateway

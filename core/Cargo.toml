@@ -34,7 +34,7 @@ thiserror = "2"
 # exactly that conversion, so it is visible and tested here rather than
 # being a derive nobody reads.
 yaml-rust2 = "0.13"
-ureq = { version = "3", features = ["json"] }
+ureq = { version = "3", features = ["json", "platform-verifier"] }
 # v7 because a client-minted item id has to be one the server accepts, and
 # the ids it mints itself are time-sortable: a device minting v4 would put
 # every local create at a random point in an ordering the server treats as

@@ -4,16 +4,13 @@ description = "The Rust client for a Marfa instance, generated from its openapi.
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-
-[lib]
-# The generated code carries the generator's own style; the workspace's
-# lints are for code written here.
-doctest = false
+# Unlike the rest of the workspace this crate is published, by the release
+# workflow from a tag, so it does not inherit `publish = false`.
 
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
-serde_with = { version = "3.8", default-features = false, features = ["base64", "std", "macros"] }
+serde_with = { version = "3.8", default-features = false, features = ["std", "macros"] }
 serde_repr = "0.1"
 url = "2.5"
-reqwest = { version = "0.13", default-features = false, features = ["json", "blocking", "multipart", "query", "form", "rustls"] }
+reqwest = { version = "0.13", default-features = false, features = ["json", "blocking", "query", "rustls"] }

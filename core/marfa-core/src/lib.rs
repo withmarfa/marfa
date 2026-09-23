@@ -107,7 +107,7 @@ impl Core {
         cache: Option<blob::Cache>,
     ) -> Result<Core> {
         let http = match server {
-            Some(server) => Some(http::Http::new(&server.url, Some(&server.key))?),
+            Some(server) => Some(http::Http::new(&server.url, &server.key)?),
             None => None,
         };
         if let Some(http) = &http

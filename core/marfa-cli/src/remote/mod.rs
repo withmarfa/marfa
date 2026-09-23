@@ -42,6 +42,9 @@ pub struct Remote {
     /// Whether the root has answered the contract this binary was built
     /// for. Asked once, before the first call that carries a credential.
     contract_held: Cell<bool>,
+    /// What a public read of the root already said, so the gate does not
+    /// ask the same question twice in one command.
+    root_read: RefCell<Option<Served>>,
     url: String,
     origin: String,
     credential: Option<CredentialSource>,
@@ -67,6 +70,10 @@ impl Named {
         let key = remote.bearer().ok_or_else(|| CliError::NoCredential {
             origin: remote.origin().to_string(),
         })?;
+        // The working copy talks to the server through the core's own
+        // transport, so the contract is held here, before it is handed the
+        // key, as a direct command's is before its first call.
+        remote.hold_contract()?;
         Ok(Server {
             url: remote.url().to_string(),
             key,
@@ -95,7 +102,7 @@ impl Remote {
                 Err(error) => return Err(error),
             },
         };
-        let origin = Transport::new(&url, None)?.origin();
+        let origin = transport::origin_of(&url)?;
         let mut kept = None;
         let (key, credential) = match named.key.clone() {
             Some(key) => (Some(key), Some(CredentialSource::Flag)),
@@ -123,6 +130,7 @@ impl Remote {
         Ok(Remote {
             http: RefCell::new(http),
             contract_held: Cell::new(false),
+            root_read: RefCell::new(None),
             url,
             origin,
             credential,
@@ -191,6 +199,7 @@ impl Remote {
             http: RefCell::new(http),
             // The refresh path's tests script no root; the gate has its own.
             contract_held: Cell::new(true),
+            root_read: RefCell::new(None),
             origin,
             credential: Some(CredentialSource::Keychain),
             bearer: RefCell::new(Some(kept.bearer().to_string())),
@@ -207,6 +216,7 @@ impl Remote {
             url: url.to_string(),
             http: RefCell::new(http),
             contract_held: Cell::new(false),
+            root_read: RefCell::new(None),
             origin,
             credential: None,
             bearer: RefCell::new(None),
@@ -223,6 +233,7 @@ impl Remote {
             url: origin.clone(),
             http: RefCell::new(http),
             contract_held: Cell::new(false),
+            root_read: RefCell::new(None),
             origin,
             credential: None,
             bearer: RefCell::new(None),
@@ -241,9 +252,8 @@ impl Remote {
     }
 
     /// A remote over a transport to a door outside the document, such as
-    /// the identity door a sign-in names. It answers no contract, and the
-    /// server that named it was held to one on the way there, so it is not
-    /// asked again.
+    /// the identity door a sign-in names. It answers no contract; the caller
+    /// holds the server that named it to one before using this.
     pub fn beside_the_document(http: Transport) -> Remote {
         let remote = Remote::with(http);
         remote.contract_held.set(true);
@@ -276,6 +286,14 @@ impl Remote {
             self.hold_contract()?;
         }
         let reply = self.send(request)?;
+        if !request.credential
+            && request.segments == [""]
+            && request.method == request::Method::Get
+            && (200..300).contains(&reply.status)
+            && let ReplyBody::Text(text) = &reply.body
+        {
+            *self.root_read.borrow_mut() = Some(Served::of(text));
+        }
         if reply.status == 401 && request.credential && self.can_refresh() {
             self.refreshed()?;
             return self.send(request);
@@ -288,7 +306,7 @@ impl Remote {
     /// is sent to it. A public call is not held to it: `status` and `whoami`
     /// read the root to say what a server is, which is how a person finds
     /// out that it is the wrong one.
-    fn hold_contract(&self) -> Result<(), CliError> {
+    pub fn hold_contract(&self) -> Result<(), CliError> {
         if self.contract_held.get() {
             return Ok(());
         }
@@ -297,7 +315,12 @@ impl Remote {
         if !self.http.borrow().has_credential() {
             return Ok(());
         }
-        match self.http.borrow().served()? {
+        let read = self.root_read.borrow().clone();
+        let served = match read {
+            Some(served) => served,
+            None => self.http.borrow().served()?,
+        };
+        match served {
             Served::Expected => {
                 self.contract_held.set(true);
                 Ok(())
@@ -307,6 +330,11 @@ impl Remote {
                 served,
                 expected: marfa_client::CONTRACT_VERSION,
             }),
+            Served::Refused {
+                status,
+                text,
+                retry_after_seconds,
+            } => Err(refused(status, &text, retry_after_seconds)),
         }
     }
 

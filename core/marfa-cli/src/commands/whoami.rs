@@ -12,7 +12,7 @@ use crate::remote::{CredentialSource, Remote, Transport};
 /// A key has no door that says whose it is, so for a key this reports the
 /// key's kind and its source; a token reports the person it was issued to.
 pub fn run(remote: &Remote, out: &Printer) -> Result<(), CliError> {
-    let instance = remote.json(&Request::get(&[]).public())?;
+    let instance = remote.json(&crate::commands::status::root_request())?;
     let credential = match remote.credential() {
         None => json!(null),
         Some(source) => {
@@ -37,7 +37,18 @@ pub fn run(remote: &Remote, out: &Printer) -> Result<(), CliError> {
                 // names for it. A token whose scope does not reach the
                 // identity claims is refused there (401 or 403) and reported
                 // without a person; any other refusal is this command's.
-                if let Some(endpoint) = auth::discover(remote)?.userinfo_endpoint {
+                // The token is sent on, so the server that issued it is held
+                // to the contract first; a server on another one is reported
+                // without a person rather than refused, since saying which
+                // server this is remains the command's job.
+                let held = match remote.hold_contract() {
+                    Ok(()) => true,
+                    Err(CliError::ContractMismatch { .. }) => false,
+                    Err(error) => return Err(error),
+                };
+                if !held {
+                    record["person"] = json!(null);
+                } else if let Some(endpoint) = auth::discover(remote)?.userinfo_endpoint {
                     let door =
                         Remote::beside_the_document(Transport::new(&endpoint, Some(&bearer))?);
                     match door.json(&Request::get(&[])) {
