@@ -74,6 +74,20 @@ jobs:
             echo "::error::The tag names no major.minor.patch version."
             exit 1
           fi
+          # Each version is the one before it plus 0.0.1, and the first is
+          # 0.0.1: the tag has to be the highest other tag's next step.
+          git fetch --quiet --tags origin
+          previous="$(git tag -l 'v*' --sort=-v:refname | grep -vx "v$version" | head -n 1)"
+          if [ -z "$previous" ]; then
+            expected="0.0.1"
+          else
+            IFS=. read -r major minor patch <<< "${previous#v}"
+            expected="$major.$minor.$((patch + 1))"
+          fi
+          if [ "$version" != "$expected" ]; then
+            echo "::error::$version does not follow ${previous:-no tag}; the next version is $expected."
+            exit 1
+          fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "building $version from $GITHUB_SHA"
 
