@@ -125,11 +125,12 @@ export const MAX_WINDOW_DAYS = 400;
  * Ceiling on the assembled result, across every series in the window.
  *
  * The one bound that refuses, because it is recoverable in the way a scan
- * ceiling is not: a caller asks for less time and succeeds. It is checked as the result is assembled and before any item
- * is read, so a window that cannot be served costs neither the rest of
- * the assembly nor a single row fetch, and it is published on every
- * successful read (see `scan` on the response) so a calendar growing
- * toward it is visible before a request is refused.
+ * ceiling is not: a caller asks for less time and succeeds. It is checked
+ * as the result is assembled and before any item is read, so a window
+ * that cannot be served costs neither the rest of the assembly nor a
+ * single row fetch, and it is published on every successful read (see
+ * `scan` on the response) so a calendar growing toward it is visible
+ * before a request is refused.
  */
 export const MAX_OCCURRENCES = 5000;
 
@@ -260,12 +261,12 @@ const SERIES_PER_YIELD = 32;
  * **The bound this buys, stated in the unit that costs:** one
  * uninterrupted stretch walks at most
  * `ITERATIONS_PER_YIELD + MAX_EXPANSION_ITERATIONS - 1` iterations —
- * 119,999 at these values. The second term is irreducible here and is most of the
- * bound: one `expandSeries` call is atomic, so a stretch can always be
- * one full expansion longer than the budget that admitted it. Shrinking
- * it means either refusing more rules or making the expansion itself
- * resumable, and a rule's phase is anchored at the series start, so it
- * cannot be resumed mid-stream.
+ * 119,999 at these values. The second term is irreducible here and is
+ * most of the bound: one `expandSeries` call is atomic, so a stretch can
+ * always be one full expansion longer than the budget that admitted it.
+ * Shrinking it means either refusing more rules or making the expansion
+ * itself resumable, and a rule's phase is anchored at the series start,
+ * so it cannot be resumed mid-stream.
  *
  * **What this does not bound:** the total work one request may do. It
  * paces the loop, it does not stop it, and a paced loop still runs for
@@ -333,12 +334,10 @@ const ITERATIONS_PER_YIELD = 20_000;
  *
  * The third is charged like the other two and should be: the expansion
  * returned nothing and the walk that made the discarded occurrences is
- * spent.
- * Measured: one `FREQ=MINUTELY` rule over a two-day window is refused at
- * 2,000 occurrences and charges 2,001 iterations. An earlier version of
- * this docblock said a charged series produced no occurrence by
- * construction, which that fixture falsifies; what is true by
- * construction is that its expansion returned none.
+ * spent. Measured: one `FREQ=MINUTELY` rule over a two-day window is
+ * refused at 2,000 occurrences and charges 2,001 iterations. So a charged
+ * series may well have produced occurrences; what is true by construction
+ * is that its expansion returned none.
  *
  * ## Why crossing it is a 200 and not a 400
  *
@@ -513,11 +512,11 @@ interface SeriesScanResult {
  * arriving here declares a rule. Returning `undefined` therefore means
  * one thing only — the row declares *no* rule, which `[]` and a
  * serializer's `null` both are — and every other way of failing to
- * produce a series is a defect the response reports. Before that
- * distinction existed, a rule-bearing row with no `starts_at` was
- * dropped here *and* dropped by the window pass for carrying a rule, so
- * it appeared nowhere in the response and `series_errors` counted it as
- * zero. `core.event` requires only `title`, so writing one is a 201.
+ * produce a series is a defect the response reports. Without that
+ * distinction, a rule-bearing row with no `starts_at` would be dropped
+ * here *and* by the window pass for carrying a rule, so it would appear
+ * nowhere in the response and `series_errors` would count it as zero.
+ * `core.event` requires only `title`, so writing one is a 201.
  *
  * `recurrence` is declared as an array of strings but validated only as
  * an array, so a non-string entry stores. One that filters the list
@@ -538,7 +537,7 @@ function projectSeries(item: Item): SeriesScanResult | undefined {
       defect: `Series ${item.id} has a recurrence that is not a list of RFC 5545 property lines, so no rule was applied`,
     };
   }
-  // An empty list is an explicit "this does not repeat" and always was.
+  // An empty list is an explicit "this does not repeat".
   if (raw.length === 0) return undefined;
 
   const recurrence = raw.filter(
@@ -697,10 +696,8 @@ async function groupExceptionsBySeries(
     // Determinism is real here and comes from somewhere else: the scan
     // hands these ids over in the store's keyset order, which is a total
     // order. Iterating the returned map instead would preserve that too,
-    // since it is keyed by the same ids. An earlier version of this
-    // comment credited the slice walk with fixing a resolution order that
-    // was never in doubt, which points the next reader at the wrong
-    // fragile part.
+    // since it is keyed by the same ids, so the slice walk is not what
+    // keeps the order.
     for (const exceptionId of slice) {
       const seriesId = chunk
         .get(exceptionId)
