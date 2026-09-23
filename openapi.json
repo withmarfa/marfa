@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Marfa API",
-    "version": "1",
+    "version": "2",
     "description": "Typed data layer for structured personal data"
   },
   "components": {
