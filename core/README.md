@@ -5,7 +5,7 @@ The Rust engine every native client embeds: a local SQLite working copy of a dec
 What it does is written down in `conformance/spec/device.md`, `queue-and-verdicts.md` and `folders.md`, and the fixtures under `conformance/src/suites/device/` gate the binary against them.
 
 - `marfa-core`: the library.
-- `marfa-client`: the Rust client, generated from `openapi.json` by OpenAPI Generator under `pnpm generate` and never edited by hand. `openapitools.json` pins the generator and its settings, and `templates/` holds the overrides: `ResponseContent` keeps the response's headers, so a caller can read `Retry-After`, and the crate carries the `CONTRACT_VERSION` it was generated for.
+- `marfa-client`: the Rust client, generated from `openapi.json` by OpenAPI Generator under `pnpm generate` and never edited by hand. `openapitools.json` pins the generator and its settings, and `templates/` holds the overrides: `ResponseContent` keeps the response's headers, so a caller can read `Retry-After`, and the crate carries the `CONTRACT_VERSION` it was generated for. The generator is a Java program, so `pnpm generate` needs a Java runtime on the path, 11 or later; CI's freshness job installs Temurin 21.
 - `marfa-cli`: the `marfa` binary.
 - `bindings/swift`: UniFFI bindings packaged as an XCFramework and a Swift package, with an example target. Its own cargo workspace, for the reason `Cargo.toml` gives.
 - `bindings/node`: a napi-rs module with a proof script.
