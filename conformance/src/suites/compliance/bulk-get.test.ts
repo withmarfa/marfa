@@ -39,6 +39,7 @@ describe("POST /items/bulk-get", () => {
     const res = await client.bulkGet([a, b]);
     expect(res.status).toBe(200);
     await expectMatchesSchema("POST", "/items/bulk-get", 200, res.data);
+    expect(Object.keys(res.data)).toEqual(["items"]);
     const ids = res.data.items.map((i) => i.id).sort();
     expect(ids).toEqual([a, b].sort());
   });
@@ -70,6 +71,10 @@ describe("POST /items/bulk-get", () => {
     const a = await createTrackedNote();
     const res = await client.bulkGet([a], ["metadata"]);
     expect(res.status).toBe(200);
+    await expectMatchesSchema("POST", "/items/bulk-get", 200, res.data);
+    // The ids the caller named are the whole answer, so there is no cursor
+    // beside the rows.
+    expect(Object.keys(res.data).sort()).toEqual(["items", "metadata"]);
     expect(Array.isArray(res.data.metadata)).toBe(true);
     expect(res.data.metadata?.some((m) => m.item_id === a)).toBe(true);
   });

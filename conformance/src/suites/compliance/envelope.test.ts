@@ -220,6 +220,72 @@ describe("one envelope for every list and search", () => {
   });
 });
 
+describe("an item's neighbors stand outside the envelope", () => {
+  type Detail = {
+    item: {
+      edges: Record<
+        string,
+        { data: { target_id: string }[]; next_cursor: unknown }
+      >;
+    };
+    neighbors?: { item: { id: string } }[];
+    neighbors_truncated?: boolean;
+  };
+
+  it("hydrates the far ends as a list, flagging no truncation below the cap", async () => {
+    const detail = (await read(`/items/${itemId}?include=neighbors`)) as Detail;
+    await expectMatchesSchema("GET", "/items/{id}", 200, detail);
+    expect(Array.isArray(detail.neighbors)).toBe(true);
+    expect(detail.neighbors?.map((n) => n.item.id)).toEqual([targetId]);
+    expect(detail.neighbors_truncated).toBe(false);
+  });
+
+  it("flags neighbors_truncated when the far ends across edge types pass the cap", async () => {
+    // Three edge types of 34 each: every block is whole, with no cursor to
+    // follow, and only their combined 102 far ends pass the cap. That is
+    // the case the flag exists for, since no block's cursor can say it.
+    const edgeTypes = ["about", "references", "derived-from"];
+    const perType = 34;
+    const created = await client.bulkItems({
+      items: Array.from({ length: 1 + edgeTypes.length * perType }, () =>
+        createNote({ source: ctx.source }),
+      ),
+    });
+    expect(created.ok).toBe(true);
+    const ids = created.data.results.map((entry) => String(entry.id));
+    for (const id of ids) trackItem(ctx, id);
+    const [hub, ...farEnds] = ids;
+    const edges = await client.bulkEdges({
+      edges: farEnds.map((target, i) => ({
+        source_id: hub!,
+        target_id: target,
+        edge_type: edgeTypes[Math.floor(i / perType)]!,
+      })),
+    });
+    expect(edges.ok).toBe(true);
+    expect(edges.data.counts.created).toBe(farEnds.length);
+    for (const entry of edges.data.results) trackEdge(ctx, entry.id!);
+
+    const detail = (await read(`/items/${hub!}?include=neighbors`)) as Detail;
+    await expectMatchesSchema("GET", "/items/{id}", 200, detail);
+    for (const type of edgeTypes) {
+      expect(detail.item.edges[type]?.data, type).toHaveLength(perType);
+      expect(detail.item.edges[type]?.next_cursor, type).toBeNull();
+    }
+    // The blocks still name every far end the flag says was left out.
+    expect(
+      Object.values(detail.item.edges)
+        .flatMap((block) => block.data.map((edge) => edge.target_id))
+        .sort(),
+    ).toEqual([...farEnds].sort());
+    expect(detail.neighbors_truncated).toBe(true);
+    const hydrated = detail.neighbors?.map((n) => n.item.id) ?? [];
+    expect(hydrated.length).toBeGreaterThan(0);
+    expect(hydrated.length).toBeLessThan(farEnds.length);
+    expect(farEnds).toEqual(expect.arrayContaining(hydrated));
+  });
+});
+
 describe("search pages by cursor", () => {
   it("walks to a null cursor, delivering every hit once", async () => {
     const tag = `envelope-search-${ctx.runId}`;
