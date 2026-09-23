@@ -21,6 +21,7 @@ mod store;
 mod wire;
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::AtomicBool;
 use std::sync::{Mutex, MutexGuard};
 use std::time::Duration;
 
@@ -28,6 +29,7 @@ use rusqlite::Connection;
 use serde_json::Value;
 
 pub use blob::{file_type_for, mime_type_for};
+pub use catch_up::{Change, FollowReport};
 pub use drain::{DrainReport, DrainVerdict};
 pub use error::CoreError;
 pub use folder::{Folder, PullReport, ScanReport, Slice};
@@ -82,6 +84,24 @@ impl Core {
         Self::from_connection(store::open(path)?, server, lock, Some(cache))
     }
 
+    /// Opens a store another process writes, to read it and nothing else
+    /// (`device.md` 40).
+    ///
+    /// It never claims the writer role, so a helper started before the app
+    /// cannot lock the app out of its own store, and it never writes, so it
+    /// refuses a path where no store has been made rather than making one.
+    /// `data_version` is how it learns the writer saved.
+    pub fn open_reader(path: impl AsRef<Path>) -> Result<Core> {
+        let path = path.as_ref();
+        Ok(Core {
+            conn: Mutex::new(store::open_to_read(path)?),
+            http: None,
+            cache: Some(blob::Cache::beside(path)),
+            catch_up_idle: DEFAULT_CATCH_UP_IDLE,
+            lock: lock::WriterLock::reader(),
+        })
+    }
+
     pub fn open_in_memory(server: Option<Server>) -> Result<Core> {
         let lock = lock::WriterLock::claim(None)?;
         Self::from_connection(store::open_in_memory()?, server, lock, None)
@@ -132,12 +152,37 @@ impl Core {
     /// `tier`, with their tags and outbound edges, and stores the event
     /// cursor to catch up from.
     pub fn hydrate(&self, types: &[String], tier: Tier) -> Result<HydrateReport> {
+        // A hydration replaces the copy, which is a write to the store like
+        // any other (`device.md` 26).
+        self.lock.refuse_unless_writer()?;
         hydrate::hydrate(self, self.http()?, types, tier)
     }
 
     /// Applies every event since the stored cursor and advances it.
     pub fn catch_up(&self) -> Result<CatchUpReport> {
+        self.lock.refuse_unless_writer()?;
         catch_up::catch_up(self, self.http()?, self.catch_up_idle)
+    }
+
+    /// Holds the event stream open and applies each event as it arrives,
+    /// telling `on_change` of each one that changed the copy, until `stop` is
+    /// set (`device.md` 39).
+    ///
+    /// `on_change` is called with no lock on the store held, so it may read
+    /// the row it is told about.
+    pub fn follow(
+        &self,
+        stop: &AtomicBool,
+        mut on_change: impl FnMut(&Change),
+    ) -> Result<FollowReport> {
+        self.lock.refuse_unless_writer()?;
+        catch_up::follow(self, self.http()?, stop, &mut on_change)
+    }
+
+    /// A number that moves each time another process saves to this store:
+    /// a reader polls it and reads again when it moves (`device.md` 40).
+    pub fn data_version(&self) -> Result<i64> {
+        store::data_version(&*self.conn()?)
     }
 
     pub fn list(&self, filters: &ListFilters, sort: Sort) -> Result<Vec<Item>> {
@@ -1251,6 +1296,21 @@ mod tests {
                     .attach("x", Path::new("no-such-file.png"), &Attachment::default())
                     .unwrap_err(),
             ),
+            // The three that write the copy from the server's side. Each is
+            // refused at the handle before it reaches the missing server.
+            (
+                "hydrate",
+                reader
+                    .hydrate(&["core.note".into()], Tier::Library)
+                    .unwrap_err(),
+            ),
+            ("catch_up", reader.catch_up().unwrap_err()),
+            (
+                "follow",
+                reader
+                    .follow(&std::sync::atomic::AtomicBool::new(true), |_| {})
+                    .unwrap_err(),
+            ),
         ];
         for (door, refusal) in &refusals {
             assert_eq!(
@@ -1269,7 +1329,7 @@ mod tests {
         // list from quietly shrinking.
         assert_eq!(
             refusals.len(),
-            19,
+            22,
             "an entry has gone from the list above. Every method on `Core` \
              that calls `refuse_unless_writer` belongs in it, and a door \
              dropped from it is a door nothing here covers."
@@ -1358,6 +1418,46 @@ mod tests {
             core.blob(&other),
             Err(CoreError::BytesAbsent { hash, .. }) if hash == other
         ));
+    }
+
+    #[test]
+    fn a_store_opened_to_read_never_claims_the_writer_and_is_told_of_saves() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("core.sqlite");
+        assert!(
+            Core::open_reader(&path).is_err(),
+            "a reading open answered for a path where no store was made"
+        );
+        assert!(
+            !path.exists(),
+            "a reading open made a store it was only meant to read"
+        );
+        // The witness: the same open once a writer has made the store.
+        drop(Core::open(&path, None).unwrap());
+        let reader = Core::open_reader(&path).unwrap();
+        assert_eq!(reader.handle(), Handle::Reader);
+        let writer = Core::open(&path, None).unwrap();
+        assert_eq!(
+            writer.handle(),
+            Handle::Writer,
+            "a reader opened first took the writer role, so the app is locked out of its own store"
+        );
+
+        let before = reader.data_version().unwrap();
+        assert_eq!(
+            reader.data_version().unwrap(),
+            before,
+            "the signal moved with no save, so a reader cannot tell a save from nothing"
+        );
+        {
+            let conn = writer.conn().unwrap();
+            store::meta_set(&conn, "saved", "yes").unwrap();
+        }
+        assert_ne!(
+            reader.data_version().unwrap(),
+            before,
+            "the writer saved and the reader's signal did not move"
+        );
     }
 
     #[test]

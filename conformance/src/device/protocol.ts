@@ -52,6 +52,22 @@ export interface CatchUpReport {
   reached_head: boolean;
 }
 
+/** One event a held stream applied (`device.md` 39). */
+export interface Change {
+  event: string;
+  item_id: string | null;
+  edge_id: string | null;
+  cursor: string;
+}
+
+/** What a held stream did before it was stopped. */
+export interface FollowReport {
+  applied: number;
+  skipped: number;
+  cursor: string;
+  reconnects: number;
+}
+
 export interface Status {
   server_origin?: string | null;
   slice_types: string[];

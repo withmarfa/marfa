@@ -73,6 +73,15 @@ impl WriterLock {
         }
     }
 
+    /// The handle of a store opened to read: it never touches the lock
+    /// file, so it can neither take the writer role nor keep it from anyone.
+    pub fn reader() -> WriterLock {
+        WriterLock {
+            _claim: Mutex::new(None),
+            handle: Handle::Reader,
+        }
+    }
+
     pub fn handle(&self) -> Handle {
         self.handle
     }

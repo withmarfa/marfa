@@ -5,12 +5,14 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import {
   type CatchUpReport,
+  type Change,
   type DeviceUnderTest,
   type Draft,
   type DrainReport,
   type Edge,
   type EdgeDraft,
   type Edit,
+  type FollowReport,
   type HydrateReport,
   type Item,
   type ListFilters,
@@ -58,6 +60,8 @@ function classify(stderr: string, exitCode: number | null): Refusal {
 /** A device command left running, for the one-writer rule. */
 export interface HeldCommand {
   readonly stderr: string;
+  /** What it has printed so far, for a command that reports as it runs. */
+  readonly stdout: string;
   running: () => boolean;
   stop: () => Promise<void>;
 }
@@ -68,6 +72,8 @@ export interface CliDeviceOptions {
   store: string;
   url?: string;
   key?: string;
+  /** Open the store to read only (`device.md` 40). */
+  reader?: boolean;
 }
 
 export function newStore(label: string): string {
@@ -84,8 +90,39 @@ export class CliDevice implements DeviceUnderTest {
     return this.options.store;
   }
 
-  reopen(overrides: { url?: string; key?: string } = {}): DeviceUnderTest {
+  reopen(
+    overrides: {
+      url?: string;
+      key?: string;
+      reader?: boolean;
+      store?: string;
+    } = {},
+  ): CliDevice {
     return new CliDevice({ ...this.options, ...overrides });
+  }
+
+  /**
+   * Holds the event stream open for `seconds` (`device.md` 39): a line per
+   * event that changed the copy, then the report.
+   */
+  async follow(
+    seconds: number,
+  ): Promise<Outcome<{ changes: Change[]; report: FollowReport }>> {
+    const lines = await this.lines([
+      "follow",
+      "--for",
+      String(seconds),
+      ...this.server(),
+    ]);
+    if (!lines.ok) return lines;
+    const report = lines.value.at(-1) as FollowReport | undefined;
+    if (report === undefined) {
+      throw new Error("the follow printed nothing, not even its report");
+    }
+    return {
+      ok: true,
+      value: { changes: lines.value.slice(0, -1) as Change[], report },
+    };
   }
 
   async hydrate(types: string[], tier: Tier): Promise<Outcome<HydrateReport>> {
@@ -235,12 +272,19 @@ export class CliDevice implements DeviceUnderTest {
       { stdio: ["ignore", "pipe", "pipe"] },
     );
     let stderr = "";
+    let stdout = "";
     child.stderr.on("data", (chunk: Buffer) => {
       stderr += chunk.toString();
+    });
+    child.stdout.on("data", (chunk: Buffer) => {
+      stdout += chunk.toString();
     });
     return {
       get stderr() {
         return stderr;
+      },
+      get stdout() {
+        return stdout;
       },
       running: () => child.exitCode === null && !child.killed,
       stop: async () => {
@@ -406,7 +450,32 @@ export class CliDevice implements DeviceUnderTest {
 
   /** Every device operation is a `device` command on one store, answered as JSON. */
   private prefix(): string[] {
-    return ["--json", "device", "--db", this.options.store];
+    return [
+      "--json",
+      "device",
+      "--db",
+      this.options.store,
+      ...(this.options.reader === true ? ["--reader"] : []),
+    ];
+  }
+
+  /** A command that prints one JSON value per line as it runs. */
+  private async lines(args: string[]): Promise<Outcome<unknown[]>> {
+    const outcome = await this.invokeText([...this.prefix(), ...args]);
+    if (!outcome.ok) return outcome;
+    try {
+      return {
+        ok: true,
+        value: outcome.value
+          .split("\n")
+          .filter((line) => line.trim() !== "")
+          .map((line) => JSON.parse(line) as unknown),
+      };
+    } catch {
+      throw new Error(
+        `the device printed a line that is not JSON: ${outcome.value.slice(0, 200)}`,
+      );
+    }
   }
 
   /**
@@ -423,6 +492,20 @@ export class CliDevice implements DeviceUnderTest {
   }
 
   private async invoke<T>(full: string[]): Promise<Outcome<T>> {
+    const outcome = await this.invokeText(full);
+    if (!outcome.ok) return outcome;
+    const text = outcome.value.trim();
+    if (text === "") return { ok: true, value: null as T };
+    try {
+      return { ok: true, value: JSON.parse(text) as T };
+    } catch {
+      throw new Error(
+        `the device exited cleanly and printed something that is not JSON: ${text.slice(0, 200)}`,
+      );
+    }
+  }
+
+  private async invokeText(full: string[]): Promise<Outcome<string>> {
     let stdout: string;
     try {
       // A device that hangs is a failing device, and the runner owns the
@@ -456,15 +539,7 @@ export class CliDevice implements DeviceUnderTest {
       }
       return { ok: false, refusal: classify(failure.stderr, failure.code) };
     }
-    const text = stdout.trim();
-    if (text === "") return { ok: true, value: null as T };
-    try {
-      return { ok: true, value: JSON.parse(text) as T };
-    } catch {
-      throw new Error(
-        `the device exited cleanly and printed something that is not JSON: ${text.slice(0, 200)}`,
-      );
-    }
+    return { ok: true, value: stdout };
   }
 }
 

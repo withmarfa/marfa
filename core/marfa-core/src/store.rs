@@ -55,6 +55,50 @@ pub fn open(path: &Path) -> Result<Connection, CoreError> {
     Ok(conn)
 }
 
+/// Opens a store another process made, to read it: no file is created, no
+/// schema is applied, and nothing is written, so a reader started before the
+/// writer can never lock the writer out or leave a store half made.
+pub fn open_to_read(path: &Path) -> Result<Connection, CoreError> {
+    let conn = Connection::open_with_flags(
+        path,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .map_err(|error| {
+        CoreError::Invalid(format!(
+            "{} is not a store to read ({error}); a reading open never makes one",
+            path.display()
+        ))
+    })?;
+    conn.busy_timeout(std::time::Duration::from_secs(5))?;
+    let found = conn
+        .query_row(
+            "SELECT value FROM meta WHERE key = ?1",
+            [META_SCHEMA_VERSION],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(|_| {
+            CoreError::Invalid(format!(
+                "{} is not a store: it has no schema to read",
+                path.display()
+            ))
+        })?;
+    match found {
+        Some(found) if found == SCHEMA_VERSION => Ok(conn),
+        found => Err(CoreError::WrongSchema {
+            expected: SCHEMA_VERSION.to_string(),
+            found: found.unwrap_or_else(|| "none".into()),
+            path: path.display().to_string(),
+        }),
+    }
+}
+
+/// A number that moves each time another connection commits to the store,
+/// which is how a reader learns the writer saved.
+pub fn data_version(conn: &Connection) -> Result<i64, CoreError> {
+    Ok(conn.query_row("PRAGMA data_version", [], |row| row.get(0))?)
+}
+
 pub fn open_in_memory() -> Result<Connection, CoreError> {
     let conn = Connection::open_in_memory()?;
     prepare(&conn)?;
@@ -179,14 +223,19 @@ pub fn hydrated(conn: &Connection) -> Result<bool, CoreError> {
 /// `hydrated`; the report asks this as well, so it can name the second case
 /// rather than calling it the first (`device.md` 5).
 pub fn holds_slice(conn: &Connection) -> Result<bool, CoreError> {
-    if meta_get(conn, META_SLICE_TIER)?.is_none() {
-        return Ok(false);
-    }
-    let types: Vec<String> = match meta_get(conn, META_SLICE_TYPES)? {
-        Some(json) => serde_json::from_str(&json)?,
-        None => return Ok(false),
+    Ok(slice(conn)?.is_some_and(|(types, _)| !types.is_empty()))
+}
+
+/// The slice a hydration declared: its types and its tier, or nothing where
+/// no hydration has declared one.
+pub fn slice(conn: &Connection) -> Result<Option<(Vec<String>, Tier)>, CoreError> {
+    let Some(tier) = meta_get(conn, META_SLICE_TIER)? else {
+        return Ok(None);
     };
-    Ok(!types.is_empty())
+    let Some(types) = meta_get(conn, META_SLICE_TYPES)? else {
+        return Ok(None);
+    };
+    Ok(Some((serde_json::from_str(&types)?, tier.parse()?)))
 }
 
 /// Refuses a read on a store that cannot answer one.

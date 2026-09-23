@@ -39,6 +39,17 @@ func expect(_ held: Bool, _ expectation: String) {
     failed = true
 }
 
+// What the core tells of each change as it lands, from a thread of its own.
+final class Collector: ChangeListener, @unchecked Sendable {
+    private let lock = NSLock()
+    private var held: [Change] = []
+    var changes: [Change] { lock.withLock { held } }
+    func changed(change: Change) { lock.withLock { held.append(change) } }
+    func ended(error: MarfaError?) {
+        if let error { FileHandle.standardError.write(Data("follow ended: \(error)\n".utf8)) }
+    }
+}
+
 func printQueue(_ core: MarfaCore) throws {
     for write in try core.queue() {
         print("  \(write.kind)  \(write.itemId ?? "-")  \(describe(write.verdict))  refusals \(write.refusals)")
@@ -121,8 +132,31 @@ do {
         print("cleared \(try core.forgetAnswered()) answered write(s); \(try core.queue().count) left")
         expect(try core.queue().isEmpty, "answered writes were left in the queue")
 
+    case "follow":
+        // Held open while the binary makes a note on the server; the change
+        // arrives here, and a reader on the same store is told the copy saved.
+        let reader = try MarfaCore.openReader(path: path)
+        let before = try reader.dataVersion()
+        let collector = Collector()
+        let subscription = core.follow(listener: collector)
+        func made() -> Change? {
+            collector.changes.first { change in
+                guard let id = change.itemId, let item = try? core.get(id: id) else { return false }
+                return (try? title(of: item)) == "Made by the binary"
+            }
+        }
+        let deadline = Date().addingTimeInterval(30)
+        while made() == nil && Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.1)
+        }
+        subscription.stop()
+        let change = made()
+        print("followed: \(change.map { "\($0.event) \($0.itemId ?? "-") at \($0.cursor)" } ?? "nothing")")
+        expect(change?.event == "item.created", "the note the binary made did not arrive through follow")
+        expect(try reader.dataVersion() != before, "a reader on the same store was not told the copy saved")
+
     default:
-        FileHandle.standardError.write(Data("name a phase: hydrate, write or drain\n".utf8))
+        FileHandle.standardError.write(Data("name a phase: hydrate, write, drain or follow\n".utf8))
         exit(2)
     }
 } catch {

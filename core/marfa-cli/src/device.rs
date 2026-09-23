@@ -26,6 +26,11 @@ pub struct DeviceArgs {
     )]
     pub db: Option<PathBuf>,
 
+    /// Open the store to read only: never claim the writer role, never
+    /// write, and refuse a path where no store has been made.
+    #[arg(long, global = true)]
+    pub reader: bool,
+
     #[command(subcommand)]
     pub command: DeviceCommand,
 }
@@ -44,6 +49,21 @@ pub enum DeviceCommand {
     /// Apply every event since the last hydrate or catch-up.
     #[command(name = "catch-up")]
     CatchUp,
+    /// Hold the event stream open and apply each event as it arrives,
+    /// printing a line for each that changed the copy.
+    Follow {
+        /// Stop after this many seconds; without it, follow until
+        /// interrupted.
+        #[arg(long = "for", value_name = "SECONDS")]
+        r#for: Option<u64>,
+    },
+    /// Print a line each time another process saves to the store.
+    Changes {
+        /// Stop after this many seconds; without it, watch until
+        /// interrupted.
+        #[arg(long = "for", value_name = "SECONDS")]
+        r#for: Option<u64>,
+    },
     /// Read items from the local copy.
     Items {
         #[command(subcommand)]
@@ -391,9 +411,15 @@ pub struct ListArgs {
 }
 
 pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<(), CliError> {
+    let store = Store {
+        db: args.db,
+        reader: args.reader,
+    };
     match args.command {
         DeviceCommand::Hydrate { types, tier } => {
-            let report = open(&args.db, Some(named.server()?))?.hydrate(&types, tier.into())?;
+            let report = store
+                .open(Some(named.server()?))?
+                .hydrate(&types, tier.into())?;
             output::report(&report, json, || {
                 format!(
                     "hydrated {} item(s) and {} edge(s) of {} at {} in {} page(s); cursor {}",
@@ -406,8 +432,62 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<(), CliError> 
                 )
             })
         }
+        DeviceCommand::Follow { r#for } => {
+            let core = store.open(Some(named.server()?))?;
+            let stop = stop_after(r#for);
+            // A line that cannot be written stops the follow and is the
+            // error it ends with, rather than events applied and never told.
+            let mut unwritten: Option<CliError> = None;
+            let report = core.follow(&stop, |change| {
+                if unwritten.is_some() {
+                    return;
+                }
+                let written = output::line_of(change, json, || {
+                    format!(
+                        "{} {} (cursor {})",
+                        change.event,
+                        change
+                            .item_id
+                            .as_deref()
+                            .or(change.edge_id.as_deref())
+                            .unwrap_or("-"),
+                        change.cursor
+                    )
+                });
+                if let Err(error) = written {
+                    unwritten = Some(error);
+                    stop.store(true, std::sync::atomic::Ordering::Relaxed);
+                }
+            })?;
+            if let Some(error) = unwritten {
+                return Err(error);
+            }
+            output::line_of(&report, json, || {
+                format!(
+                    "applied {} event(s), skipped {}; cursor {}; {} reconnect(s)",
+                    report.applied, report.skipped, report.cursor, report.reconnects
+                )
+            })
+        }
+        DeviceCommand::Changes { r#for } => {
+            let core = store.open(None)?;
+            let stop = stop_after(r#for);
+            eprintln!("watching for saves (interrupt to stop)");
+            let mut seen = core.data_version()?;
+            while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+                std::thread::sleep(CHANGES_POLL);
+                let now = core.data_version()?;
+                if now != seen {
+                    seen = now;
+                    output::line_of(&serde_json::json!({ "data_version": now }), json, || {
+                        format!("saved (data version {now})")
+                    })?;
+                }
+            }
+            Ok(())
+        }
         DeviceCommand::CatchUp => {
-            let report = open(&args.db, Some(named.server()?))?.catch_up()?;
+            let report = store.open(Some(named.server()?))?.catch_up()?;
             output::report(&report, json, || {
                 format!(
                     "applied {} event(s), skipped {}; cursor {}{}",
@@ -423,7 +503,7 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<(), CliError> 
             })
         }
         DeviceCommand::Items { command } => {
-            let core = open(&args.db, None)?;
+            let core = store.open(None)?;
             match command {
                 ItemsCommand::List(args) => {
                     let filters = ListFilters {
@@ -488,7 +568,7 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<(), CliError> 
         }
         DeviceCommand::Blobs { command } => match command {
             BlobsCommand::Put { file, mime_type } => output::queued_one(
-                &open(&args.db, None)?.put_blob(&file, mime_type.as_deref())?,
+                &store.open(None)?.put_blob(&file, mime_type.as_deref())?,
                 json,
             ),
             BlobsCommand::Get { hash } => {
@@ -500,7 +580,7 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<(), CliError> 
                     Err(CliError::NoServerNamed) => None,
                     Err(error) => return Err(error),
                 };
-                let path = open(&args.db, server)?.blob(&hash)?;
+                let path = store.open(server)?.blob(&hash)?;
                 output::report(
                     &serde_json::json!({ "hash": hash, "path": path }),
                     json,
@@ -522,13 +602,10 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<(), CliError> 
                 r#type: type_,
                 tags,
             };
-            output::hits(
-                &open(&args.db, None)?.search(&query, &filters, limit)?,
-                json,
-            )
+            output::hits(&store.open(None)?.search(&query, &filters, limit)?, json)
         }
         DeviceCommand::Edges { command } => {
-            let core = open(&args.db, None)?;
+            let core = store.open(None)?;
             match command {
                 EdgesCommand::List { item } => {
                     let edges = core.edges_from(&item)?;
@@ -580,7 +657,7 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<(), CliError> 
             }
         }
         DeviceCommand::Tags { command } => {
-            let core = open(&args.db, None)?;
+            let core = store.open(None)?;
             let queued = match command {
                 TagsCommand::Add { item, tag } => core.add_tag(&item, &tag)?,
                 TagsCommand::Remove { item, tag } => core.remove_tag(&item, &tag)?,
@@ -588,7 +665,7 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<(), CliError> 
             output::queued_one(&queued, json)
         }
         DeviceCommand::Metadata { command } => {
-            let core = open(&args.db, None)?;
+            let core = store.open(None)?;
             let (item, tags, replace) = match command {
                 MetadataCommand::Replace { item, tags } => (item, tags, true),
                 MetadataCommand::Merge { item, tags } => (item, tags, false),
@@ -597,7 +674,7 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<(), CliError> 
             output::queued_one(&core.write_metadata(&item, &write, replace)?, json)
         }
         DeviceCommand::Extensions { command } => {
-            let core = open(&args.db, None)?;
+            let core = store.open(None)?;
             let queued = match command {
                 ExtensionsCommand::Write {
                     item,
@@ -615,19 +692,19 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<(), CliError> 
             };
             output::queued_one(&queued, json)
         }
-        DeviceCommand::Queue => output::queued(&open(&args.db, None)?.queue()?, json),
+        DeviceCommand::Queue => output::queued(&store.open(None)?.queue()?, json),
         DeviceCommand::Forget => {
-            let cleared = open(&args.db, None)?.forget_answered()?;
+            let cleared = store.open(None)?.forget_answered()?;
             output::report(&cleared, json, || {
                 format!("cleared {cleared} answered write(s)")
             })
         }
         DeviceCommand::Drain => {
-            let report = open(&args.db, Some(named.server()?))?.drain()?;
+            let report = store.open(Some(named.server()?))?.drain()?;
             output::drained(&report, json)
         }
         DeviceCommand::Release { id, reason } => {
-            let core = open(&args.db, None)?;
+            let core = store.open(None)?;
             let released = match (&id, &reason) {
                 (_, Some(reason)) => core.release_reason(*reason)?,
                 (Some(id), None) => usize::from(core.release(id)?),
@@ -649,7 +726,7 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<(), CliError> 
             })
         }
         DeviceCommand::Status => {
-            let status = open(&args.db, None)?.status()?;
+            let status = store.open(None)?.status()?;
             output::report(&status, json, || {
                 format!(
                     "server {}\nslice {} at {}\ncursor {}\nhydration {}\n{} item(s), {} edge(s)",
@@ -683,20 +760,47 @@ fn blocked_reason() -> impl clap::builder::TypedValueParser<Value = marfa_core::
     .try_map(|reason| reason.parse::<marfa_core::BlockedReason>())
 }
 
-/// A working copy is named by `--db` or `MARFA_DB` or it does not exist:
-/// there is no default store, because a store nobody named is one nobody
-/// can find again. The file is made at the named path on first open, so
-/// the state report is answerable before a hydration (`device.md` 5).
-fn open(db: &Option<PathBuf>, server: Option<Server>) -> Result<Core, CliError> {
-    let Some(path) = db else {
-        return Err(CliError::NoStoreNamed);
-    };
-    let path = path.clone();
-    if let Some(parent) = path.parent()
-        && !parent.as_os_str().is_empty()
-        && !parent.exists()
-    {
-        std::fs::create_dir_all(parent)?;
+/// How often `changes` asks whether the store moved.
+const CHANGES_POLL: std::time::Duration = std::time::Duration::from_millis(100);
+
+/// A flag set after `seconds`, or never.
+fn stop_after(seconds: Option<u64>) -> std::sync::Arc<std::sync::atomic::AtomicBool> {
+    let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    if let Some(seconds) = seconds {
+        let flag = std::sync::Arc::clone(&stop);
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_secs(seconds));
+            flag.store(true, std::sync::atomic::Ordering::Relaxed);
+        });
     }
-    Ok(Core::open(path, server)?)
+    stop
+}
+
+/// The store a device command names, and how it is opened.
+struct Store {
+    db: Option<PathBuf>,
+    reader: bool,
+}
+
+impl Store {
+    /// A working copy is named by `--db` or `MARFA_DB` or it does not exist:
+    /// there is no default store, because a store nobody named is one nobody
+    /// can find again. The file is made at the named path on first open, so
+    /// the state report is answerable before a hydration (`device.md` 5);
+    /// opened to read, it is never made (`device.md` 40).
+    fn open(&self, server: Option<Server>) -> Result<Core, CliError> {
+        let Some(path) = &self.db else {
+            return Err(CliError::NoStoreNamed);
+        };
+        if self.reader {
+            return Ok(Core::open_reader(path)?);
+        }
+        if let Some(parent) = path.parent()
+            && !parent.as_os_str().is_empty()
+            && !parent.exists()
+        {
+            std::fs::create_dir_all(parent)?;
+        }
+        Ok(Core::open(path, server)?)
+    }
 }

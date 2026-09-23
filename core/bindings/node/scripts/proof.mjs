@@ -171,7 +171,34 @@ if (phase === "hydrate") {
     `cleared ${cleared} answered write(s); ${core.queue().length} left`,
   );
   expect(core.queue().length === 0, "answered writes were left in the queue");
+} else if (phase === "follow") {
+  // Held open while the binary makes a note on the server; the change
+  // arrives here, and a reader on the same store is told the copy saved.
+  const reader = MarfaCore.openReader(path);
+  const before = reader.dataVersion();
+  /** @type {import("../index.js").Change[]} */
+  const changes = [];
+  const subscription = core.follow(
+    (change) => changes.push(change),
+    (error) => {
+      if (error) console.error(`follow ended: ${error}`);
+    },
+  );
+  const made = () =>
+    changes.find((change) => {
+      const item = change.itemId ? core.get(change.itemId) : null;
+      return item?.properties.title === "Made by the binary";
+    });
+  const deadline = Date.now() + 30_000;
+  while (!made() && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  subscription.stop();
+  const change = made();
+  console.log(`followed: ${change ? `${change.event} ${change.itemId} at ${change.cursor}` : "nothing"}`);
+  expect(change?.event === "item.created", "the note the binary made did not arrive through follow");
+  expect(reader.dataVersion() !== before, "a reader on the same store was not told the copy saved");
 } else {
-  console.error("name a phase: hydrate, write or drain");
+  console.error("name a phase: hydrate, write, drain or follow");
   process.exit(2);
 }

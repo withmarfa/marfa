@@ -218,6 +218,45 @@ describe("a device refuses a write only the server may make", () => {
   });
 });
 
+describe("a store opened to read writes nothing from the server either", () => {
+  it("refuses a hydration, a catch-up and a follow from a reading handle", async () => {
+    harness = await hydratedHarness("reading-open-refusals", {
+      rows: { "core.note": [{ item: { id: HELD.id, version: HELD.version } }] },
+    });
+    const reader = harness.device.reopen({ reader: true });
+    // The witness: the reading open reads, so the refusals below are the
+    // handle and not a store it cannot open.
+    const listed = await reader.list();
+    expect(
+      listed.ok,
+      `a store opened to read could not be read: ${JSON.stringify(listed)}`,
+    ).toBe(true);
+    const refusals = {
+      hydrate: await reader.hydrate(["core.note"], "library"),
+      "catch-up": await reader.catchUp(),
+      follow: await reader.follow(1),
+    };
+    for (const [door, outcome] of Object.entries(refusals)) {
+      expect(
+        outcome.ok,
+        `a reading handle ran a ${door}, which writes the copy the writer holds`,
+      ).toBe(false);
+      if (!outcome.ok) {
+        expect(
+          outcome.refusal.code,
+          `the ${door} was refused for another reason: ${outcome.refusal.raw}`,
+        ).toBe("reading_handle");
+      }
+    }
+    expect(
+      harness.server.requests.filter(
+        (request) => request.pathname === "/events",
+      ),
+      "a reading handle reached the event stream",
+    ).toHaveLength(1);
+  });
+});
+
 /** Every write door, against a device that is not the writer. */
 async function expectRefusedAsReader(
   second: DeviceUnderTest,

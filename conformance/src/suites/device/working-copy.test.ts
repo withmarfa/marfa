@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { describe, it, expect, afterEach, vi } from "vitest";
 import {
   KEY,
@@ -484,6 +484,59 @@ describe("the working copy belongs to one server", () => {
       file.includes(KEY),
       "the key is written into the store, so a copied file carries the credential with it",
     ).toBe(false);
+  });
+
+  it("opens a store to read without claiming the writer role, and is told when it saves", async () => {
+    harness = await hydratedHarness("reader-first", {
+      rows: { "core.note": [{ item: { id: "n1" } }] },
+    });
+    // A path where nothing has been made: the reading open refuses it and
+    // leaves nothing there.
+    const nowhere = harness.device.reopen({
+      reader: true,
+      store: `${harness.device.store}.absent`,
+    });
+    expect(
+      (await nowhere.status()).ok,
+      "a reading open answered for a path with no store",
+    ).toBe(false);
+    expect(existsSync(`${harness.device.store}.absent`)).toBe(false);
+
+    // The helper starts first and waits for saves.
+    const reader = harness.device
+      .reopen({ reader: true })
+      .hold(["changes", "--for", "8"]);
+    try {
+      await vi.waitFor(
+        () => {
+          expect(
+            reader.stderr,
+            `the reader never started watching: ${reader.stderr}`,
+          ).toContain("watching for saves");
+        },
+        { timeout: 10_000, interval: 25 },
+      );
+      // The app opens second and is the writer all the same.
+      const wrote = await harness.device.create({
+        type: "core.note",
+        properties: { title: "saved by the app", body: "saved" },
+      });
+      expect(
+        wrote.ok,
+        `a reader started first took the writer role, so the app cannot write to its own store: ${JSON.stringify(wrote)}`,
+      ).toBe(true);
+      await vi.waitFor(
+        () => {
+          expect(
+            reader.stdout,
+            "the writer saved and the reader was not told",
+          ).toContain("data_version");
+        },
+        { timeout: 5_000, interval: 50 },
+      );
+    } finally {
+      await reader.stop();
+    }
   });
 
   it("gives a second opener a reading handle that refuses writes", async () => {

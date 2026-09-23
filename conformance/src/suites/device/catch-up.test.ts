@@ -541,6 +541,101 @@ describe("catch-up replays from the cursor", () => {
     ).toBe("edited here");
   });
 
+  it("applies each event on a held stream as it arrives, and resumes from its cursor when the stream drops", async () => {
+    harness = await startHarness("follow-held");
+    const { server, device } = harness;
+    scriptHydration(server, {
+      head: "10",
+      rows: {
+        "core.note": [
+          {
+            item: {
+              id: "row",
+              version: 1,
+              properties: { title: "as hydrated", body: "the body" },
+            },
+          },
+        ],
+      },
+    });
+    const resumedFrom: Array<string | undefined> = [];
+    server.answer(
+      "GET",
+      "/events",
+      // One event and then the stream ends: the connection a laptop loses
+      // when it sleeps.
+      (request) => {
+        resumedFrom.push(request.headers["last-event-id"]);
+        return {
+          kind: "sse",
+          frames: [
+            connected,
+            itemEvent(
+              "11",
+              "item.updated",
+              wireItem({
+                id: "row",
+                version: 2,
+                properties: { title: "changed while held", body: "the body" },
+              }),
+            ),
+          ],
+        };
+      },
+      (request) => {
+        resumedFrom.push(request.headers["last-event-id"]);
+        return {
+          kind: "sse",
+          hold: true,
+          frames: [
+            connected,
+            itemEvent(
+              "12",
+              "item.created",
+              wireItem({
+                id: "arrived",
+                version: 1,
+                properties: { title: "arrived live", body: "new" },
+              }),
+            ),
+          ],
+        };
+      },
+    );
+
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    const followed = await device.follow(3);
+    expect(
+      followed.ok,
+      `the device could not follow the stream: ${JSON.stringify(followed)}`,
+    ).toBe(true);
+    if (!followed.ok) return;
+    expect(
+      followed.value.changes.map((change) => [
+        change.event,
+        change.item_id,
+        change.cursor,
+      ]),
+      "the device did not report each event it applied, in the order they arrived",
+    ).toEqual([
+      ["item.updated", "row", "11"],
+      ["item.created", "arrived", "12"],
+    ]);
+    expect(
+      resumedFrom,
+      "the stream was opened again from somewhere other than the last event applied, so an event in between is lost or applied twice",
+    ).toEqual(["10", "11"]);
+    expect(followed.value.report.reconnects).toBe(1);
+    expect(followed.value.report.cursor).toBe("12");
+
+    const held = await device.get("row");
+    expect(held.ok && held.value.properties.title).toBe("changed while held");
+    expect(
+      (await device.get("arrived")).ok,
+      "the event that arrived on the held stream was reported and not applied",
+    ).toBe(true);
+  });
+
   it("leaves the cursor at the last applied event when the stream ends early", async () => {
     harness = await startHarness("short-stream");
     const { server, device } = harness;

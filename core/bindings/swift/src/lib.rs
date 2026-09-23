@@ -2,6 +2,7 @@
 //! because UniFFI has no arbitrary-JSON type.
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 uniffi::setup_scaffolding!();
 
@@ -772,10 +773,82 @@ pub struct MarfaCore {
     inner: marfa_core::Core,
 }
 
+/// One event a held stream applied: what it was, what it was about, and the
+/// cursor it left.
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct Change {
+    pub event: String,
+    pub item_id: Option<String>,
+    pub edge_id: Option<String>,
+    pub cursor: String,
+}
+
+impl From<&marfa_core::Change> for Change {
+    fn from(change: &marfa_core::Change) -> Self {
+        Change {
+            event: change.event.clone(),
+            item_id: change.item_id.clone(),
+            edge_id: change.edge_id.clone(),
+            cursor: change.cursor.clone(),
+        }
+    }
+}
+
+/// What an app hands `follow`: told of each change as it lands, on a thread
+/// of the core's, and once when the stream ends, with the error that ended
+/// it or none where it was stopped.
+#[uniffi::export(with_foreign)]
+pub trait ChangeListener: Send + Sync {
+    fn changed(&self, change: Change);
+    fn ended(&self, error: Option<MarfaError>);
+}
+
+/// A held stream, stopped by `stop`. The call returns at once; the thread
+/// reading the stream ends at the server's next frame.
+#[derive(uniffi::Object)]
+pub struct Subscription {
+    stop: Arc<AtomicBool>,
+}
+
+#[uniffi::export]
+impl Subscription {
+    pub fn stop(&self) {
+        self.stop.store(true, Ordering::Relaxed);
+    }
+}
+
 #[uniffi::export]
 impl MarfaCore {
     /// Opens the file at `path`, creating it when absent. `url` and `key`
     /// go together; without them only local reads work.
+    /// Opens a store another process writes, to read it only: never the
+    /// writer, never a write, and a path with no store is refused.
+    #[uniffi::constructor]
+    pub fn open_reader(path: String) -> Result<Arc<Self>, MarfaError> {
+        Ok(Arc::new(MarfaCore {
+            inner: marfa_core::Core::open_reader(path)?,
+        }))
+    }
+
+    /// A number that moves each time another process saves to the store.
+    pub fn data_version(&self) -> Result<i64, MarfaError> {
+        Ok(self.inner.data_version()?)
+    }
+
+    /// Holds the event stream open on a thread of its own and applies each
+    /// event as it arrives, telling `listener` of each change.
+    pub fn follow(self: Arc<Self>, listener: Arc<dyn ChangeListener>) -> Arc<Subscription> {
+        let stop = Arc::new(AtomicBool::new(false));
+        let flag = Arc::clone(&stop);
+        std::thread::spawn(move || {
+            let ended = self
+                .inner
+                .follow(&flag, |change| listener.changed(change.into()));
+            listener.ended(ended.err().map(Into::into));
+        });
+        Arc::new(Subscription { stop })
+    }
+
     #[uniffi::constructor]
     pub fn open(
         path: String,

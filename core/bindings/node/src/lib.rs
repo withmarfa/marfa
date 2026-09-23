@@ -1,8 +1,10 @@
 //! The Node-facing shape of `marfa_core`.
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use napi::bindgen_prelude::*;
+use napi::threadsafe_function::ThreadsafeFunctionCallMode;
 use napi_derive::napi;
 
 #[napi(string_enum = "snake_case")]
@@ -607,6 +609,31 @@ fn failure(error: marfa_core::CoreError) -> Error {
     Error::new(napi::Status::GenericFailure, format!("{code}: {detail}"))
 }
 
+/// One event a held stream applied: what it was, what it was about, and the
+/// cursor it left.
+#[napi(object)]
+pub struct Change {
+    pub event: String,
+    pub item_id: Option<String>,
+    pub edge_id: Option<String>,
+    pub cursor: String,
+}
+
+/// A held stream, stopped by `stop`. The call returns at once; the thread
+/// reading the stream ends at the server's next frame.
+#[napi]
+pub struct Subscription {
+    stop: Arc<AtomicBool>,
+}
+
+#[napi]
+impl Subscription {
+    #[napi]
+    pub fn stop(&self) {
+        self.stop.store(true, Ordering::Relaxed);
+    }
+}
+
 /// A local copy of a slice of one server.
 #[napi]
 pub struct MarfaCore {
@@ -753,6 +780,65 @@ impl Task for Drain {
 impl MarfaCore {
     /// Opens the file at `path`, creating it when absent. `url` and `key` go
     /// together; without them only local reads work.
+    /// Opens a store another process writes, to read it only: never the
+    /// writer, never a write, and a path with no store is refused.
+    #[napi(factory)]
+    pub fn open_reader(path: String) -> Result<MarfaCore> {
+        let core = marfa_core::Core::open_reader(path).map_err(failure)?;
+        Ok(MarfaCore {
+            inner: Arc::new(core),
+        })
+    }
+
+    /// A number that moves each time another process saves to the store.
+    #[napi]
+    pub fn data_version(&self) -> Result<i64> {
+        self.inner.data_version().map_err(failure)
+    }
+
+    /// Holds the event stream open on a thread of its own and applies each
+    /// event as it arrives: `onChange` for each change, `onEnd` once, with
+    /// the error that ended it or null where it was stopped. Neither
+    /// callback keeps the process alive.
+    #[napi]
+    pub fn follow(
+        &self,
+        on_change: Function<Change, ()>,
+        on_end: Function<Option<String>, ()>,
+    ) -> Result<Subscription> {
+        let changed = on_change
+            .build_threadsafe_function()
+            .callee_handled::<false>()
+            .weak::<true>()
+            .build()?;
+        let ended = on_end
+            .build_threadsafe_function()
+            .callee_handled::<false>()
+            .weak::<true>()
+            .build()?;
+        let stop = Arc::new(AtomicBool::new(false));
+        let flag = Arc::clone(&stop);
+        let core = Arc::clone(&self.inner);
+        std::thread::spawn(move || {
+            let result = core.follow(&flag, |change| {
+                changed.call(
+                    Change {
+                        event: change.event.clone(),
+                        item_id: change.item_id.clone(),
+                        edge_id: change.edge_id.clone(),
+                        cursor: change.cursor.clone(),
+                    },
+                    ThreadsafeFunctionCallMode::NonBlocking,
+                );
+            });
+            ended.call(
+                result.err().map(|error| failure(error).reason),
+                ThreadsafeFunctionCallMode::NonBlocking,
+            );
+        });
+        Ok(Subscription { stop })
+    }
+
     #[napi(factory)]
     pub fn open(path: String, url: Option<String>, key: Option<String>) -> Result<MarfaCore> {
         let server = match (url, key) {
