@@ -9,7 +9,11 @@ import {
   trackWebhook,
 } from "../../utils/setup.js";
 import { createNote } from "../../generators/items.js";
-import { expectMatchesSchema } from "../../utils/openapi.js";
+import {
+  expectMatchesSchema,
+  pageDoors,
+  servedDocument,
+} from "../../utils/openapi.js";
 
 /**
  * Every list and every search answers one envelope: the rows under `data`
@@ -146,8 +150,12 @@ describe("one envelope for every list and search", () => {
     },
   ];
 
-  it("names twenty-one doors", () => {
-    expect(doors).toHaveLength(21);
+  it("names every door the document publishes as a page", async () => {
+    // Derived from the served document rather than counted, so a door that
+    // starts answering a page without a row here turns this red.
+    expect(doors.map((door) => door.template).sort()).toEqual(
+      pageDoors(await servedDocument()).sort(),
+    );
   });
 
   for (const door of doors) {
@@ -264,10 +272,17 @@ describe("search pages by cursor", () => {
   });
 
   it("refuses an offset query key", async () => {
+    // A search pages by cursor alone. The refusal names the key, so a 400
+    // for some other reason, such as a missing `q`, cannot pass for it.
     const response = await fetch(`${apiUrl}/search?q=${title}&offset=1`, {
       headers: { Authorization: `Bearer ${apiKey}` },
     });
     expect(response.status).toBe(400);
+    const body = (await response.json()) as {
+      error: { code: string; details?: { unknown_parameters?: string[] } };
+    };
+    expect(body.error.code).toBe("validation_error");
+    expect(body.error.details?.unknown_parameters).toEqual(["offset"]);
   });
 
   it("refuses a cursor another listing issued, and one it cannot read", async () => {

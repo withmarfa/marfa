@@ -124,6 +124,32 @@ function fetchOpenApi(): Promise<OpenApiDocument> {
   return cached;
 }
 
+/** The served document, read once per run. */
+export function servedDocument(): Promise<OpenApiDocument> {
+  return fetchOpenApi();
+}
+
+/**
+ * The path templates whose `GET` answers `200` with a page: an object that
+ * declares both `data` and `next_cursor`. A door answering `data` alone,
+ * such as an extension read, is not one.
+ */
+export function pageDoors(document: OpenApiDocument): string[] {
+  const out: string[] = [];
+  for (const [path, methods] of Object.entries(document.paths)) {
+    const content = methods["get"]?.responses?.["200"]?.content ?? {};
+    const declared = Object.values(content).flatMap((media) => {
+      const schema = inline(media.schema, document) as
+        { properties?: Record<string, unknown> } | undefined;
+      return Object.keys(schema?.properties ?? {});
+    });
+    if (declared.includes("data") && declared.includes("next_cursor")) {
+      out.push(path);
+    }
+  }
+  return out;
+}
+
 export interface PublishedOperation {
   method: string;
   path: string;

@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import {
   closed,
   inline,
+  pageDoors,
   validatorFor,
   type OpenApiDocument,
 } from "./openapi.js";
@@ -129,5 +130,41 @@ describe("inline", () => {
     expect(() => inline({ $ref: "#/components/schemas/Missing" }, doc)).toThrow(
       /no #\/components\/schemas\/Missing/,
     );
+  });
+});
+
+describe("pageDoors", () => {
+  const answering = (properties: Record<string, unknown>) => ({
+    responses: {
+      "200": {
+        content: {
+          "application/json": { schema: { type: "object", properties } },
+        },
+      },
+    },
+  });
+
+  it("names a GET whose success declares data and next_cursor, and nothing else", () => {
+    const page = { data: {}, next_cursor: {} };
+    expect(
+      pageDoors({
+        paths: {
+          "/page": { get: answering(page) },
+          "/data-only": { get: answering({ data: {} }) },
+          "/posted": { post: answering(page) },
+        },
+      }),
+    ).toEqual(["/page"]);
+  });
+
+  it("resolves a referenced success in the committed document", () => {
+    const pages = pageDoors(committed);
+    expect(pages).toContain("/items");
+    // An extension read answers `data` without a cursor: published, and
+    // not a page.
+    expect(
+      committed.paths["/items/{id}/extensions/{namespace}"]?.get,
+    ).toBeDefined();
+    expect(pages).not.toContain("/items/{id}/extensions/{namespace}");
   });
 });
