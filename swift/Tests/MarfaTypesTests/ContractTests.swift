@@ -16,6 +16,27 @@ import Testing
     #expect(root.contract == marfaContractVersion)
 }
 
+/// The constant is the document's `info.version`, read off the document the
+/// package was generated from rather than off the constant itself.
+@Test func theContractIsTheDocuments() throws {
+    let document = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .appendingPathComponent("openapi.json")
+    let info = try JSONDecoder().decode(
+        Document.self,
+        from: Data(contentsOf: document)
+    ).info
+    #expect(info.version == String(marfaContractVersion))
+}
+
+private struct Document: Decodable {
+    struct Info: Decodable { let version: String }
+    let info: Info
+}
+
 /// A page of items decodes as the envelope every list answers.
 @Test func aPageDecodesAsTheEnvelope() throws {
     let json = Data(#"{"data":[],"next_cursor":null}"#.utf8)
