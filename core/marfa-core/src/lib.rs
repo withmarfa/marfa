@@ -1232,8 +1232,8 @@ mod tests {
         };
         // **Every door, not the two that are easy to reach.** The comment
         // above claims the guard is consulted by all of them, and a test
-        // covering two of seventeen proves it for two: the call could go
-        // missing from any of the other fifteen with nothing red.
+        // covering two of them proves it for two: the call could go missing
+        // from any of the others with nothing red.
         let refusals: Vec<(&str, CoreError)> = vec![
             ("create_item", reader.create_item(&draft).unwrap_err()),
             ("update_item", reader.update_item("x", &edit).unwrap_err()),
