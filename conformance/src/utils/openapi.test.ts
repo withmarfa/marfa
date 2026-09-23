@@ -134,37 +134,74 @@ describe("inline", () => {
 });
 
 describe("pageDoors", () => {
-  const answering = (properties: Record<string, unknown>) => ({
+  const answering = (schema: unknown, status = "200") => ({
     responses: {
-      "200": {
-        content: {
-          "application/json": { schema: { type: "object", properties } },
-        },
-      },
+      [status]: { content: { "application/json": { schema } } },
     },
   });
+  const object = (properties: Record<string, unknown>) => ({
+    type: "object",
+    properties,
+  });
+  const page = object({ data: {}, next_cursor: {} });
 
-  it("names a GET whose success declares data and next_cursor, and nothing else", () => {
-    const page = { data: {}, next_cursor: {} };
+  it("names an operation whose success declares data and next_cursor, and nothing else", () => {
     expect(
       pageDoors({
         paths: {
           "/page": { get: answering(page) },
-          "/data-only": { get: answering({ data: {} }) },
-          "/posted": { post: answering(page) },
+          "/data-only": { get: answering(object({ data: {} })) },
+          "/refused": { get: answering(page, "400") },
         },
       }),
-    ).toEqual(["/page"]);
+    ).toEqual(["GET /page"]);
   });
 
-  it("resolves a referenced success in the committed document", () => {
+  it("names a page answered by a method other than GET", () => {
+    expect(
+      pageDoors({
+        paths: { "/pages": { post: answering(page, "201") } },
+      }),
+    ).toEqual(["POST /pages"]);
+  });
+
+  it("names a page composed across an allOf, through a reference", () => {
+    const composed: OpenApiDocument = {
+      paths: {
+        "/composed": {
+          get: answering({
+            allOf: [
+              { $ref: "#/components/schemas/Page" },
+              object({ min_copies: { type: "integer" } }),
+            ],
+          }),
+        },
+        "/half": {
+          get: answering({
+            allOf: [
+              { $ref: "#/components/schemas/Rows" },
+              object({ min_copies: { type: "integer" } }),
+            ],
+          }),
+        },
+      },
+      components: {
+        schemas: { Page: page, Rows: object({ data: {} }) },
+      },
+    };
+    expect(pageDoors(composed)).toEqual(["GET /composed"]);
+  });
+
+  it("names exactly the twenty-one GET pages of the committed document", () => {
     const pages = pageDoors(committed);
-    expect(pages).toContain("/items");
+    expect(pages).toHaveLength(21);
+    expect(pages.every((door) => door.startsWith("GET "))).toBe(true);
+    expect(pages).toContain("GET /items");
     // An extension read answers `data` without a cursor: published, and
     // not a page.
     expect(
       committed.paths["/items/{id}/extensions/{namespace}"]?.get,
     ).toBeDefined();
-    expect(pages).not.toContain("/items/{id}/extensions/{namespace}");
+    expect(pages).not.toContain("GET /items/{id}/extensions/{namespace}");
   });
 });

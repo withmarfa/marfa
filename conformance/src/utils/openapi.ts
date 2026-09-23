@@ -130,21 +130,39 @@ export function servedDocument(): Promise<OpenApiDocument> {
 }
 
 /**
- * The path templates whose `GET` answers `200` with a page: an object that
- * declares both `data` and `next_cursor`. A door answering `data` alone,
- * such as an extension read, is not one.
+ * The properties an inlined schema declares, its own and every `allOf`
+ * branch's, so a page composed from parts reads as the object it answers.
+ */
+function declaredProperties(schema: unknown): string[] {
+  if (schema === null || typeof schema !== "object") return [];
+  const record = schema as JsonSchema;
+  const own = Object.keys((record.properties as object | undefined) ?? {});
+  const branches = Array.isArray(record.allOf)
+    ? record.allOf.flatMap((branch) => declaredProperties(branch))
+    : [];
+  return [...own, ...branches];
+}
+
+/**
+ * Every operation, as `METHOD /template`, that answers a 2xx JSON body
+ * with a page: an object that declares both `data` and `next_cursor`,
+ * whether by reference, inline or across an `allOf`. A door answering
+ * `data` alone, such as an extension read, is not one.
  */
 export function pageDoors(document: OpenApiDocument): string[] {
   const out: string[] = [];
   for (const [path, methods] of Object.entries(document.paths)) {
-    const content = methods["get"]?.responses?.["200"]?.content ?? {};
-    const declared = Object.values(content).flatMap((media) => {
-      const schema = inline(media.schema, document) as
-        { properties?: Record<string, unknown> } | undefined;
-      return Object.keys(schema?.properties ?? {});
-    });
-    if (declared.includes("data") && declared.includes("next_cursor")) {
-      out.push(path);
+    for (const [method, operation] of Object.entries(methods)) {
+      const declared = Object.entries(operation.responses ?? {})
+        .filter(([status]) => /^2\d\d$/.test(status))
+        .flatMap(([, response]) => Object.entries(response.content ?? {}))
+        .filter(([mediaType]) => /\bjson\b/.test(mediaType))
+        .flatMap(([, media]) =>
+          declaredProperties(inline(media.schema, document)),
+        );
+      if (declared.includes("data") && declared.includes("next_cursor")) {
+        out.push(`${method.toUpperCase()} ${path}`);
+      }
     }
   }
   return out;
