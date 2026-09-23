@@ -1,7 +1,7 @@
 //! The Node-facing shape of `marfa_core`.
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use napi::bindgen_prelude::*;
 use napi::threadsafe_function::ThreadsafeFunctionCallMode;
@@ -619,8 +619,8 @@ pub struct Change {
     pub cursor: String,
 }
 
-/// A held stream, stopped by `stop`. The call returns at once; the thread
-/// reading the stream ends at the server's next frame.
+/// A held stream, stopped by `stop` or by being collected. The follow ends
+/// within a quarter second of either, and `onEnd` is called once it has.
 #[napi]
 pub struct Subscription {
     stop: Arc<AtomicBool>,
@@ -630,6 +630,14 @@ pub struct Subscription {
 impl Subscription {
     #[napi]
     pub fn stop(&self) {
+        self.stop.store(true, Ordering::Relaxed);
+    }
+}
+
+/// The follow's thread holds the core, and with it the writer's claim on
+/// the store, so a subscription nobody holds any more must end it.
+impl Drop for Subscription {
+    fn drop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
     }
 }
@@ -778,8 +786,6 @@ impl Task for Drain {
 
 #[napi]
 impl MarfaCore {
-    /// Opens the file at `path`, creating it when absent. `url` and `key` go
-    /// together; without them only local reads work.
     /// Opens a store another process writes, to read it only: never the
     /// writer, never a write, and a path with no store is refused.
     #[napi(factory)]
@@ -820,8 +826,14 @@ impl MarfaCore {
         let flag = Arc::clone(&stop);
         let core = Arc::clone(&self.inner);
         std::thread::spawn(move || {
+            // Two threadsafe functions keep no order between them, so `onEnd`
+            // waits until every `onChange` queued before it has run.
+            let sent = Arc::new(AtomicU64::new(0));
+            let delivered = Arc::new(AtomicU64::new(0));
             let result = core.follow(&flag, |change| {
-                changed.call(
+                sent.fetch_add(1, Ordering::AcqRel);
+                let done = Arc::clone(&delivered);
+                let status = changed.call_with_return_value(
                     Change {
                         event: change.event.clone(),
                         item_id: change.item_id.clone(),
@@ -829,8 +841,18 @@ impl MarfaCore {
                         cursor: change.cursor.clone(),
                     },
                     ThreadsafeFunctionCallMode::NonBlocking,
+                    move |_, _| {
+                        done.fetch_add(1, Ordering::AcqRel);
+                        Ok(())
+                    },
                 );
+                if status != napi::Status::Ok {
+                    delivered.fetch_add(1, Ordering::AcqRel);
+                }
             });
+            while delivered.load(Ordering::Acquire) < sent.load(Ordering::Acquire) {
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
             ended.call(
                 result.err().map(|error| failure(error).reason),
                 ThreadsafeFunctionCallMode::NonBlocking,
@@ -839,6 +861,8 @@ impl MarfaCore {
         Ok(Subscription { stop })
     }
 
+    /// Opens the file at `path`, creating it when absent. `url` and `key` go
+    /// together; without them only local reads work.
     #[napi(factory)]
     pub fn open(path: String, url: Option<String>, key: Option<String>) -> Result<MarfaCore> {
         let server = match (url, key) {

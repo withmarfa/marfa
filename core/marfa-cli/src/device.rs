@@ -57,7 +57,9 @@ pub enum DeviceCommand {
         #[arg(long = "for", value_name = "SECONDS")]
         r#for: Option<u64>,
     },
-    /// Print a line each time another process saves to the store.
+    /// Print a line each time another process saves to the store. Opens it
+    /// to read, with or without `--reader`, so watching never takes the
+    /// writer's place.
     Changes {
         /// Stop after this many seconds; without it, watch until
         /// interrupted.
@@ -418,7 +420,7 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<(), CliError> 
     match args.command {
         DeviceCommand::Hydrate { types, tier } => {
             let report = store
-                .open(Some(named.server()?))?
+                .open_with_server(named)?
                 .hydrate(&types, tier.into())?;
             output::report(&report, json, || {
                 format!(
@@ -433,7 +435,7 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<(), CliError> 
             })
         }
         DeviceCommand::Follow { r#for } => {
-            let core = store.open(Some(named.server()?))?;
+            let core = store.open_with_server(named)?;
             let stop = stop_after(r#for);
             // A line that cannot be written stops the follow and is the
             // error it ends with, rather than events applied and never told.
@@ -463,17 +465,41 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<(), CliError> 
                 return Err(error);
             }
             output::line_of(&report, json, || {
+                let failed = match (&report.last_failure, report.failed_opens) {
+                    (Some(reason), count) => {
+                        format!("; {count} stream(s) could not be opened, last: {reason}")
+                    }
+                    (None, _) => String::new(),
+                };
                 format!(
-                    "applied {} event(s), skipped {}; cursor {}; {} reconnect(s)",
+                    "applied {} event(s), skipped {}; cursor {}; {} reconnect(s){failed}",
                     report.applied, report.skipped, report.cursor, report.reconnects
                 )
             })
         }
         DeviceCommand::Changes { r#for } => {
-            let core = store.open(None)?;
+            let core = Store {
+                reader: true,
+                ..store
+            }
+            .open(None)?;
             let stop = stop_after(r#for);
-            eprintln!("watching for saves (interrupt to stop)");
+            // Read before it is announced, so a save that lands after the
+            // announcement is always told. Announced on stdout under `--json`,
+            // where stderr carries only a refusal.
             let mut seen = core.data_version()?;
+            if json {
+                output::line_of(
+                    &serde_json::json!({ "watching": true, "data_version": seen }),
+                    json,
+                    String::new,
+                )?;
+            } else {
+                match r#for {
+                    Some(seconds) => eprintln!("watching for saves for {seconds}s"),
+                    None => eprintln!("watching for saves (interrupt to stop)"),
+                }
+            }
             while !stop.load(std::sync::atomic::Ordering::Relaxed) {
                 std::thread::sleep(CHANGES_POLL);
                 let now = core.data_version()?;
@@ -487,7 +513,7 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<(), CliError> 
             Ok(())
         }
         DeviceCommand::CatchUp => {
-            let report = store.open(Some(named.server()?))?.catch_up()?;
+            let report = store.open_with_server(named)?.catch_up()?;
             output::report(&report, json, || {
                 format!(
                     "applied {} event(s), skipped {}; cursor {}{}",
@@ -700,7 +726,7 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<(), CliError> 
             })
         }
         DeviceCommand::Drain => {
-            let report = store.open(Some(named.server()?))?.drain()?;
+            let report = store.open_with_server(named)?.drain()?;
             output::drained(&report, json)
         }
         DeviceCommand::Release { id, reason } => {
@@ -802,5 +828,15 @@ impl Store {
             std::fs::create_dir_all(parent)?;
         }
         Ok(Core::open(path, server)?)
+    }
+
+    /// For the commands that talk to a server. Opened to read, it resolves
+    /// none: the core refuses each of them on a reading handle, and resolving
+    /// one could refresh a stored token over the network for nothing.
+    fn open_with_server(&self, named: &Named) -> Result<Core, CliError> {
+        if self.reader {
+            return self.open(None);
+        }
+        self.open(Some(named.server()?))
     }
 }

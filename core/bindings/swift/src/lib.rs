@@ -803,8 +803,8 @@ pub trait ChangeListener: Send + Sync {
     fn ended(&self, error: Option<MarfaError>);
 }
 
-/// A held stream, stopped by `stop`. The call returns at once; the thread
-/// reading the stream ends at the server's next frame.
+/// A held stream, stopped by `stop` or by letting it go. The follow ends
+/// within a quarter second of either, and `ended` is called once it has.
 #[derive(uniffi::Object)]
 pub struct Subscription {
     stop: Arc<AtomicBool>,
@@ -817,10 +817,16 @@ impl Subscription {
     }
 }
 
+/// The follow's thread holds the core, and with it the writer's claim on
+/// the store, so a subscription nobody holds any more must end it.
+impl Drop for Subscription {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+    }
+}
+
 #[uniffi::export]
 impl MarfaCore {
-    /// Opens the file at `path`, creating it when absent. `url` and `key`
-    /// go together; without them only local reads work.
     /// Opens a store another process writes, to read it only: never the
     /// writer, never a write, and a path with no store is refused.
     #[uniffi::constructor]
@@ -849,6 +855,8 @@ impl MarfaCore {
         Arc::new(Subscription { stop })
     }
 
+    /// Opens the file at `path`, creating it when absent. `url` and `key`
+    /// go together; without them only local reads work.
     #[uniffi::constructor]
     pub fn open(
         path: String,

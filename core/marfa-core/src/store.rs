@@ -56,12 +56,14 @@ pub fn open(path: &Path) -> Result<Connection, CoreError> {
 }
 
 /// Opens a store another process made, to read it: no file is created, no
-/// schema is applied, and nothing is written, so a reader started before the
-/// writer can never lock the writer out or leave a store half made.
+/// schema is applied, and the store is never written, so a reader started
+/// before the writer can never lock the writer out or leave a store half
+/// made. Read-only rather than a promise, because a read-write connection
+/// that is the last to close checkpoints the writer's journal into the file.
 pub fn open_to_read(path: &Path) -> Result<Connection, CoreError> {
     let conn = Connection::open_with_flags(
         path,
-        rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
     )
     .map_err(|error| {
         CoreError::Invalid(format!(
@@ -77,11 +79,17 @@ pub fn open_to_read(path: &Path) -> Result<Connection, CoreError> {
             |row| row.get::<_, String>(0),
         )
         .optional()
-        .map_err(|_| {
-            CoreError::Invalid(format!(
-                "{} is not a store: it has no schema to read",
-                path.display()
-            ))
+        .map_err(|error| match &error {
+            rusqlite::Error::SqliteFailure(_, Some(message))
+                if message.starts_with("no such table")
+                    || message.contains("file is not a database") =>
+            {
+                CoreError::Invalid(format!(
+                    "{} is not a store: it has no schema to read",
+                    path.display()
+                ))
+            }
+            _ => CoreError::from(error),
         })?;
     match found {
         Some(found) if found == SCHEMA_VERSION => Ok(conn),
@@ -553,29 +561,62 @@ struct RawWrite {
     answered_at: Option<String>,
 }
 
+type TypeRow = (
+    String,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    String,
+);
+
+/// Replaces the type catalog, and writes nothing where it is the one held:
+/// a follow asks for the catalog on every stream it opens, and a reader told
+/// of each save would otherwise be told of one every two minutes.
 pub fn replace_types(conn: &Connection, types: &[WireType]) -> Result<(), CoreError> {
+    let mut rows: Vec<TypeRow> = types
+        .iter()
+        .map(|entry| {
+            let hints = entry.display_hints.clone().unwrap_or_default();
+            let mut json = entry.rest.clone();
+            json.insert("id".into(), Value::String(entry.id.clone()));
+            if let Some(parent) = &entry.parent {
+                json.insert("parent".into(), Value::String(parent.clone()));
+            }
+            if let Some(label) = &entry.label {
+                json.insert("label".into(), Value::String(label.clone()));
+            }
+            (
+                entry.id.clone(),
+                entry.parent.clone(),
+                entry.label.clone(),
+                hints.title_field,
+                Value::Object(json).to_string(),
+            )
+        })
+        .collect();
+    rows.sort();
+    let held: Vec<TypeRow> = conn
+        .prepare("SELECT id, parent, label, title_field, json FROM types ORDER BY id")?
+        .query_map([], |row| {
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+            ))
+        })?
+        .collect::<Result<_, _>>()?;
+    if held == rows {
+        return Ok(());
+    }
     conn.execute("DELETE FROM types", [])?;
     let mut insert = conn.prepare(
         "INSERT INTO types (id, parent, label, title_field, json)
          VALUES (?1, ?2, ?3, ?4, ?5)",
     )?;
-    for entry in types {
-        let hints = entry.display_hints.clone().unwrap_or_default();
-        let mut json = entry.rest.clone();
-        json.insert("id".into(), Value::String(entry.id.clone()));
-        if let Some(parent) = &entry.parent {
-            json.insert("parent".into(), Value::String(parent.clone()));
-        }
-        if let Some(label) = &entry.label {
-            json.insert("label".into(), Value::String(label.clone()));
-        }
-        insert.execute(params![
-            entry.id,
-            entry.parent,
-            entry.label,
-            hints.title_field,
-            Value::Object(json).to_string(),
-        ])?;
+    for row in rows {
+        insert.execute(params![row.0, row.1, row.2, row.3, row.4])?;
     }
     Ok(())
 }

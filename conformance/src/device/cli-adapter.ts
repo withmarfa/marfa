@@ -125,6 +125,14 @@ export class CliDevice implements DeviceUnderTest {
     };
   }
 
+  /**
+   * The same follow, left running, so a fixture can read what it prints
+   * while the stream is still held.
+   */
+  holdFollow(seconds: number): HeldCommand {
+    return this.hold(["follow", "--for", String(seconds), ...this.server()]);
+  }
+
   async hydrate(types: string[], tier: Tier): Promise<Outcome<HydrateReport>> {
     return this.json<HydrateReport>([
       "hydrate",

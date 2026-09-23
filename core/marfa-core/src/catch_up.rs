@@ -1,4 +1,5 @@
 use std::io::{self, BufReader};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::thread;
@@ -12,7 +13,7 @@ use crate::http::Http;
 use crate::model::{CatchUpReport, Tier};
 use crate::sse::{Frame, Frames};
 use crate::store;
-use crate::wire::EventPayload;
+use crate::wire::{EventPayload, WireType};
 use crate::{Core, Result};
 
 const STREAM_HARD_BOUND: Duration = Duration::from_secs(120);
@@ -27,6 +28,11 @@ const STOP_POLL: Duration = Duration::from_millis(250);
 /// A held stream that says nothing, not even a keepalive, for this long is
 /// taken as gone and opened again.
 const SILENCE: Duration = Duration::from_secs(90);
+/// The wait before asking again after a stream that could not be opened or
+/// ended early, doubling each time to the most. A stream that stayed open
+/// at least the most resets it, so the client's own bound on a stream is
+/// followed by an immediate reopen and a server that ends every stream at
+/// once is asked at most every thirty seconds.
 const RECONNECT_FIRST: Duration = Duration::from_secs(1);
 const RECONNECT_MOST: Duration = Duration::from_secs(30);
 
@@ -51,38 +57,40 @@ pub struct FollowReport {
     pub applied: u64,
     pub skipped: u64,
     pub cursor: String,
-    /// Streams opened after the first: a stream the server bounded, one
-    /// that dropped, one that could not be opened and was asked for again.
+    /// Streams asked for after the first: after the client's own bound on a
+    /// stream, a stream that dropped or ended early, or one that could not
+    /// be opened.
     pub reconnects: u64,
+    /// Asks for a stream that failed and were retried, and the last reason.
+    pub failed_opens: u64,
+    pub last_failure: Option<String>,
 }
 
-/// What catch-up and follow both start from: the slice, the stored cursor,
-/// and the type catalog as the server has it now.
-fn prepare(core: &Core, http: &Http) -> Result<(Slice, String, Catalog)> {
-    let (slice, cursor) = {
-        let conn = core.conn()?;
-        if !store::hydration_complete(&conn)? {
-            return Err(CoreError::HydrationIncomplete);
-        }
-        let cursor =
-            store::meta_get(&conn, store::META_EVENT_CURSOR)?.ok_or(CoreError::NoCursor)?;
-        if cursor.is_empty() || !cursor.bytes().all(|byte| byte.is_ascii_digit()) {
-            return Err(CoreError::Invalid(format!(
-                "the stored event cursor {cursor:?} is not an event id"
-            )));
-        }
-        let (types, tier) = store::slice(&conn)?.ok_or(CoreError::NoCursor)?;
-        (Slice { types, tier }, cursor)
-    };
-    let catalog_rows = http.types()?;
-    let catalog = {
-        let mut conn = core.conn()?;
-        let tx = conn.transaction()?;
-        store::replace_types(&tx, &catalog_rows)?;
-        tx.commit()?;
-        Catalog::load(&conn)?
-    };
-    Ok((slice, cursor, catalog))
+/// What catch-up and follow both start from: the slice and the stored
+/// cursor.
+fn start(core: &Core) -> Result<(Slice, String)> {
+    let conn = core.conn()?;
+    if !store::hydration_complete(&conn)? {
+        return Err(CoreError::HydrationIncomplete);
+    }
+    let cursor = store::meta_get(&conn, store::META_EVENT_CURSOR)?.ok_or(CoreError::NoCursor)?;
+    if cursor.is_empty() || !cursor.bytes().all(|byte| byte.is_ascii_digit()) {
+        return Err(CoreError::Invalid(format!(
+            "the stored event cursor {cursor:?} is not an event id"
+        )));
+    }
+    let (types, tier) = store::slice(&conn)?.ok_or(CoreError::NoCursor)?;
+    Ok((Slice { types, tier }, cursor))
+}
+
+/// The type catalog as the server has it now, written only where it differs
+/// from the one held, so a reader told of every save is not told of this.
+fn adopt(core: &Core, types: &[WireType]) -> Result<Catalog> {
+    let mut conn = core.conn()?;
+    let tx = conn.transaction()?;
+    store::replace_types(&tx, types)?;
+    tx.commit()?;
+    Catalog::load(&conn)
 }
 
 /// Opens the stream from `cursor` and reads its frames on a thread of their
@@ -138,7 +146,7 @@ fn take(
     let applied = apply(&tx, catalog, slice, kind, payload)?;
     // The cursor is the last id received, never the highest: ids are
     // assigned before commit, so a lower id can arrive after a higher one
-    // and would be skipped for ever by a high-water mark.
+    // and would be skipped forever by a high-water mark.
     store::meta_set(&tx, store::META_EVENT_CURSOR, id)?;
     tx.commit()?;
     Ok(applied.then(|| Change {
@@ -155,7 +163,8 @@ fn payload_of(data: &str) -> Result<EventPayload> {
 }
 
 pub(crate) fn catch_up(core: &Core, http: &Http, idle: Duration) -> Result<CatchUpReport> {
-    let (slice, cursor, catalog) = prepare(core, http)?;
+    let (slice, cursor) = start(core)?;
+    let catalog = adopt(core, &http.types()?)?;
     let frames = open(http, &cursor, &slice, STREAM_HARD_BOUND)?;
 
     let mut report = CatchUpReport {
@@ -248,40 +257,51 @@ fn aged_out(core: &Core, payload: EventPayload) -> Result<CoreError> {
 /// stored cursor, so nothing between the two is lost: the cursor moves only
 /// with an applied event. What does not clear by asking again ends it: a
 /// cursor the log has aged past, a refused credential, a store that is no
-/// longer hydrated.
+/// longer hydrated, an answer no retry changes.
 ///
-/// `stop` is looked at between frames and at least every quarter second, so
-/// this returns promptly once it is set; the thread reading the stream ends
-/// at the server's next frame.
+/// `stop` is looked at between frames and at least every quarter second,
+/// including while a stream is being asked for: that request runs on a
+/// thread of its own holding only the transport, so it cannot keep the
+/// store once this has returned.
 pub(crate) fn follow(
     core: &Core,
-    http: &Http,
+    http: Arc<Http>,
     stop: &AtomicBool,
     on_change: &mut dyn FnMut(&Change),
 ) -> Result<FollowReport> {
     let mut report = FollowReport::default();
     let mut backoff = RECONNECT_FIRST;
-    let mut opened = false;
+    let mut asked = false;
     while !stop.load(Ordering::Relaxed) {
-        if opened {
+        let (slice, cursor) = start(core)?;
+        report.cursor = cursor.clone();
+        if asked {
             report.reconnects += 1;
         }
-        opened = true;
-        let session = prepare(core, http).and_then(|(slice, cursor, catalog)| {
-            let frames = open(http, &cursor, &slice, STREAM_HARD_BOUND)?;
-            Ok((slice, cursor, catalog, frames))
-        });
-        let (slice, cursor, catalog, frames) = match session {
-            Ok(session) => session,
+        asked = true;
+        let Some(reached) = reach(&http, &cursor, &slice, stop) else {
+            break;
+        };
+        let (types, frames) = match reached {
+            Ok(reached) => reached,
             Err(error) if passes(&error) => {
-                wait_unless_stopped(stop, backoff);
+                report.failed_opens += 1;
+                let wait = match &error {
+                    CoreError::RateLimited {
+                        retry_after_seconds: Some(seconds),
+                        ..
+                    } => backoff.max(Duration::from_secs(*seconds)),
+                    _ => backoff,
+                };
+                report.last_failure = Some(error.to_string());
+                wait_unless_stopped(stop, wait);
                 backoff = (backoff * 2).min(RECONNECT_MOST);
                 continue;
             }
             Err(error) => return Err(error),
         };
-        backoff = RECONNECT_FIRST;
-        report.cursor = cursor;
+        let catalog = adopt(core, &types)?;
+        let opened = Instant::now();
         let mut heard = Instant::now();
         loop {
             if stop.load(Ordering::Relaxed) {
@@ -315,16 +335,64 @@ pub(crate) fn follow(
                 }
             }
         }
+        if opened.elapsed() >= RECONNECT_MOST {
+            backoff = RECONNECT_FIRST;
+        } else {
+            wait_unless_stopped(stop, backoff);
+            backoff = (backoff * 2).min(RECONNECT_MOST);
+        }
     }
     Ok(report)
 }
 
-/// Whether a failure to open a stream clears by asking again.
+type Reached = Result<(Vec<WireType>, Receiver<io::Result<Frame>>)>;
+
+/// Asks for the type catalog and the stream on a thread holding only the
+/// transport, and waits for the answer while watching `stop`. `None` when
+/// `stop` was set first.
+fn reach(http: &Arc<Http>, cursor: &str, slice: &Slice, stop: &AtomicBool) -> Option<Reached> {
+    let (sender, answer) = mpsc::sync_channel::<Reached>(1);
+    let http = Arc::clone(http);
+    let cursor = cursor.to_string();
+    let filter = slice.types.clone();
+    let tier = slice.tier;
+    thread::spawn(move || {
+        let slice = Slice {
+            types: filter,
+            tier,
+        };
+        let reached = http.types().and_then(|types| {
+            let frames = open(&http, &cursor, &slice, STREAM_HARD_BOUND)?;
+            Ok((types, frames))
+        });
+        let _ = sender.send(reached);
+    });
+    loop {
+        if stop.load(Ordering::Relaxed) {
+            return None;
+        }
+        match answer.recv_timeout(STOP_POLL) {
+            Ok(reached) => return Some(reached),
+            Err(RecvTimeoutError::Timeout) => continue,
+            Err(RecvTimeoutError::Disconnected) => {
+                return Some(Err(CoreError::Network(
+                    "the request for the event stream ended with no answer".into(),
+                )));
+            }
+        }
+    }
+}
+
+/// Whether a failure to open a stream clears by asking again: the network,
+/// a server busy or failing. Any other answer, a 404 or a 405 from a server
+/// that is not Marfa's, ends the follow and says so rather than asking
+/// forever without a word.
 fn passes(error: &CoreError) -> bool {
-    matches!(
-        error,
-        CoreError::Network(_) | CoreError::RateLimited { .. } | CoreError::Server { .. }
-    )
+    match error {
+        CoreError::Network(_) | CoreError::RateLimited { .. } => true,
+        CoreError::Server { status, .. } => *status >= 500 || *status == 408,
+        _ => false,
+    }
 }
 
 fn wait_unless_stopped(stop: &AtomicBool, wait: Duration) {

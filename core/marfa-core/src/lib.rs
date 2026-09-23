@@ -21,8 +21,8 @@ mod store;
 mod wire;
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::AtomicBool;
-use std::sync::{Mutex, MutexGuard};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
 use rusqlite::Connection;
@@ -43,6 +43,14 @@ pub use store::CEILING;
 
 pub type Result<T> = std::result::Result<T, CoreError>;
 
+struct StreamClaim<'a>(&'a AtomicBool);
+
+impl Drop for StreamClaim<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
+}
+
 /// Where the slice comes from. The key is held in memory and never written.
 #[derive(Debug, Clone)]
 pub struct Server {
@@ -52,7 +60,9 @@ pub struct Server {
 
 pub struct Core {
     conn: Mutex<Connection>,
-    http: Option<http::Http>,
+    /// Shared so a held stream can ask for its next stream on a thread that
+    /// holds the transport and nothing of the store.
+    http: Option<Arc<http::Http>>,
     /// Where blobs' bytes are held: beside the working copy's file, and nowhere for a
     /// store held in memory.
     cache: Option<blob::Cache>,
@@ -60,6 +70,9 @@ pub struct Core {
     /// Held for as long as the `Core` lives, which is what makes it the
     /// claim rather than a record of one (`device.md` 3).
     lock: lock::WriterLock,
+    /// Set while a catch-up or a follow runs. Two would each move the one
+    /// cursor, so it could go backwards and an event could be applied twice.
+    streaming: AtomicBool,
 }
 
 const DEFAULT_CATCH_UP_IDLE: Duration = Duration::from_secs(3);
@@ -99,6 +112,7 @@ impl Core {
             cache: Some(blob::Cache::beside(path)),
             catch_up_idle: DEFAULT_CATCH_UP_IDLE,
             lock: lock::WriterLock::reader(),
+            streaming: AtomicBool::new(false),
         })
     }
 
@@ -127,7 +141,7 @@ impl Core {
         cache: Option<blob::Cache>,
     ) -> Result<Core> {
         let http = match server {
-            Some(server) => Some(http::Http::new(&server.url, &server.key)?),
+            Some(server) => Some(Arc::new(http::Http::new(&server.url, &server.key)?)),
             None => None,
         };
         if let Some(http) = &http
@@ -145,6 +159,7 @@ impl Core {
             cache,
             catch_up_idle: DEFAULT_CATCH_UP_IDLE,
             lock,
+            streaming: AtomicBool::new(false),
         })
     }
 
@@ -161,6 +176,7 @@ impl Core {
     /// Applies every event since the stored cursor and advances it.
     pub fn catch_up(&self) -> Result<CatchUpReport> {
         self.lock.refuse_unless_writer()?;
+        let _streaming = self.claim_stream()?;
         catch_up::catch_up(self, self.http()?, self.catch_up_idle)
     }
 
@@ -176,7 +192,9 @@ impl Core {
         mut on_change: impl FnMut(&Change),
     ) -> Result<FollowReport> {
         self.lock.refuse_unless_writer()?;
-        catch_up::follow(self, self.http()?, stop, &mut on_change)
+        let http = self.http.clone().ok_or(CoreError::NoServer)?;
+        let _streaming = self.claim_stream()?;
+        catch_up::follow(self, http, stop, &mut on_change)
     }
 
     /// A number that moves each time another process saves to this store:
@@ -778,10 +796,14 @@ impl Core {
         if let Some(path) = cache.held(&hash)? {
             return Ok(path);
         }
-        let Some(http) = self.http.as_ref() else {
+        let Some(http) = self.http.as_deref() else {
+            let reason = match self.handle() {
+                Handle::Reader => "a reading handle fetches nothing; the writer fetches them",
+                Handle::Writer => "this working copy was opened with no server to fetch them from",
+            };
             return Err(CoreError::BytesAbsent {
                 hash,
-                reason: "this working copy was opened with no server to fetch them from".into(),
+                reason: reason.into(),
             });
         };
         blob::fetch(cache, http, &hash)
@@ -839,7 +861,20 @@ impl Core {
     }
 
     fn http(&self) -> Result<&http::Http> {
-        self.http.as_ref().ok_or(CoreError::NoServer)
+        self.http.as_deref().ok_or(CoreError::NoServer)
+    }
+
+    fn claim_stream(&self) -> Result<StreamClaim<'_>> {
+        self.streaming
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .map_err(|_| {
+                CoreError::Invalid(
+                    "this working copy is already catching up or following; one stream at a \
+                     time moves its cursor"
+                        .into(),
+                )
+            })?;
+        Ok(StreamClaim(&self.streaming))
     }
 
     pub(crate) fn cache(&self) -> Result<&blob::Cache> {

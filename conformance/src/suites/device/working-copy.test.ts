@@ -491,16 +491,59 @@ describe("the working copy belongs to one server", () => {
       rows: { "core.note": [{ item: { id: "n1" } }] },
     });
     // A path where nothing has been made: the reading open refuses it and
-    // leaves nothing there.
-    const nowhere = harness.device.reopen({
-      reader: true,
-      store: `${harness.device.store}.absent`,
-    });
+    // leaves nothing there. The witness: an ordinary open of such a path
+    // makes the store.
+    const made = `${harness.device.store}.made`;
+    expect((await harness.device.reopen({ store: made }).status()).ok).toBe(
+      true,
+    );
+    expect(existsSync(made)).toBe(true);
+    const absent = `${harness.device.store}.absent`;
+    const nowhere = await harness.device
+      .reopen({ reader: true, store: absent })
+      .status();
     expect(
-      (await nowhere.status()).ok,
+      nowhere.ok,
       "a reading open answered for a path with no store",
     ).toBe(false);
-    expect(existsSync(`${harness.device.store}.absent`)).toBe(false);
+    if (!nowhere.ok) expect(nowhere.refusal.code).toBe("invalid");
+    expect(existsSync(absent)).toBe(false);
+
+    // Never writes, even where a writer died with a save still in its
+    // journal and the reader is the last to close: a writer that closes
+    // last folds the journal into the file, and a reader must not.
+    harness.server.answer("GET", "/events", {
+      kind: "sse",
+      hold: true,
+      frames: [
+        connected,
+        itemEvent("11", "item.created", wireItem({ id: "journaled" })),
+      ],
+    });
+    const dying = harness.device.holdFollow(20);
+    try {
+      await vi.waitFor(
+        () => expect(dying.stdout).toContain('"cursor":"11"'),
+        { timeout: 10_000, interval: 25 },
+      );
+    } finally {
+      await dying.stop();
+    }
+    const bytes = () => readFileSync(harness!.device.store);
+    const untouched = bytes();
+    const reading = harness.device.reopen({ reader: true });
+    expect((await reading.status()).ok).toBe(true);
+    expect((await reading.get("journaled")).ok).toBe(true);
+    expect(
+      bytes().equals(untouched),
+      "a store opened to read was written",
+    ).toBe(true);
+    // The witness: the writer, closing last, folds the journal in.
+    expect((await harness.device.status()).ok).toBe(true);
+    expect(
+      bytes().equals(untouched),
+      "the writer closing last left the file as it was, so the check above proves nothing",
+    ).toBe(false);
 
     // The helper starts first and waits for saves.
     const reader = harness.device
@@ -510,12 +553,18 @@ describe("the working copy belongs to one server", () => {
       await vi.waitFor(
         () => {
           expect(
-            reader.stderr,
+            reader.stdout,
             `the reader never started watching: ${reader.stderr}`,
-          ).toContain("watching for saves");
+          ).toContain('"watching":true');
         },
         { timeout: 10_000, interval: 25 },
       );
+      const told = () =>
+        reader.stdout.split("\n").filter((line) => line.trim() !== "");
+      expect(
+        told(),
+        "the reader reported a save before anything saved",
+      ).toHaveLength(1);
       // The app opens second and is the writer all the same.
       const wrote = await harness.device.create({
         type: "core.note",
@@ -527,10 +576,8 @@ describe("the working copy belongs to one server", () => {
       ).toBe(true);
       await vi.waitFor(
         () => {
-          expect(
-            reader.stdout,
-            "the writer saved and the reader was not told",
-          ).toContain("data_version");
+          expect(told(), "the writer saved and the reader was not told")
+            .length.toBeGreaterThan(1);
         },
         { timeout: 5_000, interval: 50 },
       );
