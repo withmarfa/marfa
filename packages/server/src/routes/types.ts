@@ -507,6 +507,18 @@ const updateTypeRoute = createRoute({
       },
       description: "Type updated",
     },
+    400: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema([
+            "invalid_schema",
+            "validation_error",
+          ]),
+        },
+      },
+      description:
+        "`validation_error` for a malformed identifier, a body of the wrong shape, or a parent chain that is circular, too deep or unresolved; `invalid_schema` for a schema the validator refuses.",
+    },
     401: {
       content: {
         "application/json": {

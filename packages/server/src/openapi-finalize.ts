@@ -10,9 +10,9 @@
  *   2. Strips platform-internal operations (server metrics, the blob
  *      link target). They still serve — they are simply not part of the
  *      public reference.
- *   3. Injects the two consumer routes defined as plain Hono handlers
- *      (the SSE stream and OAuth dynamic client registration), which the
- *      reflection cannot see.
+ *   3. Injects the routes defined as plain Hono handlers (the instance
+ *      root, the SSE stream and OAuth dynamic client registration), which
+ *      the reflection cannot see.
  *
  * Both the live `/openapi.json` endpoint (`app.ts`) and the committed
  * `openapi.json` (`scripts/generate-openapi.ts`) call this, so the two never
@@ -22,6 +22,7 @@
 import { IDEMPOTENT_WRITE_DOORS } from "./middleware/idempotency.js";
 import { refusalComponentName } from "./openapi.js";
 import { toOpenApiPath } from "./openapi-path.js";
+import { CONTRACT_VERSION } from "./contract.js";
 import { bodyCapFor } from "./middleware/body-cap.js";
 
 // Loose typing — the document is a plain OpenAPI 3.1 object. `paths` is typed
@@ -35,34 +36,13 @@ interface OpenAPIDoc {
 }
 
 /**
- * `info` block for the generated document.
- *
- * `version` is the API-contract version, the wire shape served under
- * `/openapi.json`, and is not the deployed build's version reported on
- * `GET /`. It moves when the contract moves and not on a deploy.
- *
- * **The literal is guarded; the decision to move it is not.** Editing this
- * number without regenerating `openapi.json` reddens
- * `openapi-committed-spec.test.ts` and the `openapi-freshness` job, which
- * compare the document to what the source produces, so the two cannot drift
- * apart. What nothing checks is whether the number moved when the contract
- * did, and a judgment nobody verifies is one that gets skipped, so the rule
- * is stated here to be applied without judgment. It moves whenever a caller
- * could have branched on what left: a path, a method, an operation id, a
- * field, an enum member, a status or a refusal code, including one this
- * document never declared, because a body the document leaves open is still
- * a shape a caller reads. An addition does not move it. **One change, one
- * number**, even where the change carries several breaks: the version
- * records that the contract moved, and a second increment inside one change
- * would say it moved twice. Minor rather than major because the API is
- * pre-release.
- *
- * Lives here so the live `/openapi.json` endpoint and the committed spec
- * read one literal instead of keeping two in lockstep by hand.
+ * `info` block for the generated document. `version` is the contract
+ * version, whose rule is in `contract.ts`; the live `/openapi.json` and the
+ * committed document read it from there.
  */
 export const OPENAPI_DOCUMENT_INFO = {
   title: "Marfa API",
-  version: "5.10.0",
+  version: String(CONTRACT_VERSION),
   description: "Typed data layer for structured personal data",
 } as const;
 
@@ -75,6 +55,11 @@ export const OPENAPI_DOCUMENT_INFO = {
  * with no door behind it.
  */
 const PUBLIC_TAGS = [
+  {
+    name: "Instance",
+    description:
+      "What this instance is: its name, its build, the contract it serves and the surfaces it carries.",
+  },
   {
     name: "Items",
     description:
@@ -250,12 +235,27 @@ const RESPONSE_HEADER_COMPONENTS: Record<string, unknown> = {
 };
 
 /** Headers on every response, whatever the operation or the status. */
-const UNIVERSAL_RESPONSE_HEADERS = [
-  "X-Request-ID",
+const UNIVERSAL_RESPONSE_HEADERS = ["X-Request-ID"];
+
+/** Headers the rate limiter sets on every response that passes through it. */
+const RATE_LIMIT_HEADERS = [
   "X-RateLimit-Limit",
   "X-RateLimit-Remaining",
   "X-RateLimit-Reset",
 ];
+
+/**
+ * Operations `app.ts` mounts ahead of the rate limiter. The limiter never
+ * sees them, so they answer no `429` and carry none of its headers.
+ */
+const AHEAD_OF_THE_LIMITER = new Set(["get /"]);
+
+/**
+ * Statuses answered ahead of the rate limiter and the idempotency claim: the
+ * body cap refuses before either sees the request, so its refusal carries
+ * neither's headers.
+ */
+const ANSWERED_AHEAD_OF_THE_LIMITER = new Set([413]);
 
 /**
  * A refusal middleware answers on behalf of the doors it is mounted over.
@@ -480,6 +480,10 @@ function withResponseHeaders(
     }
     const code = Number.parseInt(status, 10);
     const names = [...UNIVERSAL_RESPONSE_HEADERS];
+    const passedTheLimiter =
+      !AHEAD_OF_THE_LIMITER.has(operationKey) &&
+      !ANSWERED_AHEAD_OF_THE_LIMITER.has(code);
+    if (passedTheLimiter) names.push(...RATE_LIMIT_HEADERS);
     // `default` and any other non-numeric key parses to NaN, and NaN fails
     // both comparisons — so an unrecognized key gets the universal set and
     // no claim this code cannot support.
@@ -490,7 +494,11 @@ function withResponseHeaders(
       names.push("X-Error-Code");
     }
     if (code === 429) names.push("Retry-After");
-    if (replays && !NEVER_REPLAYED_STATUSES.has(code)) {
+    if (
+      replays &&
+      !NEVER_REPLAYED_STATUSES.has(code) &&
+      !ANSWERED_AHEAD_OF_THE_LIMITER.has(code)
+    ) {
       names.push("Idempotency-Replayed");
     }
 
@@ -513,6 +521,49 @@ function withResponseHeaders(
  * no `createRoute` to reflect one from.
  */
 export const EXTRA_PATHS: Record<string, Record<string, unknown>> = {
+  "/": {
+    get: {
+      operationId: "getInstance",
+      tags: ["Instance"],
+      summary: "Describe the instance",
+      description:
+        "Answers without a credential: the instance's name, the build it runs as `version`, the `instance_id` that tells two instances answering the same shape apart, the contract version as `contract`, and the surfaces it carries as `features`. `contract` equals this document's `info.version`, so a client generated from this document can tell whether a server speaks the contract it was generated for.",
+      responses: {
+        "200": {
+          description: "The instance",
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                properties: {
+                  name: { type: "string", const: "marfa" },
+                  version: {
+                    type: "string",
+                    description: "The deployed build.",
+                  },
+                  instance_id: { type: "string" },
+                  contract: {
+                    type: "integer",
+                    minimum: 1,
+                    description:
+                      "The contract version, which moves only when the wire changes in a way a client generated for the old number cannot read.",
+                  },
+                  features: { type: "array", items: { type: "string" } },
+                },
+                required: [
+                  "name",
+                  "version",
+                  "instance_id",
+                  "contract",
+                  "features",
+                ],
+              },
+            },
+          },
+        },
+      },
+    },
+  },
   "/events": {
     get: {
       operationId: "streamEvents",
@@ -724,10 +775,9 @@ export function finalizeOpenAPISpec<T extends OpenAPIDoc>(spec: T): T {
   }
 
   // Declare the middleware-set response headers, last so that the injected
-  // routes above are covered too — they are served through the same logger
-  // and the same limiter as everything else, and a client reading the
-  // reference has no way to know which routes the reflection happened to
-  // see.
+  // routes above are covered too: they are served through the same logger
+  // as everything else, and a client reading the reference has no way to
+  // know which routes the reflection happened to see.
   for (const [pathKey, methods] of Object.entries(nextPaths)) {
     const withHeaders: Record<string, unknown> = {};
     for (const [method, op] of Object.entries(methods)) {
@@ -742,10 +792,17 @@ export function finalizeOpenAPISpec<T extends OpenAPIDoc>(spec: T): T {
       if (declaresSecurity(operation)) {
         responses["401"] ??= CHAIN_REFUSALS.unauthorized.response;
       }
-      if (bodyCapFor(pathKey) !== "none") {
+      // The body cap counts a body, and a GET or HEAD carries none to count.
+      if (
+        bodyCapFor(pathKey) !== "none" &&
+        method !== "get" &&
+        method !== "head"
+      ) {
         responses["413"] ??= CHAIN_REFUSALS.requestTooLarge.response;
       }
-      responses["429"] ??= CHAIN_REFUSALS.rateLimited.response;
+      if (!AHEAD_OF_THE_LIMITER.has(`${method} ${pathKey}`)) {
+        responses["429"] ??= CHAIN_REFUSALS.rateLimited.response;
+      }
       if (declaresSecurity(operation)) {
         responses["503"] ??= CHAIN_REFUSALS.writeContention.response;
       }

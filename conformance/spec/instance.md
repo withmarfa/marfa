@@ -14,3 +14,9 @@ What one deployment says about itself. The credential chapters state what a key 
 **That the value is minted once and survives a restart is not stated here, because nothing over HTTP can see it.** Both halves — a mint that answers the same value to every caller of a fresh database, and a value that a reopen of the same database returns — are properties of the server's own storage, asserted in `packages/server/src/storage/instance-id.test.ts`. A fixture run against an already-booted server reads whatever that server holds and cannot tell a durable id from one minted at the start of the run.
 
 What the identity is _not_ — never a prefix on an identifier, never a permission or a permission root, never a column on an item — is a decision about vocabulary rather than an observable behavior, so it is stated in `GLOSSARY.md` and carries no statement here.
+
+## The contract
+
+4. **The root and the document carry one contract version**: the root answers it as `contract`, a positive integer, and the document's `info.version` is the same number. It is not the build, which the root answers as `version`. `compliance/instance.test.ts › carries one contract version at the root and in its document`, `› describes itself at the root`.
+
+**When the number moves is not stated here, because no fixture can see a change it was not shown.** The rule is written beside the number in `packages/server/src/contract.ts`: it moves when a client generated for the old number cannot read the new answers.

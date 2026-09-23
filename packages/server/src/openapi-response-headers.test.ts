@@ -34,12 +34,33 @@ const DOOR_KEYS = new Set(
   }),
 );
 
-const UNIVERSAL = [
-  "X-Request-ID",
+const UNIVERSAL = ["X-Request-ID"];
+
+const RATE_LIMIT = [
   "X-RateLimit-Limit",
   "X-RateLimit-Remaining",
   "X-RateLimit-Reset",
 ];
+
+/**
+ * Operations `app.ts` mounts ahead of the rate limiter, which therefore
+ * answer no 429 and carry none of its headers. `app.root.test.ts` holds the
+ * root to that on the wire.
+ */
+const AHEAD_OF_THE_LIMITER = new Set(["GET /"]);
+
+/**
+ * The body cap's refusal, answered before the limiter and the idempotency
+ * claim see the request, so it carries neither's headers.
+ */
+const ANSWERED_AHEAD = "413";
+
+/**
+ * The registration door is answered by the sign-in library's own response,
+ * which none of the middleware headers reach. Recorded as an open question
+ * rather than declared away, so the wire half leaves it out by name.
+ */
+const UNSTAMPED_ON_THE_WIRE = new Set(["POST /auth/oauth2/register"]);
 
 /** Statuses an idempotency claim gives back rather than records. */
 const RELEASED = new Set([401, 403]);
@@ -115,6 +136,40 @@ describe("the published spec declares the headers the server sets", () => {
     expect(missing.sort()).toEqual([]);
   });
 
+  it("declares the rate limiter's headers on every response it passes, and no other", () => {
+    const wrong: string[] = [];
+    for (const [key, responses] of operations) {
+      for (const [status, response] of Object.entries(responses)) {
+        const behind =
+          !AHEAD_OF_THE_LIMITER.has(key) && status !== ANSWERED_AHEAD;
+        for (const name of RATE_LIMIT) {
+          if (name in (response.headers ?? {}) !== behind) {
+            wrong.push(`${key} ${status} ${name}`);
+          }
+        }
+      }
+    }
+    for (const key of AHEAD_OF_THE_LIMITER) {
+      expect(operations.has(key), `${key} is published`).toBe(true);
+    }
+    expect(wrong.sort()).toEqual([]);
+  });
+
+  it("declares no 413 on a GET or HEAD, which carries no body to count", () => {
+    const declaring = [...operations]
+      .filter(
+        ([key, responses]) =>
+          /^(GET|HEAD) /.test(key) && ANSWERED_AHEAD in responses,
+      )
+      .map(([key]) => key);
+    // Witness: the cap is declared somewhere, so the filter above reads
+    // real declarations rather than none.
+    expect(
+      [...operations.values()].some((responses) => ANSWERED_AHEAD in responses),
+    ).toBe(true);
+    expect(declaring).toEqual([]);
+  });
+
   it("declares X-Error-Code on error responses and not on success", () => {
     // No exceptions: every error response declares the header and every
     // success response does not.
@@ -153,11 +208,10 @@ describe("the published spec declares the headers the server sets", () => {
         }
       }
     }
-    // Every served operation is behind the limiter, so every one answers
-    // 429 — a count of zero would mean the refusal stopped being declared
-    // and every assertion above passed by having nothing to check. Every
-    // published operation is served, so every one carries the refusal.
-    expect(refusals).toBe(operations.size);
+    // Every operation behind the limiter answers 429, so a count short of
+    // theirs means the refusal stopped being declared somewhere and the
+    // assertion above passed by having nothing to check there.
+    expect(refusals).toBe(operations.size - AHEAD_OF_THE_LIMITER.size);
     expect(wrong.sort()).toEqual([]);
   });
 
@@ -181,9 +235,12 @@ describe("the published spec declares the headers the server sets", () => {
       const responses = operations.get(key);
       expect(responses, `${key} is missing from the spec`).toBeDefined();
       for (const [status, response] of Object.entries(responses ?? {})) {
-        // 401 and 403 release the claim rather than recording it, so
-        // neither can ever be replayed and neither carries the marker.
-        const released = RELEASED.has(Number.parseInt(status, 10));
+        // 401 and 403 release the claim rather than recording it, and the
+        // body cap refuses before the claim is made, so none of them can
+        // ever be replayed and none carries the marker.
+        const released =
+          RELEASED.has(Number.parseInt(status, 10)) ||
+          status === ANSWERED_AHEAD;
         expect(
           "Idempotency-Replayed" in (response.headers ?? {}),
           `${key} ${status}`,
@@ -369,5 +426,59 @@ describe("the server sends the headers the spec declares", () => {
     // Rebuilding the Response to add headers must not disturb what it
     // carries: the stored body is the contract, byte for byte.
     expect(await replay.text()).toBe(await first.text());
+  });
+
+  it("sends the limiter's headers exactly where each operation declares them", async () => {
+    // One request per published operation, so a door mounted ahead of the
+    // limiter without the document saying so fails here by name. Each
+    // answer is read against the declaration on the status it came back
+    // with, whatever that status is.
+    const concrete = (template: string) =>
+      template
+        .replace("{hash}", "sha256:" + "0".repeat(64))
+        .replace(/\{[^}]+\}/g, "019537a0-7b80-7000-8000-000000000000");
+    const paths = ((await buildPublishedOpenAPISpec()).paths ?? {}) as Record<
+      string,
+      Record<string, Operation>
+    >;
+    const wrong: string[] = [];
+    let checked = 0;
+    for (const [path, methods] of Object.entries(paths)) {
+      for (const [lower, operation] of Object.entries(methods)) {
+        const method = lower.toUpperCase();
+        const key = `${method} ${path}`;
+        const responses = (operation.responses ?? {}) as Record<
+          string,
+          SpecResponse
+        >;
+        if (UNSTAMPED_ON_THE_WIRE.has(key)) continue;
+        const response = await ctx.app.request(concrete(path), {
+          method,
+          headers: {
+            Authorization: `Bearer ${ctx.workingKey}`,
+            "Content-Type": "application/json",
+          },
+          body: method === "GET" || method === "HEAD" ? undefined : "{}",
+        });
+        await response.body?.cancel();
+        const answered = responses[String(response.status)];
+        if (answered === undefined) {
+          wrong.push(
+            `${key} answered an undeclared ${String(response.status)}`,
+          );
+          continue;
+        }
+        const declared = answered.headers ?? {};
+        const sent = response.headers.get("X-RateLimit-Limit") !== null;
+        checked += 1;
+        if (sent !== "X-RateLimit-Limit" in declared) {
+          wrong.push(
+            `${key} answered ${String(response.status)}, sent=${String(sent)}`,
+          );
+        }
+      }
+    }
+    expect(checked).toBeGreaterThan(50);
+    expect(wrong).toEqual([]);
   });
 });

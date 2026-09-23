@@ -15,11 +15,12 @@ afterAll(async () => {
 });
 
 /**
- * Dynamic client registration is an open door by design: RFC 7591 lets a
- * client register before it holds anything. Every other published door must
- * turn a bare request away.
+ * Two doors are open by design. Dynamic client registration, because RFC
+ * 7591 lets a client register before it holds anything; and the root,
+ * because a client reads the contract there before it holds a credential to
+ * send. Every other published door must turn a bare request away.
  */
-const OPEN_DOORS = new Set(["POST /auth/oauth2/register"]);
+const OPEN_DOORS = new Set(["POST /auth/oauth2/register", "GET /"]);
 
 /**
  * Nothing about these requests is well formed, which is the point. The
@@ -37,7 +38,7 @@ function concretePath(template: string): string {
     .replace(/\{[^}]+\}/g, UNKNOWN_ID);
 }
 
-describe("every published door refuses a request with no credential", () => {
+describe("every published door but the open ones refuses a request with no credential", () => {
   it("answers 401 unauthorized on each of them", async () => {
     const doors = (await publishedOperations()).filter(
       (op) => !OPEN_DOORS.has(`${op.method} ${op.path}`),
@@ -68,5 +69,27 @@ describe("every published door refuses a request with no credential", () => {
       }
     }
     expect(wrong).toEqual([]);
+  });
+});
+
+describe("the open doors", () => {
+  it("are published, and answer a request with no credential", async () => {
+    const published = new Set(
+      (await publishedOperations()).map((op) => `${op.method} ${op.path}`),
+    );
+    for (const door of OPEN_DOORS) {
+      expect(published, door).toContain(door);
+      const [method, path] = door.split(" ") as [string, string];
+      const response = await fetch(`${apiUrl}${path}`, {
+        method,
+        headers: { "Content-Type": "application/json" },
+        body: method === "GET" ? undefined : UNPARSEABLE_BODY,
+      });
+      await response.body?.cancel();
+      expect(response.status, door).not.toBe(401);
+      // The root answers outright; registration refuses the malformed body
+      // on its merits, which is still not a credential refusal.
+      if (door === "GET /") expect(response.status, door).toBe(200);
+    }
   });
 });

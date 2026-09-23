@@ -1,5 +1,4 @@
 {
-  "GET /": "names the instance, its build and the surfaces it serves",
   "GET /health": "liveness, read before any credential exists",
   "GET /openapi.json": "the document itself",
   "GET /metrics": "server metrics, internal",

@@ -58,6 +58,7 @@ import { authErrorRoutes } from "./routes/auth-error.js";
 import { loggerMiddleware } from "./middleware/logger.js";
 import { otelCorrelationMiddleware } from "./middleware/otel-correlation.js";
 import { bodyCapFor } from "./middleware/body-cap.js";
+import { CONTRACT_VERSION } from "./contract.js";
 import {
   idempotencyMiddleware,
   IDEMPOTENT_WRITE_DOORS,
@@ -265,9 +266,8 @@ export function createApp(
     "connectors",
   ];
   // The deployed `version` comes from `version.json`, read at startup by
-  // index.ts and threaded through `config.versionSha`. The OpenAPI document
-  // carries the separate API-contract version (`info.version` below), a
-  // literal that moves on wire-shape changes and not on a deploy.
+  // index.ts and threaded through `config.versionSha`; `contract` is the
+  // contract version, which does not move on a deploy.
   const deployedVersion = config.versionSha ?? "dev";
   // `instance_id` names the deployment, and the root is where a caller that
   // holds no credential can read it: the id is what distinguishes two
@@ -278,6 +278,7 @@ export function createApp(
       name: "marfa",
       version: deployedVersion,
       instance_id: instanceId,
+      contract: CONTRACT_VERSION,
       features,
     }),
   );
@@ -308,10 +309,11 @@ export function createApp(
   app.use("*", authMiddleware(storage, config.apiKeySalt));
 
   // Rate limiting (defaults: 1000 req/min, configurable via RATE_LIMIT_REQUESTS,
-  // RATE_LIMIT_WINDOW_MS and RATE_LIMIT_KEYS_REQUESTS). Protects all
-  // endpoints. Configuration flows
-  // through AppConfig — the rate-limit middleware reads its settings from
-  // there rather than from `process.env`, so a deployment's limits are
+  // RATE_LIMIT_WINDOW_MS and RATE_LIMIT_KEYS_REQUESTS). Protects every door
+  // mounted below it; the root, `/health` and `/auth/static` sit above it,
+  // and `openapi-finalize.ts` declares the root that way. Configuration
+  // flows through AppConfig: the rate-limit middleware reads its settings
+  // from there rather than from `process.env`, so a deployment's limits are
   // whatever `loadConfig` resolved at boot.
   if (config.rateLimitEnabled) {
     app.use(

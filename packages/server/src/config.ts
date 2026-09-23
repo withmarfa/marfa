@@ -323,9 +323,8 @@ export interface AppConfig {
   rateLimitAggregateMultiplier?: number;
   /** Deployed-build identifier, surfaced on `GET /` as `version`. Filled
    *  by `index.ts` from `version.json` at startup; defaults to `"dev"`
-   *  when no version file is present (local development). The committed
-   *  OpenAPI spec keeps a separate, semantically-distinct
-   *  API-contract version. */
+   *  when no version file is present (local development). It is not the
+   *  contract version, which `GET /` answers as `contract`. */
   versionSha?: string;
   /**
    * OpenTelemetry configuration. The instrumentation bootstrap

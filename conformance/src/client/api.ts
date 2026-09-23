@@ -1136,6 +1136,7 @@ export class MarfaClient {
       name: string;
       version: string;
       instance_id: string;
+      contract: number;
       features: string[];
     }>
   > {
@@ -1143,6 +1144,7 @@ export class MarfaClient {
       name: string;
       version: string;
       instance_id: string;
+      contract: number;
       features: string[];
     }>("/");
   }

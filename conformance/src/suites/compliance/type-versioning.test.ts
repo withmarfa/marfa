@@ -39,6 +39,23 @@ async function registerInitial(typeId: string): Promise<TypeSchema> {
 }
 
 describe("PUT /types semver-diff", () => {
+  it("refuses a malformed identifier and a schema the validator refuses with 400", async () => {
+    const typeId = `user.versioning-shape-${ctx.runId}`;
+    const initial = await registerInitial(typeId);
+
+    const malformed = await client.updateType("not a type id", initial);
+    expect(malformed.status).toBe(400);
+    expect(malformed.error?.error.code).toBe("validation_error");
+
+    const wrongShape = await client.updateType(typeId, {
+      ...initial,
+      version: 2,
+      fields: { body: { type: "not-a-field-type" } },
+    } as unknown as TypeSchema);
+    expect(wrongShape.status).toBe(400);
+    expect(wrongShape.error?.error.code).toBe("invalid_schema");
+  });
+
   it("rejects no-op resubmission with version_bump_mismatch", async () => {
     const typeId = `user.versioning-noop-${ctx.runId}`;
     const initial = await registerInitial(typeId);
