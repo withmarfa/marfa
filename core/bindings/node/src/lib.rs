@@ -609,6 +609,13 @@ fn failure(error: marfa_core::CoreError) -> Error {
     Error::new(napi::Status::GenericFailure, format!("{code}: {detail}"))
 }
 
+/// An item's thumbnail: the image's type and its bytes.
+#[napi(object)]
+pub struct Thumbnail {
+    pub mime_type: String,
+    pub bytes: Buffer,
+}
+
 /// One event a held stream applied: what it was, what it was about, and the
 /// cursor it left.
 #[napi(object)]
@@ -1198,6 +1205,20 @@ impl MarfaCore {
     #[napi]
     pub fn blob_held(&self, hash: String) -> Result<bool> {
         self.inner.blob_held(&hash).map_err(failure)
+    }
+
+    /// The thumbnail an item carries, from the copy with no request; null
+    /// where the item is not held, its type declares none, or it carries none.
+    #[napi]
+    pub fn thumbnail(&self, id: String) -> Result<Option<Thumbnail>> {
+        Ok(self
+            .inner
+            .thumbnail(&id)
+            .map_err(failure)?
+            .map(|thumbnail| Thumbnail {
+                mime_type: thumbnail.mime_type,
+                bytes: thumbnail.bytes.into(),
+            }))
     }
 
     /// Sends a blocked or dead write again, under a fresh idempotency key.
