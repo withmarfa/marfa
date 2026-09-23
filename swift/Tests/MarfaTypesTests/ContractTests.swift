@@ -16,15 +16,19 @@ import Testing
     #expect(root.contract == marfaContractVersion)
 }
 
-/// The constant is the document's `info.version`, read off the document the
-/// package was generated from rather than off the constant itself.
-@Test func theContractIsTheDocuments() throws {
-    let document = URL(fileURLWithPath: #filePath)
-        .deletingLastPathComponent()
-        .deletingLastPathComponent()
-        .deletingLastPathComponent()
-        .deletingLastPathComponent()
-        .appendingPathComponent("openapi.json")
+/// The document the package was generated from, where it sits in the
+/// repository; a released package carries the sources, not the document.
+private let document = URL(fileURLWithPath: #filePath)
+    .deletingLastPathComponent()
+    .deletingLastPathComponent()
+    .deletingLastPathComponent()
+    .deletingLastPathComponent()
+    .appendingPathComponent("openapi.json")
+
+/// The constant is the document's `info.version`, read off the document
+/// rather than off the constant itself.
+@Test(.enabled(if: FileManager.default.fileExists(atPath: document.path)))
+func theContractIsTheDocuments() throws {
     let info = try JSONDecoder().decode(
         Document.self,
         from: Data(contentsOf: document)

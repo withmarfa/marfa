@@ -2,7 +2,13 @@ name: Release
 
 # A release is a tag, and tags are the maintainer's. Each is the one before
 # it plus 0.0.1, starting at 0.0.1. Pushing `v<version>` builds the artifacts
-# from that commit and uploads them to the run. Nothing here publishes.
+# from that commit, uploads them to the run, and publishes them.
+#
+# A dispatch with a `version` is a dry run: it runs the same jobs a tag
+# would, against a commit that passed CI on `main`, and skips only the
+# publish job. It is how the workflow is exercised without a tag, which only
+# the maintainer makes; the tag path reads the version off the tag and never
+# off an input.
 #
 # The version is the tag's, and nowhere else: `scripts/release/stamp-version.sh`
 # writes it into every manifest in this checkout, which is why no manifest in
@@ -12,6 +18,11 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "The version a tag would carry, for a dry run that publishes nothing"
+        required: true
 
 # Never cancel a release in flight. The key is per ref, so a second push of
 # the same tag queues behind the first; two different tags run side by side.
@@ -28,7 +39,9 @@ jobs:
       contents: read
       actions: read
     steps:
-      # A tag has to point at a commit that went through `ci.yml` on `main`.
+      # A tag has to point at a commit that went through `ci.yml` on `main`,
+      # and so does a dry run, which is dispatched on `main`: the two runs
+      # differ in their trigger and in the publish job, and in nothing else.
       # A pull request's head passes `ci.yml` too, and under squash merges it
       # never reaches `main`, so the run asked for is a push to `main`, not
       # any green run on the SHA. Verifying that run is stronger than
@@ -55,28 +68,39 @@ jobs:
     timeout-minutes: 60
     permissions:
       contents: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@v7
 
       # Read through the environment and held to the version grammar before
-      # anything uses it: a ref name may carry characters a shell would act
-      # on if it were substituted into a script.
+      # anything uses it: a ref name or an input may carry characters a shell
+      # would act on if it were substituted into a script.
       - name: Read the version off the tag
         id: version
+        env:
+          DRY_RUN_VERSION: ${{ inputs.version }}
         run: |
-          ref="${GITHUB_REF#refs/tags/}"
-          if [ "$ref" = "$GITHUB_REF" ]; then
-            echo "::error::A release runs at a tag ref; $GITHUB_REF is not one."
-            exit 1
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            version="$DRY_RUN_VERSION"
+            echo "a dry run: the version is the input's, and nothing is published"
+          else
+            ref="${GITHUB_REF#refs/tags/}"
+            if [ "$ref" = "$GITHUB_REF" ]; then
+              echo "::error::A release runs at a tag ref; $GITHUB_REF is not one."
+              exit 1
+            fi
+            version="${ref#v}"
           fi
-          version="${ref#v}"
           if ! [[ "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
             echo "::error::The tag names no major.minor.patch version."
             exit 1
           fi
           # Each version is the one before it plus 0.0.1, and the first is
-          # 0.0.1, so every version is 0.0.N and follows the highest 0.0.M
-          # below it. Read off the remote, which needs no history, and never
+          # 0.0.1, so every version is 0.0.N, follows the highest 0.0.M below
+          # it, and has none above it: a tag re-made in a gap is not the next
+          # version. The tag being released is on the remote already, so it is
+          # set aside. Read off the remote, which needs no history, and never
           # through a pipe whose empty answer would fail the step unexplained.
           IFS=. read -r major minor patch <<< "$version"
           if [ "$major.$minor" != "0.0" ]; then
@@ -84,18 +108,24 @@ jobs:
             exit 1
           fi
           previous=-1
+          latest=-1
           for tag in $(git ls-remote --tags --refs origin 'refs/tags/v0.0.*' | awk '{ print $2 }'); do
             n="${tag#refs/tags/v0.0.}"
-            if [[ "$n" =~ ^(0|[1-9][0-9]*)$ ]] && [ "$n" -lt "$patch" ] && [ "$n" -gt "$previous" ]; then
-              previous="$n"
-            fi
+            [[ "$n" =~ ^(0|[1-9][0-9]*)$ ]] || continue
+            if [ "$n" -lt "$patch" ] && [ "$n" -gt "$previous" ]; then previous="$n"; fi
+            if [ "$n" -gt "$latest" ]; then latest="$n"; fi
           done
+          if [ "$latest" -gt "$patch" ]; then
+            echo "::error::0.0.$latest is already tagged, so $version is not the next version."
+            exit 1
+          fi
           expected=$((previous < 0 ? 1 : previous + 1))
           if [ "$patch" != "$expected" ]; then
             echo "::error::$version does not follow the tags before it; the next version is 0.0.$expected."
             exit 1
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "previous=$previous" >> "$GITHUB_OUTPUT"
           echo "building $version from $GITHUB_SHA"
 
       # Homebrew's rustup is keg-only, so nothing it installs is on the
@@ -137,8 +167,103 @@ jobs:
           tar -czf "$RUNNER_TEMP/artifacts/marfa-$VERSION-darwin-arm64.tar.gz" -C target/release marfa
           target/release/marfa --version
 
+      - name: Pack @withmarfa/client
+        run: pnpm --filter @withmarfa/client pack --pack-destination "$RUNNER_TEMP/artifacts"
+
+      # `--allow-dirty` because the stamp just wrote the version into the
+      # manifests of this checkout, which is the only place it lives.
+      - name: Package the marfa-client crate
+        working-directory: core
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          cargo package -p marfa-client --allow-dirty
+          cp "target/package/marfa-client-$VERSION.crate" "$RUNNER_TEMP/artifacts/"
+
+      # The Swift types as the source package a consumer depends on: the
+      # manifest, its resolution, the generated sources, and the tests the
+      # manifest declares, without which SwiftPM refuses the package.
+      - name: Zip the Swift types
+        working-directory: swift
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          swift build
+          zip -qr "$RUNNER_TEMP/artifacts/MarfaTypes-$VERSION.zip" Package.swift Package.resolved README.md Sources Tests
+
+      # What the release moved on the published surface, against the lock
+      # at the release before it. The first release has none to compare.
+      - name: Write the published surface's delta
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          PREVIOUS: ${{ steps.version.outputs.previous }}
+        run: |
+          out="$RUNNER_TEMP/artifacts/surface-delta-$VERSION.md"
+          if [ "$PREVIOUS" -lt 0 ]; then
+            pnpm exec tsx scripts/release/surface-delta.ts packages/server/published-surface-lock.json > "$out"
+          else
+            git fetch --depth 1 origin "refs/tags/v0.0.$PREVIOUS:refs/tags/v0.0.$PREVIOUS"
+            git show "v0.0.$PREVIOUS:packages/server/published-surface-lock.json" > "$RUNNER_TEMP/previous-lock.json"
+            pnpm exec tsx scripts/release/surface-delta.ts packages/server/published-surface-lock.json "$RUNNER_TEMP/previous-lock.json" > "$out"
+          fi
+          cat "$out"
+
       - uses: actions/upload-artifact@v7
         with:
           name: release-${{ steps.version.outputs.version }}
           path: ${{ runner.temp }}/artifacts/
           if-no-files-found: error
+
+  # Never reached by a dry run. The npm package and the crate go to their
+  # registries, and a GitHub release at the tag carries every artifact.
+  publish:
+    name: Publish
+    needs: build
+    if: github.event_name == 'push'
+    runs-on: self-hosted
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v7
+        with:
+          name: release-${{ needs.build.outputs.version }}
+          path: artifacts
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: Put the Rust toolchain on PATH
+        run: |
+          echo "/opt/homebrew/opt/rustup/bin" >> "$GITHUB_PATH"
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+      # No `--provenance`: npm attests provenance only from a GitHub-hosted
+      # runner's OIDC identity, and every job here runs on the self-hosted
+      # pool.
+      - name: Publish @withmarfa/client to npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          echo "//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}" > "$RUNNER_TEMP/.npmrc"
+          npm publish "artifacts/withmarfa-client-$VERSION.tgz" --access public --userconfig "$RUNNER_TEMP/.npmrc"
+      - name: Publish marfa-client to crates.io
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/crate"
+          tar -xzf "artifacts/marfa-client-$VERSION.crate" -C "$RUNNER_TEMP/crate"
+          # The package is the one the build job made and checked, published
+          # from where it was unpacked rather than from the checkout, which
+          # `cargo publish` would package again.
+          cargo publish --manifest-path "$RUNNER_TEMP/crate/marfa-client-$VERSION/Cargo.toml"
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          gh release create "v$VERSION" artifacts/* \
+            --title "v$VERSION" \
+            --notes-file "artifacts/surface-delta-$VERSION.md" \
+            --verify-tag
