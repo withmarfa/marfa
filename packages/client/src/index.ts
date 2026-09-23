@@ -44,8 +44,7 @@ export function createClient(options: ClientOptions): MarfaClient {
   let checked: Promise<void> | undefined;
   const checkContract = async (): Promise<void> => {
     const response = await fetcher(`${baseUrl}/`);
-    const served = ((await response.json()) as { contract?: unknown })
-      .contract;
+    const served = ((await response.json()) as { contract?: unknown }).contract;
     if (served !== CONTRACT_VERSION) throw new ContractMismatchError(served);
   };
   const gate: Middleware = {
