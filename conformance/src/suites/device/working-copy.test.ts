@@ -9,7 +9,6 @@ import {
   scriptHydration,
   type Harness,
 } from "./harness.js";
-import { notWrittenYet, skipIfPending } from "./pending.js";
 import {
   SCRIPTED_TYPES,
   connected,
@@ -203,9 +202,89 @@ describe("the working copy holds one slice", () => {
     ).toContain("ancient");
   });
 
-  it("holds the thumbnail an item carries", async (context) => {
-    skipIfPending(context);
-    notWrittenYet("a thumbnail traveling with its item");
+  it("holds the thumbnail an item carries", async () => {
+    harness = await startHarness("thumbnail");
+    const { server, device } = harness;
+    // A registered type declaring a thumbnail, answered before the
+    // hydration's own catalog, which it replaces for the one read a
+    // hydration makes.
+    server.answer("GET", "/types", {
+      kind: "json",
+      status: 200,
+      body: {
+        data: [
+          ...SCRIPTED_TYPES,
+          wireType("user.snapshot", {
+            titleField: "title",
+            fields: {
+              title: { type: "string" },
+              thumbnail: { type: "thumbnail" },
+            },
+          }),
+        ],
+        next_cursor: null,
+      },
+    });
+    // A PNG's signature, then base64 that spells a word a search could
+    // find: `/` makes it a token of its own.
+    const data = "iVBORw0KGgoA/unicornsXYZ";
+    scriptHydration(server, {
+      head: "10",
+      rows: {
+        "user.snapshot": [
+          {
+            item: {
+              id: "snap",
+              type: "user.snapshot",
+              properties: {
+                title: "Holiday",
+                thumbnail: `data:image/png;base64,${data}`,
+              },
+            },
+          },
+        ],
+        "core.note": [
+          {
+            item: {
+              id: "beside",
+              properties: { title: "Beside", body: "unicornsXYZ" },
+            },
+          },
+        ],
+      },
+    });
+    expect(
+      (await device.hydrate(["user.snapshot", "core.note"], "library")).ok,
+    ).toBe(true);
+    const asked = server.requests.length;
+
+    const out = `${device.store}.thumbnail.png`;
+    const held = await device.thumbnail("snap", out);
+    expect(held.ok, JSON.stringify(held)).toBe(true);
+    if (!held.ok) return;
+    expect(held.value.thumbnail?.mime_type).toBe("image/png");
+    expect(
+      readFileSync(out),
+      "the thumbnail's bytes are not the image the item carried",
+    ).toEqual(Buffer.from(data, "base64"));
+    expect(
+      server.requests.length,
+      "the thumbnail was fetched rather than read from the item held",
+    ).toBe(asked);
+
+    // An item whose type declares none carries none.
+    const none = await device.thumbnail("beside", `${out}.none`);
+    expect(none.ok && none.value.thumbnail).toBeNull();
+
+    // The image's base64 is not searchable. The witness: the same token in
+    // a body is found.
+    const hits = await device.search("unicornsXYZ");
+    expect(hits.ok).toBe(true);
+    if (!hits.ok) return;
+    expect(
+      hits.value.map((hit) => hit.item.id),
+      "a search matched the thumbnail's base64, so every image answers searches for whatever its encoding happens to spell",
+    ).toEqual(["beside"]);
   });
 
   it("says the bytes are absent rather than the item", async () => {

@@ -32,8 +32,6 @@ The specification has two halves.
 
 A statement is a sentence about observable behavior, followed by its citations. A citation names a file under `src/suites/` and a test title in it, and the cited test asserts what the statement says: the same status, the same code, the same field, the same bound. A statement with no citation does not belong here. `src/utils/spec-citations.test.ts` fails when a citation names a file or title that does not exist, and `src/suites/device/corpus.decision.test.ts` fails when a device statement carries no citation at all.
 
-**A device citation may name a fixture the binary cannot satisfy yet.** `src/suites/device/pending.ts` carries two registers, each entry naming the statement its fixture will assert. `PENDING` is the list a milestone empties, and its reaching empty is that milestone's gate; `PENDING_BEYOND_MILESTONE` holds what a later milestone covers, with the reason traveling with the entry, so the first list cannot reach empty by relabeling. `corpus.decision.test.ts` holds both to exactly the fixtures that skip and holds the second to exactly the entries a decision named, and a fixture whose assertions are written runs and must fail, so the run goes red the day the device satisfies it.
-
 ## What the fixtures run against
 
 The server's half runs against one locally booted server on SQLite, one dataset. Each fixture file mints its own key through the provisioning key with a `source` unique to the file, and every row it writes is stamped with that source. The operator-only doors run as the operator key.

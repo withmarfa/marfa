@@ -217,9 +217,7 @@ export interface ListFilters {
 /**
  * A device, as the fixtures drive it.
  *
- * One operation per thing a device can be asked to do. A fixture that needs
- * an operation the binary has no command for yet is pending against the
- * statement it will assert (`pending.ts`).
+ * One operation per thing a device can be asked to do.
  */
 export interface DeviceUnderTest {
   /** The store this device reads and writes. One device, one store. */
@@ -288,6 +286,16 @@ export interface DeviceUnderTest {
   putBlob(path: string, mimeType?: string): Promise<Outcome<QueuedWrite>>;
   /** Where a blob's bytes are held, fetched first where they are not. */
   blob(hash: string): Promise<Outcome<{ hash: string; path: string }>>;
+  /** The thumbnail an item carries, read from the copy; its bytes to `out`. */
+  thumbnail(
+    id: string,
+    out: string,
+  ): Promise<
+    Outcome<{
+      id: string;
+      thumbnail: { mime_type: string; size_bytes: number; path: string } | null;
+    }>
+  >;
   /** A file attached to an item: the upload, the file item, the edge. */
   attach(
     item: string,
