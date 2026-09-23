@@ -9,11 +9,13 @@ import {
 } from "./harness.js";
 import { notWrittenYet, skipIfPending } from "./pending.js";
 import {
+  SCRIPTED_TYPES,
   connected,
   itemEvent,
   replay,
   streamCursor,
   wireItem,
+  wireType,
 } from "../../device/marfa-answers.js";
 
 /**
@@ -753,6 +755,18 @@ describe("a local read answers the active state unless asked otherwise", () => {
 describe("a local search narrows as a list does", () => {
   it("narrows a local search by type and tags as a list does", async () => {
     harness = await startHarness("search-narrowing");
+    // A subtype by declared parent alone: its name shares no prefix with
+    // `core.file`, so only the parent puts it in that subtree. Answered
+    // before the hydration's own catalog, which it replaces for the one read
+    // a hydration makes.
+    harness.server.answer("GET", "/types", {
+      kind: "json",
+      status: 200,
+      body: [
+        ...SCRIPTED_TYPES,
+        wireType("user.photo", { parent: "core.file", titleField: "title" }),
+      ],
+    });
     scriptHydration(harness.server, {
       head: "10",
       rows: {
@@ -778,6 +792,14 @@ describe("a local search narrows as a list does", () => {
               properties: { title: "heron file" },
             },
           },
+          {
+            item: {
+              id: "photo",
+              type: "user.photo",
+              properties: { title: "heron photo" },
+            },
+            tags: ["garden"],
+          },
         ],
       },
     });
@@ -795,17 +817,21 @@ describe("a local search narrows as a list does", () => {
       ).toBe(true);
       return hits.ok ? hits.value.map((hit) => hit.item.id).sort() : [];
     };
-    // The control: unnarrowed, the search finds all three, so every absence
+    // The control: unnarrowed, the search finds all four, so every absence
     // below is the narrowing.
-    expect(await ids({})).toEqual(["file", "image", "note"]);
+    expect(await ids({})).toEqual(["file", "image", "note", "photo"]);
     expect(
       await ids({ type: "core.file" }),
-      "a search narrowed to a type answered another type, or dropped the subtype a list would answer",
-    ).toEqual(["file", "image"]);
+      "a search narrowed to a type answered another type, or dropped a subtype a list would answer, by name or by declared parent",
+    ).toEqual(["file", "image", "photo"]);
     expect(
       await ids({ tags: ["birds"] }),
       "a search narrowed to a tag answered a row without it",
     ).toEqual(["image", "note"]);
+    expect(
+      await ids({ tags: ["birds", "garden"] }),
+      "a search narrowed by two tags answered a row carrying only one of them",
+    ).toEqual(["note"]);
     expect(
       await ids({ type: "core.note", tags: ["birds", "garden"] }),
       "a search narrowed by a type and two tags answered a row lacking one of them",

@@ -1,6 +1,12 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { startHarness, scriptHydration, type Harness } from "./harness.js";
 import {
+  startHarness,
+  scriptHydration,
+  scriptWrites,
+  type Harness,
+} from "./harness.js";
+import {
+  answers,
   catchupTooOld,
   connected,
   headRead,
@@ -385,6 +391,85 @@ describe("catch-up replays from the cursor", () => {
       held.value.properties.title,
       "the event erased an edit the device has not had answered, so the copy shows the write as undone while the queue still sends it",
     ).toBe("edited here, not yet sent");
+  });
+
+  it("applies an event beneath a blocked write, which a release sends again", async () => {
+    harness = await startHarness("event-beneath-blocked-write");
+    const { server, device } = harness;
+    const hydrated = {
+      id: "row",
+      version: 1,
+      properties: { title: "as hydrated", body: "as hydrated" },
+    };
+    scriptHydration(server, {
+      head: "10",
+      rows: { "core.note": [{ item: hydrated }] },
+    });
+    // The server holds a later version and will not resolve this edit
+    // itself, so the edit is blocked `conflict_unresolved` and stays in the
+    // queue for a release.
+    const snapshot = {
+      version: 2,
+      properties: { title: "as hydrated", body: "changed elsewhere" },
+      tier: "library" as const,
+      occurred_at: "2026-01-01T00:00:00.000Z",
+      source_id: null,
+    };
+    scriptWrites(server, {
+      update: [
+        answers.versionConflict(
+          snapshot,
+          { ...snapshot, version: 1 },
+          ["title"],
+          { fields: {}, default: "last_writer_wins" },
+        ),
+      ],
+    });
+    server.answer(
+      "GET",
+      "/events",
+      replay("11", [
+        itemEvent(
+          "11",
+          "item.updated",
+          wireItem({
+            id: "row",
+            version: 2,
+            properties: { title: "as hydrated", body: "changed elsewhere" },
+          }),
+        ),
+      ]),
+    );
+
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    expect(
+      (
+        await device.update("row", {
+          properties: { title: "edited here" },
+          version: 1,
+        })
+      ).ok,
+    ).toBe(true);
+    const drained = await device.drain();
+    expect(drained.ok).toBe(true);
+    if (!drained.ok) return;
+    expect(
+      drained.value.verdicts[0]?.verdict,
+      "the edit was not blocked, so nothing here is about a blocked write",
+    ).toBe("blocked");
+    expect((await device.catchUp()).ok).toBe(true);
+
+    const held = await device.get("row");
+    expect(held.ok).toBe(true);
+    if (!held.ok) return;
+    expect(
+      held.value.properties.body,
+      "the event was not applied at all, so nothing here is about applying one beneath a blocked write",
+    ).toBe("changed elsewhere");
+    expect(
+      held.value.properties.title,
+      "the event erased a blocked edit, which is still in the queue for a release to send again, so the copy shows it undone while the queue holds it",
+    ).toBe("edited here");
   });
 
   it("leaves the cursor at the last applied event when the stream ends early", async () => {

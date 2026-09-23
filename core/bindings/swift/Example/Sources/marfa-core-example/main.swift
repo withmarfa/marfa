@@ -30,6 +30,15 @@ func title(of item: Item) throws -> String {
     return (properties?["title"] as? String) ?? "(untitled)"
 }
 
+// Prints a failed expectation and fails the run, so the proof is a check
+// rather than a transcript someone has to read.
+nonisolated(unsafe) var failed = false
+func expect(_ held: Bool, _ expectation: String) {
+    guard !held else { return }
+    FileHandle.standardError.write(Data("proof failed: \(expectation)\n".utf8))
+    failed = true
+}
+
 func printQueue(_ core: MarfaCore) throws {
     for write in try core.queue() {
         print("  \(write.kind)  \(write.itemId ?? "-")  \(describe(write.verdict))  refusals \(write.refusals)")
@@ -53,7 +62,7 @@ do {
         else { throw MarfaError.Invalid(message: "a queued create named no item") }
         _ = try core.updateItem(
             id: firstId, edit: Edit(propertiesJson: #"{"title":"Swift first, edited"}"#, baseVersion: held.version))
-        _ = try core.addTag(id: firstId, tag: "favourite")
+        _ = try core.addTag(id: firstId, tag: "favorite")
         _ = try core.createEdge(draft: EdgeDraft(sourceId: firstId, targetId: secondId, edgeType: "references"))
         let third = try core.createItem(
             draft: Draft(type: "core.note", propertiesJson: #"{"title":"Swift third","body":"deleted before it was sent"}"#, tier: .feed))
@@ -62,10 +71,17 @@ do {
         print("queued, nothing answered:")
         try printQueue(core)
         let offline = try core.drain()
-        print("drain with the server away: sent \(offline.sent), answered \(offline.verdicts.filter { $0.verdict != nil }.count)")
+        let answered = offline.verdicts.filter { $0.verdict != nil }.count
+        print("drain with the server away: sent \(offline.sent), answered \(answered)")
+        expect(answered == 0, "a drain with the server away answered a write")
+        expect(
+            try core.queue().allSatisfy { $0.refusals == 0 },
+            "a drain with the server away counted a refusal against a write")
         let local = try core.search(
-            query: "swift", filters: SearchFilters(type: "core.note", tags: ["favourite"]), limit: 10)
-        print("local search for favourites: \(try local.map { try title(of: $0.item) })")
+            query: "swift", filters: SearchFilters(type: "core.note", tags: ["favorite"]), limit: 10)
+        let found = try local.map { try title(of: $0.item) }
+        print("local search for favorites: \(found)")
+        expect(found == ["Swift first, edited"], "a local search for the tagged edit did not find exactly it")
 
     case "drain":
         let report = try core.drain()
@@ -73,10 +89,22 @@ do {
         for verdict in report.verdicts {
             print("  \(verdict.kind)  \(verdict.itemId ?? "-")  \(describe(verdict.verdict))")
         }
+        let outcomes = report.verdicts.map { describe($0.verdict) }
+        let refusal = "refused: type_not_permitted"
+        expect(
+            outcomes.filter { $0 == refusal }.count == 1, "the system.device create was not refused type_not_permitted")
+        expect(
+            outcomes.filter { $0 != refusal }.allSatisfy { $0 == "accepted" },
+            "a write other than the system.device create was not accepted")
         let notes = try core.list(
             filters: ListFilters(type: "core.note", tier: .feed), sort: Sort(field: .createdAt, direction: .descending))
         print("notes now: \(try notes.map { "\(try title(of: $0)) v\($0.version) \($0.tags)" })")
+        let edited = try notes.first { try title(of: $0) == "Swift first, edited" }
+        expect(edited?.version == 2, "the edit was not answered at version 2")
+        expect(edited?.tags.contains("favorite") == true, "the edit lost its tag")
+        expect(try !notes.contains { try title(of: $0) == "Swift third" }, "the note deleted offline is still listed")
         print("cleared \(try core.forgetAnswered()) answered write(s); \(try core.queue().count) left")
+        expect(try core.queue().isEmpty, "answered writes were left in the queue")
 
     default:
         FileHandle.standardError.write(Data("name a phase: hydrate, write or drain\n".utf8))
@@ -86,3 +114,4 @@ do {
     FileHandle.standardError.write(Data("marfa-core-example: \(error)\n".utf8))
     exit(1)
 }
+if failed { exit(1) }

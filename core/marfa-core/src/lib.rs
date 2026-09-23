@@ -535,6 +535,7 @@ impl Core {
         for (key, value) in &edit.properties {
             next.properties.insert(key.clone(), value.clone());
         }
+        next.updated_at = store::now_iso();
         let tx = conn.transaction()?;
         store::upsert_edge(&tx, &next.as_wire())?;
         let queued = store::enqueue(

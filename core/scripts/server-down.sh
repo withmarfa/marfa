@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Stops the server server-up.sh started and removes its directory, unless the
-# caller named the directory to keep (MARFA_SERVER_STATE at boot).
+# caller named the directory to keep (MARFA_SERVER_KEEP at boot).
 set -euo pipefail
 
 env_file="${1:-${MARFA_SERVER_ENV:-}}"
@@ -44,7 +44,7 @@ if kill -0 "${MARFA_SERVER_PID}" 2>/dev/null; then
   done
   stop KILL
 fi
-[[ -n "${MARFA_SERVER_KEEP:-}" ]] || rm -rf "${MARFA_SERVER_STATE}"
+[[ -n "${MARFA_SERVER_KEPT:-}" ]] || rm -rf "${MARFA_SERVER_STATE}"
 # The env file too, when the caller placed it outside the state directory. A
 # stale one names a pid that is gone, and the next run to read it would signal
 # whatever the system has since given that number to.

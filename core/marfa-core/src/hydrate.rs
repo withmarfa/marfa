@@ -4,7 +4,7 @@ use std::time::Duration;
 use crate::catalog::Catalog;
 use crate::error::CoreError;
 use crate::http::{Http, ItemsQuery};
-use crate::model::{HydrateReport, Tier};
+use crate::model::{Draft, EdgeDraft, HydrateReport, Tier, WriteKind};
 use crate::sse::{Frame, Frames};
 use crate::store;
 use crate::wire::{EventPayload, WireEdge, WireEdgeBlock};
@@ -112,6 +112,7 @@ pub(crate) fn hydrate(
     let items = {
         let mut conn = core.conn()?;
         let tx = conn.transaction()?;
+        lay_queue_over(&tx, &catalog)?;
         store::meta_set(&tx, store::META_SERVER_ORIGIN, &http.origin())?;
         store::meta_set(
             &tx,
@@ -134,6 +135,60 @@ pub(crate) fn hydrate(
         pages,
         cursor,
     })
+}
+
+/// Puts the writes still waiting back into the copy a hydration has just
+/// refilled (`queue-and-verdicts.md` 30, 35).
+///
+/// The queue survives a hydration and the copy does not, so without this a
+/// create still waiting is a row a local read no longer finds, and an edit
+/// still waiting reads as undone, while the queue goes on sending both.
+fn lay_queue_over(conn: &rusqlite::Connection, catalog: &Catalog) -> Result<()> {
+    let waiting = store::waiting_writes(conn)?;
+    let mut items: Vec<&str> = Vec::new();
+    let mut edges: Vec<&str> = Vec::new();
+    for row in &waiting {
+        match row.kind {
+            WriteKind::CreateItem => {
+                let (id, draft) = Draft::from_payload(&store::payload_of(conn, &row.id)?)?;
+                if !store::item_held(conn, &id)? {
+                    let mut wire = draft.wire(&id);
+                    if draft.occurred_at.is_none() {
+                        wire.occurred_at.clone_from(&row.queued_at);
+                        wire.created_at.clone_from(&row.queued_at);
+                        wire.updated_at.clone_from(&row.queued_at);
+                    }
+                    store::upsert_item(conn, &wire, Some(&[]), catalog.title_field(&draft.r#type))?;
+                }
+            }
+            WriteKind::CreateEdge => {
+                let (id, draft) = EdgeDraft::from_payload(&store::payload_of(conn, &row.id)?)?;
+                if store::edge_by_id(conn, &id)?.is_none() {
+                    store::upsert_edge(conn, &draft.wire(&id))?;
+                }
+            }
+            _ => {}
+        }
+        if let Some(id) = row.edge_id.as_deref() {
+            if !edges.contains(&id) {
+                edges.push(id);
+            }
+        } else if let Some(id) = row.item_id.as_deref()
+            && !items.contains(&id)
+        {
+            items.push(id);
+        }
+    }
+    for id in items {
+        let Some(held) = store::item_by_id(conn, id)? else {
+            continue;
+        };
+        store::lay_waiting_writes_over(conn, id, catalog.title_field(&held.r#type))?;
+    }
+    for id in edges {
+        store::lay_waiting_edge_writes_over(conn, id)?;
+    }
+    Ok(())
 }
 
 fn declared_types(types: &[String]) -> Result<Vec<String>> {

@@ -210,9 +210,7 @@ fn apply(
             //
             // What is left is a genuine tie: two events can share a version
             // when one of them changed no field, and the version cannot
-            // order them. The stream's order decides those, which is what
-            // `device.md` 13 now says rather than claiming the version
-            // decides every pair.
+            // order them. The stream's order decides those (`device.md` 13).
             if let Some(held) = store::held_version(tx, &item.id)?
                 && item.version < held
             {

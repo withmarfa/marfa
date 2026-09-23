@@ -187,27 +187,6 @@ enum Shape {
     Plain,
 }
 
-/// Which shape a kind's door answers with, or nothing for a kind whose door
-/// this build does not send to.
-fn shape_of(kind: WriteKind) -> Option<Shape> {
-    Some(match kind {
-        WriteKind::CreateItem
-        | WriteKind::UpdateItem
-        | WriteKind::RestoreItem
-        | WriteKind::TransitionItem => Shape::Item,
-        WriteKind::CreateEdge | WriteKind::UpdateEdge => Shape::Edge,
-        WriteKind::DeleteItem
-        | WriteKind::DeleteEdge
-        | WriteKind::ReplaceMetadata
-        | WriteKind::MergeMetadata
-        | WriteKind::AddTag
-        | WriteKind::RemoveTag
-        | WriteKind::WriteExtension
-        | WriteKind::DeleteExtension => Shape::Plain,
-        WriteKind::UploadBlob => return None,
-    })
-}
-
 /// Whether a row can go out yet.
 enum Readiness {
     Ready,
@@ -248,13 +227,14 @@ fn readiness(
     Readiness::Ready
 }
 
-/// Where a queued write goes and what it carries.
+/// Where a queued write goes, what it carries, and the shape its door
+/// answers a success with.
 ///
 /// Every kind in `WriteKind` either addresses here or names itself
 /// in the refusal. No kind falls through to a default: a write sent to the
 /// wrong door is a write the server takes and the device reads as something
 /// else.
-fn address<'a>(row: &'a QueuedWrite, payload: &'a str) -> Result<Outgoing<'a>> {
+fn address<'a>(row: &'a QueuedWrite, payload: &'a str) -> Result<(Outgoing<'a>, Shape)> {
     let item_id = || -> Result<&str> {
         row.item_id.as_deref().ok_or_else(|| {
             CoreError::Store(format!(
@@ -287,84 +267,103 @@ fn address<'a>(row: &'a QueuedWrite, payload: &'a str) -> Result<Outgoing<'a>> {
             ))
         })
     };
-    let item = |segments: Vec<String>, method: Method| -> Result<Outgoing<'a>> {
-        Ok(Outgoing {
-            method,
-            segments,
-            params: Vec::new(),
-            body: payload,
-            idempotency_key: &row.idempotency_key,
-        })
+    let to = |method: Method, segments: Vec<String>, shape: Shape| {
+        Ok((
+            Outgoing {
+                method,
+                segments,
+                params: Vec::new(),
+                body: payload,
+                idempotency_key: &row.idempotency_key,
+            },
+            shape,
+        ))
     };
     match row.kind {
-        WriteKind::CreateItem => Ok(Outgoing {
-            method: Method::Post,
-            segments: vec!["items".into()],
-            params: Vec::new(),
-            body: payload,
-            idempotency_key: &row.idempotency_key,
-        }),
-        WriteKind::UpdateItem => Ok(Outgoing {
-            method: Method::Patch,
-            segments: vec!["items".into(), item_id()?.into()],
+        WriteKind::CreateItem => to(Method::Post, vec!["items".into()], Shape::Item),
+        WriteKind::UpdateItem => {
+            let (mut outgoing, shape) = to(
+                Method::Patch,
+                vec!["items".into(), item_id()?.into()],
+                Shape::Item,
+            )?;
             // On every update this device sends (`queue-and-verdicts.md` 5).
             // The device resolves nothing itself; this asks the server to
             // resolve inside its own transaction rather than refusing and
             // leaving two writes where one is atomic.
-            params: vec![("conflict".into(), "auto".into())],
-            body: payload,
-            idempotency_key: &row.idempotency_key,
-        }),
-        WriteKind::DeleteItem => item(vec!["items".into(), item_id()?.into()], Method::Delete),
-        WriteKind::RestoreItem => item(
+            outgoing.params = vec![("conflict".into(), "auto".into())];
+            Ok((outgoing, shape))
+        }
+        WriteKind::DeleteItem => to(
+            Method::Delete,
+            vec!["items".into(), item_id()?.into()],
+            Shape::Plain,
+        ),
+        WriteKind::RestoreItem => to(
+            Method::Post,
             vec!["items".into(), item_id()?.into(), "restore".into()],
-            Method::Post,
+            Shape::Item,
         ),
-        WriteKind::TransitionItem => item(
+        WriteKind::TransitionItem => to(
+            Method::Post,
             vec!["items".into(), item_id()?.into(), "transition".into()],
-            Method::Post,
+            Shape::Item,
         ),
-        WriteKind::CreateEdge => item(vec!["edges".into()], Method::Post),
-        WriteKind::UpdateEdge => item(vec!["edges".into(), edge_id()?.into()], Method::Patch),
-        WriteKind::DeleteEdge => item(vec!["edges".into(), edge_id()?.into()], Method::Delete),
-        WriteKind::ReplaceMetadata => item(
-            vec!["items".into(), item_id()?.into(), "metadata".into()],
-            Method::Put,
-        ),
-        WriteKind::MergeMetadata => item(
-            vec!["items".into(), item_id()?.into(), "metadata".into()],
+        WriteKind::CreateEdge => to(Method::Post, vec!["edges".into()], Shape::Edge),
+        WriteKind::UpdateEdge => to(
             Method::Patch,
+            vec!["edges".into(), edge_id()?.into()],
+            Shape::Edge,
         ),
-        WriteKind::AddTag => item(
-            vec!["items".into(), item_id()?.into(), "tags".into()],
+        WriteKind::DeleteEdge => to(
+            Method::Delete,
+            vec!["edges".into(), edge_id()?.into()],
+            Shape::Plain,
+        ),
+        WriteKind::ReplaceMetadata => to(
+            Method::Put,
+            vec!["items".into(), item_id()?.into(), "metadata".into()],
+            Shape::Plain,
+        ),
+        WriteKind::MergeMetadata => to(
+            Method::Patch,
+            vec!["items".into(), item_id()?.into(), "metadata".into()],
+            Shape::Plain,
+        ),
+        WriteKind::AddTag => to(
             Method::Post,
+            vec!["items".into(), item_id()?.into(), "tags".into()],
+            Shape::Plain,
         ),
-        WriteKind::RemoveTag => item(
+        WriteKind::RemoveTag => to(
+            Method::Delete,
             vec![
                 "items".into(),
                 item_id()?.into(),
                 "tags".into(),
                 tag()?.into(),
             ],
-            Method::Delete,
+            Shape::Plain,
         ),
-        WriteKind::WriteExtension => item(
-            vec![
-                "items".into(),
-                item_id()?.into(),
-                "extensions".into(),
-                namespace()?.into(),
-            ],
+        WriteKind::WriteExtension => to(
             Method::Put,
-        ),
-        WriteKind::DeleteExtension => item(
             vec![
                 "items".into(),
                 item_id()?.into(),
                 "extensions".into(),
                 namespace()?.into(),
             ],
+            Shape::Plain,
+        ),
+        WriteKind::DeleteExtension => to(
             Method::Delete,
+            vec![
+                "items".into(),
+                item_id()?.into(),
+                "extensions".into(),
+                namespace()?.into(),
+            ],
+            Shape::Plain,
         ),
         WriteKind::UploadBlob => Err(CoreError::Invalid(
             "this build has no door for a queued upload_blob; it is a kind the queue holds and the drain cannot yet send".into(),
@@ -464,7 +463,7 @@ pub fn drain(core: &Core, http: &Http) -> Result<DrainReport> {
             }
             store::payload_of(&conn, &row.id)?
         };
-        let outgoing = address(row, &payload)?;
+        let (outgoing, shape) = address(row, &payload)?;
         // The connection is not held across the send. A drain is the one
         // call that waits on a network, and holding the store shut for the
         // length of a queue's worth of requests would make `queue` — the
@@ -488,7 +487,7 @@ pub fn drain(core: &Core, http: &Http) -> Result<DrainReport> {
             );
         }
 
-        let settled = settle(core, row, &answer, classify(&answer))?;
+        let settled = settle(core, row, &answer, classify(&answer), shape)?;
         answers.insert(row.id.clone(), settled.verdict);
         let stop = settled.stops_the_drain;
         report.verdicts.push(verdict_of(row, &settled));
@@ -510,9 +509,9 @@ pub fn drain(core: &Core, http: &Http) -> Result<DrainReport> {
 /// unanswered create is at 0, and the create's answer says what the server
 /// made of it. Nothing where the write was based on anything else.
 fn own_create_version(conn: &rusqlite::Connection, row: &QueuedWrite) -> Result<Option<i64>> {
-    let (created, field) = match row.kind {
-        WriteKind::UpdateItem => (WriteKind::CreateItem, "item"),
-        WriteKind::UpdateEdge => (WriteKind::CreateEdge, "edge"),
+    let (created, field, subject) = match row.kind {
+        WriteKind::UpdateItem => (WriteKind::CreateItem, "item", row.item_id.as_deref()),
+        WriteKind::UpdateEdge => (WriteKind::CreateEdge, "edge", row.edge_id.as_deref()),
         _ => return Ok(None),
     };
     if row.base_version != Some(0) {
@@ -530,13 +529,22 @@ fn own_create_version(conn: &rusqlite::Connection, row: &QueuedWrite) -> Result<
         {
             continue;
         }
-        let version = create
+        // Only an answer about the row this write addresses. A create the
+        // server took as an upsert onto another row answers with that row,
+        // and its version is not one this write was ever based on.
+        let answered = create
             .answer
             .as_deref()
             .and_then(|answer| serde_json::from_str::<serde_json::Value>(answer).ok())
-            .and_then(|answer| answer.get(field)?.get("version")?.as_i64());
-        if version.is_some() {
-            return Ok(version);
+            .and_then(|answer| answer.get(field).cloned());
+        let Some(answered) = answered else {
+            continue;
+        };
+        if answered.get("id").and_then(serde_json::Value::as_str) != subject {
+            continue;
+        }
+        if let Some(version) = answered.get("version").and_then(serde_json::Value::as_i64) {
+            return Ok(Some(version));
         }
     }
     Ok(None)
@@ -588,6 +596,7 @@ fn settle(
     row: &QueuedWrite,
     answer: &std::result::Result<Answer, CoreError>,
     class: Classified,
+    shape: Shape,
 ) -> Result<Settled> {
     let envelope = answer.as_ref().ok().map(|answer| answer.body.clone());
     match class {
@@ -601,14 +610,6 @@ fn settle(
                 .as_ref()
                 .map(|answer| answer.replayed)
                 .unwrap_or(false);
-            let Some(shape) = shape_of(row.kind) else {
-                // A kind whose door this build does not know. Counted rather
-                // than accepted: the device cannot say what the server took.
-                let conn = core.conn()?;
-                let refusals = store::count_refusal(&conn, &row.id)?;
-                drop(conn);
-                return finish_counted(core, row, refusals, envelope);
-            };
             match shape {
                 Shape::Item => {
                     let Ok(parsed) = serde_json::from_str::<WireWriteAnswer>(&body) else {
@@ -953,4 +954,84 @@ fn reconcile_inner(core: &Core, row: &QueuedWrite) -> Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn write<'a>(
+        kind: WriteKind,
+        item_id: &'a str,
+        edge_id: Option<&'a str>,
+        base_version: Option<i64>,
+        depends_on: &'a [String],
+    ) -> store::NewWrite<'a> {
+        store::NewWrite {
+            kind,
+            item_id: Some(item_id),
+            target_id: None,
+            edge_id,
+            namespace: None,
+            tag: None,
+            base_version,
+            payload: "{}",
+            depends_on,
+        }
+    }
+
+    /// The version comes from an answer about the row the edit addresses and
+    /// no other. The witness is the same edit rebased once the answer names
+    /// its row, so the first `None` is the id check and not a rebase that
+    /// never fires.
+    #[test]
+    fn only_an_answer_about_the_row_itself_rebases_an_edit_of_it() {
+        let conn = store::open_in_memory().unwrap();
+        for (created, edited, field, subject, edge) in [
+            (
+                WriteKind::CreateItem,
+                WriteKind::UpdateItem,
+                "item",
+                "mine",
+                None,
+            ),
+            (
+                WriteKind::CreateEdge,
+                WriteKind::UpdateEdge,
+                "edge",
+                "link",
+                Some("link"),
+            ),
+        ] {
+            let create = store::enqueue(&conn, &write(created, "mine", edge, None, &[])).unwrap();
+            let depends_on = [create.id.clone()];
+            let edit =
+                store::enqueue(&conn, &write(edited, "mine", edge, Some(0), &depends_on)).unwrap();
+            let answer =
+                |id: &str| serde_json::json!({ field: { "id": id, "version": 5 } }).to_string();
+            let answered = |id: &str| {
+                store::record_verdict(
+                    &conn,
+                    &create.id,
+                    &store::Answered {
+                        verdict: Verdict::Accepted,
+                        reason: None,
+                        answer: Some(&answer(id)),
+                        conflicted_copy_id: None,
+                    },
+                )
+                .unwrap();
+                store::queued_write(&conn, &edit.id).unwrap().unwrap()
+            };
+            assert_eq!(
+                own_create_version(&conn, &answered("theirs")).unwrap(),
+                None,
+                "an answer about another {field} rebased an edit of this one"
+            );
+            assert_eq!(
+                own_create_version(&conn, &answered(subject)).unwrap(),
+                Some(5)
+            );
+        }
+    }
 }

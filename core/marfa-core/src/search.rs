@@ -206,7 +206,7 @@ mod tests {
 
     /// A type narrows by its subtree and tags narrow by every tag given,
     /// exactly as a list narrows. The control is the unnarrowed search
-    /// matching all four, so each absence below is the narrowing.
+    /// matching all five, so each absence below is the narrowing.
     #[test]
     fn a_type_and_tags_narrow_a_search_as_they_narrow_a_list() {
         let conn = conn();
@@ -217,6 +217,7 @@ mod tests {
                 wire_type("core.file", None, Some("title")),
                 wire_type("core.file.image", Some("core.file"), Some("title")),
                 wire_type("core.bookmark", None, Some("title")),
+                wire_type("user.photo", Some("core.file"), Some("title")),
             ],
         )
         .unwrap();
@@ -235,6 +236,9 @@ mod tests {
         row("image", "core.file.image", &["birds"]);
         row("file", "core.file", &[]);
         row("bookmark", "core.bookmark", &["birds"]);
+        // A subtype by declared parent alone: its name shares no prefix with
+        // `core.file`, so only the parent puts it in that subtree.
+        row("photo", "user.photo", &["garden"]);
         let catalog = Catalog::load(&conn).unwrap();
         let ids = |filters: SearchFilters| {
             let mut ids: Vec<String> = search(&conn, &catalog, "heron", &filters, 10)
@@ -247,14 +251,14 @@ mod tests {
         };
         assert_eq!(
             ids(SearchFilters::default()),
-            vec!["bookmark", "file", "image", "note"]
+            vec!["bookmark", "file", "image", "note", "photo"]
         );
         assert_eq!(
             ids(SearchFilters {
                 r#type: Some("core.file".into()),
                 ..Default::default()
             }),
-            vec!["file", "image"]
+            vec!["file", "image", "photo"]
         );
         assert_eq!(
             ids(SearchFilters {
@@ -262,6 +266,15 @@ mod tests {
                 ..Default::default()
             }),
             vec!["bookmark", "image", "note"]
+        );
+        // Every tag given, with no type to do the narrowing for it: four rows
+        // carry one of the two and one carries both.
+        assert_eq!(
+            ids(SearchFilters {
+                tags: vec!["birds".into(), "garden".into()],
+                ..Default::default()
+            }),
+            vec!["note"]
         );
         assert_eq!(
             ids(SearchFilters {

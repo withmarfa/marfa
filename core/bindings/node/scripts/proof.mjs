@@ -31,17 +31,33 @@ function describe(verdict) {
 /** @param {import("../index.js").Item} item */
 const title = (item) => String(item.properties.title ?? "(untitled)");
 
+/**
+ * Prints a failed expectation and fails the run, so the proof is a check
+ * rather than a transcript someone has to read.
+ * @param {boolean} held
+ * @param {string} expectation
+ */
+function expect(held, expectation) {
+  if (held) return;
+  console.error(`proof failed: ${expectation}`);
+  process.exitCode = 1;
+}
+
 /** @param {MarfaCore} core */
 function printQueue(core) {
   for (const write of core.queue()) {
-    console.log(`  ${write.kind}  ${write.itemId ?? "-"}  ${describe(write.verdict)}  refusals ${write.refusals}`);
+    console.log(
+      `  ${write.kind}  ${write.itemId ?? "-"}  ${describe(write.verdict)}  refusals ${write.refusals}`,
+    );
   }
 }
 
 const core = MarfaCore.open(path, url, key);
 if (phase === "hydrate") {
   const hydrated = await core.hydrate(["core.note"], Tier.Feed);
-  console.log(`hydrated ${hydrated.items} item(s) at feed; cursor ${hydrated.cursor}; handle ${core.heldHandle()}`);
+  console.log(
+    `hydrated ${hydrated.items} item(s) at feed; cursor ${hydrated.cursor}; handle ${core.heldHandle()}`,
+  );
 } else if (phase === "write") {
   const first = core.createItem({
     type: "core.note",
@@ -56,33 +72,85 @@ if (phase === "hydrate") {
   const firstId = first.itemId ?? "";
   const held = core.get(firstId);
   if (!held || !second.itemId) throw new Error("a queued create named no item");
-  core.updateItem(firstId, { properties: { title: "Node first, edited" }, baseVersion: held.version });
-  core.addTag(firstId, "favourite");
-  core.createEdge({ sourceId: firstId, targetId: second.itemId, edgeType: "references" });
+  core.updateItem(firstId, {
+    properties: { title: "Node first, edited" },
+    baseVersion: held.version,
+  });
+  core.addTag(firstId, "favorite");
+  core.createEdge({
+    sourceId: firstId,
+    targetId: second.itemId,
+    edgeType: "references",
+  });
   const third = core.createItem({
     type: "core.note",
     properties: { title: "Node third", body: "deleted before it was sent" },
     tier: Tier.Feed,
   });
   core.deleteItem(third.itemId ?? "");
-  core.createItem({ type: "system.device", properties: { name: "not the device's to write" } });
+  core.createItem({
+    type: "system.device",
+    properties: { name: "not the device's to write" },
+  });
   console.log("queued, nothing answered:");
   printQueue(core);
   const offline = await core.drain();
+  const answered = offline.verdicts.filter((v) => v.verdict).length;
   console.log(
-    `drain with the server away: sent ${offline.sent}, answered ${offline.verdicts.filter((v) => v.verdict).length}`,
+    `drain with the server away: sent ${offline.sent}, answered ${answered}`,
   );
-  const local = core.search("node", { type: "core.note", tags: ["favourite"] }, 10);
-  console.log(`local search for favourites: ${local.map((hit) => title(hit.item)).join(", ")}`);
+  expect(answered === 0, "a drain with the server away answered a write");
+  expect(
+    core.queue().every((write) => write.refusals === 0),
+    "a drain with the server away counted a refusal against a write",
+  );
+  const local = core.search(
+    "node",
+    { type: "core.note", tags: ["favorite"] },
+    10,
+  );
+  const found = local.map((hit) => title(hit.item));
+  console.log(`local search for favorites: ${found.join(", ")}`);
+  expect(
+    found.length === 1 && found[0] === "Node first, edited",
+    "a local search for the tagged edit did not find exactly it",
+  );
 } else if (phase === "drain") {
   const report = await core.drain();
   console.log(`drain: sent ${report.sent}, held ${report.held}`);
   for (const entry of report.verdicts) {
-    console.log(`  ${entry.kind}  ${entry.itemId ?? "-"}  ${describe(entry.verdict)}`);
+    console.log(
+      `  ${entry.kind}  ${entry.itemId ?? "-"}  ${describe(entry.verdict)}`,
+    );
   }
+  const outcomes = report.verdicts.map((entry) => describe(entry.verdict));
+  expect(
+    outcomes.filter((outcome) => outcome === "refused: type_not_permitted")
+      .length === 1,
+    "the system.device create was not refused type_not_permitted",
+  );
+  expect(
+    outcomes
+      .filter((outcome) => outcome !== "refused: type_not_permitted")
+      .every((outcome) => outcome === "accepted"),
+    "a write other than the system.device create was not accepted",
+  );
   const notes = core.list({ type: "core.note", tier: Tier.Feed });
-  console.log(`notes now: ${notes.map((note) => `${title(note)} v${note.version} [${note.tags.join(",")}]`).join("; ")}`);
-  console.log(`cleared ${core.forgetAnswered()} answered write(s); ${core.queue().length} left`);
+  console.log(
+    `notes now: ${notes.map((note) => `${title(note)} v${note.version} [${note.tags.join(",")}]`).join("; ")}`,
+  );
+  const edited = notes.find((note) => title(note) === "Node first, edited");
+  expect(edited?.version === 2, "the edit was not answered at version 2");
+  expect(edited?.tags.includes("favorite") === true, "the edit lost its tag");
+  expect(
+    !notes.some((note) => title(note) === "Node third"),
+    "the note deleted offline is still listed",
+  );
+  const cleared = core.forgetAnswered();
+  console.log(
+    `cleared ${cleared} answered write(s); ${core.queue().length} left`,
+  );
+  expect(core.queue().length === 0, "answered writes were left in the queue");
 } else {
   console.error("name a phase: hydrate, write or drain");
   process.exit(2);

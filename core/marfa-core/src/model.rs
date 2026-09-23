@@ -148,20 +148,6 @@ pub struct Edge {
 }
 
 impl Edge {
-    /// This edge as the store writes it, stamps left as they are.
-    pub(crate) fn as_wire_keeping_time(&self) -> crate::wire::WireEdge {
-        crate::wire::WireEdge {
-            id: self.id.clone(),
-            source_id: self.source_id.clone(),
-            target_id: self.target_id.clone(),
-            edge_type: self.edge_type.clone(),
-            properties: self.properties.clone(),
-            version: self.version,
-            created_at: self.created_at.clone(),
-            updated_at: self.updated_at.clone(),
-        }
-    }
-
     /// This edge as the store writes it, for the same reason `Item::as_wire`
     /// exists: a local edit changes an edge the copy already holds, and the
     /// store speaks the wire shape.
@@ -174,7 +160,7 @@ impl Edge {
             properties: self.properties.clone(),
             version: self.version,
             created_at: self.created_at.clone(),
-            updated_at: crate::store::now_iso(),
+            updated_at: self.updated_at.clone(),
         }
     }
 }
@@ -436,6 +422,31 @@ impl Draft {
             body.insert("version".into(), Value::from(version));
         }
         Ok(serde_json::to_string(&Value::Object(body))?)
+    }
+
+    /// The create a queued body describes, and the id it names: the row a
+    /// copy holds again for a create still waiting when a hydration has
+    /// cleared it (`queue-and-verdicts.md` 35).
+    pub(crate) fn from_payload(body: &str) -> std::result::Result<(String, Draft), CoreError> {
+        let body: Value = serde_json::from_str(body)?;
+        let text = |key: &str| body.get(key).and_then(Value::as_str).map(str::to_string);
+        let id = text("id").ok_or_else(|| {
+            CoreError::Store("a queued create carries no id, so its row cannot be held".into())
+        })?;
+        let draft = Draft {
+            r#type: text("type").unwrap_or_default(),
+            properties: body
+                .get("properties")
+                .and_then(Value::as_object)
+                .cloned()
+                .unwrap_or_default(),
+            tier: text("tier").map(|tier| tier.parse()).transpose()?,
+            source: text("source"),
+            source_id: text("source_id"),
+            occurred_at: text("occurred_at"),
+            ..Default::default()
+        };
+        Ok((id, draft))
     }
 
     /// The row the working copy holds until the server answers.
@@ -841,6 +852,36 @@ impl EdgeDraft {
         body.insert("edge_type".into(), Value::String(self.edge_type.clone()));
         body.insert("properties".into(), Value::Object(self.properties.clone()));
         Ok(serde_json::to_string(&Value::Object(body))?)
+    }
+
+    /// The edge a queued body describes, and the id it names, for the
+    /// reason `Draft::from_payload` gives.
+    pub(crate) fn from_payload(body: &str) -> std::result::Result<(String, EdgeDraft), CoreError> {
+        let body: Value = serde_json::from_str(body)?;
+        let text = |key: &str| {
+            body.get(key)
+                .and_then(Value::as_str)
+                .map(str::to_string)
+                .unwrap_or_default()
+        };
+        let id = text("id");
+        if id.is_empty() {
+            return Err(CoreError::Store(
+                "a queued edge create carries no id, so its edge cannot be held".into(),
+            ));
+        }
+        let draft = EdgeDraft {
+            source_id: text("source_id"),
+            target_id: text("target_id"),
+            edge_type: text("edge_type"),
+            properties: body
+                .get("properties")
+                .and_then(Value::as_object)
+                .cloned()
+                .unwrap_or_default(),
+            id: None,
+        };
+        Ok((id, draft))
     }
 
     /// The edge the working copy holds until the server answers. Version 0,

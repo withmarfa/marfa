@@ -90,8 +90,8 @@ pub enum DeviceCommand {
         )]
         id: Option<String>,
         /// Release every write blocked for this reason instead of one by id.
-        #[arg(long, value_name = "REASON")]
-        reason: Option<String>,
+        #[arg(long, value_name = "REASON", value_parser = blocked_reason())]
+        reason: Option<marfa_core::BlockedReason>,
     },
     /// What the local copy holds and where it came from.
     Status,
@@ -525,7 +525,7 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<(), CliError> 
         DeviceCommand::Release { id, reason } => {
             let core = open(&args.db, None)?;
             let released = match (&id, &reason) {
-                (_, Some(reason)) => core.release_reason(reason.parse()?)?,
+                (_, Some(reason)) => core.release_reason(*reason)?,
                 (Some(id), None) => usize::from(core.release(id)?),
                 // clap refuses this combination, so reaching it means the
                 // argument rules and this branch have drifted apart.
@@ -573,6 +573,16 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<(), CliError> 
 /// there is no default store, because a store nobody named is one nobody
 /// can find again. The file is made at the named path on first open, so
 /// the state report is answerable before a hydration (`device.md` 5).
+/// The five reasons, read at the flag, so anything else is refused before
+/// the store opens and `--help` lists what may be named.
+fn blocked_reason() -> impl clap::builder::TypedValueParser<Value = marfa_core::BlockedReason> {
+    use clap::builder::TypedValueParser;
+    clap::builder::PossibleValuesParser::new(
+        marfa_core::BlockedReason::ALL.map(marfa_core::BlockedReason::as_str),
+    )
+    .try_map(|reason| reason.parse::<marfa_core::BlockedReason>())
+}
+
 fn open(db: &Option<PathBuf>, server: Option<Server>) -> Result<Core, CliError> {
     let Some(path) = db else {
         return Err(CliError::NoStoreNamed);

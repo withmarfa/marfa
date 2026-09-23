@@ -1,10 +1,15 @@
 #!/usr/bin/env bash
-# Boots the monorepo server on SQLite in a throwaway directory, mints the
-# first key from the bootstrap secret the server prints, and writes an env
-# file naming the server, a working key and the process to stop.
+# Boots the monorepo server on SQLite, mints the first key from the
+# bootstrap secret the server prints, and writes an env file naming the
+# server, a working key and the process to stop.
 #
-#   eval "$(scripts/server-up.sh)"      # exports MARFA_TEST_URL, MARFA_TEST_KEY, MARFA_SERVER_ENV
-#   scripts/server-down.sh              # stops it and removes the directory
+#   env_text="$(scripts/server-up.sh)" && eval "${env_text}"
+#                                       # exports MARFA_TEST_URL, MARFA_TEST_KEY, MARFA_SERVER_ENV
+#   scripts/server-down.sh              # stops it, and removes a directory it made
+#
+# Assigned and then evaluated, never `eval "$(…)"` alone: `eval` of an empty
+# string succeeds, so a boot that failed would leave the caller running on
+# whatever the last boot exported.
 #
 # Set MARFA_SERVER_ENV first to choose where the env file goes. A caller that
 # wants to clean up after a boot that failed has to, because the default sits
@@ -13,11 +18,13 @@
 # MARFA_SERVER_REPO points at the monorepo checkout to boot; the default is
 # the checkout this script lives in.
 #
-# MARFA_SERVER_STATE names a directory to keep the instance in. The first
+# MARFA_SERVER_KEEP names a directory to keep the instance in. The first
 # boot there records its port, its secrets and the working key beside the
 # database, and a later boot on the same directory reuses all four: the same
 # origin, the same data, the same key. That is how a proof stops a server and
-# brings it back. `server-down.sh` leaves a named directory in place.
+# brings it back. `server-down.sh` leaves that directory in place. It is an
+# input only: the env file names the directory in MARFA_SERVER_STATE, which a
+# second boot in the same shell does not read.
 #
 # PORT defaults to one the kernel says is free, because a fixed default
 # cannot be right for both callers: the runner pool runs on a developer's own
@@ -37,8 +44,8 @@ print(s.getsockname()[1])
 s.close()'
 }
 keep=""
-if [[ -n "${MARFA_SERVER_STATE:-}" ]]; then
-  state="${MARFA_SERVER_STATE}"
+if [[ -n "${MARFA_SERVER_KEEP:-}" ]]; then
+  state="${MARFA_SERVER_KEEP}"
   keep=1
   mkdir -p "${state}"
 else
@@ -84,7 +91,6 @@ fi
 # this script is routinely run inside a command substitution, where it does
 # not: the job then shares the script's group, `kill -- -$pid` names a group
 # that is not the server's, and the fallback kills pnpm and orphans node.
-# Measured after that shape had already shipped.
 (
   cd "${repo}"
   exec pnpm --filter @withmarfa/server exec tsx --import ./src/instrumentation.ts src/index.ts
@@ -109,7 +115,7 @@ write_env() {
     echo "export MARFA_SERVER_ENV='${env_file}'"
     echo "export MARFA_SERVER_PID='${pid}'"
     echo "export MARFA_SERVER_STATE='${state}'"
-    echo "export MARFA_SERVER_KEEP='${keep}'"
+    echo "export MARFA_SERVER_KEPT='${keep}'"
   } >"${env_file}"
 }
 write_env ""

@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use rusqlite::{Connection, OptionalExtension, params, params_from_iter};
+use rusqlite::{Connection, OptionalExtension, named_params, params, params_from_iter};
 use serde_json::{Map, Value};
 use uuid::Uuid;
 
@@ -18,7 +18,7 @@ pub const META_SLICE_TIER: &str = "slice_tier";
 pub const META_EVENT_CURSOR: &str = "event_cursor";
 pub const META_HYDRATE_STATE: &str = "hydrate_state";
 pub const HYDRATE_IN_PROGRESS: &str = "in_progress";
-pub const SCHEMA_VERSION: &str = "6";
+pub const SCHEMA_VERSION: &str = "7";
 
 /// The schema the version above names, hashed as the folder mapping hashes
 /// bytes. A change to `schema.sql` without a new version would open a store
@@ -31,7 +31,7 @@ pub const SCHEMA_VERSION: &str = "6";
 /// on one would price every edit to the prose at a version bump that refuses
 /// every working copy on disk.
 #[cfg(test)]
-const SCHEMA_HASH: &str = "f73a05f772245511";
+const SCHEMA_HASH: &str = "b0e4c59d5dbd0471";
 
 const ITEM_COLUMNS: &str = "id, type, state, tier, version, schema_version, source, source_id, occurred_at, created_at, updated_at, properties";
 const EDGE_COLUMNS: &str =
@@ -350,8 +350,45 @@ fn civil_from_days(days: i64) -> (i64, u32, u32) {
 /// of every write it sent (`queue-and-verdicts.md` 6), and a verdict a caller
 /// has not read yet is not a verdict that has been reported.
 pub fn queued_writes(conn: &Connection) -> Result<Vec<QueuedWrite>, CoreError> {
+    read_writes(conn, "", [])
+}
+
+/// The writes still waiting (`queue-and-verdicts.md` 35): unanswered, or
+/// blocked, which a release sends again.
+pub fn waiting_writes(conn: &Connection) -> Result<Vec<QueuedWrite>, CoreError> {
+    read_writes(
+        conn,
+        "WHERE verdict IS NULL OR verdict = ?1",
+        [Verdict::Blocked.as_str()],
+    )
+}
+
+/// The writes still waiting on one item, read through the index rather than
+/// by reading the whole queue, because this runs once per answer and once
+/// per event.
+fn waiting_writes_for_item(conn: &Connection, id: &str) -> Result<Vec<QueuedWrite>, CoreError> {
+    read_writes(
+        conn,
+        "WHERE item_id = ?1 AND (verdict IS NULL OR verdict = ?2)",
+        [id, Verdict::Blocked.as_str()],
+    )
+}
+
+fn waiting_writes_for_edge(conn: &Connection, id: &str) -> Result<Vec<QueuedWrite>, CoreError> {
+    read_writes(
+        conn,
+        "WHERE edge_id = ?1 AND (verdict IS NULL OR verdict = ?2)",
+        [id, Verdict::Blocked.as_str()],
+    )
+}
+
+fn read_writes(
+    conn: &Connection,
+    filter: &str,
+    values: impl rusqlite::Params,
+) -> Result<Vec<QueuedWrite>, CoreError> {
     let mut statement = conn.prepare(&format!(
-        "SELECT {QUEUE_COLUMNS} FROM queue ORDER BY seq ASC"
+        "SELECT {QUEUE_COLUMNS} FROM queue {filter} ORDER BY seq ASC"
     ))?;
     // Positional, and the order is `QUEUE_COLUMNS`'s. Two columns of the same
     // type swapped here would read as valid data, so the two lists are kept
@@ -366,7 +403,7 @@ pub fn queued_writes(conn: &Connection) -> Result<Vec<QueuedWrite>, CoreError> {
     // and a value outside its closed set is refused rather than carried: a
     // store holding one is a store this build cannot read correctly, and the
     // `CHECK`s in `schema.sql` are what keep one from being written.
-    let rows = statement.query_map([], |row| {
+    let rows = statement.query_map(values, |row| {
         Ok(RawWrite {
             id: row.get(0)?,
             kind: row.get(1)?,
@@ -1609,9 +1646,9 @@ pub fn count_refusal(conn: &Connection, id: &str) -> Result<i64, CoreError> {
 /// to be told the same thing once per row.
 pub fn block_unanswered(conn: &Connection, reason: BlockedReason) -> Result<usize, CoreError> {
     Ok(conn.execute(
-        "UPDATE queue SET verdict = 'blocked', reason = ?1, answered_at = ?2
+        "UPDATE queue SET verdict = ?1, reason = ?2, answered_at = ?3
           WHERE verdict IS NULL",
-        params![reason.as_str(), now_iso()],
+        params![Verdict::Blocked.as_str(), reason.as_str(), now_iso()],
     )?)
 }
 
@@ -1626,9 +1663,9 @@ pub fn unblock_self_clearing(conn: &Connection) -> Result<usize, CoreError> {
     Ok(conn.execute(
         &format!(
             "UPDATE queue SET verdict = NULL, reason = NULL, answered_at = NULL
-              WHERE verdict = 'blocked' AND reason IN ({places})"
+              WHERE verdict = ? AND reason IN ({places})"
         ),
-        params_from_iter(clearing),
+        params_from_iter(std::iter::once(Verdict::Blocked.as_str()).chain(clearing)),
     )?)
 }
 
@@ -1748,16 +1785,23 @@ fn dependants_refused_with(conn: &Connection, id: &str) -> Result<Vec<String>, C
 pub fn forget_answered(conn: &Connection) -> Result<usize, CoreError> {
     Ok(conn.execute(
         "DELETE FROM queue
-          WHERE verdict IN ('accepted', 'merged', 'conflicted', 'refused')
-            AND NOT (verdict = 'refused' AND sent = 0)
+          WHERE verdict IN (:accepted, :merged, :conflicted, :refused)
+            AND NOT (verdict = :refused AND sent = 0)
             AND NOT EXISTS (
               SELECT 1 FROM queue AS waiting
                WHERE (waiting.verdict IS NULL
-                      OR waiting.verdict IN ('blocked', 'dead')
-                      OR (waiting.verdict = 'refused' AND waiting.sent = 0))
+                      OR waiting.verdict IN (:blocked, :dead)
+                      OR (waiting.verdict = :refused AND waiting.sent = 0))
                  AND waiting.depends_on LIKE '%' || queue.id || '%'
             )",
-        [],
+        named_params! {
+            ":accepted": Verdict::Accepted.as_str(),
+            ":merged": Verdict::Merged.as_str(),
+            ":conflicted": Verdict::Conflicted.as_str(),
+            ":refused": Verdict::Refused.as_str(),
+            ":blocked": Verdict::Blocked.as_str(),
+            ":dead": Verdict::Dead.as_str(),
+        },
     )?)
 }
 
@@ -1783,23 +1827,16 @@ pub fn forget_item(conn: &Connection, id: &str) -> Result<(), CoreError> {
 
 /// Whether a queued row still stands to be sent: unanswered, or parked for
 /// a reason that may yet clear.
-fn still_waiting(row: &QueuedWrite) -> bool {
-    matches!(row.verdict, None | Some(Verdict::Blocked))
-}
-
 /// Lays every write to an item that is still waiting back over the row as
 /// the server last sent it (`queue-and-verdicts.md` 35), whole fields in the
 /// order they were queued. Called after anything puts the server's row into
-/// the copy: an answer the drain adopts, a reconcile, an event.
+/// the copy: an answer the drain adopts, a reconcile, an event, a hydration.
 pub fn lay_waiting_writes_over(
     conn: &Connection,
     item_id: &str,
     title_field: Option<&str>,
 ) -> Result<(), CoreError> {
-    let waiting: Vec<QueuedWrite> = queued_writes(conn)?
-        .into_iter()
-        .filter(|row| row.item_id.as_deref() == Some(item_id) && still_waiting(row))
-        .collect();
+    let waiting = waiting_writes_for_item(conn, item_id)?;
     if waiting.is_empty() {
         return Ok(());
     }
@@ -1864,10 +1901,7 @@ pub fn lay_waiting_writes_over(
 /// The same for an edge: an edit still waiting is laid back over the
 /// server's properties, and a delete still waiting takes the edge out again.
 pub fn lay_waiting_edge_writes_over(conn: &Connection, edge_id: &str) -> Result<(), CoreError> {
-    let waiting: Vec<QueuedWrite> = queued_writes(conn)?
-        .into_iter()
-        .filter(|row| row.edge_id.as_deref() == Some(edge_id) && still_waiting(row))
-        .collect();
+    let waiting = waiting_writes_for_edge(conn, edge_id)?;
     let Some(mut edge) = edge_by_id(conn, edge_id)? else {
         return Ok(());
     };
@@ -1888,7 +1922,7 @@ pub fn lay_waiting_edge_writes_over(conn: &Connection, edge_id: &str) -> Result<
             _ => {}
         }
     }
-    upsert_edge(conn, &edge.as_wire_keeping_time())
+    upsert_edge(conn, &edge.as_wire())
 }
 
 /// Moves a queued write onto the version the server gave the row it was

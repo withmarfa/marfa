@@ -995,7 +995,7 @@ describe("an answer the device applies keeps what it has not had answered", () =
         })
       ).ok,
     ).toBe(true);
-    expect((await device.addTag(id, "favourite")).ok).toBe(true);
+    expect((await device.addTag(id, "favorite")).ok).toBe(true);
     expect((await device.deleteItem(binnedId)).ok).toBe(true);
 
     // The creates are answered and nothing after them is: every later door
@@ -1025,7 +1025,7 @@ describe("an answer the device applies keeps what it has not had answered", () =
     expect(
       read.value.tags,
       "the answer to the create erased the tag queued after it, and a tag's own answer carries no row to put it back",
-    ).toEqual(["favourite"]);
+    ).toEqual(["favorite"]);
 
     const listed = await device.list();
     expect(listed.ok).toBe(true);
@@ -1113,5 +1113,132 @@ describe("an answer the device applies keeps what it has not had answered", () =
       sentVersion(HELD.id),
       "an edit based on a version the server issued was sent on some other version",
     ).toBe(HELD.version);
+  });
+
+  it("sends an edit of its own unanswered edge based on the version that edge was answered with", async () => {
+    harness = await hydratedHarness("queue-rebase-own-edge", { rows: held() });
+    const { device, server } = harness;
+    const note = await device.create({
+      type: "core.note",
+      properties: { title: "the other end", body: "the other end" },
+    });
+    expect(note.ok).toBe(true);
+    if (!note.ok) return;
+    const target = note.value.item_id ?? "a";
+    const link = await device.createEdge({
+      source: HELD.id,
+      target,
+      type: "references",
+    });
+    expect(link.ok).toBe(true);
+    if (!link.ok) return;
+    const edgeId = link.value.edge_id ?? "e";
+    expect(
+      (
+        await device.updateEdge(edgeId, {
+          properties: { weight: 2 },
+          version: 0,
+        })
+      ).ok,
+    ).toBe(true);
+
+    acceptCreates(harness);
+    scriptWrites(server, {
+      edges: [
+        writeAnswers.edge({
+          id: edgeId,
+          source_id: HELD.id,
+          target_id: target,
+          version: 1,
+        }),
+        writeAnswers.edge({
+          id: edgeId,
+          source_id: HELD.id,
+          target_id: target,
+          version: 2,
+          properties: { weight: 2 },
+        }),
+      ],
+    });
+    expect((await device.drain()).ok).toBe(true);
+
+    const patch = server.requests.find(
+      (request) =>
+        request.method === "PATCH" && request.pathname === `/edges/${edgeId}`,
+    );
+    expect(
+      patch,
+      "the edit of the device's own edge was never sent, so nothing below is about the version it went on",
+    ).toBeDefined();
+    expect(
+      (JSON.parse(patch?.body ?? "{}") as { version?: unknown }).version,
+      "an edit of the device's own edge went out based on the placeholder the copy held, a version the server never mints",
+    ).toBe(1);
+  });
+
+  it("keeps the writes it has not had answered through a re-hydration", async () => {
+    const rows = held();
+    harness = await hydratedHarness("queue-overlay-rehydrate", { rows });
+    const { device } = harness;
+    const note = await device.create({
+      type: "core.note",
+      properties: { title: "made here", body: "made here" },
+    });
+    expect(note.ok).toBe(true);
+    if (!note.ok) return;
+    const made = note.value.item_id ?? "a";
+    expect(
+      (
+        await device.update(HELD.id, {
+          properties: { title: "edited here" },
+          version: HELD.version,
+        })
+      ).ok,
+    ).toBe(true);
+    expect((await device.addTag(HELD.id, "favorite")).ok).toBe(true);
+
+    // The server has since moved the held row on elsewhere, and nothing the
+    // hydration pulls answers any of the three writes above.
+    rows["core.note"] = [
+      {
+        item: {
+          id: HELD.id,
+          version: HELD.version + 1,
+          properties: { title: "held", body: "changed elsewhere" },
+        },
+      },
+    ];
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+
+    const read = await device.get(HELD.id);
+    expect(read.ok).toBe(true);
+    if (!read.ok) return;
+    // The witness: the hydration took the server's row, so what follows is
+    // about writes laid over a refilled copy and not a copy nothing touched.
+    expect(
+      read.value.properties.body,
+      "the re-hydration did not take the server's row, so nothing here is about a refilled copy",
+    ).toBe("changed elsewhere");
+    expect(read.value.version).toBe(HELD.version + 1);
+    expect(
+      read.value.properties.title,
+      "the re-hydration erased an edit still in the queue, so the copy shows the write as undone while the queue still sends it",
+    ).toBe("edited here");
+    expect(
+      read.value.tags,
+      "the re-hydration erased a tag still in the queue, and its answer carries no row to put it back",
+    ).toEqual(["favorite"]);
+
+    const own = await device.get(made);
+    expect(
+      own.ok,
+      "the re-hydration dropped a row the device created and has not had answered, so a caller told the write was queued can no longer read it",
+    ).toBe(true);
+    if (!own.ok) return;
+    expect(own.value.properties.title).toBe("made here");
+    expect(
+      (await queueOf(device)).filter((row) => row.verdict === null).length,
+      "the writes this case lays over the refilled copy were not left waiting",
+    ).toBe(3);
   });
 });

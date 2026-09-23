@@ -59,7 +59,7 @@ cargo build -p marfa-cli
 
 ## Bindings
 
-Both reach everything `marfa_core::Core` does: the reads, hydrate and catch-up, every queued write, the queue, drain, release, forget, and the six verdicts as a typed value carrying what each one says.
+Both open a store on a file with a server and reach the reads, hydrate and catch-up, every queued write, the queue, drain, release, forget, and the six verdicts as a typed value carrying what each one says. An in-memory store and catch-up's idle setting stay in Rust, where the tests use them.
 
 Swift: `bindings/swift/build.sh` packages the FFI crate with cargo-swift into `bindings/swift/MarfaCore`, with macOS, iOS and simulator slices; the example in `bindings/swift/Example` runs with `swift run`.
 
