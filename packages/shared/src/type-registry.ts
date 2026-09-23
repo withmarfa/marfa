@@ -896,7 +896,7 @@ const thumbnail = z.string().superRefine((value, ctx) => {
   if (size > THUMBNAIL_MAX_BYTES) {
     ctx.addIssue({
       code: "custom",
-      message: `Must decode to at most ${THUMBNAIL_MAX_BYTES} bytes; this is ${size}`,
+      message: `Must decode to at most ${String(THUMBNAIL_MAX_BYTES)} bytes; this is ${String(size)}`,
     });
     return;
   }

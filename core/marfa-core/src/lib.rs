@@ -1276,7 +1276,7 @@ mod tests {
     fn a_thumbnail_is_read_from_the_held_row_and_never_searched() {
         use base64::Engine;
         let dir = tempfile::tempdir().unwrap();
-        let core = Core::open(&dir.path().join("core.sqlite"), None).unwrap();
+        let core = Core::open(dir.path().join("core.sqlite"), None).unwrap();
         {
             let conn = core.conn().unwrap();
             store::meta_set(&conn, store::META_EVENT_CURSOR, "10").unwrap();

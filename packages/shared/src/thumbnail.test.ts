@@ -20,7 +20,9 @@ const padded = (head: Buffer, size: number) =>
   Buffer.concat([head, Buffer.alloc(size - head.length, 7)]);
 
 const TYPE = "test.thumbnail";
-afterEach(() => unregisterTypeSchema(TYPE));
+afterEach(() => {
+  unregisterTypeSchema(TYPE);
+});
 
 function check(value: unknown) {
   registerTypeSchema({
@@ -53,7 +55,9 @@ describe("a thumbnail's value", () => {
     expect(result.success).toBe(false);
     if (!result.success) {
       expect(result.errors[0]?.field).toBe("thumbnail");
-      expect(result.errors[0]?.message).toContain(`${THUMBNAIL_MAX_BYTES + 1}`);
+      expect(result.errors[0]?.message).toContain(
+        String(THUMBNAIL_MAX_BYTES + 1),
+      );
     }
   });
 

@@ -934,12 +934,13 @@ function validateThumbnails(
     )
     .map(([name, { owner }]) => `"${name}" from "${owner}"`);
   const all = [...own.map((name) => `"${name}"`), ...inherited];
-  if (all.length > 1 && own.length > 0) {
+  const last = own.at(-1);
+  if (all.length > 1 && last !== undefined) {
     errors.push(
       issue({
-        field: `fields.${own[own.length - 1]}`,
+        field: `fields.${last}`,
         expected: "at most one thumbnail field, counting inherited ones",
-        actual: `${all.length}: ${all.join(", ")}`,
+        actual: `${String(all.length)}: ${all.join(", ")}`,
         hint: "Keep one thumbnail field.",
       }),
     );
