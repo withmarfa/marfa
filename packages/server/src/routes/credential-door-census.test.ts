@@ -102,12 +102,12 @@ function documentedDoors(): Set<string> {
  * credential in the URL.
  *
  * A caller cannot be asked for a credential in order to learn how to obtain
- * one, or which contract a server speaks before choosing what to send, so
- * registration and the root are open by construction.
+ * one, or which instance it is about to sign in to, so registration and the
+ * root are open by construction.
  */
 const OPEN_OPERATIONS: Record<string, string> = {
   "GET /":
-    "the instance's description, where a client reads the contract before it holds a credential to send",
+    "the instance's description, where a caller with no credential yet reads which instance answers and which contract it speaks",
   "POST /auth/oauth2/register":
     "dynamic client registration, which is how a client comes to hold anything",
   "GET /blobs/:hash/fetch":

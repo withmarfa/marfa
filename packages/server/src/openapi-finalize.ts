@@ -22,7 +22,7 @@
 import { IDEMPOTENT_WRITE_DOORS } from "./middleware/idempotency.js";
 import { refusalComponentName } from "./openapi.js";
 import { toOpenApiPath } from "./openapi-path.js";
-import { CONTRACT_VERSION } from "./contract.js";
+import { CONTRACT_HEADER, CONTRACT_VERSION } from "./contract.js";
 import { bodyCapFor } from "./middleware/body-cap.js";
 
 // Loose typing — the document is a plain OpenAPI 3.1 object. `paths` is typed
@@ -169,7 +169,7 @@ const IDEMPOTENCY_HEADER_PARAM = {
   required: false,
   schema: { type: "string", maxLength: 255 },
   description:
-    "A client-chosen key identifying this write. The server records the status and body it returns against the key and answers a repeat carrying the same key with that stored result, performing no second write. A conflict is recorded like any other outcome, so a retry is told its first attempt collided rather than left to re-derive it. Scoped to this instance; a key replayed with a different request is refused with `idempotency_key_reused`.",
+    "A client-chosen key identifying this write. The server records the status and body it returns against the key and answers a repeat carrying the same key with that stored result, performing no second write. A conflict is recorded like any other outcome, so a retry is told its first attempt collided rather than left to re-derive it. Scoped to this instance; a key replayed with a different request, or with the same one after the instance has moved to another contract version, is refused with `idempotency_key_reused`, since the stored answer is shaped for the contract it was written under.",
 };
 
 /** The doors, keyed the way the reflected document keys an operation. */
@@ -197,6 +197,11 @@ const IDEMPOTENT_OPERATIONS = new Set(
  * meaning is written once rather than restated on every operation.
  */
 const RESPONSE_HEADER_COMPONENTS: Record<string, unknown> = {
+  [CONTRACT_HEADER]: {
+    description:
+      "The contract version this server speaks, the same integer as the document's `info.version` and the root's `contract`. Sent on every response the application gives, refusals included, so a client can check the answer it is about to read. A client generated for another number cannot trust the body. A request refused by the HTTP layer before it reaches the application, such as one with a malformed host, is answered without it.",
+    schema: { type: "integer", minimum: 1 },
+  },
   "X-Request-ID": {
     description:
       "This request's identifier, the same one written to the server's request log. Echoes the caller's own `X-Request-ID` when it sends one matching `[A-Za-z0-9_-]{1,128}`, and is a generated UUIDv7 otherwise, so a client can either adopt the server's id or impose its own. Quote it when reporting a problem: it is the one value that finds the request again.",
@@ -235,7 +240,22 @@ const RESPONSE_HEADER_COMPONENTS: Record<string, unknown> = {
 };
 
 /** Headers on every response, whatever the operation or the status. */
-const UNIVERSAL_RESPONSE_HEADERS = ["X-Request-ID"];
+const UNIVERSAL_RESPONSE_HEADERS = [CONTRACT_HEADER, "X-Request-ID"];
+
+/**
+ * Every header an answer carries that a browser hides from a page on another
+ * origin unless CORS exposes it: the chain's, the blob doors' own, and the
+ * export's file name. None is on the safelist, and a client that cannot see
+ * `X-Marfa-Contract` refuses every success it is sent. `app.cors.test.ts`
+ * holds this to every header the document declares.
+ */
+export const EXPOSED_RESPONSE_HEADERS: readonly string[] = [
+  ...Object.keys(RESPONSE_HEADER_COMPONENTS),
+  "Accept-Ranges",
+  "Content-Range",
+  "ETag",
+  "Content-Disposition",
+];
 
 /** Headers the rate limiter sets on every response that passes through it. */
 const RATE_LIMIT_HEADERS = [

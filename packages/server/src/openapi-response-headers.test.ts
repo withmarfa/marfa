@@ -17,6 +17,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { buildPublishedOpenAPISpec } from "./openapi-published.js";
+import { CONTRACT_HEADER, CONTRACT_VERSION } from "./contract.js";
 import { IDEMPOTENT_WRITE_DOORS } from "./middleware/idempotency.js";
 import { createTestContext, request } from "./test-utils.js";
 import type { TestContext } from "./test-utils.js";
@@ -34,7 +35,7 @@ const DOOR_KEYS = new Set(
   }),
 );
 
-const UNIVERSAL = ["X-Request-ID"];
+const UNIVERSAL = ["X-Marfa-Contract", "X-Request-ID"];
 
 const RATE_LIMIT = [
   "X-RateLimit-Limit",
@@ -57,8 +58,10 @@ const ANSWERED_AHEAD = "413";
 
 /**
  * The registration door is answered by the sign-in library's own response,
- * which none of the middleware headers reach. Recorded as an open question
- * rather than declared away, so the wire half leaves it out by name.
+ * which the prepared headers (`X-Request-ID`, the limiter's trio) never
+ * reach; the contract header is stamped on the way out and does. Recorded as
+ * an open question rather than declared away, so the prepared-header wire
+ * check leaves it out by name.
  */
 const UNSTAMPED_ON_THE_WIRE = new Set(["POST /auth/oauth2/register"]);
 
@@ -479,6 +482,77 @@ describe("the server sends the headers the spec declares", () => {
       }
     }
     expect(checked).toBeGreaterThan(50);
+    expect(wrong).toEqual([]);
+  });
+
+  it("sends the contract version on every answer, the ones no route shapes included", async () => {
+    // Every published operation, the registration door too: it is answered
+    // by the sign-in library, which the prepared headers never reach, and a
+    // client checks this header on whatever arrives.
+    const concrete = (template: string) =>
+      template
+        .replace("{hash}", "sha256:" + "0".repeat(64))
+        .replace(/\{[^}]+\}/g, "019537a0-7b80-7000-8000-000000000000");
+    const paths = ((await buildPublishedOpenAPISpec()).paths ?? {}) as Record<
+      string,
+      Record<string, Operation>
+    >;
+    const answers: { label: string; response: Response }[] = [];
+    for (const [path, methods] of Object.entries(paths)) {
+      for (const lower of Object.keys(methods)) {
+        const method = lower.toUpperCase();
+        answers.push({
+          label: `${method} ${path}`,
+          response: await ctx.app.request(concrete(path), {
+            method,
+            headers: {
+              Authorization: `Bearer ${ctx.workingKey}`,
+              "Content-Type": "application/json",
+            },
+            body: method === "GET" || method === "HEAD" ? undefined : "{}",
+          }),
+        });
+      }
+    }
+    answers.push(
+      {
+        label: "an unmatched route",
+        response: await ctx.app.request("/no-such-door"),
+      },
+      {
+        label: "an error page for a browser",
+        response: await ctx.app.request("/no-such-door", {
+          headers: { Accept: "text/html" },
+        }),
+      },
+      {
+        label: "the body cap's refusal",
+        response: await ctx.app.request("/items", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${ctx.workingKey}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ padding: "x".repeat(20 * 1024 * 1024) }),
+        }),
+      },
+    );
+    const statuses = new Set<number>();
+    const wrong: string[] = [];
+    for (const { label, response } of answers) {
+      await response.body?.cancel();
+      statuses.add(response.status);
+      const sent = response.headers.get(CONTRACT_HEADER);
+      if (sent !== String(CONTRACT_VERSION)) {
+        wrong.push(
+          `${label} answered ${String(response.status)} with ${String(sent)}`,
+        );
+      }
+    }
+    // A 401 and the body cap's 413 are answered by the chain rather than a
+    // route, and an unmatched path by the fallback, so reaching all three
+    // shows the loop met more than route handlers.
+    expect([...statuses]).toEqual(expect.arrayContaining([200, 401, 404, 413]));
     expect(wrong).toEqual([]);
   });
 });

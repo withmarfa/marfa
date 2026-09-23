@@ -1,5 +1,6 @@
 import { OpenAPIHono } from "@hono/zod-openapi";
 import {
+  EXPOSED_RESPONSE_HEADERS,
   finalizeOpenAPISpec,
   OPENAPI_DOCUMENT_INFO,
 } from "./openapi-finalize.js";
@@ -59,6 +60,7 @@ import { loggerMiddleware } from "./middleware/logger.js";
 import { otelCorrelationMiddleware } from "./middleware/otel-correlation.js";
 import { bodyCapFor } from "./middleware/body-cap.js";
 import { CONTRACT_VERSION } from "./contract.js";
+import { contractHeader } from "./middleware/contract-header.js";
 import {
   idempotencyMiddleware,
   IDEMPOTENT_WRITE_DOORS,
@@ -132,6 +134,10 @@ export function createApp(
     return c.json(body, 404);
   });
 
+  // Outermost, so every answer the application gives carries the contract
+  // version, the ones no later layer shapes included.
+  app.use("*", contractHeader());
+
   // Expose the resolved AppConfig on the request context so handlers and
   // middleware read env-derived values from the single config source
   // rather than re-reading `process.env`.
@@ -161,6 +167,7 @@ export function createApp(
     app.use(
       "*",
       cors({
+        exposeHeaders: [...EXPOSED_RESPONSE_HEADERS],
         origin: (origin) => {
           if (!origin) return config.corsOrigins[0];
           if (config.corsOrigins.includes(origin)) return origin;
