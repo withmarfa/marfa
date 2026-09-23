@@ -84,6 +84,13 @@ function scriptFolderWrites(
       type?: string;
     }
   >();
+  // The type of each row the hydration served, so an update to one is
+  // answered with the type the real server keeps rather than a default.
+  const served = new Map(
+    Object.values(harness.rows)
+      .flat()
+      .map((row) => [row.item.id, String(wireItem(row.item).type)]),
+  );
   scriptWrites(harness.server, {
     create: [
       (request) => {
@@ -157,7 +164,7 @@ function scriptFolderWrites(
             ...sent.properties,
           },
           source_id: sent.source_id ?? held.get(id)?.source_id ?? null,
-          type: held.get(id)?.type,
+          type: held.get(id)?.type ?? served.get(id),
         });
         const now = held.get(id)!;
         return answers.updated(
@@ -2609,6 +2616,8 @@ describe("a file that is not a document", () => {
     acceptUploads(harness.server);
     writeFileSync(join(harness.dir, "photo.png"), photo);
     put(harness, "note.md", "---\ntitle: A note\n---\nbeside a photo\n");
+    // Empty, so no blob the server holds: left alone rather than pushed.
+    writeFileSync(join(harness.dir, "blank.png"), Buffer.alloc(0));
     const pushed = await harness.folder.push();
     expect(
       pushed.ok,
@@ -2619,7 +2628,11 @@ describe("a file that is not a document", () => {
       pushed.value.scan.created,
       "the photo was not pushed, so a file dropped beside the notes never leaves the machine",
     ).toBe(2);
-    expect(pushed.value.scan.skipped).toBe(0);
+    expect(
+      pushed.value.scan.skipped,
+      "an empty file was pushed, and the server refuses an empty blob",
+    ).toBe(1);
+    expect(sentKeys(harness)).not.toContain("blank.png");
 
     const file = sentCreates(harness).find(
       (create) => create.source_id === "photo.png",
@@ -2674,11 +2687,42 @@ describe("a file that is not a document", () => {
       (JSON.parse(patch?.body ?? "{}") as { properties?: unknown }).properties,
       "the update did not name the new bytes, so the item still names the old file",
     ).toMatchObject({ blob_ref: hashOf(edited) });
+
+    // A move alone: the new name and the title the folder gave it follow,
+    // and the bytes, unchanged, are not sent again.
+    const uploadsBefore = harness.server.requests.filter(
+      (request) => request.pathname === "/blobs",
+    ).length;
+    renameSync(join(harness.dir, "photo.png"), join(harness.dir, "moved.png"));
+    const moved = await harness.folder.push();
+    expect(moved.ok).toBe(true);
+    if (!moved.ok) return;
+    expect(moved.value.scan.renamed).toBe(1);
+    const rename = harness.server.requests
+      .filter(
+        (request) =>
+          request.method === "PATCH" &&
+          request.pathname === `/items/${String(file?.id)}`,
+      )
+      .at(-1);
+    expect(
+      JSON.parse(rename?.body ?? "{}") as Record<string, unknown>,
+      "the move did not carry the new name, so the next pull puts the file back where it was",
+    ).toMatchObject({
+      source_id: "moved.png",
+      properties: { title: "moved.png", blob_ref: hashOf(edited) },
+    });
+    expect(
+      harness.server.requests.filter((request) => request.pathname === "/blobs")
+        .length,
+      "a move alone sent the unchanged bytes again",
+    ).toBe(uploadsBefore);
   });
 
   it("writes a file item's bytes as its file, and reports them absent where it cannot fetch them", async () => {
     const bytes = photo;
     const hash = hashOf(bytes);
+    const other = Buffer.from("the bytes another file item names\n");
     harness = await folderHarness("folder-file-pull", {
       slice,
       rows: {
@@ -2694,10 +2738,24 @@ describe("a file that is not a document", () => {
               },
             },
           },
+          // Its link serves bytes that are not the ones it names, so its
+          // file can never be written; the photo beside it still is.
+          {
+            item: {
+              id: "01a00000-0000-7000-8000-0000000000f2",
+              type: "core.file",
+              properties: {
+                title: "broken.txt",
+                blob_ref: hashOf(other),
+                mime_type: "text/plain",
+              },
+            },
+          },
         ],
       },
     });
     scriptBlob(harness.server, bytes);
+    scriptBlob(harness.server, other, Buffer.from("not those bytes\n"));
 
     await harness.server.offline();
     const offline = await harness.folder.pull();
@@ -2709,7 +2767,7 @@ describe("a file that is not a document", () => {
     expect(
       offline.value.absent,
       "a file item whose bytes could not be had was not reported",
-    ).toBe(1);
+    ).toBe(2);
     expect(
       existsSync(join(harness.dir, "photo.png")),
       "the pull wrote a file for bytes it does not have",
@@ -2719,11 +2777,15 @@ describe("a file that is not a document", () => {
     // the absence above was the bytes and not a pull that writes no files.
     await harness.server.online();
     const pulled = await harness.folder.pull();
-    expect(pulled.ok).toBe(true);
+    expect(
+      pulled.ok,
+      `one file whose bytes could not be written failed the whole pull: ${JSON.stringify(pulled)}`,
+    ).toBe(true);
     if (!pulled.ok) return;
     expect(pulled.value.written).toBe(1);
-    expect(pulled.value.absent).toBe(0);
+    expect(pulled.value.absent).toBe(1);
     expect(readFileSync(join(harness.dir, "photo.png"))).toEqual(bytes);
+    expect(existsSync(join(harness.dir, "broken.txt"))).toBe(false);
 
     // Its own write is not read back as a change (`folders.md` 14).
     const scanned = await harness.folder.scan();
@@ -2734,5 +2796,16 @@ describe("a file that is not a document", () => {
       "the file the pull wrote was read back as a change to push",
     ).toBe(1);
     expect(scanned.value.created + scanned.value.updated).toBe(0);
+
+    // A file the folder already holds the bytes of needs no server at all.
+    await harness.server.offline();
+    const again = await harness.folder.pull();
+    expect(again.ok).toBe(true);
+    if (!again.ok) return;
+    expect(
+      again.value.unchanged,
+      "a file already on the disk was fetched again, and reported absent with the server away",
+    ).toBe(1);
+    await harness.server.online();
   });
 });

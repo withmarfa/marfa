@@ -16,7 +16,7 @@ use crate::error::CoreError;
 use crate::http::{Answer, Call, CallBody, Http, Method, Outgoing, ReplyBody};
 use crate::model::{BlockedReason, QueuedWrite, Verdict, WriteKind};
 use crate::store;
-use crate::wire::{WireEdgeAnswer, WireWriteAnswer};
+use crate::wire::{WireEdgeAnswer, WireErrorEnvelope, WireWriteAnswer};
 use crate::{Core, Result};
 
 /// What a drain did.
@@ -394,7 +394,12 @@ fn address<'a>(row: &'a QueuedWrite, payload: &'a str) -> Result<Door<'a>> {
             let mime_type = serde_json::from_str::<serde_json::Value>(payload)?
                 .get("mime_type")
                 .and_then(serde_json::Value::as_str)
-                .unwrap_or("application/octet-stream")
+                .ok_or_else(|| {
+                    CoreError::Store(format!(
+                        "the queued upload {} names no MIME type to send its bytes under",
+                        row.id
+                    ))
+                })?
                 .to_string();
             Ok(Door::Upload { hash, mime_type })
         }
@@ -420,10 +425,10 @@ fn upload(http: &Http, bytes: File, mime_type: &str) -> std::result::Result<Answ
         ReplyBody::Text(text) => text,
         ReplyBody::Stream(_) => String::new(),
     };
-    let code = serde_json::from_str::<serde_json::Value>(&body)
-        .ok()
-        .and_then(|envelope| Some(envelope.get("error")?.get("code")?.as_str()?.to_string()))
-        .unwrap_or_default();
+    let code = match serde_json::from_str::<WireErrorEnvelope>(&body) {
+        Ok(envelope) => envelope.error.code,
+        Err(_) => String::new(),
+    };
     Ok(Answer {
         status: reply.status,
         code,
@@ -531,12 +536,17 @@ pub fn drain(core: &Core, http: &Http) -> Result<DrainReport> {
         let sendable = match address(row, &payload)? {
             Door::Json(outgoing, shape) => Sendable::Json(outgoing, shape),
             Door::Upload { hash, mime_type } => {
-                let held = core.cache()?.held(hash)?;
-                match held.map(File::open) {
-                    Some(Ok(bytes)) => Sendable::Upload { bytes, mime_type },
-                    _ => {
+                let opened = match core.cache()?.held(hash)? {
+                    Some(path) => File::open(path),
+                    None => Err(std::io::Error::from(std::io::ErrorKind::NotFound)),
+                };
+                match opened {
+                    Ok(bytes) => Sendable::Upload { bytes, mime_type },
+                    // Gone: a write that can never be sent, refused with the
+                    // bytes named rather than left waiting for them.
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                         let reason = format!(
-                            "the bytes of {hash} are no longer held beside the store, so there is nothing to send"
+                            "the bytes of {hash} are no longer held beside the working copy, so there is nothing to send"
                         );
                         let conn = core.conn()?;
                         store::record_verdict(
@@ -553,6 +563,21 @@ pub fn drain(core: &Core, http: &Http) -> Result<DrainReport> {
                         report.verdicts.push(verdict_of(
                             row,
                             &Settled::plain(Some(Verdict::Refused), Some(reason), row.refusals),
+                        ));
+                        continue;
+                    }
+                    // Held and not opened now: a file locked, a process out of
+                    // handles. Neither is the write's fault, so it stays
+                    // unanswered and uncounted for the next drain, and the
+                    // report says why.
+                    Err(error) => {
+                        report.verdicts.push(verdict_of(
+                            row,
+                            &Settled::plain(
+                                None,
+                                Some(format!("the bytes of {hash} could not be opened: {error}")),
+                                row.refusals,
+                            ),
                         ));
                         continue;
                     }

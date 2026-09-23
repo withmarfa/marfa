@@ -1,5 +1,5 @@
-//! A blob's bytes, held beside the store and fetched when a caller asks for
-//! them (`device.md` 30, 37, 38).
+//! A blob's bytes, held beside the working copy and fetched when a caller
+//! asks for them (`device.md` 30, 37, 38).
 //!
 //! Hydration never comes here (`device.md` 28): an item carries its blob's
 //! name, and a slice of a thousand photos is a thousand names until someone
@@ -20,7 +20,7 @@ use crate::wire::WireErrorEnvelope;
 
 const PREFIX: &str = "sha256:";
 
-/// Where a store's bytes live: a folder beside the store file, one file per
+/// Where a working copy's bytes live: a folder beside its file, one file per
 /// blob, named by the hex of its hash.
 pub(crate) struct Cache {
     dir: PathBuf,
@@ -47,21 +47,53 @@ impl Cache {
         Ok(path.is_file().then_some(path))
     }
 
-    /// Copies a file in under the hash of what was read, and says what that
-    /// was. The copy is what an upload later streams from, so a file the
+    /// Copies a file in under the hash of what was read, and answers that
+    /// hash. The copy is what an upload later streams from, so a file the
     /// person changes or deletes after asking does not change what is sent.
-    pub(crate) fn take(&self, source: &Path) -> Result<(String, u64)> {
-        let file = File::open(source).map_err(|error| {
+    ///
+    /// An empty file is refused: the server holds no empty blob, so an
+    /// upload of one would be refused on its first answer, and the file item
+    /// waiting on it with it.
+    pub(crate) fn take(&self, source: &Path) -> Result<String> {
+        let unreadable = |error: io::Error| {
             CoreError::Invalid(format!("{} cannot be read: {error}", source.display()))
-        })?;
+        };
+        let file = File::open(source).map_err(unreadable)?;
         let (hash, size, incoming) = self.copy_in(file).map_err(|error| match error {
-            Copy::Source(error) => {
-                CoreError::Invalid(format!("{} cannot be read: {error}", source.display()))
-            }
+            Copy::Source(error) => unreadable(error),
             Copy::Cache(error) => self.unwritable(error),
         })?;
+        if size == 0 {
+            let _ = fs::remove_file(&incoming);
+            return Err(CoreError::Invalid(format!(
+                "{} is empty, and the server holds no empty blob",
+                source.display()
+            )));
+        }
         self.settle(&incoming, &hash)?;
-        Ok((hash, size))
+        Ok(hash)
+    }
+
+    /// Takes away bytes a fetch or a copy left half written, where they are
+    /// old enough that nothing is still writing them: a process that ended
+    /// mid-copy leaves its file behind and nothing else ever will.
+    pub(crate) fn sweep_incoming(&self, older_than: Duration) {
+        let Ok(entries) = fs::read_dir(&self.dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let stale = entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".incoming-")
+                && entry
+                    .metadata()
+                    .and_then(|metadata| metadata.modified())
+                    .is_ok_and(|modified| modified.elapsed().is_ok_and(|age| age > older_than));
+            if stale {
+                let _ = fs::remove_file(entry.path());
+            }
+        }
     }
 
     /// Keeps fetched bytes, and only once they hash to the name they were
@@ -136,11 +168,23 @@ impl Cache {
     }
 }
 
-/// The hex a hash names, refusing anything that is not `sha256:` and 64
-/// lowercase hex digits. The hex becomes a file name, so nothing else may
-/// reach one.
+/// A blob's name as the server writes it, from the name or from its hex
+/// alone, which the server's own doors take too.
+pub(crate) fn named(hash: &str) -> Result<String> {
+    let hex = hex_of(hash)?;
+    Ok(format!("{PREFIX}{hex}"))
+}
+
+/// The SHA-256 name of bytes in hand.
+pub(crate) fn name_of(bytes: &[u8]) -> String {
+    format!("{PREFIX}{:x}", Sha256::digest(bytes))
+}
+
+/// The hex a hash names, refusing anything that is not 64 lowercase hex
+/// digits, with or without `sha256:` before them. The hex becomes a file
+/// name, so nothing else may reach one.
 fn hex_of(hash: &str) -> Result<&str> {
-    hash.strip_prefix(PREFIX)
+    Some(hash.strip_prefix(PREFIX).unwrap_or(hash))
         .filter(|hex| {
             hex.len() == 64
                 && hex
@@ -155,9 +199,8 @@ fn hex_of(hash: &str) -> Result<&str> {
 }
 
 /// Fetches a blob's bytes into the cache: the link from the server, then
-/// the bytes from the link.
+/// the bytes from the link. `hash` is the name as the server writes it.
 pub(crate) fn fetch(cache: &Cache, http: &Http, hash: &str) -> Result<PathBuf> {
-    hex_of(hash)?;
     let absent = |reason: String| CoreError::BytesAbsent {
         hash: hash.to_string(),
         reason,
@@ -172,12 +215,20 @@ pub(crate) fn fetch(cache: &Cache, http: &Http, hash: &str) -> Result<PathBuf> {
             credential: true,
             stream: false,
         })
-        .map_err(|error| absent(format!("the server cannot be reached: {error}")))?;
+        .map_err(|error| match error {
+            CoreError::Network(reason) => absent(format!("the server cannot be reached: {reason}")),
+            other => other,
+        })?;
     let ReplyBody::Text(text) = reply.body else {
         return Err(CoreError::Decoding(
             "the link door answered a stream where it answers JSON".into(),
         ));
     };
+    if reply.status == 404 {
+        // The server holds no bytes by this name. The item naming them is
+        // still whole, which is what absent bytes are (`device.md` 30).
+        return Err(absent(format!("the server holds none: {text}")));
+    }
     if !(200..300).contains(&reply.status) {
         return Err(refused(reply.status, &text, reply.retry_after_seconds));
     }
@@ -186,23 +237,15 @@ pub(crate) fn fetch(cache: &Cache, http: &Http, hash: &str) -> Result<PathBuf> {
         .get("url")
         .and_then(serde_json::Value::as_str)
         .ok_or_else(|| CoreError::Decoding(format!("the link door answered no url: {text}")))?;
-    // An absolute link is used exactly as given, never re-serialized: an
-    // object store signs its own spelling of the URL. A relative one is the
-    // server's own and resolves against it.
-    let link = match url::Url::parse(link) {
-        Ok(_) => link.to_string(),
-        Err(url::ParseError::RelativeUrlWithoutBase) => {
-            url::Url::parse(&format!("{}/", http.origin()))?
-                .join(link)?
-                .to_string()
-        }
-        Err(error) => {
-            return Err(CoreError::Decoding(format!(
-                "the link door answered a link that is not one ({error}): {link}"
-            )));
-        }
-    };
-    let bytes = open(&link).map_err(absent)?;
+    // Used exactly as given and never re-serialized: an object store signs
+    // its own spelling of the URL. The door answers an absolute link, and
+    // anything else is an answer this device cannot read.
+    url::Url::parse(link).map_err(|error| {
+        CoreError::Decoding(format!(
+            "the link door answered a link that is not an absolute URL ({error}): {link}"
+        ))
+    })?;
+    let bytes = open(link).map_err(absent)?;
     cache.keep(hash, bytes)
 }
 
@@ -229,7 +272,9 @@ fn open(link: &str) -> std::result::Result<impl Read, String> {
     Ok(response.into_body().into_reader())
 }
 
-/// A refusal from the link door, with the server's code.
+/// A refusal from the link door, with the server's code. The transport's
+/// own mapping cannot be reached from here while its file is held for the
+/// envelope change, and this goes when it can.
 fn refused(status: u16, text: &str, retry_after_seconds: Option<u64>) -> CoreError {
     let (code, message) = match serde_json::from_str::<WireErrorEnvelope>(text) {
         Ok(envelope) => (
@@ -315,9 +360,14 @@ mod tests {
     #[test]
     fn a_hash_names_a_file_and_nothing_else_does() {
         assert!(hex_of(EMPTY).is_ok());
+        // The hex alone is the same name, as the server's doors take it.
+        assert_eq!(
+            named("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855").unwrap(),
+            EMPTY
+        );
         for bad in [
-            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
             "sha256:../../etc/passwd",
+            "../../etc/passwd",
             "sha256:E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855",
             "sha256:e3b0",
         ] {
@@ -376,15 +426,35 @@ mod tests {
         let source = dir.path().join("hello.txt");
         fs::write(&source, b"hello").unwrap();
         let cache = Cache::beside(&dir.path().join("store.sqlite"));
-        let (hash, size) = cache.take(&source).unwrap();
+        let hash = cache.take(&source).unwrap();
         assert_eq!(
             hash,
             "sha256:2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
         );
-        assert_eq!(size, 5);
+        assert_eq!(hash, name_of(b"hello"));
         assert_eq!(
             fs::read(cache.held(&hash).unwrap().unwrap()).unwrap(),
             b"hello"
         );
+
+        // An empty file is refused, and leaves nothing behind.
+        let empty = dir.path().join("empty.png");
+        fs::write(&empty, b"").unwrap();
+        assert!(matches!(cache.take(&empty), Err(CoreError::Invalid(_))));
+        assert_eq!(cache.held(EMPTY).unwrap(), None);
+    }
+
+    #[test]
+    fn a_half_written_copy_is_swept_once_it_is_old() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = Cache::beside(&dir.path().join("store.sqlite"));
+        fs::create_dir_all(&cache.dir).unwrap();
+        let left = cache.dir.join(".incoming-left-by-a-crash");
+        fs::write(&left, b"half").unwrap();
+        // Young enough that something may still be writing it: kept.
+        cache.sweep_incoming(Duration::from_secs(3600));
+        assert!(left.exists());
+        cache.sweep_incoming(Duration::ZERO);
+        assert!(!left.exists());
     }
 }

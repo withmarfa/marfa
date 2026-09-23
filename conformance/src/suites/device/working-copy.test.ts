@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { describe, it, expect, afterEach, vi } from "vitest";
 import {
   KEY,
+  hashOf,
   hydratedHarness,
   scriptBlob,
   startHarness,
@@ -13,10 +14,12 @@ import {
   SCRIPTED_TYPES,
   connected,
   itemEvent,
+  refusal,
   replay,
   streamCursor,
   wireItem,
   wireType,
+  writeAnswers,
 } from "../../device/marfa-answers.js";
 
 /** One `core.file` row naming `hash`, for a hydration to pull. */
@@ -213,6 +216,18 @@ describe("the working copy holds one slice", () => {
     hydrateOneFile(server, hash);
     expect((await device.hydrate(["core.file"], "library")).ok).toBe(true);
 
+    // A blob the server holds no bytes for is absent bytes too, not a
+    // missing item.
+    const unheld = hashOf(Buffer.from("never uploaded\n"));
+    server.answer(
+      "GET",
+      `/blobs/${unheld}/url`,
+      refusal(404, "blob_not_found", "no blob with this hash"),
+    );
+    const none = await device.blob(unheld);
+    expect(none.ok).toBe(false);
+    if (!none.ok) expect(none.refusal.code).toBe("bytes_absent");
+
     await server.offline();
     const absent = await device.blob(hash);
     expect(
@@ -252,12 +267,48 @@ describe("the working copy holds one slice", () => {
     harness = await startHarness("bytes-held");
     const { server, device } = harness;
     const bytes = Buffer.from("fetched once\n");
-    const hash = scriptBlob(server, bytes);
+    const hash = hashOf(bytes);
+    const hex = hash.slice("sha256:".length);
+    // A link spelled the way an object store signs one, which a device that
+    // rebuilt the URL would spell differently.
+    const link = `/links/${hex}?X-Sig=a%2Fb%3D&Expires=1`;
+    server.answer(
+      "GET",
+      `/blobs/${hash}/url`,
+      writeAnswers.link(`${server.url}${link}`),
+    );
+    server.answer("GET", `/links/${hex}`, {
+      kind: "bytes",
+      status: 200,
+      body: bytes,
+    });
     hydrateOneFile(server, hash);
     expect((await device.hydrate(["core.file"], "library")).ok).toBe(true);
 
     const first = await device.blob(hash);
     expect(first.ok).toBe(true);
+    if (first.ok) {
+      expect(
+        first.value.path.startsWith(`${device.store}.blobs/`),
+        "the bytes were not kept beside the working copy",
+      ).toBe(true);
+    }
+    const followed = server.requests.find((request) =>
+      request.pathname.startsWith("/links/"),
+    );
+    expect(
+      followed?.target,
+      "the link was not fetched exactly as the server gave it",
+    ).toBe(link);
+    expect(
+      followed?.headers.authorization,
+      "the device sent its credential to the link, which an object store's host must never see",
+    ).toBeUndefined();
+    // The witness: the device does carry its credential, to the server.
+    expect(
+      server.requests.find((request) => request.pathname.endsWith("/url"))
+        ?.headers.authorization,
+    ).toBeDefined();
     const asked = (): number =>
       server.requests.filter(
         (request) =>

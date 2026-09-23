@@ -7,7 +7,7 @@ import {
 } from "../../device/marfa-answers.js";
 import type { DeviceUnderTest, QueuedWrite } from "../../device/protocol.js";
 import type { Responder } from "../../device/scripted-server.js";
-import { existsSync, rmSync } from "node:fs";
+import { chmodSync, existsSync, rmSync } from "node:fs";
 import {
   acceptUploads,
   fileOf,
@@ -443,13 +443,7 @@ describe("what a drain sends and reports", () => {
   });
 });
 
-/**
- * The kinds a queue holds (`queue-and-verdicts.md` 32).
- *
- * `upload_blob` is the one this build cannot yet send: blob work is outside
- * this milestone, and the queue holding a kind whose door has not been built
- * is the contract's shape rather than a gap in it.
- */
+/** The kinds a queue holds (`queue-and-verdicts.md` 32). */
 const WRITE_KINDS = [
   "create_item",
   "update_item",
@@ -1475,6 +1469,16 @@ describe("an upload is a queued write", () => {
       "the upload does not name the bytes it carries, so nothing can ask what is outstanding for them",
     ).toBe(hashOf(bytes));
     expect(queued.value.verdict).toBeNull();
+    // An empty file is refused where it is asked for, since the server holds
+    // no empty blob; the upload above is the witness that files are taken.
+    const empty = await device.putBlob(fileOf("empty.txt", ""));
+    expect(
+      empty.ok,
+      "an empty file was queued as an upload the server will refuse",
+    ).toBe(false);
+    expect((await queueOf(device)).map((row) => row.kind)).toEqual([
+      "upload_blob",
+    ]);
 
     // The bytes were held when the upload was queued: the file the person
     // named is gone before the drain, and the upload still sends them.
@@ -1621,6 +1625,36 @@ describe("an upload is a queued write", () => {
       server.requests.filter((request) => request.pathname === "/blobs"),
       "an upload with nothing to send reached the server",
     ).toHaveLength(1);
+  });
+
+  it("leaves an upload whose held bytes cannot be opened unanswered, and says why", async () => {
+    harness = await hydratedHarness("upload-unopened", { rows: held() });
+    const { device, server } = harness;
+    const bytes = Buffer.from("held and locked for now\n");
+    expect((await device.putBlob(fileOf("locked.txt", bytes))).ok).toBe(true);
+    const heldAt = `${device.store}.blobs/${hashOf(bytes).slice("sha256:".length)}`;
+    chmodSync(heldAt, 0o000);
+    acceptUploads(server);
+    try {
+      const drained = await device.drain();
+      expect(drained.ok).toBe(true);
+      if (!drained.ok) return;
+      expect(
+        drained.value.verdicts[0]?.verdict,
+        "bytes held but not opened for now were refused for good, and the file item waiting on them with them",
+      ).toBeNull();
+      expect(drained.value.verdicts[0]?.reason).toContain(
+        "could not be opened",
+      );
+      expect(drained.value.verdicts[0]?.refusals).toBe(0);
+    } finally {
+      chmodSync(heldAt, 0o644);
+    }
+    // The witness: the same upload goes once the bytes can be opened.
+    const again = await device.drain();
+    expect(again.ok).toBe(true);
+    if (!again.ok) return;
+    expect(again.value.verdicts[0]?.verdict).toBe("accepted");
   });
 
   it("counts an upload whose answer names other bytes", async () => {

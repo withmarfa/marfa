@@ -273,6 +273,8 @@ export interface FolderHarness {
   server: ScriptedServer;
   folder: CliFolder;
   dir: string;
+  /** What the hydration served, so a scripted write door knows those rows. */
+  rows: Record<string, Array<{ item: WireItemOptions; tags?: string[] }>>;
   stop: () => Promise<void>;
 }
 
@@ -345,7 +347,7 @@ export async function folderHarness(
       );
     }
   }
-  return { server, folder, dir, stop };
+  return { server, folder, dir, rows: options.rows ?? {}, stop };
 }
 
 /** The name a blob's bytes go by: `sha256:` and the hex of their digest. */

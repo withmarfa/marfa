@@ -61,6 +61,8 @@ export interface RecordedRequest {
   pathname: string;
   query: URLSearchParams;
   headers: Record<string, string>;
+  /** The request target exactly as it arrived, before any parsing. */
+  target: string;
   body: string;
   /** The body's bytes as they arrived, for a body that is not text. */
   raw: Buffer;
@@ -219,6 +221,7 @@ export class ScriptedServer {
         pathname: url.pathname,
         query: url.searchParams,
         headers,
+        target: request.url ?? "/",
         body: Buffer.concat(chunks).toString("utf8"),
         raw: Buffer.concat(chunks),
         seq: this.seq++,

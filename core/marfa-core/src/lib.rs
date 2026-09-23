@@ -51,7 +51,7 @@ pub struct Server {
 pub struct Core {
     conn: Mutex<Connection>,
     http: Option<http::Http>,
-    /// Where blobs' bytes are held: beside the store file, and nowhere for a
+    /// Where blobs' bytes are held: beside the working copy's file, and nowhere for a
     /// store held in memory.
     cache: Option<blob::Cache>,
     catch_up_idle: Duration,
@@ -62,6 +62,10 @@ pub struct Core {
 
 const DEFAULT_CATCH_UP_IDLE: Duration = Duration::from_secs(3);
 
+/// How old a half-written copy of a blob's bytes must be before the writer
+/// takes it away on open: well past any fetch or copy still running.
+const INCOMING_GRACE: Duration = Duration::from_secs(3600);
+
 impl Core {
     /// Opens the file at `path`, creating it and its schema when absent. A
     /// file bound to a different server than `server` is refused.
@@ -71,12 +75,11 @@ impl Core {
         // store first would have done so as a writer for as long as it took
         // to find out it was not one.
         let lock = lock::WriterLock::claim(Some(path))?;
-        Self::from_connection(
-            store::open(path)?,
-            server,
-            lock,
-            Some(blob::Cache::beside(path)),
-        )
+        let cache = blob::Cache::beside(path);
+        if lock.handle() == Handle::Writer {
+            cache.sweep_incoming(INCOMING_GRACE);
+        }
+        Self::from_connection(store::open(path)?, server, lock, Some(cache))
     }
 
     pub fn open_in_memory(server: Option<Server>) -> Result<Core> {
@@ -586,14 +589,14 @@ impl Core {
 
     /// Queues an upload (`device.md` 38).
     ///
-    /// The bytes are copied beside the store under their hash, and the queue
-    /// holds that name and never the bytes: a queue is read whole by every
-    /// write that looks for what it depends on.
+    /// The bytes are copied beside the working copy under their hash, and
+    /// the queue holds that name and never the bytes: a queue is read whole
+    /// by every write that looks for what it depends on.
     pub fn put_blob(&self, path: &Path, mime_type: Option<&str>) -> Result<QueuedWrite> {
         self.with_upload(
             path,
             &blob::mime_type_for(path, mime_type),
-            |_, _, upload| Ok(upload.clone()),
+            |_, _, upload, _| Ok(upload.clone()),
         )
     }
 
@@ -601,9 +604,9 @@ impl Core {
     /// it, naming the bytes and their MIME type.
     pub(crate) fn create_file_item(&self, path: &Path, draft: &Draft) -> Result<QueuedWrite> {
         let mime_type = blob::mime_type_for(path, None);
-        self.with_upload(path, &mime_type, |tx, catalog, upload| {
+        self.with_upload(path, &mime_type, |tx, catalog, upload, hash| {
             let mut draft = draft.clone();
-            name_bytes(&mut draft.properties, upload, &mime_type);
+            name_bytes(&mut draft.properties, hash, &mime_type);
             queue_create(tx, catalog, &draft, std::slice::from_ref(&upload.id))
         })
     }
@@ -617,30 +620,31 @@ impl Core {
         edit: &Edit,
     ) -> Result<QueuedWrite> {
         let mime_type = blob::mime_type_for(path, None);
-        self.with_upload(path, &mime_type, |tx, catalog, upload| {
+        self.with_upload(path, &mime_type, |tx, catalog, upload, hash| {
             let mut edit = edit.clone();
-            name_bytes(&mut edit.properties, upload, &mime_type);
+            name_bytes(&mut edit.properties, hash, &mime_type);
             queue_update(tx, catalog, id, &edit, std::slice::from_ref(&upload.id))
         })
     }
 
-    /// Takes a file's bytes in beside the store, then queues their upload
-    /// and whatever waits on it in one transaction: a write queued without
-    /// the upload it names would name bytes the server is never sent.
+    /// Takes a file's bytes in beside the working copy, then queues their
+    /// upload and whatever waits on it in one transaction: a write queued
+    /// without the upload it names would name bytes the server is never
+    /// sent.
     fn with_upload<T>(
         &self,
         path: &Path,
         mime_type: &str,
-        then: impl FnOnce(&Connection, &catalog::Catalog, &QueuedWrite) -> Result<T>,
+        then: impl FnOnce(&Connection, &catalog::Catalog, &QueuedWrite, &str) -> Result<T>,
     ) -> Result<T> {
         self.lock.refuse_unless_writer()?;
         store::refuse_unless_hydrated(&*self.conn()?)?;
-        let (hash, size) = self.cache()?.take(path)?;
+        let hash = self.cache()?.take(path)?;
         let mut conn = self.conn()?;
         let catalog = catalog::Catalog::load(&conn)?;
         let tx = conn.transaction()?;
-        let upload = queue_upload(&tx, &hash, mime_type, size)?;
-        let queued = then(&tx, &catalog, &upload)?;
+        let upload = queue_upload(&tx, &hash, mime_type)?;
+        let queued = then(&tx, &catalog, &upload, &hash)?;
         tx.commit()?;
         Ok(queued)
     }
@@ -653,9 +657,13 @@ impl Core {
     /// upload names bytes the server never receives, and an edge queued
     /// without its file item links nothing.
     pub fn attach(&self, target: &str, path: &Path, attachment: &Attachment) -> Result<Attached> {
+        self.lock.refuse_unless_writer()?;
         {
             let conn = self.conn()?;
-            if !store::item_held(&conn, target)? {
+            store::refuse_unless_hydrated(&conn)?;
+            // A row in the bin reads as absent (`device.md` 32), and a file
+            // attached to it would be linked to something nobody can open.
+            if store::item_by_id(&conn, target)?.is_none() {
                 return Err(CoreError::NotFound {
                     code: "item_not_found".into(),
                     message: format!("{target} is not a row this copy holds"),
@@ -676,8 +684,8 @@ impl Core {
             tier: attachment.tier,
             ..Default::default()
         };
-        self.with_upload(path, &mime_type, |tx, catalog, upload| {
-            name_bytes(&mut draft.properties, upload, &mime_type);
+        self.with_upload(path, &mime_type, |tx, catalog, upload, hash| {
+            name_bytes(&mut draft.properties, hash, &mime_type);
             let item = queue_create(tx, catalog, &draft, std::slice::from_ref(&upload.id))?;
             let edge = queue_edge(
                 tx,
@@ -696,29 +704,33 @@ impl Core {
         })
     }
 
-    /// A blob's bytes, as a file beside the store (`device.md` 30, 37).
+    /// A blob's bytes, as a file beside the working copy (`device.md` 30,
+    /// 37).
     ///
-    /// Answered from what the store holds when it holds them, and otherwise
-    /// fetched through the link the server gives and held for next time.
-    /// Where there are no bytes and no way to fetch them, the refusal is
-    /// `bytes_absent` naming the hash: the item that names them is whole.
+    /// Answered from what is held there when the bytes are held, and
+    /// otherwise fetched through the link the server gives and held for
+    /// next time. Where there are no bytes and no way to fetch them, the
+    /// refusal is `bytes_absent` naming the hash: the item that names them
+    /// is whole.
     pub fn blob(&self, hash: &str) -> Result<PathBuf> {
+        let hash = blob::named(hash)?;
         let cache = self.cache()?;
-        if let Some(path) = cache.held(hash)? {
+        if let Some(path) = cache.held(&hash)? {
             return Ok(path);
         }
         let Some(http) = self.http.as_ref() else {
             return Err(CoreError::BytesAbsent {
-                hash: hash.to_string(),
-                reason: "this store was opened with no server to fetch them from".into(),
+                hash,
+                reason: "this working copy was opened with no server to fetch them from".into(),
             });
         };
-        blob::fetch(cache, http, hash)
+        blob::fetch(cache, http, &hash)
     }
 
-    /// Whether a blob's bytes are held beside the store, with no request.
+    /// Whether a blob's bytes are held beside the working copy, with no
+    /// request.
     pub fn blob_held(&self, hash: &str) -> Result<bool> {
-        Ok(self.cache()?.held(hash)?.is_some())
+        Ok(self.cache()?.held(&blob::named(hash)?)?.is_some())
     }
 
     /// Clears the rows the server has answered, and says how many went.
@@ -993,29 +1005,18 @@ fn queue_edge(tx: &Connection, draft: &EdgeDraft) -> Result<QueuedWrite> {
     )
 }
 
-/// A file item's two properties that name its bytes: the hash the upload
-/// carries, and the MIME type it was sent under.
-fn name_bytes(
-    properties: &mut serde_json::Map<String, Value>,
-    upload: &QueuedWrite,
-    mime_type: &str,
-) {
-    properties.insert(
-        "blob_ref".into(),
-        upload.blob.clone().unwrap_or_default().into(),
-    );
+/// A file item's two properties that name its bytes: their hash, and the
+/// MIME type they are sent under.
+fn name_bytes(properties: &mut serde_json::Map<String, Value>, hash: &str, mime_type: &str) {
+    properties.insert("blob_ref".into(), hash.into());
     properties.insert("mime_type".into(), mime_type.into());
 }
 
-/// An upload, queued under the hash of bytes already held beside the store.
-/// The payload is what the drain needs to send them and nothing more.
-fn queue_upload(conn: &Connection, hash: &str, mime_type: &str, size: u64) -> Result<QueuedWrite> {
-    let payload = serde_json::json!({
-        "hash": hash,
-        "mime_type": mime_type,
-        "size_bytes": size,
-    })
-    .to_string();
+/// An upload, queued under the hash of bytes already held beside the working
+/// copy. The hash rides in the payload beside its own column, as a tag's
+/// does, and the MIME type is what the drain sends the bytes under.
+fn queue_upload(conn: &Connection, hash: &str, mime_type: &str) -> Result<QueuedWrite> {
+    let payload = serde_json::json!({ "hash": hash, "mime_type": mime_type }).to_string();
     store::enqueue(
         conn,
         &store::NewWrite {
@@ -1222,6 +1223,19 @@ mod tests {
             // Clearing answered rows is a write to the queue like any
             // other.
             ("forget_answered", reader.forget_answered().unwrap_err()),
+            // Refused before the file is read, so a reader copies nothing in.
+            (
+                "put_blob",
+                reader
+                    .put_blob(Path::new("no-such-file.png"), None)
+                    .unwrap_err(),
+            ),
+            (
+                "attach",
+                reader
+                    .attach("x", Path::new("no-such-file.png"), &Attachment::default())
+                    .unwrap_err(),
+            ),
         ];
         for (door, refusal) in &refusals {
             assert_eq!(
@@ -1240,7 +1254,7 @@ mod tests {
         // list from quietly shrinking.
         assert_eq!(
             refusals.len(),
-            17,
+            19,
             "an entry has gone from the list above. Every method on `Core` \
              that calls `refuse_unless_writer` belongs in it, and a door \
              dropped from it is a door nothing here covers."

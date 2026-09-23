@@ -295,6 +295,13 @@ impl Folder {
                 // the folder holds what it last agreed with.
                 continue;
             };
+            // An empty file that is not a document is no blob the server
+            // holds (`folders.md` 28), and pushing one would queue an upload
+            // refused on its first answer.
+            if bytes.is_empty() && !is_document(path) {
+                report.skipped += 1;
+                continue;
+            }
             let text = String::from_utf8_lossy(&bytes).into_owned();
             let hash = state::hash(&bytes);
             let mark = identities.get(path).map(|found| found.key());
@@ -874,10 +881,24 @@ impl Folder {
             base_version: Some(held.version),
             source_id: (bound.path != key).then(|| key.to_string()),
         };
+        // A title the folder gave the file follows it to its new name; one
+        // somebody set on the item stays theirs.
+        let old_name = bound.path.rsplit('/').next().unwrap_or(&bound.path);
+        let new_name = key.rsplit('/').next().unwrap_or(key);
+        if old_name != new_name
+            && held
+                .properties
+                .get(document::TITLE_FIELD)
+                .and_then(Value::as_str)
+                == Some(old_name)
+        {
+            edit.properties
+                .insert(document::TITLE_FIELD.into(), Value::String(new_name.into()));
+        }
         if bound.content_hash == hash {
             // The same bytes under a new name. They are named as the copy
             // holds them, so the update carries a field and moves nothing
-            // but the key.
+            // but the key and the name.
             for field in ["blob_ref", "mime_type"] {
                 if let Some(value) = held.properties.get(field) {
                     edit.properties.insert(field.into(), value.clone());
@@ -1172,7 +1193,7 @@ impl Folder {
                 let conn = self.core.conn()?;
                 state::bound_to_item(&conn, &item.id)?
             };
-            let want = self.path_for(item, bound.as_ref());
+            let want = self.path_for(item, bound.as_ref(), &catalog);
             // Nothing is counted as taken until this item is actually going
             // to be written there. A path a pull declines is not a path
             // anything took, and leaving the claim in starves whichever item
@@ -1192,20 +1213,44 @@ impl Folder {
             // for them (`folders.md` 29). Where they cannot be had, nothing
             // is written and nothing is bound, and the next pull asks again.
             let (bytes, wrote) = match bytes_of(item, &catalog) {
-                Some(blob) => match self.core.blob(blob) {
-                    Ok(held) => (
-                        std::fs::read(&held).map_err(|error| {
-                            CoreError::Store(format!("cannot read {}: {error}", held.display()))
-                        })?,
-                        Vec::new(),
-                    ),
-                    Err(CoreError::BytesAbsent { .. } | CoreError::NotFound { .. }) => {
-                        report.absent += 1;
-                        visited.insert(item.id.clone());
-                        continue;
+                Some(blob) => {
+                    // The file this folder wrote already holds these bytes:
+                    // nothing to fetch, and no server needed to fetch it.
+                    let on_disk = bound
+                        .as_ref()
+                        .filter(|bound| bound.path == want)
+                        .and_then(|bound| std::fs::read(self.root.join(&bound.path)).ok())
+                        .filter(|found| {
+                            crate::blob::named(blob)
+                                .is_ok_and(|named| crate::blob::name_of(found) == named)
+                        });
+                    match on_disk {
+                        Some(found) => (found, Vec::new()),
+                        None => match self.core.blob(blob) {
+                            Ok(held) => (
+                                std::fs::read(&held).map_err(|error| {
+                                    CoreError::Store(format!(
+                                        "cannot read {}: {error}",
+                                        held.display()
+                                    ))
+                                })?,
+                                Vec::new(),
+                            ),
+                            // A refused credential refuses every file alike,
+                            // and saying so once beats counting each.
+                            Err(error @ CoreError::Unauthorized { .. }) => return Err(error),
+                            // Anything else is about this file's bytes alone:
+                            // absent, missing on the server, a name that is
+                            // not one, bytes that are not what they are
+                            // named. The other files still reach the disk.
+                            Err(_) => {
+                                report.absent += 1;
+                                visited.insert(item.id.clone());
+                                continue;
+                            }
+                        },
                     }
-                    Err(error) => return Err(error),
-                },
+                }
                 None => {
                     let (text, wrote) = self.render(item, &declined)?;
                     (text.into_bytes(), wrote)
@@ -1438,7 +1483,7 @@ impl Folder {
     /// The natural key the folder gave it, when it has one: the key is the
     /// path, so an item this folder created goes back where it came from. An
     /// item from elsewhere takes its title, which is the only name it has.
-    fn path_for(&self, item: &Item, bound: Option<&state::Bound>) -> String {
+    fn path_for(&self, item: &Item, bound: Option<&state::Bound>, catalog: &Catalog) -> String {
         if let Some(key) = item.source_id.as_deref()
             && !key.is_empty()
             && !key.starts_with('/')
@@ -1457,11 +1502,7 @@ impl Folder {
             .unwrap_or(&item.id);
         // A file item's title is a file's name already, extension and all;
         // a document's is a heading, and the folder names its file.
-        if item
-            .properties
-            .get("blob_ref")
-            .is_some_and(Value::is_string)
-        {
+        if bytes_of(item, catalog).is_some() {
             safe_name(title)
         } else {
             format!("{}.md", safe_name(title))

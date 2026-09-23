@@ -91,7 +91,7 @@ if (phase === "hydrate") {
   core.deleteItem(third.itemId ?? "");
   const attachment = `${path}.attachment.txt`;
   writeFileSync(attachment, "bytes attached with the server away\n");
-  const attached = core.attach(firstId, attachment);
+  const attached = await core.attach(firstId, attachment);
   expect(
     attached.item.dependsOn.includes(attached.upload.id),
     "the attached file item does not wait on its upload",

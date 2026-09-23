@@ -667,6 +667,55 @@ pub struct Drain {
     core: Arc<marfa_core::Core>,
 }
 
+pub struct PutBlob {
+    core: Arc<marfa_core::Core>,
+    path: String,
+    mime_type: Option<String>,
+}
+
+#[napi]
+impl Task for PutBlob {
+    type Output = marfa_core::QueuedWrite;
+    type JsValue = QueuedWrite;
+
+    fn compute(&mut self) -> Result<Self::Output> {
+        self.core
+            .put_blob(std::path::Path::new(&self.path), self.mime_type.as_deref())
+            .map_err(failure)
+    }
+
+    fn resolve(&mut self, _: Env, write: Self::Output) -> Result<Self::JsValue> {
+        queued(write)
+    }
+}
+
+pub struct Attach {
+    core: Arc<marfa_core::Core>,
+    id: String,
+    path: String,
+    attachment: marfa_core::Attachment,
+}
+
+#[napi]
+impl Task for Attach {
+    type Output = marfa_core::Attached;
+    type JsValue = Attached;
+
+    fn compute(&mut self) -> Result<Self::Output> {
+        self.core
+            .attach(&self.id, std::path::Path::new(&self.path), &self.attachment)
+            .map_err(failure)
+    }
+
+    fn resolve(&mut self, _: Env, attached: Self::Output) -> Result<Self::JsValue> {
+        Ok(Attached {
+            upload: queued(attached.upload)?,
+            item: queued(attached.item)?,
+            edge: queued(attached.edge)?,
+        })
+    }
+}
+
 pub struct FetchBlob {
     core: Arc<marfa_core::Core>,
     hash: String,
@@ -965,43 +1014,39 @@ impl MarfaCore {
         })
     }
 
-    /// Holds a file's bytes beside the store and queues their upload.
-    #[napi]
-    pub fn put_blob(&self, path: String, mime_type: Option<String>) -> Result<QueuedWrite> {
-        queued(
-            self.inner
-                .put_blob(std::path::Path::new(&path), mime_type.as_deref())
-                .map_err(failure)?,
-        )
+    /// Holds a file's bytes beside the working copy and queues their upload.
+    /// Off the JavaScript thread, because the whole file is copied and
+    /// hashed.
+    #[napi(ts_return_type = "Promise<QueuedWrite>")]
+    pub fn put_blob(&self, path: String, mime_type: Option<String>) -> AsyncTask<PutBlob> {
+        AsyncTask::new(PutBlob {
+            core: Arc::clone(&self.inner),
+            path,
+            mime_type,
+        })
     }
 
     /// Attaches a file to an item: its upload, a file item naming the bytes,
-    /// and an `attached-to` edge, three queued writes.
-    #[napi]
+    /// and an `attached-to` edge, three queued writes. Off the JavaScript
+    /// thread, for the reason `putBlob` is.
+    #[napi(ts_return_type = "Promise<Attached>")]
     pub fn attach(
         &self,
         id: String,
         path: String,
         attachment: Option<Attachment>,
-    ) -> Result<Attached> {
+    ) -> AsyncTask<Attach> {
         let attachment = attachment.unwrap_or_default();
-        let attached = self
-            .inner
-            .attach(
-                &id,
-                std::path::Path::new(&path),
-                &marfa_core::Attachment {
-                    mime_type: attachment.mime_type,
-                    title: attachment.title,
-                    r#type: attachment.r#type,
-                    tier: attachment.tier.map(Into::into),
-                },
-            )
-            .map_err(failure)?;
-        Ok(Attached {
-            upload: queued(attached.upload)?,
-            item: queued(attached.item)?,
-            edge: queued(attached.edge)?,
+        AsyncTask::new(Attach {
+            core: Arc::clone(&self.inner),
+            id,
+            path,
+            attachment: marfa_core::Attachment {
+                mime_type: attachment.mime_type,
+                title: attachment.title,
+                r#type: attachment.r#type,
+                tier: attachment.tier.map(Into::into),
+            },
         })
     }
 
