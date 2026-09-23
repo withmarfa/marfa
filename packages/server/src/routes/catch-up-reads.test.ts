@@ -3,21 +3,18 @@
  *
  * A durable client holds a cursor and asks two questions on reconnect:
  * what changed since this moment, and what state is everything in now.
- * Neither was answerable. The only time filter read the item's own
- * user-meaningful time rather than when the row changed, so a client that
- * had been away could not narrow at all, and a listing that omits its
- * state answers the active one, so the one fact a client most needs in
- * order to prune its local copy — that a row has left it — was the one it
- * could not see.
+ * The item's own time cannot answer the first, since it is user-meaningful
+ * rather than when the row changed, and a listing that omits its state
+ * answers the active one, so it cannot show the one fact a client most
+ * needs in order to prune its local copy: that a row has left it.
  *
  * `updated_after` is that filter and `state=any` is that listing.
  *
  * **Every assertion here is on which rows come back, never on a status
- * code alone.** An unknown query key is stripped rather than refused, so
- * the failure this feature exists to prevent looks exactly like success:
- * `200`, a well-formed page, and the whole corpus in it. A test that
- * checked only the status would pass against a server that ignored the
- * parameter entirely.
+ * code alone.** A server that ignored the parameter would answer `200`, a
+ * well-formed page and the whole corpus in it, so the failure this feature
+ * exists to prevent looks exactly like success. A test that checked only
+ * the status would pass against it.
  *
  * Runs against the real store, because the predicate and the ordering are
  * the store's and a fake would assert its own.
@@ -478,7 +475,7 @@ describe("a time bound is read as the instant it names", () => {
 describe("an empty bound is refused rather than widened", () => {
   it("refuses an empty updated_after on GET /items", async () => {
     // The ordering switches on the filter being present and the
-    // predicate on it being truthy, so an empty value used to order by
+    // predicate on it being truthy, so an empty value taken would order by
     // `(updated_at, id)` ascending and bound nothing at all — a full
     // corpus walk wearing the shape of a narrow catch-up. A client
     // building `?updated_after=${cursor}` before it holds a cursor sends

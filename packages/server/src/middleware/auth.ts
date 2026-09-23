@@ -107,16 +107,15 @@ export function hashApiKey(raw: string, salt: string): string {
  * store needs — `key_hash`, which no route may ever see, and
  * `revoked_at`, which is already spent by the time validation returns.
  *
- * Subtractive on purpose. Rebuilding the object field by field, which is
- * what this replaced, means every field added to `ApiKey` afterwards is
- * dropped until someone remembers to extend the list, and dropped
- * silently: the types agree either way because the missing fields are
- * optional. `oauth_client_id` is the field that shows what that costs —
- * it is optional, it is stamped by the server rather than asked for, and
- * `extensionLabelOf` refuses a label claim on it, so a rebuild that
- * forgot it would hand every app-minted key a label it may not have.
- * Naming what to remove fails closed on the next field; naming what to
- * keep fails open.
+ * Subtractive on purpose. Rebuilding the object field by field would drop
+ * every field added to `ApiKey` afterwards until someone remembered to
+ * extend the list, and drop it silently: the types agree either way
+ * because the missing fields are optional. `oauth_client_id` is the field
+ * that shows what that costs — it is optional, it is stamped by the server
+ * rather than asked for, and `extensionLabelOf` refuses a label claim on
+ * it, so a rebuild that forgot it would hand every app-minted key a label
+ * it may not have. Naming what to remove fails closed on the next field;
+ * naming what to keep fails open.
  */
 export function toRequestApiKey(
   stored: ApiKey & { key_hash: string; revoked_at: string | null },
@@ -262,8 +261,8 @@ export function _clearOAuthLastUsedCacheForTesting(): void {
 
 /**
  * **Nothing here reads how the instance was configured, and that is the
- * point.** This was the last place in this file where what a caller may do
- * turned on a deployment setting rather than on the credential in hand.
+ * point.** What a caller may do turns on the credential in hand and never on
+ * a deployment setting.
  *
  * **It resolves and never refuses.** This runs at `app.use("*")`, before
  * anything has matched a route, so it cannot know whether the door the
@@ -548,13 +547,13 @@ export function checkTypeAccess(
   // machinery writes these rows through the storage layer rather than through
   // a credential at all.
   //
-  // **The message says no credential rather than naming the operator key**,
-  // which is what it used to do. The operator key is the only credential
-  // this fence admits, and the permission resolution below then refuses it
-  // too: `api_keys_operator_holds_nothing` makes an operator key's
+  // **The message says no credential rather than naming the operator key.**
+  // The operator key is the only credential this fence admits, and the
+  // permission resolution below then refuses it too:
+  // `api_keys_operator_holds_nothing` makes an operator key's
   // `type_permissions` empty by database constraint, so the map resolves
-  // `none`. Naming a door and refusing everyone who walks through it sent
-  // readers looking for a credential to mint.
+  // `none`. Naming a door and refusing everyone who walks through it would
+  // send readers looking for a credential to mint.
   //
   // `core.*` writes are NOT gated here — core types are user-facing
   // (core.note, core.task, core.bookmark) and ordinary credentials write them
@@ -598,32 +597,31 @@ export function checkTypeAccess(
  *
  * **Returns a pair, and that is the point.** `allowed` alone cannot say what
  * a permission map says: a `"none"` entry subtracts, and a filter assembled
- * from the granted patterns has no way to state a subtraction. This used to
- * be approximated — the global wildcard was enumerated into the concrete ids
- * it stood for, minus the excluded ones — and the approximation leaked in
- * both directions. A subtree grant with an exclusion nested beneath it,
- * `{"user.*": "read", "user.secret": "none"}`, carried no global wildcard, so
- * it was passed through whole and listed the one type it exists to withhold.
- * And rows orphaned by `DELETE /types/{id}?force=true` — the registration
- * dropped, the items deliberately kept — could not appear in an enumeration
- * over the registry, so they vanished from every listing while the point
- * check still served them by id.
+ * from the granted patterns has no way to state a subtraction. Approximating
+ * it, by enumerating the global wildcard into the concrete ids it stands for
+ * minus the excluded ones, leaks in both directions. A subtree grant with an
+ * exclusion nested beneath it, `{"user.*": "read", "user.secret": "none"}`,
+ * carries no global wildcard, so it would pass through whole and list the one
+ * type it exists to withhold. And rows orphaned by
+ * `DELETE /types/{id}?force=true`, the registration dropped and the items
+ * deliberately kept, cannot appear in an enumeration over the registry, so
+ * they would vanish from every listing while the point check still served
+ * them by id.
  *
  * Both are the same failure: a list filter and a point check that disagree.
  * `excluded_types` states the subtraction instead of approximating it, so
  * neither shape has anywhere to hide, and nothing depends on the registry
- * naming every type any more.
+ * naming every type.
  *
  * **The pair rather than a second function beside this one is deliberate.** A
  * call site that took the permitted list without the exclusions would fail
  * open, which is the defect above reintroduced one layer up, and it would do
  * so silently — every suite that does not mint an exclusion-carrying key
  * would still pass. Returning one object makes it unrepresentable: a call
- * site cannot forget a field it has to destructure. (Ten consumers today,
- * nine through `getTypeFilter` and one direct: `refuseNarrowCredential` in
- * `routes/webhooks.ts`, which reads both `allowed` and `excluded` — the
- * pair this reasoning is about — and which asks this function rather than
- * the wrapper so that it answers its own code.)
+ * site cannot forget a field it has to destructure. (`refuseNarrowCredential`
+ * in `routes/webhooks.ts` asks this function directly rather than through
+ * `getTypeFilter`: it reads both `allowed` and `excluded`, the pair this
+ * reasoning is about, and asks here so that it answers its own code.)
  *
  * `allowed: undefined` keeps meaning "no restriction" and `allowed: []` keeps
  * meaning "nothing visible", so the contract at every call site survives.
@@ -633,15 +631,12 @@ export function computeTypeFilter(
   /**
    * Which grants count as permitting a type.
    *
-   * `"read"` is the default and the historical behavior, and it is right for
-   * a listing: a caller may see anything it may read or write. A door that
-   * *writes* what it matched has to ask the narrower question, and the one
-   * that did not was `POST /items/bulk-actions` — filter-in, no per-row
-   * permission check, so a key granted read across the board arrived with
-   * nothing narrowed and then wrote to everything it matched. Two comments in
-   * that route already said the narrowing was to writable types, which is
-   * what made it hard to see: the sentence was there and the code did
-   * something else.
+   * `"read"` is the default, and it is right for a listing: a caller may see
+   * anything it may read or write. A door that *writes* what it matched has
+   * to ask the narrower question. `POST /items/bulk-actions` is filter-in
+   * with no per-row permission check, so asked at `"read"` a key granted
+   * read across the board would arrive with nothing narrowed and then write
+   * to everything it matched.
    *
    * A read-only grant lands in `excluded` rather than merely being left out
    * of `allowed`, because a broader pattern would otherwise readmit it:
@@ -739,41 +734,25 @@ export function itemProvenanceSource(
  * The type a write declares is the type it lands on, or the write is
  * refused.
  *
- * Most doors address a row by something other than its type — a natural
- * key, or an id — and carry a `type` in the body that played no part in
- * finding it. Those doors took the resolved row's type and merged the
- * submitted properties onto it, so a caller that declared one type and
- * resolved another was not refused, it was reinterpreted, with a 200 and
- * nothing said.
+ * Most doors address a row by something other than its type, a natural
+ * key or an id, and carry a `type` in the body that plays no part in
+ * finding it. Merging the submitted properties onto whatever the key
+ * resolved would reinterpret a caller that declared one type and resolved
+ * another, with a 200 and nothing said, rather than refuse it.
  *
  * Two doors are exempt and neither by omission. `POST /items` create
  * resolves no row, so the type it names IS the row. `bulk-actions`
  * selects by filter, where a type is a selector and cannot disagree with
  * what it selected.
  *
- * Refusing here rather than in each caller is the deliberate half, and
- * the reason is stronger than it first looked. Counted against the
- * connectors repository rather than recalled: **no inbound connector
- * reads the type of the row it is about to write.** Every `getItem` call
- * in every handler fetches either the connection's own configuration row
- * or, on the outbound path, the item an event names.
- *
- * Eight address the row by an id they cached from an earlier sync, which
- * is what lets them call the update route at all. That is an identity
- * cache, not a type check: it narrows the exposure without closing it.
- * Five cannot even do that — three hold a bounded delivery ring rather
- * than item ids, and two hand a whole page to a bulk upsert with no
- * per-record id to read by.
- *
- * Deliberately no fleet total here. It depends on whether the scaffold
- * package and the one write-only connector are counted, an earlier
- * draft of this comment asserted one, and it was wrong.
- *
- * So there is no caller-side defense to defer to. The door is the only
- * place the disagreement can be seen at all, which is also why it does
- * not care why the two types differ — a type a caller derives fresh on
- * every run from configuration the user can change is the likeliest
- * source, and no caller is in a position to notice.
+ * Refusing here rather than in each caller is deliberate. A caller that
+ * addresses a row by an id it cached, or hands a page to a bulk upsert,
+ * has no reason to read the row's type before writing, so there is no
+ * caller-side defense to defer to. The door is the only place the
+ * disagreement can be seen at all, which is also why it does not care why
+ * the two types differ: a type a caller derives fresh on every run from
+ * configuration the user can change is the likeliest source, and no
+ * caller is in a position to notice.
  *
  * Called from each door that resolves a row it did not create; the
  * door-coverage tests pin the set.
@@ -786,9 +765,9 @@ export function requireDeclaredTypeMatches(
   // oversight. Admitting an ancestor would soften the one failure this
   // causes — a write family moved from a specific type to the core one
   // it descends from would keep syncing — but it also makes the declared
-  // type unfalsifiable for every type with descendants, which is most of
-  // them. The claim is either the row's type or it is not, and a caller
-  // that means to move a corpus between types has an operation for it.
+  // type unfalsifiable for every type with descendants. The claim is either
+  // the row's type or it is not, and a caller that means to move a corpus
+  // between types has an operation for it.
   if (declared === row.type) return;
   throw new MarfaError(
     ErrorCode.TYPE_MISMATCH,
@@ -913,10 +892,10 @@ export function requirePermission(
  * An empty `allowed` at read level is a credential that may read no type
  * at all. Answering it `200` with an empty page says "there is nothing
  * here", which is not what happened: there is a great deal here and this
- * credential may not see it. The single-row doors have always said so —
+ * credential may not see it. The single-row doors say so, since
  * `checkTypeAccess` resolves the same empty map to `none` and throws
- * `type_not_permitted` — so one question was answered two ways depending
- * on how many rows the caller asked for.
+ * `type_not_permitted`, and refusing here too answers one question one way
+ * however many rows the caller asked for.
  *
  * **Only at read level.** `POST /items/bulk-actions` asks at `"write"`,
  * where it narrows a match set rather than refusing a row, and a key

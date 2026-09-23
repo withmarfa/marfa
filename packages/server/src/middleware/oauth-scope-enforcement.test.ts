@@ -354,10 +354,10 @@ describe("OAuth scope grammar enforcement on the data plane", () => {
         scopes: ["nonsense", "::write", "DELETE EVERYTHING"],
       });
       // Every scope was dropped, so `type_permissions` is empty and the
-      // token reaches no type. The listings used to answer `200` with an
-      // empty body — which reads as "there is nothing here" to a token
-      // that is in fact being kept out — while the single-row door beside
-      // them refused. All of them refuse now.
+      // token reaches no type. A listing answering `200` with an empty body
+      // would read as "there is nothing here" to a token that is in fact
+      // being kept out, while the single-row door beside it refused, so
+      // every one of them refuses.
       for (const path of [
         "/items?type=core.note",
         "/metadata/tags",

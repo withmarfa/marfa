@@ -220,15 +220,9 @@ export function searchRoutes(storage: Storage) {
   router.openapi(searchRoute, async (c) => {
     requireAuth(c);
 
-    // Before anything reads the validated query, which has already had an
-    // unknown key stripped from it. This door never carried the retired
-    // names, but the published rename tells a caller they belong on every
-    // filtered read — and an absence discovered at 200 over the whole
-    // corpus is the silence the rename was refused for.
-    //
-    // No modification-time filter is named: this door has none, and
-    // sending a caller to a parameter it would strip is that same failure
-    // reached through the refusal.
+    // Read from the raw URL, because the validated query has already had
+    // an unknown key stripped from it, and a filter the caller believes
+    // applied would otherwise answer 200 over the whole corpus.
     refuseUnknownQueryParams(c.req.raw.url, searchRoute.request.query);
 
     const {

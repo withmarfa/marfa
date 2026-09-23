@@ -684,8 +684,8 @@ const updateItemRoute = createRoute({
              *  could be attempted, answered with a 200, and do nothing. */
             type: z.string().optional(),
             /** Whether `properties` lays over the item's or becomes them.
-             *  Defaults to `merge`, which is what every caller before this
-             *  meant. A `replace` says the set sent IS the item's
+             *  Defaults to `merge`, so a write that names no mode can never
+             *  remove a property it did not mention. A `replace` says the set sent IS the item's
              *  properties, so a field the row holds and this write does not
              *  name is removed. The result is validated either way, so a
              *  replace dropping a required field is refused rather than
@@ -1259,20 +1259,19 @@ export function itemRoutes(storage: Storage) {
     if (body.occurred_at && !isValidTimestamp(body.occurred_at)) {
       throw new MarfaError(ErrorCode.VALIDATION_ERROR, "Invalid occurred_at");
     }
-    // A create is not a transition, so it reached none of the graph, and a
-    // membership test against the universal state list is a weaker question
-    // than the one that matters: `trashed` is a valid state and is not in
-    // the `system.*` lifecycle at all. The operator key could therefore
-    // create a `system.connection` directly in `trashed` — a state no
-    // transition can produce and none can leave — and then restore it into
-    // `active` having passed nothing the graph admits.
+    // A create is not a transition, so nothing puts it through the graph on
+    // its own, and a membership test against the universal state list is a
+    // weaker question than the one that matters: `trashed` is a valid state
+    // and is not in the `system.*` lifecycle at all. That test alone would
+    // let the operator key create a `system.connection` directly in
+    // `trashed` (a state no transition can produce and none can leave) and
+    // then restore it into `active` having passed nothing the graph admits.
     //
     // Asking `validateTransition` what the default start state can reach
     // gives each type its own answer with no second table to keep in step:
     // a non-system type gets `active | archived | trashed`, a `system.*`
-    // type gets `active | revoked`. It also still rejects a state that is
-    // not a state, so the universal check it replaces is subsumed rather
-    // than dropped.
+    // type gets `active | revoked`. It also rejects a value that is not a
+    // state at all, so no separate check of the state's spelling is needed.
     //
     // **In the route, not in `storage.items.create`**, and the asymmetry
     // with `items.restore()` is deliberate. The store's `create` is also
@@ -1434,8 +1433,9 @@ export function itemRoutes(storage: Storage) {
       // reason, and deleting either call reddens one case and only one.
       if (existing?.state === "trashed") {
         // The user deleted this. Reviving it would overturn that decision
-        // silently, and refusing forever is the bug being fixed, so the
-        // sync is acknowledged and nothing is written or published.
+        // silently, and refusing it would fail the same sync on every retry
+        // for as long as the row stays trashed, so the sync is acknowledged
+        // and nothing is written or published.
         //
         // **What the acknowledgment may disclose, stated rather than left
         // to where this `return` sits.** The natural key bounds some axes
@@ -2110,11 +2110,11 @@ export function itemRoutes(storage: Storage) {
     // incomplete when this is set and page the per-type edge/backref endpoints.
     let neighborsTruncated = false;
     // How many neighbors the caller may not read, counted over the edge
-    // blocks this response carries. Omitting them is right — a neighbor
-    // outside the caller's scope must never leak — but omitting them
-    // *silently* made a partial neighborhood indistinguishable from a
-    // complete one. An app missing a type scope rendered a ticket with
-    // none of its relations and looked correct doing it.
+    // blocks this response carries. A neighbor outside the caller's scope
+    // is omitted, never leaked, and the count says so: without it a partial
+    // neighborhood reads as a complete one, and a caller missing a type
+    // scope renders an item with none of its relations as though it had
+    // none.
     //
     // **It counts what the item map hid, and cannot count what the edge
     // map hid.** A relationship the credential may not read is not in
@@ -2327,8 +2327,8 @@ export function itemRoutes(storage: Storage) {
 
     // Shape-validate and permission-gate the edges payload up-front.
     //
-    // **Kept after the collapse onto `applyInlineEdges`, and not because
-    // it refuses earlier — the helper's permission gate and its id and
+    // **Not redundant with `applyInlineEdges`, and not because it
+    // refuses earlier — the helper's permission gate and its id and
     // self-edge refusals all run before its deletes, so nothing here
     // saves a rollback.** Two things only this pass does: it is the only
     // check that the value at an edge type is an array at all, which the
@@ -2692,7 +2692,8 @@ export function itemRoutes(storage: Storage) {
   });
 
   // Lifecycle (restore, transition) and versions live in sibling files.
-  // Nest-mounted here to preserve the original OpenAPI path emission order.
+  // Mounted at this point because the document emits paths in mount order,
+  // and the generated document is checked in and held to the server.
   router.route("/", itemsLifecycleRoutes(storage));
   router.route("/", itemsVersionsRoutes(storage));
 

@@ -36,10 +36,6 @@ Field definitions:
 
 Subtypes only declare fields they add. They inherit all parent fields and **may not redefine them** (enforced at registration).
 
-## Dormant stubs — the `_deferred` marker
-
-A type schema may carry `"_deferred": true` to mark it as retained-but-inactive. The generator skips `_deferred: true` schemas — they are **not** emitted into the generated registry, **not** included in `ALL_TYPES`, and therefore not available to the server or a client at runtime. The JSON file stays in `core/` as a record of the shape so the type can be resurrected cleanly when it returns.
-
 ## Commands
 
 ```sh

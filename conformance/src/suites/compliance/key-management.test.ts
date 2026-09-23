@@ -312,12 +312,11 @@ describe("key management", () => {
     trackItem(ctx, seeded.data.item.id);
     const seededId = seeded.data.item.id;
 
-    // A listing used to answer `200` with an empty array, which says "there
-    // is nothing here" — and there is a great deal here; what is true is
-    // that this credential may not see it. The single-row doors already
-    // said so, refusing `type_not_permitted` through the same map, so one
-    // question was answered two ways depending on how many rows were asked
-    // for.
+    // An empty `200` on a listing would say "there is nothing here", and
+    // there is a great deal here; what is true is that this credential may
+    // not see it. The single-row doors refuse `type_not_permitted` through
+    // the same map, so the listings refuse it too, and one question gets one
+    // answer however many rows were asked for.
     const refused = [
       ["GET /items", await operator.listItems({ limit: 5 })],
       ["GET /items/stats", await operator.itemStats()],

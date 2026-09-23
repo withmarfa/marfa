@@ -2,7 +2,6 @@ import { describe, it, expect } from "vitest";
 import {
   parseScope,
   isValidScope,
-  expandWildcardScopes,
   expandBundlesToScopes,
   scopesToTypePermissions,
   scopesToEdgePermissions,
@@ -138,45 +137,6 @@ describe("isValidScope", () => {
   });
 });
 
-describe("expandWildcardScopes", () => {
-  const knownTypes = [
-    "core.media",
-    "core.media.book",
-    "core.media.article",
-    "core.note",
-    "core.bookmark",
-  ];
-
-  it("expands wildcard to matching types", () => {
-    const result = expandWildcardScopes(["core.media.*:read"], knownTypes);
-    expect(result).toContain("core.media:read");
-    expect(result).toContain("core.media.book:read");
-    expect(result).toContain("core.media.article:read");
-    expect(result).not.toContain("core.note:read");
-  });
-
-  it("passes non-wildcard scopes through", () => {
-    const result = expandWildcardScopes(["core.note:write"], knownTypes);
-    expect(result).toEqual(["core.note:write"]);
-  });
-
-  it("deduplicates", () => {
-    const result = expandWildcardScopes(
-      ["core.note:read", "core.note:read"],
-      knownTypes,
-    );
-    expect(result).toEqual(["core.note:read"]);
-  });
-
-  it("skips invalid scopes", () => {
-    const result = expandWildcardScopes(
-      ["invalid", "core.note:read"],
-      knownTypes,
-    );
-    expect(result).toEqual(["core.note:read"]);
-  });
-});
-
 describe("scopesToTypePermissions", () => {
   it("converts read scopes to read permissions", () => {
     const perms = scopesToTypePermissions([
@@ -252,9 +212,8 @@ describe("scopeCovers", () => {
 
   // Kind confusion. `edge` and `metadata` are not reserved roots, so
   // `edge.foo` is a registrable item type, and `edge.*:write` is a scope the
-  // server both advertises and issues. The exact comparison this replaced
-  // happened to contain that; a pattern match does not, so the guard is
-  // explicit and these pin it.
+  // server both advertises and issues. A pattern match reaches it, so the
+  // guard is explicit and these pin it.
   it("an edge grant does not satisfy an item-type requirement", () => {
     expect(scopeCovers(["edge.*:write"], "edge.foo", "write")).toBe(false);
   });
@@ -269,8 +228,8 @@ describe("scopeCovers", () => {
     expect(scopeCovers(["openid"], "openid", "read")).toBe(false);
   });
 
-  // The load-bearing non-regression for the new matcher: a bare identifier is
-  // exact, not a subtree. A later swap to subtree semantics has to fail here.
+  // A bare identifier is exact, not a subtree, so a swap to subtree
+  // semantics has to fail here.
   it("a bare identifier does not reach its descendants", () => {
     expect(scopeCovers(["core.note:read"], "core.note.private", "read")).toBe(
       false,
@@ -497,10 +456,9 @@ describe("permissions", () => {
     // root, and the wildcard that `isValidTypePattern` would otherwise
     // accept as an item-type pattern.
     expect(parseScope("webhooks.everything")).toBeNull();
-    // The names the previous draft of this set used. A retired member has to
-    // fail rather than linger as a literal nothing enforces, and `space` is
-    // the root the family was named after before it was named for what it
-    // permits.
+    // Names outside the closed set, `space` among them as the word
+    // `GLOSSARY.md` bans: a literal that parsed would linger as a grant
+    // nothing enforces.
     expect(parseScope("schema.types")).toBeNull();
     expect(parseScope("space.webhooks")).toBeNull();
     expect(parseScope("space.usage")).toBeNull();
@@ -583,17 +541,6 @@ describe("permissions", () => {
     expect(scopesToMetadataPermissions(held)).toEqual({ types: "write" });
   });
 
-  it("passes through wildcard expansion unchanged", () => {
-    // The set holds no wildcard, so expansion has nothing to do here and
-    // must not drop the literal on its way to the consent screen.
-    expect(
-      expandWildcardScopes(
-        ["webhooks.manage", "core.media.*:read"],
-        ["core.media", "core.media.book"],
-      ),
-    ).toEqual(["webhooks.manage", "core.media:read", "core.media.book:read"]);
-  });
-
   it("keeps the root out of the type grammar", () => {
     // The reservation is what stops a publisher registering a type whose
     // identifier is a capability literal. Without it the grant and the type
@@ -607,7 +554,7 @@ describe("permissions", () => {
       expect(isValidTypeIdentifier(literal)).toBe(false);
       expect(isValidTypePattern(literal)).toBe(false);
     }
-    // The retired root stays reserved although nothing is named for it: were
+    // `space` stays reserved although nothing is named for it: were
     // it claimable, a publisher could take the one word `GLOSSARY.md` bans
     // and register types beneath it. It is also claimed whole by the parser,
     // which reservation does not buy — `isValidTypePattern` never consults
@@ -683,7 +630,7 @@ describe("expandBundlesToScopes", () => {
 // is measurable rather than theoretical: making either one grant when the
 // permission map is absent leaves every test in this file green and the
 // server's edge, type and scope-enforcement suites green too. The mainline
-// is well covered by those integration suites (making `edgePermissionCovers`
+// is well covered by those server suites (making `edgePermissionCovers`
 // return true unconditionally fails eight of them), so what these cases add
 // is specifically the deny direction, which is the half a permission check
 // exists for.
@@ -770,11 +717,11 @@ describe("edgePermissionCovers", () => {
     );
   });
 
-  // The three stages are individually covered above, and each was green
-  // while the whole chain was broken: parsing accepted `edge.user.*:write`,
-  // projection stored it, and matching then failed to resolve it, so a
-  // token that reported the scope was refused the write. Only a test
-  // spanning all three sees that.
+  // The three stages are individually covered above, and each can be green
+  // while the whole chain is broken: parsing accepts `edge.user.*:write`,
+  // projection stores it, and matching fails to resolve it, so a token that
+  // reports the scope is refused the write. Only a test spanning all three
+  // sees that.
   it("carries a granted namespace scope through to the write decision", () => {
     const granted = ["edge.user.*:write", "edge.parent-of:write"];
     const perms = scopesToEdgePermissions(granted);
@@ -862,11 +809,11 @@ describe("the global type wildcard stays in its own map", () => {
 // A scope reaches the item-type axis because it was identified as a type
 // scope, never because it was not identified as anything else.
 //
-// Naming the families they skip reads the same as the rule on today's union
-// and inverts on tomorrow's: a family nobody adds to the list falls through
-// to "must be an item type", and being treated as one means having the
-// pattern matched against the live type registry, where a `*` anywhere in it
-// reaches every registered type.
+// Naming the families they skip reads the same as the rule on the current
+// union and inverts on a wider one: a family nobody adds to the list falls
+// through to "must be an item type", and being treated as one means having
+// the pattern matched against the live type registry, where a `*` anywhere
+// in it reaches every registered type.
 //
 // These cases are written against the union itself rather than against a
 // hand-kept list of families, so a kind that does not exist yet is measured
@@ -1082,21 +1029,19 @@ describe("scopesOfferedOffByDefaultOnly", () => {
 });
 
 /**
- * Coverage, which is the question every consent comparison was asking and
- * none of them was answering.
+ * Coverage, which is the question every consent comparison asks.
  *
- * These pin behavior that partly already held — exact membership always
- * worked — so there is no red phase to notice and each guard is worth
+ * Exact membership is the easy half and passes whether or not a guard is
+ * sound, so there is no red phase to notice and each guard is worth
  * breaking on purpose. The capability arm is the one to break first: it is
  * the only one whose failure is a fail-open rather than a re-prompt.
  */
 describe("grantCoversScope", () => {
   describe("item types, where breadth is the whole point", () => {
     it("covers a named type from a namespace wildcard", () => {
-      // The fix, in one line. A person who granted "all your core content"
-      // has already answered the question a later request for `core.note`
-      // asks, and the string comparison this replaces asked it again on
-      // every launch.
+      // A person who granted "all your core content" has already answered
+      // the question a later request for `core.note` asks, and a string
+      // comparison would ask it again on every launch.
       expect(grantCoversScope(["core.*:read"], "core.note:read")).toBe(true);
     });
 
@@ -1130,8 +1075,8 @@ describe("grantCoversScope", () => {
      * by precedence — exact, then the longest matching subtree wildcard, then
      * the global one — so the narrower pattern genuinely holds the broader one
      * down. A helper that returns on the first pattern to match with a
-     * sufficient verb answers the opposite way, and this function delegated to
-     * one until a review found it.
+     * sufficient verb answers the opposite way, so delegating to one would
+     * make this function fail-open.
      *
      * The direction matters: answering yes here skips a consent screen, and
      * the token minted from the request then carries the concrete literal,
@@ -1174,8 +1119,8 @@ describe("grantCoversScope", () => {
      * Every resolver on every axis takes a concrete identifier and looks at
      * the entries at or above it. Handed a pattern, it therefore never sees a
      * held entry BENEATH that pattern — and an entry beneath is exactly what
-     * narrows a grant. The first version of this function asked the resolver
-     * anyway, and a review caught it.
+     * narrows a grant, so asking the resolver would say yes to a grant the
+     * entry beneath holds down.
      */
     it("refuses a wildcard requirement that something under it narrows", () => {
       // `*:write` sits above `core`, so the resolver finds it and says yes,
@@ -1225,23 +1170,21 @@ describe("grantCoversScope", () => {
    * reading the audit log — and the kind exists precisely so that no breadth
    * expression reaches one.
    *
-   * **These pin the intent; they are not what stops a regression, and an
-   * earlier version of this comment claimed otherwise.** The property is
-   * guarded three times over in the code — the verb-less arm, the operation
-   * refusal behind it, and the exhaustiveness binding — so deleting any one
-   * of them leaves every assertion here green, and deleting the arm itself
-   * fails the build rather than a test. That is the right amount of guard
-   * and the wrong thing to describe as a test.
+   * **These pin the intent; they are not what stops a regression.** The
+   * property is guarded three times over in the code — the verb-less arm,
+   * the operation refusal behind it, and the exhaustiveness binding — so
+   * deleting any one of them leaves every assertion here green, and
+   * deleting the arm itself fails the build rather than a test. That is the
+   * right amount of guard and the wrong thing to describe as a test.
    *
    * What they are worth is saying, in one place a person will read, what the
-   * answer has to be. The routes do gate on these — `requirePermission`
-   * runs at seventeen call sites across nine route files, covering `items.purge`,
-   * `keys.mint`, `config.manage`, `schema.write`, `webhooks.manage`,
-   * `grants.manage` and `audit.read`. What no bundle does yet is *offer*
-   * one, so a wrong answer today shows a consent screen no default grant
-   * can satisfy rather than opening a door, and the reason to hold the line
-   * now is that the bundles arrive later and will inherit whatever this
-   * says.
+   * answer has to be. The routes gate on these through
+   * `requirePermission`, covering `items.purge`, `keys.mint`,
+   * `config.manage`, `schema.write`, `webhooks.manage`, `grants.manage` and
+   * `audit.read`. No default bundle *offers* one, so a wrong answer shows a
+   * consent screen no default grant can satisfy rather than opening a door,
+   * and the line is held here so a bundle that offers one inherits the
+   * right answer.
    */
   describe("capabilities, reachable only by name", () => {
     it("covers a capability the grant names", () => {
@@ -1343,10 +1286,11 @@ describe("grantCoversScope", () => {
       // from the grant side. A type wildcard reaches no edge, and an edge
       // grant reaches no item type.
       //
-      // The first draft asserted the second half with `parent-of:read`,
-      // which is not a scope at all: a bare single-segment identifier is
-      // not a valid type, so the requirement was refused for being
-      // unparseable and the test passed without exercising the axis split.
+      // The second half names `edge.parent-of:read` rather than
+      // `parent-of:read`, which is not a scope at all: a bare single-segment
+      // identifier is not a valid type, so that requirement would be refused
+      // for being unparseable and the test would pass without exercising
+      // the axis split.
       expect(grantCoversScope(["*:write"], "edge.parent-of:read")).toBe(false);
       expect(grantCoversScope(["edge.*:write"], "core.note:read")).toBe(false);
     });
@@ -1399,9 +1343,9 @@ describe("grantCoversScope", () => {
 
   describe("what it does with a literal it cannot read", () => {
     it("covers an unparseable requirement the grant names verbatim", () => {
-      // Both sides carrying a scope this build has stopped understanding is
-      // not a narrowing, and reading it as one would revoke live tokens
-      // over a grammar change.
+      // Both sides carrying a scope this build cannot read is not a
+      // narrowing, and reading it as one would revoke live tokens over a
+      // grammar change.
       expect(
         grantCoversScope(["from-a-later-build"], "from-a-later-build"),
       ).toBe(true);
@@ -1612,10 +1556,9 @@ describe("the content category projection", () => {
 
 describe("adding the content category to a wildcard grant can narrow it", () => {
   // Four resolutions, asserted rather than described. The comment on
-  // `scopesToTypePermissions` states them as measured fact, and until this
-  // block existed nothing held any of them: the tests above cover the
-  // projection on its own and never the wildcard-plus-category combination
-  // the claim is actually about.
+  // `scopesToTypePermissions` states them as measured fact, and the tests
+  // above cover the projection on its own and never the wildcard-plus-
+  // category combination the claim is actually about.
   //
   // The property is that a strictly larger scope set covers strictly less.
   // `resolveTypePermission` puts an exact key ahead of any wildcard, and the

@@ -8,25 +8,21 @@
  * either axis is listed by neither and cannot be revoked through any
  * interface the product has.
  *
- * `DELETE /items/{id}` with the operator key produced exactly one such
- * row on its own, before that door refused a live grant; every item door
- * refuses it now, so the fixture below is written through the store.
- * `softDeleteState` resolves `revoked` rather than `trashed`
- * for a `system.*` type, so `state` moves and `properties` does not — the
- * row now reads active on the status axis and revoked on the state axis.
- * `findGrantItemId` had no `state` predicate and `items.get` hides only
- * trashed rows, so a later re-approval found it, flipped `status` back to
- * `"active"` (already its value) and stamped a fresh `granted_at`, leaving a
+ * `softDeleteState` resolves `revoked` rather than `trashed` for a
+ * `system.*` type, so a soft delete moves `state` and leaves `properties`:
+ * the row reads active on the status axis and revoked on the state axis.
+ * Every item door refuses a live grant, so none produces that row, but a
+ * deployment's data can hold one, and the fixture below writes it through
+ * the store. `items.get` hides only trashed rows, so a lookup with no
+ * `state` predicate would find it on a later re-approval, set `status` to
+ * `"active"` (already its value) and stamp a fresh `granted_at`, leaving a
  * record the token step would happily mint against and nobody could reach.
  *
- * The fix is a `state = 'active'` predicate on `findGrantItemId` itself.
- * That makes the fresh insert the only branch a soft-deleted
- * grant can reach, and it fixes the code-flow twin at the same time, since
- * `projectGrantOnConsent` resolves through the same method.
- *
- * The disagreement was driven through the real routes while a route still
- * produced the shape. None does now, so the shape is written onto the row,
- * and what that proves, that the predicate reads the field, is the point.
+ * `findGrantItemId` carries a `state = 'active'` predicate for that reason.
+ * It makes the fresh insert the only branch a soft-deleted grant can reach,
+ * and it covers the code-flow twin as well, since `projectGrantOnConsent`
+ * resolves through the same method. The shape is written onto the row, and
+ * what that proves, that the predicate reads the field, is the point.
  */
 import { describe, it, expect, afterEach, vi } from "vitest";
 import {
@@ -216,14 +212,13 @@ describe("a soft-deleted grant is not resurrected by a re-approval", () => {
     expect(before[0]!.client_id).toBe(clientId);
 
     // The shape that produces the disagreement: revoked on the state axis
-    // and active on the status axis. `DELETE /items/{id}` used to produce it
-    // with the operator key; that door now refuses a live grant (pinned
-    // below), so the row is put into the shape directly, as any earlier
-    // deployment's data or a future door could.
+    // and active on the status axis. No door produces it for a live grant
+    // (the refusal is pinned below), so the row is put into the shape
+    // directly, as a deployment's data or a future door could.
     await softDeleteGrantRow(c, originalId);
 
-    // The fixture only means anything if it is the shape the predicate was
-    // added to exclude: revoked on the state axis, still active on the
+    // The fixture only means anything if it is the shape the predicate
+    // exists to exclude: revoked on the state axis, still active on the
     // status axis, and therefore listed by neither read surface.
     const hidden = await c.storage.items.get(originalId);
     expect(hidden?.state).toBe("revoked");
@@ -271,8 +266,8 @@ describe("a soft-deleted grant is not resurrected by a re-approval", () => {
     // the predicate and not a mis-keyed probe.
     expect(await resolveGrantItemId(c, clientId, authUserId)).toBe(grant.id);
 
-    // The door that produced this shape now refuses a live grant; shape the
-    // row through the store instead.
+    // No door produces this shape for a live grant; shape the row through
+    // the store instead.
     await softDeleteGrantRow(c, grant.id);
     expect((await c.storage.items.get(grant.id))?.state).toBe("revoked");
 
@@ -334,9 +329,9 @@ describe("an ordinary revoke still re-establishes on re-approval", () => {
  * "write")` first, and a grant is a `system.connection`: the
  * reserved-namespace fence admits only the operator key, whose own type map
  * is empty, so no credential the product can mint writes one. Both answer 403
- * `type_not_permitted` and never consult liveness at all. The refusal that
- * used to sit behind that gate was removed rather than reordered, because a
- * refusal nobody can reach reads as a protection somebody is relying on; what
+ * `type_not_permitted` and never consult liveness at all. No liveness
+ * refusal sits behind that gate, because a refusal nobody can reach reads as
+ * a protection somebody is relying on; what
  * these cases pin is the gate that does the work, and that the grant is
  * untouched afterwards.
  *

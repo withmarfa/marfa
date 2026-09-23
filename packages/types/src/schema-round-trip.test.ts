@@ -12,13 +12,11 @@ import {
 // -----------------------------------------------------------------------------
 // The guarantee: an in-tree JSON schema is a valid runtime submission, verbatim.
 //
-// There are two ways to author a type — commit a JSON file here, or POST it to
-// a running server — and they used to be judged by different code. The in-tree
-// files were the natural thing to copy when learning the format, and copying
-// one produced a schema the runtime silently reshaped or outright rejected.
-//
-// These tests pin the two paths together. `validateTypeSchema` below is the
-// same function `POST /types` calls.
+// There are two ways to author a type: commit a JSON file here, or POST it to
+// a running server. The in-tree files are the natural thing to copy when
+// learning the format, so one the runtime would reshape or reject teaches the
+// wrong format. `validateTypeSchema` below is the same function `POST /types`
+// calls, which holds the two paths to one judgment.
 // -----------------------------------------------------------------------------
 
 const typesRoot = resolve(import.meta.dirname, "..");
@@ -44,7 +42,6 @@ function load(): Loaded[] {
       const data = JSON.parse(
         readFileSync(join(family.dir, file), "utf-8"),
       ) as Record<string, unknown>;
-      if (data._deferred === true) continue;
       out.push({ family: family.name, file, data });
     }
   }
@@ -94,9 +91,8 @@ describe("in-tree schemas normalize to what the registry ships", () => {
       if (!shipped) return;
 
       // Every attribute the author declared survives into the registry with
-      // the same value. Codegen used to drop searchable / maxLength /
-      // maxItems / format on the floor, so a JSON file could say one thing and
-      // the shipped registry another.
+      // the same value, so a JSON file cannot say one thing and the shipped
+      // registry another.
       for (const [name, declared] of Object.entries(result.data.fields)) {
         const inRegistry = shipped.fields[name];
         expect(inRegistry, `${result.data.id}.${name} missing`).toBeDefined();

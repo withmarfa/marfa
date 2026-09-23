@@ -69,13 +69,12 @@
  * ceiling bounds the assembly and the item fetches, which is what it
  * says on the constant, and nothing before them.
  *
- * Bounding the passes too was considered and declined. A ceiling on
- * rows read is the fail-closed scan ceiling this change removed. A
+ * The passes are not bounded. A ceiling on rows read is a fail-closed
+ * scan ceiling, the one kind of bound this route does not have. A
  * ceiling on kept projections cannot be set safely either: a window seed
  * is dropped later if its series consumed it as an exception, so a cap
  * on seeds kept would drop meetings a healthy calendar contains, which
- * is the one outcome worth less than a slow read. The claim is corrected
- * rather than the property added.
+ * is the one outcome worth less than a slow read.
  *
  * That leaves the projections themselves growing linearly with the
  * instance's event count. It is survivable where holding whole rows is not,
@@ -125,13 +124,13 @@ export const MAX_WINDOW_DAYS = 400;
 /**
  * Ceiling on the assembled result, across every series in the window.
  *
- * The one bound that still refuses, and it is recoverable in the way the
- * removed scan ceiling was not: a caller asks for less time and
- * succeeds. It is checked as the result is assembled and before any item
- * is read, so a window that cannot be served costs neither the rest of
- * the assembly nor a single row fetch, and it is published on every
- * successful read (see `scan` on the response) so a calendar growing
- * toward it is visible before a request is refused.
+ * The one bound that refuses, because it is recoverable in the way a scan
+ * ceiling is not: a caller asks for less time and succeeds. It is checked
+ * as the result is assembled and before any item is read, so a window
+ * that cannot be served costs neither the rest of the assembly nor a
+ * single row fetch, and it is published on every successful read (see
+ * `scan` on the response) so a calendar growing toward it is visible
+ * before a request is refused.
  */
 export const MAX_OCCURRENCES = 5000;
 
@@ -142,10 +141,10 @@ export const MAX_OCCURRENCES = 5000;
  * `series_errors` is a second result array and `MAX_OCCURRENCES`
  * structurally cannot bound it. A calendar of rules that all fail in the
  * parser contributes no occurrence at all, so it sits at zero against
- * every other bound here and still returns an arbitrarily long list. Measured before this existed:
- * 25,000 rows carrying a malformed rule answered 200 with a 4.8 MB JSON
- * body, built as one string in memory. Ten times that is the fail-open
- * crash this change exists to remove, relocated into the other array.
+ * every other bound here and still returns an arbitrarily long list.
+ * Measured without this cap, 25,000 rows carrying a malformed rule
+ * answered 200 with a 4.8 MB JSON body, built as one string in memory,
+ * and ten times that is an out-of-memory crash in the other array.
  *
  * ## Why this one truncates where the rules above forbid truncating
  *
@@ -159,14 +158,12 @@ export const MAX_OCCURRENCES = 5000;
  *     it cannot remove a meeting, and the healthy series beside them
  *     expand and return exactly as they would have.
  *
- *     The stronger-sounding version — that a listed series contributed
- *     no occurrence — is false and was the argument this docblock used
- *     to make. Two of the shapes reported here render: a `recurrence`
- *     holding no readable property line is reported and still shows as
- *     the single event its own times describe, and a rule missing one
- *     unreadable line is reported and still contributes every occurrence
- *     it expands to. The conclusion survives; the reasoning had to be
- *     the weaker one, which is the one that is true.
+ *     The stronger-sounding version, that a listed series contributed
+ *     no occurrence, is false. Two of the shapes reported here render: a
+ *     `recurrence` holding no readable property line is reported and
+ *     still shows as the single event its own times describe, and a rule
+ *     missing one unreadable line is reported and still contributes
+ *     every occurrence it expands to.
  *   - **The response declares its own incompleteness.**
  *     `series_errors_truncated` is on the envelope beside the array, so
  *     a partial list is never mistaken for a complete one. That is the
@@ -180,17 +177,16 @@ export const MAX_OCCURRENCES = 5000;
  *     broken rule is broken in two ways fits half as many rows under
  *     it.
  *
- * Refusing here was tried first and was wrong. The series pass is
- * unwindowed, so a refusal could not be recovered from by asking for a
- * narrower window: a calendar with 501 broken rules would have received no
- * calendar at all, its healthy series having expanded perfectly well.
- * That is precisely the fail-closed scan ceiling this change exists to
- * remove, reintroduced one array over.
+ * Refusing here would be wrong. The series pass is unwindowed, so a
+ * refusal could not be recovered from by asking for a narrower window: a
+ * calendar with 501 broken rules would receive no calendar at all, its
+ * healthy series having expanded perfectly well. That is a fail-closed
+ * scan ceiling, one array over.
  *
- * The retention argument that motivated the ceiling is untouched:
- * accumulation still stops here, so the array in memory is bounded by
- * this and by `MAX_SERIES_ERROR_MESSAGE_CHARS` whatever is stored.
- * What changed is only that the request still succeeds.
+ * Trimming bounds the retention as well as a refusal would: accumulation
+ * stops here, so the array in memory is bounded by this and by
+ * `MAX_SERIES_ERROR_MESSAGE_CHARS` whatever is stored, and the request
+ * still succeeds.
  */
 export const MAX_SERIES_ERRORS = 500;
 
@@ -223,10 +219,8 @@ const EVENT_PAGE_SIZE = MAX_PAGE_LIMIT;
  * Both batched reads below build a single `IN (...)` from every id they
  * are given and neither chunks internally, so an unchunked call from
  * here turns a large calendar into a statement carrying more bind
- * parameters than SQLite will accept. While the scan was capped that was
- * unreachable; without the cap it is the failure that would replace the
- * one being removed, and a different error is not an improvement on a
- * refusal.
+ * parameters than SQLite will accept. The scan is uncapped, so that is
+ * reachable, and a SQLite error is not an improvement on a refusal.
  */
 const ID_BATCH_SIZE = 500;
 
@@ -252,26 +246,27 @@ const SERIES_PER_YIELD = 32;
  * Rule iterations walked between one yield to the event loop and the
  * next.
  *
- * A series count is the wrong unit for the expansion's cost and this
- * loop used to be paced by it alone. `expandSeries` is synchronous and
- * one call walks up to `MAX_EXPANSION_ITERATIONS` — 100,000 — so 32
- * series between yields permitted 3.2 million iterations in a single
+ * A series count is the wrong unit for the expansion's cost, so the loop
+ * is not paced by it alone. `expandSeries` is synchronous and one call
+ * walks up to `MAX_EXPANSION_ITERATIONS` — 100,000 — so 32 series
+ * between yields would permit 3.2 million iterations in a single
  * uninterrupted stretch of CPU, with health checks, open streams and
  * every other request on the instance waiting behind it. That is not an
  * exotic shape: a `FREQ=MINUTELY` reminder created a year ago burns the
- * whole cap on every read, forever, and 32 of them ran between yields.
- * Measured through the route at 11.5 seconds, and invariant in the
- * number of series, because it was always exactly 32 expansions deep.
+ * whole cap on every read, forever. Paced by series alone, 32 of them
+ * between yields measured 11.5 seconds through the route, invariant in
+ * the number of series because the stretch is always exactly 32
+ * expansions deep.
  *
  * **The bound this buys, stated in the unit that costs:** one
  * uninterrupted stretch walks at most
  * `ITERATIONS_PER_YIELD + MAX_EXPANSION_ITERATIONS - 1` iterations —
- * 119,999 today. The second term is irreducible here and is most of the
- * bound: one `expandSeries` call is atomic, so a stretch can always be
- * one full expansion longer than the budget that admitted it. Shrinking
- * it means either refusing more rules or making the expansion itself
- * resumable, and a rule's phase is anchored at the series start, so it
- * cannot be resumed mid-stream.
+ * 119,999 at these values. The second term is irreducible here and is
+ * most of the bound: one `expandSeries` call is atomic, so a stretch can
+ * always be one full expansion longer than the budget that admitted it.
+ * Shrinking it means either refusing more rules or making the expansion
+ * itself resumable, and a rule's phase is anchored at the series start,
+ * so it cannot be resumed mid-stream.
  *
  * **What this does not bound:** the total work one request may do. It
  * paces the loop, it does not stop it, and a paced loop still runs for
@@ -288,18 +283,16 @@ const ITERATIONS_PER_YIELD = 20_000;
  * Rule iterations one request may spend on expansions that return no
  * occurrence, before it stops expanding.
  *
- * ## The bound this replaces
+ * ## What it bounds
  *
- * Refusing the read at the 501st expansion failure also capped how many
- * *expansions* one request performed, at roughly 501, and capping the
- * error list instead removed that without anything taking its place.
- * Every stored series is now walked. Measured through the route:
+ * The error list is trimmed rather than refused, so nothing else stops
+ * one request walking every stored series. Measured through the route:
  * 40 `FREQ=MINUTELY` rules each burning `MAX_EXPANSION_ITERATIONS` took
  * 13.5 seconds, about 340 ms of CPU per rule, and nothing about that
- * number stopped at 40. Fifty thousand such rules is hours of CPU on one
+ * number stops at 40. Fifty thousand such rules is hours of CPU on one
  * request. The event loop is fine — `ITERATIONS_PER_YIELD` hands it back
  * throughout — but a request that answers in an hour is not, and no
- * bound in this file had anything to say about it.
+ * other bound in this file has anything to say about it.
  *
  * ## Why it counts only the series that contribute nothing
  *
@@ -341,20 +334,19 @@ const ITERATIONS_PER_YIELD = 20_000;
  *
  * The third is charged like the other two and should be: the expansion
  * returned nothing and the walk that made the discarded occurrences is
- * spent.
- * Measured: one `FREQ=MINUTELY` rule over a two-day window is refused at
- * 2,000 occurrences and charges 2,001 iterations. An earlier version of
- * this docblock said a charged series produced no occurrence by
- * construction, which that fixture falsifies; what is true by
- * construction is that its expansion returned none.
+ * spent. Measured: one `FREQ=MINUTELY` rule starting at the opening of a
+ * seven-day window is refused at 2,000 occurrences and charges 2,001
+ * iterations, which `occurrences.pagination.test.ts` pins. So a charged
+ * series may well have produced occurrences; what is true by construction
+ * is that its expansion returned none.
  *
  * ## Why crossing it is a 200 and not a 400
  *
  * The walk is pre-window: a rule's phase is anchored at the series
  * start, so the iterations counted here are burned before the window is
  * reached and asking for a narrower window does not reduce them. A
- * refusal here would therefore be unrecoverable, which is the
- * fail-closed scan ceiling this route exists to have removed. So the
+ * refusal here would therefore be unrecoverable, a fail-closed ceiling
+ * on the whole read. So the
  * read succeeds, `scan.series_unexpanded` says how many series were left
  * unexpanded, and `expansion_incomplete` says the calendar may be
  * missing what they held. Series are walked in the store's keyset order,
@@ -422,7 +414,7 @@ const EVENT_TYPES = ["core.event", "google.calendar.event"] as const;
 
 /** Rows read so far by one request, summed across its passes. Reported
  *  on the response rather than compared against anything: what the read
- *  cost is worth knowing, and it is no longer grounds for refusing. */
+ *  cost is worth knowing, and it is not grounds for refusing. */
 interface ScanBudget {
   scanned: number;
 }
@@ -521,11 +513,11 @@ interface SeriesScanResult {
  * arriving here declares a rule. Returning `undefined` therefore means
  * one thing only — the row declares *no* rule, which `[]` and a
  * serializer's `null` both are — and every other way of failing to
- * produce a series is a defect the response reports. Before that
- * distinction existed, a rule-bearing row with no `starts_at` was
- * dropped here *and* dropped by the window pass for carrying a rule, so
- * it appeared nowhere in the response and `series_errors` counted it as
- * zero. `core.event` requires only `title`, so writing one is a 201.
+ * produce a series is a defect the response reports. Without that
+ * distinction, a rule-bearing row with no `starts_at` would be dropped
+ * here *and* by the window pass for carrying a rule, so it would appear
+ * nowhere in the response and `series_errors` would count it as zero.
+ * `core.event` requires only `title`, so writing one is a 201.
  *
  * `recurrence` is declared as an array of strings but validated only as
  * an array, so a non-string entry stores. One that filters the list
@@ -546,7 +538,7 @@ function projectSeries(item: Item): SeriesScanResult | undefined {
       defect: `Series ${item.id} has a recurrence that is not a list of RFC 5545 property lines, so no rule was applied`,
     };
   }
-  // An empty list is an explicit "this does not repeat" and always was.
+  // An empty list is an explicit "this does not repeat".
   if (raw.length === 0) return undefined;
 
   const recurrence = raw.filter(
@@ -705,10 +697,8 @@ async function groupExceptionsBySeries(
     // Determinism is real here and comes from somewhere else: the scan
     // hands these ids over in the store's keyset order, which is a total
     // order. Iterating the returned map instead would preserve that too,
-    // since it is keyed by the same ids. An earlier version of this
-    // comment credited the slice walk with fixing a resolution order that
-    // was never in doubt, which points the next reader at the wrong
-    // fragile part.
+    // since it is keyed by the same ids, so the slice walk is not what
+    // keeps the order.
     for (const exceptionId of slice) {
       const seriesId = chunk
         .get(exceptionId)
@@ -1304,7 +1294,7 @@ export function occurrenceRoutes(
       if (consumedExceptions.has(seed.id)) continue;
 
       const at = new Date(seed.starts_at);
-      // The SQL does the narrowing now. This stays as a belt: it is the
+      // The SQL does the narrowing. This is a belt: it is the
       // one place the normalized column and the stored value are read
       // against each other, so a column that ever disagreed with its row
       // shows up as a missing event rather than a wrong one.
@@ -1347,15 +1337,14 @@ export function occurrenceRoutes(
        * occurrence — which the item does not carry a time for — comes
        * from the expansion.**
        *
-       * Two rules used to apply. A standalone row and a computed one
-       * were both rendered from the scan-time projection while a
-       * replacement re-derived from the fetched item, so two rows in one
-       * response followed opposite rules. That was survivable while the
-       * gap between scan and fetch was microseconds. It is not now: the
-       * yields above widen that gap to the length of the whole request,
-       * so a meeting moved while the request was in flight rendered its
-       * old slot beside the new `item.properties.starts_at`, in the same
-       * object, contradicting itself.
+       * One rule, because the yields above widen the gap between scan
+       * and fetch to the length of the whole request. A standalone row
+       * rendered from the scan-time projection, beside a replacement
+       * re-derived from the fetched item, would have two rows in one
+       * response follow opposite rules, and a meeting moved while the
+       * request was in flight would render its old slot beside the new
+       * `item.properties.starts_at`, in the same object, contradicting
+       * itself.
        *
        * A computed occurrence is exempt because there is nothing to
        * re-derive: the item is the series, and its `starts_at` is the
@@ -1367,7 +1356,7 @@ export function occurrenceRoutes(
        *
        * The window stays a filter over which rows appear, not a
        * constraint on what time they are shown at. That is the rule
-       * `replaces` already followed — a moved instance is shown at its
+       * `replaces` follows — a moved instance is shown at its
        * own time, which may fall outside the window — and applying it to
        * a standalone row that moved is the same answer to the same
        * question.

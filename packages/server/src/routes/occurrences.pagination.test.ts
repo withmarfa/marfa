@@ -4,11 +4,10 @@
  * Its own file because the fixture is a few hundred events, and every
  * assertion in the sibling suite would pay for them.
  *
- * The route asked the storage layer for 1000 rows and read the single
- * page it got back. `items.list` clamps any limit to 200, so what it
- * actually saw was the 200 most recent events of each type — and it
- * returned that as the calendar, with a 200 and no indication anything
- * was missing. An instance passes 200 events without anyone noticing.
+ * `items.list` clamps any limit to 200, so a route that read the single
+ * page it got back would see the 200 most recent events of each type and
+ * return that as the calendar, with a 200 and no indication anything was
+ * missing. An instance passes 200 events without anyone noticing.
  *
  * The second half of the file goes further than a seeded fixture can and
  * drives the route over a synthetic storage: what an unbounded scan costs
@@ -420,8 +419,7 @@ function appOver(
     c.set("apiKey", {
       id: "key-under-test",
       is_operator: true,
-      // The rank this fixture used to carry bypassed the permission maps; with
-      // one permission model the map is the whole of its reach.
+      // The maps are the whole of this key's reach, so they carry it.
       type_permissions: { "*": "write" },
       extension_permissions: { "*": "write" },
       edge_permissions: { "*": "write" },
@@ -454,20 +452,21 @@ async function readWindow(
   );
 }
 
-describe("GET /occurrences over a calendar past the old scan ceiling", () => {
-  // Comfortably past the 20,000-row total this route used to refuse the
-  // whole calendar at. That refusal could not be recovered from: the one
-  // move a caller knows is to ask for a narrower window, and the window has
-  // no bearing on how many rows carry a rule.
-  const PAST_THE_OLD_CEILING = 20_500;
+describe("GET /occurrences over rule-bearing rows a hundred pages deep", () => {
+  // No total of rule-bearing rows refuses the read. A refusal at a row
+  // total could not be recovered from: the one move a caller knows is to
+  // ask for a narrower window, and the window has no bearing on how many
+  // rows carry a rule. There is no bound to sit past, so the size is a
+  // walk of a hundred pages at the clamp the route reads the store by.
+  const MANY_SERIES = 100 * MAX_PAGE_LIMIT;
 
   it("serves the window rather than refusing the read", async () => {
     const rows: SyntheticRow[] = [];
-    for (let i = 0; i < PAST_THE_OLD_CEILING; i += 1) {
+    for (let i = 0; i < MANY_SERIES; i += 1) {
       rows.push({
         id: `series-${String(i)}`,
         properties: {
-          title: `retired series ${String(i)}`,
+          title: `ended series ${String(i)}`,
           // A rule that ran once, years before the window: read and
           // expanded like every other, contributing nothing to the answer.
           starts_at: "2019-03-04T09:00:00.000Z",
@@ -492,8 +491,8 @@ describe("GET /occurrences over a calendar past the old scan ceiling", () => {
       data: OccurrenceRow[];
       scan: { events_read: number };
     };
-    // The three meetings actually in the window, found behind twenty
-    // thousand rows that a ceiling would have refused the read over.
+    // The three meetings actually in the window, found behind every
+    // rule-bearing row a ceiling would have refused the read over.
     expect(body.data.map((r) => r.item.properties.title)).toEqual([
       "meeting 0",
       "meeting 1",
@@ -501,7 +500,7 @@ describe("GET /occurrences over a calendar past the old scan ceiling", () => {
     ]);
     // Every rule-bearing row was read, and the count is on the response so
     // the size of the read is visible rather than merely survived.
-    expect(body.scan.events_read).toBeGreaterThan(PAST_THE_OLD_CEILING);
+    expect(body.scan.events_read).toBeGreaterThan(MANY_SERIES);
   });
 });
 
@@ -718,8 +717,8 @@ describe("the reported expansion failures are bounded", () => {
   it("caps the list and says so rather than refusing the calendar", async () => {
     // The whole point of trimming here rather than refusing: the healthy
     // series here expanded perfectly well, and an instance with 501
-    // broken rules getting no calendar at all would be the fail-closed
-    // ceiling this route exists to have removed.
+    // broken rules getting no calendar at all would be a fail-closed
+    // ceiling on the whole read, which this route does not have.
     const rows = [
       ...broken(50_000),
       {
@@ -825,8 +824,7 @@ describe("the reported failures are scoped to what the request read", () => {
 
     // The same instance, read as the other event type. Zero here is true of
     // what was read and says nothing about the 600 rules alongside it,
-    // which is exactly what the field's description now claims and no
-    // more.
+    // which is exactly what the field's description claims and no more.
     const narrowed = await readWindow(
       app,
       SYNTHETIC_FROM,
@@ -847,11 +845,10 @@ describe("the reported failures are scoped to what the request read", () => {
 
 describe("the occurrence ceiling and the broken-rule cap compose", () => {
   it("refuses an over-full window on an instance whose rules are broken", async () => {
-    // The 400's description used to end by saying an instance full of rules
-    // that cannot be expanded is not among the reads it refuses. True of
-    // the broken rules on their own and false of this instance, which holds
-    // both: the ceiling counts what the healthy rows produce and is
-    // indifferent to how many rules failed beside them.
+    // Broken rules on their own are not among the reads the 400 refuses,
+    // but this instance holds both: the ceiling counts what the healthy
+    // rows produce and is indifferent to how many rules failed beside
+    // them.
     const rows = [
       ...Array.from({ length: 600 }, (_, i) => ({
         id: `broken-${String(i)}`,
@@ -884,13 +881,11 @@ describe("the expansion budget bounds the walking that contributes nothing", () 
    * A tenth of the production ceiling, handed to the route.
    *
    * Reaching a ceiling denominated in rule iterations means walking
-   * them, and at the production value that was six seconds a test on a
-   * box that also runs the organization's CI. Every assertion below is
-   * written against whatever value is in force — the overshoot, the
-   * count left unexpanded, what the refusal carries — so a tenth
-   * exercises the same code and the same arithmetic at a tenth of the
-   * cost. The production number is pinned by the equality below, which
-   * is what was really being asserted by spending it.
+   * them, which at the production value costs seconds a test. Every
+   * assertion below is written against whatever value is in force — the
+   * overshoot, the count left unexpanded, what the refusal carries — so a
+   * tenth exercises the same code and the same arithmetic at a tenth of
+   * the cost, and the production number is pinned by the equality below.
    */
   const BUDGET = MAX_UNPRODUCTIVE_EXPANSION_ITERATIONS / 10;
 
@@ -1012,11 +1007,9 @@ describe("the expansion budget bounds the walking that contributes nothing", () 
     // The counter is credited from the expansion's iteration count, and
     // a rule that fails in the parser has not iterated. Five hundred of
     // them are five hundred reported failures and a budget still at
-    // zero, which is what the field's description now says and used to
-    // contradict. Cheap in practice — a failed parse is microseconds —
-    // so this is a false description being removed rather than a hole
-    // being closed, which is the class of defect this whole change is
-    // about.
+    // zero, which is what the field's description says. Cheap in
+    // practice, since a failed parse is microseconds, so this holds the
+    // description to the code rather than closing a hole.
     const rows = Array.from({ length: 500 }, (_, i) => ({
       id: `unparsable-${String(i)}`,
       properties: {
@@ -1043,9 +1036,8 @@ describe("the expansion budget bounds the walking that contributes nothing", () 
     // charged.
     //
     // Charging it is right: none of that reached `data` and the walk is
-    // spent either way. What was wrong was three descriptions saying the
-    // counter covers series that produced no occurrence, when the
-    // predicate is what they contributed.
+    // spent either way. The counter covers series that contributed no
+    // occurrence, not series that produced none.
     const res = await readWindow(
       appOver(
         syntheticCalendar([
@@ -1082,13 +1074,10 @@ describe("the expansion budget bounds the walking that contributes nothing", () 
     // whole history on every read, which is the ordinary shape of a
     // long-lived calendar rather than a contrived one.
     //
-    // This test cannot stop anyone writing that the budget bounds a
-    // request's total work — no test fails when prose is edited, and
-    // this file's own history proves it, because the suite above carried
-    // an overstated name for a whole commit while staying green. What it
-    // does is hold a counterexample in the exact unit the bound is
-    // denominated in, so a reader who doubts the claim has a number to
-    // cite rather than a stopwatch to argue about.
+    // No test fails when prose overstates the budget as a bound on a
+    // request's total work. This one holds a counterexample in the exact
+    // unit the bound is denominated in, so a reader who doubts the claim
+    // has a number to cite rather than a stopwatch to argue about.
     const daily = (anchor: string, prefix: string): SyntheticRow[] =>
       Array.from({ length: 100 }, (_, i) => ({
         id: `${prefix}-${String(i)}`,
@@ -1189,8 +1178,9 @@ describe("the expansion budget bounds the walking that contributes nothing", () 
 describe("a row's time and the item it renders cannot disagree", () => {
   // The scan projects a time, the item is fetched at the end, and the
   // yields in between widen that gap from microseconds to the length of
-  // the whole request. A meeting moved inside that gap used to render the
-  // slot the scan saw beside the item's new `starts_at`, in one object.
+  // the whole request. A meeting moved inside that gap could render the
+  // slot the scan saw beside the item's new `starts_at`, in one object, so
+  // a row takes its time from the item it renders.
   it("shows a standalone row at the time its own item carries", async () => {
     const calendar = syntheticCalendar(
       [
@@ -1393,7 +1383,7 @@ describe("the exception edges are consumed a chunk at a time", () => {
 describe("the unwindowed scan", () => {
   it("keeps the expansion's input rather than the row", async () => {
     // The property that makes an unbounded walk affordable, and the one a
-    // regression would quietly undo: going back to accumulating rows still
+    // regression would quietly undo: accumulating rows instead still
     // returns the right answer, just at kilobytes each instead of a couple
     // of hundred bytes. Nothing else would notice.
     const rows: SyntheticRow[] = [];

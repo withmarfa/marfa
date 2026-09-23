@@ -1,22 +1,13 @@
 /**
- * `?type=` means the same thing on every read surface.
+ * `?type=` means the same thing on every read surface: the named type plus
+ * everything under it, by name prefix and by declared parent, because
+ * inheritance-inclusive reads are the documented model everywhere else.
  *
- * `/items` has always read the parameter as a subtree: the named type plus
- * everything under it, by name prefix and by declared parent. `/search`
- * read it as an exact identifier, and rejected the explicit wildcard
- * spelling outright. So the same narrowing applied to a listing and to a
- * search returned different sets, and the spelling that worked on one was
- * a 400 on the other.
- *
- * Two tests that each passed while describing different behavior is how
- * that survived, which is why this file asserts agreement rather than
- * per-endpoint behavior. Each case runs the same query through every read
- * surface and requires one answer.
- *
- * The resolved meaning is the subtree, because inheritance-inclusive reads
- * are the documented model everywhere else. That makes `/search` wider
- * than it was, which is a behavior change for a caller relying on it being
- * exact — hence the documentation companion.
+ * This file asserts agreement rather than per-surface behavior. Two tests
+ * that each pass while describing different behavior leave the same
+ * narrowing answering one set on a listing and another on a search, and a
+ * spelling that works on one refused on the other. Each case runs the same
+ * query through every read surface and requires one answer.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { createTestContext, request } from "../test-utils.js";
@@ -131,8 +122,8 @@ const SURFACES: Surface[] = [
   },
   {
     // The third read surface. It filters through the same item-store call
-    // `/items` uses, so it already agreed on meaning — but it validated the
-    // parameter as a bare identifier, so it disagreed on grammar.
+    // `/items` uses, so it agrees on meaning; grammar is the half a check
+    // of the parameter as a bare identifier would break.
     name: "GET /export",
     typesFor: async (type) => {
       const res = await request(
@@ -207,9 +198,8 @@ describe("?type= resolves the same subtree on every read surface", () => {
     );
 
     for (const [i, s] of SURFACES.entries()) {
-      // The wildcard used to be a 400 on search and a subtree on items, so
-      // assert the status too: a surface that starts rejecting it again
-      // would otherwise pass on an empty-set comparison.
+      // Assert the status too: a surface that rejected the wildcard would
+      // otherwise pass on an empty-set comparison.
       expect(at(wildcard, i).status, `${s.name} wildcard status`).toBe(200);
       expect(at(wildcard, i).types, `${s.name} wildcard`).toEqual(
         at(bare, i).types,
@@ -245,13 +235,11 @@ describe("?type= resolves the same subtree on every read surface", () => {
 // ---------------------------------------------------------------------------
 // Coverage: a fourth type-filtered read surface cannot appear quietly
 //
-// The three surfaces above agree today because someone noticed they had
-// drifted and wrote this file. Nothing stopped a fourth from appearing and
-// disagreeing the same way — the list was hand-written, so a new read route
-// taking `?type=` would simply not be compared against anything. This walks
-// the app's own spec instead: every spec-visible read that accepts a `type`
-// query parameter must either be one of the surfaces compared above, or
-// carry a stated reason it resolves types differently.
+// The surfaces above are a hand-written list, so a new read route taking
+// `?type=` would be compared against nothing. This walks the app's own spec
+// instead: every spec-visible read that accepts a `type` query parameter
+// must either be one of the surfaces compared above, or carry a stated
+// reason it resolves types differently.
 //
 // The same shape the write-door tests use, for the same reason: the value
 // of an agreement test is not the agreement it asserts, it is that the

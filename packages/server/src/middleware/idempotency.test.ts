@@ -2,7 +2,7 @@
  * A write that is retried after a lost response learns what its first
  * attempt did, rather than being told the outcome of asking again.
  *
- * The three refusals this replaces are each correct answers to the
+ * Without it, three refusals would each be correct answers to the
  * request as the server sees it and wrong answers to the question the
  * client is asking: a repeated create collides with itself, a repeated
  * update conflicts against its own change, and a repeated delete is not
@@ -355,12 +355,12 @@ describe("the key names one request in every dimension, not just the body", () =
 /**
  * One request spelled two ways is one request.
  *
- * Percent-encoding is not canonical, and the digest used to be taken over
- * the raw pathname — so `/items/abc` and `/items/%61bc` were two
- * fingerprints for one resource. A fingerprint that disagrees with the
- * stored one is read as the key being reused for a *different* request,
- * so a client that changed its encoding between attempts was refused
- * rather than replayed. That is not a transient refusal: a spent key
+ * Percent-encoding is not canonical, so a digest taken over the raw
+ * pathname would make `/items/abc` and `/items/%61bc` two fingerprints for
+ * one resource. A fingerprint that disagrees with the stored one is read
+ * as the key being reused for a *different* request, so a client that
+ * changed its encoding between attempts would be refused rather than
+ * replayed. That is not a transient refusal: a spent key
  * cannot be un-spent by trying again, so the write could never complete
  * under it.
  *
@@ -788,9 +788,9 @@ describe("a claim the store did not grant", () => {
         profile_permissions: {},
         created_at: new Date().toISOString(),
         last_used_at: null,
-        // Checked rather than asserted through `unknown`. The double cast used
-        // to hide two fields the wire type no longer has, and a fixture that
-        // cannot be checked is the one place a retired field survives longest.
+        // Checked rather than asserted through `unknown`: a double cast would
+        // hide a field the wire type does not have, and a fixture that
+        // cannot be checked is where such a field survives longest.
       } satisfies ApiKey);
       c.set("authType", credential.oauth === true ? "oauth" : "api_key");
       await next();

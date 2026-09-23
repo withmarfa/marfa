@@ -6,10 +6,15 @@ import {
   createTestContext,
   trackEdge,
   trackItem,
+  trackKey,
   trackWebhook,
 } from "../../utils/setup.js";
 import { createNote } from "../../generators/items.js";
-import { expectMatchesSchema } from "../../utils/openapi.js";
+import {
+  expectMatchesSchema,
+  pageDoors,
+  servedDocument,
+} from "../../utils/openapi.js";
 
 /**
  * Every list and every search answers one envelope: the rows under `data`
@@ -146,8 +151,60 @@ describe("one envelope for every list and search", () => {
     },
   ];
 
-  it("names twenty-one doors", () => {
+  it("names twenty-one doors, every one the document publishes as a page", async () => {
+    // The derived set holds the rows to the document, so a door that starts
+    // answering a page without a row here turns this red. The count holds
+    // both to the number the specification states, so a new page added with
+    // a row beside it turns this red too.
     expect(doors).toHaveLength(21);
+    expect(doors.map((door) => `GET ${door.template}`).sort()).toEqual(
+      pageDoors(await servedDocument()).sort(),
+    );
+  });
+
+  it("answers a null cursor from every door that takes none", async () => {
+    // A door that declares no cursor has no way to be asked for a second
+    // page, so it answers its whole set and says so. Derived from the
+    // document rather than listed, and counted, so a door that starts or
+    // stops taking a cursor turns this red.
+    const document = await servedDocument();
+    const whole = doors.filter(
+      (door) =>
+        !(document.paths[door.template]?.get?.parameters ?? []).some(
+          (parameter) =>
+            parameter.in === "query" && parameter.name === "cursor",
+        ),
+    );
+    expect(whole).toHaveLength(13);
+    for (const door of whole) {
+      const body = (await read(
+        door.path(),
+        door.operator ? operatorKey : apiKey,
+      )) as Record<string, unknown>;
+      expect(body.next_cursor, door.template).toBeNull();
+    }
+  });
+
+  it("answers GET /auth/grants, which the document does not publish, in the same envelope", async () => {
+    // Outside the twenty-one: the owner's approved-apps list is served
+    // beside the document rather than in it, and answers the same two keys.
+    expect((await servedDocument()).paths["/auth/grants"]).toBeUndefined();
+    const minted = await client.createKey({
+      label: "envelope-grants",
+      source: `${ctx.source}-grants`,
+      permissions: ["grants.manage"],
+      type_permissions: { "*": "read" },
+    });
+    expect(minted.ok, JSON.stringify(minted.error)).toBe(true);
+    trackKey(ctx, minted.data.id);
+    const body = (await read("/auth/grants", minted.data.key)) as Record<
+      string,
+      unknown
+    >;
+    expect(Object.keys(body).sort()).toEqual(["data", "next_cursor"]);
+    expect(Array.isArray(body.data)).toBe(true);
+    // The whole set in one answer: the door takes no cursor.
+    expect(body.next_cursor).toBeNull();
   });
 
   for (const door of doors) {
@@ -209,6 +266,97 @@ describe("one envelope for every list and search", () => {
   });
 });
 
+describe("an item's neighbors stand outside the envelope", () => {
+  type Detail = {
+    item: {
+      edges: Record<
+        string,
+        { data: { target_id: string }[]; next_cursor: unknown }
+      >;
+    };
+    neighbors?: { item: { id: string } }[];
+    neighbors_truncated?: boolean;
+  };
+
+  it("hydrates the far ends as a list, flagging no truncation below the cap", async () => {
+    const detail = (await read(`/items/${itemId}?include=neighbors`)) as Detail;
+    await expectMatchesSchema("GET", "/items/{id}", 200, detail);
+    expect(Array.isArray(detail.neighbors)).toBe(true);
+    expect(detail.neighbors?.map((n) => n.item.id)).toEqual([targetId]);
+    expect(detail.neighbors_truncated).toBe(false);
+  });
+
+  /**
+   * A hub with `perType` far ends under each of `edgeTypes`, all of them
+   * notes the fixture's own key reads, read back with its neighbors.
+   */
+  async function hubWith(edgeTypes: string[], perType: number) {
+    const created = await client.bulkItems({
+      items: Array.from({ length: 1 + edgeTypes.length * perType }, () =>
+        createNote({ source: ctx.source }),
+      ),
+    });
+    expect(created.ok).toBe(true);
+    const ids = created.data.results.map((entry) => String(entry.id));
+    for (const id of ids) trackItem(ctx, id);
+    const [hub, ...farEnds] = ids;
+    const edges = await client.bulkEdges({
+      edges: farEnds.map((target, i) => ({
+        source_id: hub!,
+        target_id: target,
+        edge_type: edgeTypes[Math.floor(i / perType)]!,
+      })),
+    });
+    expect(edges.ok).toBe(true);
+    expect(edges.data.counts.created).toBe(farEnds.length);
+    for (const entry of edges.data.results) trackEdge(ctx, entry.id!);
+
+    const detail = (await read(`/items/${hub!}?include=neighbors`)) as Detail;
+    await expectMatchesSchema("GET", "/items/{id}", 200, detail);
+    for (const type of edgeTypes) {
+      expect(detail.item.edges[type]?.data, type).toHaveLength(perType);
+      expect(detail.item.edges[type]?.next_cursor, type).toBeNull();
+    }
+    // The blocks name every far end, whatever the list beside them holds.
+    expect(
+      Object.values(detail.item.edges)
+        .flatMap((block) => block.data.map((edge) => edge.target_id))
+        .sort(),
+    ).toEqual([...farEnds].sort());
+    return { detail, farEnds };
+  }
+
+  it("hydrates every far end at the cap, flagging no truncation", async () => {
+    // Exactly the cap of 100, as four edge types of 25 rather than two of
+    // 50, so no block sits at its own per-type cap of 50 and the combined
+    // cap is the only bound in reach.
+    const { detail, farEnds } = await hubWith(
+      ["about", "references", "derived-from", "attached-to"],
+      25,
+    );
+    expect(farEnds).toHaveLength(100);
+    expect(detail.neighbors_truncated).toBe(false);
+    expect((detail.neighbors?.map((n) => n.item.id) ?? []).sort()).toEqual(
+      [...farEnds].sort(),
+    );
+  });
+
+  it("flags neighbors_truncated when the far ends across edge types pass the cap", async () => {
+    // Three edge types of 34 each: every block is whole, with no cursor to
+    // follow, and only their combined 102 far ends pass the cap. That is
+    // the case the flag exists for, since no block's cursor can say it.
+    const { detail, farEnds } = await hubWith(
+      ["about", "references", "derived-from"],
+      34,
+    );
+    expect(detail.neighbors_truncated).toBe(true);
+    const hydrated = detail.neighbors?.map((n) => n.item.id) ?? [];
+    expect(hydrated.length).toBeGreaterThan(0);
+    expect(hydrated.length).toBeLessThan(farEnds.length);
+    expect(farEnds).toEqual(expect.arrayContaining(hydrated));
+  });
+});
+
 describe("search pages by cursor", () => {
   it("walks to a null cursor, delivering every hit once", async () => {
     const tag = `envelope-search-${ctx.runId}`;
@@ -264,10 +412,17 @@ describe("search pages by cursor", () => {
   });
 
   it("refuses an offset query key", async () => {
+    // A search pages by cursor alone. The refusal names the key, so a 400
+    // for some other reason, such as a missing `q`, cannot pass for it.
     const response = await fetch(`${apiUrl}/search?q=${title}&offset=1`, {
       headers: { Authorization: `Bearer ${apiKey}` },
     });
     expect(response.status).toBe(400);
+    const body = (await response.json()) as {
+      error: { code: string; details?: { unknown_parameters?: string[] } };
+    };
+    expect(body.error.code).toBe("validation_error");
+    expect(body.error.details?.unknown_parameters).toEqual(["offset"]);
   });
 
   it("refuses a cursor another listing issued, and one it cannot read", async () => {

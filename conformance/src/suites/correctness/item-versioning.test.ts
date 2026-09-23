@@ -104,11 +104,11 @@ describe("item versioning", () => {
   });
 
   it("refuses a body key the update door does not declare", async () => {
-    // `force_snapshot` is the key this case is written around: it was
-    // accepted and did nothing, so a caller sending it was told its request
-    // had been honored when only the half the door understood was. The door
-    // now refuses a key it does not declare rather than dropping it, which
-    // is the rule the query grammar already keeps.
+    // `force_snapshot` is a key the door does not declare. Accepted and
+    // ignored, it would tell the caller its request had been honored when
+    // only the half the door understood was, so the door refuses a key it
+    // does not declare rather than dropping it, the rule the query grammar
+    // keeps.
     const r = await client.createItem(
       createNote({
         source: ctx.source,
@@ -264,11 +264,10 @@ describe("item versioning", () => {
 
   it("refuses a stale write that collides on tier, occurred_at or source_id", async () => {
     // The three item fields an update may change that are not properties.
-    // The version check used to look at properties alone, so a stale write
-    // carrying only one of these was merged and the newer value it landed
-    // on was overwritten with nothing refused — a device holding the
-    // version as its protection was protected on properties and on
-    // nothing else.
+    // A version check that looked at properties alone would merge a stale
+    // write carrying only one of these and overwrite the newer value it
+    // landed on with nothing refused: a device holding the version as its
+    // protection would be protected on properties and on nothing else.
     const cases = [
       {
         // Both writers move it, and a tier has two values, so they agree

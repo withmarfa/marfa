@@ -252,9 +252,9 @@ describe("audit log", () => {
     const justBefore = new Date(Date.parse(row.created_at) - 1).toISOString();
     expect(await seen({ created_after: justBefore })).toBe(true);
 
-    // A value that is not an instant is refused rather than compared. The
-    // silence this replaces answered 200 to both of these: the empty trail
-    // for a lower bound, the whole trail for an upper one, neither
+    // A value that is not an instant is refused rather than compared.
+    // Compared, it would answer 200 to both of these: the empty trail for a
+    // lower bound, the whole trail for an upper one, neither
     // distinguishable from a window that matched that much.
     for (const bound of ["created_after", "created_before"]) {
       const bad = await client.rawRequest(`/audit?${bound}=banana`);
@@ -263,25 +263,26 @@ describe("audit log", () => {
     }
   });
 
-  it("refuses a retired bound rather than answering the whole trail", async () => {
-    // The bounds used to be `since` and `until`, and this door had no
-    // unknown-parameter refusal, so a caller still sending one was answered
-    // `200` with everything — a dropped filter reads exactly like a time
-    // range that matched every row. The control is the second assertion:
-    // the same request with the current name has to come back `200`, or
-    // this case would pass against a door that refused its own vocabulary.
-    const retired = await client.rawRequest(
+  it("refuses an undeclared bound rather than answering the whole trail", async () => {
+    // A bound the door does not declare, answered `200` with everything,
+    // would read exactly like a time range that matched every row. The
+    // control is the second assertion: the same request under the declared
+    // name has to come back `200`, or this case would pass against a door
+    // that refused its own vocabulary.
+    const undeclared = await client.rawRequest(
       `/audit?since=${encodeURIComponent(new Date(0).toISOString())}`,
     );
-    expect(retired.status).toBe(400);
-    expect(retired.error?.error.code).toBe("validation_error");
-    expect(retired.error?.error.details?.unknown_parameters).toEqual(["since"]);
+    expect(undeclared.status).toBe(400);
+    expect(undeclared.error?.error.code).toBe("validation_error");
+    expect(undeclared.error?.error.details?.unknown_parameters).toEqual([
+      "since",
+    ]);
 
-    const current = await client.listAudit({
+    const declared = await client.listAudit({
       created_after: new Date(0).toISOString(),
       limit: 1,
     });
-    expect(current.status).toBe(200);
+    expect(declared.status).toBe(200);
   });
 
   it("refuses a request with no credential", async () => {

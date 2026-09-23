@@ -1,9 +1,9 @@
 /**
  * An edge carries the version a client read.
  *
- * Two devices editing one edge used to overwrite each other in silence:
- * the write replaced properties unconditionally, so the loser was never
- * told and the winner was never asked. An edge now carries a version, and
+ * Without one, two devices editing one edge would overwrite each other in
+ * silence: a write that replaces properties unconditionally never tells
+ * the loser and never asks the winner. So an edge carries a version, and
  * `PATCH /edges/{id}` accepts it as a precondition.
  *
  * **The version is a property of the statement, not of the door.** Only

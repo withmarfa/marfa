@@ -148,15 +148,15 @@ export interface SeededPlatformType {
 }
 
 /**
- * Where a registered type came from. Immutability used to be a compiled set —
- * a type was unmodifiable because the build said so. As a row property it can
- * distinguish the cases that actually differ: the platform vocabulary is
- * locked, a type a connector published is updatable by that connector's
- * own package and nothing else, and a type a person registered is theirs.
+ * Where a registered type came from. Held as a row property rather than
+ * decided by the build, so it can distinguish the cases that actually
+ * differ: the platform vocabulary is locked, a type a connector published
+ * is updatable by that connector's own package and nothing else, and a type
+ * a person registered is theirs.
  *
- * **`unknown` is a real answer, not a missing one.** An archive taken before
- * archives carried provenance has none to replay, and the restore has to
- * write something. The three substantive values are all wrong for it: `user`
+ * **`unknown` is a real answer, not a missing one.** An archive entry that
+ * carries no provenance has none to replay, and the restore has to write
+ * something. The three substantive values are all wrong for it: `user`
  * is what the consent screen offers a read-and-write wildcard over, and
  * claiming it for a row that may be a connected service's mirror is the
  * laundering this value exists to stop; `connector` claims a publisher
@@ -396,8 +396,8 @@ export function listTypes(): TypeSchema[] {
  * here.** It is `NAMESPACE_TIER_ROOTS` plus every scope-family root plus the
  * retired one, and `scope-roots.ts` composes it from exactly those lists — so
  * the arithmetic is the code that produces it rather than a sentence with a
- * number in it. A sentence is what rotted the last time the set grew, and it
- * rotted silently, because nothing compiles a docblock.
+ * number in it. Such a sentence rots silently when the set grows, because
+ * nothing compiles a docblock.
  *
  * What the extra roots have in common is that no type is ever registrable
  * under one, so no identifier reaching a classifier can carry them, and none
@@ -415,9 +415,9 @@ export type NamespaceTier =
 /**
  * Returns true if the candidate is a reserved root prefix.
  *
- * The set is `validation.ts`'s, imported rather than restated. A second copy
- * lived here and the two were free to drift, which on this particular set is
- * a security question and not a tidiness one: `isReservedRoot` is what the
+ * The set is `validation.ts`'s, imported rather than restated, because two
+ * copies would be free to drift, which on this particular set is a security
+ * question and not a tidiness one: `isReservedRoot` is what the
  * registration paths ask, `RESERVED_ROOTS` is what the identifier grammar
  * asks, and a root present in one and absent from the other is a namespace
  * that refuses registration in one direction and admits it in the other.
@@ -563,12 +563,10 @@ function declaredDescendants(rootId: string): string[] {
  *   merge-policy and role chain in `storage/policy.ts`, which imports it
  *   rather than declaring a second copy beside it.
  *
- * One name stood for both until now, held privately here and exported under
- * the same spelling from the server's own file, at different values. Nothing
- * broke while this one stayed private, and exporting it as it stood is what
- * would have broken: a file needing both could not have imported both without
- * renaming one at the import. Names that say which is which are the point of
- * this pair, and the reason neither is called `MAX_INHERITANCE_DEPTH` now.
+ * Each has a name that says which it is, and neither is called
+ * `MAX_INHERITANCE_DEPTH`: one name for both, at different values, would
+ * leave a file needing both unable to import both without renaming one at
+ * the import.
  *
  * Reaching this bound means a registration cap was bypassed or outgrown: a
  * schema entered by a path that runs no parent-chain check at all, or a chain
@@ -893,15 +891,12 @@ function fieldToZod(field: FieldDefinition): z.ZodType {
       // ruled explicitly — a whole day has no instant at all, and
       // `all_day` on the event is what says which reading applies. A
       // naive local time satisfies neither and is refused, so it cannot
-      // surface later as a parse error in whatever reads it. Measured
-      // against both live databases before enforcement: every stored
-      // value in a declared datetime field already conforms, so no
-      // migration accompanies this.
+      // surface later as a parse error in whatever reads it.
       schema = z.union([z.iso.datetime({ offset: true }), z.iso.date()]);
       break;
     case "date":
-      // A calendar date, YYYY-MM-DD. Same reasoning as datetime: the
-      // declared format used to collapse to an unchecked bounded string.
+      // A calendar date, YYYY-MM-DD. Same reasoning as datetime: a
+      // declared format is checked rather than read as a bounded string.
       schema = z.iso.date();
       break;
     case "enum":
@@ -1092,7 +1087,7 @@ export const SYSTEM_TYPE_TRANSITIONS: Readonly<Record<ItemState, ItemState[]>> =
  * `contentCategoryPermissions` in `scopes.ts` pairs the same two tests for
  * the same reason, and the warning there applies here: dropping the set and
  * keeping the name test looks equivalent only because every system type
- * ships under `system.` today, and stops being so the moment one does not.
+ * ships under `system.`, and stops being so the moment one does not.
  */
 export function hasBoundedLifecycle(typeId: string): boolean {
   return SYSTEM_TYPE_IDS.has(typeId) || isSystemType(typeId);
@@ -1122,13 +1117,14 @@ const SYSTEM_STATES: ReadonlySet<ItemState> = new Set([
 ]);
 
 /**
- * Validates whether a state transition is allowed. Universal — types do not
- * declare their own state machines, so the typeId is only kept for API
- * parity and potential future use. It is NOT used to reject transitions on
- * custom (registered) types: the server-side item-store enforces type
- * existence at create time, so by the time `validateTransition` is called
- * the type is already known, and custom types share the same state graph
- * as core types.
+ * Validates whether a state transition is allowed, answering `null` when it
+ * is and the reason when it is not. Types do not declare their own state
+ * machines, so `typeId` picks between the two graphs there are and nothing
+ * more: `hasBoundedLifecycle(typeId)` selects `SYSTEM_TYPE_TRANSITIONS` for
+ * a platform record and `SYSTEM_TRANSITIONS` for everything else, core and
+ * registered types alike. It does not check that the type exists: the item
+ * store refuses an unknown type when the item is created, so the item being
+ * transitioned already has a known one.
  */
 export function validateTransition(
   typeId: string,
@@ -1143,8 +1139,6 @@ export function validateTransition(
     return `Invalid target state "${nextState}"`;
   }
 
-  // `system.*` items use the bounded active → revoked lifecycle. All other
-  // types follow the canonical three-state graph.
   const transitions = hasBoundedLifecycle(typeId)
     ? SYSTEM_TYPE_TRANSITIONS
     : SYSTEM_TRANSITIONS;

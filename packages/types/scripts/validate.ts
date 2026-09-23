@@ -5,7 +5,9 @@
  * `core/system/` and `core/edges/`, resolves each family in dependency order,
  * and runs `validateTypeSchema` / `validateEdgeTypeSchema` — the same
  * functions the registration routes call. A schema that passes here is one a
- * client could submit over the wire unchanged.
+ * client could submit over the wire unchanged. It also asks
+ * `unreadTopLevelKeys`, which the wire does not, so a file cannot carry a key
+ * nothing reads.
  *
  * Usage: pnpm --filter @withmarfa/types validate
  */
@@ -14,9 +16,11 @@ import { readFileSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { TypeSchema } from "../src/schema-types.js";
 import {
+  unreadTopLevelKeys,
   validateEdgeTypeSchema,
   validateTypeSchema,
 } from "../src/schema-validation.js";
+import type { SchemaValidationIssue } from "../src/schema-validation.js";
 
 const typesRoot = resolve(import.meta.dirname, "..");
 
@@ -39,17 +43,14 @@ function loadFamily(family: string, dir: string): RawSchema[] {
   } catch {
     return [];
   }
-  return files
-    .sort()
-    .map((file) => ({
-      family,
-      file,
-      data: JSON.parse(readFileSync(join(dir, file), "utf-8")) as Record<
-        string,
-        unknown
-      >,
-    }))
-    .filter((s) => s.data._deferred !== true);
+  return files.sort().map((file) => ({
+    family,
+    file,
+    data: JSON.parse(readFileSync(join(dir, file), "utf-8")) as Record<
+      string,
+      unknown
+    >,
+  }));
 }
 
 /** The declared identifier, or "" when the file omits one — the validator
@@ -60,6 +61,12 @@ function schemaId(s: RawSchema): string {
 
 const registry = new Map<string, TypeSchema>();
 const errors: string[] = [];
+
+function report(where: string, issues: SchemaValidationIssue[]): void {
+  for (const error of issues) {
+    errors.push(`${where} → ${error.field}\n      ${error.message}`);
+  }
+}
 const counts: Record<string, number> = {};
 let checked = 0;
 
@@ -76,15 +83,12 @@ for (const family of FAMILIES) {
   );
   for (const raw of raws) {
     checked++;
+    report(`${family.name}/${raw.file}`, unreadTopLevelKeys(raw.data, "type"));
     const result = validateTypeSchema(raw.data, {
       resolveSchema: (id) => registry.get(id),
     });
     if (!result.success) {
-      for (const error of result.errors) {
-        errors.push(
-          `${family.name}/${raw.file} → ${error.field}\n      ${error.message}`,
-        );
-      }
+      report(`${family.name}/${raw.file}`, result.errors);
       continue;
     }
     if (registry.has(result.data.id)) {
@@ -113,11 +117,10 @@ const edgeIds = new Set<string>();
 counts.edge = edgeRaws.length;
 for (const raw of edgeRaws) {
   checked++;
+  report(`edge/${raw.file}`, unreadTopLevelKeys(raw.data, "edge"));
   const result = validateEdgeTypeSchema(raw.data);
   if (!result.success) {
-    for (const error of result.errors) {
-      errors.push(`edge/${raw.file} → ${error.field}\n      ${error.message}`);
-    }
+    report(`edge/${raw.file}`, result.errors);
     continue;
   }
   if (edgeIds.has(result.data.id)) {

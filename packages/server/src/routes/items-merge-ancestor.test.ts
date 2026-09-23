@@ -2,16 +2,13 @@
  * Field-level three-way merge needs a common ancestor, and the ancestor is
  * the version snapshot at the version the client sent.
  *
- * Snapshots used to be throttled to one per ten minutes, so during an active
- * editing session there usually was not one. With no ancestor the server
- * falls back to declaring every field the client submitted to be in conflict,
- * which is the opposite of what the merge exists to do: two devices editing
- * different fields inside the window collided on both, and a client sending
- * its whole property bag collided on everything.
- *
- * These run against a throttle that would have been wide open (the interval
- * is not configurable any more, and was ten minutes when it was), so every
- * write here lands well inside what used to be one window.
+ * Every update snapshots the version it replaces, however soon after the
+ * last one it lands. With no ancestor the server falls back to declaring
+ * every field the client submitted to be in conflict, which is the opposite
+ * of what the merge exists to do: two devices editing different fields in
+ * quick succession would collide on both, and a client sending its whole
+ * property bag would collide on everything. So every write here follows the
+ * one before it at once, the case a snapshot taken on a timer would miss.
  */
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import { createTestContext, request } from "../test-utils.js";
@@ -67,18 +64,16 @@ async function read(id: string): Promise<ItemBody["item"]> {
 }
 
 describe("PATCH /items/:id — a versioned write has an ancestor to merge against", () => {
-  it("merges edits to different fields made inside the old throttle window", async () => {
-    // The item has to carry one prior edit for this to reproduce. A first
-    // update always snapshotted, because the throttle had no previous
-    // timestamp to measure against — so the window only bit from the second
-    // update onward, which is to say during an actual editing session rather
-    // than on an untouched item.
+  it("merges edits to different fields made in quick succession", async () => {
+    // The item carries one prior edit first, so the writes below land
+    // inside an editing session rather than on an untouched item, which is
+    // where a missing snapshot would bite.
     const { id, version } = await seed({ title: "original", body: "original" });
     expect((await patch(id, { title: "warm" }, version)).status).toBe(200);
     const settled = await read(id);
 
-    // Two devices now edit different fields from the same version, inside
-    // what used to be one throttle window.
+    // Two devices now edit different fields from the same version, moments
+    // apart.
     const first = await patch(id, { title: "edited by A" }, settled.version);
     expect(first.status).toBe(200);
 
@@ -154,8 +149,7 @@ describe("PATCH /items/:id — a versioned write has an ancestor to merge agains
     });
     expect(res.status).toBe(200);
     const body = (await res.json()) as { data: { version: number }[] };
-    // Two updates leave the two states they replaced, rather than one
-    // sample of whichever happened to fall outside the interval.
+    // Two updates leave the two states they replaced, one snapshot each.
     expect(body.data.map((v) => v.version).sort()).toEqual([1, 2]);
   });
 });
