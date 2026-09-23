@@ -7,12 +7,13 @@ packages:
   # its `typecheck` joins the root's.
   - "conformance"
 
-# A script refuses to run once the workspace's packages, or their
-# versions, differ from what the last install recorded. An install is what
-# links a new package's `.bin` entries, so without this the first build
-# after a rebase that adds a package fails with `tsup: command not found`.
-# `error` rather than `install`, so the install is one the operator runs
-# rather than one that happens silently mid-build.
+# `pnpm run` and `pnpm exec` refuse while the workspace differs from what
+# the last install recorded: a package added or removed, a version changed,
+# a manifest out of step with the lockfile, a setting changed. A rebase that
+# adds a package would otherwise reach its build before the install that
+# links the package's `.bin` entries, and fail with `tsup: command not
+# found`. `error` rather than `install`, so the install is one the operator
+# runs rather than one a script starts on its own.
 verifyDepsBeforeRun: error
 
 overrides:
