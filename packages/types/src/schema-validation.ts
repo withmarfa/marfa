@@ -532,6 +532,18 @@ function describeShapeConflict(
 // ---------------------------------------------------------------------------
 
 /**
+ * Top-level keys `validateTypeSchema` reads only to refuse. Lifecycle is
+ * universal and metadata-layer, so a per-type state machine has no effect
+ * and would mislead whoever wrote it. `unreadTopLevelKeys` leaves these to
+ * the validator, which already names each one.
+ */
+export const REFUSED_TYPE_SCHEMA_KEYS: readonly string[] = [
+  "states",
+  "default_state",
+  "transitions",
+];
+
+/**
  * Validates and normalizes a type schema. On success the returned `data` is
  * the canonical `TypeSchema` — the exact shape the registry stores, whichever
  * authoring path produced the input.
@@ -653,9 +665,7 @@ export function validateTypeSchema(
     }
   }
 
-  // Lifecycle is universal and metadata-layer; a per-type state machine has no
-  // effect and would mislead whoever wrote it.
-  for (const forbiddenKey of ["states", "default_state", "transitions"]) {
+  for (const forbiddenKey of REFUSED_TYPE_SCHEMA_KEYS) {
     if (forbiddenKey in obj) {
       errors.push(
         issue({
@@ -1479,13 +1489,15 @@ export function validateEdgeTypeSchema(
 // ---------------------------------------------------------------------------
 
 /**
- * Every top-level key `validateTypeSchema` reads. Checked against
+ * Every top-level key `validateTypeSchema` reads to accept. Checked against
  * `TypeSchema` in both directions, so a key added to the type without being
  * listed here fails to compile rather than being refused in every file that
  * uses it. `required` is the authoring form the validator folds into the
- * fields, and so is read without being a key of the result.
+ * fields, and so is read without being a key of the result. The keys it
+ * reads only to refuse are `REFUSED_TYPE_SCHEMA_KEYS`, and
+ * `unread-keys.test.ts` holds the two lists together to what it reads.
  */
-const TYPE_SCHEMA_KEYS: ReadonlySet<string> = new Set([
+export const TYPE_SCHEMA_KEYS: ReadonlySet<string> = new Set([
   ...Object.keys({
     id: true,
     parent: true,
@@ -1503,7 +1515,7 @@ const TYPE_SCHEMA_KEYS: ReadonlySet<string> = new Set([
 ]);
 
 /** Every top-level key `validateEdgeTypeSchema` reads, held the same way. */
-const EDGE_TYPE_SCHEMA_KEYS: ReadonlySet<string> = new Set(
+export const EDGE_TYPE_SCHEMA_KEYS: ReadonlySet<string> = new Set(
   Object.keys({
     id: true,
     label: true,
@@ -1533,8 +1545,11 @@ export function unreadTopLevelKeys(
   const obj = asRecord(input);
   if (!obj) return [];
   const read = kind === "type" ? TYPE_SCHEMA_KEYS : EDGE_TYPE_SCHEMA_KEYS;
+  // A refused key is the validator's to report, and reporting it here too
+  // would name one fault twice.
+  const refused = kind === "type" ? REFUSED_TYPE_SCHEMA_KEYS : [];
   return Object.keys(obj)
-    .filter((key) => !read.has(key))
+    .filter((key) => !read.has(key) && !refused.includes(key))
     .map((key) =>
       issue({
         field: key,
