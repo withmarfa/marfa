@@ -39,17 +39,14 @@ function loadFamily(family: string, dir: string): RawSchema[] {
   } catch {
     return [];
   }
-  return files
-    .sort()
-    .map((file) => ({
-      family,
-      file,
-      data: JSON.parse(readFileSync(join(dir, file), "utf-8")) as Record<
-        string,
-        unknown
-      >,
-    }))
-    .filter((s) => s.data._deferred !== true);
+  return files.sort().map((file) => ({
+    family,
+    file,
+    data: JSON.parse(readFileSync(join(dir, file), "utf-8")) as Record<
+      string,
+      unknown
+    >,
+  }));
 }
 
 /** The declared identifier, or "" when the file omits one — the validator

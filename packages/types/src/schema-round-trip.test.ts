@@ -44,7 +44,6 @@ function load(): Loaded[] {
       const data = JSON.parse(
         readFileSync(join(family.dir, file), "utf-8"),
       ) as Record<string, unknown>;
-      if (data._deferred === true) continue;
       out.push({ family: family.name, file, data });
     }
   }

@@ -46,14 +46,9 @@ function loadDir(dir: string): RawSchema[] {
   }));
 }
 
-// Dormant stubs stay on disk as a record of shape but never reach the runtime
-// registry, so they are neither validated nor emitted.
-const active = (schemas: RawSchema[]): RawSchema[] =>
-  schemas.filter((s) => s.data._deferred !== true);
-
-const coreRaw = active(loadDir(coreDir));
-const connectorRaw = active(loadDir(connectorsDir));
-const systemRaw = active(loadDir(systemDir));
+const coreRaw = loadDir(coreDir);
+const connectorRaw = loadDir(connectorsDir);
+const systemRaw = loadDir(systemDir);
 
 /** The declared identifier, or "" when the file omits one — the validator
  *  reports that as an error, so ordering just needs to be stable. */
