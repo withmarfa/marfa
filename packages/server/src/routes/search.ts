@@ -34,7 +34,6 @@ import {
 /** How deep the ranking is read; a cursor past it is refused. */
 const MAX_SEARCH_DEPTH = 10_000;
 
-/** The position a search cursor carries. */
 /**
  * The position a search cursor carries, refused unless it was minted for
  * this same query. A position is only meaningful in the ranking it came

@@ -107,6 +107,15 @@ export interface UpdateMetadataInput {
  * `ok`/`status`/`error` rather than as a throw, so a fixture can assert on a
  * refusal the same way it asserts on a success.
  */
+/** `?limit=&cursor=` for the arguments given, or nothing. */
+function pageQuery(page: { limit?: number; cursor?: string }): string {
+  const query = new URLSearchParams();
+  if (page.limit !== undefined) query.set("limit", String(page.limit));
+  if (page.cursor !== undefined) query.set("cursor", page.cursor);
+  const text = query.toString();
+  return text === "" ? "" : `?${text}`;
+}
+
 export class MarfaClient {
   private baseUrl: string;
   private apiKey: string;
@@ -788,11 +797,10 @@ export class MarfaClient {
 
   async listConnectorRuns(
     id: string,
-    limit?: number,
+    page: { limit?: number; cursor?: string } = {},
   ): Promise<ApiResponse<PaginatedResult<ConnectorRun>>> {
-    const query = limit === undefined ? "" : `?limit=${String(limit)}`;
     return this.request<PaginatedResult<ConnectorRun>>(
-      `/connectors/${id}/runs${query}`,
+      `/connectors/${id}/runs${pageQuery(page)}`,
     );
   }
 
@@ -1006,11 +1014,10 @@ export class MarfaClient {
 
   async listWebhookDeliveries(
     id: string,
-    limit?: number,
+    page: { limit?: number; cursor?: string } = {},
   ): Promise<ApiResponse<PaginatedResult<WebhookDelivery>>> {
-    const query = limit === undefined ? "" : `?limit=${String(limit)}`;
     return this.request<PaginatedResult<WebhookDelivery>>(
-      `/webhooks/${id}/deliveries${query}`,
+      `/webhooks/${id}/deliveries${pageQuery(page)}`,
     );
   }
 

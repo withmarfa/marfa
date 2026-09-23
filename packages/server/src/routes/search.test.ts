@@ -395,7 +395,7 @@ describe("GET /search pages by cursor", () => {
     }
   });
 
-  it("refuses the offset it no longer takes", async () => {
+  it("refuses an offset query key", async () => {
     expect((await search("q=wombatcursor&offset=5")).status).toBe(400);
   });
 });

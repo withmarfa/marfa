@@ -276,7 +276,8 @@ export interface ItemDetail {
    * incomplete when it is set and page the per-type edge/backref reads.
    */
   neighbors_truncated?: boolean;
-  versions?: Version[];
+  /** The item's history, newest first, whole: `next_cursor` is always `null`. */
+  versions?: PaginatedResult<Version>;
 }
 
 export interface SearchFilters {

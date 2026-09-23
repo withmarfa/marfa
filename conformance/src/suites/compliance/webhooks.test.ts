@@ -109,6 +109,53 @@ describe("outbound webhooks", () => {
     expect(row?.attempt).toBe(1);
   });
 
+  it("pages its delivery log by cursor, every attempt once", async () => {
+    const created = await client.createWebhook({
+      url: receiver.hookUrl("paged"),
+      events: ["item.created"],
+    });
+    expect(created.status).toBe(201);
+    trackWebhook(ctx, created.data.id, client);
+    const ids: string[] = [];
+    for (let i = 0; i < 3; i++) {
+      const item = await client.createItem(
+        createNote({ source: ctx.source, properties: { body: `paged ${String(i)}` } }),
+      );
+      expect(item.ok).toBe(true);
+      trackItem(ctx, item.data.item.id);
+      ids.push(item.data.item.id);
+    }
+    for (const id of ids) {
+      await receiver.waitFor(
+        (r) => r.path === "/hook/paged" && r.body.includes(id),
+      );
+    }
+    // The delivery is logged after the receiver answers, so the log is
+    // read until it holds all three.
+    let seen = 0;
+    for (let attempt = 0; attempt < 40 && seen < 3; attempt++) {
+      seen = (await client.listWebhookDeliveries(created.data.id)).data.data
+        .length;
+      if (seen < 3) await new Promise((r) => setTimeout(r, 250));
+    }
+    expect(seen).toBe(3);
+
+    const first = await client.listWebhookDeliveries(created.data.id, {
+      limit: 2,
+    });
+    expect(first.data.data).toHaveLength(2);
+    expect(first.data.next_cursor).not.toBeNull();
+    const rest = await client.listWebhookDeliveries(created.data.id, {
+      limit: 2,
+      cursor: first.data.next_cursor!,
+    });
+    expect(rest.data.data).toHaveLength(1);
+    expect(rest.data.next_cursor).toBeNull();
+    expect(
+      new Set([...first.data.data, ...rest.data.data].map((d) => d.id)).size,
+    ).toBe(3);
+  });
+
   it("refuses a wildcard subscription while a named one on the same event is delivered", async () => {
     // Asserting the refusal alone would pass on a server that had stopped
     // delivering altogether, so the named subscription on the same event is

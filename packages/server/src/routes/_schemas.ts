@@ -332,6 +332,10 @@ export const VersionSchema = z
   })
   .openapi("Version");
 
+/** An item's history, newest first: the whole of it, so `next_cursor` is
+ *  always `null`. The same page `GET /items/{id}/versions` answers. */
+export const VersionPageSchema = pageOf(VersionSchema, "VersionPage");
+
 /**
  * The single-item read response. The base shape (`item` with outbound `edges`
  * hydrated, plus `metadata`) is always present; the three optional blocks are
@@ -353,8 +357,8 @@ export const VersionSchema = z
  *   a partial neighborhood indistinguishable from a complete one, so an app
  *   missing an edge scope rendered a ticket with none of its relations and
  *   looked correct doing it.
- * - `versions` — the item's version snapshots, newest-first. Opt in with
- *   `include=versions`.
+ * - `versions` — the item's version snapshots, newest first, as the same page
+ *   `GET /items/{id}/versions` answers. Opt in with `include=versions`.
  */
 export const ItemDetailSchema = z
   .object({
@@ -364,7 +368,7 @@ export const ItemDetailSchema = z
     neighbors: z.array(ItemWithMetadataSchema).optional(),
     neighbors_truncated: z.boolean().optional(),
     neighbors_omitted: z.number().int().optional(),
-    versions: z.array(VersionSchema).optional(),
+    versions: VersionPageSchema.optional(),
   })
   .openapi("ItemDetail");
 

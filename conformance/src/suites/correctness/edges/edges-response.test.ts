@@ -115,6 +115,35 @@ describe("edge response hydration + pagination", () => {
     expect(collected.size).toBe(SEED);
   });
 
+  it("continues a hydrated inbound block at the backrefs listing", async () => {
+    const target = await makeItem("inbound");
+    const SEED = 51;
+    for (let i = 0; i < SEED; i++) {
+      const e = await client.createEdge({
+        source_id: await makeItem(`s${String(i)}`),
+        target_id: target,
+        edge_type: "about",
+      });
+      expect(e.ok).toBe(true);
+      trackEdge(ctx, e.data.edge.id);
+    }
+    const detail = await client.rawRequest<{
+      backrefs: Record<string, { data: { id: string }[]; next_cursor: string | null }>;
+    }>(`/items/${target}?include=backrefs`);
+    expect(detail.ok).toBe(true);
+    const block = detail.data.backrefs.about!;
+    expect(block.data).toHaveLength(50);
+    expect(block.next_cursor).not.toBeNull();
+    const rest = await client.listItemBackrefs(target, {
+      edge_type: "about",
+      cursor: block.next_cursor!,
+    });
+    expect(rest.ok).toBe(true);
+    expect(rest.data.next_cursor).toBeNull();
+    const ids = new Set([...block.data, ...rest.data.data].map((e) => e.id));
+    expect(ids.size).toBe(SEED);
+  });
+
   it("answers 404 for an unknown item and 400 for a malformed id", async () => {
     const unknown = await client.listItemEdges(
       "00000000-0000-7000-8000-000000000000",

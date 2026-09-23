@@ -4,7 +4,7 @@ import type { AppEnv } from "../middleware/auth.js";
 import { requireTypeAccess } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
-import { VersionSchema, pageOf } from "./_schemas.js";
+import { VersionPageSchema } from "./_schemas.js";
 
 // ---------------------------------------------------------------------------
 // Local schemas
@@ -34,7 +34,7 @@ const listVersionsRoute = createRoute({
     200: {
       content: {
         "application/json": {
-          schema: pageOf(VersionSchema, "VersionPage"),
+          schema: VersionPageSchema,
         },
       },
       description: "Version history",

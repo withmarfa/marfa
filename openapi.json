@@ -612,15 +612,34 @@
             "type": "integer"
           },
           "versions": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/Version"
-            }
+            "$ref": "#/components/schemas/VersionPage"
           }
         },
         "required": [
           "item",
           "metadata"
+        ]
+      },
+      "VersionPage": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Version"
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Pass as `cursor` for the next page; `null` on the last. A page can be short, or empty, with a cursor still to follow, so a walk stops on `null` and never on a short page."
+          }
+        },
+        "required": [
+          "data",
+          "next_cursor"
         ]
       },
       "Version": {
@@ -938,28 +957,6 @@
         },
         "required": [
           "error"
-        ]
-      },
-      "VersionPage": {
-        "type": "object",
-        "properties": {
-          "data": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/Version"
-            }
-          },
-          "next_cursor": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Pass as `cursor` for the next page; `null` on the last. A page can be short, or empty, with a cursor still to follow, so a walk stops on `null` and never on a short page."
-          }
-        },
-        "required": [
-          "data",
-          "next_cursor"
         ]
       },
       "MetadataResponse": {
@@ -2594,28 +2591,7 @@
           "data": {
             "type": "array",
             "items": {
-              "type": "object",
-              "properties": {
-                "starts_at": {
-                  "type": "string"
-                },
-                "ends_at": {
-                  "type": "string"
-                },
-                "item": {
-                  "$ref": "#/components/schemas/Item"
-                },
-                "series_id": {
-                  "type": "string"
-                },
-                "replaces": {
-                  "type": "string"
-                }
-              },
-              "required": [
-                "starts_at",
-                "item"
-              ]
+              "$ref": "#/components/schemas/Occurrence"
             }
           },
           "next_cursor": {
@@ -2720,6 +2696,30 @@
           "next_cursor",
           "window",
           "scan"
+        ]
+      },
+      "Occurrence": {
+        "type": "object",
+        "properties": {
+          "starts_at": {
+            "type": "string"
+          },
+          "ends_at": {
+            "type": "string"
+          },
+          "item": {
+            "$ref": "#/components/schemas/Item"
+          },
+          "series_id": {
+            "type": "string"
+          },
+          "replaces": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "starts_at",
+          "item"
         ]
       },
       "TagCountPage": {
@@ -19399,6 +19399,16 @@
             "description": "How many runs, newest first: at most 200, 50 unless given.",
             "name": "limit",
             "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Opaque cursor from a previous page's `next_cursor`."
+            },
+            "required": false,
+            "description": "Opaque cursor from a previous page's `next_cursor`.",
+            "name": "cursor",
+            "in": "query"
           }
         ],
         "responses": {
@@ -23684,6 +23694,16 @@
             "required": false,
             "description": "Maximum number of delivery attempts to return.",
             "name": "limit",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Opaque cursor from a previous page's `next_cursor`."
+            },
+            "required": false,
+            "description": "Opaque cursor from a previous page's `next_cursor`.",
+            "name": "cursor",
             "in": "query"
           }
         ],

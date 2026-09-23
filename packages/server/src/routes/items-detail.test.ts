@@ -110,7 +110,10 @@ interface DetailResponse {
   }[];
   neighbors_truncated?: boolean;
   neighbors_omitted?: number;
-  versions?: { id: string; version: number }[];
+  versions?: {
+    data: { id: string; version: number }[];
+    next_cursor: string | null;
+  };
 }
 
 async function detail(
@@ -258,8 +261,12 @@ describe("GET /items/:id?include=versions", () => {
     expect(without.versions).toBeUndefined();
 
     const withVersions = await detail(adminA, item, "versions");
-    expect(Array.isArray(withVersions.versions)).toBe(true);
-    expect((withVersions.versions ?? []).length).toBeGreaterThanOrEqual(1);
+    expect(Object.keys(withVersions.versions ?? {}).sort()).toEqual([
+      "data",
+      "next_cursor",
+    ]);
+    expect(withVersions.versions?.next_cursor).toBeNull();
+    expect(withVersions.versions?.data.length).toBeGreaterThanOrEqual(1);
   });
 });
 

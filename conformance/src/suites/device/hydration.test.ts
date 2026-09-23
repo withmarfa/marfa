@@ -209,6 +209,29 @@ describe("what a hydration leaves behind", () => {
     expect((await device.list()).ok).toBe(true);
   });
 
+  it("walks past an empty page that still carries a cursor", async () => {
+    // A page the server thinned to nothing for this credential can arrive
+    // empty with more to follow; a walk that stopped there would leave the
+    // copy short and call it complete.
+    harness = await startHarness("empty-page");
+    const { server, device } = harness;
+    server.answer("GET", "/events", headRead("7"));
+    server.answer("GET", "/types", typeCatalog());
+    server.answer(
+      "GET",
+      "/items",
+      itemsPage([{ item: wireItem({ id: "before" }) }], { nextCursor: "p2" }),
+      itemsPage([], { nextCursor: "p3" }),
+      itemsPage([{ item: wireItem({ id: "after" }) }]),
+    );
+
+    const hydrated = await device.hydrate(["core.note"], "library");
+    expect(
+      hydrated.ok ? [hydrated.value.items, hydrated.value.pages] : hydrated,
+      "the hydration stopped on the empty page rather than on the null cursor",
+    ).toEqual([2, 3]);
+  });
+
   it("reports the counts, the pages and the cursor it stored", async () => {
     harness = await startHarness("report");
     const { server, device } = harness;

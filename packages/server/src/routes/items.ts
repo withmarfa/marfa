@@ -2213,7 +2213,9 @@ export function itemRoutes(storage: Storage) {
               neighbors_omitted: neighborsOmitted,
             }
           : {}),
-        ...(includeVersions && versions ? { versions } : {}),
+        ...(includeVersions && versions
+          ? { versions: { data: versions, next_cursor: null } }
+          : {}),
       },
       200,
     );

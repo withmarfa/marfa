@@ -394,3 +394,60 @@ fn record_line(record: &Value) -> String {
     }
     line
 }
+
+#[cfg(test)]
+mod tests {
+    use super::describe;
+    use serde_json::json;
+
+    #[test]
+    fn a_page_with_a_cursor_names_how_to_continue() {
+        let text = describe(&json!({
+            "data": [{"id": "i1", "type": "core.note", "created_at": "2026-01-01T00:00:00Z"}],
+            "next_cursor": "c2",
+        }))
+        .unwrap();
+        assert_eq!(
+            text,
+            "i1  core.note  2026-01-01T00:00:00Z\nmore: --cursor c2"
+        );
+    }
+
+    #[test]
+    fn the_last_page_names_no_cursor() {
+        let text = describe(&json!({"data": [], "next_cursor": null})).unwrap();
+        assert_eq!(text, "(none)");
+    }
+
+    #[test]
+    fn an_occurrence_leads_with_when_it_falls() {
+        let text = describe(&json!({
+            "data": [{
+                "starts_at": "2026-01-02T09:00:00Z",
+                "ends_at": "2026-01-02T10:00:00Z",
+                "item": {"id": "e1", "type": "core.event", "properties": {"title": "Standup"}},
+            }],
+            "next_cursor": null,
+            "window": {},
+            "scan": {},
+        }))
+        .unwrap();
+        assert_eq!(
+            text,
+            "2026-01-02T09:00:00Z to 2026-01-02T10:00:00Z  e1  core.event    Standup"
+        );
+    }
+
+    #[test]
+    fn a_search_hit_leads_with_its_score() {
+        let text = describe(&json!({
+            "data": [{
+                "item": {"id": "n1", "type": "core.note", "properties": {"title": "Wombat"}},
+                "relevance_score": 1.5,
+            }],
+            "next_cursor": null,
+        }))
+        .unwrap();
+        assert_eq!(text, "  1.500  n1  core.note    Wombat");
+    }
+}

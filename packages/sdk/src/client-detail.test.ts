@@ -93,6 +93,7 @@ describe("items.getDetail", () => {
     // A small neighborhood is complete, not truncated.
     expect(detail.neighbors_truncated).toBe(false);
     // Versions present.
-    expect((detail.versions ?? []).length).toBeGreaterThanOrEqual(1);
+    expect(detail.versions?.data.length).toBeGreaterThanOrEqual(1);
+    expect(detail.versions?.next_cursor).toBeNull();
   });
 });

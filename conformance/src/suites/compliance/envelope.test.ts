@@ -194,6 +194,19 @@ describe("one envelope for every list and search", () => {
     )) as { data: { id: string; edges?: Blocks }[] };
     isPage(listed.data.find((row) => row.id === itemId)?.edges?.about);
   });
+
+  it("carries an item's hydrated history as a page", async () => {
+    const detail = (await read(`/items/${itemId}?include=versions`)) as {
+      versions?: Record<string, unknown>;
+    };
+    await expectMatchesSchema("GET", "/items/{id}", 200, detail);
+    expect(Object.keys(detail.versions ?? {}).sort()).toEqual([
+      "data",
+      "next_cursor",
+    ]);
+    expect(Array.isArray(detail.versions?.data)).toBe(true);
+    expect(detail.versions?.next_cursor).toBeNull();
+  });
 });
 
 describe("search pages by cursor", () => {
@@ -225,7 +238,32 @@ describe("search pages by cursor", () => {
     expect(new Set(seen).size).toBe(5);
   });
 
-  it("refuses the offset it no longer takes", async () => {
+  it("refuses a cursor minted for another search", async () => {
+    const token = `envelope-bound-${ctx.runId}`;
+    for (let i = 0; i < 2; i++) {
+      const r = await client.createItem(
+        createNote({ source: ctx.source, properties: { body: token } }),
+      );
+      expect(r.ok).toBe(true);
+      trackItem(ctx, r.data.item.id);
+    }
+    const first = await client.search(token, { limit: 1 });
+    expect(first.data.next_cursor).not.toBeNull();
+    // The witness: the same cursor on the same search continues it.
+    const same = await client.search(token, {
+      limit: 1,
+      cursor: first.data.next_cursor!,
+    });
+    expect(same.status).toBe(200);
+    const refused = await client.search(`${token} other`, {
+      limit: 1,
+      cursor: first.data.next_cursor!,
+    });
+    expect(refused.status).toBe(400);
+    expect(refused.error?.error.code).toBe("validation_error");
+  });
+
+  it("refuses an offset query key", async () => {
     const response = await fetch(`${apiUrl}/search?q=${title}&offset=1`, {
       headers: { Authorization: `Bearer ${apiKey}` },
     });
