@@ -230,9 +230,9 @@ describe("enforcement_override — the per-credential levers", () => {
     expect(echoed.status).toBe(200);
     const listed = (
       (await echoed.json()) as {
-        keys: { id: string; enforcement_override?: unknown }[];
+        data: { id: string; enforcement_override?: unknown }[];
       }
-    ).keys.find((k) => k.id === minted.id);
+    ).data.find((k) => k.id === minted.id);
     expect(listed?.enforcement_override).toEqual(override);
 
     // Applied: an undeclared property is refused under this key and admitted

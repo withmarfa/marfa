@@ -148,11 +148,11 @@ export const NextCursorSchema = z
   );
 
 /**
- * A single edge type's hydrated block on an item response: the first page of
- * that type's edges, cut at 50 by default, which
- * `GET /items/{id}/edges?edge_type=X&cursor=...` continues.
+ * A page of edges. Also a single edge type's hydrated block on an item
+ * response, which is the first page of that type's edges, cut at 50 by
+ * default, that `GET /items/{id}/edges?edge_type=X&cursor=...` continues.
  */
-export const ItemEdgesBlockSchema = pageOf(EdgeSchema, "ItemEdgesBlock");
+export const EdgePageSchema = pageOf(EdgeSchema, "EdgePage");
 
 export const ItemSchema = z
   .object({
@@ -176,7 +176,7 @@ export const ItemSchema = z
      * opt-in on list GETs via ?include=edges. An empty object means no edges
      * or hydration was skipped.
      */
-    edges: z.record(z.string(), ItemEdgesBlockSchema).optional(),
+    edges: z.record(z.string(), EdgePageSchema).optional(),
     /**
      * Hydrated extension namespaces. Opt-in on list GETs via
      * ?include=extensions; filtered by caller permissions (same rule as
@@ -345,7 +345,7 @@ export const VersionSchema = z
  *   and permission-filtered. Opt in with `include=neighbors`. Paired with
  *   `neighbors_truncated`: the combined neighbor set is capped, and when the cap
  *   bites this flag is `true` — the only signal for that case, since the
- *   per-type edge-block `has_more` does not cover a combined-set overflow.
+ *   per-type edge block's `next_cursor` does not cover a combined-set overflow.
  *   Consumers must page the per-type edge/backref endpoints when it is set.
  * - `neighbors_omitted` — how many of the item's neighbors were left out
  *   because the caller may not read them. Distinct from `neighbors_truncated`,
@@ -360,7 +360,7 @@ export const ItemDetailSchema = z
   .object({
     item: ItemSchema,
     metadata: MetadataSchema,
-    backrefs: z.record(z.string(), ItemEdgesBlockSchema).optional(),
+    backrefs: z.record(z.string(), EdgePageSchema).optional(),
     neighbors: z.array(ItemWithMetadataSchema).optional(),
     neighbors_truncated: z.boolean().optional(),
     neighbors_omitted: z.number().int().optional(),

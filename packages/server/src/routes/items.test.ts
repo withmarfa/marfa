@@ -125,15 +125,16 @@ describe("POST /items", () => {
     expect(res.status).toBe(201);
     const data = (await res.json()) as {
       item: {
-        edges?: Record<string, { edges: { target_id: string }[] }>;
+        edges?: Record<
+          string,
+          { data: { target_id: string }[]; next_cursor: string | null }
+        >;
       };
       metadata: { tags: string[] };
     };
     expect(data.metadata.tags).toEqual(["reading", "important"]);
-    expect(data.item.edges?.about?.edges.length).toBe(1);
-    expect(data.item.edges?.about?.edges[0]?.target_id).toBe(
-      targetData.item.id,
-    );
+    expect(data.item.edges?.about?.data.length).toBe(1);
+    expect(data.item.edges?.about?.data[0]?.target_id).toBe(targetData.item.id);
   });
 
   it("natural-key upsert: re-POST with same (source, source_id) updates in place", async () => {
@@ -877,8 +878,7 @@ describe("GET /items", () => {
     expect(res.status).toBe(200);
     const data = (await res.json()) as Record<string, unknown>;
     expect(data).toHaveProperty("data");
-    expect(data).toHaveProperty("has_more");
-    expect(data).toHaveProperty("cursor");
+    expect(data).toHaveProperty("next_cursor");
   });
 
   it("filters by type", async () => {
@@ -1783,9 +1783,9 @@ describe("GET /items/:id/versions", () => {
       },
     );
     expect(res.status).toBe(200);
-    const data = (await res.json()) as { versions: { version: number }[] };
-    expect(data.versions.length).toBe(1);
-    expect(data.versions[0]).toHaveProperty("version", 1);
+    const data = (await res.json()) as { data: { version: number }[] };
+    expect(data.data.length).toBe(1);
+    expect(data.data[0]).toHaveProperty("version", 1);
   });
 });
 
@@ -2004,11 +2004,10 @@ describe("GET /items?sort=properties.<field>", () => {
       expect(res.status).toBe(200);
       const body = (await res.json()) as {
         data: { id: string }[];
-        cursor: string | null;
-        has_more: boolean;
+        next_cursor: string | null;
       };
       for (const row of body.data) if (known.has(row.id)) ordered.push(row.id);
-      cursor = body.has_more ? body.cursor : null;
+      cursor = body.next_cursor;
     } while (cursor);
     return ordered;
   }
@@ -2495,10 +2494,10 @@ describe("metadata.extensions are permission-filtered on every read path", () =>
     });
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
-      results: { metadata: { extensions: Record<string, unknown> } }[];
+      data: { metadata: { extensions: Record<string, unknown> } }[];
     };
-    expect(body.results.length).toBeGreaterThan(0);
-    for (const result of body.results) {
+    expect(body.data.length).toBeGreaterThan(0);
+    for (const result of body.data) {
       const namespaces = Object.keys(result.metadata.extensions);
       for (const ns of namespaces) {
         expect(ns).toBe("visible-app.prefs");
@@ -2669,12 +2668,12 @@ describe("GET /items?include=extensions", () => {
     const body = (await res.json()) as {
       data: {
         id: string;
-        edges?: Record<string, { edges: unknown[] }>;
+        edges?: Record<string, { data: unknown[]; next_cursor: string | null }>;
         extensions?: Record<string, unknown>;
       }[];
     };
     const row = body.data.find((r) => r.id === item.id);
-    expect(row?.edges?.about?.edges.length).toBe(1);
+    expect(row?.edges?.about?.data.length).toBe(1);
     expect(row?.extensions).toHaveProperty("app.data");
   });
 });
@@ -2797,7 +2796,7 @@ describe("POST /items — inline-edge hydration parity past the cap", () => {
     // The create response builds its edge hydration from the rows the
     // transaction created rather than reading them back, so this pins
     // the parity that makes the shortcut safe: same edges as a
-    // follow-up GET, same has_more, and a cursor that fetches the
+    // follow-up GET, the same cursor, and one that fetches the
     // remainder with no duplicates and no unreachable edges.
     const targetIds: string[] = [];
     for (let i = 0; i < 51; i++) {
@@ -2825,15 +2824,14 @@ describe("POST /items — inline-edge hydration parity past the cap", () => {
         id: string;
         edges: Record<
           string,
-          { edges: { id: string }[]; has_more: boolean; next_cursor?: string }
+          { data: { id: string }[]; next_cursor: string | null }
         >;
       };
     };
     const block = created.item.edges.references;
     if (!block) throw new Error("references block missing from response");
-    expect(block.edges).toHaveLength(50);
-    expect(block.has_more).toBe(true);
-    expect(block.next_cursor).toBeDefined();
+    expect(block.data).toHaveLength(50);
+    expect(block.next_cursor).not.toBeNull();
 
     // Byte-parity with the read path: a fresh single-item GET must
     // return the identical 50 edge ids in the identical order.
@@ -2847,13 +2845,16 @@ describe("POST /items — inline-edge hydration parity past the cap", () => {
     );
     const readItem = (await readBack.json()) as {
       item: {
-        edges: Record<string, { edges: { id: string }[] }>;
+        edges: Record<
+          string,
+          { data: { id: string }[]; next_cursor: string | null }
+        >;
       };
     };
     const readBlock = readItem.item.edges.references;
     if (!readBlock) throw new Error("references block missing from read");
-    expect(block.edges.map((e) => e.id)).toEqual(
-      readBlock.edges.map((e) => e.id),
+    expect(block.data.map((e) => e.id)).toEqual(
+      readBlock.data.map((e) => e.id),
     );
 
     // The cursor reaches exactly the one remaining edge — no duplicates
@@ -2866,7 +2867,7 @@ describe("POST /items — inline-edge hydration parity past the cap", () => {
     );
     expect(rest.status).toBe(200);
     const restBody = (await rest.json()) as { data: { id: string }[] };
-    const firstPageIds = new Set(block.edges.map((e) => e.id));
+    const firstPageIds = new Set(block.data.map((e) => e.id));
     expect(restBody.data).toHaveLength(1);
     expect(firstPageIds.has(restBody.data[0]?.id ?? "")).toBe(false);
   });

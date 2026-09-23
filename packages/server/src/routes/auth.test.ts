@@ -141,13 +141,13 @@ describe("key management", () => {
     });
     expect(listRes.status).toBe(200);
     const body = (await listRes.json()) as {
-      keys: { id: string; permissions?: string[] }[];
+      data: { id: string; permissions?: string[] }[];
     };
-    expect(body.keys.length).toBeGreaterThanOrEqual(2);
+    expect(body.data.length).toBeGreaterThanOrEqual(2);
     // The stored row says the same thing the mint response did. Asserted
     // separately because the two are built by different code, and the mint
     // response is the one a caller cannot go back and re-read.
-    expect(body.keys.find((k) => k.id === created.id)?.permissions).toEqual([
+    expect(body.data.find((k) => k.id === created.id)?.permissions).toEqual([
       "webhooks.manage",
     ]);
   });
@@ -194,9 +194,9 @@ describe("extension_permissions wiring", () => {
       key: ctx.workingKey,
     });
     const list = (await listRes.json()) as {
-      keys: { id: string; extension_permissions?: Record<string, string> }[];
+      data: { id: string; extension_permissions?: Record<string, string> }[];
     };
-    const found = list.keys.find((k) => k.id === created.id);
+    const found = list.data.find((k) => k.id === created.id);
     expect(found?.extension_permissions).toEqual({ "swift.calendar": "write" });
   });
 
@@ -255,9 +255,9 @@ describe("extension_permissions wiring", () => {
       key: ctx.workingKey,
     });
     const list = (await listRes.json()) as {
-      keys: { id: string; metadata_permissions?: Record<string, string> }[];
+      data: { id: string; metadata_permissions?: Record<string, string> }[];
     };
-    const found = list.keys.find((k) => k.id === created.id);
+    const found = list.data.find((k) => k.id === created.id);
     expect(found?.metadata_permissions).toEqual({ types: "write" });
   });
 

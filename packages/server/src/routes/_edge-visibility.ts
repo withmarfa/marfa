@@ -66,8 +66,8 @@ export function sourceTypeReadable(
  * Rows are dropped rather than refused, because every caller is answering
  * with a collection: a collection that refused would tell a caller a row
  * it may not read exists. A page or a block can therefore come back
- * shorter than it was asked for, and empty while its `has_more` is true —
- * the pagination signals are the store's and are left alone, so paging
+ * shorter than it was asked for, and empty with a `next_cursor` still to
+ * follow — the cursor is the store's and is left alone, so paging
  * still walks the whole listing.
  *
  * The source lookup runs even where the caller has already authorized the

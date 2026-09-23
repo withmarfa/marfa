@@ -95,9 +95,15 @@ describe("edge events on every door", () => {
     });
     expect(res.status).toBe(201);
     const parsed = (await res.json()) as {
-      item: { id: string; edges?: Record<string, { edges: { id: string }[] }> };
+      item: {
+        id: string;
+        edges?: Record<
+          string,
+          { data: { id: string }[]; next_cursor: string | null }
+        >;
+      };
     };
-    const created = (parsed.item.edges?.references?.edges ?? []).map(
+    const created = (parsed.item.edges?.references?.data ?? []).map(
       (e) => e.id,
     );
     expect(created).toHaveLength(1);

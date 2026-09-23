@@ -92,14 +92,13 @@ async function edge(
 }
 
 interface EdgesBlock {
-  edges: {
+  data: {
     id: string;
     source_id: string;
     target_id: string;
     edge_type: string;
   }[];
-  has_more: boolean;
-  next_cursor?: string;
+  next_cursor: string | null;
 }
 interface DetailResponse {
   item: { id: string; edges?: Record<string, EdgesBlock> };
@@ -150,7 +149,7 @@ describe("GET /items/:id — base shape is unchanged without include", () => {
     expect(d.item.id).toBe(parent);
     expect(d.metadata.tags).toEqual(["t"]);
     // Outbound edges are always hydrated on the single-item read.
-    expect(d.item.edges?.["parent-of"]?.edges.length).toBe(1);
+    expect(d.item.edges?.["parent-of"]?.data.length).toBe(1);
     // The opt-in blocks are absent unless requested.
     expect(d.backrefs).toBeUndefined();
     expect(d.neighbors).toBeUndefined();
@@ -167,8 +166,8 @@ describe("GET /items/:id?include=backrefs", () => {
     await edge(adminA, comment, parent, "in-thread");
 
     const d = await detail(adminA, parent, "backrefs");
-    expect(d.backrefs?.["in-thread"]?.edges.length).toBe(1);
-    expect(d.backrefs?.["in-thread"]?.edges[0]?.source_id).toBe(comment);
+    expect(d.backrefs?.["in-thread"]?.data.length).toBe(1);
+    expect(d.backrefs?.["in-thread"]?.data[0]?.source_id).toBe(comment);
     // Inbound edges don't appear on the outbound `item.edges` block.
     expect(d.item.edges?.["in-thread"]).toBeUndefined();
   });
@@ -265,7 +264,7 @@ describe("GET /items/:id?include=versions", () => {
 });
 
 describe("GET /items/:id?include=backrefs — per-type pagination", () => {
-  it("caps each inbound type and signals has_more + a cursor past the cap", async () => {
+  it("caps each inbound type and carries a cursor past the cap", async () => {
     const parent = await create(adminA, "core.note", { body: "busy thread" });
     const overflow = HYDRATE_PER_TYPE_CAP + 1;
 
@@ -305,8 +304,8 @@ describe("GET /items/:id?include=backrefs — per-type pagination", () => {
 
     const d = await detail(adminA, parent, "backrefs");
     const block = d.backrefs?.["in-thread"];
-    expect(block?.edges.length).toBe(HYDRATE_PER_TYPE_CAP);
-    expect(block?.has_more).toBe(true);
+    expect(block?.data.length).toBe(HYDRATE_PER_TYPE_CAP);
+    expect(block?.next_cursor).not.toBeNull();
     expect(typeof block?.next_cursor).toBe("string");
   });
 });
@@ -314,8 +313,8 @@ describe("GET /items/:id?include=backrefs — per-type pagination", () => {
 describe("GET /items/:id?include=neighbors — combined-set truncation signal", () => {
   it("flags neighbors_truncated when the combined set overflows even though every per-type block is below its cap", async () => {
     // Three edge types, 40 each = 120 neighbors. Each block (40) is under the
-    // 50 per-type cap, so no block reports has_more — but the combined set
-    // exceeds the 100-neighbor bound. This is the case the per-type has_more
+    // 50 per-type cap, so no block carries a cursor — but the combined set
+    // exceeds the 100-neighbor bound. This is the case the per-type cursor
     // cannot signal; only neighbors_truncated catches it.
     const per = 40;
     const parent = await create(adminA, "core.note", { body: "busy hub" });
@@ -368,9 +367,9 @@ describe("GET /items/:id?include=neighbors — combined-set truncation signal", 
 
     const d = await detail(adminA, parent, "backrefs,neighbors");
     // No single type is truncated...
-    expect(d.item.edges?.["parent-of"]?.has_more).toBe(false);
-    expect(d.backrefs?.["in-thread"]?.has_more).toBe(false);
-    expect(d.backrefs?.["attached-to"]?.has_more).toBe(false);
+    expect(d.item.edges?.["parent-of"]?.next_cursor).toBeNull();
+    expect(d.backrefs?.["in-thread"]?.next_cursor).toBeNull();
+    expect(d.backrefs?.["attached-to"]?.next_cursor).toBeNull();
     // ...but the combined neighbor set is, and only this flag says so.
     expect(d.neighbors_truncated).toBe(true);
     expect((d.neighbors ?? []).length).toBeLessThanOrEqual(100);

@@ -2103,7 +2103,7 @@ export function itemRoutes(storage: Storage) {
 
     let neighbors: { item: Item; metadata: Metadata }[] | undefined;
     // True when the 1-hop neighbor set was capped (more neighbors exist than
-    // were hydrated). Distinct from the per-type edge-block `has_more`: several
+    // were hydrated). Distinct from the per-type edge block's `next_cursor`: several
     // edge types can each sit below their per-type cap while their COMBINED
     // neighbor set exceeds the bound, so this is the only signal that catches
     // that case. Consumers must treat every neighbor-derived view as
@@ -2146,7 +2146,7 @@ export function itemRoutes(storage: Storage) {
 
       // Bound the hydration so a pathological fan-out can't pin the worker. When
       // the bound bites, `neighbors_truncated` flags it — the per-block
-      // `has_more` does NOT cover this, since the cap is on the combined set
+      // `next_cursor` does NOT cover this, since the cap is on the combined set
       // across types, not any single type.
       neighborsTruncated = neighborIds.size > MAX_NEIGHBOR_IDS;
       const ids = [...neighborIds].slice(0, MAX_NEIGHBOR_IDS);

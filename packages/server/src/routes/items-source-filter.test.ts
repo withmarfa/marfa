@@ -143,11 +143,11 @@ describe("source_filter is not switchable off by broadening the query", () => {
     });
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
-      results: { item: { type: string; source: string } }[];
+      data: { item: { type: string; source: string } }[];
     };
     const sources = [
       ...new Set(
-        body.results
+        body.data
           .filter((r) => r.item.type === "core.note")
           .map((r) => r.item.source),
       ),

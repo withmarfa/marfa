@@ -201,7 +201,7 @@ describe("items", () => {
     await createNote();
     const result = await client.items.list({ type: "core.note", limit: 5 });
     expect(result.data.length).toBeGreaterThanOrEqual(1);
-    expect(result).toHaveProperty("has_more");
+    expect(result).toHaveProperty("next_cursor");
   });
 
   it("updates an item", async () => {

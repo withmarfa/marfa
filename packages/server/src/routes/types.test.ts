@@ -142,7 +142,7 @@ describe("GET /types", () => {
       key: ctx.workingKey,
     });
     expect(res.status).toBe(200);
-    const types = (await res.json()) as TypeSchema[];
+    const types = ((await res.json()) as { data: TypeSchema[] }).data;
     expect(types.length).toBeGreaterThan(0);
     const noteType = types.find((t) => t.id === "core.note");
     expect(noteType).toBeTruthy();
@@ -155,7 +155,7 @@ describe("GET /types", () => {
     const res = await request(ctx.app, "GET", "/types", {
       key: ctx.workingKey,
     });
-    const types = (await res.json()) as TypeSchema[];
+    const types = ((await res.json()) as { data: TypeSchema[] }).data;
 
     const containers = types
       .filter((t) => t.roles?.includes("container"))
@@ -716,7 +716,7 @@ describe("compatible_with at the gate and on the wire", () => {
     const list = await request(ctx.app, "GET", "/types", {
       key: ctx.workingKey,
     });
-    const listBody = (await list.json()) as TypeSchema[];
+    const listBody = ((await list.json()) as { data: TypeSchema[] }).data;
     const fromList = listBody.find((t) => t.id === "demo.meal_plan");
     expect(fromList?.compatible_with).toEqual(["core.note"]);
   });

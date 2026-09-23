@@ -36,8 +36,7 @@ interface Page {
     updated_at: string;
     occurred_at?: string | null;
   }[];
-  cursor: string | null;
-  has_more: boolean;
+  next_cursor: string | null;
 }
 
 async function listItems(
@@ -64,13 +63,13 @@ async function listItems(
 async function firstCursor(query: string): Promise<string> {
   const { status, page } = await listItems(`${query}&limit=1`);
   expect(status).toBe(200);
-  expect(page?.has_more).toBe(true);
-  expect(page?.cursor).toBeTruthy();
-  const next = await listItems(`${query}&limit=1&cursor=${page!.cursor!}`);
+  expect(page?.next_cursor).not.toBeNull();
+  expect(page?.next_cursor).toBeTruthy();
+  const next = await listItems(`${query}&limit=1&cursor=${page!.next_cursor!}`);
   expect(next.status).toBe(200);
   expect(next.page?.data).toHaveLength(1);
   expect(next.page?.data[0]?.id).not.toBe(page!.data[0]?.id);
-  return page!.cursor!;
+  return page!.next_cursor!;
 }
 
 /** The refusal, asserted by shape rather than by status alone: a 400 that
@@ -181,7 +180,9 @@ describe("GET /items — the cursor is bound to the ordering that issued it", ()
     // the witness that the same position is honored with its key.
     const { page } = await listItems(`${TYPE}&limit=1`);
     const last = page!.data[0]!;
-    const honored = await listItems(`${TYPE}&cursor=${page!.cursor!}&limit=1`);
+    const honored = await listItems(
+      `${TYPE}&cursor=${page!.next_cursor!}&limit=1`,
+    );
     expect(honored.status).toBe(200);
     expect(honored.page?.data).toHaveLength(1);
     expect(honored.page?.data[0]?.id).not.toBe(last.id);
@@ -217,7 +218,7 @@ describe("a cursor whose key is not one this listing mints", () => {
   it("refuses a bare `created_at` on the default listing it names", async () => {
     const { page } = await listItems(`${TYPE}&limit=1`);
     const last = page!.data[0]!;
-    await honoredAt(TYPE, page!.cursor!, last.id);
+    await honoredAt(TYPE, page!.next_cursor!, last.id);
     expectOrderingRefusal(
       await listItems(
         `${TYPE}&cursor=${cursorTagged(last.created_at, last.id, "created_at")}&limit=1`,
@@ -229,7 +230,7 @@ describe("a cursor whose key is not one this listing mints", () => {
     const catchUp = `${TYPE}&updated_after=1970-01-01T00:00:00.000Z`;
     const { page } = await listItems(`${catchUp}&limit=1`);
     const last = page!.data[0]!;
-    await honoredAt(catchUp, page!.cursor!, last.id);
+    await honoredAt(catchUp, page!.next_cursor!, last.id);
     expectOrderingRefusal(
       await listItems(
         `${catchUp}&cursor=${cursorTagged(last.updated_at, last.id, "updated_at")}&limit=1`,
@@ -241,7 +242,7 @@ describe("a cursor whose key is not one this listing mints", () => {
     const byOccurrence = `${TYPE}&sort=occurred_at&direction=desc`;
     const { page } = await listItems(`${byOccurrence}&limit=1`);
     const last = page!.data[0]!;
-    await honoredAt(byOccurrence, page!.cursor!, last.id);
+    await honoredAt(byOccurrence, page!.next_cursor!, last.id);
     expectOrderingRefusal(
       await listItems(
         `${byOccurrence}&cursor=${cursorTagged(last.occurred_at ?? last.created_at, last.id, "occurred_at")}&limit=1`,
@@ -297,8 +298,8 @@ describe("GET /edges — the same rule on the sibling listing", () => {
         message: body.error.message,
       };
     }
-    const body = (await res.json()) as { cursor: string | null };
-    return { status: 200, cursor: body.cursor };
+    const body = (await res.json()) as { next_cursor: string | null };
+    return { status: 200, cursor: body.next_cursor };
   }
 
   it("refuses a cursor crossing between the default and the catch-up", async () => {
@@ -352,12 +353,12 @@ describe("a cursor continues the page it came from and nothing else", () => {
     }
     const body = (await res.json()) as {
       data: { id: string }[];
-      cursor: string | null;
+      next_cursor: string | null;
     };
     return {
       status: 200,
       ids: body.data.map((row) => row.id),
-      cursor: body.cursor,
+      cursor: body.next_cursor,
     };
   }
 
@@ -399,9 +400,8 @@ describe("a cursor continues the page it came from and nothing else", () => {
   }
 
   interface Block {
-    edges: { id: string }[];
-    has_more: boolean;
-    next_cursor?: string;
+    data: { id: string }[];
+    next_cursor: string | null;
   }
 
   it("reports a malformed cursor as malformed, not as another listing's", async () => {
@@ -481,9 +481,8 @@ describe("a cursor continues the page it came from and nothing else", () => {
       return body.item.edges.about!;
     };
     const exactly = await read();
-    expect(exactly.edges).toHaveLength(HYDRATE_PER_TYPE_CAP);
-    expect(exactly.has_more).toBe(false);
-    expect(exactly.next_cursor).toBeUndefined();
+    expect(exactly.data).toHaveLength(HYDRATE_PER_TYPE_CAP);
+    expect(exactly.next_cursor).toBeNull();
 
     edgeIds.push(await link(hub, await note("out-last")));
     // The edge the block will cut at is the second oldest; a write moves
@@ -496,10 +495,10 @@ describe("a cursor continues the page it came from and nothing else", () => {
     expect(patched.status).toBe(200);
 
     const over = await read();
-    expect(over.edges).toHaveLength(HYDRATE_PER_TYPE_CAP);
-    expect(over.has_more).toBe(true);
-    expect(over.edges.at(-1)?.id).toBe(edgeIds[1]);
-    const shown = new Set(over.edges.map((edge) => edge.id));
+    expect(over.data).toHaveLength(HYDRATE_PER_TYPE_CAP);
+    expect(over.next_cursor).not.toBeNull();
+    expect(over.data.at(-1)?.id).toBe(edgeIds[1]);
+    const shown = new Set(over.data.map((edge) => edge.id));
     const follow = async (cursor: string) => {
       const rest = await list(
         `/items/${hub}/edges?edge_type=about&cursor=${encodeURIComponent(cursor)}`,
@@ -528,7 +527,7 @@ describe("a cursor continues the page it came from and nothing else", () => {
     };
     expect(page.data.map((row) => row.id)).toEqual([hub]);
     const fromListing = page.data[0]!.edges.about!;
-    expect(fromListing.has_more).toBe(true);
+    expect(fromListing.next_cursor).not.toBeNull();
     await follow(fromListing.next_cursor!);
   });
 
@@ -608,12 +607,12 @@ describe("a cursor continues the page it came from and nothing else", () => {
       (await res.json()) as {
         backrefs: Record<
           string,
-          { edges: { id: string }[]; has_more: boolean; next_cursor?: string }
+          { data: { id: string }[]; next_cursor: string | null }
         >;
       }
     ).backrefs.about;
-    expect(block?.has_more).toBe(true);
-    expect(block?.edges).toHaveLength(HYDRATE_PER_TYPE_CAP);
+    expect(block?.next_cursor).not.toBeNull();
+    expect(block?.data).toHaveLength(HYDRATE_PER_TYPE_CAP);
     const cursor = encodeURIComponent(block!.next_cursor!);
 
     const rest = await list(
@@ -621,7 +620,7 @@ describe("a cursor continues the page it came from and nothing else", () => {
     );
     expect(rest.status).toBe(200);
     expect(rest.ids).toHaveLength(1);
-    const shown = new Set(block!.edges.map((edge) => edge.id));
+    const shown = new Set(block!.data.map((edge) => edge.id));
     expect(shown.has(rest.ids![0]!)).toBe(false);
 
     expectOrderingRefusal(

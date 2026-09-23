@@ -88,9 +88,12 @@ describe("the two cases that look like an unknown type are not refused", () => {
       key: ctx.workingKey,
     });
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { data: unknown[]; has_more: boolean };
+    const body = (await res.json()) as {
+      data: unknown[];
+      next_cursor: string | null;
+    };
     expect(body.data).toEqual([]);
-    expect(body.has_more).toBe(false);
+    expect(body.next_cursor).toBeNull();
   });
 
   it("a registered type the credential cannot read answers an empty page", async () => {

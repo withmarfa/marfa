@@ -13,7 +13,10 @@ import type { Metadata } from "@withmarfa/shared";
 interface HydratedItem {
   id: string;
   type: string;
-  edges?: Record<string, { edges: { target_id: string }[] }>;
+  edges?: Record<
+    string,
+    { data: { target_id: string }[]; next_cursor: string | null }
+  >;
   extensions?: Record<string, Record<string, unknown>>;
 }
 
@@ -127,8 +130,8 @@ describe("POST /items/bulk-get", () => {
     expect(data.items).toHaveLength(1);
 
     const host = data.items[0];
-    expect(host?.edges?.references?.edges).toHaveLength(1);
-    expect(host?.edges?.references?.edges[0]?.target_id).toBe(targetId);
+    expect(host?.edges?.references?.data).toHaveLength(1);
+    expect(host?.edges?.references?.data[0]?.target_id).toBe(targetId);
     expect(host?.extensions?.["custom.ns"]).toEqual({ data: { flag: true } });
 
     expect(data.metadata).toBeDefined();

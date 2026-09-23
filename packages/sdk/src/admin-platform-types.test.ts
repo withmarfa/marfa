@@ -40,7 +40,9 @@ describe("client.admin.platformTypes.drift", () => {
           "http://example.test/admin/platform-types/drift",
         );
         expect(init?.method).toBe("GET");
-        return Promise.resolve(makeJsonResponse(200, { types: [] }));
+        return Promise.resolve(
+          makeJsonResponse(200, { data: [], next_cursor: null }),
+        );
       },
     );
 
@@ -48,7 +50,7 @@ describe("client.admin.platformTypes.drift", () => {
     expect(mockFetch).toHaveBeenCalledOnce();
   });
 
-  it("unwraps `types` and returns a bare array", async () => {
+  it("unwraps `data` and returns a bare array", async () => {
     const rows = [
       {
         id: "withmarfa.captured_email",
@@ -64,7 +66,7 @@ describe("client.admin.platformTypes.drift", () => {
       },
     ];
     const mockFetch = vi.fn((): Promise<Response> =>
-      Promise.resolve(makeJsonResponse(200, { types: rows })),
+      Promise.resolve(makeJsonResponse(200, { data: rows, next_cursor: null })),
     );
 
     const drifted = await makeClient(mockFetch).admin.platformTypes.drift();
@@ -80,7 +82,7 @@ describe("client.admin.platformTypes.drift", () => {
 
   it("returns an empty array when nothing has drifted", async () => {
     const mockFetch = vi.fn((): Promise<Response> =>
-      Promise.resolve(makeJsonResponse(200, { types: [] })),
+      Promise.resolve(makeJsonResponse(200, { data: [], next_cursor: null })),
     );
 
     await expect(

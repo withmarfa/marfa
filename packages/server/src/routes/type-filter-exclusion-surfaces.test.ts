@@ -104,16 +104,16 @@ async function searchedTypes(key: string): Promise<string[]> {
   const res = await request(ctx.app, "GET", "/search?q=zqxbrindle", { key });
   expect(res.status).toBe(200);
   const body = (await res.json()) as {
-    results: { item: { type: string } }[];
+    data: { item: { type: string } }[];
   };
-  return body.results.map((r) => r.item.type);
+  return body.data.map((r) => r.item.type);
 }
 
 async function tagVocabulary(key: string): Promise<string[]> {
   const res = await request(ctx.app, "GET", "/metadata/tags", { key });
   expect(res.status).toBe(200);
-  const body = (await res.json()) as { tags: { tag: string }[] };
-  return body.tags.map((t) => t.tag);
+  const body = (await res.json()) as { data: { tag: string }[] };
+  return body.data.map((t) => t.tag);
 }
 
 async function statsTypes(key: string): Promise<Record<string, number>> {

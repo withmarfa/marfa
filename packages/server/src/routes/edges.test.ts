@@ -813,12 +813,17 @@ describe("Edge hydration on item reads", () => {
     });
     expect(res.status).toBe(200);
     const data = (await res.json()) as {
-      item: { edges?: Record<string, { edges: { target_id: string }[] }> };
+      item: {
+        edges?: Record<
+          string,
+          { data: { target_id: string }[]; next_cursor: string | null }
+        >;
+      };
     };
     expect(data.item.edges).toBeDefined();
     const about = data.item.edges?.about;
     expect(about).toBeDefined();
-    expect(about?.edges.length).toBe(2);
+    expect(about?.data.length).toBe(2);
   });
 
   it("skips edge hydration on GET /items unless include=edges", async () => {
@@ -1186,8 +1191,7 @@ describe("GET /edges", () => {
     expect(res.status).toBe(200);
     const data = (await res.json()) as {
       data: { edge_type: string; properties: Record<string, unknown> }[];
-      cursor: string | null;
-      has_more: boolean;
+      next_cursor: string | null;
     };
     const matching = data.data.filter(
       (e) => (e.properties as { tag?: string }).tag === tag,
@@ -1236,17 +1240,16 @@ describe("GET /edges", () => {
     );
     const firstData = (await first.json()) as {
       data: { properties: Record<string, unknown> }[];
-      cursor: string | null;
-      has_more: boolean;
+      next_cursor: string | null;
     };
     expect(firstData.data.length).toBe(2);
-    expect(firstData.has_more).toBe(true);
-    expect(firstData.cursor).toBeTruthy();
+    expect(firstData.next_cursor).not.toBeNull();
+    expect(firstData.next_cursor).toBeTruthy();
 
     const second = await request(
       ctx.app,
       "GET",
-      `/edges?edge_type=${edgeType}&limit=2&cursor=${encodeURIComponent(firstData.cursor ?? "")}`,
+      `/edges?edge_type=${edgeType}&limit=2&cursor=${encodeURIComponent(firstData.next_cursor ?? "")}`,
       { key: ctx.workingKey },
     );
     const secondData = (await second.json()) as {

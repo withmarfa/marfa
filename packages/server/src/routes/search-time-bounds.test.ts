@@ -72,8 +72,8 @@ async function searchIds(query: string): Promise<string[]> {
     key: ctx.workingKey,
   });
   expect(res.status).toBe(200);
-  const body = (await res.json()) as { results: { item: { id: string } }[] };
-  return body.results.map((r) => r.item.id).sort();
+  const body = (await res.json()) as { data: { item: { id: string } }[] };
+  return body.data.map((r) => r.item.id).sort();
 }
 
 describe("GET /search — the time bounds it advertises", () => {

@@ -37,12 +37,12 @@ describe("GET /search happy path", () => {
     );
     expect(res.status).toBe(200);
     const data = (await res.json()) as {
-      results: {
+      data: {
         item: { id: string; properties: Record<string, unknown> };
       }[];
     };
-    expect(data.results.length).toBeGreaterThanOrEqual(1);
-    expect(data.results[0]?.item.properties.body).toContain("Quokkas");
+    expect(data.data.length).toBeGreaterThanOrEqual(1);
+    expect(data.data[0]?.item.properties.body).toContain("Quokkas");
   });
 });
 
@@ -62,9 +62,7 @@ describe("GET /search indexes tags", () => {
     const before = await request(ctx.app, "GET", `/search?q=${tag}`, {
       key: ctx.workingKey,
     });
-    expect(((await before.json()) as { results: unknown[] }).results).toEqual(
-      [],
-    );
+    expect(((await before.json()) as { data: unknown[] }).data).toEqual([]);
 
     const tagged = await request(ctx.app, "POST", `/items/${item.id}/tags`, {
       key: ctx.workingKey,
@@ -77,8 +75,8 @@ describe("GET /search indexes tags", () => {
     });
     expect(found.status).toBe(200);
     const results = (
-      (await found.json()) as { results: { item: { id: string } }[] }
-    ).results;
+      (await found.json()) as { data: { item: { id: string } }[] }
+    ).data;
     expect(results.map((r) => r.item.id)).toEqual([item.id]);
 
     // And gone once the tag is: the index follows the sidecar both ways.
@@ -92,9 +90,7 @@ describe("GET /search indexes tags", () => {
     const after = await request(ctx.app, "GET", `/search?q=${tag}`, {
       key: ctx.workingKey,
     });
-    expect(((await after.json()) as { results: unknown[] }).results).toEqual(
-      [],
-    );
+    expect(((await after.json()) as { data: unknown[] }).data).toEqual([]);
   });
 });
 
@@ -132,9 +128,9 @@ describe("GET /search library filter", () => {
     );
     expect(res.status).toBe(200);
     const data = (await res.json()) as {
-      results: { item: { id: string; tier: "library" | "feed" } }[];
+      data: { item: { id: string; tier: "library" | "feed" } }[];
     };
-    const libraryFlags = new Set(data.results.map((r) => r.item.tier));
+    const libraryFlags = new Set(data.data.map((r) => r.item.tier));
     expect(libraryFlags.has("library")).toBe(true);
     expect(libraryFlags.has("feed")).toBe(true);
   });
@@ -148,10 +144,10 @@ describe("GET /search library filter", () => {
     );
     expect(res.status).toBe(200);
     const data = (await res.json()) as {
-      results: { item: { tier: "library" | "feed" } }[];
+      data: { item: { tier: "library" | "feed" } }[];
     };
-    expect(data.results.length).toBeGreaterThan(0);
-    for (const result of data.results) {
+    expect(data.data.length).toBeGreaterThan(0);
+    for (const result of data.data) {
       expect(result.item.tier).toBe("library");
     }
   });
@@ -165,10 +161,10 @@ describe("GET /search library filter", () => {
     );
     expect(res.status).toBe(200);
     const data = (await res.json()) as {
-      results: { item: { tier: "library" | "feed" } }[];
+      data: { item: { tier: "library" | "feed" } }[];
     };
-    expect(data.results.length).toBeGreaterThan(0);
-    for (const result of data.results) {
+    expect(data.data.length).toBeGreaterThan(0);
+    for (const result of data.data) {
       expect(result.item.tier).toBe("feed");
     }
   });
@@ -182,9 +178,9 @@ describe("GET /search library filter", () => {
     );
     expect(res.status).toBe(200);
     const data = (await res.json()) as {
-      results: { item: { tier: "library" | "feed" } }[];
+      data: { item: { tier: "library" | "feed" } }[];
     };
-    const libraryFlags = new Set(data.results.map((r) => r.item.tier));
+    const libraryFlags = new Set(data.data.map((r) => r.item.tier));
     expect(libraryFlags.has("library")).toBe(true);
     expect(libraryFlags.has("feed")).toBe(true);
   });
@@ -220,10 +216,10 @@ describe("GET /search?tags=", () => {
     );
     expect(res.status).toBe(200);
     const data = (await res.json()) as {
-      results: { metadata: { tags: string[] } }[];
+      data: { metadata: { tags: string[] } }[];
     };
-    expect(data.results.length).toBeGreaterThan(0);
-    for (const result of data.results) {
+    expect(data.data.length).toBeGreaterThan(0);
+    for (const result of data.data) {
       expect(result.metadata.tags).toContain("red");
     }
   });
@@ -237,14 +233,14 @@ describe("GET /search?tags=", () => {
     );
     expect(res.status).toBe(200);
     const data = (await res.json()) as {
-      results: { metadata: { tags: string[] } }[];
+      data: { metadata: { tags: string[] } }[];
     };
-    for (const result of data.results) {
+    for (const result of data.data) {
       expect(result.metadata.tags).toContain("red");
       expect(result.metadata.tags).toContain("small");
     }
     // Only the red+small note should match; not red+large or blue+small.
-    expect(data.results.length).toBe(1);
+    expect(data.data.length).toBe(1);
   });
 
   it("returns empty when no items have the requested tag", async () => {
@@ -255,8 +251,8 @@ describe("GET /search?tags=", () => {
       { key: ctx.workingKey },
     );
     expect(res.status).toBe(200);
-    const data = (await res.json()) as { results: unknown[] };
-    expect(data.results).toHaveLength(0);
+    const data = (await res.json()) as { data: unknown[] };
+    expect(data.data).toHaveLength(0);
   });
 });
 
@@ -304,8 +300,8 @@ describe("GET /search?include=system", () => {
   async function foundIds(query: string): Promise<string[]> {
     const res = await request(ctx.app, "GET", query, { key: ctx.workingKey });
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { results: { item: { id: string } }[] };
-    return body.results.map((r) => r.item.id);
+    const body = (await res.json()) as { data: { item: { id: string } }[] };
+    return body.data.map((r) => r.item.id);
   }
 
   it("omits system.* rows when the token is absent", async () => {

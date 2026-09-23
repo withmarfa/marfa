@@ -83,7 +83,7 @@ describe("the page bound", () => {
     // One row rather than a throw, and rather than an empty page claiming
     // there is more.
     expect(page.data).toHaveLength(MIN_PAGE_LIMIT);
-    expect(page.has_more).toBe(true);
+    expect(page.next_cursor).not.toBeNull();
   });
 
   it("uses the default when the caller names no limit", async () => {

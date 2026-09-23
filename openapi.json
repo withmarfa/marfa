@@ -82,7 +82,7 @@
           "edges": {
             "type": "object",
             "additionalProperties": {
-              "$ref": "#/components/schemas/ItemEdgesBlock"
+              "$ref": "#/components/schemas/EdgePage"
             }
           },
           "extensions": {
@@ -122,7 +122,7 @@
           "feed"
         ]
       },
-      "ItemEdgesBlock": {
+      "EdgePage": {
         "type": "object",
         "properties": {
           "data": {
@@ -596,7 +596,7 @@
           "backrefs": {
             "type": "object",
             "additionalProperties": {
-              "$ref": "#/components/schemas/ItemEdgesBlock"
+              "$ref": "#/components/schemas/EdgePage"
             }
           },
           "neighbors": {
@@ -1489,28 +1489,6 @@
         },
         "required": [
           "extensions"
-        ]
-      },
-      "EdgePage": {
-        "type": "object",
-        "properties": {
-          "data": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/Edge"
-            }
-          },
-          "next_cursor": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Pass as `cursor` for the next page; `null` on the last. A page can be short, or empty, with a cursor still to follow, so a walk stops on `null` and never on a short page."
-          }
-        },
-        "required": [
-          "data",
-          "next_cursor"
         ]
       },
       "EdgeResponse": {

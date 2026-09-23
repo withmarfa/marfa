@@ -153,9 +153,9 @@ describe("PATCH /items/:id — a versioned write has an ancestor to merge agains
       key: ctx.workingKey,
     });
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { versions: { version: number }[] };
+    const body = (await res.json()) as { data: { version: number }[] };
     // Two updates leave the two states they replaced, rather than one
     // sample of whichever happened to fall outside the interval.
-    expect(body.versions.map((v) => v.version).sort()).toEqual([1, 2]);
+    expect(body.data.map((v) => v.version).sort()).toEqual([1, 2]);
   });
 });

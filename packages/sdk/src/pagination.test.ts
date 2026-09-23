@@ -30,12 +30,8 @@ function stubPages<T>(
   return Object.assign(fetcher, { calls });
 }
 
-function page<T>(
-  data: T[],
-  cursor: string | null,
-  has_more: boolean,
-): PaginatedResult<T> {
-  return { data, cursor, has_more };
+function page<T>(data: T[], next_cursor: string | null): PaginatedResult<T> {
+  return { data, next_cursor };
 }
 
 async function drain<T>(source: AsyncIterable<T>): Promise<T[]> {
@@ -47,9 +43,9 @@ async function drain<T>(source: AsyncIterable<T>): Promise<T[]> {
 describe("paginate", () => {
   it("yields every row across pages, in order", async () => {
     const fetcher = stubPages([
-      page(["a", "b"], "c1", true),
-      page(["c", "d"], "c2", true),
-      page(["e"], null, false),
+      page(["a", "b"], "c1"),
+      page(["c", "d"], "c2"),
+      page(["e"], null),
     ]);
 
     expect(await drain(paginate(fetcher))).toEqual(["a", "b", "c", "d", "e"]);
@@ -58,28 +54,23 @@ describe("paginate", () => {
     expect(fetcher.calls).toEqual([undefined, "c1", "c2"]);
   });
 
-  it("stops when the server reports more but hands back no cursor", async () => {
-    // There is nothing to resume from, so continuing would mean re-requesting
-    // the previous cursor and serving the same page for ever. The stub throws
-    // if a fourth call happens, so a regression here hangs on nothing: it
-    // fails.
-    const fetcher = stubPages([
-      page(["a"], "c1", true),
-      page(["b"], null, true),
-    ]);
+  it("walks past an empty page that still carries a cursor", async () => {
+    // A page thinned by what the credential may read can come back empty
+    // with more to follow; stopping there would truncate the walk.
+    const fetcher = stubPages([page([], "c1"), page(["b"], null)]);
 
-    expect(await drain(paginate(fetcher))).toEqual(["a", "b"]);
-    expect(fetcher.calls).toHaveLength(2);
+    expect(await drain(paginate(fetcher))).toEqual(["b"]);
+    expect(fetcher.calls).toEqual([undefined, "c1"]);
   });
 
   it("makes one request for a single-page result", async () => {
-    const fetcher = stubPages([page(["only"], null, false)]);
+    const fetcher = stubPages([page(["only"], null)]);
     expect(await drain(paginate(fetcher))).toEqual(["only"]);
     expect(fetcher.calls).toHaveLength(1);
   });
 
   it("yields nothing, and fetches once, for an empty result", async () => {
-    const fetcher = stubPages([page([], null, false)]);
+    const fetcher = stubPages([page([], null)]);
     expect(await drain(paginate(fetcher))).toEqual([]);
     expect(fetcher.calls).toHaveLength(1);
   });
@@ -90,9 +81,7 @@ describe("paginate", () => {
     const fetcher = vi.fn(
       (cursor: string | undefined): Promise<PaginatedResult<string>> =>
         Promise.resolve(
-          cursor === undefined
-            ? page(["a", "b"], "c1", true)
-            : page(["c"], null, false),
+          cursor === undefined ? page(["a", "b"], "c1") : page(["c"], null),
         ),
     );
 
@@ -107,7 +96,7 @@ describe("paginate", () => {
   });
 
   it("does not fetch at all until the first row is asked for", async () => {
-    const fetcher = vi.fn(() => Promise.resolve(page(["a"], null, false)));
+    const fetcher = vi.fn(() => Promise.resolve(page(["a"], null)));
     const walk = paginate(fetcher);
     expect(fetcher).not.toHaveBeenCalled();
     await drain(walk);
@@ -124,17 +113,14 @@ describe("paginate", () => {
 
 describe("collect", () => {
   it("returns every row when the walk fits inside the ceiling", async () => {
-    const fetcher = stubPages([
-      page([1, 2], "c1", true),
-      page([3], null, false),
-    ]);
+    const fetcher = stubPages([page([1, 2], "c1"), page([3], null)]);
     expect(await collect(paginate(fetcher), { maxItems: 10 })).toEqual([
       1, 2, 3,
     ]);
   });
 
   it("accepts a walk that lands exactly on the ceiling", async () => {
-    const fetcher = stubPages([page([1, 2, 3], null, false)]);
+    const fetcher = stubPages([page([1, 2, 3], null)]);
     expect(await collect(paginate(fetcher), { maxItems: 3 })).toEqual([
       1, 2, 3,
     ]);
@@ -145,10 +131,7 @@ describe("collect", () => {
     // returns the first N rows of a larger set is indistinguishable from a
     // complete one at the call site, so the caller reports a wrong total and
     // nothing anywhere says so.
-    const fetcher = stubPages([
-      page([1, 2], "c1", true),
-      page([3, 4], null, false),
-    ]);
+    const fetcher = stubPages([page([1, 2], "c1"), page([3, 4], null)]);
 
     await expect(
       collect(paginate(fetcher), { maxItems: 3 }),
@@ -157,7 +140,7 @@ describe("collect", () => {
 
   it("names the ceiling it hit and how to proceed", async () => {
     const walk = (): AsyncIterable<number> =>
-      paginate(stubPages([page([1, 2], null, false)]));
+      paginate(stubPages([page([1, 2], null)]));
 
     await expect(collect(walk(), { maxItems: 1 })).rejects.toMatchObject({
       maxItems: 1,
@@ -172,7 +155,7 @@ describe("collect", () => {
   it("refuses a ceiling that is not a positive integer", async () => {
     for (const bad of [0, -1, 1.5, Number.NaN]) {
       await expect(
-        collect(paginate(stubPages([page([1], null, false)])), {
+        collect(paginate(stubPages([page([1], null)])), {
           maxItems: bad,
         }),
       ).rejects.toBeInstanceOf(RangeError);

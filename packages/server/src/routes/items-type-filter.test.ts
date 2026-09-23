@@ -145,9 +145,9 @@ describe("allowed_types — underscore handling across read surfaces", () => {
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
-      results: { item: { type: string } }[];
+      data: { item: { type: string } }[];
     };
-    const types = [...new Set(body.results.map((r) => r.item.type))].sort();
+    const types = [...new Set(body.data.map((r) => r.item.type))].sort();
     expect(types).not.toContain(LOOKALIKE);
     expect(types).not.toContain(LOOKALIKE_CHILD);
   });
@@ -168,8 +168,8 @@ describe("allowed_types — underscore handling across read surfaces", () => {
     const key = await mintScopedKey({ [`${UNDERSCORE_PARENT}.*`]: "read" });
     const res = await request(ctx.app, "GET", "/metadata/tags", { key });
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { tags: { tag: string }[] };
-    const tags = body.tags.map((t) => t.tag);
+    const body = (await res.json()) as { data: { tag: string }[] };
+    const tags = body.data.map((t) => t.tag);
     expect(tags).toContain("tag-underscored");
     expect(tags).not.toContain("tag-lookalike");
   });

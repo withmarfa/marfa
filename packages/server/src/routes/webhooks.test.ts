@@ -132,9 +132,9 @@ describe("GET /webhooks", () => {
       key: ctx.workingKey,
     });
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { webhooks: WebhookResponse[] };
-    expect(body.webhooks.length).toBeGreaterThan(0);
-    for (const w of body.webhooks) {
+    const body = (await res.json()) as { data: WebhookResponse[] };
+    expect(body.data.length).toBeGreaterThan(0);
+    for (const w of body.data) {
       // redactSecret() prefixes with "****" when secret length > 4.
       expect(w.secret.startsWith("****")).toBe(true);
       expect(w.secret.length).toBe(8);
@@ -275,9 +275,9 @@ describe("GET /webhooks/:id/deliveries", () => {
       { key: ctx.workingKey },
     );
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { deliveries: unknown[] };
-    expect(Array.isArray(body.deliveries)).toBe(true);
-    expect(body.deliveries.length).toBe(0);
+    const body = (await res.json()) as { data: unknown[] };
+    expect(Array.isArray(body.data)).toBe(true);
+    expect(body.data.length).toBe(0);
   });
 
   it("respects the limit query parameter", async () => {
@@ -303,8 +303,8 @@ describe("GET /webhooks/:id/deliveries", () => {
       { key: ctx.workingKey },
     );
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { deliveries: unknown[] };
-    expect(body.deliveries.length).toBe(2);
+    const body = (await res.json()) as { data: unknown[] };
+    expect(body.data.length).toBe(2);
   });
 
   it("returns 404 when the webhook does not exist", async () => {

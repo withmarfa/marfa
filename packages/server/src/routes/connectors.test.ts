@@ -479,7 +479,7 @@ describe("POST /connectors/{id}/runs and GET /connectors/{id}/runs", () => {
       await json<{ data: ConnectorRun[] }>(
         await request(ctx.app, "GET", path, { key: otherKey }),
       ),
-    ).toEqual({ data: [run] });
+    ).toEqual({ data: [run], next_cursor: null });
 
     const failed = await request(ctx.app, "POST", path, {
       key: ctx.workingKey,

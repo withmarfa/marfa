@@ -95,8 +95,8 @@ async function searchedIds(query: string): Promise<string[]> {
     res.status,
     `the search door refused this read, so the case that called it is about a refusal rather than a selection: ${query}`,
   ).toBe(200);
-  const body = (await res.json()) as { results: { item: { id: string } }[] };
-  return body.results.map((hit) => hit.item.id).filter((id) => mine.has(id));
+  const body = (await res.json()) as { data: { item: { id: string } }[] };
+  return body.data.map((hit) => hit.item.id).filter((id) => mine.has(id));
 }
 
 async function exportedIds(query: string): Promise<string[]> {

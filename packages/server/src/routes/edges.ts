@@ -16,9 +16,9 @@ import {
 } from "../openapi.js";
 import {
   EdgeResponseSchema,
+  EdgePageSchema,
   EdgeSchema,
   VersionConflictErrorSchema,
-  pageOf,
 } from "./_schemas.js";
 import { refuseReusedEdgeId } from "./_reused-edge-id.js";
 import { readableEdges } from "./_edge-visibility.js";
@@ -57,7 +57,7 @@ const EdgeConflictSchema = z
   })
   .openapi("EdgeVersionConflict");
 
-const EdgeListSchema = pageOf(EdgeSchema, "EdgePage");
+const EdgeListSchema = EdgePageSchema;
 
 const MAX_EDGE_TYPE_FILTER = 10;
 
