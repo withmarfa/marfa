@@ -105,8 +105,8 @@ describe("DELETE /admin/platform-types/{id}", () => {
   });
 
   it("binds `drift` as an identifier rather than reaching the listing", async () => {
-    // The two doors share a prefix now that this one names no verb of its
-    // own, so the listing's own path is a well-formed `{id}` under DELETE.
+    // The two doors share a prefix and this one names no verb of its own,
+    // so the listing's own path is a well-formed `{id}` under DELETE.
     // It binds the literal, and no platform row carries `drift`, so it is
     // refused as an identifier that is not there — the sibling cannot be
     // addressed as something to remove. The listing keeps answering its
@@ -158,12 +158,11 @@ describe("DELETE /admin/platform-types/{id}", () => {
 
   it("stops the type resolving on this process, not at the next boot", async () => {
     // The row is half of what makes a type resolve; the in-process registry
-    // is the other half, and `deletePlatformType` used to leave it. So a
-    // successful removal changed nothing a caller could see: `GET /types`
-    // kept listing the identifier, `GET /types/{id}` kept answering 200, and
-    // the operator was told the row was gone. The route's description
-    // claimed the immediacy this asserts, and the storage layer did not
-    // provide it.
+    // is the other half. A removal that left the registry would change
+    // nothing a caller could see: `GET /types` would keep listing the
+    // identifier, `GET /types/{id}` would keep answering 200, and the
+    // operator would be told the row was gone. The route's description
+    // claims the immediacy this asserts.
     const ctx = await newContext();
     const id = await seedDriftedType(ctx);
 
@@ -318,9 +317,9 @@ describe("/health reports drift and does not degrade on it", () => {
     expect(body.platform_types).toEqual({ drifted: 2 });
 
     expect(body.status).toBe("ok");
-    // Not a component. A status is the thing this removed, so the entry
-    // has to be absent rather than reporting a constant `ok` that a
-    // consumer could still key on.
+    // Not a component. Drift carries no status, so the entry has to be
+    // absent rather than reporting a constant `ok` that a consumer could
+    // key on.
     expect(body.components.platform_types).toBeUndefined();
     // The identifiers are not here: this endpoint is unauthenticated.
     expect(JSON.stringify(body)).not.toContain("core.retired_health");

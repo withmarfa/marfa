@@ -73,9 +73,9 @@ afterAll(async () => {
 /**
  * A key whose reach is exactly its permission map — nothing reads past it.
  *
- * An ordinary working credential. It used to be minted with the operator
- * flag, and an operator key is the instance tier and may hold no permission
- * at all, so that fixture was a shape the product cannot produce.
+ * An ordinary working credential, not an operator key: an operator key is
+ * the instance tier and may hold no permission at all, so a fixture minted
+ * with the flag would be a shape the product cannot produce.
  */
 async function mintKey(type_permissions: Perms): Promise<string> {
   const suffix = Math.random().toString(36).slice(2, 12);

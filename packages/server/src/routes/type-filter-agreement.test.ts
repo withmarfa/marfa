@@ -131,8 +131,8 @@ const SURFACES: Surface[] = [
   },
   {
     // The third read surface. It filters through the same item-store call
-    // `/items` uses, so it already agreed on meaning — but it validated the
-    // parameter as a bare identifier, so it disagreed on grammar.
+    // `/items` uses, so it agrees on meaning; grammar is the half a check
+    // of the parameter as a bare identifier would break.
     name: "GET /export",
     typesFor: async (type) => {
       const res = await request(
@@ -207,9 +207,8 @@ describe("?type= resolves the same subtree on every read surface", () => {
     );
 
     for (const [i, s] of SURFACES.entries()) {
-      // The wildcard used to be a 400 on search and a subtree on items, so
-      // assert the status too: a surface that starts rejecting it again
-      // would otherwise pass on an empty-set comparison.
+      // Assert the status too: a surface that rejected the wildcard would
+      // otherwise pass on an empty-set comparison.
       expect(at(wildcard, i).status, `${s.name} wildcard status`).toBe(200);
       expect(at(wildcard, i).types, `${s.name} wildcard`).toEqual(
         at(bare, i).types,

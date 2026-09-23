@@ -424,14 +424,13 @@ describe("GET /items/:id/edges + /backrefs", () => {
 
   /**
    * The anchor lookup decides whether the whole call answers, and the two
-   * outcomes below share one line of code — a genuinely absent item and a
-   * trashed one both used to resolve to nothing, and only one of them was
-   * meant to.
+   * outcomes below share one line of code: a genuinely absent item resolves
+   * to nothing, and a trashed one must not.
    *
    * Edges carry no lifecycle column, and `GET /edges` returns an edge
    * whether or not either endpoint is in the bin. Answering not-found here
-   * made the same edge reachable through one door and invisible through
-   * another, decided by the state of a row the edge does not belong to. A
+   * would make the same edge reachable through one door and invisible
+   * through another, decided by the state of a row the edge does not belong to. A
    * client reconciling its copy needs the edges of a trashed item: that is
    * how it learns the item went to the bin with its relationships intact.
    */
@@ -489,11 +488,10 @@ describe("GET /items/:id/edges + /backrefs", () => {
    * question — a credential can be authenticated and hold no grant on the
    * type.
    *
-   * The anchor is trashed in both halves deliberately. A trashed anchor
-   * used to answer not-found, so the door that now serves its edges is
-   * the one that widened the gap: without the check, a key with no read
-   * grant on the type could newly enumerate the relationships of
-   * soft-deleted rows of that type.
+   * The anchor is trashed in both halves deliberately. This door serves a
+   * trashed anchor's edges rather than answering not-found, so without the
+   * check a key with no read grant on the type could enumerate the
+   * relationships of soft-deleted rows of that type.
    *
    * Refused and admitted together, because either alone is passed by a
    * door that has no check at all or by one that refuses everything.
@@ -1318,9 +1316,9 @@ describe("PATCH/DELETE /edges/:id — source-type gate on trashed source", () =>
       { "*": "write" },
     );
 
-    // Previously: storage.items.get() returned null for trashed, so the
-    // type gate was silently skipped and PATCH would succeed. Now it
-    // must 403.
+    // The endpoint is trashed, and the type gate still has to read it: a
+    // lookup that hid trashed rows would skip the gate and let the PATCH
+    // through.
     const patch = await request(ctx.app, "PATCH", `/edges/${edge.id}`, {
       key: restrictedKey,
       body: { properties: { note: "v2-should-fail" }, version: edge.version },
