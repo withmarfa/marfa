@@ -339,9 +339,9 @@ lines.push("");
  * annotated with the schema interfaces, which widen every value to `string`
  * and every list to `string[]`, so the shapes of fields, enum values,
  * parents, roles, constraints and cardinalities reach a built declaration
- * through these instead, and they are what the published-surface lock sees
- * move when a shipped definition does. Prose is left out because it moves
- * nothing a consumer compiles against.
+ * through these instead, and they are what `shipped-shapes.sha256` sees move
+ * when a shipped definition does. Prose is left out because it moves nothing
+ * a consumer compiles against.
  */
 function shapeLiteral(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(shapeLiteral);
