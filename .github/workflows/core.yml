@@ -2,9 +2,10 @@ name: Core
 
 # Path-gated, which ci.yml deliberately is not. The trade is the same one
 # ci.yml weighs for its freshness jobs — a gate that skips is a gate that can
-# be wrong — and it lands the other way here: two release builds for iOS
-# targets, an XCFramework, a Swift example and a booted server, none of which
-# anything outside core/ can change.
+# be wrong — and it lands the other way here: an XCFramework with its iOS
+# slices, both bindings' consumers and a booted server, none of which anything
+# outside core/ can change. The core's own three commands run on every pull
+# request, as `Core checks` in ci.yml.
 on:
   push:
     branches: [main]
@@ -61,36 +62,6 @@ jobs:
       - name: Add the iOS targets
         run: rustup target add aarch64-apple-ios aarch64-apple-ios-sim
 
-      # The keychain tests skip, saying so, where no keychain answers. A
-      # runner whose keychain does answer is told to require them, so a
-      # keychain that stops answering later fails the job rather than
-      # quietly narrowing it.
-      - name: Say whether the keychain answers
-        run: |
-          if security add-generic-password -a probe -s marfa-keychain-probe -w probe -U \
-            && security delete-generic-password -a probe -s marfa-keychain-probe >/dev/null; then
-            echo "MARFA_KEYCHAIN_REQUIRED=1" >> "$GITHUB_ENV"
-            echo "the keychain answers; its tests are required"
-          else
-            echo "the keychain does not answer; its tests will skip and say so"
-          fi
-
-      - name: Check the core workspace
-        working-directory: core
-        run: |
-          cargo fmt --check
-          cargo clippy --all-targets -- -D warnings
-          cargo test
-
-      # Its own workspace, so its own three commands: cargo-swift refuses to
-      # name a package inside a multi-crate workspace.
-      - name: Check the Swift FFI crate
-        working-directory: core/bindings/swift
-        run: |
-          cargo fmt --check
-          cargo clippy --all-targets -- -D warnings
-          cargo test
-
       - uses: pnpm/action-setup@v6
         with:
           dest: ${{ runner.temp }}/setup-pnpm
@@ -129,23 +100,26 @@ jobs:
           eval "${server_env}"
           cargo test -p marfa-core -- --include-ignored
 
-      # Compiled, not packaged: the XCFramework carries arm64 macOS only, so
-      # these two prove the FFI crate still builds for the phone.
-      - name: Compile the FFI crate for iOS
-        working-directory: core/bindings/swift
-        run: |
-          cargo build --release --lib --target aarch64-apple-ios
-          cargo build --release --lib --target aarch64-apple-ios-sim
-
       - name: Package the Swift bindings
         run: core/bindings/swift/build.sh
       - name: Build the Swift example
         working-directory: core/bindings/swift/Example
         run: swift build
 
-      # Outside the pnpm workspace, so every call carries the flag.
-      - name: Build the Node module
+      # Outside the pnpm workspace, so every call carries the flag. `check`
+      # holds the Node proof to the declarations the build generates.
+      - name: Build and check the Node module
         working-directory: core/bindings/node
         run: |
           pnpm --ignore-workspace install --frozen-lockfile
           pnpm --ignore-workspace run build
+          pnpm --ignore-workspace run check
+
+      # Each binding's consumer, driven against a server stopped and started
+      # again: queued writes answered once it is back, a blob fetched, and a
+      # change the binary makes arriving through a held stream.
+      - name: Prove both bindings against a booted server
+        working-directory: core
+        run: |
+          cargo build -p marfa-cli
+          scripts/binding-proof.sh
