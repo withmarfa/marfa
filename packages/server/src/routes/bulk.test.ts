@@ -107,7 +107,7 @@ describe("POST /items/bulk", () => {
   });
 
   it("upsert mode updates existing rows matched by id (no source_id)", async () => {
-    // Offline-first clients (Swift / TS SDKs) assign UUIDs locally and
+    // Offline-first clients assign UUIDs locally and
     // expect `mode: upsert` to update by primary id when a row already
     // exists server-side — e.g. migrating a local-mode Notes store whose
     // items were seeded earlier. Before this path existed, the second

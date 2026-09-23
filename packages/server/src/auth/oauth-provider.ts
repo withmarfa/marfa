@@ -1566,7 +1566,7 @@ async function narrowAuthorizeScopes(
   // only good while the dropped scope costs a permission. These two cost the
   // session model instead: without `offline_access` there is no refresh token,
   // and without `openid` there is no id_token. Dropping either silently
-  // succeeds here and then fails two steps later inside the SDK — a token
+  // succeeds here and then fails two steps later inside the client — a token
   // exchange that cannot find `refresh_token`, or a sign-out that cannot find
   // an id_token — with nothing pointing back at the scope that went missing.
   // A named `invalid_scope` at the authorize step is the better answer,
@@ -1650,7 +1650,7 @@ async function narrowAuthorizeScopes(
  * Scopes whose absence breaks the session model rather than costing a
  * permission, so narrowing them away is worse than refusing.
  *
- * `offline_access` is what mints the refresh token; without it the SDK's
+ * `offline_access` is what mints the refresh token; without it a client's
  * token exchange throws `invalid_grant` because `refresh_token` is missing.
  * `openid` is what mints the id_token; without it sign-out cannot build its
  * end-session URL. In both cases the failure surfaces well after the

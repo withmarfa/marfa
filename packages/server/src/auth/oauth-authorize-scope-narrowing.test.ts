@@ -467,7 +467,7 @@ describe("authorize scope narrowing", () => {
       challenge,
     );
 
-    // Narrowing it away would succeed here and then fail inside the SDK at
+    // Narrowing it away would succeed here and then fail inside the client at
     // the token step, with nothing naming the scope that went missing. A
     // named `invalid_scope` says which literal to go and register.
     expect(res.status).toBe(302);
@@ -752,7 +752,7 @@ describe("authorize scope narrowing on a form POST", () => {
     // A ceiling that omits `offline_access`. The refusal, not the reading,
     // is what this pins: once the hook can read a POST's scope it can also
     // narrow one, and narrowing a session scope away succeeds at the
-    // authorize step and then fails inside the SDK with nothing naming the
+    // authorize step and then fails inside the client with nothing naming the
     // literal that went missing. Both verbs have to refuse, not just the
     // one the guard was written against.
     const clientId = await seedClient(ctx, ["openid", "core.note:read"]);

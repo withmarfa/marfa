@@ -455,7 +455,7 @@ describe("rate-limit response headers survive the error handler", () => {
   // throwing, and the logger prepares X-Request-ID for every request. The
   // error handler builds a fresh Response, which drops prepared headers
   // unless it copies them — these tests pin the copy, because the published
-  // reference promises the headers and the SDK's retry path reads
+  // reference promises the headers and a client's retry reads
   // Retry-After.
   it("a 429 carries Retry-After and the X-RateLimit-* trio", async () => {
     const key = await makeWorkingKey(ctx, "rl-headers");

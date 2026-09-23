@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   CONTRACT_VERSION,
   ContractMismatchError,
+  ContractUnreadableError,
   createClient,
   pages,
   type Page,
@@ -9,7 +10,7 @@ import {
 
 /** A server that answers the root with `contract` and every other path
  *  with an empty page, recording what it was asked. */
-function stubServer(contract: unknown) {
+function stubServer(contract: unknown, root?: () => Response) {
   const seen: { url: string; authorization: string | null }[] = [];
   const fetch = (input: string | URL | Request, init?: RequestInit) => {
     const request = new Request(input, init);
@@ -17,6 +18,9 @@ function stubServer(contract: unknown) {
       url: new URL(request.url).pathname,
       authorization: request.headers.get("Authorization"),
     });
+    if (new URL(request.url).pathname === "/" && root) {
+      return Promise.resolve(root());
+    }
     const body =
       new URL(request.url).pathname === "/"
         ? { name: "marfa", contract }
@@ -27,7 +31,7 @@ function stubServer(contract: unknown) {
       }),
     );
   };
-  return { seen, fetch: fetch as typeof globalThis.fetch };
+  return { seen, fetch };
 }
 
 describe("the contract gate", () => {
@@ -41,7 +45,85 @@ describe("the contract gate", () => {
     await expect(client.GET("/edge-types")).rejects.toBeInstanceOf(
       ContractMismatchError,
     );
-    expect(server.seen.map((r) => r.url)).toEqual(["/"]);
+    expect(server.seen).toEqual([{ url: "/", authorization: null }]);
+  });
+
+  it("reads the root without the credential, once for concurrent first requests", async () => {
+    const server = stubServer(CONTRACT_VERSION);
+    const client = createClient({
+      baseUrl: "https://marfa.example",
+      credential: "k",
+      fetch: server.fetch,
+    });
+    await Promise.all([
+      client.GET("/edge-types"),
+      client.GET("/edge-types"),
+      client.GET("/edge-types"),
+    ]);
+    expect(server.seen[0]).toEqual({ url: "/", authorization: null });
+    expect(server.seen.filter((r) => r.url === "/")).toHaveLength(1);
+  });
+
+  it("asks again after a check that failed, rather than remembering it as a pass", async () => {
+    let refusals = 1;
+    const server = stubServer(CONTRACT_VERSION, () =>
+      refusals-- > 0
+        ? new Response("<html>bad gateway</html>", { status: 502 })
+        : Response.json({ contract: CONTRACT_VERSION }),
+    );
+    const client = createClient({
+      baseUrl: "https://marfa.example",
+      credential: "k",
+      fetch: server.fetch,
+    });
+    const refused = client.GET("/edge-types");
+    await expect(refused).rejects.toBeInstanceOf(ContractUnreadableError);
+    await expect(refused).rejects.toMatchObject({ status: 502 });
+    const answered = await client.GET("/edge-types");
+    expect(answered.response.ok).toBe(true);
+    expect(server.seen.map((r) => r.url)).toEqual(["/", "/", "/edge-types"]);
+  });
+
+  it("reads a contract of another type as another contract", async () => {
+    const server = stubServer(String(CONTRACT_VERSION));
+    const client = createClient({
+      baseUrl: "https://marfa.example",
+      credential: "k",
+      fetch: server.fetch,
+    });
+    await expect(client.GET("/edge-types")).rejects.toThrow(
+      `serves contract "${String(CONTRACT_VERSION)}"`,
+    );
+  });
+
+  it("sends nothing to a base URL other than its own", async () => {
+    const server = stubServer(CONTRACT_VERSION);
+    const client = createClient({
+      baseUrl: "https://marfa.example",
+      credential: "k",
+      fetch: server.fetch,
+    });
+    await expect(
+      client.GET("/edge-types", { baseUrl: "https://elsewhere.example" }),
+    ).rejects.toThrow(/refuses to send/);
+    expect(server.seen).toEqual([]);
+  });
+
+  it("types its calls from the document", () => {
+    const client = createClient({
+      baseUrl: "https://marfa.example",
+      credential: "k",
+      fetch: stubServer(CONTRACT_VERSION).fetch,
+    });
+    // Checked by the compiler when the package typechecks.
+    const typed = () => {
+      // @ts-expect-error: no such path in the document
+      void client.GET("/nowhere");
+      // @ts-expect-error: the path parameter is required
+      void client.GET("/items/{id}", {});
+      void client.GET("/items/{id}", { params: { path: { id: "i" } } });
+    };
+    expect(typeof typed).toBe("function");
   });
 
   it("proceeds against a server on its contract, reading the root once, with the bearer", async () => {
@@ -92,6 +174,20 @@ describe("pages", () => {
     for await (const row of pages(source.fetch)) rows.push(row);
     expect(rows).toEqual(["a", "b"]);
     expect(source.asked).toEqual([undefined, "c1", "c2"]);
+  });
+
+  it("refuses a cursor it already followed, however far back", async () => {
+    const source = stub([
+      { data: ["a"], next_cursor: "c1" },
+      { data: ["b"], next_cursor: "c2" },
+      { data: ["c"], next_cursor: "c1" },
+    ]);
+    const rows: string[] = [];
+    const walk = async () => {
+      for await (const row of pages(source.fetch)) rows.push(row);
+    };
+    await expect(walk()).rejects.toThrow(/would not end/);
+    expect(rows).toEqual(["a", "b", "c"]);
   });
 
   it("refuses a cursor answered back unchanged", async () => {

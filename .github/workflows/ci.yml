@@ -409,7 +409,7 @@ jobs:
       - run: pnpm build
       - name: Regenerate and check for drift
         run: |
-          pnpm generate
+          pnpm --filter @withmarfa/server run generate:openapi
           if ! git diff --exit-code openapi.json; then
             echo "openapi.json is out of date. Run 'pnpm generate' and commit."
             exit 1
@@ -444,11 +444,11 @@ jobs:
       - name: Every manifest carries the placeholder
         run: pnpm vitest run ci/version-fields.test.ts
 
-  # The clients generated from `openapi.json` are committed beside it, so a
-  # consumer reads the same types the document declares without generating
-  # anything. This regenerates each from the committed document and refuses a
-  # difference: a change to the document that did not regenerate its clients,
-  # or a hand edit to a generated file.
+  # What is generated from `openapi.json` is committed, so a consumer reads
+  # the types the document declares without generating anything. This
+  # regenerates it from the committed document and refuses a difference: a
+  # change to the document that did not regenerate, or a hand edit to a
+  # generated file.
   clients-freshness:
     name: Generated clients are fresh
     timeout-minutes: 15
@@ -468,7 +468,7 @@ jobs:
           NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > .npmrc
       - run: pnpm install --frozen-lockfile
-      - name: Regenerate each client and check for drift
+      - name: Regenerate the TypeScript client and check for drift
         run: |
           pnpm --filter @withmarfa/client run generate
           if ! git diff --exit-code packages/client/src; then

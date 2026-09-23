@@ -446,7 +446,7 @@ export interface ConflictSnapshot {
   source_id: string | null;
 }
 
-/** Enriched 409 conflict response — the server produces this, the SDK consumes it. */
+/** Enriched 409 conflict response, which a client reads to resolve the conflict. */
 export interface ConflictResponse {
   /**
    * `message` is prose for a person, and the only part of this envelope that
@@ -464,8 +464,8 @@ export interface ConflictResponse {
   conflicting_fields: string[];
   /**
    * Resolved merge policy for the conflicting item's type, with inheritance
-   * applied. Always present — the server is the authoritative resolver, so
-   * SDKs read policy directly from the response without a side-fetch or a
+   * applied. Always present: the server is the authoritative resolver, so
+   * a client reads policy directly from the response without a side-fetch or a
    * client-side cache. Strategies for fields not listed in `fields` fall back
    * to `default`, which itself defaults to `last_writer_wins` when absent.
    */
@@ -660,18 +660,4 @@ export interface InstanceConfig {
    * by a wide margin, and nothing else ages it out.
    */
   activity_retention_days?: number;
-}
-
-/**
- * What `/config` answers: the configuration, under the identity of the
- * instance whose configuration it is.
- *
- * `instance_id` is deliberately not a field of `InstanceConfig` beside the
- * levers. `PUT /config` is a wholesale replacement of what that interface
- * describes, so an identity held there would leave with the first body that
- * omitted it. It is read-only on the wire: a `PUT` may send back the one it
- * read, and one naming a different instance is refused.
- */
-export interface InstanceConfigResponse extends InstanceConfig {
-  instance_id: string;
 }

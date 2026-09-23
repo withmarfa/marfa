@@ -212,8 +212,8 @@ export function isValidTypeOrigin(value: unknown): value is TypeOrigin {
  * Refill the platform registry from seeded rows.
  *
  * The compiled arrays remain the map's contents until this is called, which is
- * what keeps every consumer that never boots a server — the SDK, a browser
- * bundle, the codegen — resolving the shipped vocabulary with no database in
+ * what keeps every consumer that never boots a server — a browser bundle,
+ * the codegen — resolving the shipped vocabulary with no database in
  * sight. A server calls this once at boot so an instance's vocabulary is the
  * data it holds rather than the build it happens to be running.
  *

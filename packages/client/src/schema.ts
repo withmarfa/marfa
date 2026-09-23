@@ -4754,7 +4754,7 @@ export interface operations {
                     "application/json": components["schemas"]["BulkActionResult"];
                 };
             };
-            /** @description Job queued. Poll GET /items/bulk-actions/jobs/{id} until status is terminal (completed / failed / canceled). SDKs do this transparently for callers; the envelope is exposed for explicit-control use cases. */
+            /** @description Job queued. Poll GET /items/bulk-actions/jobs/{id} until status is terminal (completed / failed / canceled). The envelope is exposed for explicit-control use cases. */
             202: {
                 headers: {
                     "X-Request-ID": components["headers"]["X-Request-ID"];

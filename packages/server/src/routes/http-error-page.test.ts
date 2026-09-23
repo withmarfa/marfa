@@ -99,7 +99,7 @@ describe("content negotiation end to end", () => {
   });
 
   it("an unauthorized API call is untouched", async () => {
-    // The contract every SDK and CLI depends on. If this ever returns HTML,
+    // The contract every client depends on. If this ever returns HTML,
     // every client that parses an error breaks at once.
     ctx = await createTestContext();
     const res = await request(ctx.app, "GET", "/items", {});

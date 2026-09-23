@@ -691,10 +691,8 @@ export function edgeRoutes(storage: Storage) {
       );
     }
     const updated = result.edge;
-    // An edit is as observable as a create or a delete. Without this the
-    // SDK could change an edge through this route and nothing propagated
-    // it, so a second device kept the stale payload with nothing to say
-    // otherwise.
+    // An edit is as observable as a create or a delete: without it a second
+    // device keeps the stale payload with nothing saying otherwise.
     await publishEdge({ type: "edge_updated", edge: updated });
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,

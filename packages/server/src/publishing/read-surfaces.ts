@@ -276,8 +276,8 @@ function contractTextOf(
  * names. Reading the file's own statements would record the specifier —
  * `B as BulkActionErrorEntry` — rather than the shape a consumer
  * compiles against, which collapses the surface back to names and is the
- * defect this guard exists to close. Every root export of two of these
- * packages arrives that way.
+ * defect this guard exists to close. A bundler writes a package's root
+ * exports that way.
  */
 function surfaceExportsOf(dtsPath: string, pkgDir: string): SurfaceExport[] {
   const program = ts.createProgram([dtsPath], {

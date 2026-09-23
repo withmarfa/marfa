@@ -1160,23 +1160,12 @@ export function occurrenceRoutes(
      * not property lines beside readable ones. `expandSeries` reports
      * its own refusals, the unresolvable timezone among them.
      *
-     * **This is a list, not a guarantee.** An earlier version of this
-     * comment said every way the route declines a rule comes through
-     * here, and the timezone case was live in the file at the time —
-     * asserting completeness is what turned an inherited hole into a
-     * false claim, which is the mistake the array itself exists to stop
-     * the response from making.
+     * **This is a list, not a guarantee.** A row listed here is a rule
+     * the read could not use *or could not fully apply*: the fourth
+     * projection class above is reported and still expands, contributing
+     * every occurrence its readable lines produce.
      *
-     * The replacement overclaimed in a second way, which is worth
-     * keeping written down because it is the same reflex: it said a row
-     * listed here is a rule the read could not use. **Not use, or not
-     * fully apply** — the fourth projection class above is reported and
-     * expands, contributing every occurrence the readable lines produce.
-     * That qualifier is on the schema and on the SDK and was missing
-     * only here, which is how a caller reading the source got a stronger
-     * promise than a caller reading the API.
-     *
-     * What holds is narrower than either: an entry names a row and a
+     * An entry names a row and a
      * thing that was wrong with its rule. It does not say the row is
      * absent from `data`, and the absence of an entry does not say the
      * row is sound. Whether some other way of being broken has no path

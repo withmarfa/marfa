@@ -10,9 +10,6 @@
       "import": "./dist/index.js"
     }
   },
-  "files": [
-    "dist"
-  ],
   "scripts": {
     "build": "tsup",
     "typecheck": "tsc --noEmit",
@@ -27,7 +24,6 @@
     "@withmarfa/types": "workspace:*",
     "@types/node": "^26.2.0",
     "tsup": "^8.5.1",
-    "tsx": "^4.23.12",
     "typescript": "^6.0.3"
   }
 }

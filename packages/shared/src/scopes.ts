@@ -831,7 +831,7 @@ function contentCategoryPermissions(
  * `SYSTEM_TYPE_IDS`, and that set is data an instance holds rather than a
  * fact about the build: a server seeds it from `types` at boot, and
  * every caller of this function runs after seeding. In a browser bundle or
- * in the SDK there is no boot, so it resolves against the compiled shipped
+ * in the codegen there is no boot, so it resolves against the compiled shipped
  * set — the same contract {@link typeMatchesPattern} already has against
  * `TYPE_REGISTRY`, and the same one every other registry-reading helper in
  * this package carries. A scope list holding no content literal touches none
@@ -1646,7 +1646,7 @@ export function scopesOfferedOffByDefaultOnly(
   // them on either surface.
   //
   // Without this the exemption asymmetry is not cosmetic. `offline_access`
-  // is what a client names to get a refresh token, every SDK device flow
+  // is what a client names to get a refresh token, every device flow
   // requests it, and an operator who put it in an off-by-default bundle
   // would have every one of them refused outright at initiation. A bundle
   // withholds a mechanism by not requesting it.

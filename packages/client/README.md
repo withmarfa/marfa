@@ -1,6 +1,6 @@
 # @withmarfa/client
 
-The TypeScript client for a Marfa instance, generated from the repository's `openapi.json`. Every path, parameter, body and answer is typed from the document, so a request the server would refuse on shape does not compile.
+The TypeScript client for a Marfa instance, generated from the repository's `openapi.json`. Paths, parameters, bodies and answers are typed from the document: a path the document does not name, or a required parameter left out, does not compile. Ranges and formats the document states only in prose are the server's to refuse.
 
 ```ts
 import { createClient, pages } from "@withmarfa/client";
@@ -28,11 +28,15 @@ for await (const item of everyItem) {
 
 ## The contract
 
-The client carries the contract version it was generated for as `CONTRACT_VERSION`. Before its first request it reads the instance's root once, without the credential, and if the root's `contract` differs it refuses with `ContractMismatchError` and sends nothing further. A failed check is not remembered as a pass: the next request asks again.
+The client carries the contract version it was generated for as `CONTRACT_VERSION`. Before its first request it reads the instance's root once, without the credential. A root whose `contract` differs is refused with `ContractMismatchError`, and one that cannot be read with `ContractUnreadableError`; either way nothing further is sent. A failed check is not remembered as a pass: the next request asks again. The credential is sent only under the `baseUrl` the client was made for, and never to the root.
 
 ## Pages
 
 Every list and search answers `{ data, next_cursor }`. `pages` walks one to the end, following `next_cursor` until it is `null`. A page can be short, or empty, with a cursor still to follow, so the walk never stops on a short page.
+
+## What it does not do
+
+It sends what the document declares and hands back what the server answered. It does not retry, poll a bulk job, read the event stream, verify a webhook's signature or resolve a conflict: a refusal comes back as the server's envelope, with `Retry-After` on the response where the server sent one.
 
 ## Generating
 

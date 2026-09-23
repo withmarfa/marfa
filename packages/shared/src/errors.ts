@@ -183,8 +183,8 @@ export enum ErrorCode {
    * the caller. Returned by `GET /items/bulk-actions/jobs/:id` and
    * `DELETE /items/bulk-actions/jobs/:id`. Canceled / failed terminal
    * states are NOT in this enum — they're carried in the job envelope's
-   * `status` field on a 200 GET, and SDKs classify them client-side
-   * rather than the server returning an HTTP error.
+   * `status` field on a 200 GET, for a client to classify, rather than
+   * the server returning an HTTP error.
    */
   BULK_JOB_NOT_FOUND = "bulk_job_not_found",
   /** `DELETE /blobs/{hash}/locations/{store}` named a store that holds no
@@ -383,7 +383,7 @@ export function httpStatus(code: ErrorCode): number {
   return STATUS_MAP[code];
 }
 
-/** Structured error thrown by the server and SDK. Carries a typed code and HTTP status. */
+/** Structured error thrown by the server. Carries a typed code and HTTP status. */
 export class MarfaError extends Error {
   readonly code: ErrorCode;
   readonly status: number;
