@@ -160,10 +160,7 @@ impl Transport {
                 };
                 Ok(Served::Refused {
                     status: refused.status.as_u16(),
-                    retry_after_seconds: retry_after_seconds(
-                        header("Retry-After"),
-                        header("Date"),
-                    ),
+                    retry_after_seconds: retry_after_seconds(header("Retry-After"), header("Date")),
                     text: refused.content,
                 })
             }

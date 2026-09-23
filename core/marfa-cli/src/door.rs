@@ -39,14 +39,22 @@ pub struct Answer {
     pub status: &'static str,
     pub content_type: &'static str,
     pub body: String,
+    /// Headers beyond the content type, such as a `Retry-After`.
+    pub headers: Vec<(&'static str, String)>,
 }
 
 impl Answer {
+    pub fn with_header(mut self, name: &'static str, value: impl Into<String>) -> Answer {
+        self.headers.push((name, value.into()));
+        self
+    }
+
     pub fn json(status: &'static str, body: &str) -> Answer {
         Answer {
             status,
             content_type: "application/json",
             body: body.to_string(),
+            headers: Vec::new(),
         }
     }
 }
@@ -75,9 +83,14 @@ impl Door {
             for answer in answers {
                 let (mut stream, _) = listener.accept().unwrap();
                 received.push(read_request(&mut stream));
+                let extra: String = answer
+                    .headers
+                    .iter()
+                    .map(|(name, value)| format!("{name}: {value}\r\n"))
+                    .collect();
                 write!(
                     stream,
-                    "HTTP/1.1 {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    "HTTP/1.1 {}\r\nContent-Type: {}\r\nContent-Length: {}\r\n{extra}Connection: close\r\n\r\n{}",
                     answer.status,
                     answer.content_type,
                     answer.body.len(),

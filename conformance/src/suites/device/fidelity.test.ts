@@ -658,6 +658,20 @@ describe("the scripted answers match the server's", () => {
     expect(Buffer.from(await fetched.arrayBuffer())).toEqual(bytes);
   });
 
+  it("matches the root a binary reads the contract off", async () => {
+    const response = await fetch(`${apiUrl}/`);
+    const body = (await response.json()) as { contract: number };
+    expectFidelity(
+      "the root",
+      { status: response.status, body },
+      answers.root(body.contract),
+      {
+        same: ["name", "contract"],
+        shape: ["version", "instance_id", "features"],
+      },
+    );
+  });
+
   it("matches the items page a hydration walks", async () => {
     const seeded = await note({ title: "page shape", body: "page shape" });
     const page = await client.rawRequest(

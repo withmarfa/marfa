@@ -1,6 +1,8 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { describe, it, expect, afterEach } from "vitest";
+import { newStore } from "../../device/cli-adapter.js";
+import { answers } from "../../device/marfa-answers.js";
 import { ScriptedServer } from "../../device/scripted-server.js";
 import { KEY, requireBinary } from "./harness.js";
 
@@ -29,18 +31,17 @@ async function builtFor(): Promise<number> {
   return Number(document.default.info.version);
 }
 
-/** `marfa items list` against the scripted server, with nothing inherited. */
-async function listItems(url: string) {
+/** The binary against the scripted server, with nothing inherited. */
+async function marfa(args: string[]) {
   const env: Record<string, string> = {};
   for (const [name, value] of Object.entries(process.env)) {
     if (value !== undefined && !name.startsWith("MARFA_")) env[name] = value;
   }
   try {
-    const { stdout, stderr } = await run(
-      requireBinary(),
-      ["--json", "--url", url, "--key", KEY, "items", "list"],
-      { env, timeout: 30_000 },
-    );
+    const { stdout, stderr } = await run(requireBinary(), args, {
+      env,
+      timeout: 30_000,
+    });
     return { code: 0, stdout, stderr };
   } catch (error) {
     const failed = error as { code?: number; stdout?: string; stderr?: string };
@@ -52,12 +53,12 @@ async function listItems(url: string) {
   }
 }
 
+function listItems(url: string) {
+  return marfa(["--json", "--url", url, "--key", KEY, "items", "list"]);
+}
+
 function scriptRoot(contract: unknown): void {
-  server?.answer("GET", "/", {
-    kind: "json",
-    status: 200,
-    body: { name: "marfa", version: "dev", contract, features: [] },
-  });
+  server?.answer("GET", "/", answers.root(contract));
   server?.answer("GET", "/items", {
     kind: "json",
     status: 200,
@@ -107,5 +108,68 @@ describe("the contract the binary was built for", () => {
     expect(
       (JSON.parse(outcome.stderr) as { error: { code: string } }).error.code,
     ).toBe("contract_mismatch");
+    expect(server.requests.map((r) => `${r.method} ${r.pathname}`)).toEqual([
+      "GET /",
+    ]);
+    expect(server.requests[0]?.headers.authorization).toBeUndefined();
+  });
+
+  it("holds the working copy to it before the key is handed over", async () => {
+    server = await ScriptedServer.start();
+    scriptRoot((await builtFor()) + 1);
+    const outcome = await marfa([
+      "--json",
+      "device",
+      "--db",
+      newStore("contract"),
+      "hydrate",
+      "--url",
+      server.url,
+      "--key",
+      KEY,
+      "--types",
+      "core.note",
+      "--tier",
+      "library",
+    ]);
+    expect(outcome.code, outcome.stderr).toBe(1);
+    expect(
+      (JSON.parse(outcome.stderr) as { error: { code: string } }).error.code,
+    ).toBe("contract_mismatch");
+    expect(server.requests.map((r) => `${r.method} ${r.pathname}`)).toEqual([
+      "GET /",
+    ]);
+  });
+
+  it("still says which server this is, and that its contract is another", async () => {
+    server = await ScriptedServer.start();
+    const served = (await builtFor()) + 1;
+    scriptRoot(served);
+    server.answer("GET", "/health", {
+      kind: "json",
+      status: 200,
+      body: { status: "ok" },
+    });
+    const outcome = await marfa([
+      "--json",
+      "--url",
+      server.url,
+      "--key",
+      KEY,
+      "status",
+    ]);
+    expect(outcome.code, outcome.stderr).toBe(0);
+    const report = JSON.parse(outcome.stdout) as {
+      contract: { served: number; built_for: number };
+      stats: unknown;
+    };
+    expect(report.contract).toEqual({
+      served,
+      built_for: await builtFor(),
+    });
+    expect(report.stats).toBeNull();
+    expect(
+      server.requests.every((r) => r.headers.authorization === undefined),
+    ).toBe(true);
   });
 });

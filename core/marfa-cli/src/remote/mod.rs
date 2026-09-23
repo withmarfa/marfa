@@ -713,6 +713,7 @@ mod tests {
                 status: "200 OK",
                 content_type: "text/plain",
                 body: "hello".into(),
+                headers: Vec::new(),
             },
             Answer::json(
                 "404 Not Found",
@@ -848,5 +849,100 @@ mod tests {
         let answered = unheld_at(&door).json(&Request::get(&[]).public()).unwrap();
         assert_eq!(answered["contract"], 2);
         assert_eq!(door.received().len(), 1);
+    }
+
+    /// A redirect is the refusal it is, not a hop the credential follows:
+    /// the door sees one request and the caller hears the status.
+    #[test]
+    fn a_redirect_is_not_followed() {
+        let door = Door::open(vec![
+            Answer::json("302 Found", "").with_header("Location", "/elsewhere"),
+        ]);
+        let remote = remote_at(&door, Some("marfa_k1_x"));
+        match remote.json(&Request::get(&["items"])) {
+            Err(CliError::Refused { status, .. }) => assert_eq!(status, 302),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(door.received().len(), 1);
+    }
+
+    /// `Retry-After` reaches the refusal off the wire, as seconds and as an
+    /// HTTP-date read against the response's own `Date`.
+    #[test]
+    fn retry_after_is_read_in_both_forms() {
+        let door = Door::open(vec![
+            Answer::json(
+                "429 Too Many Requests",
+                r#"{"error":{"code":"rate_limited","message":"slow"}}"#,
+            )
+            .with_header("Retry-After", "7"),
+            Answer::json(
+                "503 Service Unavailable",
+                r#"{"error":{"code":"write_contention","message":"busy"}}"#,
+            )
+            .with_header("Retry-After", "Sun, 06 Nov 1994 08:49:42 GMT")
+            .with_header("Date", "Sun, 06 Nov 1994 08:49:37 GMT"),
+        ]);
+        let remote = remote_at(&door, Some("marfa_k1_x"));
+        for expected in [7, 5] {
+            match remote.json(&Request::get(&["items"])) {
+                Err(CliError::Refused {
+                    retry_after_seconds,
+                    ..
+                }) => assert_eq!(retry_after_seconds, Some(expected)),
+                other => panic!("{other:?}"),
+            }
+        }
+        door.received();
+    }
+
+    /// A header a command names, such as the stream's `Last-Event-ID`,
+    /// arrives as it was given.
+    #[test]
+    fn a_named_header_reaches_the_wire() {
+        let door = Door::open(vec![Answer::json("200 OK", r#"{"data":[]}"#)]);
+        let remote = remote_at(&door, Some("marfa_k1_x"));
+        remote
+            .json(&Request::get(&["items"]).header("Last-Event-ID", "42"))
+            .unwrap();
+        assert_eq!(door.received()[0].header("last-event-id"), Some("42"));
+    }
+
+    /// A root that refuses for a reason that is not the contract, a 503
+    /// while a server starts, is that refusal, retryable, not a mismatch.
+    #[test]
+    fn a_root_refusing_for_another_reason_is_that_refusal() {
+        let door = Door::open(vec![Answer::json(
+            "503 Service Unavailable",
+            r#"{"error":{"code":"write_contention","message":"busy"}}"#,
+        )]);
+        match unheld_at(&door).json(&Request::get(&["items"])) {
+            Err(CliError::Refused { status, code, .. }) => {
+                assert_eq!((status, code.as_str()), (503, "write_contention"));
+            }
+            other => panic!("{other:?}"),
+        }
+        door.received();
+    }
+
+    /// A root the command already read publicly decides the gate, so the
+    /// root is not asked twice.
+    #[test]
+    fn a_root_already_read_is_not_read_again() {
+        let door = Door::open(vec![
+            root(&marfa_client::CONTRACT_VERSION.to_string()),
+            Answer::json("200 OK", r#"{"data":[]}"#),
+        ]);
+        let remote = unheld_at(&door);
+        remote
+            .json(&crate::commands::status::root_request())
+            .unwrap();
+        remote.json(&Request::get(&["items"])).unwrap();
+        let paths: Vec<String> = door
+            .received()
+            .iter()
+            .map(|r| r.path().to_string())
+            .collect();
+        assert_eq!(paths, vec!["/", "/items"]);
     }
 }
