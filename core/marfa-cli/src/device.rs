@@ -569,10 +569,6 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<(), CliError> 
     }
 }
 
-/// A working copy is named by `--db` or `MARFA_DB` or it does not exist:
-/// there is no default store, because a store nobody named is one nobody
-/// can find again. The file is made at the named path on first open, so
-/// the state report is answerable before a hydration (`device.md` 5).
 /// The five reasons, read at the flag, so anything else is refused before
 /// the store opens and `--help` lists what may be named.
 fn blocked_reason() -> impl clap::builder::TypedValueParser<Value = marfa_core::BlockedReason> {
@@ -583,6 +579,10 @@ fn blocked_reason() -> impl clap::builder::TypedValueParser<Value = marfa_core::
     .try_map(|reason| reason.parse::<marfa_core::BlockedReason>())
 }
 
+/// A working copy is named by `--db` or `MARFA_DB` or it does not exist:
+/// there is no default store, because a store nobody named is one nobody
+/// can find again. The file is made at the named path on first open, so
+/// the state report is answerable before a hydration (`device.md` 5).
 fn open(db: &Option<PathBuf>, server: Option<Server>) -> Result<Core, CliError> {
     let Some(path) = db else {
         return Err(CliError::NoStoreNamed);
