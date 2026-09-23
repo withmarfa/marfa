@@ -2731,7 +2731,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                /** @description A client-chosen key identifying this write. The server records the status and body it returns against the key and answers a repeat carrying the same key with that stored result, performing no second write. A conflict is recorded like any other outcome, so a retry is told its first attempt collided rather than left to re-derive it. Scoped to this instance; a key replayed with a different request is refused with `idempotency_key_reused`. */
+                /** @description A client-chosen key identifying this write. The server records the status and body it returns against the key and answers a repeat carrying the same key with that stored result, performing no second write. A conflict is recorded like any other outcome, so a retry is told its first attempt collided rather than left to re-derive it. Scoped to this instance; a key replayed with a different request, or with the same one after the instance has moved to another contract version, is refused with `idempotency_key_reused`, since the stored answer is shaped for the contract it was written under. */
                 "Idempotency-Key"?: string;
             };
             path?: never;
@@ -3134,7 +3134,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                /** @description A client-chosen key identifying this write. The server records the status and body it returns against the key and answers a repeat carrying the same key with that stored result, performing no second write. A conflict is recorded like any other outcome, so a retry is told its first attempt collided rather than left to re-derive it. Scoped to this instance; a key replayed with a different request is refused with `idempotency_key_reused`. */
+                /** @description A client-chosen key identifying this write. The server records the status and body it returns against the key and answers a repeat carrying the same key with that stored result, performing no second write. A conflict is recorded like any other outcome, so a retry is told its first attempt collided rather than left to re-derive it. Scoped to this instance; a key replayed with a different request, or with the same one after the instance has moved to another contract version, is refused with `idempotency_key_reused`, since the stored answer is shaped for the contract it was written under. */
                 "Idempotency-Key"?: string;
             };
             path: {
@@ -3308,7 +3308,7 @@ export interface operations {
                 conflict?: components["schemas"]["ConflictMode"];
             };
             header?: {
-                /** @description A client-chosen key identifying this write. The server records the status and body it returns against the key and answers a repeat carrying the same key with that stored result, performing no second write. A conflict is recorded like any other outcome, so a retry is told its first attempt collided rather than left to re-derive it. Scoped to this instance; a key replayed with a different request is refused with `idempotency_key_reused`. */
+                /** @description A client-chosen key identifying this write. The server records the status and body it returns against the key and answers a repeat carrying the same key with that stored result, performing no second write. A conflict is recorded like any other outcome, so a retry is told its first attempt collided rather than left to re-derive it. Scoped to this instance; a key replayed with a different request, or with the same one after the instance has moved to another contract version, is refused with `idempotency_key_reused`, since the stored answer is shaped for the contract it was written under. */
                 "Idempotency-Key"?: string;
             };
             path: {
@@ -3508,7 +3508,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                /** @description A client-chosen key identifying this write. The server records the status and body it returns against the key and answers a repeat carrying the same key with that stored result, performing no second write. A conflict is recorded like any other outcome, so a retry is told its first attempt collided rather than left to re-derive it. Scoped to this instance; a key replayed with a different request is refused with `idempotency_key_reused`. */
+                /** @description A client-chosen key identifying this write. The server records the status and body it returns against the key and answers a repeat carrying the same key with that stored result, performing no second write. A conflict is recorded like any other outcome, so a retry is told its first attempt collided rather than left to re-derive it. Scoped to this instance; a key replayed with a different request, or with the same one after the instance has moved to another contract version, is refused with `idempotency_key_reused`, since the stored answer is shaped for the contract it was written under. */
                 "Idempotency-Key"?: string;
             };
             path: {
@@ -3664,7 +3664,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                /** @description A client-chosen key identifying this write. The server records the status and body it returns against the key and answers a repeat carrying the same key with that stored result, performing no second write. A conflict is recorded like any other outcome, so a retry is told its first attempt collided rather than left to re-derive it. Scoped to this instance; a key replayed with a different request is refused with `idempotency_key_reused`. */
+                /** @description A client-chosen key identifying this write. The server records the status and body it returns against the key and answers a repeat carrying the same key with that stored result, performing no second write. A conflict is recorded like any other outcome, so a retry is told its first attempt collided rather than left to re-derive it. Scoped to this instance; a key replayed with a different request, or with the same one after the instance has moved to another contract version, is refused with `idempotency_key_reused`, since the stored answer is shaped for the contract it was written under. */
                 "Idempotency-Key"?: string;
             };
             path: {
@@ -4387,7 +4387,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                /** @description A client-chosen key identifying this write. The server records the status and body it returns against the key and answers a repeat carrying the same key with that stored result, performing no second write. A conflict is recorded like any other outcome, so a retry is told its first attempt collided rather than left to re-derive it. Scoped to this instance; a key replayed with a different request is refused with `idempotency_key_reused`. */
+                /** @description A client-chosen key identifying this write. The server records the status and body it returns against the key and answers a repeat carrying the same key with that stored result, performing no second write. A conflict is recorded like any other outcome, so a retry is told its first attempt collided rather than left to re-derive it. Scoped to this instance; a key replayed with a different request, or with the same one after the instance has moved to another contract version, is refused with `idempotency_key_reused`, since the stored answer is shaped for the contract it was written under. */
                 "Idempotency-Key"?: string;
             };
             path: {
@@ -6197,7 +6197,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                /** @description A client-chosen key identifying this write. The server records the status and body it returns against the key and answers a repeat carrying the same key with that stored result, performing no second write. A conflict is recorded like any other outcome, so a retry is told its first attempt collided rather than left to re-derive it. Scoped to this instance; a key replayed with a different request is refused with `idempotency_key_reused`. */
+                /** @description A client-chosen key identifying this write. The server records the status and body it returns against the key and answers a repeat carrying the same key with that stored result, performing no second write. A conflict is recorded like any other outcome, so a retry is told its first attempt collided rather than left to re-derive it. Scoped to this instance; a key replayed with a different request, or with the same one after the instance has moved to another contract version, is refused with `idempotency_key_reused`, since the stored answer is shaped for the contract it was written under. */
                 "Idempotency-Key"?: string;
             };
             path?: never;
@@ -6500,7 +6500,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                /** @description A client-chosen key identifying this write. The server records the status and body it returns against the key and answers a repeat carrying the same key with that stored result, performing no second write. A conflict is recorded like any other outcome, so a retry is told its first attempt collided rather than left to re-derive it. Scoped to this instance; a key replayed with a different request is refused with `idempotency_key_reused`. */
+                /** @description A client-chosen key identifying this write. The server records the status and body it returns against the key and answers a repeat carrying the same key with that stored result, performing no second write. A conflict is recorded like any other outcome, so a retry is told its first attempt collided rather than left to re-derive it. Scoped to this instance; a key replayed with a different request, or with the same one after the instance has moved to another contract version, is refused with `idempotency_key_reused`, since the stored answer is shaped for the contract it was written under. */
                 "Idempotency-Key"?: string;
             };
             path: {
@@ -6671,7 +6671,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                /** @description A client-chosen key identifying this write. The server records the status and body it returns against the key and answers a repeat carrying the same key with that stored result, performing no second write. A conflict is recorded like any other outcome, so a retry is told its first attempt collided rather than left to re-derive it. Scoped to this instance; a key replayed with a different request is refused with `idempotency_key_reused`. */
+                /** @description A client-chosen key identifying this write. The server records the status and body it returns against the key and answers a repeat carrying the same key with that stored result, performing no second write. A conflict is recorded like any other outcome, so a retry is told its first attempt collided rather than left to re-derive it. Scoped to this instance; a key replayed with a different request, or with the same one after the instance has moved to another contract version, is refused with `idempotency_key_reused`, since the stored answer is shaped for the contract it was written under. */
                 "Idempotency-Key"?: string;
             };
             path: {

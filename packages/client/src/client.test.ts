@@ -141,7 +141,7 @@ describe("the contract check", () => {
     );
   });
 
-  it("reads an answer on its own contract, with no round trip to the root", async () => {
+  it("reads an answer on its own contract, sending only the call, with the bearer", async () => {
     // The witness: the same client against the contract it was generated for.
     const server = stubServer();
     const client = make(server, "https://marfa.example/");
@@ -156,13 +156,80 @@ describe("the contract check", () => {
   });
 });
 
+describe("what a caller's own code sees", () => {
+  it("hands middleware a request without the credential and an answer already checked", async () => {
+    const server = stubServer(() => ({
+      contract: String(CONTRACT_VERSION + 1),
+    }));
+    const client = make(server);
+    const seen: { authorization: string | null; read: boolean }[] = [];
+    client.use({
+      onRequest({ request }) {
+        seen.push({
+          authorization: request.headers.get("Authorization"),
+          read: false,
+        });
+        return undefined;
+      },
+      onResponse() {
+        seen.push({ authorization: null, read: true });
+        return undefined;
+      },
+    });
+    await expect(client.GET("/edge-types")).rejects.toBeInstanceOf(
+      ContractMismatchError,
+    );
+    // The request was seen without the bearer, which the server did get;
+    // the answer on another contract never reached the middleware.
+    expect(seen).toEqual([{ authorization: null, read: false }]);
+    expect(server.seen[0]?.authorization).toBe("Bearer k");
+  });
+
+  it("releases the body of an answer it refuses", async () => {
+    let cancelled = false;
+    const body = new ReadableStream({
+      cancel() {
+        cancelled = true;
+      },
+    });
+    const client = createClient({
+      baseUrl: "https://marfa.example",
+      credential: "k",
+      fetch: () =>
+        Promise.resolve(
+          new Response(body, {
+            headers: { [CONTRACT_HEADER]: String(CONTRACT_VERSION + 1) },
+          }),
+        ),
+    });
+    await expect(client.GET("/edge-types")).rejects.toBeInstanceOf(
+      ContractMismatchError,
+    );
+    expect(cancelled).toBe(true);
+  });
+
+  it("holds an answer from a request's own fetch too", async () => {
+    const own = stubServer(() => ({ contract: String(CONTRACT_VERSION + 1) }));
+    const client = make(stubServer());
+    await expect(
+      client.GET("/edge-types", { fetch: own.fetch }),
+    ).rejects.toBeInstanceOf(ContractMismatchError);
+  });
+});
+
 describe("where the credential goes", () => {
   it("sends nothing to a base URL other than its own", async () => {
     const server = stubServer();
     const client = make(server);
-    await expect(
-      client.GET("/edge-types", { baseUrl: "https://elsewhere.example" }),
-    ).rejects.toThrow(/refuses to send/);
+    for (const elsewhere of [
+      "https://elsewhere.example",
+      // A host that begins with this one's name is another host.
+      "https://marfa.example.elsewhere.example",
+    ]) {
+      await expect(
+        client.GET("/edge-types", { baseUrl: elsewhere }),
+      ).rejects.toThrow(/refuses to send/);
+    }
     expect(server.seen).toEqual([]);
     // The witness: the same client does send under its own base URL.
     await client.GET("/edge-types");
@@ -189,6 +256,10 @@ describe("where the credential goes", () => {
     const server = stubServer();
     expect(() => make(server, "https://marfa.example/?x=1")).toThrow(TypeError);
     expect(() => make(server, "https://marfa.example/#top")).toThrow(TypeError);
+    // An empty query or fragment parses to none, and would still end the
+    // path every call is appended to.
+    expect(() => make(server, "https://marfa.example/?")).toThrow(TypeError);
+    expect(() => make(server, "https://marfa.example/#")).toThrow(TypeError);
     expect(() => make(server, "ftp://marfa.example")).toThrow(TypeError);
   });
 

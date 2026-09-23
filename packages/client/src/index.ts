@@ -50,34 +50,61 @@ export type MarfaClient = Client<paths>;
  * rather than read. An error answer with no header is handed on as it
  * came, since a proxy in front of the server answers without one and its
  * status is still the truth. The credential is sent only under the
- * configured `baseUrl`, and never after a redirect. Middleware a caller adds
- * with `use` runs after these checks and sees the credential.
+ * configured `baseUrl`, and never after a redirect.
+ *
+ * Both are done where the request leaves and the answer arrives, inside the
+ * client's own `fetch`, so middleware a caller adds with `use` sees a request
+ * without the credential and an answer already checked.
  */
 export function createClient(options: ClientOptions): MarfaClient {
   const fetcher = options.fetch ?? globalThis.fetch;
-  const base = new URL(options.baseUrl);
-  if (base.protocol !== "http:" && base.protocol !== "https:") {
-    throw new TypeError(`baseUrl must be http or https, not ${base.protocol}`);
-  }
-  if (base.search !== "" || base.hash !== "") {
+  // Checked on the text as given: an empty query or fragment parses to none,
+  // and would still end the path the calls are appended to.
+  if (/[?#]/.test(options.baseUrl)) {
     throw new TypeError(
       "baseUrl names where the instance is served, with no query or fragment",
     );
   }
+  const base = new URL(options.baseUrl);
+  if (base.protocol !== "http:" && base.protocol !== "https:") {
+    throw new TypeError(`baseUrl must be http or https, not ${base.protocol}`);
+  }
   const baseUrl = base.href.replace(/\/+$/, "");
-  // Normalized as a request's own URL is, so the comparison below is
-  // between two spellings of the same thing.
+  // Normalized as a request's own URL is, and ending in a slash, so the
+  // comparison below is between two spellings of the same thing and a host
+  // that merely begins with this one is not under it.
   const root = new URL(`${baseUrl}/`).href;
   const expected = String(CONTRACT_VERSION);
+
+  const hold = async (response: Response): Promise<Response> => {
+    const served = response.headers.get(CONTRACT_HEADER);
+    if (served === expected) return response;
+    if (served === null && !response.ok) return response;
+    // Released rather than left for the collector, which would hold the
+    // connection until it ran.
+    await response.body?.cancel();
+    throw new ContractMismatchError(served, response.status);
+  };
+
+  const send = async (request: Request): Promise<Response> => {
+    // A per-request `baseUrl`, or a caller's middleware rewriting the URL,
+    // would otherwise carry the credential to another server.
+    if (!request.url.startsWith(root)) {
+      throw new Error(
+        `This client is for ${baseUrl}; it refuses to send ${request.url}.`,
+      );
+    }
+    // A redirect is refused, so the credential never leaves the URL it was
+    // sent to.
+    const headers = new Headers(request.headers);
+    headers.set("Authorization", `Bearer ${options.credential}`);
+    return hold(
+      await fetcher(new Request(request, { headers, redirect: "error" })),
+    );
+  };
+
   const gate: Middleware = {
-    onRequest({ request, params }) {
-      // A per-request `baseUrl` would otherwise carry the credential to
-      // another server.
-      if (!request.url.startsWith(root)) {
-        throw new Error(
-          `This client is for ${baseUrl}; it refuses to send ${request.url}.`,
-        );
-      }
+    onRequest({ params }) {
       // A path segment of `.` or `..` survives encoding and is resolved
       // away, sending the call to another route than the one named.
       for (const value of Object.values(params.path ?? {})) {
@@ -87,23 +114,15 @@ export function createClient(options: ClientOptions): MarfaClient {
           );
         }
       }
-      // A redirect is refused, so the credential never leaves the URL it
-      // was sent to.
-      const headers = new Headers(request.headers);
-      headers.set("Authorization", `Bearer ${options.credential}`);
-      return new Request(request, { headers, redirect: "error" });
+      return undefined;
     },
-    async onResponse({ response }) {
-      const served = response.headers.get(CONTRACT_HEADER);
-      if (served === expected) return undefined;
-      if (served === null && !response.ok) return undefined;
-      // Released rather than left for the collector, which would hold the
-      // connection until it ran.
-      await response.body?.cancel();
-      throw new ContractMismatchError(served, response.status);
+    // A caller can hand one request a `fetch` of its own, which does not
+    // pass through `send`; its answer is still held here.
+    onResponse({ response }) {
+      return hold(response);
     },
   };
-  const client = createFetchClient<paths>({ baseUrl, fetch: fetcher });
+  const client = createFetchClient<paths>({ baseUrl, fetch: send });
   client.use(gate);
   return client;
 }
