@@ -9,11 +9,11 @@ import { buildPublishedOpenAPISpec } from "./openapi-published.js";
  * here rather than in a generated client.
  */
 
-type Schema = {
+interface Schema {
   $ref?: string;
   properties?: Record<string, unknown>;
   required?: string[];
-};
+}
 type Paths = Record<
   string,
   Record<

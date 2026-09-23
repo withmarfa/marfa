@@ -119,7 +119,10 @@ describe("outbound webhooks", () => {
     const ids: string[] = [];
     for (let i = 0; i < 3; i++) {
       const item = await client.createItem(
-        createNote({ source: ctx.source, properties: { body: `paged ${String(i)}` } }),
+        createNote({
+          source: ctx.source,
+          properties: { body: `paged ${String(i)}` },
+        }),
       );
       expect(item.ok).toBe(true);
       trackItem(ctx, item.data.item.id);

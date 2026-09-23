@@ -128,7 +128,10 @@ describe("edge response hydration + pagination", () => {
       trackEdge(ctx, e.data.edge.id);
     }
     const detail = await client.rawRequest<{
-      backrefs: Record<string, { data: { id: string }[]; next_cursor: string | null }>;
+      backrefs: Record<
+        string,
+        { data: { id: string }[]; next_cursor: string | null }
+      >;
     }>(`/items/${target}?include=backrefs`);
     expect(detail.ok).toBe(true);
     const block = detail.data.backrefs.about!;

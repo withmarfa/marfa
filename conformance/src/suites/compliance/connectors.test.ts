@@ -445,7 +445,9 @@ describe("heartbeats and runs", () => {
     const past = await client.listConnectorRuns(mine.data.id, { limit: 201 });
     expect(past.status).toBe(400);
     expect(past.error?.error.code).toBe("validation_error");
-    expect((await client.listConnectorRuns(mine.data.id, { limit: 0 })).status).toBe(400);
+    expect(
+      (await client.listConnectorRuns(mine.data.id, { limit: 0 })).status,
+    ).toBe(400);
     expect((await client.deleteConnector(mine.data.id)).status).toBe(200);
   });
 
