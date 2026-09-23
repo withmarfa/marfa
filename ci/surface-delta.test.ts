@@ -45,4 +45,45 @@ describe("the surface delta a release carries", () => {
     const deltas = surfaceDelta({}, lock({ a: "1" }));
     expect(deltas[0]).toMatchObject({ status: "removed", removed: ["a"] });
   });
+
+  it("orders packages and names, whichever way the locks list them", () => {
+    const deltas = surfaceDelta(
+      {
+        "@withmarfa/z": {
+          hash: "h",
+          exports: { y: "1", x: "1", m: "9", k: "9" },
+        },
+        "@withmarfa/a": { hash: "h", exports: { q: "1" } },
+      },
+      {
+        "@withmarfa/z": {
+          hash: "h",
+          exports: { d: "1", c: "1", m: "1", k: "1" },
+        },
+        "@withmarfa/b": { hash: "h", exports: { f: "1", e: "1" } },
+      },
+    );
+    expect(deltas.map((delta) => delta.pkg)).toEqual([
+      "@withmarfa/a",
+      "@withmarfa/b",
+      "@withmarfa/z",
+    ]);
+    expect(deltas[1]?.removed).toEqual(["e", "f"]);
+    expect(deltas[2]).toMatchObject({
+      added: ["x", "y"],
+      removed: ["c", "d"],
+      changed: ["k", "m"],
+    });
+  });
+
+  it("renders each list as the names, quoted, and says first only when it is", () => {
+    const deltas = surfaceDelta(
+      lock({ b: "2", a: "1", c: "3" }),
+      lock({ c: "0" }),
+    );
+    const text = render(deltas, false);
+    expect(text).toContain("Added: `a`, `b`");
+    expect(text).toContain("Changed: `c`");
+    expect(text).not.toContain("The first release");
+  });
 });
