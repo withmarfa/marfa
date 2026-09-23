@@ -130,7 +130,7 @@ export class CliDevice implements DeviceUnderTest {
    * while the stream is still held.
    */
   holdFollow(seconds: number): HeldCommand {
-    return this.hold(["follow", "--for", String(seconds), ...this.server()]);
+    return this.hold(["follow", "--for", String(seconds)]);
   }
 
   async hydrate(types: string[], tier: Tier): Promise<Outcome<HydrateReport>> {

@@ -502,16 +502,17 @@ describe("the working copy belongs to one server", () => {
     const nowhere = await harness.device
       .reopen({ reader: true, store: absent })
       .status();
-    expect(
-      nowhere.ok,
-      "a reading open answered for a path with no store",
-    ).toBe(false);
+    expect(nowhere.ok, "a reading open answered for a path with no store").toBe(
+      false,
+    );
     if (!nowhere.ok) expect(nowhere.refusal.code).toBe("invalid");
     expect(existsSync(absent)).toBe(false);
 
     // Never writes, even where a writer died with a save still in its
     // journal and the reader is the last to close: a writer that closes
-    // last folds the journal into the file, and a reader must not.
+    // last folds the journal into the file, and a reader must not. The
+    // hydration's head read is still the answer at the front, so the follow
+    // reads it, waits, and asks again for this one.
     harness.server.answer("GET", "/events", {
       kind: "sse",
       hold: true,
@@ -522,10 +523,10 @@ describe("the working copy belongs to one server", () => {
     });
     const dying = harness.device.holdFollow(20);
     try {
-      await vi.waitFor(
-        () => expect(dying.stdout).toContain('"cursor":"11"'),
-        { timeout: 10_000, interval: 25 },
-      );
+      await vi.waitFor(() => expect(dying.stdout).toContain('"cursor":"11"'), {
+        timeout: 10_000,
+        interval: 25,
+      });
     } finally {
       await dying.stop();
     }
@@ -576,8 +577,10 @@ describe("the working copy belongs to one server", () => {
       ).toBe(true);
       await vi.waitFor(
         () => {
-          expect(told(), "the writer saved and the reader was not told")
-            .length.toBeGreaterThan(1);
+          expect(
+            told().length,
+            "the writer saved and the reader was not told",
+          ).toBeGreaterThan(1);
         },
         { timeout: 5_000, interval: 50 },
       );

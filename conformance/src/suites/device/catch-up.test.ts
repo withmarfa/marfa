@@ -20,6 +20,7 @@ import {
   wireItem,
   wireType,
 } from "../../device/marfa-answers.js";
+import type { Answer } from "../../device/scripted-server.js";
 
 /**
  * "Events apply in log order, gated by version", and "a stale cursor means
@@ -668,14 +669,18 @@ describe("catch-up replays from the cursor", () => {
     harness = await startHarness("follow-backoff");
     const { server, device } = harness;
     scriptHydration(server, { head: "10" });
-    server.answer("GET", "/events", headRead("10"));
+    // A server that ends every stream the moment it opens, and later one
+    // that fails and then refuses.
+    let next: Answer[] = [];
+    server.answer("GET", "/events", () =>
+      next.length > 1
+        ? next.shift()!
+        : (next[0] ?? { kind: "sse", frames: [connected] }),
+    );
     expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
     const streams = () =>
       server.requests.filter((request) => request.pathname === "/events")
         .length;
-
-    // A server that ends every stream the moment it opens.
-    server.answer("GET", "/events", { kind: "sse", frames: [connected] });
     const before = streams();
     const followed = await device.follow(4);
     expect(followed.ok, JSON.stringify(followed)).toBe(true);
@@ -691,12 +696,10 @@ describe("catch-up replays from the cursor", () => {
 
     // A server failing is asked again; an answer that no retry changes ends
     // the follow and says so.
-    server.answer(
-      "GET",
-      "/events",
+    next = [
       refusal(503, "unavailable", "busy"),
       refusal(405, "method_not_allowed", "not here"),
-    );
+    ];
     const refusedFrom = streams();
     const refused = await device.follow(10);
     expect(
@@ -714,9 +717,8 @@ describe("catch-up replays from the cursor", () => {
     harness = await startHarness("follow-stall");
     const { server, device } = harness;
     scriptHydration(server, { head: "10" });
-    server.answer("GET", "/events", headRead("10"));
-    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
     server.answer("GET", "/events", { kind: "stall" });
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
 
     const started = Date.now();
     const followed = await device.follow(1);
@@ -737,12 +739,11 @@ describe("catch-up replays from the cursor", () => {
     harness = await startHarness("follow-aged-out");
     const { server, device } = harness;
     scriptHydration(server, { head: "10" });
-    server.answer("GET", "/events", headRead("10"));
-    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
     server.answer("GET", "/events", {
       kind: "sse",
       frames: [connected, streamCursor("900"), catchupTooOld("500", "10")],
     });
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
 
     const before = server.requests.filter(
       (request) => request.pathname === "/events",

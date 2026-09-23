@@ -1455,6 +1455,72 @@ mod tests {
         ));
     }
 
+    /// The type catalog a follow asks for on every stream is written only
+    /// where it changed, so a reader told of each save is not told of a
+    /// catalog nobody changed.
+    #[test]
+    fn an_unchanged_type_catalog_is_not_written_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("core.sqlite");
+        let writer = Core::open(&path, None).unwrap();
+        let reader = Core::open_reader(&path).unwrap();
+        let catalog = [store::testing::wire_type("core.note", None, Some("title"))];
+        let replace = |types: &[crate::wire::WireType]| {
+            let mut conn = writer.conn().unwrap();
+            let tx = conn.transaction().unwrap();
+            store::replace_types(&tx, types).unwrap();
+            tx.commit().unwrap();
+        };
+        replace(&catalog);
+        let before = reader.data_version().unwrap();
+        replace(&catalog);
+        assert_eq!(
+            reader.data_version().unwrap(),
+            before,
+            "the same catalog was written again, and a reader was told of a save that changed nothing"
+        );
+        // The witness: a catalog that differs is written.
+        replace(&[store::testing::wire_type("core.note", None, Some("body"))]);
+        assert_ne!(reader.data_version().unwrap(), before);
+    }
+
+    /// Two streams on one handle would each move the one cursor.
+    #[test]
+    fn one_stream_at_a_time_moves_the_cursor() {
+        let dir = tempfile::tempdir().unwrap();
+        // Nothing answers here, so the follow asks again until it is stopped.
+        let core = Core::open(
+            dir.path().join("core.sqlite"),
+            Some(Server {
+                url: "http://127.0.0.1:9".into(),
+                key: "k".into(),
+            }),
+        )
+        .unwrap();
+        {
+            let conn = core.conn().unwrap();
+            store::meta_set(&conn, store::META_EVENT_CURSOR, "10").unwrap();
+            store::meta_set(&conn, store::META_SLICE_TYPES, "[\"core.note\"]").unwrap();
+            store::meta_set(&conn, store::META_SLICE_TIER, "library").unwrap();
+        }
+        let stop = AtomicBool::new(false);
+        std::thread::scope(|scope| {
+            let following = scope.spawn(|| core.follow(&stop, |_| {}));
+            std::thread::sleep(Duration::from_millis(300));
+            let second = core.catch_up();
+            stop.store(true, Ordering::Relaxed);
+            let report = following.join().unwrap().unwrap();
+            assert!(
+                matches!(&second, Err(CoreError::Invalid(message)) if message.contains("already")),
+                "a catch-up ran beside a follow on one handle: {second:?}"
+            );
+            // The witness: the follow was running, asking for a stream.
+            assert!(report.failed_opens >= 1, "{report:?}");
+        });
+        // And once it ended, the handle takes the next one.
+        assert!(!matches!(core.catch_up(), Err(CoreError::Invalid(_))));
+    }
+
     #[test]
     fn a_store_opened_to_read_never_claims_the_writer_and_is_told_of_saves() {
         let dir = tempfile::tempdir().unwrap();
