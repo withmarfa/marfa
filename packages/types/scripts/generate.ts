@@ -62,12 +62,34 @@ function schemaId(s: RawSchema): string {
 }
 
 // Parents must be validated and registered before their children, and
-// `compatible_with` targets before the connector types that claim them. Sorting
-// by identifier depth puts every ancestor ahead of its descendants, and the
-// family order below puts core ahead of the connectors that reference it.
-function byDepth(a: RawSchema, b: RawSchema): number {
-  const depth = (s: RawSchema) => schemaId(s).split(".").length;
-  return depth(a) - depth(b) || schemaId(a).localeCompare(schemaId(b));
+// `compatible_with` targets before the connector types that claim them. The
+// family order below puts core ahead of the connectors that reference it, and
+// within a family a type goes after every ancestor it names: by the length of
+// its `parent` chain, not by its identifier, since a parent need not be its
+// child's prefix.
+function byAncestry(raws: RawSchema[]): RawSchema[] {
+  const parentOf = new Map<string, string>();
+  for (const raw of raws) {
+    if (typeof raw.data.parent === "string") {
+      parentOf.set(schemaId(raw), raw.data.parent);
+    }
+  }
+  const depth = (id: string): number => {
+    const seen = new Set<string>();
+    let steps = 0;
+    for (let at = parentOf.get(id); at !== undefined; at = parentOf.get(at)) {
+      // A cycle is the validator's to report; the order only has to end.
+      if (seen.has(at)) break;
+      seen.add(at);
+      steps += 1;
+    }
+    return steps;
+  };
+  return [...raws].sort(
+    (a, b) =>
+      depth(schemaId(a)) - depth(schemaId(b)) ||
+      schemaId(a).localeCompare(schemaId(b)),
+  );
 }
 
 const registry = new Map<string, TypeSchema>();
@@ -154,7 +176,7 @@ function resolveMergePolicy(schema: TypeSchema): TypeSchema["merge_policy"] {
 
 function buildFamily(raws: RawSchema[]): TypeSchema[] {
   const built: TypeSchema[] = [];
-  for (const raw of [...raws].sort(byDepth)) {
+  for (const raw of byAncestry(raws)) {
     const result = validateTypeSchema(raw.data, {
       resolveSchema: (id) => registry.get(id),
     });
@@ -176,7 +198,12 @@ function buildFamily(raws: RawSchema[]): TypeSchema[] {
     if (mergePolicy) schema.merge_policy = mergePolicy;
     built.push(schema);
   }
-  return built;
+  // Emitted by identifier, so the generated registry keeps one order however
+  // the ancestry that decided registration is drawn.
+  const segments = (id: string) => id.split(".").length;
+  return built.sort(
+    (a, b) => segments(a.id) - segments(b.id) || a.id.localeCompare(b.id),
+  );
 }
 
 const coreTypes = buildFamily(coreRaw);
@@ -339,9 +366,9 @@ lines.push("");
  * annotated with the schema interfaces, which widen every value to `string`
  * and every list to `string[]`, so the shapes of fields, enum values,
  * parents, roles, constraints and cardinalities reach a built declaration
- * through these instead, and they are what the published-surface lock sees
- * move when a shipped definition does. Prose is left out because it moves
- * nothing a consumer compiles against.
+ * through these instead, and they are what `shipped-shapes.sha256` sees move
+ * when a shipped definition does. Prose is left out because it moves nothing
+ * a consumer compiles against.
  */
 function shapeLiteral(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(shapeLiteral);

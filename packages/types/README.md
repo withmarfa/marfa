@@ -43,9 +43,10 @@ A type schema may carry `"_deferred": true` to mark it as retained-but-inactive.
 ## Commands
 
 ```sh
-pnpm validate     # validate every schema in core/, core/system/, core/edges/ and connectors/
-pnpm generate     # regenerate both registries in generated/
-pnpm build        # bundle src/ to dist/ for downstream consumers
+pnpm validate      # validate every schema in core/, core/system/, core/edges/ and connectors/
+pnpm generate      # regenerate both registries in generated/
+pnpm shapes:digest # rewrite shipped-shapes.sha256 after a shipped shape changes
+pnpm build         # bundle src/ to dist/ for downstream consumers
 pnpm typecheck
 ```
 
@@ -57,4 +58,5 @@ CI runs `pnpm validate` and a codegen-freshness check (`pnpm generate` + `git di
 2. If it's a subtype, set `parent` and include only new fields (do not redefine ancestor fields)
 3. `pnpm validate` to check the schema
 4. `pnpm generate` to regenerate the registry
-5. Commit with `feat(types): add core.<name> type`
+5. `pnpm shapes:digest` to rewrite `shipped-shapes.sha256`, since a new or changed type moves the shapes it holds
+6. Commit with `feat(types): add core.<name> type`

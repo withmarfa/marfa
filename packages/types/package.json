@@ -17,7 +17,8 @@
     "build": "tsup",
     "typecheck": "tsc --noEmit",
     "validate": "tsx scripts/validate.ts",
-    "generate": "tsx scripts/generate.ts"
+    "generate": "tsx scripts/generate.ts",
+    "shapes:digest": "tsx scripts/shapes-digest.ts --write"
   },
   "devDependencies": {
     "@types/node": "^26.2.0",

@@ -69,7 +69,7 @@ describe("the shipped shapes", () => {
     }
   });
 
-  it("keep their values as literal types, which is what the surface lock hashes", () => {
+  it("keep their values as literal types, which is what the shapes digest hashes", () => {
     // Checked by the compiler when the package typechecks: a widened emit
     // makes these `string`, and the assertions stop compiling.
     expectTypeOf(
