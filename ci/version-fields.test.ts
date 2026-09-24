@@ -307,7 +307,7 @@ describe("no file holds a version", () => {
         },
         {
           path: "swift/README.md",
-          text: '.package(url: "https://example.com/marfa-swift-sdk", from: "v1.2.3")\n',
+          text: '.package(url: "https://example.com/marfa-swift", from: "v1.2.3")\n',
         },
         {
           path: CONTRACT_FILE,

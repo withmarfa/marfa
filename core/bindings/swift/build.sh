@@ -2,7 +2,7 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-# One cargo-swift, because each version writes different glue: the Swift SDK
+# One cargo-swift, because each version writes different glue: marfa-swift
 # commits the glue this script generates at the commit it pins, and its CI
 # runs this script again at that pin and refuses glue that differs.
 cargo_swift=0.11.1
