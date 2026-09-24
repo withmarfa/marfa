@@ -10,6 +10,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
+import { DatabaseSync } from "node:sqlite";
 import { join } from "node:path";
 import { describe, it, expect, afterEach, vi } from "vitest";
 import {
@@ -2186,6 +2187,94 @@ describe("identity", () => {
       [moved.value.created, moved.value.requeued, moved.value.lost],
       "a lost file that moved was left as lost, though the person acted on it",
     ).toEqual([1, 1, 0]);
+  });
+
+  it("says in words which source its key does not claim, and once while watching", async () => {
+    harness = await folderHarness("folder-unclaimed-words", {
+      slice: {
+        types: ["core.note"],
+        defaultType: "core.note",
+        source: "notes",
+      },
+    });
+    scriptFolderWrites(harness, { claims: () => false });
+    put(harness, "a.md", "---\ntitle: A\n---\na\n");
+    const line = "does not claim the source notes";
+    const creates = () =>
+      harness!.server.requests.filter(
+        (request) => request.method === "POST" && request.pathname === "/items",
+      ).length;
+
+    const pushed = await harness.folder.pushText();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    expect(
+      pushed.ok && pushed.value,
+      "a push did not say which source",
+    ).toContain(line);
+    const drained = await harness.folder.device().text(["drain"]);
+    expect(drained.ok, JSON.stringify(drained)).toBe(true);
+    expect(
+      drained.ok && drained.value,
+      "a drain did not say which source",
+    ).toContain(line);
+    expect(creates()).toBe(2);
+
+    const watching = harness.folder.watchText();
+    try {
+      await vi.waitFor(() => expect(watching.stdout).toContain(line), {
+        timeout: 20_000,
+        interval: 100,
+      });
+      // The minute passes: the record of when the source was found is set
+      // back, so the next pass asks again, finds the same, and says nothing.
+      const store = new DatabaseSync(harness.folder.store);
+      try {
+        store
+          .prepare("UPDATE meta SET value = ? WHERE key = ?")
+          .run("2020-01-01T00:00:00.000Z", "unclaimed_source:notes");
+      } finally {
+        store.close();
+      }
+      await vi.waitFor(() => expect(creates()).toBe(3), {
+        timeout: 20_000,
+        interval: 100,
+      });
+      await new Promise((resolve) => setTimeout(resolve, 2_000));
+    } finally {
+      await watching.stop();
+    }
+    expect(
+      watching.stdout.split(line).length - 1,
+      `a watcher said the same unclaimed source again: ${watching.stdout}`,
+    ).toBe(1);
+    expect(
+      watching.stdout.trim().split("\n").length,
+      `a watcher printed a pass that asked again and found the same: ${watching.stdout}`,
+    ).toBe(2);
+  });
+
+  it("says in words when a file is bound to an item that is gone, once while watching", async () => {
+    harness = await folderHarness("folder-lost-words");
+    scriptWrites(harness.server, {
+      create: [refusal(400, "invalid_properties", "the body is not allowed")],
+      read: [refusal(404, "item_not_found", "Item not found")],
+    });
+    put(harness, "mine.md", "---\ntitle: Mine\n---\nnot allowed\n");
+    const watching = harness.folder.watchText();
+    try {
+      await vi.waitFor(
+        () =>
+          expect(watching.stdout).toContain("1 bound to an item that is gone"),
+        { timeout: 20_000, interval: 100 },
+      );
+      await new Promise((resolve) => setTimeout(resolve, 3_000));
+    } finally {
+      await watching.stop();
+    }
+    expect(
+      watching.stdout.split("bound to an item that is gone").length - 1,
+      `a watcher said the same lost file on every pass: ${watching.stdout}`,
+    ).toBe(1);
   });
 
   it("refuses a folder that names no source, or one it may never name", async () => {

@@ -273,6 +273,26 @@ export class CliDevice implements DeviceUnderTest {
     return this.json<Status>(["status"]);
   }
 
+  /**
+   * A device command as a person at a terminal runs it, without `--json`,
+   * for the lines the binary prints for a person rather than the document
+   * it prints for a program.
+   */
+  async text(args: string[]): Promise<Outcome<string>> {
+    return this.invokeText([
+      "device",
+      "--db",
+      this.options.store,
+      ...args,
+      ...this.server(),
+    ]);
+  }
+
+  /** A command at the binary's root, without `--json`. */
+  async rootText(args: string[]): Promise<Outcome<string>> {
+    return this.invokeText([...args, ...this.server()]);
+  }
+
   /** An operation the binary offers no command for at all, for the refusal statements. */
   async attempt(args: string[]): Promise<Outcome<unknown>> {
     return this.json<unknown>(args);
@@ -300,11 +320,14 @@ export class CliDevice implements DeviceUnderTest {
    * the store for every case after it, and they would fail as the rule rather
    * than as the leak.
    */
-  hold(args: string[], at: "device" | "root" = "device"): HeldCommand {
+  hold(
+    args: string[],
+    at: "device" | "root" | "text" = "device",
+  ): HeldCommand {
     const child = spawn(
       this.options.binary,
       [
-        ...(at === "device" ? this.prefix() : ["--json"]),
+        ...(at === "device" ? this.prefix() : at === "root" ? ["--json"] : []),
         ...args,
         ...this.server(),
       ],
@@ -730,6 +753,21 @@ export class CliFolder {
       url: this.options.url,
       key: this.options.key,
     }).hold(["folders", "watch", this.dir], "root");
+  }
+
+  /** A watch left running that prints for a person, not a program. */
+  watchText(): HeldCommand {
+    return new CliDevice({
+      binary: this.options.binary,
+      store: this.store,
+      url: this.options.url,
+      key: this.options.key,
+    }).hold(["folders", "watch", this.dir], "text");
+  }
+
+  /** A push, printed for a person. */
+  async pushText(): Promise<Outcome<string>> {
+    return this.device().rootText(["folders", "push", this.dir]);
   }
 
   private server(): string[] {
