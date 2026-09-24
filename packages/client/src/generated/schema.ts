@@ -1817,11 +1817,15 @@ export interface components {
             cascade_on_delete?: "cascade" | "orphan" | "block";
             property_schema?: {
                 [key: string]: {
+                    /** @description A field type's name, stored as given rather than checked against the ones a type's `fields` take, and never `thumbnail`: an edge carries no thumbnail. */
                     type: string;
                     description?: string;
                     required?: boolean;
                     enum_values?: string[];
+                    /** @description A field type's name, stored as given rather than checked against the ones a type's `fields` take, and never `thumbnail`: an edge carries no thumbnail. */
                     items_type?: string;
+                    /** @description A refinement of a string property, stored as given, and never `thumbnail`: an edge carries no thumbnail. */
+                    format?: string;
                 };
             };
         };
@@ -1960,27 +1964,30 @@ export interface components {
             [key: string]: unknown;
         };
         FieldDefinition: {
-            /** @enum {string} */
-            type: "string" | "number" | "integer" | "boolean" | "url" | "email" | "datetime" | "date" | "enum" | "array" | "object";
+            /**
+             * @description `thumbnail` holds a small image the writer supplies: `data:image/png;base64,…`, `image/jpeg` or `image/webp`, canonical base64, at most 16 KiB decoded, beginning with that format's signature. A type carries at most one, never under a name search indexes whatever its type (`title`, `body`, `description`, `name`), and never as an array's `items_type`.
+             * @enum {string}
+             */
+            type: "string" | "number" | "integer" | "boolean" | "url" | "email" | "datetime" | "date" | "enum" | "array" | "object" | "thumbnail";
             description?: string;
             required?: boolean;
             enum_values?: string[];
             items_type?: string;
             /**
-             * @description Semantic refinement of a `string` field. Only the annotation-only formats reach the registry: the four with a field type of their own normalize into `type`.
+             * @description Semantic refinement of a `string` field. Only the annotation-only formats reach the registry: those with a field type of their own normalize into `type`.
              * @enum {string}
              */
-            format?: "url" | "email" | "datetime" | "date" | "bcp47" | "iso3166";
+            format?: "url" | "email" | "datetime" | "date" | "thumbnail" | "bcp47" | "iso3166";
             searchable?: boolean;
             maxLength?: number;
             maxItems?: number;
         } & {
             [key: string]: unknown;
         };
-        InvalidSchemaOrValidationErrorRefusal: {
+        InheritanceViolationOrInvalidSchemaOrValidationErrorRefusal: {
             error: {
                 /** @enum {string} */
-                code: "invalid_schema" | "validation_error";
+                code: "inheritance_violation" | "invalid_schema" | "validation_error";
                 message: string;
                 details?: {
                     [key: string]: unknown;
@@ -7687,7 +7694,7 @@ export interface operations {
                     "application/json": components["schemas"]["TypeResponse"];
                 };
             };
-            /** @description `validation_error` for a malformed identifier, a body of the wrong shape, or a parent chain that is circular, too deep or unresolved; `invalid_schema` for a schema the validator refuses. */
+            /** @description `validation_error` for a malformed identifier, a body of the wrong shape, or a parent chain that is circular, too deep or unresolved; `inheritance_violation` for a field whose shape differs from the one a type above or below it in the chain declares under the same name; `invalid_schema` for any other schema the validator refuses. */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -7699,7 +7706,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["InvalidSchemaOrValidationErrorRefusal"];
+                    "application/json": components["schemas"]["InheritanceViolationOrInvalidSchemaOrValidationErrorRefusal"];
                 };
             };
             /** @description Unauthorized */

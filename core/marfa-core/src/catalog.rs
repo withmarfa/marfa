@@ -7,6 +7,26 @@ use crate::error::CoreError;
 struct Entry {
     parent: Option<String>,
     title_field: Option<String>,
+    thumbnail_field: Option<String>,
+}
+
+/// What the local index reads from an item's properties.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct Indexing {
+    pub title_field: Option<String>,
+    /// Never indexed: its base64 matches nothing a person would search for,
+    /// and the server leaves it out of its own index too.
+    pub thumbnail_field: Option<String>,
+}
+
+#[cfg(test)]
+impl Indexing {
+    pub fn titled(field: &str) -> Indexing {
+        Indexing {
+            title_field: Some(field.to_string()),
+            thumbnail_field: None,
+        }
+    }
 }
 
 /// The server's type catalog as last hydrated, answering the same subtree
@@ -20,22 +40,25 @@ const MAX_PARENT_WALK: usize = 64;
 
 impl Catalog {
     pub fn load(conn: &Connection) -> Result<Catalog, CoreError> {
-        let mut statement = conn.prepare("SELECT id, parent, title_field FROM types")?;
+        let mut statement =
+            conn.prepare("SELECT id, parent, title_field, thumbnail_field FROM types")?;
         let rows = statement.query_map([], |row| {
             Ok((
                 row.get::<_, String>(0)?,
                 row.get::<_, Option<String>>(1)?,
                 row.get::<_, Option<String>>(2)?,
+                row.get::<_, Option<String>>(3)?,
             ))
         })?;
         let mut entries = HashMap::new();
         for row in rows {
-            let (id, parent, title_field) = row?;
+            let (id, parent, title_field, thumbnail_field) = row?;
             entries.insert(
                 id,
                 Entry {
                     parent,
                     title_field,
+                    thumbnail_field,
                 },
             );
         }
@@ -81,11 +104,32 @@ impl Catalog {
     }
 
     pub fn title_field(&self, type_id: &str) -> Option<&str> {
+        self.nearest(type_id, |entry| entry.title_field.as_deref())
+    }
+
+    /// The thumbnail a type carries, its own or the one it inherits: the
+    /// server's `GET /types` answers each type as declared, not resolved.
+    pub fn thumbnail_field(&self, type_id: &str) -> Option<&str> {
+        self.nearest(type_id, |entry| entry.thumbnail_field.as_deref())
+    }
+
+    pub fn indexing(&self, type_id: &str) -> Indexing {
+        Indexing {
+            title_field: self.title_field(type_id).map(str::to_string),
+            thumbnail_field: self.thumbnail_field(type_id).map(str::to_string),
+        }
+    }
+
+    fn nearest<'a>(
+        &'a self,
+        type_id: &str,
+        read: impl Fn(&'a Entry) -> Option<&'a str>,
+    ) -> Option<&'a str> {
         let mut current = type_id;
         for _ in 0..MAX_PARENT_WALK {
             let entry = self.entries.get(current)?;
-            if let Some(field) = &entry.title_field {
-                return Some(field);
+            if let Some(found) = read(entry) {
+                return Some(found);
             }
             current = entry.parent.as_deref()?;
         }
@@ -124,6 +168,7 @@ mod tests {
                         Entry {
                             parent: parent.map(str::to_string),
                             title_field: None,
+                            thumbnail_field: None,
                         },
                     )
                 })

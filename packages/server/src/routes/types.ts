@@ -101,7 +101,11 @@ function validateParentChain(
  */
 const FieldDefinitionSchema = z
   .looseObject({
-    type: z.enum(FIELD_TYPES as unknown as [string, ...string[]]),
+    type: z
+      .enum(FIELD_TYPES as unknown as [string, ...string[]])
+      .describe(
+        "`thumbnail` holds a small image the writer supplies: `data:image/png;base64,…`, `image/jpeg` or `image/webp`, canonical base64, at most 16 KiB decoded, beginning with that format's signature. A type carries at most one, never under a name search indexes whatever its type (`title`, `body`, `description`, `name`), and never as an array's `items_type`.",
+      ),
     description: z.string().optional(),
     required: z.boolean().optional(),
     enum_values: z.array(z.string()).optional(),
@@ -110,7 +114,7 @@ const FieldDefinitionSchema = z
       .enum(FIELD_FORMATS as unknown as [string, ...string[]])
       .optional()
       .describe(
-        "Semantic refinement of a `string` field. Only the annotation-only formats reach the registry: the four with a field type of their own normalize into `type`.",
+        "Semantic refinement of a `string` field. Only the annotation-only formats reach the registry: those with a field type of their own normalize into `type`.",
       ),
     searchable: z.boolean().optional(),
     maxLength: z.number().int().optional(),
@@ -511,13 +515,14 @@ const updateTypeRoute = createRoute({
       content: {
         "application/json": {
           schema: makeErrorResponseSchema([
+            "inheritance_violation",
             "invalid_schema",
             "validation_error",
           ]),
         },
       },
       description:
-        "`validation_error` for a malformed identifier, a body of the wrong shape, or a parent chain that is circular, too deep or unresolved; `invalid_schema` for a schema the validator refuses.",
+        "`validation_error` for a malformed identifier, a body of the wrong shape, or a parent chain that is circular, too deep or unresolved; `inheritance_violation` for a field whose shape differs from the one a type above or below it in the chain declares under the same name; `invalid_schema` for any other schema the validator refuses.",
     },
     401: {
       content: {
@@ -777,6 +782,15 @@ export function typeRoutes(storage: Storage) {
       const body = c.req.valid("json");
       const result = validateTypeSchema({ ...body, id });
       if (!result.success) {
+        // The inheritance rule is one rule from either end of the chain,
+        // so this door answers it with the code registration does.
+        if (result.errors.some((e) => e.code === "inheritance_violation")) {
+          throw new MarfaError(
+            ErrorCode.INHERITANCE_VIOLATION,
+            "Type gives a field a shape another type in its chain declares differently",
+            { errors: result.errors },
+          );
+        }
         throw new MarfaError(ErrorCode.INVALID_SCHEMA, "Invalid type schema", {
           errors: result.errors,
         });

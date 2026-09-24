@@ -53,6 +53,29 @@ const TypeConstraintSchema = z
     },
   );
 
+/** Nothing reads a thumbnail from an edge, and a value nothing reads is a
+ *  value nothing checks. */
+const EdgePropertyTypeSchema = z
+  .string()
+  .refine((type) => type !== "thumbnail", {
+    message: "An edge never carries a thumbnail",
+  })
+  .describe(
+    "A field type's name, stored as given rather than checked against the ones a type's `fields` take, and never `thumbnail`: an edge carries no thumbnail.",
+  );
+
+/** Declared so the format that stands for a thumbnail on a type's field is
+ *  refused here, where an undeclared key would be dropped and the edge type
+ *  registered as though it named none. */
+const EdgePropertyFormatSchema = z
+  .string()
+  .refine((format) => format !== "thumbnail", {
+    message: "An edge never carries a thumbnail",
+  })
+  .describe(
+    "A refinement of a string property, stored as given, and never `thumbnail`: an edge carries no thumbnail.",
+  );
+
 /** Exported so the archive restore validates a carried edge type through
  *  exactly the shape this route accepts, rather than a second reading of
  *  the same rules that can drift from it. */
@@ -74,11 +97,12 @@ export const EdgeTypeRequestSchema = z
       .record(
         z.string(),
         z.object({
-          type: z.string(),
+          type: EdgePropertyTypeSchema,
           description: z.string().optional(),
           required: z.boolean().optional(),
           enum_values: z.array(z.string()).optional(),
-          items_type: z.string().optional(),
+          items_type: EdgePropertyTypeSchema.optional(),
+          format: EdgePropertyFormatSchema.optional(),
         }),
       )
       .optional(),
@@ -278,9 +302,9 @@ export function edgeTypeRoutes(storage: Storage) {
         "Invalid edge-type identifier",
       );
     }
-    // NQ-1 resolution (custom edges do not inherit): pull the raw body and
-    // reject `extends` explicitly. Zod's default .strip() would silently
-    // drop it — that's lenient but invites clients to believe it worked.
+    // A registered edge type does not inherit: pull the raw body and reject
+    // `extends` explicitly. Zod's default .strip() would silently drop it —
+    // that's lenient but invites clients to believe it worked.
     const rawBody = await c.req.json<Record<string, unknown>>();
     if ("extends" in rawBody) {
       throw new MarfaError(

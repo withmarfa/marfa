@@ -2,7 +2,6 @@ import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { ALL_PENDING, PENDING, PENDING_BEYOND_MILESTONE } from "./pending.js";
 
 /**
  * The corpus against the chapters, with no server and no device.
@@ -10,16 +9,10 @@ import { ALL_PENDING, PENDING, PENDING_BEYOND_MILESTONE } from "./pending.js";
  * `spec-citations.test.ts` checks that a citation resolves. It cannot check
  * the other direction, and the other direction is the one that matters here:
  * a device statement with no citation is a rule nothing asserts, and it would
- * read exactly like a rule everything asserts. Nor can it see the pending
- * list, which is the only thing standing between "this statement is asserted"
- * and "this statement has a test that skips".
+ * read exactly like a rule everything asserts.
  *
  * So: every device statement is cited, every citation reaches a device
- * fixture, every pending entry names a statement that exists and a test that
- * exists, and a fixture with no body is pending. The last two together are
- * what make the list shrink honestly — a body removed from the list without
- * being written throws, and a body written but left on the list is caught
- * here.
+ * fixture, and every fixture of the device's behavior is cited.
  */
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -128,35 +121,6 @@ function titlesIn(file: string): string[] {
   );
 }
 
-function blocksIn(file: string): Array<{ title: string; source: string }> {
-  const text = readFileSync(resolve(here, file), "utf8");
-  const found: Array<{ title: string; source: string }> = [];
-  for (const block of text.split(/(?=(?:^|\s)it\(\s*")/)) {
-    TITLE.lastIndex = 0;
-    const title = TITLE.exec(block);
-    if (title) found.push({ title: title[1], source: block });
-  }
-  return found;
-}
-
-function blockFor(file: string, title: string): string | undefined {
-  return blocksIn(file).find((block) => block.title === title)?.source;
-}
-
-/** A fixture whose body is `notWrittenYet` asserts nothing and must be pending. */
-function bodilessTitles(file: string): string[] {
-  const path = resolve(here, file);
-  const text = readFileSync(path, "utf8");
-  const blocks = text.split(/(?=(?:^|\s)it\(\s*")/);
-  const bodiless: string[] = [];
-  for (const block of blocks) {
-    TITLE.lastIndex = 0;
-    const title = TITLE.exec(block);
-    if (title && block.includes("notWrittenYet(")) bodiless.push(title[1]);
-  }
-  return bodiless;
-}
-
 const allStatements = CHAPTERS.flatMap(statements);
 const fixtureFiles = readdirSync(here).filter(
   (name) => name.endsWith(".test.ts") && !name.endsWith(".decision.test.ts"),
@@ -237,6 +201,41 @@ describe("every device statement is asserted by something", () => {
     ).toEqual([]);
   });
 
+  it("runs every device fixture rather than skipping one", () => {
+    // A fixture that skips passes every check here: it is cited, its title
+    // resolves, and it asserts nothing, so the statement citing it reads as
+    // asserted while nothing runs it. One marked to fail is the same: it
+    // passes when what it asserts is false.
+    const SKIPS =
+      /\b(?:skip|skipIf|runIf|todo|fails)\s*\(|\b(?:skip|todo|fails)\s*:\s*true\b/;
+    // The witness: the check sees each way a fixture is skipped.
+    for (const written of [
+      "context.skip();",
+      "({ skip }) => skip()",
+      'it.skip("a fixture", () => {});',
+      'it.skipIf(true)("a fixture", () => {});',
+      'it.runIf(false)("a fixture", () => {});',
+      'it.todo("a fixture");',
+      'it.fails("a fixture", () => {});',
+      'it("a fixture", { skip: true }, () => {});',
+      'it("a fixture", { todo: true }, () => {});',
+      'it("a fixture", { fails: true }, () => {});',
+      'describe.skip("a chapter", () => {});',
+    ]) {
+      expect(SKIPS.test(written), written).toBe(true);
+    }
+    const skipping = fixtureFiles.filter((file) =>
+      SKIPS.test(readFileSync(resolve(here, file), "utf8")),
+    );
+    expect(
+      skipping,
+      "a device fixture skips itself, so the statement citing it is asserted by nothing",
+    ).toEqual([]);
+    // The witness: the files read are the fixtures, so an empty list above
+    // is every one of them read and not nothing read.
+    expect(fixtureFiles).toContain("working-copy.test.ts");
+  });
+
   it("cites every fixture of the device's behavior from some statement", () => {
     // The suite's own controls are not the device's behavior: fidelity holds
     // the scripting to the real server and the scripted server's own tests
@@ -265,113 +264,5 @@ describe("every device statement is asserted by something", () => {
     // The witness: the files read are the fixtures, so an empty list above
     // is every one of them cited and not nothing read.
     expect(fixtureFiles).toContain("queue.test.ts");
-  });
-});
-
-describe("the pending list and the fixtures agree", () => {
-  it("keeps what a later milestone covers out of the list this one empties", () => {
-    // The reason is the entry, not a comment beside it. Milestone one is
-    // reached when `PENDING` is empty, so a statement that moved here without
-    // the decision that put it here would let the milestone be declared by
-    // relabeling rather than by work. The thumbnail is the only thing the
-    // milestone deliberately leaves.
-    expect(
-      PENDING_BEYOND_MILESTONE,
-      "a statement was moved out of the milestone's list without the decision that allows it, so the list the milestone must empty is shrinking by bookkeeping",
-    ).toEqual({
-      "working-copy.test.ts › holds the thumbnail an item carries":
-        "device.md 29 — the device has no thumbnail at all: no shipped type carries thumbnail bytes, nothing under core/ names one, and the local row holds an item's properties alone, so there is nothing for hydration to carry and nothing for a read to answer with",
-    });
-  });
-
-  it("keeps the two registers disjoint", () => {
-    // A key in both merges into one union and the duplicate is invisible,
-    // which would let an entry sit in `PENDING_BEYOND_MILESTONE` while
-    // `PENDING` still counts it, or the reverse once one is removed.
-    const inBoth = Object.keys(PENDING).filter(
-      (key) => key in PENDING_BEYOND_MILESTONE,
-    );
-    expect(
-      inBoth,
-      "a fixture is on both registers, so removing it from one leaves it pending under the other and the milestone's list cannot be trusted to be complete",
-    ).toEqual([]);
-  });
-
-  it("names a fixture that exists for every pending entry", () => {
-    const missing = Object.keys(ALL_PENDING).filter((key) => {
-      const [file, title] = key.split(" › ");
-      return !titlesIn(`device/${file}`).includes(title);
-    });
-    expect(
-      missing,
-      "a pending entry names a test that does not exist, so the list is carrying a statement nothing will ever turn green",
-    ).toEqual([]);
-  });
-
-  it("names a statement that exists for every pending entry", () => {
-    const unknown: string[] = [];
-    for (const [key, statement] of Object.entries(ALL_PENDING)) {
-      const [chapter, number] = statement.split(" ");
-      const match = allStatements.find(
-        (candidate) =>
-          candidate.chapter === chapter && candidate.number === number,
-      );
-      if (!match) unknown.push(`${key} -> ${statement}`);
-    }
-    expect(
-      unknown,
-      "a pending entry names a statement no chapter carries, so nobody can tell what writing the fixture would prove",
-    ).toEqual([]);
-  });
-
-  it("keeps every fixture with no body on the list, and every fixture with one off it", () => {
-    const bodiless = new Set(
-      fixtureFiles.flatMap((file) =>
-        bodilessTitles(file).map((title) => `${file} › ${title}`),
-      ),
-    );
-    const listed = new Set(Object.keys(ALL_PENDING));
-
-    const unlisted = [...bodiless].filter((key) => !listed.has(key)).sort();
-    expect(
-      unlisted,
-      "a fixture with no body is not on the pending list, so it fails as though the device were broken rather than reporting the statement it is waiting for",
-    ).toEqual([]);
-  });
-
-  it("requires a written pending fixture to be the kind that polices itself", () => {
-    // A pending fixture whose body is written has to run and fail, so the day
-    // the device satisfies it the run goes red asking for the entry to be
-    // removed. One that skips instead would sit on the list forever, cited by
-    // a statement nothing asserts, with every other check here passing.
-    const bodiless = new Set(
-      fixtureFiles.flatMap((file) =>
-        bodilessTitles(file).map((title) => `${file} › ${title}`),
-      ),
-    );
-    const wrong: string[] = [];
-    for (const key of Object.keys(ALL_PENDING)) {
-      if (bodiless.has(key)) continue;
-      const [file, title] = key.split(" › ");
-      const block = blockFor(file, title);
-      if (block === undefined) {
-        wrong.push(`${key}: the test is gone`);
-        continue;
-      }
-      if (!block.includes("pendingUntilItPasses(")) {
-        wrong.push(
-          `${key}: has a body but does not run it under pendingUntilItPasses`,
-        );
-      }
-      if (block.includes("skipIfPending(")) {
-        wrong.push(
-          `${key}: has a body and skips anyway, so it can never go green`,
-        );
-      }
-    }
-    expect(
-      wrong,
-      "a pending fixture with a written body is not the self-policing kind, so a statement the device already satisfies can stay skipped forever",
-    ).toEqual([]);
   });
 });

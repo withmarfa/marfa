@@ -64,6 +64,12 @@ impl Answer {
         }
     }
 
+    /// The same answer on another contract than the binary's.
+    pub fn on_another_contract(self) -> Answer {
+        let other = another_contract();
+        self.on_contract(Some(&other))
+    }
+
     /// The same answer naming another contract, or with `None` naming none.
     pub fn on_contract(mut self, contract: Option<&str>) -> Answer {
         self.headers
@@ -214,4 +220,9 @@ fn unchunk(body: &[u8]) -> Vec<u8> {
         at += size + 2;
     }
     out
+}
+
+/// A contract the binary was not built for.
+pub fn another_contract() -> String {
+    (marfa_client::CONTRACT_VERSION + 1).to_string()
 }

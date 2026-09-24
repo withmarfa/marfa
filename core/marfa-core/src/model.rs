@@ -913,6 +913,57 @@ pub struct Attachment {
     pub tier: Option<Tier>,
 }
 
+/// An item's thumbnail, decoded from the data URI it travels as.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Thumbnail {
+    pub mime_type: String,
+    pub bytes: Vec<u8>,
+}
+
+/// The most a thumbnail decodes to, which is the server's cap on one.
+pub const THUMBNAIL_MAX_BYTES: usize = 16 * 1024;
+
+impl Thumbnail {
+    /// A thumbnail as the server takes one: `data:image/png;base64,`,
+    /// `data:image/jpeg;base64,` or `data:image/webp;base64,` and canonical
+    /// base64 of at most [`THUMBNAIL_MAX_BYTES`], whose bytes begin with that
+    /// format's signature. A held value that is not one is refused rather
+    /// than answered as an image: it was written before its type declared
+    /// the field, and nothing checked it.
+    pub fn from_data_uri(value: &str) -> Result<Thumbnail, CoreError> {
+        use base64::Engine;
+        let unreadable =
+            |why: &str| CoreError::Decoding(format!("a thumbnail that is {why}: {:.40}", value));
+        let (mime_type, data) = value
+            .strip_prefix("data:")
+            .and_then(|rest| rest.split_once(";base64,"))
+            .ok_or_else(|| unreadable("not a base64 data URI"))?;
+        let signed: fn(&[u8]) -> bool = match mime_type {
+            "image/png" => |bytes| bytes.starts_with(b"\x89PNG\r\n\x1a\n"),
+            "image/jpeg" => |bytes| bytes.starts_with(b"\xff\xd8\xff"),
+            "image/webp" => {
+                |bytes| bytes.starts_with(b"RIFF") && bytes.get(8..12) == Some(b"WEBP".as_slice())
+            }
+            _ => return Err(unreadable("not a PNG, JPEG or WebP image")),
+        };
+        // The standard engine refuses bits the bytes do not use and padding
+        // other than the one spelling, which is the server's canonical rule.
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(data)
+            .map_err(|_| unreadable("not canonical base64"))?;
+        if bytes.len() > THUMBNAIL_MAX_BYTES {
+            return Err(unreadable("over the thumbnail cap"));
+        }
+        if !signed(&bytes) {
+            return Err(unreadable("not the image its data URI names"));
+        }
+        Ok(Thumbnail {
+            mime_type: mime_type.to_string(),
+            bytes,
+        })
+    }
+}
+
 /// The three writes an attachment is, in the order they go out.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Attached {
@@ -957,7 +1008,92 @@ impl MetadataWrite {
 
 #[cfg(test)]
 mod tests {
+    use base64::Engine;
+
     use super::*;
+
+    const PNG: &[u8] = b"\x89PNG\r\n\x1a\n";
+    const JPEG: &[u8] = b"\xff\xd8\xff\xe0";
+    const WEBP: &[u8] = b"RIFF\0\0\0\0WEBPVP8 ";
+
+    fn uri(mime_type: &str, head: &[u8], size: usize) -> String {
+        let mut bytes = head.to_vec();
+        bytes.resize(size, 7);
+        format!(
+            "data:{mime_type};base64,{}",
+            base64::engine::general_purpose::STANDARD.encode(bytes)
+        )
+    }
+
+    /// Each of the three formats reads with its own type and its bytes, up
+    /// to the cap.
+    #[test]
+    fn a_thumbnail_reads_as_the_image_its_data_uri_names() {
+        for (mime_type, head) in [
+            ("image/png", PNG),
+            ("image/jpeg", JPEG),
+            ("image/webp", WEBP),
+        ] {
+            let read = Thumbnail::from_data_uri(&uri(mime_type, head, 64)).unwrap();
+            assert_eq!(read.mime_type, mime_type);
+            assert_eq!(read.bytes.len(), 64);
+            assert!(read.bytes.starts_with(head));
+        }
+        let at_cap = Thumbnail::from_data_uri(&uri("image/png", PNG, THUMBNAIL_MAX_BYTES)).unwrap();
+        assert_eq!(at_cap.bytes.len(), THUMBNAIL_MAX_BYTES);
+    }
+
+    /// What the server refuses as a thumbnail, a device refuses to read as
+    /// one: each of these was held under the property before its type
+    /// declared it.
+    #[test]
+    fn a_value_the_server_would_refuse_is_not_read_as_a_thumbnail() {
+        let refused = [
+            ("not an image", uri("text/plain", PNG, 64)),
+            ("another image", uri("image/gif", b"GIF89a", 64)),
+            ("an uppercase type", uri("image/PNG", PNG, 64)),
+            ("not the image it names", uri("image/jpeg", PNG, 64)),
+            (
+                "a signature short by a byte",
+                uri("image/png", &PNG[..7], 64),
+            ),
+            (
+                "a RIFF that is not WebP",
+                uri("image/webp", b"RIFF\0\0\0\0WAVEfmt ", 64),
+            ),
+            (
+                "over the cap",
+                uri("image/png", PNG, THUMBNAIL_MAX_BYTES + 1),
+            ),
+            (
+                "unused bits set",
+                "data:image/png;base64,iVBORw0KGgp=".to_string(),
+            ),
+            (
+                "padding left off",
+                "data:image/png;base64,iVBORw0KGgo".to_string(),
+            ),
+            ("a link", "https://example.com/thumb.png".to_string()),
+            ("empty", "data:image/png;base64,".to_string()),
+        ];
+        for (what, value) in refused {
+            assert!(
+                matches!(
+                    Thumbnail::from_data_uri(&value),
+                    Err(CoreError::Decoding(_))
+                ),
+                "{what} was read as a thumbnail"
+            );
+        }
+        // The witness for the two base64 cases: the canonical spelling of the
+        // same eight bytes is read.
+        assert_eq!(
+            Thumbnail::from_data_uri("data:image/png;base64,iVBORw0KGgo=")
+                .unwrap()
+                .bytes,
+            PNG
+        );
+    }
 
     fn row(verdict: Option<Verdict>, reason: Option<&str>, answer: Option<&str>) -> QueuedWrite {
         QueuedWrite {

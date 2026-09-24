@@ -1,19 +1,16 @@
 import {
+  ALWAYS_SEARCHED_FIELDS,
   getSearchableStringFields,
   isFieldSearchableExcluded,
 } from "@withmarfa/shared";
 
 /**
- * The four core search fields, indexed as named columns in the FTS5 table.
- * Any of them can be opted out via `searchable: false` on the type's field
- * definition.
+ * The core search fields, indexed as named columns in the FTS5 table. Any of
+ * them can be opted out via `searchable: false` on the type's field
+ * definition. The list type registration reads, so a field it refuses to make
+ * a thumbnail is exactly a field indexed here.
  */
-export const CORE_FTS_FIELDS = [
-  "title",
-  "body",
-  "description",
-  "name",
-] as const;
+export const CORE_FTS_FIELDS = ALWAYS_SEARCHED_FIELDS;
 
 export type CoreFtsField = (typeof CORE_FTS_FIELDS)[number];
 

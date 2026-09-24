@@ -731,7 +731,7 @@ fn the_remaining_leaves_reach_the_doors_the_document_names() {
 /// what the shaping carries.
 mod dispatch {
     use super::*;
-    use crate::door::{Answer, Door};
+    use crate::door::{Answer, Door, another_contract};
     use crate::output::Printer;
     use crate::remote::Remote;
     use crate::remote::Transport;
@@ -849,7 +849,11 @@ mod dispatch {
         // A mint answered on another contract would not be read, and the
         // secret it spent cannot be spent twice.
         let door = Door::open(vec![
-            Answer::json("200 OK", r#"{"name":"marfa","contract":2}"#).on_contract(Some("2")),
+            Answer::json(
+                "200 OK",
+                &format!(r#"{{"name":"marfa","contract":{}}}"#, another_contract()),
+            )
+            .on_another_contract(),
         ]);
         match keys::run(
             keys::KeysCommand::Bootstrap {

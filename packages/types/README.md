@@ -28,9 +28,9 @@ Each type is a JSON file with:
 
 Field definitions:
 
-- **`type`** — `string`, `integer`, `number`, `boolean`, `array`, `object`, `enum`
+- **`type`** — one of `FIELD_TYPES` (`src/schema-validation.ts`): `string`, `number`, `integer`, `boolean`, `url`, `email`, `datetime`, `date`, `enum`, `array`, `object`, `thumbnail`. A `thumbnail` is a small image the writer supplies as a `data:` URI of a PNG, JPEG or WebP, at most 16 KiB decoded; a type carries at most one, never named `title`, `body`, `description` or `name`.
 - **`description`** — what the field is
-- **`format`** — optional: `url`, `date`, `datetime`, `email`, `bcp47`, `iso3166`
+- **`format`** — optional, one of `FIELD_FORMATS`: `url`, `email`, `datetime`, `date` and `thumbnail` normalize into `type`; `bcp47` and `iso3166` annotate a `string` and survive as `format`
 - **`enum_values`** — required for `enum` type
 - **`items_type`** — required for `array` type
 

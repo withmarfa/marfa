@@ -181,6 +181,26 @@ export class CliDevice implements DeviceUnderTest {
     return this.json<Item>(["items", "get", id]);
   }
 
+  /**
+   * The thumbnail an item carries (`device.md` 29), its bytes written to
+   * `out`; `thumbnail` is null for an item that carries none.
+   */
+  async thumbnail(
+    id: string,
+    out: string,
+  ): Promise<
+    Outcome<{
+      id: string;
+      thumbnail: {
+        mime_type: string;
+        size_bytes: number;
+        path: string | null;
+      } | null;
+    }>
+  > {
+    return this.json(["items", "thumbnail", id, "--out", out]);
+  }
+
   async search(
     query: string,
     filters: SearchFilters = {},

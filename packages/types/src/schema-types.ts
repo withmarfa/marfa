@@ -20,18 +20,19 @@ export type FieldType =
   | "date"
   | "enum"
   | "array"
-  | "object";
+  | "object"
+  | "thumbnail";
 
 /**
- * Semantic refinements on top of a `FieldType`. Four of them (`url`, `email`,
- * `datetime`, `date`) have a first-class `FieldType` of the same name and
- * normalize into `type`, so `{ type: "string", format: "url" }` and
- * `{ type: "url" }` are the same declaration. The remaining two annotate a
- * `string` field whose contents follow a published standard but which has no
- * dedicated `FieldType`; they survive normalization as `format`.
+ * Semantic refinements on top of a `FieldType`. Those with a first-class
+ * `FieldType` of the same name normalize into `type`, so `{ type: "string",
+ * format: "url" }` and `{ type: "url" }` are the same declaration. The rest
+ * (`bcp47`, `iso3166`) annotate a `string` field whose contents follow a
+ * published standard but which has no dedicated `FieldType`; they survive
+ * normalization as `format`.
  */
 export type FieldFormat =
-  "url" | "email" | "datetime" | "date" | "bcp47" | "iso3166";
+  "url" | "email" | "datetime" | "date" | "thumbnail" | "bcp47" | "iso3166";
 
 export interface FieldDefinition {
   type: FieldType;
@@ -41,7 +42,7 @@ export interface FieldDefinition {
   items_type?: string;
   /**
    * Semantic refinement of a `string` field. Only the annotation-only formats
-   * (`bcp47`, `iso3166`) survive here — the four formats that have a matching
+   * (`bcp47`, `iso3166`) survive here — the formats that have a matching
    * `FieldType` normalize into `type` instead, so there is exactly one way to
    * read a field's shape. Carried through the registry and the type diff so a
    * schema round-trips unchanged; value-level enforcement of the annotation

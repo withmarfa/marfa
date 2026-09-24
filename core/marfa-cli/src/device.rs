@@ -198,6 +198,15 @@ pub enum ItemsCommand {
     /// Attach a file to an item: its upload, a file item naming the bytes,
     /// and an `attached-to` edge, three queued writes.
     Attach(AttachArgs),
+    /// The thumbnail an item carries, read from the local copy with no
+    /// request: its MIME type and size, and its bytes written to `--out`.
+    Thumbnail {
+        /// The item id.
+        id: String,
+        /// Where to write the image's bytes.
+        #[arg(long, value_name = "FILE")]
+        out: Option<PathBuf>,
+    },
 }
 
 #[derive(Debug, Args)]
@@ -590,6 +599,42 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<(), CliError> 
                     };
                     let attached = core.attach(&args.id, &args.file, &attachment)?;
                     output::queued(&[attached.upload, attached.item, attached.edge], json)
+                }
+                ItemsCommand::Thumbnail { id, out } => {
+                    if core.get(&id)?.is_none() {
+                        return Err(CliError::NotHeld(id));
+                    }
+                    let Some(thumbnail) = core.thumbnail(&id)? else {
+                        return output::report(
+                            &serde_json::json!({ "id": id, "thumbnail": null }),
+                            json,
+                            || format!("{id} carries no thumbnail"),
+                        );
+                    };
+                    if let Some(path) = &out {
+                        std::fs::write(path, &thumbnail.bytes)?;
+                    }
+                    output::report(
+                        &serde_json::json!({
+                            "id": id,
+                            "thumbnail": {
+                                "mime_type": thumbnail.mime_type,
+                                "size_bytes": thumbnail.bytes.len(),
+                                "path": out,
+                            }
+                        }),
+                        json,
+                        || {
+                            format!(
+                                "{} of {} bytes{}",
+                                thumbnail.mime_type,
+                                thumbnail.bytes.len(),
+                                out.as_ref()
+                                    .map(|path| format!(", written to {}", path.display()))
+                                    .unwrap_or_default()
+                            )
+                        },
+                    )
                 }
             }
         }

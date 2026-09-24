@@ -488,6 +488,111 @@ describe("archives carry type registrations", () => {
     expect(res.status).toBe(409);
   });
 
+  it("refuses an archive carrying an edge type with a thumbnail property", async () => {
+    const source = await newContext();
+    await source.storage.items.create({
+      type: "core.note",
+      properties: { body: "innocent" },
+      source: "at-et",
+      source_id: "et1",
+    });
+    const entries = await extractArchive(await exportArchive(source));
+    const withEdgeType = (property: Record<string, string>) =>
+      repack(entries, {
+        "types.ndjson":
+          JSON.stringify({
+            edge_type: {
+              id: `user.depicts-${uniqueSuffix()}`,
+              cardinality: "many-to-many",
+              property_schema: { preview: property },
+            },
+          }) + "\n",
+      });
+
+    // The witness: the same edge type with a text property restores.
+    const plain = await restore(
+      await newContext(),
+      await withEdgeType({ type: "string" }),
+    );
+    expect(plain.status, await plain.clone().text()).toBe(200);
+    expect(((await plain.json()) as RestoreResult).edge_types_registered).toBe(
+      1,
+    );
+
+    const refused: Record<string, string>[] = [
+      { type: "thumbnail" },
+      { type: "string", format: "thumbnail" },
+      { type: "array", items_type: "thumbnail" },
+    ];
+    for (const property of refused) {
+      const destination = await newContext();
+      const res = await restore(destination, await withEdgeType(property));
+      expect(
+        res.status,
+        `an archive registered an edge type whose property is ${JSON.stringify(property)}`,
+      ).toBe(400);
+      expect(await destination.storage.edgeTypes.list()).toHaveLength(0);
+    }
+  });
+
+  it("refuses an archive whose child gains a second thumbnail from a parent it carries", async () => {
+    const source = await newContext();
+    await source.storage.items.create({
+      type: "core.note",
+      properties: { body: "innocent" },
+      source: "at-tt",
+      source_id: "tt1",
+    });
+    const entries = await extractArchive(await exportArchive(source));
+    // Fresh ids for each archive: the registry is the process's, so a pair
+    // one restore registered would be the parent the next one validates
+    // against before its own loop runs.
+    const pair = async (childFields: Record<string, { type: string }>) => {
+      const suffix = uniqueSuffix();
+      const parentId = `user.album_${suffix}`;
+      const childId = `user.album_${suffix}.raw`;
+      const archive = await repack(entries, {
+        "types.ndjson":
+          [
+            { id: childId, version: 1, parent: parentId, fields: childFields },
+            {
+              id: parentId,
+              version: 1,
+              fields: { cover: { type: "thumbnail" } },
+            },
+          ]
+            .map((type) => JSON.stringify({ type }))
+            .join("\n") + "\n",
+      });
+      return { archive, childId };
+    };
+
+    // The witness: a child adding no thumbnail of its own restores beside
+    // the same parent.
+    const plain = await pair({ camera: { type: "string" } });
+    const restored = await restore(await newContext(), plain.archive);
+    expect(restored.status, await restored.clone().text()).toBe(200);
+    expect(((await restored.json()) as RestoreResult).types_registered).toBe(2);
+
+    const refused: Record<string, { type: string }>[] = [
+      { preview: { type: "thumbnail" } },
+      { cover: { type: "string" } },
+    ];
+    for (const childFields of refused) {
+      const destination = await newContext();
+      const { archive, childId } = await pair(childFields);
+      const res = await restore(destination, archive);
+      expect(
+        res.status,
+        `an archive registered a child declaring ${JSON.stringify(childFields)} under a parent whose thumbnail is cover`,
+      ).toBe(400);
+      const body = (await res.json()) as { error: { message: string } };
+      expect(body.error.message).toContain(childId);
+      const registered = await destination.storage.types.listRegistered();
+      expect(registered.map((schema) => schema.id)).not.toContain(childId);
+    }
+  });
+
   it("restores an archive carrying no registrations", async () => {
     const source = await newContext();
     const destination = await newContext();

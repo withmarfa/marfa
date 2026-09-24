@@ -773,6 +773,13 @@ pub struct MarfaCore {
     inner: marfa_core::Core,
 }
 
+/// An item's thumbnail: the image's type and its bytes.
+#[derive(uniffi::Record)]
+pub struct Thumbnail {
+    pub mime_type: String,
+    pub bytes: Vec<u8>,
+}
+
 /// One event a held stream applied: what it was, what it was about, and the
 /// cursor it left.
 #[derive(Debug, Clone, uniffi::Record)]
@@ -1127,6 +1134,17 @@ impl MarfaCore {
     /// Whether a blob's bytes are held beside the store, with no request.
     pub fn blob_held(&self, hash: String) -> Result<bool, MarfaError> {
         Ok(self.inner.blob_held(&hash)?)
+    }
+
+    /// The thumbnail an item carries, from the copy with no request; none
+    /// where its type declares none or it carries none. An item the copy does
+    /// not hold throws `NotFound` with the code `not_held`, and a held value
+    /// that is not a thumbnail throws `Decoding` naming the item.
+    pub fn thumbnail(&self, id: String) -> Result<Option<Thumbnail>, MarfaError> {
+        Ok(self.inner.thumbnail(&id)?.map(|thumbnail| Thumbnail {
+            mime_type: thumbnail.mime_type,
+            bytes: thumbnail.bytes,
+        }))
     }
 
     /// Sends what the queue holds and records what came back. One pass.

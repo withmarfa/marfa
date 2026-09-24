@@ -1,9 +1,11 @@
 import Foundation
 import MarfaCore
 
-// Three phases, run in order with the server stopped between the first and
-// the last: `hydrate` pulls a slice, `write` queues writes while nothing can
-// be sent, and `drain` sends them once the server is back.
+// Phases, run in order by `scripts/binding-proof.sh`: `hydrate` pulls a
+// slice, `write` queues writes while the server is stopped, `drain` sends
+// them once it is back, `follow` is told of a note made on the server while
+// the stream is held, and `thumbnail` reads what a second store holds of a
+// type with a thumbnail.
 let environment = ProcessInfo.processInfo.environment
 guard let url = environment["MARFA_API_URL"], let key = environment["MARFA_API_KEY"],
     let path = environment["MARFA_DB"]
@@ -155,8 +157,40 @@ do {
         expect(change?.event == "item.created", "the note the binary made did not arrive through follow")
         expect(try reader.dataVersion() != before, "a reader on the same store was not told the copy saved")
 
+    case "thumbnail":
+        // A store of its own, holding the type the script registered: one
+        // item carrying an image, and one holding a value under the property
+        // from before the type declared it a thumbnail.
+        let copy = try MarfaCore.open(path: path + ".thumbnail", url: url, key: key)
+        _ = try copy.hydrate(types: ["user.snapshot"], tier: .library)
+        let snapshots = try copy.list(
+            filters: ListFilters(type: "user.snapshot"), sort: Sort(field: .createdAt, direction: .ascending))
+        let image = try snapshots.first { try title(of: $0) == "With an image" }
+        let early = try snapshots.first { try title(of: $0) == "Held before" }
+        expect(image != nil && early != nil, "the snapshots were not hydrated")
+        let read = try copy.thumbnail(id: image?.id ?? "")
+        print("thumbnail: \(read?.mimeType ?? "none") of \(read?.bytes.count ?? 0) bytes")
+        expect(
+            read?.mimeType == "image/png" && read?.bytes.first == 0x89
+                && read.map { Data($0.bytes.dropFirst(8)) } == Data("binding proof".utf8),
+            "the thumbnail read is not the image the item carries")
+        do {
+            _ = try copy.thumbnail(id: "not-held")
+            expect(false, "an item the copy does not hold was answered")
+        } catch MarfaError.NotFound(let code, let message) {
+            print("not held: \(code): \(message)")
+            expect(code == "not_held", "an item the copy does not hold was not refused as not held")
+        }
+        do {
+            _ = try copy.thumbnail(id: early?.id ?? "")
+            expect(false, "a held value that is not an image was answered as one")
+        } catch MarfaError.Decoding(let message) {
+            print("held before: \(message)")
+            expect(message.contains(early?.id ?? "-"), "the refusal of a held value that is not an image names no item")
+        }
+
     default:
-        FileHandle.standardError.write(Data("name a phase: hydrate, write, drain or follow\n".utf8))
+        FileHandle.standardError.write(Data("name a phase: hydrate, write, drain, follow or thumbnail\n".utf8))
         exit(2)
     }
 } catch {

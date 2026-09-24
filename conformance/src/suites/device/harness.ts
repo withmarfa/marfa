@@ -9,7 +9,7 @@ import {
   newStore,
   type FolderSlice,
 } from "../../device/cli-adapter.js";
-import type { Responder } from "../../device/scripted-server.js";
+import type { Answer, Responder } from "../../device/scripted-server.js";
 import { ScriptedServer } from "../../device/scripted-server.js";
 import {
   headRead,
@@ -148,11 +148,13 @@ export function scriptHydration(
   options: {
     head: string;
     rows?: Record<string, Array<{ item: WireItemOptions; tags?: string[] }>>;
+    /** The catalog every read of `/types` answers, the scripted one unless named. */
+    catalog?: Answer;
   },
 ): void {
   const rows = options.rows ?? {};
   server.answer("GET", "/events", headRead(options.head));
-  server.answer("GET", "/types", typeCatalog());
+  server.answer("GET", "/types", options.catalog ?? typeCatalog());
   server.answer("GET", "/items", (request) => {
     const type = request.query.get("type") ?? "";
     const forType = rows[type] ?? [];

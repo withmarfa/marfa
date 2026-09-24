@@ -1,7 +1,9 @@
 // @ts-check
-// Three phases, run in order with the server stopped between the first and
-// the last: `hydrate` pulls a slice, `write` queues writes while nothing can
-// be sent, and `drain` sends them once the server is back.
+// Phases, run in order by `scripts/binding-proof.sh`: `hydrate` pulls a
+// slice, `write` queues writes while the server is stopped, `drain` sends
+// them once it is back, `follow` is told of a note made on the server while
+// the stream is held, and `thumbnail` reads what a second store holds of a
+// type with a thumbnail.
 import { readFileSync, writeFileSync } from "node:fs";
 import { MarfaCore, Tier, WriteKind } from "../index.js";
 
@@ -198,7 +200,46 @@ if (phase === "hydrate") {
   console.log(`followed: ${change ? `${change.event} ${change.itemId} at ${change.cursor}` : "nothing"}`);
   expect(change?.event === "item.created", "the note the binary made did not arrive through follow");
   expect(reader.dataVersion() !== before, "a reader on the same store was not told the copy saved");
+} else if (phase === "thumbnail") {
+  // A store of its own, holding the type the script registered: one item
+  // carrying an image, and one holding a value under the property from
+  // before the type declared it a thumbnail.
+  const copy = MarfaCore.open(`${path}.thumbnail`, url, key);
+  await copy.hydrate(["user.snapshot"], Tier.Library);
+  const snapshots = copy.list({ type: "user.snapshot" });
+  const image = snapshots.find((item) => title(item) === "With an image");
+  const early = snapshots.find((item) => title(item) === "Held before");
+  expect(image !== undefined && early !== undefined, "the snapshots were not hydrated");
+  const read = copy.thumbnail(image?.id ?? "");
+  console.log(`thumbnail: ${read?.mimeType ?? "none"} of ${read?.bytes.length ?? 0} bytes`);
+  expect(
+    read?.mimeType === "image/png" &&
+      read.bytes[0] === 0x89 &&
+      read.bytes.subarray(8).toString() === "binding proof",
+    "the thumbnail read is not the image the item carries",
+  );
+  /** @param {string} id */
+  const refusal = (id) => {
+    try {
+      copy.thumbnail(id);
+      return "answered";
+    } catch (error) {
+      return error instanceof Error ? error.message : String(error);
+    }
+  };
+  const absent = refusal("not-held");
+  console.log(`not held: ${absent}`);
+  expect(
+    absent.startsWith("not_found:") && absent.includes("not_held"),
+    "an item the copy does not hold was not refused as not held",
+  );
+  const unreadable = refusal(early?.id ?? "");
+  console.log(`held before: ${unreadable}`);
+  expect(
+    unreadable.startsWith("decoding:") && unreadable.includes(early?.id ?? "-"),
+    "a held value that is not an image was not refused as one, naming its item",
+  );
 } else {
-  console.error("name a phase: hydrate, write, drain or follow");
+  console.error("name a phase: hydrate, write, drain, follow or thumbnail");
   process.exit(2);
 }

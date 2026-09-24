@@ -10,8 +10,6 @@ Where the server contradicts its own OpenAPI document, where its document descri
 
 Nothing here is a contradiction of the OpenAPI document; it is the server contradicting the device half of the contract. The recommended fix is to let a folder, or any caller writing on behalf of one, name the `source` its rows are keyed by, bounded by what the credential is allowed to claim, so that the key identifies the folder rather than the credential. Until then a folder carries the item id in the file as its own identity record (`folders.md` 11), which binds a second device only for files that already have one.
 
-Out of milestone one, which has one folder and one keyed process.
-
 ## 2. Client registration answers 500 when the write lock is held
 
 `POST /auth/oauth2/register` declares `201` and `400`. While another connection holds the database's write lock, it answers `500`, which it does not declare, where every door this server writes through its own storage layer answers `503 write_contention` (`errors.md` 10). The registration is written by the sign-in library, whose writes do not pass through the storage layer's busy budget. The recommended fix is to route the library's database handle through the same budget, so the door answers `503 write_contention` and declares it. `compliance/write-contention.test.ts › answers 500 at client registration, which the sign-in library writes`.

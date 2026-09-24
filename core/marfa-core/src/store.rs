@@ -5,6 +5,7 @@ use rusqlite::{Connection, OptionalExtension, named_params, params, params_from_
 use serde_json::{Map, Value};
 use uuid::Uuid;
 
+use crate::catalog::Indexing;
 use crate::error::CoreError;
 use crate::model::{BlockedReason, Edge, Item, ItemState, QueuedWrite, Tier, Verdict, WriteKind};
 use crate::wire::{WireEdge, WireItem, WireType};
@@ -18,20 +19,26 @@ pub const META_SLICE_TIER: &str = "slice_tier";
 pub const META_EVENT_CURSOR: &str = "event_cursor";
 pub const META_HYDRATE_STATE: &str = "hydrate_state";
 pub const HYDRATE_IN_PROGRESS: &str = "in_progress";
-pub const SCHEMA_VERSION: &str = "8";
+pub const SCHEMA_VERSION: &str = "9";
 
-/// The schema the version above names, hashed as the folder mapping hashes
-/// bytes. A change to `schema.sql` without a new version would open a store
-/// from the earlier build and fail on its first read of a column that build
-/// never wrote; the test that holds this hash is what makes the version move
-/// with the schema.
+/// Each schema version from 6 and the statements it named, hashed as the
+/// folder mapping hashes bytes. A change to `schema.sql` without a new version
+/// would open a store from the earlier build and fail on its first read of a
+/// column that build never wrote, so the test holds the statements to the row
+/// for the version above: a new schema is a new row under a new version, and
+/// moving the version to a row that names other statements fails it.
 ///
 /// Over the statements SQLite executes, not the file: a comment cannot make
 /// one build read a column another build never wrote, and a hash that moved
 /// on one would price every edit to the prose at a version bump that refuses
 /// every working copy on disk.
 #[cfg(test)]
-const SCHEMA_HASH: &str = "662310c80f2c6871";
+const SCHEMA_HASHES: &[(&str, &str)] = &[
+    ("6", "f73a05f772245511"),
+    ("7", "b0e4c59d5dbd0471"),
+    ("8", "662310c80f2c6871"),
+    ("9", "23d541400ea60681"),
+];
 
 const ITEM_COLUMNS: &str = "id, type, state, tier, version, schema_version, source, source_id, occurred_at, created_at, updated_at, properties";
 const EDGE_COLUMNS: &str =
@@ -569,12 +576,26 @@ type TypeRow = (
     Option<String>,
     Option<String>,
     Option<String>,
+    Option<String>,
     String,
 );
 
+/// The field a type's own declaration makes its thumbnail. Registration
+/// allows one, stored as the field type whichever way it was declared.
+fn thumbnail_field_of(declared: &Map<String, Value>) -> Option<String> {
+    declared
+        .get("fields")?
+        .as_object()?
+        .iter()
+        .find(|(_, field)| field.get("type").and_then(Value::as_str) == Some("thumbnail"))
+        .map(|(name, _)| name.clone())
+}
+
 /// Replaces the type catalog, and writes nothing where it is the one held:
 /// a follow asks for the catalog on every stream it opens, and a reader told
-/// of each save would otherwise be told of one every two minutes.
+/// of each save would otherwise be told of one every two minutes. Where it
+/// changes, every held row is indexed again, since a title or a thumbnail
+/// the catalog now names changes what a row's entry holds.
 pub fn replace_types(conn: &Connection, types: &[WireType]) -> Result<(), CoreError> {
     let mut rows: Vec<TypeRow> = types
         .iter()
@@ -593,13 +614,48 @@ pub fn replace_types(conn: &Connection, types: &[WireType]) -> Result<(), CoreEr
                 entry.parent.clone(),
                 entry.label.clone(),
                 hints.title_field,
+                thumbnail_field_of(&entry.rest),
                 Value::Object(json).to_string(),
             )
         })
         .collect();
     rows.sort();
     let held: Vec<TypeRow> = conn
-        .prepare("SELECT id, parent, label, title_field, json FROM types ORDER BY id")?
+        .prepare(
+            "SELECT id, parent, label, title_field, thumbnail_field, json FROM types ORDER BY id",
+        )?
+        .query_map([], |row| {
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+                row.get(5)?,
+            ))
+        })?
+        .collect::<Result<_, _>>()?;
+    if held == rows {
+        return Ok(());
+    }
+    conn.execute("DELETE FROM types", [])?;
+    {
+        let mut insert = conn.prepare(
+            "INSERT INTO types (id, parent, label, title_field, thumbnail_field, json)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        )?;
+        for row in rows {
+            insert.execute(params![row.0, row.1, row.2, row.3, row.4, row.5])?;
+        }
+    }
+    reindex(conn)
+}
+
+/// Writes every held row's index entry again from the catalog as it is.
+fn reindex(conn: &Connection) -> Result<(), CoreError> {
+    let catalog = crate::catalog::Catalog::load(conn)?;
+    let held: Vec<(i64, String, String, String, String)> = conn
+        .prepare("SELECT seq, id, type, state, properties FROM items")?
         .query_map([], |row| {
             Ok((
                 row.get(0)?,
@@ -610,16 +666,43 @@ pub fn replace_types(conn: &Connection, types: &[WireType]) -> Result<(), CoreEr
             ))
         })?
         .collect::<Result<_, _>>()?;
-    if held == rows {
-        return Ok(());
+    for (seq, id, type_id, state, properties) in held {
+        let properties: Map<String, Value> = serde_json::from_str(&properties)?;
+        index_row(
+            conn,
+            seq,
+            &id,
+            &state,
+            &properties,
+            &catalog.indexing(&type_id),
+        )?;
     }
-    conn.execute("DELETE FROM types", [])?;
-    let mut insert = conn.prepare(
-        "INSERT INTO types (id, parent, label, title_field, json)
-         VALUES (?1, ?2, ?3, ?4, ?5)",
-    )?;
-    for row in rows {
-        insert.execute(params![row.0, row.1, row.2, row.3, row.4])?;
+    Ok(())
+}
+
+/// The row's entry in the local index, from its properties and tags as the
+/// store holds them.
+fn index_row(
+    conn: &Connection,
+    seq: i64,
+    id: &str,
+    state: &str,
+    properties: &Map<String, Value>,
+    indexing: &Indexing,
+) -> Result<(), CoreError> {
+    let tags = tags_for_one(conn, id)?;
+    let (title, body) = fts_text(properties, indexing);
+    conn.execute("DELETE FROM items_fts WHERE rowid = ?1", [seq])?;
+    // A row in the bin is not indexed, which is the server's own rule on
+    // the same index: it drops a trashed row from the index on the write
+    // that trashes it, and rebuilds without one. A device that indexed it
+    // would answer a search the server it copies answers nothing for, and
+    // would do it under every state value rather than one.
+    if ItemState::from_str_checked(state)? != ItemState::Trashed {
+        conn.execute(
+            "INSERT INTO items_fts (rowid, title, body, tags) VALUES (?1, ?2, ?3, ?4)",
+            params![seq, title, body, tags.join(" ")],
+        )?;
     }
     Ok(())
 }
@@ -640,7 +723,7 @@ pub fn upsert_item(
     conn: &Connection,
     item: &WireItem,
     tags: Option<&[String]>,
-    title_field: Option<&str>,
+    indexing: &Indexing,
 ) -> Result<(), CoreError> {
     ItemState::from_str_checked(&item.state)?;
     conn.execute(
@@ -667,35 +750,18 @@ pub fn upsert_item(
             Value::Object(item.properties.clone()).to_string(),
         ],
     )?;
-    let tags: Vec<String> = match tags {
-        Some(tags) => {
-            conn.execute("DELETE FROM tags WHERE item_id = ?1", [&item.id])?;
-            let mut insert =
-                conn.prepare_cached("INSERT OR IGNORE INTO tags (item_id, tag) VALUES (?1, ?2)")?;
-            for tag in tags {
-                insert.execute(params![item.id, tag])?;
-            }
-            tags.to_vec()
+    if let Some(tags) = tags {
+        conn.execute("DELETE FROM tags WHERE item_id = ?1", [&item.id])?;
+        let mut insert =
+            conn.prepare_cached("INSERT OR IGNORE INTO tags (item_id, tag) VALUES (?1, ?2)")?;
+        for tag in tags {
+            insert.execute(params![item.id, tag])?;
         }
-        None => tags_for_one(conn, &item.id)?,
-    };
-    let (title, body) = fts_text(&item.properties, title_field);
+    }
     let seq: i64 = conn.query_row("SELECT seq FROM items WHERE id = ?1", [&item.id], |row| {
         row.get(0)
     })?;
-    conn.execute("DELETE FROM items_fts WHERE rowid = ?1", [seq])?;
-    // A row in the bin is not indexed, which is the server's own rule on
-    // the same index: it drops a trashed row from the index on the write
-    // that trashes it, and rebuilds without one. A device that indexed it
-    // would answer a search the server it copies answers nothing for, and
-    // would do it under every state value rather than one.
-    if ItemState::from_str_checked(&item.state)? != ItemState::Trashed {
-        conn.execute(
-            "INSERT INTO items_fts (rowid, title, body, tags) VALUES (?1, ?2, ?3, ?4)",
-            params![seq, title, body, tags.join(" ")],
-        )?;
-    }
-    Ok(())
+    index_row(conn, seq, &item.id, &item.state, &item.properties, indexing)
 }
 
 pub fn delete_item(conn: &Connection, id: &str) -> Result<bool, CoreError> {
@@ -908,17 +974,23 @@ fn invalid_row(column: usize, text: &str) -> rusqlite::Error {
     )
 }
 
-/// The title column and everything else string-valued, for the FTS row.
-pub fn fts_text(properties: &Map<String, Value>, title_field: Option<&str>) -> (String, String) {
-    let title_key = title_field.unwrap_or("title");
-    let title = properties
-        .get(title_key)
-        .and_then(Value::as_str)
-        .unwrap_or("")
-        .to_string();
+/// The title column, and every other string-valued property but the
+/// thumbnail, for the FTS row. A thumbnail is never indexed, not even as a
+/// title a type named it.
+pub fn fts_text(properties: &Map<String, Value>, indexing: &Indexing) -> (String, String) {
+    let title_key = indexing.title_field.as_deref().unwrap_or("title");
+    let title = if indexing.thumbnail_field.as_deref() == Some(title_key) {
+        String::new()
+    } else {
+        properties
+            .get(title_key)
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string()
+    };
     let mut body = Vec::new();
     for (key, value) in properties {
-        if key == title_key {
+        if key == title_key || indexing.thumbnail_field.as_deref() == Some(key.as_str()) {
             continue;
         }
         collect_strings(value, &mut body);
@@ -1037,10 +1109,96 @@ mod tests {
     /// statements moves both, or this says so.
     #[test]
     fn the_schema_version_names_the_schema_as_it_is() {
+        let versions: Vec<&str> = SCHEMA_HASHES.iter().map(|(version, _)| *version).collect();
+        let hashes: Vec<&str> = SCHEMA_HASHES.iter().map(|(_, hash)| *hash).collect();
+        assert_eq!(
+            versions.last(),
+            Some(&SCHEMA_VERSION),
+            "SCHEMA_VERSION is not the newest row of SCHEMA_HASHES: a version moved back, or a row was added without moving it"
+        );
+        let unique = |list: &[&str]| {
+            list.iter().collect::<std::collections::HashSet<_>>().len() == list.len()
+        };
+        assert!(
+            unique(&versions),
+            "two rows of SCHEMA_HASHES name one version"
+        );
+        assert!(
+            unique(&hashes),
+            "two versions in SCHEMA_HASHES name the same statements"
+        );
         assert_eq!(
             crate::folder::state::hash(schema_statements().as_bytes()),
-            SCHEMA_HASH,
-            "schema.sql's statements changed: move SCHEMA_VERSION on and set SCHEMA_HASH to the new value"
+            hashes[hashes.len() - 1],
+            "schema.sql's statements changed: move SCHEMA_VERSION on and add its row to SCHEMA_HASHES"
+        );
+    }
+
+    /// A catalog that changes writes every held row's entry again: the
+    /// thumbnail it now names leaves the entry, the row's tags stay in it,
+    /// and a row in the bin is still given none.
+    #[test]
+    fn a_changed_catalog_indexes_every_held_row_again() {
+        let conn = conn();
+        let photo = |thumbnail: bool| {
+            let mut wire = wire_type("acme.photo", None, Some("title"));
+            if thumbnail {
+                wire.rest.insert(
+                    "fields".into(),
+                    json!({ "thumbnail": { "type": "thumbnail" } }),
+                );
+            }
+            wire
+        };
+        replace_types(&conn, &[photo(false)]).unwrap();
+        let properties = json!({
+            "title": "Holiday",
+            "thumbnail": "data:image/png;base64,iVBORw0KGgoA/unicornsXYZ",
+        });
+        let indexing = crate::catalog::Catalog::load(&conn)
+            .unwrap()
+            .indexing("acme.photo");
+        for (id, state) in [("held", "active"), ("binned", "trashed")] {
+            let row = wire_item(
+                id,
+                "acme.photo",
+                state,
+                "2026-01-01T00:00:00Z",
+                properties.clone(),
+            );
+            upsert_item(&conn, &row, Some(&["summer".into()]), &indexing).unwrap();
+        }
+        let entry = |id: &str| -> Option<(String, String)> {
+            conn.query_row(
+                "SELECT body, tags FROM items_fts WHERE rowid = (SELECT seq FROM items WHERE id = ?1)",
+                [id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()
+            .unwrap()
+        };
+        // The witness: before the catalog names the thumbnail its base64 is
+        // a string like any other, in the entry beside the tags.
+        let (body, tags) = entry("held").expect("the held row has no entry");
+        assert!(body.contains("unicornsXYZ"), "{body}");
+        assert_eq!(tags, "summer");
+        assert_eq!(entry("binned"), None);
+
+        replace_types(&conn, &[photo(true)]).unwrap();
+        let (body, tags) =
+            entry("held").expect("the catalog changed and the held row lost its entry");
+        assert!(
+            !body.contains("unicornsXYZ"),
+            "the catalog named the thumbnail and the entry still holds its base64: {body}"
+        );
+        assert_eq!(
+            tags, "summer",
+            "the entry written again dropped the row's tags"
+        );
+        assert_eq!(
+            entry("binned"),
+            None,
+            "the entry written again put a row in the bin into the index"
         );
     }
 
@@ -1109,7 +1267,7 @@ mod tests {
             updated_at: "2031-03-03T03:03:03Z".into(),
             edges: None,
         };
-        upsert_item(&conn, &row, None, Some("title")).unwrap();
+        upsert_item(&conn, &row, None, &Indexing::titled("title")).unwrap();
 
         let item = item_by_id(&conn, "positional-1").unwrap().unwrap();
         assert_eq!(item.id, "positional-1");
@@ -1133,7 +1291,13 @@ mod tests {
     fn an_item_round_trips_with_its_tags_and_keeps_them_when_none_are_sent() {
         let conn = conn();
         let note = note("n1", "Hello", "world", "2026-01-01T00:00:00Z");
-        upsert_item(&conn, &note, Some(&["a".into(), "b".into()]), Some("title")).unwrap();
+        upsert_item(
+            &conn,
+            &note,
+            Some(&["a".into(), "b".into()]),
+            &Indexing::titled("title"),
+        )
+        .unwrap();
         let item = item_by_id(&conn, "n1").unwrap().unwrap();
         assert_eq!(item.tags, vec!["a", "b"]);
         assert_eq!(item.title(Some("title")), Some("Hello"));
@@ -1145,7 +1309,7 @@ mod tests {
             .as_object()
             .unwrap()
             .clone();
-        upsert_item(&conn, &renamed, None, Some("title")).unwrap();
+        upsert_item(&conn, &renamed, None, &Indexing::titled("title")).unwrap();
         let item = item_by_id(&conn, "n1").unwrap().unwrap();
         assert_eq!(item.title(None), Some("Renamed"));
         assert_eq!(item.tags, vec!["a", "b"]);
@@ -1159,14 +1323,14 @@ mod tests {
             &conn,
             &note("n1", "a", "b", "2026-01-01T00:00:00Z"),
             Some(&["t".into()]),
-            None,
+            &Indexing::default(),
         )
         .unwrap();
         upsert_item(
             &conn,
             &note("n2", "c", "d", "2026-01-01T00:00:00Z"),
             None,
-            None,
+            &Indexing::default(),
         )
         .unwrap();
         upsert_edge(&conn, &wire_edge("e1", "n1", "n2", "references")).unwrap();
@@ -1185,7 +1349,7 @@ mod tests {
         let conn = conn();
         let item = wire_item("x", "core.note", "limbo", "2026-01-01T00:00:00Z", json!({}));
         assert!(matches!(
-            upsert_item(&conn, &item, None, None),
+            upsert_item(&conn, &item, None, &Indexing::default()),
             Err(CoreError::Decoding(_))
         ));
         assert_eq!(count(&conn, "items").unwrap(), 0);
@@ -1199,10 +1363,10 @@ mod tests {
             "nested": { "deep": ["x", 1, true, "y"] },
             "n": 5
         });
-        let (title, body) = fts_text(properties.as_object().unwrap(), Some("title"));
+        let (title, body) = fts_text(properties.as_object().unwrap(), &Indexing::titled("title"));
         assert_eq!(title, "T");
         assert_eq!(body, "B\nx\ny");
-        let (title, body) = fts_text(properties.as_object().unwrap(), Some("body"));
+        let (title, body) = fts_text(properties.as_object().unwrap(), &Indexing::titled("body"));
         assert_eq!(title, "B");
         // The order the copy holds them in, not the map type's. Nothing
         // reads it back — this is one blob to match against — and it is
@@ -1508,7 +1672,13 @@ mod tests {
             "server body",
             "2026-01-01T00:00:00Z",
         );
-        upsert_item(&conn, &server_row, Some(&["kept".into()]), Some("title")).unwrap();
+        upsert_item(
+            &conn,
+            &server_row,
+            Some(&["kept".into()]),
+            &Indexing::titled("title"),
+        )
+        .unwrap();
         let queue = |kind: WriteKind, payload: &str, tag: Option<&str>| {
             enqueue(
                 &conn,
@@ -1555,7 +1725,7 @@ mod tests {
         )
         .unwrap();
 
-        lay_waiting_writes_over(&conn, "n1", Some("title")).unwrap();
+        lay_waiting_writes_over(&conn, "n1", &Indexing::titled("title")).unwrap();
         let item = items_by_ids(&conn, &["n1".into()]).unwrap().pop().unwrap();
         assert_eq!(item.title(Some("title")), Some("edited"));
         assert_eq!(
@@ -1569,13 +1739,13 @@ mod tests {
 
         // A delete waiting after all of them leaves the row in the bin.
         queue(WriteKind::DeleteItem, "{}", None);
-        lay_waiting_writes_over(&conn, "n1", Some("title")).unwrap();
+        lay_waiting_writes_over(&conn, "n1", &Indexing::titled("title")).unwrap();
         let item = items_by_ids(&conn, &["n1".into()]).unwrap().pop().unwrap();
         assert_eq!(item.state, ItemState::Trashed);
 
         // And a move to another state after that takes it there.
         queue(WriteKind::TransitionItem, r#"{"state":"archived"}"#, None);
-        lay_waiting_writes_over(&conn, "n1", Some("title")).unwrap();
+        lay_waiting_writes_over(&conn, "n1", &Indexing::titled("title")).unwrap();
         let item = items_by_ids(&conn, &["n1".into()]).unwrap().pop().unwrap();
         assert_eq!(item.state, ItemState::Archived);
     }
@@ -1764,7 +1934,7 @@ mod tests {
                 &conn,
                 &note("n1", "a", "b", "2026-01-01T00:00:00Z"),
                 None,
-                None,
+                &Indexing::default(),
             )
             .unwrap();
         }
@@ -2054,7 +2224,7 @@ pub fn forget_item(conn: &Connection, id: &str) -> Result<(), CoreError> {
 pub fn lay_waiting_writes_over(
     conn: &Connection,
     item_id: &str,
-    title_field: Option<&str>,
+    indexing: &Indexing,
 ) -> Result<(), CoreError> {
     let waiting = waiting_writes_for_item(conn, item_id)?;
     if waiting.is_empty() {
@@ -2115,7 +2285,7 @@ pub fn lay_waiting_writes_over(
         }
     }
     tags.sort();
-    upsert_item(conn, &item.as_wire(), Some(&tags), title_field)
+    upsert_item(conn, &item.as_wire(), Some(&tags), indexing)
 }
 
 /// The same for an edge: an edit still waiting is laid back over the

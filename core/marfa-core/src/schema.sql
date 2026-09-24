@@ -14,6 +14,9 @@ CREATE TABLE IF NOT EXISTS types (
   parent TEXT,
   label TEXT,
   title_field TEXT,
+  -- The field the type declares as its thumbnail, read out of `json` once
+  -- when the catalog is written rather than on every read that loads it.
+  thumbnail_field TEXT,
   json TEXT NOT NULL
 );
 
@@ -60,7 +63,7 @@ CREATE INDEX IF NOT EXISTS tags_tag ON tags (tag);
 
 -- Keyed by rowid = items.seq: an FTS5 column cannot be indexed for a lookup,
 -- so deleting by an item_id column would scan the whole index per write.
--- What goes in and what does not is `store::upsert_item`'s, and stated there.
+-- What goes in and what does not is `store::index_row`'s, and stated there.
 CREATE VIRTUAL TABLE IF NOT EXISTS items_fts USING fts5 (
   title,
   body,

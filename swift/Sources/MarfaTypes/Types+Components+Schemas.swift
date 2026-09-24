@@ -3518,6 +3518,8 @@ extension Components {
             public struct PropertySchemaPayload: Codable, Hashable, Sendable {
                 /// - Remark: Generated from `#/components/schemas/EdgeTypeRequest/property_schema/additionalProperties`.
                 public struct AdditionalPropertiesPayload: Codable, Hashable, Sendable {
+                    /// A field type's name, stored as given rather than checked against the ones a type's `fields` take, and never `thumbnail`: an edge carries no thumbnail.
+                    ///
                     /// - Remark: Generated from `#/components/schemas/EdgeTypeRequest/property_schema/additionalProperties/type`.
                     public var _type: Swift.String
                     /// - Remark: Generated from `#/components/schemas/EdgeTypeRequest/property_schema/additionalProperties/description`.
@@ -3526,28 +3528,37 @@ extension Components {
                     public var required: Swift.Bool?
                     /// - Remark: Generated from `#/components/schemas/EdgeTypeRequest/property_schema/additionalProperties/enum_values`.
                     public var enumValues: [Swift.String]?
+                    /// A field type's name, stored as given rather than checked against the ones a type's `fields` take, and never `thumbnail`: an edge carries no thumbnail.
+                    ///
                     /// - Remark: Generated from `#/components/schemas/EdgeTypeRequest/property_schema/additionalProperties/items_type`.
                     public var itemsType: Swift.String?
+                    /// A refinement of a string property, stored as given, and never `thumbnail`: an edge carries no thumbnail.
+                    ///
+                    /// - Remark: Generated from `#/components/schemas/EdgeTypeRequest/property_schema/additionalProperties/format`.
+                    public var format: Swift.String?
                     /// Creates a new `AdditionalPropertiesPayload`.
                     ///
                     /// - Parameters:
-                    ///   - _type:
+                    ///   - _type: A field type's name, stored as given rather than checked against the ones a type's `fields` take, and never `thumbnail`: an edge carries no thumbnail.
                     ///   - description:
                     ///   - required:
                     ///   - enumValues:
-                    ///   - itemsType:
+                    ///   - itemsType: A field type's name, stored as given rather than checked against the ones a type's `fields` take, and never `thumbnail`: an edge carries no thumbnail.
+                    ///   - format: A refinement of a string property, stored as given, and never `thumbnail`: an edge carries no thumbnail.
                     public init(
                         _type: Swift.String,
                         description: Swift.String? = nil,
                         required: Swift.Bool? = nil,
                         enumValues: [Swift.String]? = nil,
-                        itemsType: Swift.String? = nil
+                        itemsType: Swift.String? = nil,
+                        format: Swift.String? = nil
                     ) {
                         self._type = _type
                         self.description = description
                         self.required = required
                         self.enumValues = enumValues
                         self.itemsType = itemsType
+                        self.format = format
                     }
                     public enum CodingKeys: String, CodingKey {
                         case _type = "type"
@@ -3555,6 +3566,7 @@ extension Components {
                         case required
                         case enumValues = "enum_values"
                         case itemsType = "items_type"
+                        case format
                     }
                 }
                 /// A container of undocumented properties.
@@ -4636,6 +4648,8 @@ extension Components {
         }
         /// - Remark: Generated from `#/components/schemas/FieldDefinition`.
         public struct FieldDefinition: Codable, Hashable, Sendable {
+            /// `thumbnail` holds a small image the writer supplies: `data:image/png;base64,…`, `image/jpeg` or `image/webp`, canonical base64, at most 16 KiB decoded, beginning with that format's signature. A type carries at most one, never under a name search indexes whatever its type (`title`, `body`, `description`, `name`), and never as an array's `items_type`.
+            ///
             /// - Remark: Generated from `#/components/schemas/FieldDefinition/type`.
             @frozen public enum _TypePayload: String, Codable, Hashable, Sendable, CaseIterable {
                 case string = "string"
@@ -4649,7 +4663,10 @@ extension Components {
                 case _enum = "enum"
                 case array = "array"
                 case object = "object"
+                case thumbnail = "thumbnail"
             }
+            /// `thumbnail` holds a small image the writer supplies: `data:image/png;base64,…`, `image/jpeg` or `image/webp`, canonical base64, at most 16 KiB decoded, beginning with that format's signature. A type carries at most one, never under a name search indexes whatever its type (`title`, `body`, `description`, `name`), and never as an array's `items_type`.
+            ///
             /// - Remark: Generated from `#/components/schemas/FieldDefinition/type`.
             public var _type: Components.Schemas.FieldDefinition._TypePayload
             /// - Remark: Generated from `#/components/schemas/FieldDefinition/description`.
@@ -4660,7 +4677,7 @@ extension Components {
             public var enumValues: [Swift.String]?
             /// - Remark: Generated from `#/components/schemas/FieldDefinition/items_type`.
             public var itemsType: Swift.String?
-            /// Semantic refinement of a `string` field. Only the annotation-only formats reach the registry: the four with a field type of their own normalize into `type`.
+            /// Semantic refinement of a `string` field. Only the annotation-only formats reach the registry: those with a field type of their own normalize into `type`.
             ///
             /// - Remark: Generated from `#/components/schemas/FieldDefinition/format`.
             @frozen public enum FormatPayload: String, Codable, Hashable, Sendable, CaseIterable {
@@ -4668,10 +4685,11 @@ extension Components {
                 case email = "email"
                 case datetime = "datetime"
                 case date = "date"
+                case thumbnail = "thumbnail"
                 case bcp47 = "bcp47"
                 case iso3166 = "iso3166"
             }
-            /// Semantic refinement of a `string` field. Only the annotation-only formats reach the registry: the four with a field type of their own normalize into `type`.
+            /// Semantic refinement of a `string` field. Only the annotation-only formats reach the registry: those with a field type of their own normalize into `type`.
             ///
             /// - Remark: Generated from `#/components/schemas/FieldDefinition/format`.
             public var format: Components.Schemas.FieldDefinition.FormatPayload?
@@ -4686,12 +4704,12 @@ extension Components {
             /// Creates a new `FieldDefinition`.
             ///
             /// - Parameters:
-            ///   - _type:
+            ///   - _type: `thumbnail` holds a small image the writer supplies: `data:image/png;base64,…`, `image/jpeg` or `image/webp`, canonical base64, at most 16 KiB decoded, beginning with that format's signature. A type carries at most one, never under a name search indexes whatever its type (`title`, `body`, `description`, `name`), and never as an array's `items_type`.
             ///   - description:
             ///   - required:
             ///   - enumValues:
             ///   - itemsType:
-            ///   - format: Semantic refinement of a `string` field. Only the annotation-only formats reach the registry: the four with a field type of their own normalize into `type`.
+            ///   - format: Semantic refinement of a `string` field. Only the annotation-only formats reach the registry: those with a field type of their own normalize into `type`.
             ///   - searchable:
             ///   - maxLength:
             ///   - maxItems:
@@ -4821,20 +4839,21 @@ extension Components {
                 try encoder.encodeAdditionalProperties(additionalProperties)
             }
         }
-        /// - Remark: Generated from `#/components/schemas/InvalidSchemaOrValidationErrorRefusal`.
-        public struct InvalidSchemaOrValidationErrorRefusal: Codable, Hashable, Sendable {
-            /// - Remark: Generated from `#/components/schemas/InvalidSchemaOrValidationErrorRefusal/error`.
+        /// - Remark: Generated from `#/components/schemas/InheritanceViolationOrInvalidSchemaOrValidationErrorRefusal`.
+        public struct InheritanceViolationOrInvalidSchemaOrValidationErrorRefusal: Codable, Hashable, Sendable {
+            /// - Remark: Generated from `#/components/schemas/InheritanceViolationOrInvalidSchemaOrValidationErrorRefusal/error`.
             public struct _ErrorPayload: Codable, Hashable, Sendable {
-                /// - Remark: Generated from `#/components/schemas/InvalidSchemaOrValidationErrorRefusal/error/code`.
+                /// - Remark: Generated from `#/components/schemas/InheritanceViolationOrInvalidSchemaOrValidationErrorRefusal/error/code`.
                 @frozen public enum CodePayload: String, Codable, Hashable, Sendable, CaseIterable {
+                    case inheritanceViolation = "inheritance_violation"
                     case invalidSchema = "invalid_schema"
                     case validationError = "validation_error"
                 }
-                /// - Remark: Generated from `#/components/schemas/InvalidSchemaOrValidationErrorRefusal/error/code`.
-                public var code: Components.Schemas.InvalidSchemaOrValidationErrorRefusal._ErrorPayload.CodePayload
-                /// - Remark: Generated from `#/components/schemas/InvalidSchemaOrValidationErrorRefusal/error/message`.
+                /// - Remark: Generated from `#/components/schemas/InheritanceViolationOrInvalidSchemaOrValidationErrorRefusal/error/code`.
+                public var code: Components.Schemas.InheritanceViolationOrInvalidSchemaOrValidationErrorRefusal._ErrorPayload.CodePayload
+                /// - Remark: Generated from `#/components/schemas/InheritanceViolationOrInvalidSchemaOrValidationErrorRefusal/error/message`.
                 public var message: Swift.String
-                /// - Remark: Generated from `#/components/schemas/InvalidSchemaOrValidationErrorRefusal/error/details`.
+                /// - Remark: Generated from `#/components/schemas/InheritanceViolationOrInvalidSchemaOrValidationErrorRefusal/error/details`.
                 public struct DetailsPayload: Codable, Hashable, Sendable {
                     /// A container of undocumented properties.
                     public var additionalProperties: [String: OpenAPIRuntime.OpenAPIValueContainer]
@@ -4852,8 +4871,8 @@ extension Components {
                         try encoder.encodeAdditionalProperties(additionalProperties)
                     }
                 }
-                /// - Remark: Generated from `#/components/schemas/InvalidSchemaOrValidationErrorRefusal/error/details`.
-                public var details: Components.Schemas.InvalidSchemaOrValidationErrorRefusal._ErrorPayload.DetailsPayload?
+                /// - Remark: Generated from `#/components/schemas/InheritanceViolationOrInvalidSchemaOrValidationErrorRefusal/error/details`.
+                public var details: Components.Schemas.InheritanceViolationOrInvalidSchemaOrValidationErrorRefusal._ErrorPayload.DetailsPayload?
                 /// Creates a new `_ErrorPayload`.
                 ///
                 /// - Parameters:
@@ -4861,9 +4880,9 @@ extension Components {
                 ///   - message:
                 ///   - details:
                 public init(
-                    code: Components.Schemas.InvalidSchemaOrValidationErrorRefusal._ErrorPayload.CodePayload,
+                    code: Components.Schemas.InheritanceViolationOrInvalidSchemaOrValidationErrorRefusal._ErrorPayload.CodePayload,
                     message: Swift.String,
-                    details: Components.Schemas.InvalidSchemaOrValidationErrorRefusal._ErrorPayload.DetailsPayload? = nil
+                    details: Components.Schemas.InheritanceViolationOrInvalidSchemaOrValidationErrorRefusal._ErrorPayload.DetailsPayload? = nil
                 ) {
                     self.code = code
                     self.message = message
@@ -4875,13 +4894,13 @@ extension Components {
                     case details
                 }
             }
-            /// - Remark: Generated from `#/components/schemas/InvalidSchemaOrValidationErrorRefusal/error`.
-            public var error: Components.Schemas.InvalidSchemaOrValidationErrorRefusal._ErrorPayload
-            /// Creates a new `InvalidSchemaOrValidationErrorRefusal`.
+            /// - Remark: Generated from `#/components/schemas/InheritanceViolationOrInvalidSchemaOrValidationErrorRefusal/error`.
+            public var error: Components.Schemas.InheritanceViolationOrInvalidSchemaOrValidationErrorRefusal._ErrorPayload
+            /// Creates a new `InheritanceViolationOrInvalidSchemaOrValidationErrorRefusal`.
             ///
             /// - Parameters:
             ///   - error:
-            public init(error: Components.Schemas.InvalidSchemaOrValidationErrorRefusal._ErrorPayload) {
+            public init(error: Components.Schemas.InheritanceViolationOrInvalidSchemaOrValidationErrorRefusal._ErrorPayload) {
                 self.error = error
             }
             public enum CodingKeys: String, CodingKey {

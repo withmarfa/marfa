@@ -22,6 +22,7 @@ export type {
   TypeSchemaValidationResult,
 } from "./schema-validation.js";
 export {
+  ALWAYS_SEARCHED_FIELDS,
   EDGE_CARDINALITIES,
   EDGE_CASCADES,
   FIELD_FORMATS,

@@ -118,6 +118,7 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+    use crate::catalog::Indexing;
     use crate::model::{ItemState, SortDirection, SortField, Tier};
     use crate::store::testing::*;
 
@@ -165,7 +166,7 @@ mod tests {
         ] {
             let item = wire_item(id, type_, state, when, json!({ "title": id }));
             let tags: Vec<String> = tags.into_iter().map(str::to_string).collect();
-            store::upsert_item(&conn, &item, Some(&tags), Some("title")).unwrap();
+            store::upsert_item(&conn, &item, Some(&tags), &Indexing::titled("title")).unwrap();
         }
         let mut feed = wire_item(
             "f",
@@ -175,7 +176,7 @@ mod tests {
             json!({}),
         );
         feed.tier = Some("feed".into());
-        store::upsert_item(&conn, &feed, None, None).unwrap();
+        store::upsert_item(&conn, &feed, None, &Indexing::default()).unwrap();
         conn
     }
 

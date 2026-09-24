@@ -76,4 +76,4 @@ pnpm --ignore-workspace run test
 
 `check` holds the proof script and the tests to the `index.d.ts` the build generates. `test` drives the held stream and the reading open against a server it scripts itself.
 
-`scripts/binding-proof.sh` drives both, after both are built, through a write made offline and its verdict once the server returns: each hydrates, the server stops, each queues writes and drains into nothing, the server comes back on the same origin with the same data, and each drains again. Then each holds the event stream open while the binary makes a note on the server, and is told of it.
+`scripts/binding-proof.sh` drives both, after both are built, through a write made offline and its verdict once the server returns: each hydrates, the server stops, each queues writes and drains into nothing, the server comes back on the same origin with the same data, and each drains again. Then each is told of a note the binary makes while it holds the stream, and reads, from a store of its own, the thumbnails of a type the binary registers.

@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { MarfaClient } from "../../client/api.js";
-import type { TestContext } from "../../client/types.js";
+import type { FieldDefinition, TestContext } from "../../client/types.js";
 import {
   createTestContext,
   trackItem,
@@ -14,6 +14,7 @@ import {
   itemsPage,
   replay,
   scriptedType,
+  snapshotType,
   wireItem,
   wireType,
   writeAnswers,
@@ -786,6 +787,41 @@ describe("the scripted answers match the server's", () => {
           "row.description",
           "row.version",
         ],
+      },
+    );
+  });
+
+  it("matches a registered type that declares a thumbnail", async () => {
+    const id = `user.snapshot-${ctx.runId}`;
+    const scripted = snapshotType(id);
+    const registered = await client.registerType({
+      id,
+      fields: scripted.fields as Record<string, FieldDefinition>,
+      display_hints: { title_field: "title" },
+    });
+    expect(registered.ok, JSON.stringify(registered.error)).toBe(true);
+    const registry = await client.rawRequest("/types");
+    expect(registry.ok).toBe(true);
+    const row = (
+      registry.data as { data: Array<Record<string, unknown>> }
+    ).data.find((candidate) => candidate.id === id);
+    expect(
+      row,
+      "the registry does not list the type just registered",
+    ).toBeDefined();
+
+    expectFidelity(
+      "a registered type declaring a thumbnail",
+      { status: registry.status, body: { row } },
+      { kind: "json", status: registry.status, body: { row: scripted } },
+      {
+        // What a device reads from a type to find its thumbnail.
+        same: [
+          "row.id",
+          "row.display_hints.title_field",
+          "row.fields.thumbnail.type",
+        ],
+        shape: ["row.label", "row.fields"],
       },
     );
   });

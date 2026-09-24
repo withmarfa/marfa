@@ -7,12 +7,15 @@ import {
   scriptBlob,
   startHarness,
   scriptHydration,
+  scriptWrites,
   type Harness,
 } from "./harness.js";
-import { notWrittenYet, skipIfPending } from "./pending.js";
 import {
   SCRIPTED_TYPES,
+  snapshotType,
+  answers,
   connected,
+  heldLog,
   itemEvent,
   refusal,
   replay,
@@ -203,9 +206,531 @@ describe("the working copy holds one slice", () => {
     ).toContain("ancient");
   });
 
-  it("holds the thumbnail an item carries", async (context) => {
-    skipIfPending(context);
-    notWrittenYet("a thumbnail traveling with its item");
+  it("holds the thumbnail an item carries", async () => {
+    harness = await startHarness("thumbnail");
+    const { server, device } = harness;
+    // A registered type declaring a thumbnail, answered before the
+    // hydration's own catalog, which it replaces for the one read a
+    // hydration makes.
+    server.answer("GET", "/types", {
+      kind: "json",
+      status: 200,
+      body: {
+        data: [...SCRIPTED_TYPES, snapshotType()],
+        next_cursor: null,
+      },
+    });
+    // A PNG's signature, then base64 that spells a word a search could
+    // find: `/` makes it a token of its own.
+    const data = "iVBORw0KGgoA/unicornsXYZ";
+    scriptHydration(server, {
+      head: "10",
+      rows: {
+        "user.snapshot": [
+          {
+            item: {
+              id: "snap",
+              type: "user.snapshot",
+              properties: {
+                title: "Holiday",
+                thumbnail: `data:image/png;base64,${data}`,
+              },
+            },
+          },
+        ],
+        "core.note": [
+          {
+            item: {
+              id: "beside",
+              properties: { title: "Beside", body: "unicornsXYZ" },
+            },
+          },
+        ],
+      },
+    });
+    expect(
+      (await device.hydrate(["user.snapshot", "core.note"], "library")).ok,
+    ).toBe(true);
+    const asked = server.requests.length;
+
+    const out = `${device.store}.thumbnail.png`;
+    const held = await device.thumbnail("snap", out);
+    expect(held.ok, JSON.stringify(held)).toBe(true);
+    if (!held.ok) return;
+    expect(held.value.thumbnail?.mime_type).toBe("image/png");
+    expect(
+      readFileSync(out),
+      "the thumbnail's bytes are not the image the item carried",
+    ).toEqual(Buffer.from(data, "base64"));
+    expect(
+      server.requests.length,
+      "the thumbnail was fetched rather than read from the item held",
+    ).toBe(asked);
+
+    // An item whose type declares none carries none, and an item the copy
+    // does not hold is refused as that rather than answered as one that
+    // carries none.
+    const none = await device.thumbnail("beside", `${out}.none`);
+    expect(none.ok && none.value.thumbnail).toBeNull();
+    const absent = await device.thumbnail("not-held", `${out}.absent`);
+    expect(
+      absent.ok ? "answered" : absent.refusal.code,
+      "the thumbnail of an item the copy does not hold was answered, or refused as though the server had said so",
+    ).toBe("not_held");
+
+    // The image's base64 is not searchable. The witness: the same token in
+    // a body is found.
+    const hits = await device.search("unicornsXYZ");
+    expect(hits.ok).toBe(true);
+    if (!hits.ok) return;
+    expect(
+      hits.value.map((hit) => hit.item.id),
+      "a search matched the thumbnail's base64, so every image answers searches for whatever its encoding happens to spell",
+    ).toEqual(["beside"]);
+  });
+
+  it("keeps a thumbnail out of its index when its type arrives after the stream opened", async () => {
+    harness = await startHarness("thumbnail-late-type");
+    const { server, device } = harness;
+    scriptHydration(server, { head: "10" });
+    // The type is registered after the device's catalog was read: the
+    // hydration and the first stream read it without the type, and every read
+    // after with it. Queued behind the hydration's own catalog answer, which
+    // the hydration takes.
+    const late = wireType("core.note.snapshot", {
+      parent: "core.note",
+      titleField: "title",
+      fields: {
+        title: { type: "string" },
+        body: { type: "string" },
+        thumbnail: { type: "thumbnail" },
+      },
+    });
+    let reads = 0;
+    server.answer("GET", "/types", () => {
+      reads += 1;
+      return {
+        kind: "json",
+        status: 200,
+        body: {
+          data: reads <= 1 ? [...SCRIPTED_TYPES] : [...SCRIPTED_TYPES, late],
+          next_cursor: null,
+        },
+      };
+    });
+    server.answer(
+      "GET",
+      "/events",
+      heldLog([
+        itemEvent(
+          "11",
+          "item.created",
+          wireItem({
+            id: "late",
+            type: "core.note.snapshot",
+            properties: {
+              title: "Late",
+              body: "zebraword",
+              thumbnail: "data:image/png;base64,iVBORw0KGgoA/unicornsXYZ",
+            },
+          }),
+        ),
+      ]),
+    );
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    expect((await device.follow(4)).ok).toBe(true);
+    // The witness that the late read answered: the stream read the catalog
+    // again after the event named a type it did not hold.
+    expect(reads).toBeGreaterThan(1);
+
+    const found = async (query: string): Promise<string[]> => {
+      const hits = await device.search(query);
+      return hits.ok ? hits.value.map((hit) => hit.item.id) : [];
+    };
+    // The witness: the item is held and indexed.
+    expect(await found("zebraword")).toEqual(["late"]);
+    expect(
+      await found("unicornsXYZ"),
+      "a thumbnail of a type the device learned only after its item arrived stayed in the index",
+    ).toEqual([]);
+  });
+
+  it("keeps a thumbnail out of its index when its type gains one after the stream opened", async () => {
+    harness = await startHarness("thumbnail-gained");
+    const { server, device } = harness;
+    const photo = (thumbnail: boolean) =>
+      wireType("user.photo", {
+        fields: {
+          title: { type: "string" },
+          body: { type: "string" },
+          ...(thumbnail ? { thumbnail: { type: "thumbnail" } } : {}),
+        },
+      });
+    // The type gains its thumbnail after the device read the catalog: the
+    // hydration and the first stream read it without one, every read after
+    // with it.
+    let reads = 0;
+    scriptHydration(server, {
+      head: "10",
+      rows: {
+        "user.photo": [
+          {
+            item: {
+              id: "photo",
+              type: "user.photo",
+              properties: { title: "Holiday", body: "as hydrated" },
+            },
+          },
+        ],
+      },
+      catalog: {
+        kind: "json",
+        status: 200,
+        body: { data: [...SCRIPTED_TYPES, photo(false)], next_cursor: null },
+      },
+    });
+    server.answer("GET", "/types", () => {
+      reads += 1;
+      return {
+        kind: "json",
+        status: 200,
+        body: {
+          data: [...SCRIPTED_TYPES, photo(reads > 1)],
+          next_cursor: null,
+        },
+      };
+    });
+    server.answer(
+      "GET",
+      "/events",
+      heldLog([
+        itemEvent(
+          "11",
+          "item.updated",
+          wireItem({
+            id: "photo",
+            type: "user.photo",
+            version: 2,
+            properties: {
+              title: "Holiday",
+              body: "zebraword",
+              thumbnail: "data:image/png;base64,iVBORw0KGgoA/unicornsXYZ",
+            },
+          }),
+        ),
+      ]),
+    );
+    expect((await device.hydrate(["user.photo"], "library")).ok).toBe(true);
+    const followed = await device.follow(3);
+    expect(followed.ok, JSON.stringify(followed)).toBe(true);
+    // The witness that the catalog was read again after the event named an
+    // image under a property it did not know as the thumbnail.
+    expect(reads, "the follow never read the catalog again").toBeGreaterThan(1);
+
+    const found = async (query: string): Promise<string[]> => {
+      const hits = await device.search(query);
+      return hits.ok ? hits.value.map((hit) => hit.item.id) : [];
+    };
+    // The witness: the event was applied and its row indexed.
+    expect(await found("zebraword")).toEqual(["photo"]);
+    expect(
+      await found("unicornsXYZ"),
+      "a type gained a thumbnail after the stream opened and the image's base64 went into the index",
+    ).toEqual([]);
+  });
+
+  describe("keeps a thumbnail out of its index when the catalog was already read again for another image", () => {
+    /** The catalog, holding `user.photo` with `cover` as its thumbnail or
+     *  without a thumbnail at all. */
+    const photos = (withCover: boolean) => ({
+      kind: "json" as const,
+      status: 200,
+      body: {
+        data: [
+          ...SCRIPTED_TYPES,
+          wireType("user.photo", {
+            fields: {
+              title: { type: "string" },
+              body: { type: "string" },
+              ...(withCover ? { cover: { type: "thumbnail" } } : {}),
+            },
+          }),
+        ],
+        next_cursor: null,
+      },
+    });
+    // An image under a property the type never declares, which sends the
+    // device to the catalog once and is then taken as the text it is.
+    const icon = "data:image/png;base64,iVBORw0KGgoA/iconwordXYZ";
+    const cover = "data:image/png;base64,iVBORw0KGgoA/unicornsXYZ";
+    const photo = (id: string, properties: Record<string, unknown>) =>
+      wireItem({ id, type: "user.photo", properties });
+    const found = async (query: string): Promise<string[]> => {
+      const hits = await harness?.device.search(query);
+      return hits?.ok ? hits.value.map((hit) => hit.item.id).sort() : [];
+    };
+
+    it("keeps a thumbnail out of its index when it follows, in one item, an image already read again for", async () => {
+      harness = await startHarness("thumbnail-after-spent");
+      const { server, device } = harness;
+      scriptHydration(server, { head: "10", catalog: photos(false) });
+      // `cover` becomes the thumbnail after the device's second read: the
+      // one the stream opened with and the one `icon` sent it to.
+      let reads = 0;
+      server.answer("GET", "/types", () => {
+        reads += 1;
+        return photos(reads > 2);
+      });
+      server.answer(
+        "GET",
+        "/events",
+        heldLog([
+          itemEvent(
+            "11",
+            "item.created",
+            photo("first", { title: "First", body: "as sent", icon }),
+          ),
+          // `icon` comes first, and the device has read the catalog again
+          // for it already.
+          itemEvent(
+            "12",
+            "item.created",
+            photo("second", {
+              title: "Second",
+              body: "zebraword",
+              icon,
+              cover,
+            }),
+          ),
+        ]),
+      );
+      expect((await device.hydrate(["user.photo"], "library")).ok).toBe(true);
+      const followed = await device.follow(3);
+      expect(followed.ok, JSON.stringify(followed)).toBe(true);
+      // The witness: the event was applied and its row indexed.
+      expect(await found("zebraword")).toEqual(["second"]);
+      expect(
+        await found("unicornsXYZ"),
+        "an image already read again for hid the thumbnail after it in the same item, and the thumbnail's base64 went into the index",
+      ).toEqual([]);
+      expect(
+        reads,
+        "the image after one already read again for, in the same item, did not send the device to the catalog",
+      ).toBe(3);
+    });
+
+    it("keeps a thumbnail out of its index when its property was read again for before its type declared it", async () => {
+      harness = await startHarness("thumbnail-declared-later");
+      const { server, device } = harness;
+      scriptHydration(server, { head: "10", catalog: photos(false) });
+      // The type declares `cover` its thumbnail only after the device's
+      // third read, which the third stream opened with.
+      let reads = 0;
+      server.answer("GET", "/types", () => {
+        reads += 1;
+        return photos(reads > 3);
+      });
+      const first = itemEvent(
+        "11",
+        "item.created",
+        photo("first", { title: "First", body: "as sent", cover: icon }),
+      );
+      const second = itemEvent(
+        "12",
+        "item.created",
+        photo("second", { title: "Second", body: "zebraword", cover }),
+      );
+      // The first stream meets `cover` and is opened again; the second takes
+      // it as the text it still is and ends; the third, on a catalog read
+      // just before the type declared it, carries an item written after.
+      let opened = 0;
+      server.answer("GET", "/events", (request) => {
+        opened += 1;
+        const after = BigInt(request.headers["last-event-id"] ?? "0");
+        const log = opened <= 2 ? [first] : [first, second];
+        return {
+          kind: "sse",
+          hold: opened !== 2,
+          frames: [
+            connected,
+            ...log.filter((frame) => BigInt(frame.id ?? "0") > after),
+          ],
+        };
+      });
+      expect((await device.hydrate(["user.photo"], "library")).ok).toBe(true);
+      const followed = await device.follow(4);
+      expect(followed.ok, JSON.stringify(followed)).toBe(true);
+      // The witness: the event was applied and its row indexed.
+      expect(await found("zebraword")).toEqual(["second"]);
+      expect(
+        await found("unicornsXYZ"),
+        "a property read again for in one stream was never read again for, so the thumbnail its type declared later went into the index",
+      ).toEqual([]);
+      expect(
+        reads,
+        "a stream met an image under a property read again for in an earlier stream and did not read the catalog again",
+      ).toBe(4);
+    });
+
+    it("keeps a thumbnail out of its index when a catch-up meets it after an image already read again for", async () => {
+      harness = await startHarness("thumbnail-catch-up-after-spent");
+      const { server, device } = harness;
+      scriptHydration(server, { head: "10", catalog: photos(false) });
+      let reads = 0;
+      server.answer("GET", "/types", () => {
+        reads += 1;
+        return photos(reads > 2);
+      });
+      server.answer(
+        "GET",
+        "/events",
+        replay("12", [
+          itemEvent(
+            "11",
+            "item.created",
+            photo("first", { title: "First", body: "as sent", icon }),
+          ),
+          itemEvent(
+            "12",
+            "item.created",
+            photo("second", {
+              title: "Second",
+              body: "zebraword",
+              icon,
+              cover,
+            }),
+          ),
+        ]),
+      );
+      expect((await device.hydrate(["user.photo"], "library")).ok).toBe(true);
+      const caught = await device.catchUp();
+      expect(caught.ok, JSON.stringify(caught)).toBe(true);
+      // The witness: the event was applied and its row indexed.
+      expect(await found("zebraword")).toEqual(["second"]);
+      expect(
+        await found("unicornsXYZ"),
+        "an image already read again for hid the thumbnail after it in the same item, and the thumbnail's base64 went into the index",
+      ).toEqual([]);
+      expect(
+        reads,
+        "the image after one already read again for, in the same item, did not send the catch-up to the catalog",
+      ).toBe(3);
+    });
+  });
+
+  describe("keeps a thumbnail out of its index on every path that writes a row", () => {
+    const catalog = {
+      kind: "json" as const,
+      status: 200,
+      body: { data: [...SCRIPTED_TYPES, snapshotType()], next_cursor: null },
+    };
+    const image = "data:image/png;base64,iVBORw0KGgoA/unicornsXYZ";
+    const found = async (query: string): Promise<string[]> => {
+      const hits = await harness?.device.search(query);
+      return hits?.ok ? hits.value.map((hit) => hit.item.id) : [];
+    };
+
+    it("keeps a thumbnail out of its index when a catch-up applies it", async () => {
+      harness = await startHarness("thumbnail-applied");
+      const { server, device } = harness;
+      scriptHydration(server, { head: "10", catalog });
+      server.answer(
+        "GET",
+        "/events",
+        replay("11", [
+          itemEvent(
+            "11",
+            "item.created",
+            wireItem({
+              id: "applied",
+              type: "user.snapshot",
+              properties: { title: "zebraword", thumbnail: image },
+            }),
+          ),
+        ]),
+      );
+      expect((await device.hydrate(["user.snapshot"], "library")).ok).toBe(
+        true,
+      );
+      expect((await device.catchUp()).ok).toBe(true);
+      // The witness: the event was applied and its row indexed.
+      expect(await found("zebraword")).toEqual(["applied"]);
+      expect(
+        await found("unicornsXYZ"),
+        "an applied event put the image's base64 into the index",
+      ).toEqual([]);
+    });
+
+    it("keeps a thumbnail out of its index when a drain's answer carries it", async () => {
+      harness = await startHarness("thumbnail-settled");
+      const { server, device } = harness;
+      scriptHydration(server, { head: "10", catalog });
+      expect((await device.hydrate(["user.snapshot"], "library")).ok).toBe(
+        true,
+      );
+      const created = await device.create({
+        type: "user.snapshot",
+        properties: { title: "Made here" },
+      });
+      expect(created.ok, JSON.stringify(created)).toBe(true);
+      if (!created.ok) return;
+      const id = created.value.item_id ?? "";
+      // The server's row carries a title and an image the local one did
+      // not, so what the index holds afterwards is what the answer wrote.
+      scriptWrites(server, {
+        create: [
+          answers.created(
+            wireItem({
+              id,
+              type: "user.snapshot",
+              properties: { title: "zebraword", thumbnail: image },
+            }),
+          ),
+        ],
+      });
+      const drained = await device.drain();
+      expect(drained.ok, JSON.stringify(drained)).toBe(true);
+      // The witness: the answer's row was written and indexed.
+      expect(await found("zebraword")).toEqual([id]);
+      expect(
+        await found("unicornsXYZ"),
+        "the row a drain's answer carried put the image's base64 into the index",
+      ).toEqual([]);
+    });
+
+    it("keeps a thumbnail out of its index when a local edit writes it", async () => {
+      harness = await startHarness("thumbnail-edited");
+      const { server, device } = harness;
+      scriptHydration(server, {
+        head: "10",
+        catalog,
+        rows: {
+          "user.snapshot": [
+            {
+              item: {
+                id: "edited",
+                type: "user.snapshot",
+                properties: { title: "Before" },
+              },
+            },
+          ],
+        },
+      });
+      expect((await device.hydrate(["user.snapshot"], "library")).ok).toBe(
+        true,
+      );
+      const edit = await device.update("edited", {
+        properties: { title: "zebraword", thumbnail: image },
+        version: 1,
+      });
+      expect(edit.ok, JSON.stringify(edit)).toBe(true);
+      // The witness: the edit was laid over the row and indexed.
+      expect(await found("zebraword")).toEqual(["edited"]);
+      expect(
+        await found("unicornsXYZ"),
+        "a local edit put the image's base64 into the index",
+      ).toEqual([]);
+    });
   });
 
   it("says the bytes are absent rather than the item", async () => {

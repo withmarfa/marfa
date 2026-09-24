@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::io::{self, BufReader};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -60,6 +61,80 @@ struct Slice {
     tier: Tier,
 }
 
+/// The events that decide a row by its type: whether the slice holds it, and
+/// what its index entry leaves out.
+const ITEM_CHANGES: [&str; 6] = [
+    "item.created",
+    "item.updated",
+    "item.deleted",
+    "item.restored",
+    "item.state_changed",
+    "metadata.changed",
+];
+
+/// A type the catalog was read again for, with the property where it was an
+/// image under one.
+type Unexplained = (String, Option<String>);
+
+/// What an item event names that the catalog cannot answer for, where the
+/// row could be in the slice, and that it has not been read again for
+/// already: a type the catalog does not hold, or an image's data URI under a
+/// property it does not know as that type's thumbnail.
+///
+/// Either may mean the server's catalog changed after this one was read, and
+/// taking the event by this one would drop a row the slice holds through a
+/// parent it has not seen, or index an image's base64. Neither has to: a
+/// type the server will not describe stays unknown, and a property the type
+/// declares as text, an `icon` say, can hold an image as well as one the
+/// type has since made its thumbnail can. The catalog cannot tell those from
+/// a change until it is read again, so each costs one read a stream:
+/// `refreshed` holds what the stream has read again for, and an event naming
+/// only those is taken by the catalog as it is.
+///
+/// Only an image's data URI is looked for, because only a thumbnail changes
+/// what an entry leaves out, and a property its type does not declare is
+/// otherwise nothing unusual: the server takes one on any type its strict
+/// mode does not name. Every image is looked at rather than the first, so
+/// one already read again for does not hide another after it.
+fn unexplained(
+    catalog: &Catalog,
+    slice: &Slice,
+    kind: &str,
+    payload: &EventPayload,
+    refreshed: &HashSet<Unexplained>,
+) -> Option<Unexplained> {
+    if !ITEM_CHANGES.contains(&kind) {
+        return None;
+    }
+    let item = payload.item.as_ref()?;
+    // A row of the other tier leaves the copy whatever its type is.
+    if Tier::parse_wire(item.tier.as_deref()).ok()? != Some(slice.tier) {
+        return None;
+    }
+    if !catalog.known(&item.r#type) {
+        let named = (item.r#type.clone(), None);
+        return (!refreshed.contains(&named)).then_some(named);
+    }
+    if !slice
+        .types
+        .iter()
+        .any(|declared| catalog.matches(declared, &item.r#type))
+    {
+        return None;
+    }
+    let thumbnail = catalog.thumbnail_field(&item.r#type);
+    item.properties
+        .iter()
+        .filter(|(name, value)| {
+            thumbnail != Some(name.as_str())
+                && value
+                    .as_str()
+                    .is_some_and(|text| text.starts_with("data:image/"))
+        })
+        .map(|(name, _)| (item.r#type.clone(), Some(name.clone())))
+        .find(|named| !refreshed.contains(named))
+}
+
 /// One event a held stream applied (`device.md` 40): what it was, what it
 /// was about, and the cursor it left behind.
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -77,8 +152,8 @@ pub struct FollowReport {
     pub skipped: u64,
     pub cursor: String,
     /// Streams asked for after the first: after the client's own bound on a
-    /// stream, a stream that dropped or ended early, or one that could not
-    /// be opened.
+    /// stream, a stream that dropped or ended early, one that could not be
+    /// opened, or an event the catalog could not explain.
     pub reconnects: u64,
     /// Asks for a stream that failed and were retried, and the last reason.
     pub failed_opens: u64,
@@ -188,8 +263,12 @@ fn payload_of(data: &str) -> Result<EventPayload> {
 
 pub(crate) fn catch_up(core: &Core, http: &Http, idle: Duration) -> Result<CatchUpReport> {
     let (slice, cursor) = start(core)?;
-    let catalog = adopt(core, &http.types()?)?;
+    let mut catalog = adopt(core, &http.types()?)?;
     let frames = open(http, &cursor, &slice, STREAM_HARD_BOUND)?;
+    // Read for once each, so a type the server will not describe costs one
+    // read of the catalog rather than one for every event naming it. A
+    // catch-up is one stream, so this lasts the call.
+    let mut refreshed = HashSet::new();
 
     let mut report = CatchUpReport {
         applied: 0,
@@ -244,6 +323,12 @@ pub(crate) fn catch_up(core: &Core, http: &Http, idle: Duration) -> Result<Catch
                     }
                     kind => {
                         let Some(id) = id else { continue };
+                        while let Some(named) =
+                            unexplained(&catalog, &slice, kind, &payload, &refreshed)
+                        {
+                            refreshed.insert(named);
+                            catalog = adopt(core, &http.types()?)?;
+                        }
                         if take(core, &catalog, &slice, &id, kind, &payload)?.is_some() {
                             report.applied += 1;
                         } else {
@@ -313,6 +398,13 @@ fn follow_paced(
     let mut report = FollowReport::default();
     let mut backoff = pace.reconnect_first;
     let mut asked = false;
+    // Read for once each in a stream: an event naming one again is taken by
+    // the catalog as it is, so a type the server will not describe costs one
+    // reopen rather than one for every event naming it. Streams chained by a
+    // reopen for one of these count as one, and any other end forgets them,
+    // so the next stream reads again for a property its type has since made
+    // its thumbnail.
+    let mut refreshed = HashSet::new();
     while !stop.load(Ordering::Relaxed) {
         let (slice, cursor) = start(core)?;
         report.cursor = cursor.clone();
@@ -344,6 +436,7 @@ fn follow_paced(
         let catalog = adopt(core, &types)?;
         let opened = Instant::now();
         let mut heard = Instant::now();
+        let mut behind = false;
         loop {
             if stop.load(Ordering::Relaxed) {
                 return Ok(report);
@@ -365,6 +458,14 @@ fn follow_paced(
                 "stream_incomplete" => break,
                 kind => {
                     let Some(id) = id else { continue };
+                    // Left untaken with the cursor before it: the stream
+                    // opened again at once reads the catalog first, then
+                    // replays this event.
+                    if let Some(named) = unexplained(&catalog, &slice, kind, &payload, &refreshed) {
+                        refreshed.insert(named);
+                        behind = true;
+                        break;
+                    }
                     match take(core, &catalog, &slice, &id, kind, &payload)? {
                         Some(change) => {
                             report.applied += 1;
@@ -376,6 +477,10 @@ fn follow_paced(
                 }
             }
         }
+        if behind {
+            continue;
+        }
+        refreshed.clear();
         if opened.elapsed() >= pace.reconnect_most {
             backoff = pace.reconnect_first;
         } else {
@@ -471,8 +576,7 @@ fn apply(
             };
             store::delete_item(tx, &item.id)
         }
-        "item.created" | "item.updated" | "item.deleted" | "item.restored"
-        | "item.state_changed" | "metadata.changed" => {
+        kind if ITEM_CHANGES.contains(&kind) => {
             let Some(item) = &payload.item else {
                 return Ok(false);
             };
@@ -510,9 +614,9 @@ fn apply(
                     .metadata
                     .as_ref()
                     .map(|metadata| metadata.tags.as_slice());
-                let title_field = catalog.title_field(&item.r#type);
-                store::upsert_item(tx, item, tags, title_field)?;
-                store::lay_waiting_writes_over(tx, &item.id, title_field)?;
+                let indexing = catalog.indexing(&item.r#type);
+                store::upsert_item(tx, item, tags, &indexing)?;
+                store::lay_waiting_writes_over(tx, &item.id, &indexing)?;
                 Ok(true)
             } else {
                 store::delete_item(tx, &item.id)
@@ -1070,7 +1174,13 @@ mod tests {
                 "2026-01-01T00:00:00Z",
                 serde_json::json!({ "title": "row" }),
             );
-            store::upsert_item(&conn, &row, Some(&[]), Some("title")).unwrap();
+            store::upsert_item(
+                &conn,
+                &row,
+                Some(&[]),
+                &crate::catalog::Indexing::titled("title"),
+            )
+            .unwrap();
         }
         let run = follow_on(&core, QUICK, None);
         let change = run.change();
@@ -1124,6 +1234,123 @@ mod tests {
         }
         // The claim went with the unwinding, so the copy can be followed again.
         assert!(core.claim_stream().is_ok());
+    }
+
+    /// Every image under a property the catalog does not know as the
+    /// thumbnail is looked at, so one already read again for does not hide
+    /// another after it in the same item. The thumbnail itself is never
+    /// named, and neither is a type or property already read again for.
+    #[test]
+    fn an_image_already_read_again_for_does_not_hide_the_next() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = store::open(&dir.path().join("core.sqlite")).unwrap();
+        let mut photo = store::testing::wire_type("user.photo", None, Some("title"));
+        photo.rest.insert(
+            "fields".into(),
+            serde_json::json!({ "cover": { "type": "thumbnail" } }),
+        );
+        store::replace_types(&conn, &[photo]).unwrap();
+        let catalog = Catalog::load(&conn).unwrap();
+        let slice = Slice {
+            types: vec!["user.photo".into()],
+            tier: Tier::Library,
+        };
+        let event = |r#type: &str| {
+            let image = "data:image/png;base64,iVBORw0KGgo=";
+            payload_of(
+                &serde_json::json!({
+                    "type": "item.created",
+                    "item": {
+                        "id": "row", "type": r#type, "state": "active", "tier": "library",
+                        "version": 1, "schema_version": 1, "source": "test",
+                        "occurred_at": "2026-01-01T00:00:00Z",
+                        "created_at": "2026-01-01T00:00:00Z",
+                        "updated_at": "2026-01-01T00:00:00Z",
+                        "properties": { "icon": image, "cover": image, "badge": image, "title": image },
+                    },
+                    "metadata": { "tags": [] },
+                })
+                .to_string(),
+            )
+            .unwrap()
+        };
+        let named = |property: &str| ("user.photo".to_string(), Some(property.to_string()));
+        let mut refreshed = HashSet::new();
+        let photo = event("user.photo");
+        let mut met = Vec::new();
+        while let Some(next) = unexplained(&catalog, &slice, "item.created", &photo, &refreshed) {
+            met.push(next.clone());
+            refreshed.insert(next);
+        }
+        assert_eq!(
+            met,
+            [named("icon"), named("badge"), named("title")],
+            "an image read again for hid the next, or the thumbnail was named as one the catalog cannot explain"
+        );
+
+        let gone = event("user.gone");
+        let unknown = ("user.gone".to_string(), None);
+        assert_eq!(
+            unexplained(&catalog, &slice, "item.created", &gone, &refreshed),
+            Some(unknown.clone())
+        );
+        refreshed.insert(unknown);
+        assert_eq!(
+            unexplained(&catalog, &slice, "item.created", &gone, &refreshed),
+            None
+        );
+    }
+
+    /// A stream that ends for any reason but an event the catalog could not
+    /// explain forgets what it was read again for, so the next stream reads
+    /// again for an image its property meets there. The streams a reopen for
+    /// one chains together remember it.
+    #[test]
+    fn a_stream_that_ends_forgets_what_it_was_read_again_for() {
+        let server = Scripted::start();
+        server.on("/types", vec![types(&[(NOTE, None)])]);
+        // A note carrying an image under a property its type does not declare.
+        let with_image = |id: &str, cursor: &str| {
+            let payload = item_payload("item.created", id, NOTE, 1).replace(
+                &format!(r#""properties":{{"title":"{id}"}}"#),
+                &format!(
+                    r#""properties":{{"title":"{id}","icon":"data:image/png;base64,iVBORw0KGgo="}}"#
+                ),
+            );
+            assert!(payload.contains("icon"), "the image was not written in");
+            event(cursor, "item.created", &payload)
+        };
+        let first = with_image("n1", "11");
+        let second = with_image("n2", "12");
+        server.on(
+            "/events",
+            vec![
+                // Met, and opened again for.
+                stream(vec![connected(), first.clone()], held()),
+                // Taken as it is, and the stream ends.
+                stream(vec![connected(), first], Then::End),
+                // Met again, in a stream of its own, and opened again for.
+                stream(vec![connected(), second.clone()], held()),
+                stream(vec![connected(), second], held()),
+            ],
+        );
+        let (_dir, core) = hydrated(&server);
+        let run = follow_on(&core, QUICK, None);
+        assert_eq!(run.change().item_id.as_deref(), Some("n1"));
+        assert_eq!(run.change().item_id.as_deref(), Some("n2"));
+        run.stop();
+        let report = run.ended().unwrap();
+        assert_eq!(
+            server.seen("/types").len(),
+            4,
+            "a stream after one that ended did not read the catalog again for an image its property had met before"
+        );
+        assert_eq!(report.reconnects, 3);
+        assert_eq!(
+            run.waits(),
+            [QUICK.reconnect_first],
+            "a reopen for an image waited as a stream that ended early does"
+        );
     }
 
     #[test]
