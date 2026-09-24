@@ -1,12 +1,18 @@
 // @ts-check
 // What a drain tells a Node caller, against a server this file scripts.
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { BlockedReason, MarfaCore, Tier } from "../index.js";
+
+/** The contract every answer names, as a real server's does: the one the
+ * core is built for, read off the document it is built from. */
+const CONTRACT = /** @type {{ info: { version: string } }} */ (
+  JSON.parse(readFileSync(new URL("../../../../openapi.json", import.meta.url), "utf8"))
+).info.version;
 
 /**
  * A server that hydrates an empty `core.note` slice and refuses every create
@@ -19,7 +25,10 @@ async function unclaiming() {
       /** @type {number} */ status,
       /** @type {unknown} */ body,
     ) => {
-      res.writeHead(status, { "content-type": "application/json" });
+      res.writeHead(status, {
+        "content-type": "application/json",
+        "x-marfa-contract": CONTRACT,
+      });
       res.end(JSON.stringify(body));
     };
     if (path === "/types") {
@@ -38,7 +47,10 @@ async function unclaiming() {
     } else if (path === "/items") {
       json(200, { data: [], next_cursor: null });
     } else if (path === "/events") {
-      res.writeHead(200, { "content-type": "text/event-stream" });
+      res.writeHead(200, {
+        "content-type": "text/event-stream",
+        "x-marfa-contract": CONTRACT,
+      });
       res.end(
         ': connected\n\nevent: stream_cursor\ndata: {"type":"stream_cursor","cursor":"10"}\n\n',
       );

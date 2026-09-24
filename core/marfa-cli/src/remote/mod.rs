@@ -895,10 +895,11 @@ mod tests {
     #[test]
     fn an_answer_naming_its_contract_twice_differently_is_refused() {
         let built_for = marfa_client::CONTRACT_VERSION.to_string();
+        let other = another_contract();
         let door = Door::open(vec![
-            Answer::json("200 OK", PAGE).with_header(marfa_core::http::CONTRACT_HEADER, "2"),
+            Answer::json("200 OK", PAGE).with_header(marfa_core::http::CONTRACT_HEADER, &other),
             Answer::json("200 OK", PAGE)
-                .on_contract(Some("2"))
+                .on_contract(Some(&other))
                 .with_header(marfa_core::http::CONTRACT_HEADER, built_for.clone()),
             Answer::json("200 OK", PAGE)
                 .with_header(marfa_core::http::CONTRACT_HEADER, built_for.clone()),
@@ -906,11 +907,11 @@ mod tests {
         let remote = remote_at(&door, Some("marfa_k1_x"));
         assert_eq!(
             mismatch(remote.json(&Request::get(&["items"]))),
-            format!("answers contract {built_for} and 2")
+            format!("answers contract {built_for} and {other}")
         );
         assert_eq!(
             mismatch(remote.json(&Request::get(&["items"]))),
-            format!("answers contract 2 and {built_for}")
+            format!("answers contract {other} and {built_for}")
         );
         // The witness: the same contract named twice is one, and read.
         assert!(remote.json(&Request::get(&["items"])).is_ok());
