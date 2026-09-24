@@ -178,8 +178,8 @@ jobs:
       # device under test, so this job builds it. It stays in this job rather
       # than moving to core.yml because core.yml is path-gated on the core and
       # the server and would not run for a change to the fixtures alone, and
-      # because
-      # `release.yml` names ci.yml as the run a commit must be green on.
+      # because `release.yml` names ci.yml as the run a commit must be green
+      # on.
       # The two jobs share `marfa-suite-shared-host` above, so a cargo build
       # here never runs beside core.yml's on one machine.
       #
