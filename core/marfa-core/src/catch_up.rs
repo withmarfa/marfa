@@ -539,3 +539,590 @@ fn apply(
         _ => Ok(false),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Mutex;
+
+    use super::*;
+    use crate::Server;
+    use crate::scripted::{
+        Answer, Scripted, Then, connected, event, item_payload, refusal, stream, types,
+    };
+
+    const NOTE: &str = "core.note";
+    const MS: fn(u64) -> Duration = Duration::from_millis;
+
+    /// Short enough to watch a wait double to its most. The waits between
+    /// streams are recorded rather than slept.
+    const QUICK: Pace = Pace {
+        stop_poll: Duration::from_millis(10),
+        silence: Duration::from_millis(150),
+        reconnect_first: Duration::from_millis(10),
+        reconnect_most: Duration::from_millis(40),
+        retry_after_most: PACE.retry_after_most,
+    };
+
+    /// A store bound to `server` and hydrated by hand: `core.note` at
+    /// `library`, cursor 10.
+    fn hydrated(server: &Scripted) -> (tempfile::TempDir, Arc<Core>) {
+        let dir = tempfile::tempdir().unwrap();
+        let core = Core::open(
+            dir.path().join("core.sqlite"),
+            Some(Server {
+                url: server.url(),
+                key: "k".into(),
+            }),
+        )
+        .unwrap();
+        {
+            let conn = core.conn().unwrap();
+            store::meta_set(&conn, store::META_EVENT_CURSOR, "10").unwrap();
+            store::meta_set(&conn, store::META_SLICE_TYPES, "[\"core.note\"]").unwrap();
+            store::meta_set(&conn, store::META_SLICE_TIER, "library").unwrap();
+            store::replace_types(
+                &conn,
+                &[store::testing::wire_type(NOTE, None, Some("title"))],
+            )
+            .unwrap();
+        }
+        (dir, Arc::new(core))
+    }
+
+    struct Run {
+        stop: Arc<AtomicBool>,
+        changes: Receiver<Change>,
+        done: Receiver<Result<FollowReport>>,
+        waits: Arc<Mutex<Vec<Duration>>>,
+    }
+
+    impl Run {
+        fn change(&self) -> Change {
+            self.changes
+                .recv_timeout(Duration::from_secs(5))
+                .expect("no change was told")
+        }
+
+        fn stop(&self) {
+            self.stop.store(true, Ordering::Relaxed);
+        }
+
+        fn ended(&self) -> Result<FollowReport> {
+            self.done
+                .recv_timeout(Duration::from_secs(5))
+                .expect("the follow did not end")
+        }
+
+        fn waits(&self) -> Vec<Duration> {
+            self.waits.lock().unwrap().clone()
+        }
+    }
+
+    /// Follows on a thread of its own at `pace`, recording each wait
+    /// between streams and setting `stop` on the `stop_on_wait`th.
+    fn follow_on(core: &Arc<Core>, pace: Pace, stop_on_wait: Option<usize>) -> Run {
+        let (told, changes) = mpsc::channel();
+        let mut run = follow_telling(core, pace, stop_on_wait, move |change| {
+            let _ = told.send(change.clone());
+        });
+        run.changes = changes;
+        run
+    }
+
+    fn follow_telling(
+        core: &Arc<Core>,
+        pace: Pace,
+        stop_on_wait: Option<usize>,
+        mut on_change: impl FnMut(&Change) + Send + 'static,
+    ) -> Run {
+        let (_, changes) = mpsc::channel();
+        let (ended, done) = mpsc::channel();
+        let stop = Arc::new(AtomicBool::new(false));
+        let waits = Arc::new(Mutex::new(Vec::new()));
+        let (core, flag, recorded) = (Arc::clone(core), Arc::clone(&stop), Arc::clone(&waits));
+        thread::spawn(move || {
+            let http = core.http.clone().unwrap();
+            let mut pause = |wait: Duration| {
+                let mut recorded = recorded.lock().unwrap();
+                recorded.push(wait);
+                if Some(recorded.len()) == stop_on_wait {
+                    flag.store(true, Ordering::Relaxed);
+                }
+            };
+            let result = follow_paced(&core, http, &flag, &mut on_change, &pace, &mut pause);
+            let _ = ended.send(result);
+        });
+        Run {
+            stop,
+            changes,
+            done,
+            waits,
+        }
+    }
+
+    #[test]
+    fn a_stream_that_ends_at_once_is_asked_for_again_after_a_wait_doubling_to_the_most() {
+        let server = Scripted::start();
+        server.on("/types", vec![types(&[(NOTE, None)])]);
+        server.on("/events", vec![stream(vec![connected()], Then::End)]);
+        let (_dir, core) = hydrated(&server);
+        let run = follow_on(&core, QUICK, Some(5));
+        let report = run.ended().unwrap();
+        assert_eq!(
+            run.waits(),
+            [MS(10), MS(20), MS(40), MS(40), MS(40)],
+            "the wait after a stream that ended early did not double to its most and stay there"
+        );
+        assert_eq!(server.seen("/events").len(), 5);
+        assert_eq!(
+            report.reconnects, 4,
+            "reconnects counts the streams asked for after the first"
+        );
+        assert_eq!((report.failed_opens, report.last_failure), (0, None));
+    }
+
+    #[test]
+    fn a_stream_that_cannot_be_opened_is_asked_for_again_after_a_wait_doubling_to_the_most() {
+        let server = Scripted::start();
+        server.on("/types", vec![types(&[(NOTE, None)])]);
+        server.on("/events", vec![refusal(503, "unavailable")]);
+        let (_dir, core) = hydrated(&server);
+        let run = follow_on(&core, QUICK, Some(4));
+        let report = run.ended().unwrap();
+        assert_eq!(run.waits(), [MS(10), MS(20), MS(40), MS(40)]);
+        assert_eq!(report.failed_opens, 4);
+        assert_eq!(report.reconnects, 3);
+        let last = report.last_failure.expect("the failure was not recorded");
+        assert!(last.contains("503"), "{last}");
+    }
+
+    #[test]
+    fn a_stream_held_as_long_as_the_most_wait_resets_it() {
+        let server = Scripted::start();
+        server.on("/types", vec![types(&[(NOTE, None)])]);
+        let ended = || stream(vec![connected()], Then::End);
+        server.on(
+            "/events",
+            vec![
+                ended(),
+                ended(),
+                stream(
+                    vec![connected()],
+                    Then::Hold {
+                        keepalive: Some(MS(5)),
+                        lasting: Some(MS(100)),
+                    },
+                ),
+                ended(),
+            ],
+        );
+        let (_dir, core) = hydrated(&server);
+        let run = follow_on(&core, QUICK, Some(3));
+        run.ended().unwrap();
+        assert_eq!(
+            run.waits(),
+            [MS(10), MS(20), MS(10)],
+            "a stream held for the most wait was followed by a wait, or the next one did not start again from the first"
+        );
+    }
+
+    #[test]
+    fn a_busy_server_is_asked_again_after_the_wait_it_names_up_to_a_bound() {
+        let server = Scripted::start();
+        server.on("/types", vec![types(&[(NOTE, None)])]);
+        let limited = |after: &str| Answer::Json {
+            status: 429,
+            body: r#"{"error":{"code":"rate_limited","message":"scripted"}}"#.into(),
+            headers: vec![("Retry-After".into(), after.into())],
+        };
+        server.on(
+            "/events",
+            vec![
+                limited("1"),
+                refusal(408, "request_timeout"),
+                limited(&u64::MAX.to_string()),
+            ],
+        );
+        let (_dir, core) = hydrated(&server);
+        let run = follow_on(&core, QUICK, Some(3));
+        let report = run.ended().unwrap();
+        assert_eq!(
+            run.waits(),
+            [Duration::from_secs(1), MS(20), PACE.retry_after_most],
+            "a 429's Retry-After was not waited out, a 408 was not asked again, or a Retry-After past the bound was waited out whole"
+        );
+        assert_eq!(report.failed_opens, 3);
+        let last = report.last_failure.expect("the failure was not recorded");
+        assert!(last.contains("rate limited"), "{last}");
+    }
+
+    #[test]
+    fn an_answer_no_retry_changes_ends_the_follow() {
+        let server = Scripted::start();
+        server.on("/types", vec![types(&[(NOTE, None)])]);
+        server.on("/events", vec![refusal(404, "not_found")]);
+        let (_dir, core) = hydrated(&server);
+        let run = follow_on(&core, QUICK, None);
+        assert!(matches!(run.ended(), Err(CoreError::NotFound { .. })));
+        assert_eq!(server.seen("/events").len(), 1);
+        assert!(run.waits().is_empty());
+    }
+
+    #[test]
+    fn a_wait_ends_when_stopped_and_one_too_long_for_the_clock_does_not_panic() {
+        let stop = AtomicBool::new(false);
+        let started = Instant::now();
+        thread::scope(|scope| {
+            scope.spawn(|| wait_unless_stopped(&stop, Duration::MAX, MS(10)));
+            thread::sleep(MS(50));
+            stop.store(true, Ordering::Relaxed);
+        });
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "the wait outlasted its stop"
+        );
+        // The witness: unstopped, a wait lasts as long as it was asked to.
+        let started = Instant::now();
+        wait_unless_stopped(&AtomicBool::new(false), MS(60), MS(10));
+        assert!(started.elapsed() >= MS(60));
+    }
+
+    /// Follows at the pace in use, on a thread, until told to stop.
+    fn follow_for_real(core: &Arc<Core>) -> (Arc<AtomicBool>, Receiver<Result<FollowReport>>) {
+        let stop = Arc::new(AtomicBool::new(false));
+        let (ended, done) = mpsc::channel();
+        let (core, flag) = (Arc::clone(core), Arc::clone(&stop));
+        thread::spawn(move || {
+            let _ = ended.send(core.follow(&flag, |_| {}));
+        });
+        (stop, done)
+    }
+
+    /// Stops a follow once `path` has been asked for, and says how long
+    /// it took to end.
+    fn stopped_after(
+        server: &Scripted,
+        path: &str,
+        stop: &AtomicBool,
+        done: &Receiver<Result<FollowReport>>,
+    ) -> (Duration, FollowReport) {
+        server.wait_for(path, 1, Duration::from_secs(5));
+        thread::sleep(MS(150));
+        let asked = Instant::now();
+        stop.store(true, Ordering::Relaxed);
+        let report = done
+            .recv_timeout(Duration::from_secs(10))
+            .expect("the follow did not end")
+            .unwrap();
+        (asked.elapsed(), report)
+    }
+
+    #[test]
+    fn a_follow_stops_at_once_while_its_stream_is_talking() {
+        let server = Scripted::start();
+        server.on("/types", vec![types(&[(NOTE, None)])]);
+        server.on(
+            "/events",
+            vec![stream(
+                vec![connected()],
+                Then::Hold {
+                    keepalive: Some(MS(20)),
+                    lasting: None,
+                },
+            )],
+        );
+        let (_dir, core) = hydrated(&server);
+        let (stop, done) = follow_for_real(&core);
+        let (took, _) = stopped_after(&server, "/events", &stop, &done);
+        assert!(
+            took < Duration::from_secs(1),
+            "a follow told to stop went on reading its stream for {took:?}"
+        );
+    }
+
+    #[test]
+    fn a_follow_stops_within_its_poll_while_its_stream_is_silent() {
+        let server = Scripted::start();
+        server.on("/types", vec![types(&[(NOTE, None)])]);
+        server.on(
+            "/events",
+            vec![stream(
+                vec![connected()],
+                Then::Hold {
+                    keepalive: None,
+                    lasting: None,
+                },
+            )],
+        );
+        let (_dir, core) = hydrated(&server);
+        let (stop, done) = follow_for_real(&core);
+        let (took, _) = stopped_after(&server, "/events", &stop, &done);
+        // A quarter second's poll, and room for a loaded machine.
+        assert!(
+            took < MS(750),
+            "a follow on a silent stream took {took:?} to notice it was told to stop"
+        );
+    }
+
+    #[test]
+    fn a_follow_stops_at_once_while_the_type_catalog_is_still_being_asked_for() {
+        let server = Scripted::start();
+        server.on("/types", vec![Answer::Stall]);
+        let (_dir, core) = hydrated(&server);
+        let (stop, done) = follow_for_real(&core);
+        let (took, report) = stopped_after(&server, "/types", &stop, &done);
+        assert!(
+            took < Duration::from_secs(1),
+            "a follow waited {took:?} on a catalog nobody answered after it was told to stop"
+        );
+        assert_eq!(report.cursor, "10");
+    }
+
+    fn incomplete() -> String {
+        "event: stream_incomplete\ndata: {\"type\":\"stream_incomplete\",\"reason\":\"scripted\"}\n\n"
+            .into()
+    }
+
+    fn held() -> Then {
+        Then::Hold {
+            keepalive: Some(MS(5)),
+            lasting: None,
+        }
+    }
+
+    fn created(id: &str, cursor: &str) -> String {
+        event(
+            cursor,
+            "item.created",
+            &item_payload("item.created", id, NOTE, 1),
+        )
+    }
+
+    #[test]
+    fn a_stream_the_server_calls_incomplete_is_opened_again_from_the_cursor() {
+        let server = Scripted::start();
+        server.on("/types", vec![types(&[(NOTE, None)])]);
+        server.on(
+            "/events",
+            vec![
+                stream(vec![connected(), incomplete()], held()),
+                stream(vec![connected(), created("n1", "11")], held()),
+            ],
+        );
+        let (_dir, core) = hydrated(&server);
+        let run = follow_on(&core, QUICK, None);
+        let change = run.change();
+        run.stop();
+        let report = run.ended().unwrap();
+        assert_eq!(change.cursor, "11");
+        assert_eq!(
+            report.cursor, "11",
+            "the report does not say where the follow left the cursor"
+        );
+        let asked: Vec<_> = server
+            .seen("/events")
+            .into_iter()
+            .map(|seen| seen.last_event_id)
+            .collect();
+        assert_eq!(asked, [Some("10".to_string()), Some("10".to_string())]);
+    }
+
+    #[test]
+    fn a_stream_silent_past_the_bound_is_opened_again() {
+        let server = Scripted::start();
+        server.on("/types", vec![types(&[(NOTE, None)])]);
+        server.on(
+            "/events",
+            vec![
+                stream(
+                    vec![connected()],
+                    Then::Hold {
+                        keepalive: None,
+                        lasting: None,
+                    },
+                ),
+                stream(vec![connected(), created("n1", "11")], held()),
+            ],
+        );
+        let (_dir, core) = hydrated(&server);
+        let run = follow_on(&core, QUICK, None);
+        assert_eq!(run.change().item_id.as_deref(), Some("n1"));
+        run.stop();
+        run.ended().unwrap();
+    }
+
+    #[test]
+    fn a_keepalive_is_hearing_from_the_server() {
+        let server = Scripted::start();
+        server.on("/types", vec![types(&[(NOTE, None)])]);
+        server.on(
+            "/events",
+            vec![stream(
+                vec![connected()],
+                Then::Hold {
+                    keepalive: Some(MS(20)),
+                    lasting: None,
+                },
+            )],
+        );
+        let (_dir, core) = hydrated(&server);
+        let run = follow_on(&core, QUICK, None);
+        thread::sleep(QUICK.silence * 4);
+        run.stop();
+        run.ended().unwrap();
+        assert_eq!(
+            server.seen("/events").len(),
+            1,
+            "a stream saying nothing but keepalives was taken as silent and opened again"
+        );
+    }
+
+    #[test]
+    fn a_stream_that_fails_part_way_is_opened_again() {
+        let server = Scripted::start();
+        server.on("/types", vec![types(&[(NOTE, None)])]);
+        server.on(
+            "/events",
+            vec![
+                stream(vec![connected()], Then::Break),
+                stream(vec![connected(), created("n1", "11")], held()),
+            ],
+        );
+        let (_dir, core) = hydrated(&server);
+        let run = follow_on(&core, QUICK, None);
+        assert_eq!(run.change().item_id.as_deref(), Some("n1"));
+        run.stop();
+        run.ended().unwrap();
+    }
+
+    #[test]
+    fn each_stream_opened_adopts_the_type_catalog_the_server_has_then() {
+        let server = Scripted::start();
+        server.on(
+            "/types",
+            vec![
+                types(&[(NOTE, None)]),
+                types(&[(NOTE, None), ("user.late", Some(NOTE))]),
+            ],
+        );
+        server.on(
+            "/events",
+            vec![
+                stream(vec![connected()], Then::End),
+                stream(
+                    vec![
+                        connected(),
+                        event(
+                            "11",
+                            "item.created",
+                            &item_payload("item.created", "late", "user.late", 1),
+                        ),
+                    ],
+                    held(),
+                ),
+            ],
+        );
+        let (_dir, core) = hydrated(&server);
+        let run = follow_on(&core, QUICK, None);
+        let change = run.change();
+        run.stop();
+        run.ended().unwrap();
+        assert_eq!(
+            change.item_id.as_deref(),
+            Some("late"),
+            "a type registered between two streams was not learned by the second"
+        );
+        assert!(core.get("late").unwrap().is_some());
+    }
+
+    #[test]
+    fn a_change_to_an_edge_names_the_edge() {
+        let server = Scripted::start();
+        server.on("/types", vec![types(&[(NOTE, None)])]);
+        let edge = r#"{"type":"edge.created","edge":{"id":"e1","source_id":"row","target_id":"other","edge_type":"references","properties":{},"version":1,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}}"#;
+        server.on(
+            "/events",
+            vec![stream(
+                vec![connected(), event("11", "edge.created", edge)],
+                held(),
+            )],
+        );
+        let (_dir, core) = hydrated(&server);
+        {
+            let conn = core.conn().unwrap();
+            let row = store::testing::wire_item(
+                "row",
+                NOTE,
+                "active",
+                "2026-01-01T00:00:00Z",
+                serde_json::json!({ "title": "row" }),
+            );
+            store::upsert_item(&conn, &row, Some(&[]), Some("title")).unwrap();
+        }
+        let run = follow_on(&core, QUICK, None);
+        let change = run.change();
+        run.stop();
+        run.ended().unwrap();
+        assert_eq!(
+            (change.event.as_str(), change.item_id, change.edge_id),
+            ("edge.created", None, Some("e1".to_string()))
+        );
+    }
+
+    #[test]
+    fn a_listener_told_of_a_change_can_read_the_row_it_names() {
+        let server = Scripted::start();
+        server.on("/types", vec![types(&[(NOTE, None)])]);
+        server.on(
+            "/events",
+            vec![stream(vec![connected(), created("n1", "11")], held())],
+        );
+        let (_dir, core) = hydrated(&server);
+        let (read, rows) = mpsc::channel();
+        let reader = Arc::clone(&core);
+        let run = follow_telling(&core, QUICK, None, move |change| {
+            let id = change.item_id.clone().unwrap();
+            let _ = read.send(reader.get(&id).map(|row| row.map(|row| row.id)));
+        });
+        let row = rows
+            .recv_timeout(Duration::from_secs(5))
+            .expect("the listener could not read the row it was told of, so the follow held the store while telling it");
+        run.stop();
+        run.ended().unwrap();
+        assert_eq!(row, Ok(Some("n1".to_string())));
+    }
+
+    #[test]
+    fn neither_a_catch_up_nor_a_follow_runs_on_a_hydration_that_did_not_finish() {
+        let server = Scripted::start();
+        server.on("/types", vec![types(&[(NOTE, None)])]);
+        server.on(
+            "/events",
+            vec![stream(
+                vec![
+                    connected(),
+                    "event: stream_cursor\ndata: {\"type\":\"stream_cursor\",\"cursor\":\"10\"}\n\n"
+                        .into(),
+                ],
+                Then::End,
+            )],
+        );
+        let (_dir, core) = hydrated(&server);
+        {
+            let conn = core.conn().unwrap();
+            store::meta_set(&conn, store::META_HYDRATE_STATE, store::HYDRATE_IN_PROGRESS).unwrap();
+        }
+        assert_eq!(core.catch_up(), Err(CoreError::HydrationIncomplete));
+        assert_eq!(
+            core.follow(&AtomicBool::new(false), |_| {}),
+            Err(CoreError::HydrationIncomplete)
+        );
+        assert!(server.seen("/types").is_empty());
+        // The witness: the same store, its hydration finished, catches up.
+        {
+            let conn = core.conn().unwrap();
+            store::meta_delete(&conn, store::META_HYDRATE_STATE).unwrap();
+        }
+        assert!(core.catch_up().unwrap().reached_head);
+    }
+}

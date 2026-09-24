@@ -15,6 +15,8 @@ mod hydrate;
 mod lock;
 mod model;
 mod query;
+#[cfg(test)]
+mod scripted;
 mod search;
 mod sse;
 mod store;
