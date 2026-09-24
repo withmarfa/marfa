@@ -62,7 +62,8 @@ pub enum CliError {
     ContractMismatch {
         origin: String,
         /// What the server said about its contract, as a phrase: "answers
-        /// contract 2", "answered 200 naming no contract".
+        /// contract" and the number it named, or "answered 200 naming no
+        /// contract".
         served: String,
         expected: u64,
         /// Whether the refused answer was to a write, which the server acted
