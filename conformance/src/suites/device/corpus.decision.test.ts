@@ -204,8 +204,10 @@ describe("every device statement is asserted by something", () => {
   it("runs every device fixture rather than skipping one", () => {
     // A fixture that skips passes every check here: it is cited, its title
     // resolves, and it asserts nothing, so the statement citing it reads as
-    // asserted while nothing runs it.
-    const SKIPS = /\b(?:skip|skipIf|runIf|todo)\s*\(/;
+    // asserted while nothing runs it. One marked to fail is the same: it
+    // passes when what it asserts is false.
+    const SKIPS =
+      /\b(?:skip|skipIf|runIf|todo|fails)\s*\(|\b(?:skip|todo|fails)\s*:\s*true\b/;
     // The witness: the check sees each way a fixture is skipped.
     for (const written of [
       "context.skip();",
@@ -214,6 +216,10 @@ describe("every device statement is asserted by something", () => {
       'it.skipIf(true)("a fixture", () => {});',
       'it.runIf(false)("a fixture", () => {});',
       'it.todo("a fixture");',
+      'it.fails("a fixture", () => {});',
+      'it("a fixture", { skip: true }, () => {});',
+      'it("a fixture", { todo: true }, () => {});',
+      'it("a fixture", { fails: true }, () => {});',
       'describe.skip("a chapter", () => {});',
     ]) {
       expect(SKIPS.test(written), written).toBe(true);
