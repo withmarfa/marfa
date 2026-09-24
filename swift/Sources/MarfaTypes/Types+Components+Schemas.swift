@@ -3518,7 +3518,7 @@ extension Components {
             public struct PropertySchemaPayload: Codable, Hashable, Sendable {
                 /// - Remark: Generated from `#/components/schemas/EdgeTypeRequest/property_schema/additionalProperties`.
                 public struct AdditionalPropertiesPayload: Codable, Hashable, Sendable {
-                    /// A field type, as a type's `fields` take one, but never `thumbnail`: an edge carries no thumbnail.
+                    /// A field type's name, stored as given rather than checked against the ones a type's `fields` take, and never `thumbnail`: an edge carries no thumbnail.
                     ///
                     /// - Remark: Generated from `#/components/schemas/EdgeTypeRequest/property_schema/additionalProperties/type`.
                     public var _type: Swift.String
@@ -3528,30 +3528,37 @@ extension Components {
                     public var required: Swift.Bool?
                     /// - Remark: Generated from `#/components/schemas/EdgeTypeRequest/property_schema/additionalProperties/enum_values`.
                     public var enumValues: [Swift.String]?
-                    /// A field type, as a type's `fields` take one, but never `thumbnail`: an edge carries no thumbnail.
+                    /// A field type's name, stored as given rather than checked against the ones a type's `fields` take, and never `thumbnail`: an edge carries no thumbnail.
                     ///
                     /// - Remark: Generated from `#/components/schemas/EdgeTypeRequest/property_schema/additionalProperties/items_type`.
                     public var itemsType: Swift.String?
+                    /// A refinement of a string property, stored as given, and never `thumbnail`: an edge carries no thumbnail.
+                    ///
+                    /// - Remark: Generated from `#/components/schemas/EdgeTypeRequest/property_schema/additionalProperties/format`.
+                    public var format: Swift.String?
                     /// Creates a new `AdditionalPropertiesPayload`.
                     ///
                     /// - Parameters:
-                    ///   - _type: A field type, as a type's `fields` take one, but never `thumbnail`: an edge carries no thumbnail.
+                    ///   - _type: A field type's name, stored as given rather than checked against the ones a type's `fields` take, and never `thumbnail`: an edge carries no thumbnail.
                     ///   - description:
                     ///   - required:
                     ///   - enumValues:
-                    ///   - itemsType: A field type, as a type's `fields` take one, but never `thumbnail`: an edge carries no thumbnail.
+                    ///   - itemsType: A field type's name, stored as given rather than checked against the ones a type's `fields` take, and never `thumbnail`: an edge carries no thumbnail.
+                    ///   - format: A refinement of a string property, stored as given, and never `thumbnail`: an edge carries no thumbnail.
                     public init(
                         _type: Swift.String,
                         description: Swift.String? = nil,
                         required: Swift.Bool? = nil,
                         enumValues: [Swift.String]? = nil,
-                        itemsType: Swift.String? = nil
+                        itemsType: Swift.String? = nil,
+                        format: Swift.String? = nil
                     ) {
                         self._type = _type
                         self.description = description
                         self.required = required
                         self.enumValues = enumValues
                         self.itemsType = itemsType
+                        self.format = format
                     }
                     public enum CodingKeys: String, CodingKey {
                         case _type = "type"
@@ -3559,6 +3566,7 @@ extension Components {
                         case required
                         case enumValues = "enum_values"
                         case itemsType = "items_type"
+                        case format
                     }
                 }
                 /// A container of undocumented properties.

@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
 pub struct EdgeTypeRequestPropertySchemaValue {
-    /// A field type, as a type's `fields` take one, but never `thumbnail`: an edge carries no thumbnail.
+    /// A field type's name, stored as given rather than checked against the ones a type's `fields` take, and never `thumbnail`: an edge carries no thumbnail.
     #[serde(rename = "type")]
     pub r#type: String,
     #[serde(rename = "description", skip_serializing_if = "Option::is_none")]
@@ -22,9 +22,12 @@ pub struct EdgeTypeRequestPropertySchemaValue {
     pub required: Option<bool>,
     #[serde(rename = "enum_values", skip_serializing_if = "Option::is_none")]
     pub enum_values: Option<Vec<String>>,
-    /// A field type, as a type's `fields` take one, but never `thumbnail`: an edge carries no thumbnail.
+    /// A field type's name, stored as given rather than checked against the ones a type's `fields` take, and never `thumbnail`: an edge carries no thumbnail.
     #[serde(rename = "items_type", skip_serializing_if = "Option::is_none")]
     pub items_type: Option<String>,
+    /// A refinement of a string property, stored as given, and never `thumbnail`: an edge carries no thumbnail.
+    #[serde(rename = "format", skip_serializing_if = "Option::is_none")]
+    pub format: Option<String>,
 }
 
 impl EdgeTypeRequestPropertySchemaValue {
@@ -35,6 +38,7 @@ impl EdgeTypeRequestPropertySchemaValue {
             required: None,
             enum_values: None,
             items_type: None,
+            format: None,
         }
     }
 }

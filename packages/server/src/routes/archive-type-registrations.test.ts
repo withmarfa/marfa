@@ -521,6 +521,7 @@ describe("archives carry type registrations", () => {
 
     const refused: Record<string, string>[] = [
       { type: "thumbnail" },
+      { type: "string", format: "thumbnail" },
       { type: "array", items_type: "thumbnail" },
     ];
     for (const property of refused) {

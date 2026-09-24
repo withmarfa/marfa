@@ -61,7 +61,19 @@ const EdgePropertyTypeSchema = z
     message: "An edge never carries a thumbnail",
   })
   .describe(
-    "A field type, as a type's `fields` take one, but never `thumbnail`: an edge carries no thumbnail.",
+    "A field type's name, stored as given rather than checked against the ones a type's `fields` take, and never `thumbnail`: an edge carries no thumbnail.",
+  );
+
+/** Declared so the format that stands for a thumbnail on a type's field is
+ *  refused here, where an undeclared key would be dropped and the edge type
+ *  registered as though it named none. */
+const EdgePropertyFormatSchema = z
+  .string()
+  .refine((format) => format !== "thumbnail", {
+    message: "An edge never carries a thumbnail",
+  })
+  .describe(
+    "A refinement of a string property, stored as given, and never `thumbnail`: an edge carries no thumbnail.",
   );
 
 /** Exported so the archive restore validates a carried edge type through
@@ -90,6 +102,7 @@ export const EdgeTypeRequestSchema = z
           required: z.boolean().optional(),
           enum_values: z.array(z.string()).optional(),
           items_type: EdgePropertyTypeSchema.optional(),
+          format: EdgePropertyFormatSchema.optional(),
         }),
       )
       .optional(),

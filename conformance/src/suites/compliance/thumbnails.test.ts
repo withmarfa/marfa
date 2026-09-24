@@ -233,6 +233,18 @@ describe("a thumbnail field", () => {
       edge.status,
       "an edge type declared a thumbnail property, which nothing checks and nothing reads",
     ).toBe(400);
+    // The format that stands for a thumbnail on a type's field is refused
+    // on an edge's property too, rather than dropped and the edge type
+    // registered as though it had carried none.
+    const formatEdge = await client.registerEdgeType({
+      id: `mock.depicts-format.${ctx.runId}`,
+      cardinality: "many-to-many",
+      property_schema: { preview: { type: "string", format: "thumbnail" } },
+    });
+    expect(
+      formatEdge.status,
+      "an edge type declared a thumbnail by its format, and the format was dropped rather than refused",
+    ).toBe(400);
     const arrayEdge = await client.registerEdgeType({
       id: `mock.depicts-array.${ctx.runId}`,
       cardinality: "many-to-many",

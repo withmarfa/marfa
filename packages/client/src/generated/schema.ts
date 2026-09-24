@@ -1817,13 +1817,15 @@ export interface components {
             cascade_on_delete?: "cascade" | "orphan" | "block";
             property_schema?: {
                 [key: string]: {
-                    /** @description A field type, as a type's `fields` take one, but never `thumbnail`: an edge carries no thumbnail. */
+                    /** @description A field type's name, stored as given rather than checked against the ones a type's `fields` take, and never `thumbnail`: an edge carries no thumbnail. */
                     type: string;
                     description?: string;
                     required?: boolean;
                     enum_values?: string[];
-                    /** @description A field type, as a type's `fields` take one, but never `thumbnail`: an edge carries no thumbnail. */
+                    /** @description A field type's name, stored as given rather than checked against the ones a type's `fields` take, and never `thumbnail`: an edge carries no thumbnail. */
                     items_type?: string;
+                    /** @description A refinement of a string property, stored as given, and never `thumbnail`: an edge carries no thumbnail. */
+                    format?: string;
                 };
             };
         };
