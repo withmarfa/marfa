@@ -36269,12 +36269,12 @@ public enum Operations {
                 /// - Remark: Generated from `#/paths/types/{id}/PUT/responses/400/content`.
                 @frozen public enum Body: Sendable, Hashable {
                     /// - Remark: Generated from `#/paths/types/{id}/PUT/responses/400/content/application\/json`.
-                    case json(Components.Schemas.InvalidSchemaOrValidationErrorRefusal)
+                    case json(Components.Schemas.InheritanceViolationOrInvalidSchemaOrValidationErrorRefusal)
                     /// The associated value of the enum case if `self` is `.json`.
                     ///
                     /// - Throws: An error if `self` is not `.json`.
                     /// - SeeAlso: `.json`.
-                    public var json: Components.Schemas.InvalidSchemaOrValidationErrorRefusal {
+                    public var json: Components.Schemas.InheritanceViolationOrInvalidSchemaOrValidationErrorRefusal {
                         get throws {
                             switch self {
                             case let .json(body):
@@ -36298,7 +36298,7 @@ public enum Operations {
                     self.body = body
                 }
             }
-            /// `validation_error` for a malformed identifier, a body of the wrong shape, or a parent chain that is circular, too deep or unresolved; `invalid_schema` for a schema the validator refuses.
+            /// `validation_error` for a malformed identifier, a body of the wrong shape, or a parent chain that is circular, too deep or unresolved; `inheritance_violation` for a field whose shape differs from the one a type above or below it in the chain declares under the same name; `invalid_schema` for any other schema the validator refuses.
             ///
             /// - Remark: Generated from `#/paths//types/{id}/put(updateType)/responses/400`.
             ///
