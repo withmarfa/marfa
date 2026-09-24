@@ -924,10 +924,13 @@ describe("the working copy holds one slice", () => {
       altered.ok,
       "the device kept bytes that are not the blob they were fetched as, so the name answers a different file",
     ).toBe(false);
-    // The link was followed, so the refusal is the check on what came back
-    // and not a fetch that never happened.
+    // The altered blob's own link was followed, so the refusal is the check
+    // on what came back and not a fetch that never happened.
     expect(
-      server.requests.some((request) => request.pathname.startsWith("/links/")),
+      server.requests.some(
+        (request) =>
+          request.pathname === `/links/${hash.slice("sha256:".length)}`,
+      ),
       "the device never followed the link, so nothing here is about what it does with what the link serves",
     ).toBe(true);
     await server.offline();
