@@ -72,7 +72,7 @@ export interface CliDeviceOptions {
   store: string;
   url?: string;
   key?: string;
-  /** Open the store to read only (`device.md` 40). */
+  /** Open the store to read only (`device.md` 41). */
   reader?: boolean;
 }
 
@@ -102,7 +102,7 @@ export class CliDevice implements DeviceUnderTest {
   }
 
   /**
-   * Holds the event stream open for `seconds` (`device.md` 39): a line per
+   * Holds the event stream open for `seconds` (`device.md` 40): a line per
    * event that changed the copy, then the report.
    */
   async follow(

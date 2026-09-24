@@ -98,7 +98,7 @@ impl Core {
     }
 
     /// Opens a store another process writes, to read it and nothing else
-    /// (`device.md` 40).
+    /// (`device.md` 41).
     ///
     /// It never claims the writer role, so a helper started before the app
     /// cannot lock the app out of its own store, and it never writes, so it
@@ -182,7 +182,7 @@ impl Core {
 
     /// Holds the event stream open and applies each event as it arrives,
     /// telling `on_change` of each one that changed the copy, until `stop` is
-    /// set (`device.md` 39).
+    /// set (`device.md` 40).
     ///
     /// `on_change` is called with no lock on the store held, so it may read
     /// the row it is told about.
@@ -198,7 +198,7 @@ impl Core {
     }
 
     /// A number that moves each time another process saves to this store:
-    /// a reader polls it and reads again when it moves (`device.md` 40).
+    /// a reader polls it and reads again when it moves (`device.md` 41).
     pub fn data_version(&self) -> Result<i64> {
         store::data_version(&*self.conn()?)
     }

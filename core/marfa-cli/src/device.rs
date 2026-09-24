@@ -813,7 +813,7 @@ impl Store {
     /// there is no default store, because a store nobody named is one nobody
     /// can find again. The file is made at the named path on first open, so
     /// the state report is answerable before a hydration (`device.md` 5);
-    /// opened to read, it is never made (`device.md` 40).
+    /// opened to read, it is never made (`device.md` 41).
     fn open(&self, server: Option<Server>) -> Result<Core, CliError> {
         let Some(path) = &self.db else {
             return Err(CliError::NoStoreNamed);

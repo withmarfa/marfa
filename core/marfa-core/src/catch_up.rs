@@ -41,7 +41,7 @@ struct Slice {
     tier: Tier,
 }
 
-/// One event a held stream applied (`device.md` 39): what it was, what it
+/// One event a held stream applied (`device.md` 40): what it was, what it
 /// was about, and the cursor it left behind.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Change {
@@ -251,7 +251,7 @@ fn aged_out(core: &Core, payload: EventPayload) -> Result<CoreError> {
 }
 
 /// Holds the stream open and applies each event as it arrives, under
-/// catch-up's rules, until `stop` is set (`device.md` 39).
+/// catch-up's rules, until `stop` is set (`device.md` 40).
 ///
 /// A stream that ends, drops or cannot be opened is opened again from the
 /// stored cursor, so nothing between the two is lost: the cursor moves only

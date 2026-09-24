@@ -52,7 +52,7 @@ export interface CatchUpReport {
   reached_head: boolean;
 }
 
-/** One event a held stream applied (`device.md` 39). */
+/** One event a held stream applied (`device.md` 40). */
 export interface Change {
   event: string;
   item_id: string | null;
