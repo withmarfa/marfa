@@ -55,11 +55,14 @@ pub fn open(path: &Path) -> Result<Connection, CoreError> {
     Ok(conn)
 }
 
-/// Opens a store another process made, to read it: no file is created, no
-/// schema is applied, and the store is never written, so a reader started
-/// before the writer can never lock the writer out or leave a store half
-/// made. Read-only rather than a promise, because a read-write connection
-/// that is the last to close checkpoints the writer's journal into the file.
+/// Opens a store another process made, to read it: no store is made where
+/// none is, no schema is applied, and the store's file is never written, so
+/// a reader started before the writer can never lock the writer out or leave
+/// a store half made. Read-only rather than a promise, because a read-write
+/// connection that is the last to close checkpoints the writer's journal
+/// into the file. SQLite may still make the journal's two files beside the
+/// store, where a writer closed and took them away, because a reader of a
+/// store in WAL mode reads through them.
 pub fn open_to_read(path: &Path) -> Result<Connection, CoreError> {
     let conn = Connection::open_with_flags(
         path,
