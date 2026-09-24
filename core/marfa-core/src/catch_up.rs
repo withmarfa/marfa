@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::io::{self, BufReader};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -58,6 +59,64 @@ pub(crate) const PACE: Pace = Pace {
 struct Slice {
     types: Vec<String>,
     tier: Tier,
+}
+
+/// The events that decide a row by its type: whether the slice holds it, and
+/// what its index entry leaves out.
+const ITEM_CHANGES: [&str; 6] = [
+    "item.created",
+    "item.updated",
+    "item.deleted",
+    "item.restored",
+    "item.state_changed",
+    "metadata.changed",
+];
+
+/// What an item event names that the catalog cannot answer for, where the
+/// row could be in the slice: a type the catalog does not hold, or an image's
+/// data URI under a property it does not know as that type's thumbnail. Either
+/// means the server's catalog changed after this one was read, and taking the
+/// event by this one would drop a row the slice holds through a parent it has
+/// not seen, or index an image's base64.
+///
+/// Only an image's data URI is looked for, because only a thumbnail changes
+/// what an entry leaves out, and a property its type does not declare is
+/// otherwise nothing unusual: the server takes one on any type its strict
+/// mode does not name.
+fn unexplained(
+    catalog: &Catalog,
+    slice: &Slice,
+    kind: &str,
+    payload: &EventPayload,
+) -> Option<(String, Option<String>)> {
+    if !ITEM_CHANGES.contains(&kind) {
+        return None;
+    }
+    let item = payload.item.as_ref()?;
+    // A row of the other tier leaves the copy whatever its type is.
+    if Tier::parse_wire(item.tier.as_deref()).ok()? != Some(slice.tier) {
+        return None;
+    }
+    if !catalog.known(&item.r#type) {
+        return Some((item.r#type.clone(), None));
+    }
+    if !slice
+        .types
+        .iter()
+        .any(|declared| catalog.matches(declared, &item.r#type))
+    {
+        return None;
+    }
+    let thumbnail = catalog.thumbnail_field(&item.r#type);
+    item.properties
+        .iter()
+        .find(|(name, value)| {
+            thumbnail != Some(name.as_str())
+                && value
+                    .as_str()
+                    .is_some_and(|text| text.starts_with("data:image/"))
+        })
+        .map(|(name, _)| (item.r#type.clone(), Some(name.clone())))
 }
 
 /// One event a held stream applied (`device.md` 40): what it was, what it
@@ -188,8 +247,11 @@ fn payload_of(data: &str) -> Result<EventPayload> {
 
 pub(crate) fn catch_up(core: &Core, http: &Http, idle: Duration) -> Result<CatchUpReport> {
     let (slice, cursor) = start(core)?;
-    let catalog = adopt(core, &http.types()?)?;
+    let mut catalog = adopt(core, &http.types()?)?;
     let frames = open(http, &cursor, &slice, STREAM_HARD_BOUND)?;
+    // Read for once each, so a type the server will not describe costs one
+    // read of the catalog rather than one for every event naming it.
+    let mut refreshed = HashSet::new();
 
     let mut report = CatchUpReport {
         applied: 0,
@@ -244,6 +306,11 @@ pub(crate) fn catch_up(core: &Core, http: &Http, idle: Duration) -> Result<Catch
                     }
                     kind => {
                         let Some(id) = id else { continue };
+                        if let Some(named) = unexplained(&catalog, &slice, kind, &payload)
+                            && refreshed.insert(named)
+                        {
+                            catalog = adopt(core, &http.types()?)?;
+                        }
                         if take(core, &catalog, &slice, &id, kind, &payload)?.is_some() {
                             report.applied += 1;
                         } else {
@@ -313,6 +380,10 @@ fn follow_paced(
     let mut report = FollowReport::default();
     let mut backoff = pace.reconnect_first;
     let mut asked = false;
+    // Read for once each: an event naming one again is taken by the catalog
+    // as it is, so a type the server will not describe costs one reopen
+    // rather than one for every event naming it.
+    let mut refreshed = HashSet::new();
     while !stop.load(Ordering::Relaxed) {
         let (slice, cursor) = start(core)?;
         report.cursor = cursor.clone();
@@ -344,9 +415,7 @@ fn follow_paced(
         let catalog = adopt(core, &types)?;
         let opened = Instant::now();
         let mut heard = Instant::now();
-        // A type registered after this stream opened is one the catalog
-        // cannot index by, so the stream is opened again at once to learn it.
-        let mut unknown_type = false;
+        let mut behind = false;
         loop {
             if stop.load(Ordering::Relaxed) {
                 return Ok(report);
@@ -368,6 +437,15 @@ fn follow_paced(
                 "stream_incomplete" => break,
                 kind => {
                     let Some(id) = id else { continue };
+                    // Left untaken with the cursor before it: the stream
+                    // opened again at once reads the catalog first, then
+                    // replays this event.
+                    if let Some(named) = unexplained(&catalog, &slice, kind, &payload)
+                        && refreshed.insert(named)
+                    {
+                        behind = true;
+                        break;
+                    }
                     match take(core, &catalog, &slice, &id, kind, &payload)? {
                         Some(change) => {
                             report.applied += 1;
@@ -376,18 +454,10 @@ fn follow_paced(
                         None => report.skipped += 1,
                     }
                     report.cursor = id;
-                    if payload
-                        .item
-                        .as_ref()
-                        .is_some_and(|item| !catalog.known(&item.r#type))
-                    {
-                        unknown_type = true;
-                        break;
-                    }
                 }
             }
         }
-        if unknown_type {
+        if behind {
             continue;
         }
         if opened.elapsed() >= pace.reconnect_most {
@@ -485,8 +555,7 @@ fn apply(
             };
             store::delete_item(tx, &item.id)
         }
-        "item.created" | "item.updated" | "item.deleted" | "item.restored"
-        | "item.state_changed" | "metadata.changed" => {
+        kind if ITEM_CHANGES.contains(&kind) => {
             let Some(item) = &payload.item else {
                 return Ok(false);
             };

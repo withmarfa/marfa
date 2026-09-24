@@ -1,4 +1,4 @@
-import type { Answer, SseFrame } from "./scripted-server.js";
+import type { Answer, RecordedRequest, SseFrame } from "./scripted-server.js";
 
 /**
  * The bodies the scripted server gives back, in the shapes the real server
@@ -281,6 +281,30 @@ export function headRead(cursor: string): Answer {
 /** A replay: the head, then the events after the cursor. */
 export function replay(head: string, frames: SseFrame[]): Answer {
   return { kind: "sse", frames: [connected, streamCursor(head), ...frames] };
+}
+
+/**
+ * A held stream that answers each request from the cursor it names, as the
+ * server's log does: every frame after `Last-Event-ID`. A fixed answer would
+ * give a device that opened the stream again either nothing or every frame
+ * again, whatever it had taken, and neither is what the server does.
+ */
+export function heldLog(
+  frames: SseFrame[],
+): (request: RecordedRequest) => Answer {
+  return (request) => {
+    const after = BigInt(request.headers["last-event-id"] ?? "0");
+    return {
+      kind: "sse",
+      hold: true,
+      frames: [
+        connected,
+        ...frames.filter(
+          (frame) => frame.id !== undefined && BigInt(frame.id) > after,
+        ),
+      ],
+    };
+  };
 }
 
 /**

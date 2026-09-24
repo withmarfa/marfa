@@ -13,6 +13,7 @@ import {
   SCRIPTED_TYPES,
   snapshotType,
   connected,
+  heldLog,
   itemEvent,
   refusal,
   replay,
@@ -311,27 +312,21 @@ describe("the working copy holds one slice", () => {
     server.answer(
       "GET",
       "/events",
-      {
-        kind: "sse",
-        hold: true,
-        frames: [
-          connected,
-          itemEvent(
-            "11",
-            "item.created",
-            wireItem({
-              id: "late",
-              type: "core.note.snapshot",
-              properties: {
-                title: "Late",
-                body: "zebraword",
-                thumbnail: "data:image/png;base64,iVBORw0KGgoA/unicornsXYZ",
-              },
-            }),
-          ),
-        ],
-      },
-      { kind: "sse", hold: true, frames: [connected] },
+      heldLog([
+        itemEvent(
+          "11",
+          "item.created",
+          wireItem({
+            id: "late",
+            type: "core.note.snapshot",
+            properties: {
+              title: "Late",
+              body: "zebraword",
+              thumbnail: "data:image/png;base64,iVBORw0KGgoA/unicornsXYZ",
+            },
+          }),
+        ),
+      ]),
     );
     expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
     expect((await device.follow(4)).ok).toBe(true);
@@ -348,6 +343,90 @@ describe("the working copy holds one slice", () => {
     expect(
       await found("unicornsXYZ"),
       "a thumbnail of a type the device learned only after its item arrived stayed in the index",
+    ).toEqual([]);
+  });
+
+  it("keeps a thumbnail out of its index when its type gains one after the stream opened", async () => {
+    harness = await startHarness("thumbnail-gained");
+    const { server, device } = harness;
+    const photo = (thumbnail: boolean) =>
+      wireType("user.photo", {
+        fields: {
+          title: { type: "string" },
+          body: { type: "string" },
+          ...(thumbnail ? { thumbnail: { type: "thumbnail" } } : {}),
+        },
+      });
+    // The type gains its thumbnail after the device read the catalog: the
+    // hydration and the first stream read it without one, every read after
+    // with it.
+    let reads = 0;
+    scriptHydration(server, {
+      head: "10",
+      rows: {
+        "user.photo": [
+          {
+            item: {
+              id: "photo",
+              type: "user.photo",
+              properties: { title: "Holiday", body: "as hydrated" },
+            },
+          },
+        ],
+      },
+      catalog: {
+        kind: "json",
+        status: 200,
+        body: { data: [...SCRIPTED_TYPES, photo(false)], next_cursor: null },
+      },
+    });
+    server.answer("GET", "/types", () => {
+      reads += 1;
+      return {
+        kind: "json",
+        status: 200,
+        body: {
+          data: [...SCRIPTED_TYPES, photo(reads > 1)],
+          next_cursor: null,
+        },
+      };
+    });
+    server.answer(
+      "GET",
+      "/events",
+      heldLog([
+        itemEvent(
+          "11",
+          "item.updated",
+          wireItem({
+            id: "photo",
+            type: "user.photo",
+            version: 2,
+            properties: {
+              title: "Holiday",
+              body: "zebraword",
+              thumbnail: "data:image/png;base64,iVBORw0KGgoA/unicornsXYZ",
+            },
+          }),
+        ),
+      ]),
+    );
+    expect((await device.hydrate(["user.photo"], "library")).ok).toBe(true);
+    const followed = await device.follow(3);
+    expect(followed.ok, JSON.stringify(followed)).toBe(true);
+    // The witness that the catalog was read again after the event named an
+    // image under a property it did not know as the thumbnail.
+    expect(reads, "the follow never read the catalog again").toBeGreaterThan(1);
+
+    const found = async (query: string): Promise<string[]> => {
+      const hits = await device.search(query);
+      return hits.ok ? hits.value.map((hit) => hit.item.id) : [];
+    };
+    // The witness: the event was applied and its row indexed.
+    expect(await found("zebraword")).toEqual(["photo"]);
+    expect(
+      await found("unicornsXYZ"),
+      "a type gained a thumbnail after the stream opened and the image's base64 went into the index",
     ).toEqual([]);
   });
 
