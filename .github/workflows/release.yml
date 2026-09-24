@@ -2,13 +2,15 @@ name: Release
 
 # A release is a tag, and tags are the maintainer's. Each is the one before
 # it plus 0.0.1, starting at 0.0.1. Pushing `v<version>` builds the artifacts
-# from that commit, uploads them to the run, and publishes them.
+# from that commit, uploads them to the run, and publishes them: the npm
+# packages `@withmarfa/core` and `@withmarfa/client`, the `marfa-client`
+# crate, the Swift types as a pull request to marfa-swift-sdk, and a GitHub
+# release carrying every artifact.
 #
-# A dispatch with a `version` is a dry run: it runs the same jobs a tag
-# would, against a commit that passed CI on `main`, and skips only the
-# publish job. It is how the workflow is exercised without a tag, which only
-# the maintainer makes; the tag path reads the version off the tag and never
-# off an input.
+# A dispatch with a `version` is a dry run: it runs the same build a tag
+# would, and skips only the publish job. It is how the workflow is exercised
+# without a tag, which only the maintainer makes; the tag path reads the
+# version off the tag and never off an input.
 #
 # The version is the tag's, and nowhere else: `scripts/release/stamp-version.sh`
 # writes it into every manifest in this checkout, which is why no manifest in
@@ -39,27 +41,31 @@ jobs:
       contents: read
       actions: read
     steps:
-      # A tag has to point at a commit that went through `ci.yml` on `main`,
-      # and so does a dry run, which is dispatched on `main`: the two runs
-      # differ in their trigger and in the publish job, and in nothing else.
+      # A tag has to point at a commit that went through `ci.yml` on `main`.
       # A pull request's head passes `ci.yml` too, and under squash merges it
       # never reaches `main`, so the run asked for is a push to `main`, not
       # any green run on the SHA. Verifying that run is stronger than
       # recomputing it here: the steps below would pass against the tag's
       # own tree either way. This is why `ci.yml` does not cancel a
       # superseded run on `main`: a canceled run is not a successful one.
-      - name: Require a green CI run on main for this commit
+      #
+      # A dry run publishes nothing, so it asks only that `ci.yml` passed at
+      # the commit by any event, which lets a branch that changes this
+      # workflow dry-run it before it merges.
+      - name: Require a green CI run for this commit
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          runs=$(gh api \
-            "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$GITHUB_SHA&status=success&event=push&branch=main" \
-            --jq '.total_count')
+          query="head_sha=$GITHUB_SHA&status=success"
+          if [ "$GITHUB_EVENT_NAME" = "push" ]; then
+            query="$query&event=push&branch=main"
+          fi
+          runs=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?$query" --jq '.total_count')
           if [ "${runs:-0}" -lt 1 ]; then
-            echo "::error::No successful ci.yml run on main for $GITHUB_SHA. A release refuses a commit that has not passed CI on main."
+            echo "::error::No successful ci.yml run for $GITHUB_SHA ($query). A release refuses a commit that has not passed CI."
             exit 1
           fi
-          echo "ci.yml is green on main for $GITHUB_SHA"
+          echo "ci.yml is green for $GITHUB_SHA ($query)"
 
   build:
     name: Build the artifacts
@@ -80,6 +86,7 @@ jobs:
         id: version
         env:
           DRY_RUN_VERSION: ${{ inputs.version }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
             version="$DRY_RUN_VERSION"
@@ -124,6 +131,23 @@ jobs:
             echo "::error::$version does not follow the tags before it; the next version is 0.0.$expected."
             exit 1
           fi
+          # The version before it has to be released, and this commit has to
+          # come after that one's. Two tags pushed together would otherwise
+          # run side by side, and a tag on an older commit of main would
+          # release less than the version it follows. Asked of the API, which
+          # needs no history in this shallow checkout. A compare that fails
+          # fails the step rather than reading as either answer.
+          if [ "$previous" -ge 0 ]; then
+            if [ "$(gh release view "v0.0.$previous" --json isDraft --jq .isDraft 2>/dev/null)" != "false" ]; then
+              echo "::error::0.0.$previous is tagged but not released; release it before $version."
+              exit 1
+            fi
+            relation=$(gh api "repos/$GITHUB_REPOSITORY/compare/v0.0.$previous...$GITHUB_SHA" --jq .status)
+            if [ "$relation" != "ahead" ]; then
+              echo "::error::$GITHUB_SHA is $relation of v0.0.$previous; a release's commit comes after the one before it."
+              exit 1
+            fi
+          fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "previous=$previous" >> "$GITHUB_OUTPUT"
           echo "building $version from $GITHUB_SHA"
@@ -165,11 +189,23 @@ jobs:
 
       - name: Build and pack @withmarfa/core
         working-directory: core/bindings/node
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
           mkdir -p "$RUNNER_TEMP/artifacts"
           pnpm --ignore-workspace install --frozen-lockfile
           pnpm --ignore-workspace run build
           pnpm --ignore-workspace pack --pack-destination "$RUNNER_TEMP/artifacts"
+          # A pack that found no build still succeeds, holding package.json
+          # alone, so what the package's `files` names is asked for by name.
+          listing=$(tar -tzf "$RUNNER_TEMP/artifacts/withmarfa-core-$VERSION.tgz")
+          for entry in package/index.js package/index.d.ts package/marfa-core.darwin-arm64.node; do
+            if ! grep -qx "$entry" <<< "$listing"; then
+              echo "::error::@withmarfa/core's tarball has no $entry:"
+              echo "$listing"
+              exit 1
+            fi
+          done
 
       - name: Build the binary for macOS
         working-directory: core
@@ -177,8 +213,12 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           cargo build --release -p marfa-cli
+          reported=$(target/release/marfa --version)
+          if [ "$reported" != "marfa $VERSION" ]; then
+            echo "::error::The binary reports '$reported', not 'marfa $VERSION'."
+            exit 1
+          fi
           tar -czf "$RUNNER_TEMP/artifacts/marfa-$VERSION-darwin-arm64.tar.gz" -C target/release marfa
-          target/release/marfa --version
 
       - name: Pack @withmarfa/client
         run: pnpm --filter @withmarfa/client pack --pack-destination "$RUNNER_TEMP/artifacts"
@@ -202,6 +242,14 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           swift build
+          # zip names a missing path in a warning and zips the rest, so each
+          # is asked for first.
+          for path in Package.swift Package.resolved README.md Sources/MarfaTypes Tests; do
+            if [ ! -e "$path" ]; then
+              echo "::error::The Swift package has no $path to zip."
+              exit 1
+            fi
+          done
           zip -qr "$RUNNER_TEMP/artifacts/MarfaTypes-$VERSION.zip" Package.swift Package.resolved README.md Sources Tests
 
       # What the release moved on the published surface, against the lock
@@ -221,14 +269,47 @@ jobs:
           fi
           cat "$out"
 
+      # Exactly the six the publish job reads, by name: an upload that only
+      # refuses an empty folder would carry a run missing one.
+      - name: Hold the artifacts to the six a release carries
+        working-directory: ${{ runner.temp }}/artifacts
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          expected=$(printf '%s\n' \
+            "MarfaTypes-$VERSION.zip" \
+            "marfa-$VERSION-darwin-arm64.tar.gz" \
+            "marfa-client-$VERSION.crate" \
+            "surface-delta-$VERSION.md" \
+            "withmarfa-client-$VERSION.tgz" \
+            "withmarfa-core-$VERSION.tgz" | LC_ALL=C sort)
+          found=$(for file in *; do printf '%s\n' "$file"; done | LC_ALL=C sort)
+          if [ "$found" != "$expected" ]; then
+            echo "::error::The artifacts are not the six a release carries."
+            diff <(echo "$expected") <(echo "$found") || true
+            exit 1
+          fi
+          for file in $found; do
+            if [ ! -s "$file" ]; then
+              echo "::error::$file is empty."
+              exit 1
+            fi
+          done
+          echo "$found"
+
       - uses: actions/upload-artifact@v7
         with:
           name: release-${{ steps.version.outputs.version }}
           path: ${{ runner.temp }}/artifacts/
           if-no-files-found: error
 
-  # Never reached by a dry run. The npm package and the crate go to their
-  # registries, and a GitHub release at the tag carries every artifact.
+  # Never reached by a dry run. Ordered so a failure part way leaves what a
+  # re-run of the same tag can finish, and never a version half out: every
+  # credential is checked before anything is sent; the steps that can be
+  # undone, the Swift pull request and the draft release, come first; the
+  # registries, which never take a version back, come last; and the release
+  # is made public only once everything is out. Every step asks whether its
+  # version is already there and skips if it is, so a re-run repeats nothing.
   publish:
     name: Publish
     needs: build
@@ -237,7 +318,27 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: write
+    env:
+      VERSION: ${{ needs.build.outputs.version }}
+      SWIFT_SDK: withmarfa/marfa-swift-sdk
     steps:
+      # Named one by one, so the message says which is missing. Before the
+      # checkout, so a tag without them costs nothing.
+      - name: Require every publishing credential
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          SWIFT_SDK_TOKEN: ${{ secrets.SWIFT_SDK_TOKEN }}
+        run: |
+          missing=()
+          for name in NPM_TOKEN CARGO_REGISTRY_TOKEN SWIFT_SDK_TOKEN; do
+            if [ -z "${!name}" ]; then missing+=("$name"); fi
+          done
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "::error::Nothing was published: the repository has no secret ${missing[*]}."
+            exit 1
+          fi
+
       - uses: actions/checkout@v7
       - uses: actions/download-artifact@v7
         with:
@@ -250,33 +351,127 @@ jobs:
         run: |
           echo "/opt/homebrew/opt/rustup/bin" >> "$GITHUB_PATH"
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+      # A set secret can still be the wrong one. npm names the account a
+      # token signs in as, and the Swift SDK's token has to read the
+      # repository it pushes to. crates.io has no read that proves a
+      # publish token, so that one is known only by its publish.
+      - name: Check the credentials reach what they publish to
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          GH_TOKEN: ${{ secrets.SWIFT_SDK_TOKEN }}
+        run: |
+          echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > "$RUNNER_TEMP/.npmrc"
+          if ! npm whoami --userconfig "$RUNNER_TEMP/.npmrc" > /dev/null; then
+            echo "::error::NPM_TOKEN does not sign in to npm."
+            exit 1
+          fi
+          if ! gh api "repos/$SWIFT_SDK" --jq .full_name > /dev/null; then
+            echo "::error::SWIFT_SDK_TOKEN cannot read $SWIFT_SDK."
+            exit 1
+          fi
+
+      # The Swift types land in marfa-swift-sdk as a pull request that puts
+      # this release's generated sources at `Sources/MarfaTypes/`, on the
+      # branch `release/v<version>`. Nothing lands until the SDK merges it:
+      # the SDK owns its manifest, its target list and its own versions, so
+      # the release proposes the sources and leaves the rest to the SDK. The
+      # zip on the GitHub release carries the same sources as a package of
+      # their own.
+      - name: Propose the Swift types to marfa-swift-sdk
+        env:
+          GH_TOKEN: ${{ secrets.SWIFT_SDK_TOKEN }}
+        run: |
+          branch="release/v$VERSION"
+          if [ "$(gh pr list -R "$SWIFT_SDK" --head "$branch" --state all --json number --jq length)" != "0" ]; then
+            echo "$SWIFT_SDK already has a pull request from $branch"
+            exit 0
+          fi
+          sdk="$RUNNER_TEMP/swift-sdk"
+          auth="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 | tr -d '\n')"
+          git -c http.extraheader="$auth" clone --quiet --depth 1 "https://github.com/$SWIFT_SDK.git" "$sdk"
+          if git -C "$sdk" -c http.extraheader="$auth" ls-remote --exit-code --heads origin "$branch" > /dev/null; then
+            echo "$branch is on $SWIFT_SDK from an earlier run; opening its pull request"
+          else
+            unzip -q "artifacts/MarfaTypes-$VERSION.zip" 'Sources/MarfaTypes/*' -d "$RUNNER_TEMP/types"
+            git -C "$sdk" checkout --quiet -b "$branch"
+            rm -rf "$sdk/Sources/MarfaTypes"
+            mkdir -p "$sdk/Sources"
+            cp -R "$RUNNER_TEMP/types/Sources/MarfaTypes" "$sdk/Sources/MarfaTypes"
+            git -C "$sdk" add Sources/MarfaTypes
+            git -C "$sdk" \
+              -c user.name="github-actions[bot]" \
+              -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+              commit --quiet -m "feat(types): MarfaTypes from marfa v$VERSION"
+            git -C "$sdk" -c http.extraheader="$auth" push --quiet origin "$branch"
+          fi
+          gh pr create -R "$SWIFT_SDK" --base main --head "$branch" \
+            --title "feat(types): MarfaTypes from marfa v$VERSION" \
+            --body "The Swift types generated from the API document at marfa v$VERSION, as the monorepo's release built them, at \`Sources/MarfaTypes/\`. They need \`swift-openapi-runtime\`, as the zip on the monorepo's v$VERSION release declares."
+
+      # A draft, so it can be removed, and seen by nobody until it is made
+      # public at the end.
+      - name: Draft the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "v$VERSION" > /dev/null 2>&1; then
+            echo "v$VERSION already has a release; bringing its files up to date"
+            gh release upload "v$VERSION" artifacts/* --clobber
+          else
+            gh release create "v$VERSION" artifacts/* \
+              --draft \
+              --title "v$VERSION" \
+              --notes-file "artifacts/surface-delta-$VERSION.md" \
+              --verify-tag
+          fi
+
       # No `--provenance`: npm attests provenance only from a GitHub-hosted
       # runner's OIDC identity, and every job here runs on the self-hosted
-      # pool.
-      - name: Publish @withmarfa/client to npm
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-          VERSION: ${{ needs.build.outputs.version }}
+      # pool. `npm view` answers a version it has, and E404 for a package or
+      # version it has not; anything else fails the step rather than being
+      # read as either.
+      - name: Publish @withmarfa/core and @withmarfa/client to npm
         run: |
-          echo "//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}" > "$RUNNER_TEMP/.npmrc"
-          npm publish "artifacts/withmarfa-client-$VERSION.tgz" --access public --userconfig "$RUNNER_TEMP/.npmrc"
+          for package in core client; do
+            name="@withmarfa/$package"
+            if found=$(npm view "$name@$VERSION" version --userconfig "$RUNNER_TEMP/.npmrc" 2> "$RUNNER_TEMP/npm-view.err"); then
+              if [ "$found" = "$VERSION" ]; then
+                echo "$name@$VERSION is already on npm"
+                continue
+              fi
+            elif ! grep -q E404 "$RUNNER_TEMP/npm-view.err"; then
+              cat "$RUNNER_TEMP/npm-view.err"
+              exit 1
+            fi
+            npm publish "artifacts/withmarfa-$package-$VERSION.tgz" --access public --userconfig "$RUNNER_TEMP/.npmrc"
+          done
+
       - name: Publish marfa-client to crates.io
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-          VERSION: ${{ needs.build.outputs.version }}
         run: |
+          status=$(curl -s -o /dev/null -w '%{http_code}' -A "withmarfa-release" \
+            "https://crates.io/api/v1/crates/marfa-client/$VERSION")
+          case "$status" in
+            200)
+              echo "marfa-client $VERSION is already on crates.io"
+              exit 0
+              ;;
+            404) ;;
+            *)
+              echo "::error::crates.io answered $status for marfa-client $VERSION."
+              exit 1
+              ;;
+          esac
           mkdir -p "$RUNNER_TEMP/crate"
           tar -xzf "artifacts/marfa-client-$VERSION.crate" -C "$RUNNER_TEMP/crate"
           # The package is the one the build job made and checked, published
           # from where it was unpacked rather than from the checkout, which
           # `cargo publish` would package again.
           cargo publish --manifest-path "$RUNNER_TEMP/crate/marfa-client-$VERSION/Cargo.toml"
-      - name: Create the GitHub release
+
+      - name: Make the GitHub release public
         env:
           GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ needs.build.outputs.version }}
-        run: |
-          gh release create "v$VERSION" artifacts/* \
-            --title "v$VERSION" \
-            --notes-file "artifacts/surface-delta-$VERSION.md" \
-            --verify-tag
+        run: gh release edit "v$VERSION" --draft=false
