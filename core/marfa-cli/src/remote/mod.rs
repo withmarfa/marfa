@@ -505,7 +505,7 @@ pub fn refused(status: u16, text: &str, retry_after_seconds: Option<u64>) -> Cli
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::door::{Answer, Door};
+    use crate::door::{Answer, Door, another_contract};
 
     fn remote_at(door: &Door, key: Option<&str>) -> Remote {
         Remote::with(Transport::new(&door.url, key).unwrap())
@@ -706,7 +706,7 @@ mod tests {
                 "200 OK",
                 r#"{"access_token":"marfa_at_new","refresh_token":"marfa_rt_new","expires_in":3600,"token_type":"Bearer"}"#,
             ),
-            Answer::json("200 OK", PAGE).on_contract(Some("2")),
+            Answer::json("200 OK", PAGE).on_another_contract(),
         ]);
         let kept = Kept::Token {
             access_token: "marfa_at_old".into(),
@@ -730,7 +730,7 @@ mod tests {
         let remote = Remote::holding(&door.url, kept).unwrap();
         match remote.json(&Request::get(&["items"])) {
             Err(CliError::ContractMismatch { served, .. }) => {
-                assert_eq!(served, "answers contract 2");
+                assert_eq!(served, format!("answers contract {}", another_contract()));
             }
             other => panic!("{other:?}"),
         }
@@ -856,21 +856,21 @@ mod tests {
     #[test]
     fn an_answer_on_another_contract_is_refused() {
         let door = Door::open(vec![
-            Answer::json("200 OK", PAGE).on_contract(Some("2")),
+            Answer::json("200 OK", PAGE).on_another_contract(),
             Answer::json(
                 "404 Not Found",
                 r#"{"error":{"code":"item_not_found","message":"no"}}"#,
             )
-            .on_contract(Some("2")),
+            .on_another_contract(),
         ]);
         let remote = remote_at(&door, Some("marfa_k1_x"));
         assert_eq!(
             mismatch(remote.json(&Request::get(&["items"]))),
-            "answers contract 2"
+            format!("answers contract {}", another_contract())
         );
         assert_eq!(
             mismatch(remote.json(&Request::get(&["items", "i"]))),
-            "answers contract 2"
+            format!("answers contract {}", another_contract())
         );
         let paths: Vec<String> = door
             .received()
@@ -936,12 +936,12 @@ mod tests {
                 body: ": keepalive\n\n".into(),
                 headers: Vec::new(),
             }
-            .on_contract(Some("2")),
+            .on_another_contract(),
         ]);
         let remote = remote_at(&door, Some("marfa_k1_x"));
         match remote.stream(&Request::get(&["events"]).streamed()) {
             Err(CliError::ContractMismatch { served, .. }) => {
-                assert_eq!(served, "answers contract 2");
+                assert_eq!(served, format!("answers contract {}", another_contract()));
             }
             other => panic!("{:?}", other.map(|_| ())),
         }
@@ -978,7 +978,7 @@ mod tests {
     /// carries the status the server answered.
     #[test]
     fn a_read_refused_on_another_contract_says_no_write_was_sent() {
-        let door = Door::open(vec![Answer::json("200 OK", PAGE).on_contract(Some("2"))]);
+        let door = Door::open(vec![Answer::json("200 OK", PAGE).on_another_contract()]);
         match remote_at(&door, Some("marfa_k1_x")).json(&Request::get(&["items"])) {
             Err(
                 error @ CliError::ContractMismatch {
@@ -1003,7 +1003,7 @@ mod tests {
     #[test]
     fn a_write_answered_on_another_contract_says_it_was_sent() {
         let door = Door::open(vec![
-            Answer::json("201 Created", r#"{"item":{"id":"i"}}"#).on_contract(Some("2")),
+            Answer::json("201 Created", r#"{"item":{"id":"i"}}"#).on_another_contract(),
         ]);
         match remote_at(&door, Some("marfa_k1_x"))
             .json(&Request::post(&["items"]).json(serde_json::json!({})))
@@ -1027,8 +1027,8 @@ mod tests {
     #[test]
     fn the_body_of_an_answer_on_another_contract_is_not_read() {
         let door = Door::open(vec![
-            Answer::json("200 OK", PAGE).on_contract(Some("2")),
-            Answer::json("200 OK", PAGE).on_contract(Some("2")),
+            Answer::json("200 OK", PAGE).on_another_contract(),
+            Answer::json("200 OK", PAGE).on_another_contract(),
         ]);
         let transport = Transport::new(&door.url, Some("marfa_k1_x")).unwrap();
         let call = || Call {
@@ -1054,9 +1054,9 @@ mod tests {
     /// saying which contract a server speaks is what reading it is for.
     #[test]
     fn a_root_on_another_contract_is_described() {
-        let door = Door::open(vec![root("2").on_contract(Some("2"))]);
+        let door = Door::open(vec![root(&another_contract()).on_another_contract()]);
         let instance = remote_at(&door, Some("marfa_k1_x")).root().unwrap();
-        assert_eq!(instance["contract"], 2);
+        assert_eq!(instance["contract"], marfa_client::CONTRACT_VERSION + 1);
         let received = door.received();
         assert_eq!(received[0].header("authorization"), None);
     }
@@ -1331,7 +1331,7 @@ mod tests {
     /// command goes on to the identity door and names the person.
     #[test]
     fn whoami_on_another_contract_names_no_person() {
-        let door = Door::open(vec![root("2").on_contract(Some("2"))]);
+        let door = Door::open(vec![root(&another_contract()).on_another_contract()]);
         let kept = Kept::Token {
             access_token: "marfa_at_x".into(),
             refresh_token: None,
