@@ -53,7 +53,7 @@ pub enum DeviceCommand {
     /// printing a line for each that changed the copy.
     Follow {
         /// Stop after this many seconds; without it, follow until
-        /// interrupted.
+        /// interrupted. Either way it ends with its report.
         #[arg(long = "for", value_name = "SECONDS")]
         r#for: Option<u64>,
     },
@@ -437,10 +437,11 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<(), CliError> 
         DeviceCommand::Follow { r#for } => {
             let core = store.open_with_server(named)?;
             let stop = stop_after(r#for);
+            stop_on_interrupt();
             // A line that cannot be written stops the follow and is the
             // error it ends with, rather than events applied and never told.
             let mut unwritten: Option<CliError> = None;
-            let report = core.follow(&stop, |change| {
+            let report = core.follow(stop, |change| {
                 if unwritten.is_some() {
                     return;
                 }
@@ -790,16 +791,40 @@ fn blocked_reason() -> impl clap::builder::TypedValueParser<Value = marfa_core::
 const CHANGES_POLL: std::time::Duration = std::time::Duration::from_millis(100);
 
 /// A flag set after `seconds`, or never.
-fn stop_after(seconds: Option<u64>) -> std::sync::Arc<std::sync::atomic::AtomicBool> {
-    let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+/// What ends a `follow` or a `changes`: its time running out, a line it
+/// could not write, or an interrupt. One flag, because a signal handler can
+/// reach nothing but a static.
+static STOP: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// The flag, set after `seconds` where they are given.
+fn stop_after(seconds: Option<u64>) -> &'static std::sync::atomic::AtomicBool {
     if let Some(seconds) = seconds {
-        let flag = std::sync::Arc::clone(&stop);
         std::thread::spawn(move || {
             std::thread::sleep(std::time::Duration::from_secs(seconds));
-            flag.store(true, std::sync::atomic::Ordering::Relaxed);
+            STOP.store(true, std::sync::atomic::Ordering::Relaxed);
         });
     }
-    stop
+    &STOP
+}
+
+extern "C" fn interrupted(_: libc::c_int) {
+    STOP.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Ctrl-C asks a follow to stop, so it ends as it does when its time is up:
+/// its report printed and the store let go. The handler is spent once it
+/// runs, so a second Ctrl-C ends the process at once.
+fn stop_on_interrupt() {
+    // SAFETY: the handler only stores to an atomic, which is safe inside a
+    // signal handler, and the action is fully initialized before it is
+    // installed.
+    unsafe {
+        let mut action: libc::sigaction = std::mem::zeroed();
+        action.sa_sigaction = interrupted as extern "C" fn(libc::c_int) as libc::sighandler_t;
+        action.sa_flags = libc::SA_RESETHAND;
+        libc::sigemptyset(&mut action.sa_mask);
+        libc::sigaction(libc::SIGINT, &action, std::ptr::null_mut());
+    }
 }
 
 /// The store a device command names, and how it is opened.
