@@ -24,6 +24,7 @@ import {
   CONTRACT_HEADER,
   type Answer,
 } from "../../device/scripted-server.js";
+import { FolderDoor, type DoorCreate } from "../../device/folder-door.js";
 
 /**
  * The control on the scripted server.
@@ -255,6 +256,305 @@ describe("the scripted answers match the server's", () => {
     );
   });
 
+  it("matches a create onto a natural key a row holds: named by id, and not", async () => {
+    // What a device meets when a create it queued carries a key another
+    // device's create already landed under (`queue-and-verdicts.md` 38).
+    const sourceId = `fidelity-${ctx.runId}.md`;
+    const first = await client.createItem({
+      type: "core.note",
+      source: ctx.source,
+      source_id: sourceId,
+      properties: { title: "first", body: "first" },
+    });
+    expect(first.status, JSON.stringify(first.error)).toBe(201);
+    trackItem(ctx, first.data.item.id);
+
+    // A body naming an id that is not the row the key resolves.
+    const named = "01a00000-0000-7000-8000-0000000000fd";
+    const refused = await client.rawRequest("/items", {
+      method: "POST",
+      body: {
+        id: named,
+        type: "core.note",
+        source: ctx.source,
+        source_id: sourceId,
+        properties: { title: "second", body: "second" },
+      },
+    });
+    expect(
+      refused.status,
+      "a create naming another id was taken onto the row its key resolves, so the refusal this case compares was never produced",
+    ).toBe(400);
+    expectFidelity(
+      "a create whose id is not the row its natural key resolves",
+      { status: refused.status, body: refused.error },
+      answers.idNotTheKeys(named, first.data.item.id, ctx.source, sourceId),
+      {
+        same: [
+          "error.code",
+          "error.details.field",
+          "error.details.requested_id",
+          "error.details.existing_id",
+          "error.details.source",
+          "error.details.source_id",
+        ],
+        shape: ["error.message"],
+      },
+    );
+
+    // The same create naming no id lands on that row, under its id.
+    const upserted = await client.rawRequest("/items", {
+      method: "POST",
+      body: {
+        type: "core.note",
+        source: ctx.source,
+        source_id: sourceId,
+        version: first.data.item.version,
+        properties: { title: "second", body: "second" },
+      },
+    });
+    expect(upserted.status, JSON.stringify(upserted.error)).toBe(200);
+    const body = upserted.data as { item: { id: string; version: number } };
+    expect(body.item.id).toBe(first.data.item.id);
+    expectFidelity(
+      "a create with no id whose natural key resolves a row",
+      { status: upserted.status, body: upserted.data },
+      answers.upserted(
+        wireItem({
+          id: first.data.item.id,
+          version: 2,
+          properties: { title: "second", body: "second" },
+          source: ctx.source,
+          source_id: sourceId,
+        }),
+      ),
+      {
+        same: [
+          "item.id",
+          "item.source",
+          "item.source_id",
+          "item.version",
+          "metadata.tags",
+        ],
+        shape: ["item.properties"],
+      },
+    );
+  });
+
+  it("holds the scripted folder door's decisions to the server's", async () => {
+    // A folder fixture's server decides with `FolderDoor` (`folders.test.ts`),
+    // so each decision it makes is made here by both, on the same request,
+    // and has to come out the same: a door that decided differently would
+    // have a folder passing against rules nobody runs.
+    const door = new FolderDoor();
+    const sourceId = `door-${ctx.runId}.md`;
+    const decide = async (
+      name: string,
+      body: DoorCreate,
+      fields: Fields,
+      scripted: FolderDoor = door,
+      sender: MarfaClient = client,
+    ) => {
+      const real = await sender.rawRequest<Record<string, unknown>>("/items", {
+        method: "POST",
+        body,
+      });
+      const answer = scripted.create(body).answer;
+      const observed = {
+        status: real.status,
+        body: real.ok ? real.data : real.error,
+      };
+      expectFidelity(name, observed, answer, fields);
+      return { real: observed.body, scripted: scriptedBody(answer) };
+    };
+    const keyed = {
+      type: "core.note",
+      source: ctx.source,
+      source_id: sourceId,
+    };
+
+    // Nothing under the key: the create makes a row.
+    const minted = await decide(
+      "a create onto a natural key nothing holds",
+      { ...keyed, version: 0, properties: { title: "door", body: "door" } },
+      {
+        same: [
+          "item.source",
+          "item.source_id",
+          "item.version",
+          "item.properties",
+        ],
+        shape: ["item.id"],
+      },
+    );
+    const realId = String(at(minted.real, "item.id"));
+    const doorId = String(at(minted.scripted, "item.id"));
+    trackItem(ctx, realId);
+
+    // The version the row is at: the create lands on it.
+    const upserted = await decide(
+      "a create carrying the version its natural key's row is at",
+      { ...keyed, version: 1, properties: { title: "door, again" } },
+      {
+        same: [
+          "item.source",
+          "item.source_id",
+          "item.version",
+          "item.properties",
+        ],
+        shape: ["item.id"],
+      },
+    );
+    expect(
+      [at(upserted.real, "item.id"), at(upserted.scripted, "item.id")],
+      "a create onto the key's row landed somewhere else on one side",
+    ).toEqual([realId, doorId]);
+
+    // An id that is not the key's row: refused on both.
+    const named = "01a00000-0000-7000-8000-0000000000fe";
+    const refused = await decide(
+      "a create naming an id that is not its natural key's row",
+      { ...keyed, id: named, properties: { title: "named" } },
+      {
+        same: [
+          "error.code",
+          "error.details.field",
+          "error.details.requested_id",
+          "error.details.source",
+          "error.details.source_id",
+        ],
+        shape: ["error.message", "error.details.existing_id"],
+      },
+    );
+    expect([
+      at(refused.real, "error.details.existing_id"),
+      at(refused.scripted, "error.details.existing_id"),
+    ]).toEqual([realId, doorId]);
+
+    // Zero, which says nothing was read: refused, naming the row.
+    const zero = await decide(
+      "a create carrying version zero onto a natural key a row holds",
+      { ...keyed, version: 0, properties: { title: "zero" } },
+      {
+        same: [
+          "error.code",
+          "error.status",
+          "requested_version",
+          "current.version",
+          "current.properties",
+          "current.source_id",
+        ],
+        shape: [
+          "error.message",
+          "current.id",
+          "current.tier",
+          "current.occurred_at",
+        ],
+      },
+    );
+    expect(
+      [at(zero.real, "current.id"), at(zero.scripted, "current.id")],
+      "the refusal did not name the key's row on one side",
+    ).toEqual([realId, doorId]);
+
+    // A version the row has moved past, colliding with what moved it.
+    const stale = await decide(
+      "a create carrying a version the row has moved past",
+      { ...keyed, version: 1, properties: { title: "stale" } },
+      {
+        same: [
+          "error.code",
+          "error.status",
+          "conflicting_fields",
+          "merge_policy.fields",
+          "merge_policy.default",
+          "current.version",
+          "current.properties",
+          "ancestor.version",
+          "ancestor.properties",
+        ],
+        shape: [
+          "error.message",
+          "current.id",
+          "current.tier",
+          "current.occurred_at",
+          "current.source_id",
+          "ancestor.id",
+          "ancestor.tier",
+          "ancestor.occurred_at",
+          "ancestor.source_id",
+        ],
+      },
+    );
+    expect([
+      at(stale.real, "current.id"),
+      at(stale.scripted, "current.id"),
+    ]).toEqual([realId, doorId]);
+
+    // A source the credential's key does not claim: refused, naming it.
+    await decide(
+      "a create naming a source its key does not claim",
+      {
+        ...keyed,
+        source: `unclaimed-${ctx.runId}`,
+        version: 0,
+        properties: { title: "unclaimed" },
+      },
+      { same: ["error.code", "error.details"], shape: ["error.message"] },
+      new FolderDoor([], () => false),
+    );
+
+    // A row of a type the key may not read, reached through a source it
+    // claims: refused without the row named, on both.
+    const hidden = `door-hidden-${ctx.runId}`;
+    const bookmark = await client.createItem({
+      type: "core.bookmark",
+      source: ctx.source,
+      source_id: hidden,
+      properties: { url: "https://example.com/door", title: "door" },
+    });
+    expect(bookmark.status, JSON.stringify(bookmark.error)).toBe(201);
+    trackItem(ctx, bookmark.data.item.id);
+    const doorKey = await client.createKey({
+      label: `${ctx.source}-door-notes`,
+      source: `${ctx.source}-door-notes`,
+      sources: [ctx.source],
+      type_permissions: { "core.note": "write" },
+    });
+    expect(doorKey.ok, JSON.stringify(doorKey.error)).toBe(true);
+    trackKey(ctx, doorKey.data.id);
+    const notesOnly = new MarfaClient({
+      baseUrl: apiUrl,
+      apiKey: doorKey.data.key,
+    });
+    const unreadable = await decide(
+      "a create whose natural key resolves a row of a type its key may not read",
+      { ...keyed, source_id: hidden, version: 0, properties: { title: "x" } },
+      { same: ["error.code", "error.message"] },
+      new FolderDoor(
+        [
+          [
+            "01a00000-0000-7000-8000-0000000000bb",
+            {
+              properties: { url: "https://example.com/door", title: "door" },
+              source: ctx.source,
+              source_id: hidden,
+              type: "core.bookmark",
+              version: 1,
+            },
+          ],
+        ],
+        () => true,
+        (type) => type === "core.note",
+      ),
+      notesOnly,
+    );
+    expect(
+      JSON.stringify(unreadable.real),
+      "the server named a row its key may not read",
+    ).not.toContain(bookmark.data.item.id);
+  });
+
   it("matches the version_conflict envelope, field for field", async () => {
     const seeded = await note({ title: "base", body: "base" });
     const winner = await client.updateItem(seeded.id, {
@@ -280,6 +580,7 @@ describe("the scripted answers match the server's", () => {
       { status: stale.status, body: stale.error },
       answers.versionConflict(
         {
+          id: seeded.id,
           version: 2,
           properties: { title: "winner", body: "winner" },
           tier: "library",
@@ -287,6 +588,7 @@ describe("the scripted answers match the server's", () => {
           source_id: null,
         },
         {
+          id: seeded.id,
           version: 1,
           properties: { title: "base", body: "base" },
           tier: "library",
@@ -306,6 +608,8 @@ describe("the scripted answers match the server's", () => {
         same: [
           "error.code",
           "error.status",
+          "current.id",
+          "ancestor.id",
           "conflicting_fields",
           "merge_policy.fields",
           "merge_policy.default",
@@ -339,6 +643,7 @@ describe("the scripted answers match the server's", () => {
       { status: refused.status, body: refused.error },
       answers.ancestorUnavailable(
         {
+          id: seeded.id,
           version: 1,
           properties: { title: "base", body: "base" },
           tier: "library",
@@ -348,7 +653,13 @@ describe("the scripted answers match the server's", () => {
         0,
       ),
       {
-        same: ["error.code", "error.status", "requested_version", "ancestor"],
+        same: [
+          "error.code",
+          "error.status",
+          "current.id",
+          "requested_version",
+          "ancestor",
+        ],
         shape: [
           "current.version",
           "current.properties",

@@ -345,6 +345,10 @@ pub struct DrainReport {
     pub verdicts: Vec<DrainVerdict>,
     /// Why the drain stopped before the queue was empty, where it did.
     pub stopped: Option<String>,
+    /// The sources the server said this credential's key does not claim,
+    /// where a create naming one was refused for it: every create naming
+    /// one is blocked `credential_refused` until the key claims it.
+    pub unclaimed_sources: Vec<String>,
     pub retry_after_seconds: Option<u64>,
 }
 
@@ -750,6 +754,7 @@ fn drained(report: marfa_core::DrainReport) -> Result<DrainReport, MarfaError> {
         held: report.held as u64,
         verdicts,
         stopped: report.stopped,
+        unclaimed_sources: report.unclaimed_sources,
         retry_after_seconds: report.retry_after_seconds,
     })
 }

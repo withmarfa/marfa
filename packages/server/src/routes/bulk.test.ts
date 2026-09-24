@@ -631,23 +631,38 @@ describe("POST /items/bulk", () => {
     expect(body.results[1]!.error?.code).toBe("type_not_permitted");
   });
 
-  it("stamps source from the credential and ignores forged payload source", async () => {
+  it("refuses an entry naming a source its key does not claim, and stamps one naming none with the credential's own", async () => {
     const suffix = Math.random().toString(36).slice(2, 8);
     const forgedSource = "forged.origin";
     const payloadSourceId = `stamp-${suffix}`;
+    const entry = {
+      type: "core.note",
+      properties: { body: `stamp test ${suffix}` },
+      source_id: payloadSourceId,
+    };
 
+    const refused = await request(ctx.app, "POST", "/items/bulk", {
+      key: ctx.workingKey,
+      body: { items: [{ ...entry, source: forgedSource }] },
+    });
+    expect(refused.status).toBe(403);
+    const refusal = (await refused.json()) as {
+      error: {
+        code: string;
+        details?: { code?: string; details?: { source?: string } };
+      };
+    };
+    expect(refusal.error.code).toBe("bulk_atomic_rollback");
+    expect(refusal.error.details?.code).toBe("forbidden");
+    expect(refusal.error.details?.details?.source).toBe(forgedSource);
+
+    // The witness: the same entry naming no source lands, stamped with the
+    // credential's own `source` rather than a prefix, so the claim is that
+    // the stamp came from the caller's row and not that the fixture happens
+    // to name its keys a certain way.
     const res = await request(ctx.app, "POST", "/items/bulk", {
       key: ctx.workingKey,
-      body: {
-        items: [
-          {
-            type: "core.note",
-            properties: { body: `stamp test ${suffix}` },
-            source: forgedSource,
-            source_id: payloadSourceId,
-          },
-        ],
-      },
+      body: { items: [entry] },
     });
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
@@ -661,10 +676,6 @@ describe("POST /items/bulk", () => {
     const item = (await getRes.json()) as {
       item: { source?: string; source_id?: string };
     };
-    expect(item.item.source).not.toBe(forgedSource);
-    // Against the credential's own `source` rather than a prefix, so the
-    // claim is that the stamp came from the caller's row and not that the
-    // fixture happens to name its keys a certain way.
     const credential = await ctx.storage.keys.validate(
       hashApiKey(ctx.workingKey, "test-salt"),
     );

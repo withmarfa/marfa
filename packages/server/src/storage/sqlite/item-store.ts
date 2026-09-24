@@ -804,6 +804,7 @@ export class SqliteItemStore implements ItemStore {
       // The same three as a refusal's envelope carries them, so a caller
       // told that one of them collided can read both sides.
       const snapshotFields: SnapshotItemFields = {
+        id,
         tier: row.tier as Tier,
         occurred_at: row.occurred_at,
         source_id: row.source_id,
@@ -974,6 +975,7 @@ export class SqliteItemStore implements ItemStore {
             {
               current: snapshotFields,
               ancestor: {
+                id,
                 tier: (ancestor.item_fields.tier ?? row.tier) as Tier,
                 occurred_at:
                   ancestor.item_fields.occurred_at ?? row.occurred_at,

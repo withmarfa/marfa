@@ -28,6 +28,9 @@ export interface WireItemOptions {
 
 const EPOCH = "2026-09-18T00:00:00.000Z";
 
+/** The source a served row carries where a fixture names none. */
+export const SERVED_SOURCE = "device-fixtures";
+
 export function wireItem(options: WireItemOptions): Record<string, unknown> {
   const at = options.occurred_at ?? EPOCH;
   return {
@@ -41,7 +44,7 @@ export function wireItem(options: WireItemOptions): Record<string, unknown> {
     tier: options.tier ?? "library",
     version: options.version ?? 1,
     schema_version: 1,
-    source: options.source ?? "device-fixtures",
+    source: options.source ?? SERVED_SOURCE,
     // Omitted rather than null: the server leaves out a column it has nothing
     // for, and absent and null are two different things to a device.
     ...(options.source_id === undefined || options.source_id === null
@@ -317,6 +320,9 @@ export function heldLog(
  * does not is a device read that goes green here and meets nothing there.
  */
 export interface ConflictSnapshotBody {
+  /** The row: a create names a natural key and not an id, and learns from
+   *  this which row refused it (`queue-and-verdicts.md` 39). */
+  id: string;
   version: number;
   properties: Record<string, unknown>;
   tier: "library" | "feed";
@@ -357,6 +363,33 @@ export const answers = {
     status: 200,
     body: withMetadata(item, tags),
   }),
+  /** A create whose natural key resolved a row the server holds: `200` and
+   *  that row, under its own id, as an update answers (`items.md` 5). */
+  upserted: (item: Record<string, unknown>, tags: string[] = []): Answer => ({
+    kind: "json",
+    status: 200,
+    body: withMetadata(item, tags),
+  }),
+  /** A create naming an `id` that is not the row its natural key resolves:
+   *  refused rather than written onto either row. */
+  idNotTheKeys: (
+    requestedId: string,
+    existingId: string,
+    source: string,
+    sourceId: string,
+  ): Answer =>
+    refusal(
+      400,
+      "validation_error",
+      "Request `id` does not match the item resolved by (source, source_id)",
+      {
+        field: "id",
+        requested_id: requestedId,
+        existing_id: existingId,
+        source,
+        source_id: sourceId,
+      },
+    ),
   resolved: (
     item: Record<string, unknown>,
     strategy: Record<string, string>,

@@ -116,7 +116,7 @@ fn step(folder: &Folder, json: bool) -> Result<(), CliError> {
             // left out: a watcher that prints zeroes while declining to write
             // is a watcher telling somebody nothing is wrong.
             let held = pulled.unwritten + pulled.collided + pulled.outside + pulled.absent;
-            format!(
+            let mut lines = vec![format!(
                 "{} created, {} updated, {} renamed, {} deleted; sent {}; {} file(s) written{}",
                 scanned.created,
                 scanned.updated,
@@ -129,7 +129,9 @@ fn step(folder: &Folder, json: bool) -> Result<(), CliError> {
                 } else {
                     String::new()
                 }
-            )
+            )];
+            lines.extend(output::unclaimed(&drained));
+            lines.join("\n")
         },
     )
 }

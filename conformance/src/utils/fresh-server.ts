@@ -171,3 +171,136 @@ export async function bootFreshServer(
     stop,
   };
 }
+
+/**
+ * An access token of the kind an app holds once a person approves it, on a
+ * server of the fixture's own.
+ *
+ * Reached the way a person reaches one, over HTTP alone: the operator key
+ * creates the owner, a native client registers, the device flow starts, the
+ * owner signs in on the sign-in surface's own origin and approves everything
+ * the consent screen offers, and the client's poll is answered. A token like
+ * this is the one credential a fixture can hold that an app holds, so a door
+ * that treats an app differently from a key is asserted through it.
+ *
+ * The owner is created here, and an instance has one, so this runs once per
+ * fresh server: a second call is refused `409 owner_exists` and throws.
+ */
+export async function approvedAppToken(server: FreshServer): Promise<string> {
+  const owner = { email: "a@example.com", password: "correct horse battery" };
+  const created = await fetch(`${server.apiUrl}/owner`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${server.operatorKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(owner),
+  });
+  if (created.status !== 201) {
+    throw new Error(
+      `the owner could not be created, so nobody can approve an app: ${String(created.status)}`,
+    );
+  }
+
+  const discovery = (await (
+    await fetch(`${server.apiUrl}/.well-known/oauth-authorization-server/auth`)
+  ).json()) as {
+    registration_endpoint: string;
+    device_authorization_endpoint: string;
+    token_endpoint: string;
+    scopes_supported: string[];
+  };
+  const registered = (await (
+    await fetch(discovery.registration_endpoint, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        client_name: "conformance",
+        application_type: "native",
+        grant_types: [
+          "urn:ietf:params:oauth:grant-type:device_code",
+          "refresh_token",
+        ],
+        response_types: [],
+        token_endpoint_auth_method: "none",
+      }),
+    })
+  ).json()) as { client_id: string };
+
+  const code = (await (
+    await fetch(discovery.device_authorization_endpoint, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        client_id: registered.client_id,
+        scope: discovery.scopes_supported.join(" "),
+      }),
+    })
+  ).json()) as {
+    device_code: string;
+    user_code: string;
+    verification_uri_complete: string;
+  };
+
+  const origin = new URL(code.verification_uri_complete).origin;
+  const signIn = await fetch(`${origin}/auth/sign-in/email`, {
+    method: "POST",
+    headers: { "content-type": "application/json", origin },
+    body: JSON.stringify(owner),
+  });
+  if (signIn.status !== 200) {
+    throw new Error(
+      `the owner could not sign in, so nothing can be approved: ${String(signIn.status)}`,
+    );
+  }
+  const cookie = /(?:^|,\s*)([\w.-]*session_token=[^;]+)/.exec(
+    signIn.headers.get("set-cookie") ?? "",
+  )?.[1];
+  if (cookie === undefined) {
+    throw new Error("the owner's sign-in set no session cookie");
+  }
+  const consent = await fetch(
+    `${origin}/auth/device/consent?user_code=${encodeURIComponent(code.user_code)}`,
+    { headers: { cookie } },
+  );
+  const html = await consent.text();
+  const form = new URLSearchParams({
+    user_code: code.user_code,
+    decision: "approve",
+  });
+  for (const scope of new Set(
+    [...html.matchAll(/name="scopes"[^>]*value="([^"]+)"/g)].map((m) => m[1]!),
+  )) {
+    form.append("scopes", scope);
+  }
+  const approved = await fetch(`${origin}/auth/device/consent`, {
+    method: "POST",
+    headers: {
+      cookie,
+      origin,
+      "content-type": "application/x-www-form-urlencoded",
+    },
+    body: form,
+  });
+  if (approved.status !== 200) {
+    throw new Error(
+      `the owner's approval was refused: ${String(approved.status)}`,
+    );
+  }
+
+  const token = (await (
+    await fetch(discovery.token_endpoint, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        grant_type: "urn:ietf:params:oauth:grant-type:device_code",
+        device_code: code.device_code,
+        client_id: registered.client_id,
+      }),
+    })
+  ).json()) as { access_token?: string };
+  if (token.access_token === undefined) {
+    throw new Error("the approved device flow answered no access token");
+  }
+  return token.access_token;
+}

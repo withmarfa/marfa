@@ -46,6 +46,13 @@ pub fn hash(bytes: &[u8]) -> String {
     format!("{sum:016x}")
 }
 
+/// The content hash of a binding whose bytes the server never took: a create
+/// refused because another device's row already held the natural key, whose
+/// copy moved onto that row (`folders.md` 13). No bytes hash to it, so a scan
+/// reads the file as changed and a pull as the person's, and neither writes
+/// over it.
+pub const UNTAKEN: &str = "";
+
 pub fn bind(conn: &Connection, bound: &Bound) -> Result<(), CoreError> {
     conn.execute(
         "INSERT INTO folder_files (path, item_id, identity, content_hash, written_hash, links, declined_links, seen_at)

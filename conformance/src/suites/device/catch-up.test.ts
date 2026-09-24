@@ -482,6 +482,7 @@ describe("catch-up replays from the cursor", () => {
     // itself, so the edit is blocked `conflict_unresolved` and stays in the
     // queue for a release.
     const snapshot = {
+      id: "row",
       version: 2,
       properties: { title: "as hydrated", body: "changed elsewhere" },
       tier: "library" as const,

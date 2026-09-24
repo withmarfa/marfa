@@ -54,8 +54,9 @@ const REFUSED_DATABASE_REMEDY =
   "point this server at a fresh file, or discard it.";
 
 /**
- * Columns whose absence means the file predates a rename, checked by table
- * so a fresh database — which has none of these tables yet — is not refused.
+ * Columns whose absence means the file predates this build's schema, because
+ * the column was renamed or added since, checked by table so a fresh
+ * database — which has none of these tables yet — is not refused.
  *
  * **A refusal here must not be reachable through the API**, and that is the
  * rule rather than a property any one of these checks happens to have.
@@ -63,21 +64,21 @@ const REFUSED_DATABASE_REMEDY =
  * settings row, a missing column, a retired one or a full-text index of the
  * older shape, so each of them meets a database an older build wrote and
  * nothing else. A refusal keyed on row *content* is a different animal:
- * a caller can mint a credential carrying the retired `integration:` source
- * prefix, so a check keyed on it would let a single request leave an
- * instance that never opened again, with the refusal telling its operator
- * to discard the database. A boot check whose trigger a request can write
- * is a denial of service with a polite message.
+ * a caller can mint a credential carrying almost any `source` it likes and
+ * write rows under it, so a check keyed on a source value would let a
+ * single request leave an instance that never opened again, with the
+ * refusal telling its operator to discard the database. A boot check whose
+ * trigger a request can write is a denial of service with a polite message.
  *
- * **Every renamed column belongs here, not only the indexed ones.** A
- * column an index is built over fails the DDL anyway, which is true and
- * the wrong conclusion: a column nothing indexes passes the DDL silently,
- * because `CREATE TABLE IF NOT EXISTS` no-ops against the old table and a
- * CHECK constraint is never re-evaluated. The boot then succeeds, `GET /`
- * answers 200, and the first read of that column throws — for
- * `api_keys.permissions` that read is in the bearer middleware, so every
- * authenticated request on the instance answers `500 internal_error` after
- * a boot that said nothing was wrong.
+ * **Every renamed or added column belongs here, not only the indexed
+ * ones.** A column an index is built over fails the DDL anyway, which is
+ * true and the wrong conclusion: a column nothing indexes passes the DDL
+ * silently, because `CREATE TABLE IF NOT EXISTS` no-ops against the old
+ * table and a CHECK constraint is never re-evaluated. The boot then
+ * succeeds, `GET /` answers 200, and the first read of that column throws —
+ * for `api_keys.permissions` and `api_keys.sources` that read is in the
+ * bearer middleware, so every authenticated request on the instance answers
+ * `500 internal_error` after a boot that said nothing was wrong.
  *
  * **The third name is a witness, and it is why `blobs` can be on this list.**
  * A table name alone is not evidence the file is one of ours: `blobs` in
@@ -89,10 +90,11 @@ const REFUSED_DATABASE_REMEDY =
  * from the other direction, and says so in its own test: recognizing a
  * stranger's schema is not this check's job.
  */
-const RENAMED_COLUMNS: readonly (readonly [string, string, string])[] = [
+const REQUIRED_COLUMNS: readonly (readonly [string, string, string])[] = [
   ["items", "occurred_at", "source_id"],
   ["audit_log", "created_at", "resource_type"],
   ["api_keys", "permissions", "is_operator"],
+  ["api_keys", "sources", "is_operator"],
   ["types", "owner_connector", "origin"],
   ["blobs", "size_bytes", "mime_type"],
   ["outbound_webhook_deliveries", "event_type", "webhook_secret"],
@@ -372,18 +374,17 @@ export async function createConnection(sqlitePath: string): Promise<{
     );
   }
 
-  // A renamed column is refused here for the same reason, and the reason is
-  // not that the old database would be read wrongly — it would not. The DDL
-  // below creates an index over the new column, so an old file fails at that
-  // statement whatever this does.
-  //
-  // What it fails with is the problem. A raw driver error naming an index
-  // says nothing an operator can act on, and it arrives after the PRAGMAs,
-  // which is the write the refusal above is ordered ahead of precisely so a
-  // database this build will not open comes back unchanged. Refusing here
-  // keeps both properties: one sentence that names the file and what to do,
-  // and a file left as it was found.
-  for (const [table, column, witness] of RENAMED_COLUMNS) {
+  // A missing column is refused here for the same reason. Where the DDL
+  // below builds an index over it, an old file fails at that statement
+  // whatever this does, and what it fails with is the problem: a raw driver
+  // error naming an index says nothing an operator can act on, and it
+  // arrives after the PRAGMAs, which is the write the refusal above is
+  // ordered ahead of precisely so a database this build will not open comes
+  // back unchanged. Where nothing indexes it, nothing fails until the first
+  // read, as `REQUIRED_COLUMNS` says. Refusing here keeps both properties:
+  // one sentence that names the file and what to do, and a file left as it
+  // was found.
+  for (const [table, column, witness] of REQUIRED_COLUMNS) {
     const info = await client.execute(`PRAGMA table_info(${table})`);
     if (info.rows.length === 0) continue;
     const names = new Set(

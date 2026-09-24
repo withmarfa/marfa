@@ -589,6 +589,8 @@ export class CliDevice implements DeviceUnderTest {
 
 /** What `folders add` is given. */
 export interface FolderSlice {
+  /** The source the folder's rows are keyed by (`folders.md` 10). */
+  source: string;
   types: string[];
   tier?: Tier;
   defaultType?: string;
@@ -606,6 +608,12 @@ export interface ScanReport {
   skipped: number;
   /** Items moved off a contested name and back (`folders.md` 24). */
   parked: number;
+  /** Files bound to a row the copy lost, queued again because they changed
+   *  or moved (`folders.md` 30). Counted in `created` too. */
+  requeued: number;
+  /** Files bound to a row the copy lost and unchanged since, so nothing was
+   *  sent (`folders.md` 30). */
+  lost: number;
 }
 
 export interface PullReport {
@@ -661,7 +669,15 @@ export class CliFolder {
   }
 
   async add(slice: FolderSlice): Promise<Outcome<unknown>> {
-    const args = ["folders", "add", this.dir, "--types", slice.types.join(",")];
+    const args = [
+      "folders",
+      "add",
+      this.dir,
+      "--source",
+      slice.source,
+      "--types",
+      slice.types.join(","),
+    ];
     if (slice.tier !== undefined) args.push("--tier", slice.tier);
     if (slice.defaultType !== undefined)
       args.push("--default-type", slice.defaultType);

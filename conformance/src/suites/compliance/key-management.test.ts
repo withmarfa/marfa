@@ -284,7 +284,7 @@ describe("key management", () => {
     );
   });
 
-  it("refuses a second key claiming a source already in use", async () => {
+  it("refuses a second key naming as its own a source already in use", async () => {
     const label = `km-source-taken-${ctx.runId}`;
     const source = `${ctx.source}-${label}`;
     const first = await client.createKey({ label, source });

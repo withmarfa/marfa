@@ -36,12 +36,12 @@ export type ItemFieldValues = Partial<
   Record<VersionedItemField, string | null>
 >;
 
-/** The same three as a snapshot carries them: every one present, because a
- *  row always has a tier and an own time and either holds a natural-key
- *  identifier or does not. */
+/** The same three as a snapshot carries them, and the row they are the
+ *  fields of: every one present, because a row always has a tier and an own
+ *  time and either holds a natural-key identifier or does not. */
 export type SnapshotItemFields = Pick<
   ConflictSnapshot,
-  "tier" | "occurred_at" | "source_id"
+  "id" | "tier" | "occurred_at" | "source_id"
 >;
 
 export interface ConflictInput {

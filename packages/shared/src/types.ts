@@ -88,7 +88,10 @@ export interface CreateItemInput {
   /** Overrides the credential's default_tier when supplied. */
   tier?: Tier;
   occurred_at?: string;
-  /** Ignored on the wire — server always stamps source from the credential. */
+  /**
+   * The source the row is keyed by and stamped with: the credential's own
+   * when omitted, or one the credential's key claims. Any other is refused.
+   */
   source?: string;
   source_id?: string;
   capture_latitude?: number;
@@ -251,8 +254,19 @@ export type ProfilePermission = "read" | "write";
 export interface ApiKey {
   id: string;
   label: string;
-  /** Human-readable display name stamped onto items this credential writes. */
+  /**
+   * The credential's own source, which no other unrevoked key holds as its
+   * own: what its writes are stamped with unless a write names one of
+   * `sources`. Keys claiming it write under it too.
+   */
   source: string;
+  /**
+   * The sources a write may name besides `source`, so a row is keyed by the
+   * named source rather than the credential's. Two keys may claim one source,
+   * which is what lets two separately enrolled devices present one natural
+   * key. Absent or empty means the credential claims nothing beyond its own.
+   */
+  sources?: string[];
   /**
    * Operator-key gate. When `true`, the credential passes the fence in front
    * of the reserved-namespace types (`system.*` and `marfa.*`; `core.*` is
@@ -345,6 +359,8 @@ export interface ApiKey {
 export interface CreateKeyInput {
   label: string;
   source: string;
+  /** The sources the key claims besides its own; see `ApiKey`. */
+  sources?: string[];
   permissions?: Permission[];
   default_tier?: Tier;
   type_permissions?: Record<string, TypePermission>;
@@ -355,9 +371,9 @@ export interface CreateKeyInput {
   /** Per-credential schema-enforcement override; see `ApiKey`. */
   enforcement_override?: EnforcementSettings;
   /**
-   * Optional. Only an existing operator key can set this to `true`; other
-   * callers see the value silently coerced to `false`. The key minted at
-   * server install is the seed operator key.
+   * Optional. Only an existing operator key can set this to `true`; any
+   * other caller naming it is refused. The key minted at server install is
+   * the seed operator key.
    */
   is_operator?: boolean;
 }
@@ -374,6 +390,8 @@ export interface CreateKeyInput {
 export interface UpdateKeyInput {
   label?: string;
   default_tier?: Tier;
+  /** Replaces the claims whole; see `ApiKey`. */
+  sources?: string[];
   permissions?: Permission[];
   type_permissions?: Record<string, TypePermission>;
   extension_permissions?: Record<string, ExtensionPermission>;
@@ -431,6 +449,10 @@ export interface ErrorResponse {
  * reason it cannot act on.
  */
 export interface ConflictSnapshot {
+  /** The row this is a snapshot of. A create that resolved a row by its
+   *  natural key named no id, and this is how it learns which row refused
+   *  it. */
+  id: string;
   version: number;
   properties: Record<string, unknown>;
   tier: Tier;

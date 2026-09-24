@@ -96,9 +96,8 @@ describe("the key a create route returns", () => {
 });
 
 describe("the declaration a create route publishes", () => {
-  // The other half. This one reddens when the schema regains a field the
-  // handler cannot fill, which is the regression the consolidation exists to
-  // prevent and which the response-body test above cannot see.
+  // The other half. This one reddens when the schema declares a field the
+  // handler cannot fill, which the response-body test above cannot see.
   //
   // Asserted against the schema rather than the generated specification so it
   // fails at the declaration rather than three steps downstream of it, where
@@ -694,6 +693,47 @@ describe("bootstrap sentinel", () => {
     }
   });
 
+  it("refuses a claim on bootstrap, as on any operator key, and the secret still mints", async () => {
+    // The key bootstrap mints is the operator key, which holds nothing, so a
+    // claim named on it is refused rather than dropped: a mint that answered
+    // `201` with the claim gone would not be the key the caller asked for.
+    const { app, storage, bootstrapSecret, tmpDir } = await freshApp();
+    try {
+      const refused = await request(app, "POST", "/keys", {
+        key: bootstrapSecret,
+        body: {
+          label: "first-admin",
+          source: "first-admin",
+          sources: ["shared-notes"],
+        },
+      });
+      expect(refused.status).toBe(403);
+      const body = (await refused.json()) as {
+        error: { code: string; details?: { source?: string } };
+      };
+      expect(body.error.code).toBe("forbidden");
+      expect(body.error.details?.source).toBe("shared-notes");
+      expect(await storage.keys.list()).toHaveLength(0);
+
+      // The witness, and the point of refusing inside the claim's window:
+      // the same secret mints once the body names no claim.
+      const minted = await request(app, "POST", "/keys", {
+        key: bootstrapSecret,
+        body: { label: "first-admin", source: "first-admin" },
+      });
+      expect(minted.status).toBe(201);
+      const operator = (await minted.json()) as {
+        is_operator: boolean;
+        sources: string[];
+      };
+      expect(operator.is_operator).toBe(true);
+      expect(operator.sources).toEqual([]);
+    } finally {
+      await storage.close();
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
   it("keeps the claim when a failure does reach the release, with a key already minted", async () => {
     // The second lock, tested where the first one is deliberately absent.
     // Nothing in the handler currently throws past the key insert — the
@@ -953,8 +993,8 @@ describe("bootstrap sentinel", () => {
       // Revoke every key.
       await storage.keys.revoke(firstId);
 
-      // Next unauthenticated POST must be rejected — this is the
-      // regression the persistent sentinel prevents.
+      // Next unauthenticated POST must be rejected: the sentinel persists
+      // past the key it was set for.
       const secondRes = await request(app, "POST", "/keys", {
         key: bootstrapSecret,
         body: {

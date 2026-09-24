@@ -19,6 +19,9 @@ pub struct ApiKey {
     pub label: String,
     #[serde(rename = "source")]
     pub source: String,
+    /// The sources a write by this key may name besides its own `source`. Empty on a key that claims nothing.
+    #[serde(rename = "sources", skip_serializing_if = "Option::is_none")]
+    pub sources: Option<Vec<String>>,
     /// The permissions this credential holds, as the literals themselves. Omitted on a create request takes the creator's whole set; anything named is honored and clamped to what the creator holds.
     #[serde(rename = "permissions", skip_serializing_if = "Option::is_none")]
     pub permissions: Option<Vec<models::Permission>>,
@@ -82,6 +85,7 @@ impl ApiKey {
             id,
             label,
             source,
+            sources: None,
             permissions: None,
             oauth_client_id: None,
             default_tier,

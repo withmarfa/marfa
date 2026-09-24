@@ -2749,7 +2749,7 @@ export interface ConnectorRunInput {
 export interface Connector {
   id: string;
   key_id: string;
-  /** The key's source, the name its writes carry. */
+  /** The key's own source, which its writes carry unless they name a claim. */
   source: string;
   name: string;
   description: string | null;

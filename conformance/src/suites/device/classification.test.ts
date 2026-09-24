@@ -1,5 +1,10 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { answers, refusal, wireItem } from "../../device/marfa-answers.js";
+import {
+  answers,
+  refusal,
+  wireItem,
+  writeAnswers,
+} from "../../device/marfa-answers.js";
 import type { DrainReport, QueuedWrite } from "../../device/protocol.js";
 import { hydratedHarness, scriptWrites } from "./harness.js";
 import type { Harness, ScriptedWrites } from "./harness.js";
@@ -609,5 +614,248 @@ describe("the ceiling, and releasing what it stopped", () => {
       new Set(keys).size,
       "the two attempts went under one key, so the server answered the second from the record of the first",
     ).toBe(2);
+  });
+
+  it("blocks a create naming a source its key does not claim, and sends it once the key does", async () => {
+    harness = await hydratedHarness("class-unclaimed-source", {
+      rows: held(),
+    });
+    const { device, server } = harness;
+    // The key claims `notes` only once this flips, as an operator granting
+    // the claim would make it.
+    let claimed = false;
+    const minted = new Map<string, string>();
+    scriptWrites(server, {
+      create: [
+        (request) => {
+          const sent = JSON.parse(request.body) as {
+            id?: string;
+            source?: string;
+            source_id?: string;
+            properties: Record<string, unknown>;
+          };
+          if (sent.source === "notes" && !claimed) {
+            return refusal(
+              403,
+              "forbidden",
+              'This credential may not write under the source "notes".',
+              { source: "notes" },
+            );
+          }
+          // The allow-list's refusal: the same status and code, naming the
+          // list beside the source (`types.md` 18).
+          if (sent.source === "listed") {
+            return refusal(
+              403,
+              "forbidden",
+              'Source "listed" is not in the allow-list for type core.note',
+              { type: "core.note", source: "listed", allowed: ["other"] },
+            );
+          }
+          const key = sent.source_id ?? sent.id ?? "";
+          const id =
+            sent.id ??
+            minted.get(key) ??
+            `01a00000-0000-7000-8000-0000000000${String(10 + minted.size)}`;
+          minted.set(key, id);
+          return answers.created(
+            wireItem({
+              id,
+              version: 1,
+              properties: sent.properties,
+              ...(sent.source === undefined ? {} : { source: sent.source }),
+              ...(sent.source_id === undefined
+                ? {}
+                : { source_id: sent.source_id }),
+            }),
+          );
+        },
+      ],
+      update: [
+        (request) => {
+          const sent = JSON.parse(request.body) as {
+            version: number;
+            properties: Record<string, unknown>;
+          };
+          return answers.updated(
+            wireItem({
+              id: request.pathname.split("/").at(-1) ?? "",
+              version: sent.version + 1,
+              properties: sent.properties,
+            }),
+          );
+        },
+      ],
+      read: [refusal(404, "item_not_found", "no such item")],
+      edges: [
+        (request) => {
+          const sent = JSON.parse(request.body) as {
+            id?: string;
+            source_id?: string;
+            target_id?: string;
+            version?: number;
+          };
+          return request.method === "POST"
+            ? writeAnswers.edge({
+                id: sent.id ?? "",
+                source_id: sent.source_id ?? "",
+                target_id: sent.target_id ?? "",
+              })
+            : writeAnswers.edge({
+                id: request.pathname.split("/").at(-1) ?? "",
+                source_id: minted.get("a.md") ?? "",
+                target_id: HELD.id,
+                version: (sent.version ?? 0) + 1,
+              });
+        },
+      ],
+    });
+
+    const first = await device.create({
+      type: "core.note",
+      properties: { title: "a", body: "a" },
+      source: "notes",
+      sourceId: "a.md",
+      version: 0,
+    });
+    const second = await device.create({
+      type: "core.note",
+      properties: { title: "b", body: "b" },
+      source: "notes",
+      sourceId: "b.md",
+      version: 0,
+    });
+    const own = await device.create({
+      type: "core.note",
+      properties: { title: "own", body: "own" },
+    });
+    const listed = await device.create({
+      type: "core.note",
+      properties: { title: "listed", body: "listed" },
+      source: "listed",
+      sourceId: "listed.md",
+      version: 0,
+    });
+    expect(first.ok && second.ok && own.ok && listed.ok).toBe(true);
+    if (!first.ok || !second.ok || !own.ok || !listed.ok) return;
+    const local = first.value.item_id ?? "";
+    const other = await device.update(HELD.id, {
+      properties: { title: "held, edited" },
+      version: HELD.version,
+    });
+    expect(other.ok).toBe(true);
+
+    const drained = await device.drain();
+    expect(drained.ok, JSON.stringify(drained)).toBe(true);
+    if (!drained.ok) return;
+    const verdictOf = (id: string) =>
+      drained.value.verdicts.find((entry) => entry.id === id);
+    expect(
+      [verdictOf(first.value.id)?.verdict, verdictOf(first.value.id)?.reason],
+      "a create refused for a claim its key does not hold was refused as a write, so a claim granted afterwards would send nothing",
+    ).toEqual(["blocked", "credential_refused"]);
+    expect(
+      [verdictOf(second.value.id)?.verdict, verdictOf(second.value.id)?.reason],
+      "a second create naming the same source was not stopped with the first",
+    ).toEqual(["blocked", "credential_refused"]);
+    expect(
+      server.requests.filter(
+        (request) =>
+          request.method === "POST" &&
+          request.pathname === "/items" &&
+          request.body.includes('"notes"'),
+      ),
+      "every create naming the unclaimed source went out, one refusal per create",
+    ).toHaveLength(1);
+    // Only that source: the rest of the queue carries on, and the drain does
+    // not stop as it does for a refused credential.
+    expect(verdictOf(own.value.id)?.verdict).toBe("accepted");
+    expect(verdictOf(other.ok ? other.value.id : "")?.verdict).toBe("accepted");
+    expect(drained.value.stopped).toBeNull();
+    expect(
+      [verdictOf(listed.value.id)?.verdict, verdictOf(listed.value.id)?.reason],
+      "a source allow-list's refusal was read as a missing claim, which no claim granted can clear",
+    ).toEqual(["refused", "forbidden"]);
+    expect(
+      drained.value.unclaimed_sources,
+      "the drain did not say which source the key does not claim, and `credential_refused` alone reads as a key that no longer works",
+    ).toEqual(["notes"]);
+
+    // Nothing was reconciled away: the row the create was queued as is still
+    // held, and an edit of it waits for the create rather than going to an id
+    // the server does not hold.
+    expect((await device.get(local)).ok).toBe(true);
+    const edit = await device.update(local, {
+      properties: { title: "a, edited" },
+      version: 0,
+    });
+    expect(edit.ok, JSON.stringify(edit)).toBe(true);
+    if (!edit.ok) return;
+    expect(
+      edit.value.depends_on,
+      "an edit of a row whose create is blocked did not wait for it, so it goes out to an id the server never held and is refused",
+    ).toEqual([first.value.id]);
+    // An edge from that row waits for the create as well.
+    const linked = await device.createEdge({
+      source: local,
+      target: HELD.id,
+      type: "references",
+    });
+    expect(linked.ok, JSON.stringify(linked)).toBe(true);
+    if (!linked.ok) return;
+    expect(linked.value.depends_on).toEqual([first.value.id]);
+
+    // Still unclaimed: one create finds that out, and nothing else is sent.
+    const before = server.requests.length;
+    const again = await device.drain();
+    expect(again.ok).toBe(true);
+    if (!again.ok) return;
+    expect(
+      server.requests
+        .slice(before)
+        .map((request) => `${request.method} ${request.pathname}`),
+    ).toEqual(["POST /items"]);
+    // The edge's create is held behind the row's now, and an edit of the edge
+    // waits for it in turn rather than going to an edge the server lacks.
+    const reworded = await device.updateEdge(linked.value.edge_id ?? "", {
+      properties: { note: "reworded" },
+      version: 0,
+    });
+    expect(reworded.ok, JSON.stringify(reworded)).toBe(true);
+    if (!reworded.ok) return;
+    expect(
+      reworded.value.depends_on,
+      "an edit of an edge whose create is held did not wait for it",
+    ).toEqual([linked.value.id]);
+
+    // The key claims the source now. The next drain sends both creates and
+    // the edit, on the version the create was answered with, with no release.
+    claimed = true;
+    const granted = await device.drain();
+    expect(granted.ok, JSON.stringify(granted)).toBe(true);
+    if (!granted.ok) return;
+    const grantedOf = (id: string) =>
+      granted.value.verdicts.find((entry) => entry.id === id)?.verdict;
+    expect(
+      [
+        grantedOf(first.value.id),
+        grantedOf(second.value.id),
+        grantedOf(edit.value.id),
+        grantedOf(linked.value.id),
+        grantedOf(reworded.value.id),
+      ],
+      "a create blocked for a claim was not sent once the key claimed the source",
+    ).toEqual(["accepted", "accepted", "accepted", "accepted", "accepted"]);
+    expect(granted.value.unclaimed_sources).toEqual([]);
+    const patch = server.requests
+      .filter(
+        (request) =>
+          request.method === "PATCH" && request.pathname.startsWith("/items/"),
+      )
+      .at(-1);
+    expect(patch?.pathname).toBe(`/items/${minted.get("a.md") ?? ""}`);
+    expect(
+      (JSON.parse(patch?.body ?? "{}") as { version?: number }).version,
+    ).toBe(1);
   });
 });

@@ -346,33 +346,22 @@ pub fn queued_write(conn: &Connection, id: &str) -> Result<Option<QueuedWrite>, 
     Ok(read_writes(conn, "WHERE id = ?1", [id])?.pop())
 }
 
-/// Queue rows naming this item that the server has not answered.
-///
-/// What makes a local read show a write nobody has answered yet
-/// (`queue-and-verdicts.md` 31), and what a second write to the same row
-/// reads to find the version it should be based on.
-pub fn unanswered_for_item(
-    conn: &Connection,
-    item_id: &str,
-) -> Result<Vec<QueuedWrite>, CoreError> {
-    Ok(queued_writes(conn)?
-        .into_iter()
-        .filter(|row| row.verdict.is_none() && row.item_id.as_deref() == Some(item_id))
-        .collect())
-}
-
-/// The unanswered creates naming this item.
+/// The creates naming this item that the server has not taken: unanswered,
+/// or blocked, which a release or a reason clearing sends again.
 ///
 /// What a later write to the same item waits for (`queue-and-verdicts.md`
-/// 4): the row does not exist on the server until its create is answered.
-/// Only creates, because statement 16 is about a row the server never
-/// accepted — a sibling write that failed for its own reasons has nothing
-/// to do with whether this one can be sent.
-pub fn unanswered_creates_for_item(
+/// 4): the row does not exist on the server until its create lands. A
+/// blocked create counts because it is waiting still (35); a write sent past
+/// one is refused `item_not_found`, and the reconcile that follows forgets
+/// the row the create is still trying to make. Only creates, because
+/// statement 16 is about a row the server never accepted — a sibling write
+/// that failed for its own reasons has nothing to do with whether this one
+/// can be sent.
+pub fn untaken_creates_for_item(
     conn: &Connection,
     item_id: &str,
 ) -> Result<Vec<String>, CoreError> {
-    Ok(unanswered_for_item(conn, item_id)?
+    Ok(waiting_writes_for_item(conn, item_id)?
         .into_iter()
         .filter(|row| row.kind == WriteKind::CreateItem)
         .map(|row| row.id)
@@ -762,6 +751,184 @@ pub fn upsert_item(
         row.get(0)
     })?;
     index_row(conn, seq, &item.id, &item.state, &item.properties, indexing)
+}
+
+/// Moves everything the copy says about the item it minted as `local` onto
+/// `answered`, the row the server answered its create with.
+///
+/// A create carrying a natural key the server already holds lands on that
+/// row (`items.md` 5), so the server answers with the row's id rather than
+/// the one the device minted. The minted row goes, and every write still
+/// waiting on it, every edge and every file bound to it names the server's
+/// row instead: left alone, each would address an id the server never
+/// held.
+pub fn adopt_answered_id(conn: &Connection, local: &str, answered: &str) -> Result<(), CoreError> {
+    if local == answered {
+        return Ok(());
+    }
+    conn.execute(
+        "DELETE FROM items_fts WHERE rowid IN (SELECT seq FROM items WHERE id = ?1)",
+        [local],
+    )?;
+    conn.execute("DELETE FROM tags WHERE item_id = ?1", [local])?;
+    conn.execute("DELETE FROM items WHERE id = ?1", [local])?;
+    for statement in [
+        "UPDATE edges SET source_id = ?2 WHERE source_id = ?1",
+        "UPDATE edges SET target_id = ?2 WHERE target_id = ?1",
+        "UPDATE queue SET item_id = ?2 WHERE item_id = ?1",
+        "UPDATE queue SET target_id = ?2 WHERE target_id = ?1",
+        "UPDATE folder_files SET item_id = ?2 WHERE item_id = ?1",
+        "UPDATE folder_journal SET item_id = ?2 WHERE item_id = ?1",
+    ] {
+        conn.execute(statement, params![local, answered])?;
+    }
+    // An edge create carries its endpoints in the body it sends, and a
+    // file's links and declined links are ids its bytes named.
+    let mut edges = conn
+        .prepare("SELECT id, payload FROM queue WHERE kind = 'create_edge' AND verdict IS NULL")?;
+    let waiting: Vec<(String, String)> = edges
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+        .collect::<Result<_, _>>()?;
+    for (id, payload) in waiting {
+        let mut body: Value = serde_json::from_str(&payload)?;
+        let mut moved = false;
+        for endpoint in ["source_id", "target_id"] {
+            if body.get(endpoint).and_then(Value::as_str) == Some(local) {
+                body[endpoint] = Value::String(answered.to_string());
+                moved = true;
+            }
+        }
+        if moved {
+            conn.execute(
+                "UPDATE queue SET payload = ?2 WHERE id = ?1",
+                params![id, body.to_string()],
+            )?;
+        }
+    }
+    for column in ["links", "declined_links"] {
+        let mut files = conn.prepare(&format!("SELECT path, {column} FROM folder_files"))?;
+        let linked: Vec<(String, String)> = files
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .collect::<Result<_, _>>()?;
+        for (path, listed) in linked {
+            let mut ids: Vec<String> = serde_json::from_str(&listed)?;
+            if ids.iter().any(|id| id == local) {
+                for id in ids.iter_mut().filter(|id| *id == local) {
+                    *id = answered.to_string();
+                }
+                conn.execute(
+                    &format!("UPDATE folder_files SET {column} = ?2 WHERE path = ?1"),
+                    params![path, serde_json::to_string(&ids)?],
+                )?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Moves the copy onto `answered`, the row a create's natural key resolved
+/// where the server refused the create because that row was there
+/// (`queue-and-verdicts.md` 39), and answers the writes it refused on the way.
+///
+/// The row the create would have made exists, so what waited on the create
+/// no longer waits: a tag, an edge, a delete names the server's row from here
+/// on. An update is the exception. It was based on the create's own row, at
+/// the version the device minted it at, so it names a version of a row the
+/// server never made, and sent on the server's version instead it would write
+/// over a row this device never read; it is refused with the create
+/// (16) and never sent.
+///
+/// A file bound to the minted row holds bytes the server never took, so its
+/// binding is marked as agreeing with nothing (`folders.md` 13): the pull
+/// leaves it as it is, and the next scan sends what it holds as an edit of
+/// the server's row or, where the row holds it already, nothing.
+pub fn land_on_held_row(
+    conn: &Connection,
+    create: &QueuedWrite,
+    answered: &str,
+) -> Result<Vec<(QueuedWrite, String)>, CoreError> {
+    let Some(local) = create.item_id.as_deref() else {
+        return Ok(Vec::new());
+    };
+    let mut refused = Vec::new();
+    for row in waiting_writes(conn)? {
+        if !row.depends_on.contains(&create.id) {
+            continue;
+        }
+        if row.kind == WriteKind::UpdateItem {
+            let reason = format!(
+                "the create it was based on was refused because {answered} already holds its natural key, \
+                 and this edit names a version of a row the server never made"
+            );
+            record_verdict(
+                conn,
+                &row.id,
+                &Answered {
+                    verdict: Verdict::Refused,
+                    reason: Some(&reason),
+                    answer: None,
+                    conflicted_copy_id: None,
+                },
+            )?;
+            refused.push((row, reason));
+            continue;
+        }
+        let still: Vec<&String> = row
+            .depends_on
+            .iter()
+            .filter(|held| **held != create.id)
+            .collect();
+        conn.execute(
+            "UPDATE queue SET depends_on = ?2 WHERE id = ?1",
+            params![
+                row.id,
+                if still.is_empty() {
+                    None
+                } else {
+                    Some(serde_json::to_string(&still)?)
+                }
+            ],
+        )?;
+    }
+    conn.execute(
+        "UPDATE folder_files SET content_hash = ?2 WHERE item_id = ?1",
+        params![local, crate::folder::state::UNTAKEN],
+    )?;
+    adopt_answered_id(conn, local, answered)?;
+    Ok(refused)
+}
+
+/// Blocks every unanswered create naming `source`, under
+/// `credential_refused` (`queue-and-verdicts.md` 40), and answers their ids.
+///
+/// The server refused one because the credential's key does not claim the
+/// source, and every other create naming it carries the same credential and
+/// the same source: sending each would be asking the same question once per
+/// file. Writes naming no source, or another, are left to go.
+pub fn block_creates_naming(conn: &Connection, source: &str) -> Result<Vec<String>, CoreError> {
+    let mut blocked = Vec::new();
+    for row in read_writes(
+        conn,
+        "WHERE verdict IS NULL AND kind = ?1",
+        [WriteKind::CreateItem.as_str()],
+    )? {
+        let payload: Value = serde_json::from_str(&payload_of(conn, &row.id)?)?;
+        if payload.get("source").and_then(Value::as_str) != Some(source) {
+            continue;
+        }
+        record_verdict(
+            conn,
+            &row.id,
+            &Answered {
+                verdict: Verdict::Blocked,
+                reason: Some(BlockedReason::CredentialRefused.as_str()),
+                answer: None,
+                conflicted_copy_id: None,
+            },
+        )?;
+        blocked.push(row.id);
+    }
+    Ok(blocked)
 }
 
 pub fn delete_item(conn: &Connection, id: &str) -> Result<bool, CoreError> {
@@ -1314,6 +1481,119 @@ mod tests {
         assert_eq!(item.title(None), Some("Renamed"));
         assert_eq!(item.tags, vec!["a", "b"]);
         assert_eq!(count(&conn, "items_fts").unwrap(), 1);
+    }
+
+    /// Everything that named the minted id names the server's row after a
+    /// create lands on one it held (`queue-and-verdicts.md` 38), and nothing
+    /// that named another id is touched.
+    #[test]
+    fn a_create_answered_with_another_id_moves_everything_onto_it() {
+        use crate::folder::state::{self, Bound};
+        let conn = conn();
+        let indexing = Indexing::titled("title");
+        for id in ["local", "server", "other"] {
+            upsert_item(
+                &conn,
+                &note(id, id, "b", "2026-01-01T00:00:00Z"),
+                None,
+                &indexing,
+            )
+            .unwrap();
+        }
+        upsert_edge(&conn, &wire_edge("e1", "local", "other", "references")).unwrap();
+        upsert_edge(&conn, &wire_edge("e2", "other", "local", "references")).unwrap();
+        upsert_edge(&conn, &wire_edge("e3", "other", "other", "references")).unwrap();
+        let bound = |path: &str, item: &str, links: Vec<String>, declined: Vec<String>| Bound {
+            path: path.into(),
+            item_id: item.into(),
+            identity: None,
+            content_hash: "h".into(),
+            written_hash: None,
+            links,
+            declined,
+        };
+        state::bind(
+            &conn,
+            &bound("a.md", "local", vec!["other".into()], vec!["other".into()]),
+        )
+        .unwrap();
+        state::bind(
+            &conn,
+            &bound(
+                "b.md",
+                "other",
+                vec!["local".into(), "other".into()],
+                vec!["local".into()],
+            ),
+        )
+        .unwrap();
+        state::journal_missing(&conn, "gone.md", "local").unwrap();
+        state::journal_missing(&conn, "kept.md", "other").unwrap();
+        conn.execute(
+            "INSERT INTO queue (id, kind, item_id, target_id, payload, idempotency_key, depends_on, queued_at)
+             VALUES ('q1', 'create_edge', 'other', 'local', ?1, 'k1', '[]', ''),
+                    ('q2', 'update_item', 'local', NULL, '{}', 'k2', '[]', '')",
+            [serde_json::json!({ "source_id": "other", "target_id": "local" }).to_string()],
+        )
+        .unwrap();
+
+        adopt_answered_id(&conn, "local", "server").unwrap();
+
+        assert!(
+            item_by_id(&conn, "local").unwrap().is_none(),
+            "the minted row is still held"
+        );
+        assert!(item_by_id(&conn, "server").unwrap().is_some());
+        let endpoints = |id: &str| -> (String, String) {
+            conn.query_row(
+                "SELECT source_id, target_id FROM edges WHERE id = ?1",
+                [id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap()
+        };
+        assert_eq!(endpoints("e1"), ("server".into(), "other".into()));
+        assert_eq!(endpoints("e2"), ("other".into(), "server".into()));
+        assert_eq!(endpoints("e3"), ("other".into(), "other".into()));
+        let queued = |id: &str| -> (Option<String>, Option<String>, String) {
+            conn.query_row(
+                "SELECT item_id, target_id, payload FROM queue WHERE id = ?1",
+                [id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap()
+        };
+        let (item, target, payload) = queued("q1");
+        assert_eq!(
+            (item.as_deref(), target.as_deref()),
+            (Some("other"), Some("server"))
+        );
+        let payload: Value = serde_json::from_str(&payload).unwrap();
+        assert_eq!(payload["source_id"], "other");
+        assert_eq!(payload["target_id"], "server");
+        assert_eq!(queued("q2").0.as_deref(), Some("server"));
+        let files = state::every_bound(&conn).unwrap();
+        let file = |path: &str| files.iter().find(|file| file.path == path).unwrap().clone();
+        assert_eq!(file("a.md").item_id, "server");
+        assert_eq!(file("a.md").links, vec!["other".to_string()]);
+        assert_eq!(file("a.md").declined, vec!["other".to_string()]);
+        assert_eq!(file("b.md").item_id, "other");
+        assert_eq!(
+            file("b.md").links,
+            vec!["server".to_string(), "other".to_string()]
+        );
+        // A link the person took out names the item too, and left naming
+        // the minted id it would be put back by the next pull.
+        assert_eq!(file("b.md").declined, vec!["server".to_string()]);
+        let journaled = state::journaled(&conn).unwrap();
+        let missing = |path: &str| {
+            journaled
+                .iter()
+                .find(|(at, _, _)| at == path)
+                .map(|(_, item, _)| item.clone())
+        };
+        assert_eq!(missing("gone.md").as_deref(), Some("server"));
+        assert_eq!(missing("kept.md").as_deref(), Some("other"));
     }
 
     #[test]
@@ -2402,11 +2682,13 @@ pub fn edge_by_id(conn: &Connection, id: &str) -> Result<Option<Edge>, CoreError
         .optional()?)
 }
 
-/// Queue rows naming this edge that the server has not answered.
+/// Queue rows naming this edge that the server has not answered, and its
+/// create while the server has not taken it, blocked included, for the
+/// reason `untaken_creates_for_item` gives.
 pub fn unanswered_for_edge(conn: &Connection, edge_id: &str) -> Result<Vec<String>, CoreError> {
-    Ok(queued_writes(conn)?
+    Ok(waiting_writes_for_edge(conn, edge_id)?
         .into_iter()
-        .filter(|row| row.verdict.is_none() && row.edge_id.as_deref() == Some(edge_id))
+        .filter(|row| row.verdict.is_none() || row.kind == WriteKind::CreateEdge)
         .map(|row| row.id)
         .collect())
 }

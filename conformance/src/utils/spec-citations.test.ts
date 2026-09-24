@@ -45,7 +45,11 @@ function walk(dir: string, extension: string): string[] {
  * and this is a reference between two documents.
  */
 function statementNumbers(file: string): Set<number> {
-  const text = readFileSync(resolve(specDir, file), "utf8");
+  return numbersIn(readFileSync(resolve(specDir, file), "utf8"));
+}
+
+/** The statement numbers `text` defines, by the rule `statementNumbers` reads a file with. */
+function numbersIn(text: string): Set<number> {
   const out = new Set<number>();
   for (const match of text.matchAll(/^(?:## )?(\d+)\. /gm)) {
     out.add(Number(match[1]));
@@ -145,11 +149,20 @@ describe("specification citations", () => {
     // entry off, and each of those still resolves, so existence alone cannot
     // see it. The headings are the file's own numbering, and this is the one
     // statement about them that does not need to know what they say.
+    //
+    // The positive control is written here rather than read from the file,
+    // because the file is emptied by design: an entry goes when the
+    // behavior it recorded changes, and a file with none left has no
+    // heading to show the parse works, so a control that needed one would
+    // fail on the day the last finding is fixed.
+    const witness = [
+      ...numbersIn("## 1. A first finding\n\nIts body.\n\n## 2. A second\n"),
+    ];
+    expect(
+      witness,
+      "the heading parse read nothing from two headings written for it, so the check on the file below is about nothing",
+    ).toEqual([1, 2]);
     const numbered = [...statementNumbers("findings.md")].sort((a, b) => a - b);
-    // The positive control: the headings parsed at all. A loose floor
-    // rather than the count, which would redden on the next removal for a
-    // reason that has nothing to do with what this asserts.
-    expect(numbered.length).toBeGreaterThan(0);
     expect(numbered).toEqual(numbered.map((_, index) => index + 1));
   });
 

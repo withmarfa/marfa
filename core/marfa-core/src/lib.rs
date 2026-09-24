@@ -443,7 +443,7 @@ impl Core {
             });
         }
         // The create and nothing else, for the reason `update_item` gives.
-        let depends_on = store::unanswered_creates_for_item(&conn, id)?;
+        let depends_on = store::untaken_creates_for_item(&conn, id)?;
         let tx = conn.transaction()?;
         store::set_item_state(&tx, id, state)?;
         let queued = store::enqueue(
@@ -607,7 +607,7 @@ impl Core {
                 message: format!("{id} is not a row this copy holds"),
             });
         }
-        let depends_on = store::unanswered_creates_for_item(&conn, id)?;
+        let depends_on = store::untaken_creates_for_item(&conn, id)?;
         let tx = conn.transaction()?;
         apply(&tx)?;
         let queued = store::enqueue(
@@ -691,7 +691,7 @@ impl Core {
                 message: format!("{id} is not a row this copy holds"),
             });
         }
-        let depends_on = store::unanswered_creates_for_item(&conn, id)?;
+        let depends_on = store::untaken_creates_for_item(&conn, id)?;
         let tx = conn.transaction()?;
         let queued = store::enqueue(
             &tx,
@@ -971,7 +971,9 @@ impl Core {
 /// The id is minted here rather than left to the server, because a row a
 /// caller has been told was queued has to be readable locally before anyone
 /// has answered for it (`queue-and-verdicts.md` 31), and a row with no id
-/// cannot be read by one.
+/// cannot be read by one. It is sent only on a create carrying no natural
+/// key: one carrying a `source_id` goes without it and the server names the
+/// row, and the copy moves onto that name when the answer comes (38).
 ///
 /// The version is optional on a create and carried when given
 /// (`queue-and-verdicts.md` 2): where the natural key resolves a live row the
@@ -1040,7 +1042,8 @@ fn queue_create(
 }
 
 /// An update, applied to the copy and queued in the caller's transaction,
-/// waiting on `after` as well as on the row's own unanswered create.
+/// waiting on `after` as well as on the row's own create while the server has
+/// not taken it.
 ///
 /// **The version is required** (`queue-and-verdicts.md` 2). An update with
 /// none is refused here rather than sent, because a version-less update is a
@@ -1102,7 +1105,7 @@ fn queue_update(
     // never accepted, not about a sibling write that failed for its own
     // reasons. The queue drains in order, so ordering needs no dependency
     // to hold it.
-    let mut depends_on = store::unanswered_creates_for_item(tx, id)?;
+    let mut depends_on = store::untaken_creates_for_item(tx, id)?;
     for waited in after {
         if !depends_on.contains(waited) {
             depends_on.push(waited.clone());
@@ -1138,7 +1141,7 @@ fn queue_edge(tx: &Connection, draft: &EdgeDraft) -> Result<QueuedWrite> {
     let payload = draft.payload(&id)?;
     let mut depends_on: Vec<String> = Vec::new();
     for endpoint in [&draft.source_id, &draft.target_id] {
-        for id in store::unanswered_creates_for_item(tx, endpoint)? {
+        for id in store::untaken_creates_for_item(tx, endpoint)? {
             if !depends_on.contains(&id) {
                 depends_on.push(id);
             }

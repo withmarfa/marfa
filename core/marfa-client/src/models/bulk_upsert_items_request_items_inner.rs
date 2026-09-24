@@ -25,6 +25,7 @@ pub struct BulkUpsertItemsRequestItemsInner {
     pub tier: Option<models::Tier>,
     #[serde(rename = "occurred_at", skip_serializing_if = "Option::is_none")]
     pub occurred_at: Option<String>,
+    /// The source this entry's row is keyed by and stamped with, resolved as `POST /items` resolves it: omitted, or naming the credential's own, takes the credential's; naming one of its key's `sources` takes that one; anything else refuses the entry `forbidden`.
     #[serde(rename = "source", skip_serializing_if = "Option::is_none")]
     pub source: Option<String>,
     #[serde(rename = "source_id", skip_serializing_if = "Option::is_none")]

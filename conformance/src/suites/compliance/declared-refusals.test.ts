@@ -13,7 +13,7 @@ import {
 } from "../../utils/setup.js";
 import { createNote } from "../../generators/items.js";
 import { tarGz } from "../../utils/archive.js";
-import { bootFreshServer } from "../../utils/fresh-server.js";
+import { approvedAppToken, bootFreshServer } from "../../utils/fresh-server.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
 
 /**
@@ -491,117 +491,13 @@ describe("a session token", () => {
   it("cannot register a connector", async () => {
     const server = await bootFreshServer("session-connector");
     try {
-      const owner = {
-        email: "a@example.com",
-        password: "correct horse battery",
-      };
-      const created = await fetch(`${server.apiUrl}/owner`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${server.operatorKey}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(owner),
-      });
-      expect(created.status).toBe(201);
-
-      const discovery = (await (
-        await fetch(
-          `${server.apiUrl}/.well-known/oauth-authorization-server/auth`,
-        )
-      ).json()) as {
-        registration_endpoint: string;
-        device_authorization_endpoint: string;
-        token_endpoint: string;
-        scopes_supported: string[];
-      };
-      const registered = (await (
-        await fetch(discovery.registration_endpoint, {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            client_name: "conformance",
-            application_type: "native",
-            grant_types: [
-              "urn:ietf:params:oauth:grant-type:device_code",
-              "refresh_token",
-            ],
-            response_types: [],
-            token_endpoint_auth_method: "none",
-          }),
-        })
-      ).json()) as { client_id: string };
-
-      const code = (await (
-        await fetch(discovery.device_authorization_endpoint, {
-          method: "POST",
-          headers: { "content-type": "application/x-www-form-urlencoded" },
-          body: new URLSearchParams({
-            client_id: registered.client_id,
-            scope: discovery.scopes_supported.join(" "),
-          }),
-        })
-      ).json()) as {
-        device_code: string;
-        user_code: string;
-        verification_uri_complete: string;
-      };
-
-      const origin = new URL(code.verification_uri_complete).origin;
-      const signIn = await fetch(`${origin}/auth/sign-in/email`, {
-        method: "POST",
-        headers: { "content-type": "application/json", origin },
-        body: JSON.stringify(owner),
-      });
-      expect(signIn.status).toBe(200);
-      const cookie = /(?:^|,\s*)([\w.-]*session_token=[^;]+)/.exec(
-        signIn.headers.get("set-cookie") ?? "",
-      )?.[1];
-      expect(cookie, "sign-in set no session cookie").toBeTruthy();
-      const consent = await fetch(
-        `${origin}/auth/device/consent?user_code=${encodeURIComponent(code.user_code)}`,
-        { headers: { cookie: cookie! } },
-      );
-      const html = await consent.text();
-      const form = new URLSearchParams({
-        user_code: code.user_code,
-        decision: "approve",
-      });
-      for (const scope of new Set(
-        [...html.matchAll(/name="scopes"[^>]*value="([^"]+)"/g)].map(
-          (m) => m[1]!,
-        ),
-      )) {
-        form.append("scopes", scope);
-      }
-      const approved = await fetch(`${origin}/auth/device/consent`, {
-        method: "POST",
-        headers: {
-          cookie: cookie!,
-          origin,
-          "content-type": "application/x-www-form-urlencoded",
-        },
-        body: form,
-      });
-      expect(approved.status).toBe(200);
-
-      const token = (await (
-        await fetch(discovery.token_endpoint, {
-          method: "POST",
-          headers: { "content-type": "application/x-www-form-urlencoded" },
-          body: new URLSearchParams({
-            grant_type: "urn:ietf:params:oauth:grant-type:device_code",
-            device_code: code.device_code,
-            client_id: registered.client_id,
-          }),
-        })
-      ).json()) as { access_token: string };
-      expect(token.access_token).toMatch(/^marfa_at_/);
+      const token = await approvedAppToken(server);
+      expect(token).toMatch(/^marfa_at_/);
 
       const refused = await fetch(`${server.apiUrl}/connectors`, {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${token.access_token}`,
+          Authorization: `Bearer ${token}`,
           "Content-Type": "application/json",
         },
         body: JSON.stringify({ name: "session" }),

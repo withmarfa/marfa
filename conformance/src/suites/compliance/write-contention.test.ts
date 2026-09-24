@@ -246,7 +246,7 @@ describe("contention on the write lock", () => {
   }, 120_000);
 
   it("answers 500 at client registration, which the sign-in library writes", async () => {
-    // What the server does, recorded in `findings.md` 2: the registration
+    // What the server does, recorded in `findings.md` 1: the registration
     // door is the sign-in library's, whose write does not pass through the
     // storage layer's busy budget, so contention reaches the caller as a
     // `500` the document does not declare.

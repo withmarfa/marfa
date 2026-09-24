@@ -336,6 +336,77 @@ describe("bulk", () => {
     );
   });
 
+  it("reads a natural key over trashed rows, as the single create does", async () => {
+    const sourceId = `trashed-${ctx.runId}`;
+    const created = await client.createItem({
+      type: "core.note",
+      properties: { title: "trashed", body: "before the bin" },
+      source_id: sourceId,
+    });
+    expect(created.status, JSON.stringify(created.error)).toBe(201);
+    const id = created.data.item.id;
+    trackItem(ctx, id);
+    expect((await client.deleteItem(id)).ok).toBe(true);
+    const binnedRow = async () => {
+      const binned = await client.listItems({
+        state: "trashed",
+        source: ctx.source,
+        limit: 100,
+      });
+      expect(binned.ok, JSON.stringify(binned.error)).toBe(true);
+      return binned.data.data.find((item) => item.id === id);
+    };
+    const before = await binnedRow();
+    expect(before, "the deleted row is not in the bin").toBeDefined();
+    const entry = {
+      type: "core.note",
+      properties: { title: "trashed", body: "a re-sync" },
+      source_id: sourceId,
+    };
+
+    // The single create's answer: the trashed row, acknowledged, and
+    // nothing written.
+    const single = await client.createItem(entry);
+    expect(single.status, JSON.stringify(single.error)).toBe(200);
+    expect(single.data.acknowledged).toBe(true);
+    expect(single.data.item.id).toBe(id);
+
+    // The same entry through the bulk door, atomic by default: the page
+    // lands, and the entry is the trashed row, left as it is.
+    const upserted = await client.bulkItems({ items: [entry] });
+    expect(
+      upserted.status,
+      `the bulk door did not find the trashed row by its natural key, so a re-sync of one deleted row rolls the whole page back: ${JSON.stringify(upserted.error)}`,
+    ).toBe(200);
+    expect(upserted.data.results[0]).toMatchObject({
+      outcome: "skipped",
+      id,
+      reason: "trashed",
+    });
+    await expectMatchesSchema("POST", "/items/bulk", 200, upserted.data);
+
+    // And under create_only it is a repeated pair like any other.
+    const repeated = await client.bulkItems({
+      items: [entry],
+      mode: "create_only",
+    });
+    expect(repeated.status, JSON.stringify(repeated.error)).toBe(200);
+    expect(repeated.data.results[0]).toMatchObject({
+      outcome: "skipped",
+      id,
+      reason: "duplicate_source",
+    });
+
+    // Nothing was written to the row, and it is still in the bin.
+    const after = await binnedRow();
+    expect(after?.version, "an acknowledgment wrote to the trashed row").toBe(
+      before?.version,
+    );
+    expect((after?.properties as { body?: string } | undefined)?.body).toBe(
+      "before the bin",
+    );
+  });
+
   it("atomic=false keeps the good entry and errors the unregistered type", async () => {
     const unregistered = `user.bulk-unregistered-${ctx.runId}`;
     const res = await client.bulkItems({

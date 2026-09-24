@@ -216,6 +216,10 @@ describe("item versioning", () => {
     const body = conflict.error as unknown as AncestorUnavailableResponse;
     expect(body.error.status).toBe(409);
     expect(body.requested_version).toBe(0);
+    expect(
+      body.current.id,
+      "the refusal did not name the row it is about in current.id",
+    ).toBe(r.data.item.id);
     expect(body.current.version).toBe(1);
     expect(body.current.properties.title).toBe("Conflict test");
     expect(body).not.toHaveProperty("ancestor");
@@ -247,6 +251,10 @@ describe("item versioning", () => {
 
     const body = conflict.error as unknown as ConflictResponse;
     expect(body.error.status).toBe(409);
+    expect(
+      [body.current.id, body.ancestor.id],
+      "the refusal did not name the row in current.id and ancestor.id",
+    ).toEqual([r.data.item.id, r.data.item.id]);
     expect(body.current.version).toBe(2);
     expect(body.current.properties.title).toBe("Server title");
     expect(body.current.properties.body).toBe("Original");

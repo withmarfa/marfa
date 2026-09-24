@@ -23,7 +23,6 @@ describe("GET /export", () => {
       body: {
         type: "core.note",
         properties: { body: "Export test" },
-        source: "export-test",
         source_id: "exp-1",
       },
     });
@@ -67,8 +66,8 @@ describe("GET /export", () => {
   });
 
   it("filters export by source", async () => {
-    // `source` is stamped from the credential, not the request body —
-    // so two keys with distinct sources give two distinct item sources.
+    // Two keys writing under their own sources give two distinct item
+    // sources.
     const tag = Math.random().toString(36).slice(2);
     const sourceA = `export-src-a-${tag}`;
     const sourceB = `export-src-b-${tag}`;
@@ -79,8 +78,6 @@ describe("GET /export", () => {
         body: {
           label: source,
           source,
-          // The rank this fixture carried admitted it past its own map, so
-          // the map has to say what the rank granted silently.
           type_permissions: { "*": "write" },
         },
       });
@@ -197,13 +194,11 @@ describe("GET /export?format=archive", () => {
     });
     const { hash: blobHash } = (await uploadRes.json()) as { hash: string };
 
-    const source = `archive-export-${Math.random().toString(36).slice(2)}`;
     await request(ctx.app, "POST", "/items", {
       key: ctx.workingKey,
       body: {
         type: "core.note",
         properties: { body: "Has a blob", blob_ref: blobHash },
-        source,
         source_id: "ae-1",
       },
     });

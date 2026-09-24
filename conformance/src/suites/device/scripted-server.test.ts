@@ -40,6 +40,7 @@ describe("the answers a device has to classify", () => {
       "/items/a",
       answers.versionConflict(
         {
+          id: "a",
           version: 3,
           properties: { title: "current", body: "current" },
           tier: "library",
@@ -47,6 +48,7 @@ describe("the answers a device has to classify", () => {
           source_id: null,
         },
         {
+          id: "a",
           version: 1,
           properties: { title: "base", body: "base" },
           tier: "library",
@@ -58,6 +60,7 @@ describe("the answers a device has to classify", () => {
       ),
       answers.ancestorUnavailable(
         {
+          id: "a",
           version: 9,
           properties: { title: "current" },
           tier: "library",

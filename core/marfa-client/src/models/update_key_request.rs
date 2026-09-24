@@ -17,6 +17,9 @@ pub struct UpdateKeyRequest {
     pub label: Option<String>,
     #[serde(rename = "default_tier", skip_serializing_if = "Option::is_none")]
     pub default_tier: Option<models::Tier>,
+    /// The sources a write by this key may name besides its own `source`, so its rows are keyed by the named source. Two keys may claim one source, which is how two devices present one natural key; a key's own `source` stays unique. Held to the rules the permission maps keep: omitted on a create that names no map either, it takes the creator's claims; named, it is only what it names; a working key may grant only its own `source` and what it claims itself, and the operator key may grant any. A source starting `oauth:` or `connector:` is refused.
+    #[serde(rename = "sources", skip_serializing_if = "Option::is_none")]
+    pub sources: Option<Vec<String>>,
     #[serde(rename = "type_permissions", skip_serializing_if = "Option::is_none")]
     pub type_permissions: Option<std::collections::HashMap<String, models::TypePermissionLevel>>,
     #[serde(
@@ -56,6 +59,7 @@ impl UpdateKeyRequest {
         UpdateKeyRequest {
             label: None,
             default_tier: None,
+            sources: None,
             type_permissions: None,
             extension_permissions: None,
             edge_permissions: None,

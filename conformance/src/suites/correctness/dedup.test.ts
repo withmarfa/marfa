@@ -48,6 +48,58 @@ describe("deduplication", () => {
     expect(r2.data.item.properties.body).toBe("second version");
   });
 
+  it("refuses a create naming an id that is not the row its natural key resolves", async () => {
+    const sourceId = `dedup-id-${generateId()}`;
+    const first = await client.createItem(
+      createNote({
+        source: ctx.source,
+        source_id: sourceId,
+        properties: { body: "first" },
+      }),
+    );
+    expect(first.status, JSON.stringify(first.error)).toBe(201);
+    trackItem(ctx, first.data.item.id);
+
+    const other = generateId();
+    const refused = await client.createItem(
+      createNote({
+        id: other,
+        source: ctx.source,
+        source_id: sourceId,
+        properties: { body: "second" },
+      }),
+    );
+    expect(
+      refused.status,
+      "a create naming one id and a key naming another row was written onto one of them",
+    ).toBe(400);
+    expect(refused.error?.error.code).toBe("validation_error");
+    expect(refused.error?.error.details).toMatchObject({
+      field: "id",
+      requested_id: other,
+      existing_id: first.data.item.id,
+      source: ctx.source,
+      source_id: sourceId,
+    });
+    const kept = await client.getItem(first.data.item.id);
+    expect(kept.data.item.version, "the refused create wrote to the row").toBe(
+      1,
+    );
+    expect((await client.getItem(other)).status).toBe(404);
+
+    // The witness: the same create naming no id lands on the row the key
+    // resolves, so the refusal is about the id.
+    const landed = await client.createItem(
+      createNote({
+        source: ctx.source,
+        source_id: sourceId,
+        properties: { body: "second" },
+      }),
+    );
+    expect(landed.status, JSON.stringify(landed.error)).toBe(200);
+    expect(landed.data.item.id).toBe(first.data.item.id);
+  });
+
   it("same source but different source_id is not a duplicate", async () => {
     const item1 = createNote({
       source: ctx.source,

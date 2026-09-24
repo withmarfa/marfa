@@ -53,6 +53,9 @@ describe("a folder round trip", () => {
       "folders",
       "add",
       dir,
+      // The key's own source, which it may always name.
+      "--source",
+      c.ctx.source,
       "--types",
       "core.note",
       "--default-type",

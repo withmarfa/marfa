@@ -1081,6 +1081,452 @@ describe("an answer the device applies keeps what it has not had answered", () =
     ).toEqual(["add_tag", "delete_item", "update_item"]);
   });
 
+  it("moves the copy onto the row a create lands on, with every write waiting on it", async () => {
+    const OTHER = { id: "01a00000-0000-7000-8000-00000000000b", version: 1 };
+    harness = await hydratedHarness("queue-create-lands-on-held", {
+      rows: {
+        "core.note": [
+          ...held()["core.note"],
+          { item: { id: OTHER.id, version: OTHER.version } },
+        ],
+      },
+    });
+    const { device, server } = harness;
+    // A create carrying the natural key of a row the server holds, and the
+    // writes queued on the row it made here before it was answered.
+    const created = await device.create({
+      type: "core.note",
+      properties: { title: "the same note", body: "b" },
+      source: "notes",
+      sourceId: "shared.md",
+      version: HELD.version,
+    });
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    const local = created.value.item_id ?? "";
+    for (const queued of [
+      await device.update(local, {
+        properties: { title: "edited here" },
+        version: 0,
+      }),
+      await device.addTag(local, "kept"),
+      await device.createEdge({
+        source: local,
+        target: OTHER.id,
+        type: "references",
+      }),
+    ]) {
+      expect(queued.ok, JSON.stringify(queued)).toBe(true);
+    }
+    // The witness: every write was queued against the id minted here, so its
+    // absence from the wire below is the move and not a write never queued.
+    expect(
+      (await queueOf(device)).filter((row) => row.item_id === local),
+    ).toHaveLength(4);
+
+    scriptWrites(server, {
+      // The server resolves the pair onto the row it holds.
+      create: [
+        (request) => {
+          const sent = JSON.parse(request.body) as {
+            properties: Record<string, unknown>;
+          };
+          return answers.created(
+            wireItem({
+              id: HELD.id,
+              version: HELD.version + 1,
+              properties: sent.properties,
+              source: "notes",
+              source_id: "shared.md",
+            }),
+          );
+        },
+      ],
+      update: [
+        (request) => {
+          const sent = JSON.parse(request.body) as {
+            version: number;
+            properties: Record<string, unknown>;
+          };
+          return answers.updated(
+            wireItem({
+              id: request.pathname.split("/").at(-1) ?? "",
+              version: sent.version + 1,
+              properties: sent.properties,
+            }),
+          );
+        },
+      ],
+      tags: [{ kind: "json", status: 200, body: {} }],
+      edges: [{ kind: "json", status: 201, body: {} }],
+    });
+    expect((await device.drain()).ok).toBe(true);
+
+    const sent = server.requests.filter((request) => request.method !== "GET");
+    expect(
+      sent
+        .filter(
+          (request) =>
+            request.pathname.includes(local) || request.body.includes(local),
+        )
+        .map((request) => `${request.method} ${request.pathname}`),
+      "a write waiting on the create went to the id minted here, which the server never held",
+    ).toEqual([]);
+    const update = sent.find(
+      (request) =>
+        request.method === "PATCH" && request.pathname === `/items/${HELD.id}`,
+    );
+    expect(
+      (JSON.parse(update?.body ?? "{}") as { version?: number }).version,
+      "the edit was not sent on the version the create was answered with",
+    ).toBe(HELD.version + 1);
+    expect(
+      sent.some(
+        (request) =>
+          request.method === "POST" &&
+          request.pathname === `/items/${HELD.id}/tags`,
+      ),
+    ).toBe(true);
+    expect(
+      sent
+        .filter((request) => request.pathname === "/edges")
+        .map(
+          (request) =>
+            (JSON.parse(request.body) as { source_id?: string }).source_id,
+        ),
+    ).toEqual([HELD.id]);
+    expect(
+      (await device.get(local)).ok,
+      "the row minted here is still held beside the one the server answered with, so the copy holds one note twice",
+    ).toBe(false);
+    expect((await device.get(HELD.id)).ok).toBe(true);
+  });
+
+  it("refuses a create whose natural key names a row, and moves the copy onto that row", async () => {
+    // Another device's create landed under the same natural key after this
+    // copy last read, so the create here, conditional on nothing being there,
+    // is refused, and the envelope names the row that is (`versions.md` 10).
+    const OTHER = { id: "01a00000-0000-7000-8000-00000000000b", version: 1 };
+    const THEIRS = { id: "01a00000-0000-7000-8000-0000000000c1", version: 2 };
+    harness = await hydratedHarness("queue-create-refused-onto-held", {
+      rows: { "core.note": [{ item: { id: OTHER.id, version: 1 } }] },
+    });
+    const { device, server } = harness;
+    const created = await device.create({
+      type: "core.note",
+      properties: { title: "mine", body: "mine" },
+      source: "notes",
+      sourceId: "raced.md",
+      version: 0,
+    });
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    const local = created.value.item_id ?? "";
+    const edit = await device.update(local, {
+      properties: { title: "mine, edited" },
+      version: 0,
+    });
+    const tagged = await device.addTag(local, "kept");
+    const linked = await device.createEdge({
+      source: local,
+      target: OTHER.id,
+      type: "references",
+    });
+    for (const queued of [edit, tagged, linked]) {
+      expect(queued.ok, JSON.stringify(queued)).toBe(true);
+    }
+    // The witness: the edit waits on the create, so its absence from the
+    // wire below is the refusal and not a write that was never queued.
+    expect(edit.ok && edit.value.depends_on).toEqual([created.value.id]);
+
+    const theirs = {
+      id: THEIRS.id,
+      version: THEIRS.version,
+      properties: { title: "theirs", body: "theirs" },
+      source: "notes",
+      source_id: "raced.md",
+    };
+    scriptWrites(server, {
+      create: [
+        answers.ancestorUnavailable(
+          {
+            id: THEIRS.id,
+            version: THEIRS.version,
+            properties: theirs.properties,
+            tier: "library",
+            occurred_at: "2026-01-01T00:00:00.000Z",
+            source_id: "raced.md",
+          },
+          0,
+        ),
+      ],
+      // The row read by the id the envelope named, to hold it.
+      read: [answers.updated(wireItem(theirs))],
+      update: [
+        (request) =>
+          answers.updated(
+            wireItem({
+              ...theirs,
+              version:
+                (JSON.parse(request.body) as { version: number }).version + 1,
+              properties: { title: "edited after", body: "theirs" },
+            }),
+          ),
+      ],
+      tags: [{ kind: "json", status: 200, body: {} }],
+      edges: [
+        (request) => {
+          const sent = JSON.parse(request.body) as {
+            id: string;
+            source_id: string;
+            target_id: string;
+          };
+          return writeAnswers.edge(sent);
+        },
+      ],
+    });
+    const drained = await device.drain();
+    expect(drained.ok, JSON.stringify(drained)).toBe(true);
+    if (!drained.ok) return;
+
+    const verdictOf = (id: string) =>
+      drained.value.verdicts.find((entry) => entry.id === id);
+    expect(
+      [
+        verdictOf(created.value.id)?.verdict,
+        verdictOf(created.value.id)?.reason,
+      ],
+      "a create the server refused because the row it would make is there was held for a release that can only meet the same refusal",
+    ).toEqual(["refused", "ancestor_unavailable"]);
+    expect(
+      verdictOf(created.value.id)?.item_id,
+      "the drain reported the create against the id minted here, which names nothing",
+    ).toBe(THEIRS.id);
+    expect(
+      verdictOf(edit.ok ? edit.value.id : "")?.verdict,
+      "an edit based on the refused create was sent, over a row this device never read",
+    ).toBe("refused");
+    expect(
+      verdictOf(tagged.ok ? tagged.value.id : "")?.verdict,
+      "the tag waited on a create that will never land, although the row it names exists",
+    ).toBe("accepted");
+    expect(verdictOf(linked.ok ? linked.value.id : "")?.verdict).toBe(
+      "accepted",
+    );
+
+    const sent = server.requests.filter((request) => request.method !== "GET");
+    expect(
+      sent
+        .filter(
+          (request) =>
+            request.pathname.includes(local) || request.body.includes(local),
+        )
+        .map((request) => `${request.method} ${request.pathname}`),
+      "a write went to the id minted here, which the server never held",
+    ).toEqual([]);
+    expect(
+      sent.filter((request) => request.method === "PATCH"),
+      "the edit based on the refused create went out",
+    ).toEqual([]);
+    expect(
+      sent.map((request) => `${request.method} ${request.pathname}`),
+    ).toEqual(["POST /items", `POST /items/${THEIRS.id}/tags`, "POST /edges"]);
+
+    // One item, the server's, as the server holds it.
+    expect(
+      (await device.get(local)).ok,
+      "the row minted here is still held beside the one the server named, so the copy holds one note twice",
+    ).toBe(false);
+    const holding = await device.get(THEIRS.id);
+    expect(holding.ok, JSON.stringify(holding)).toBe(true);
+    if (!holding.ok) return;
+    expect(holding.value.version).toBe(THEIRS.version);
+    expect(holding.value.properties.title).toBe("theirs");
+
+    // And a write after it does not wait on the refused create: it is sent,
+    // on the version the copy holds.
+    const later = await device.update(THEIRS.id, {
+      properties: { title: "edited after" },
+      version: THEIRS.version,
+    });
+    expect(later.ok, JSON.stringify(later)).toBe(true);
+    if (!later.ok) return;
+    expect(later.value.depends_on).toEqual([]);
+    expect((await device.drain()).ok).toBe(true);
+    const patch = server.requests.find(
+      (request) =>
+        request.method === "PATCH" &&
+        request.pathname === `/items/${THEIRS.id}`,
+    );
+    expect(
+      (JSON.parse(patch?.body ?? "{}") as { version?: number }).version,
+    ).toBe(THEIRS.version);
+  });
+
+  it("blocks a create whose natural key names a row it cannot read", async () => {
+    // The envelope names a row that is gone by the time the device reads it,
+    // so there is nothing to move onto, and the create stops as any write
+    // refused this way does (`queue-and-verdicts.md` 22).
+    const GONE = "01a00000-0000-7000-8000-0000000000c9";
+    harness = await hydratedHarness("queue-create-refused-onto-gone", {
+      rows: held(),
+    });
+    const { device, server } = harness;
+    const created = await device.create({
+      type: "core.note",
+      properties: { title: "mine", body: "mine" },
+      source: "notes",
+      sourceId: "gone.md",
+      version: 0,
+    });
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    const local = created.value.item_id ?? "";
+    scriptWrites(server, {
+      create: [
+        answers.ancestorUnavailable(
+          {
+            id: GONE,
+            version: 1,
+            properties: { title: "gone" },
+            tier: "library",
+            occurred_at: "2026-01-01T00:00:00.000Z",
+            source_id: "gone.md",
+          },
+          0,
+        ),
+      ],
+      read: [refusal(404, "item_not_found", "Item not found")],
+    });
+    const drained = await device.drain();
+    expect(drained.ok, JSON.stringify(drained)).toBe(true);
+    if (!drained.ok) return;
+    // The witness: the device did go to read the row it would have moved onto.
+    expect(
+      server.requests.some(
+        (request) =>
+          request.method === "GET" && request.pathname === `/items/${GONE}`,
+      ),
+    ).toBe(true);
+    const [verdict] = drained.value.verdicts;
+    expect(
+      [verdict?.verdict, verdict?.reason],
+      "a create was refused onto a row the device could not hold, leaving its copy holding nothing under the key",
+    ).toEqual(["blocked", "ancestor_unavailable"]);
+    expect((await device.get(local)).ok).toBe(true);
+  });
+
+  it("sends a create carrying a natural key without the id it minted, and holds the row the answer names", async () => {
+    harness = await hydratedHarness("queue-keyed-create-id", { rows: held() });
+    const { device, server } = harness;
+    const keyed = await device.create({
+      type: "core.note",
+      properties: { title: "keyed", body: "keyed" },
+      source: "notes",
+      sourceId: "fresh.md",
+    });
+    const plain = await device.create({
+      type: "core.note",
+      properties: { title: "plain", body: "plain" },
+    });
+    expect(keyed.ok && plain.ok).toBe(true);
+    if (!keyed.ok || !plain.ok) return;
+    const local = keyed.value.item_id ?? "";
+    expect(
+      (
+        await device.update(local, {
+          properties: { title: "keyed, edited" },
+          version: 0,
+        })
+      ).ok,
+    ).toBe(true);
+
+    // The server's rules: a create naming an id is written under it, and one
+    // naming none is given an id the server mints.
+    const minted = "01a00000-0000-7000-8000-0000000000f1";
+    scriptWrites(server, {
+      create: [
+        (request) => {
+          const sent = JSON.parse(request.body) as {
+            id?: string;
+            properties: Record<string, unknown>;
+            source?: string;
+            source_id?: string;
+          };
+          return answers.created(
+            wireItem({
+              id: sent.id ?? minted,
+              properties: sent.properties,
+              ...(sent.source === undefined ? {} : { source: sent.source }),
+              source_id: sent.source_id ?? null,
+            }),
+          );
+        },
+      ],
+      update: [
+        (request) => {
+          const sent = JSON.parse(request.body) as {
+            version: number;
+            properties: Record<string, unknown>;
+          };
+          return answers.updated(
+            wireItem({
+              id: request.pathname.split("/").at(-1) ?? "",
+              version: sent.version + 1,
+              properties: sent.properties,
+              source: "notes",
+              source_id: "fresh.md",
+            }),
+          );
+        },
+      ],
+    });
+    const drained = await device.drain();
+    expect(drained.ok, JSON.stringify(drained)).toBe(true);
+    if (!drained.ok) return;
+    expect(
+      drained.value.verdicts.find((entry) => entry.kind === "create_item")
+        ?.item_id,
+      "the drain reported the keyed create under the id minted here, which names nothing once the copy has moved",
+    ).toBe(minted);
+
+    const bodies = server.requests
+      .filter(
+        (request) => request.method === "POST" && request.pathname === "/items",
+      )
+      .map((request) => JSON.parse(request.body) as Record<string, unknown>);
+    const keyedBody = bodies.find((body) => body.source_id === "fresh.md");
+    expect(keyedBody, "the keyed create was never sent").toBeDefined();
+    expect(
+      "id" in (keyedBody ?? {}),
+      "a create carrying a natural key named the id minted here, which the server refuses wherever that key already names a row",
+    ).toBe(false);
+    // The witness: a create with no natural key still names the id minted
+    // here, so the absence above is about the key.
+    expect(
+      bodies.find((body) => body.source_id === undefined)?.id,
+      "a create with no natural key did not carry the id minted here",
+    ).toBe(plain.value.item_id);
+
+    expect(
+      (await device.get(local)).ok,
+      "the copy still holds the row under the id minted here, which the server never had",
+    ).toBe(false);
+    const landed = await device.get(minted);
+    expect(
+      landed.ok,
+      "the copy does not hold the row under the id the server answered with",
+    ).toBe(true);
+    const edit = server.requests.find((request) => request.method === "PATCH");
+    expect(
+      edit?.pathname,
+      "the edit waiting on the create went to the id minted here",
+    ).toBe(`/items/${minted}`);
+    expect(
+      (JSON.parse(edit?.body ?? "{}") as { version?: number }).version,
+    ).toBe(1);
+  });
+
   it("sends an edit of its own unanswered create based on the version that create was answered with", async () => {
     harness = await hydratedHarness("queue-rebase-own-create", {
       rows: held(),
