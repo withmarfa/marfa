@@ -433,14 +433,13 @@ impl Folder {
                         report.unchanged += 1;
                         continue;
                     }
-                    let unread = bound.content_hash == state::UNTAKEN_UNREAD;
-                    if self.queue_update(bound, &seen, &catalog, &mut unresolved)? {
-                        report.updated += 1;
-                        if unread {
+                    match self.queue_update(bound, &seen, &catalog, &mut unresolved)? {
+                        Queued::Nothing => report.unchanged += 1,
+                        Queued::Edit => report.updated += 1,
+                        Queued::Overwrite => {
+                            report.updated += 1;
                             report.overwrote += 1;
                         }
-                    } else {
-                        report.unchanged += 1;
                     }
                 }
                 Some(bound) => {
@@ -524,8 +523,13 @@ impl Folder {
                     // so a move with no edit still has something to tell the
                     // server — and telling it nothing is what left the item
                     // under the old key and had the next pull put the old
-                    // name back.
-                    self.queue_update(bound, &seen, &catalog, &mut unresolved)?;
+                    // name back. A move that carries bytes over content this
+                    // device never read says so as an edit in place does.
+                    if self.queue_update(bound, &seen, &catalog, &mut unresolved)?
+                        == Queued::Overwrite
+                    {
+                        report.overwrote += 1;
+                    }
                     report.renamed += 1;
                 }
                 // No identity the mapping knows and no row at this path: a
@@ -832,16 +836,17 @@ impl Folder {
         Ok(())
     }
 
-    /// Queues what a bound file holds as an edit of its row, and answers
-    /// whether it queued anything: a file whose bytes the server never took
-    /// and whose row holds them already (`folders.md` 13) sends nothing.
+    /// Queues what a bound file holds as an edit of its row, and answers what
+    /// it queued: nothing for a file whose bytes the server never took and
+    /// whose row holds them already (`folders.md` 13), and an overwrite for
+    /// an edit that goes over content this device never read.
     fn queue_update(
         &self,
         bound: &state::Bound,
         seen: &Seen<'_>,
         catalog: &Catalog,
         unresolved: &mut Vec<Unresolved>,
-    ) -> Result<bool> {
+    ) -> Result<Queued> {
         let Seen {
             key,
             text,
@@ -882,17 +887,22 @@ impl Folder {
                     declined: bound.declined.clone(),
                 },
             )?;
-            return Ok(false);
+            return Ok(Queued::Nothing);
         }
         // **Bytes the server never took, bound to the row another device's
         // create made** (`folders.md` 13). Where the row holds what the file
-        // does, there is nothing to send and the file is simply in step;
-        // otherwise what it holds goes below as an edit of that row, based on
-        // the version the copy holds.
-        if state::untaken(&bound.content_hash)
-            && bound.path == key
-            && self.holds_already(&held, seen, &document, catalog)
-        {
+        // does and the file stayed where it was, there is nothing to send
+        // and the file is simply in step. Otherwise what it holds goes below
+        // as an edit of that row, based on the version the copy holds, and a
+        // new name is still a move to send (23).
+        let untaken = state::untaken(&bound.content_hash);
+        let holds = untaken && self.holds_already(&held, seen, &document, catalog);
+        let queued = if bound.content_hash == state::UNTAKEN_UNREAD && !holds {
+            Queued::Overwrite
+        } else {
+            Queued::Edit
+        };
+        if holds && bound.path == key {
             let (named, declined, resolved) =
                 self.queue_links(item_id, &document.links, had, &bound.declined)?;
             if !resolved {
@@ -917,14 +927,14 @@ impl Folder {
                     declined,
                 },
             )?;
-            return Ok(false);
+            return Ok(Queued::Nothing);
         }
         // The item decides, not the extension: a file item pulled under a
         // name that reads as a document is still bytes, and reading it as a
         // document would send its bytes back as a body.
         if bytes_of(&held, catalog).is_some() {
             self.queue_update_file(bound, seen, &held)?;
-            return Ok(true);
+            return Ok(queued);
         }
         let edit = Edit {
             properties: sendable(document.properties),
@@ -963,7 +973,7 @@ impl Folder {
                 declined,
             },
         )?;
-        Ok(true)
+        Ok(queued)
     }
 
     /// A file that is not a document, as a file item keyed by its path
@@ -1779,6 +1789,17 @@ struct Seen<'a> {
     /// Device, inode and birth time, where the filesystem gave a usable
     /// three. `None` means a rename cannot be followed (`folders.md` 8).
     mark: Option<&'a str>,
+}
+
+/// What a bound file's edit queued.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Queued {
+    /// Nothing: the row holds what the file does.
+    Nothing,
+    /// An edit of the row.
+    Edit,
+    /// An edit that goes over content this device never read.
+    Overwrite,
 }
 
 /// A file whose links the scan could not all resolve on the way past.

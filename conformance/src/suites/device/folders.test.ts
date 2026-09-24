@@ -1873,6 +1873,79 @@ describe("identity", () => {
     expect(creates(), "a push did not ask again").toBe(2);
   });
 
+  it("counts an edit over unread content when the file moved before it went", async () => {
+    // The file's create landed on a row another machine made, and the
+    // person moved the file before its next push: the move carries the edit,
+    // and where the file differs from the row it replaces content this
+    // machine never read, which the scan says wherever the file now is. The
+    // same bytes still move the key, since a new name is a move to send.
+    const slice = {
+      types: ["core.note"],
+      defaultType: "core.note",
+      source: "notes",
+    };
+    const mine = "---\ntitle: Shared\n---\nthe first machine's\n";
+    for (const [label, theirs] of [
+      ["same", mine],
+      ["different", "---\ntitle: Shared\n---\nwritten on the second machine\n"],
+    ] as const) {
+      const first = await folderHarness(`folder-moved-landed-one-${label}`, {
+        slice,
+      });
+      const other = await folderHarness(`folder-moved-landed-two-${label}`, {
+        slice,
+        sharing: { server: first.server, key: "mk_second_machine" },
+      });
+      try {
+        const rows = scriptFolderWrites(first);
+        put(first, "note.md", mine);
+        put(other, "note.md", theirs);
+        expect((await first.folder.push()).ok).toBe(true);
+        const landed = itemFor(keysByItem(first), "note.md");
+        const pushed = await other.folder.push();
+        expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+        if (!pushed.ok) return;
+        expect(
+          pushed.value.drain.verdicts
+            .filter((entry) => entry.kind === "create_item")
+            .map((entry) => [entry.verdict, entry.item_id]),
+        ).toEqual([["refused", landed]]);
+
+        renameSync(join(other.dir, "note.md"), join(other.dir, "moved.md"));
+        const before = first.server.requests.length;
+        const again = await other.folder.push();
+        expect(again.ok, JSON.stringify(again)).toBe(true);
+        if (!again.ok) return;
+        const patches = first.server.requests
+          .slice(before)
+          .filter((request) => request.method === "PATCH");
+        expect(
+          patches.map((request) => request.pathname),
+          `${label}: the move sent nothing to the row the create landed on`,
+        ).toEqual([`/items/${landed}`]);
+        expect(
+          rows.get(landed)?.source_id,
+          `${label}: the file moved and its key did not, so the next pull moves it back`,
+        ).toBe("moved.md");
+        expect(again.value.scan.renamed).toBe(1);
+        if (label === "same") {
+          expect(again.value.scan.overwrote).toBe(0);
+        } else {
+          expect(rows.get(landed)?.properties.body).toBe(
+            "written on the second machine\n",
+          );
+          expect(
+            again.value.scan.overwrote,
+            "the move replaced content this machine never read and the scan did not say so",
+          ).toBe(1);
+        }
+      } finally {
+        await other.stop();
+        await first.stop();
+      }
+    }
+  });
+
   it("refuses a folder that names no source, or one it may never name", async () => {
     harness = await folderHarness("folder-source-refused", { hydrate: false });
     const slice = { types: ["core.note"], defaultType: "core.note" };
