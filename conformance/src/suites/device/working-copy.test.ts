@@ -59,6 +59,14 @@ function hydrateOneFile(server: Harness["server"], hash: string): void {
 
 let harness: Harness | undefined;
 
+/**
+ * A PNG's signature, then base64 that spells `word`: `/` makes the word a
+ * token of its own. Held as text, it is found by a search for the word, which
+ * is what makes a thumbnail's absence from a search the thumbnail rule's
+ * doing rather than the tokenizer's.
+ */
+const pngOf = (word: string) => `data:image/png;base64,iVBORw0KGgoA/${word}`;
+
 afterEach(async () => {
   await harness?.stop();
   harness = undefined;
@@ -220,9 +228,7 @@ describe("the working copy holds one slice", () => {
         next_cursor: null,
       },
     });
-    // A PNG's signature, then base64 that spells a word a search could
-    // find: `/` makes it a token of its own.
-    const data = "iVBORw0KGgoA/unicornsXYZ";
+    const image = pngOf("unicornsXYZ");
     scriptHydration(server, {
       head: "10",
       rows: {
@@ -233,7 +239,7 @@ describe("the working copy holds one slice", () => {
               type: "user.snapshot",
               properties: {
                 title: "Holiday",
-                thumbnail: `data:image/png;base64,${data}`,
+                thumbnail: image,
               },
             },
           },
@@ -242,7 +248,7 @@ describe("the working copy holds one slice", () => {
           {
             item: {
               id: "beside",
-              properties: { title: "Beside", body: "unicornsXYZ" },
+              properties: { title: "Beside", body: image },
             },
           },
         ],
@@ -261,7 +267,7 @@ describe("the working copy holds one slice", () => {
     expect(
       readFileSync(out),
       "the thumbnail's bytes are not the image the item carried",
-    ).toEqual(Buffer.from(data, "base64"));
+    ).toEqual(Buffer.from(image.replace(/^data:[^,]*,/, ""), "base64"));
     expect(
       server.requests.length,
       "the thumbnail was fetched rather than read from the item held",
@@ -278,13 +284,18 @@ describe("the working copy holds one slice", () => {
       "the thumbnail of an item the copy does not hold was answered, or refused as though the server had said so",
     ).toBe("not_held");
 
-    // The image's base64 is not searchable. The witness: the same token in
-    // a body is found.
+    // The image's base64 is not searchable. The witness: the same image
+    // held as a note's text is found.
     const hits = await device.search("unicornsXYZ");
     expect(hits.ok).toBe(true);
     if (!hits.ok) return;
+    const ids = hits.value.map((hit) => hit.item.id);
     expect(
-      hits.value.map((hit) => hit.item.id),
+      ids,
+      "the image held as text was not found either, so nothing here is about the thumbnail",
+    ).toContain("beside");
+    expect(
+      ids,
       "a search matched the thumbnail's base64, so every image answers searches for whatever its encoding happens to spell",
     ).toEqual(["beside"]);
   });
@@ -461,8 +472,8 @@ describe("the working copy holds one slice", () => {
     });
     // An image under a property the type never declares, which sends the
     // device to the catalog once and is then taken as the text it is.
-    const icon = "data:image/png;base64,iVBORw0KGgoA/iconwordXYZ";
-    const cover = "data:image/png;base64,iVBORw0KGgoA/unicornsXYZ";
+    const icon = pngOf("iconwordXYZ");
+    const cover = pngOf("unicornsXYZ");
     const photo = (id: string, properties: Record<string, unknown>) =>
       wireItem({ id, type: "user.photo", properties });
     const found = async (query: string): Promise<string[]> => {
@@ -507,8 +518,10 @@ describe("the working copy holds one slice", () => {
       expect((await device.hydrate(["user.photo"], "library")).ok).toBe(true);
       const followed = await device.follow(3);
       expect(followed.ok, JSON.stringify(followed)).toBe(true);
-      // The witness: the event was applied and its row indexed.
+      // The witness: the event was applied and its row indexed, and an image
+      // held as text is found, so the thumbnail's absence is its own.
       expect(await found("zebraword")).toEqual(["second"]);
+      expect(await found("iconwordXYZ")).toEqual(["first", "second"]);
       expect(
         await found("unicornsXYZ"),
         "an image already read again for hid the thumbnail after it in the same item, and the thumbnail's base64 went into the index",
@@ -605,8 +618,10 @@ describe("the working copy holds one slice", () => {
       expect((await device.hydrate(["user.photo"], "library")).ok).toBe(true);
       const caught = await device.catchUp();
       expect(caught.ok, JSON.stringify(caught)).toBe(true);
-      // The witness: the event was applied and its row indexed.
+      // The witness: the event was applied and its row indexed, and an image
+      // held as text is found, so the thumbnail's absence is its own.
       expect(await found("zebraword")).toEqual(["second"]);
+      expect(await found("iconwordXYZ")).toEqual(["first", "second"]);
       expect(
         await found("unicornsXYZ"),
         "an image already read again for hid the thumbnail after it in the same item, and the thumbnail's base64 went into the index",
@@ -624,7 +639,7 @@ describe("the working copy holds one slice", () => {
       status: 200,
       body: { data: [...SCRIPTED_TYPES, snapshotType()], next_cursor: null },
     };
-    const image = "data:image/png;base64,iVBORw0KGgoA/unicornsXYZ";
+    const image = pngOf("unicornsXYZ");
     const found = async (query: string): Promise<string[]> => {
       const hits = await harness?.device.search(query);
       return hits?.ok ? hits.value.map((hit) => hit.item.id) : [];
@@ -683,14 +698,15 @@ describe("the working copy holds one slice", () => {
             wireItem({
               id,
               type: "user.snapshot",
-              properties: { title: "zebraword", thumbnail: image },
+              properties: { title: pngOf("zebraword"), thumbnail: image },
             }),
           ),
         ],
       });
       const drained = await device.drain();
       expect(drained.ok, JSON.stringify(drained)).toBe(true);
-      // The witness: the answer's row was written and indexed.
+      // The witness: the answer's row was written and indexed, an image in
+      // its title found as the text it is there.
       expect(await found("zebraword")).toEqual([id]);
       expect(
         await found("unicornsXYZ"),
@@ -720,11 +736,12 @@ describe("the working copy holds one slice", () => {
         true,
       );
       const edit = await device.update("edited", {
-        properties: { title: "zebraword", thumbnail: image },
+        properties: { title: pngOf("zebraword"), thumbnail: image },
         version: 1,
       });
       expect(edit.ok, JSON.stringify(edit)).toBe(true);
-      // The witness: the edit was laid over the row and indexed.
+      // The witness: the edit was laid over the row and indexed, an image in
+      // its title found as the text it is there.
       expect(await found("zebraword")).toEqual(["edited"]);
       expect(
         await found("unicornsXYZ"),

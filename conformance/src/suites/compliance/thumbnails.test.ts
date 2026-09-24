@@ -434,19 +434,24 @@ describe("a thumbnail field", () => {
     // ends one token and starts the next.
     let token = `thumb${ctx.runId.replace(/[^A-Za-z0-9]/g, "")}`;
     while ((token.length + 1) % 4 !== 0) token += "Q";
+    const image = `data:image/png;base64,iVBORw0KGgoA/${token}`;
     const inThumbnail = await create({
       title: "Carries the token in its image",
-      thumbnail: `data:image/png;base64,iVBORw0KGgoA/${token}`,
+      thumbnail: image,
     });
     expect(inThumbnail.ok, JSON.stringify(inThumbnail.error)).toBe(true);
-    const inBody = await create({ title: "Carries it in words", body: token });
-    expect(inBody.ok).toBe(true);
+    const inBody = await create({ title: "Carries it in words", body: image });
+    expect(inBody.ok, JSON.stringify(inBody.error)).toBe(true);
 
     const found = await client.search(token, { limit: 50 });
     expect(found.ok).toBe(true);
     const ids = found.data.data.map((hit) => hit.item.id);
-    // The witness: the token is searchable where a person wrote it.
-    expect(ids).toContain(inBody.data.item.id);
+    // The witness: the same image held as a body's text is searchable, so
+    // the thumbnail's absence is the rule's doing and not the tokenizer's.
+    expect(
+      ids,
+      "the image held as text was not found either, so nothing here is about the thumbnail",
+    ).toContain(inBody.data.item.id);
     expect(
       ids,
       "a search matched an image's base64, so every thumbnail answers searches for whatever its encoding spells",
