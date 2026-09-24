@@ -60,6 +60,29 @@ export function wireItem(options: WireItemOptions): Record<string, unknown> {
   };
 }
 
+export interface WireEdgeOptions {
+  id: string;
+  source_id: string;
+  target_id: string;
+  edge_type?: string;
+  version?: number;
+  properties?: Record<string, unknown>;
+}
+
+/** An edge as the server answers one, on every door that returns an edge. */
+export function wireEdge(options: WireEdgeOptions): Record<string, unknown> {
+  return {
+    id: options.id,
+    source_id: options.source_id,
+    target_id: options.target_id,
+    edge_type: options.edge_type ?? "references",
+    properties: options.properties ?? {},
+    created_at: EPOCH,
+    updated_at: EPOCH,
+    version: options.version ?? 1,
+  };
+}
+
 export function withMetadata(
   item: Record<string, unknown>,
   tags: string[] = [],
@@ -433,6 +456,21 @@ export const answers = {
       merge_policy: mergePolicy,
     },
   }),
+  /** A stale edge update: the edge as it now stands under `current`, and no
+   *  ancestor, fields or policy, because an edge has no history to merge
+   *  against (`versions.md` 16, 17). */
+  edgeVersionConflict: (current: Record<string, unknown>): Answer => ({
+    kind: "json",
+    status: 409,
+    body: {
+      error: {
+        code: "version_conflict",
+        message: "The edge has been modified since the version you read",
+        status: 409,
+      },
+      current,
+    },
+  }),
   ancestorUnavailable: (
     current: ConflictSnapshotBody,
     requestedVersion: number,
@@ -510,28 +548,19 @@ export const writeAnswers = {
     status: 200,
     body: { url, expires_in: 3600 },
   }),
-  /** `POST /edges` and `PATCH /edges/{id}`. */
-  edge: (edge: {
-    id: string;
-    source_id: string;
-    target_id: string;
-    edge_type?: string;
-    version?: number;
-    properties?: Record<string, unknown>;
-  }): Answer => ({
+  /** `POST /edges`, which answers `201`, and `PATCH /edges/{id}`, which
+   *  answers `200`. */
+  edge: (edge: WireEdgeOptions, status: 200 | 201 = 201): Answer => ({
     kind: "json",
-    status: 201,
-    body: {
-      edge: {
-        id: edge.id,
-        source_id: edge.source_id,
-        target_id: edge.target_id,
-        edge_type: edge.edge_type ?? "references",
-        properties: edge.properties ?? {},
-        created_at: EPOCH,
-        updated_at: EPOCH,
-        version: edge.version ?? 1,
-      },
-    },
+    status,
+    body: { edge: wireEdge(edge) },
+  }),
+  /** `POST /edges` naming the id of an edge the server holds between the
+   *  same two items under the same type: a repeat, answered with the edge as
+   *  it stands and nothing written. */
+  edgeRepeated: (edge: WireEdgeOptions): Answer => ({
+    kind: "json",
+    status: 200,
+    body: { edge: wireEdge(edge), acknowledged: true },
   }),
 };

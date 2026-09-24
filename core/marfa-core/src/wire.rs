@@ -165,6 +165,10 @@ pub struct WireWriteAnswer {
 #[derive(Debug, Clone, Deserialize)]
 pub struct WireEdgeAnswer {
     pub edge: WireEdge,
+    /// The server recognized the create as a repeat of one it had already
+    /// taken, and answered the edge as it stands.
+    #[serde(default)]
+    pub acknowledged: bool,
 }
 
 #[cfg(test)]

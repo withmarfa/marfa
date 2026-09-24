@@ -15,6 +15,7 @@ import {
   replay,
   scriptedType,
   snapshotType,
+  wireEdge,
   wireItem,
   wireType,
   writeAnswers,
@@ -24,6 +25,7 @@ import {
   CONTRACT_HEADER,
   type Answer,
 } from "../../device/scripted-server.js";
+import { v7 as uuidv7 } from "uuid";
 import { FolderDoor, type DoorCreate } from "../../device/folder-door.js";
 
 /**
@@ -343,9 +345,10 @@ describe("the scripted answers match the server's", () => {
 
   it("holds the scripted folder door's decisions to the server's", async () => {
     // A folder fixture's server decides with `FolderDoor` (`folders.test.ts`),
-    // so each decision it makes is made here by both, on the same request,
-    // and has to come out the same: a door that decided differently would
-    // have a folder passing against rules nobody runs.
+    // and so does a queue fixture about an edit behind an edit
+    // (`queue.test.ts`), so each decision it makes is made here by both, on
+    // the same request, and has to come out the same: a door that decided
+    // differently would have a device passing against rules nobody runs.
     const door = new FolderDoor();
     const sourceId = `door-${ctx.runId}.md`;
     const decide = async (
@@ -390,6 +393,50 @@ describe("the scripted answers match the server's", () => {
     const realId = String(at(minted.real, "item.id"));
     const doorId = String(at(minted.scripted, "item.id"));
     trackItem(ctx, realId);
+
+    // A create naming an id and no natural key makes that row. The same
+    // create again, once somebody has edited the row, is acknowledged with
+    // the row as it now stands.
+    const ownId = {
+      type: "core.note",
+      id: uuidv7(),
+      properties: { title: "named", body: "named" },
+    };
+    await decide("a create naming its own id", ownId, {
+      same: ["item.id", "item.version", "item.properties", "acknowledged"],
+      shape: ["item.source"],
+    });
+    trackItem(ctx, ownId.id);
+    const movedOn = { properties: { title: "moved on" }, version: 1 };
+    const editedReal = await client.rawRequest(`/items/${ownId.id}`, {
+      method: "PATCH",
+      body: movedOn,
+    });
+    expect(
+      editedReal.ok,
+      `the fixture could not edit the row it named: ${JSON.stringify(editedReal.error)}`,
+    ).toBe(true);
+    door.update(ownId.id, movedOn);
+    await decide("the same create again, after an edit", ownId, {
+      same: ["item.id", "item.version", "item.properties", "acknowledged"],
+      shape: ["item.source"],
+    });
+    // And again carrying a natural key nothing holds: the key resolves no
+    // row, so the id decides, and the create is still a repeat.
+    await decide(
+      "the same create again, carrying a natural key nothing holds",
+      { ...ownId, source: ctx.source, source_id: `unkeyed-${ctx.runId}` },
+      {
+        same: [
+          "item.id",
+          "item.version",
+          "item.properties",
+          "item.source_id",
+          "acknowledged",
+        ],
+        shape: ["item.source"],
+      },
+    );
 
     // The version the row is at: the create lands on it.
     const upserted = await decide(
@@ -587,6 +634,111 @@ describe("the scripted answers match the server's", () => {
       },
       true,
     );
+    // A collision on a keep-both property, resolved: the row keeps its own
+    // value and the losing one goes to a sibling, which both sides then read.
+    const keptBoth = { properties: { body: "stale body" }, version: 2 };
+    const keptReal = await client.rawRequest<Record<string, unknown>>(
+      `/items/${realId}?conflict=auto`,
+      { method: "PATCH", body: keptBoth },
+    );
+    const keptDoor = door.update(doorId, keptBoth, { resolve: true });
+    const realCopy = at(
+      keptReal.data,
+      "conflict_resolution.conflicted_copy_id",
+    );
+    if (typeof realCopy === "string") trackItem(ctx, realCopy);
+    expectFidelity(
+      "a stale update colliding on a keep-both property, resolved by the server",
+      {
+        status: keptReal.status,
+        body: keptReal.ok ? keptReal.data : keptReal.error,
+      },
+      keptDoor,
+      {
+        same: [
+          ...merged.same,
+          "conflict_resolution.fields",
+          "conflict_resolution.strategy",
+        ],
+        shape: [...merged.shape, "conflict_resolution.conflicted_copy_id"],
+      },
+    );
+    await readBoth(
+      "a read of the sibling a keep-both resolution wrote",
+      [
+        String(realCopy),
+        String(
+          at(scriptedBody(keptDoor), "conflict_resolution.conflicted_copy_id"),
+        ),
+      ],
+      {
+        same: [
+          "item.type",
+          "item.source",
+          "item.version",
+          "item.properties",
+          "item.state",
+          "metadata.tags",
+        ],
+        shape: [
+          "item.id",
+          "item.source_id",
+          "item.occurred_at",
+          "item.created_at",
+          "item.updated_at",
+          "metadata.item_id",
+        ],
+      },
+    );
+    // A create naming a version the row has moved past, changing only what
+    // nobody changed since: merged over the row as it stands, and answered
+    // as an upsert onto it.
+    const beforeMerge = door.rows.get(doorId);
+    const mergedCreate = await decide(
+      "a create carrying a version the row has moved past, colliding with nothing",
+      { ...keyed, version: 5, properties: { title: "created stale" } },
+      {
+        same: [
+          "item.source",
+          "item.source_id",
+          "item.version",
+          "item.properties",
+        ],
+        shape: ["item.id"],
+      },
+    );
+    expect([
+      at(mergedCreate.real, "item.id"),
+      at(mergedCreate.scripted, "item.id"),
+    ]).toEqual([realId, doorId]);
+    // The same again on the version before that create, carrying the title
+    // as it stood there, which that create has changed since: the title is
+    // no change of this create's, so the row keeps the one written since,
+    // and only the body it changed is applied.
+    const echoed = await decide(
+      "a stale create carrying a property changed since at the value it named",
+      {
+        ...keyed,
+        version: beforeMerge?.version ?? 0,
+        properties: {
+          title: String(beforeMerge?.properties.title),
+          body: "created again",
+        },
+      },
+      {
+        same: [
+          "item.source",
+          "item.source_id",
+          "item.version",
+          "item.properties",
+        ],
+        shape: ["item.id"],
+      },
+    );
+    expect([
+      at(echoed.real, "item.properties.title"),
+      at(echoed.real, "item.properties.body"),
+    ]).toEqual(["created stale", "created again"]);
     await patch(
       "an update of a row nobody holds",
       [missing, missing],
@@ -1075,6 +1227,104 @@ describe("the scripted answers match the server's", () => {
           "edge.created_at",
           "edge.updated_at",
         ],
+      },
+    );
+
+    // An edit of the edge on the version it is at, and one on the version it
+    // has since left: taken and moved on, then refused naming the edge as
+    // it stands.
+    const edgeId = String(at(linked.data, "edge.id"));
+    const edgeAt = (version: number, properties: Record<string, unknown>) => ({
+      id: edgeId,
+      source_id: seeded.id,
+      target_id: other.id,
+      version,
+      properties,
+    });
+    const edited = await client.rawRequest(`/edges/${edgeId}`, {
+      method: "PATCH",
+      body: { properties: { weight: 2 }, version: 1 },
+    });
+    expect(
+      edited.ok,
+      `the fixture could not edit the edge: ${JSON.stringify(edited.error)}`,
+    ).toBe(true);
+    expectFidelity(
+      "an edge updated",
+      { status: edited.status, body: edited.data },
+      writeAnswers.edge(edgeAt(2, { weight: 2 }), 200),
+      {
+        same: [
+          "edge.id",
+          "edge.source_id",
+          "edge.target_id",
+          "edge.edge_type",
+          "edge.properties",
+          "edge.version",
+        ],
+        shape: ["edge.created_at", "edge.updated_at"],
+      },
+    );
+    const staleEdge = await client.rawRequest(`/edges/${edgeId}`, {
+      method: "PATCH",
+      body: { properties: { weight: 3 }, version: 1 },
+    });
+    expect(
+      staleEdge.status,
+      "a stale edge edit was taken, so the refusal this case exists to compare was never produced",
+    ).toBe(409);
+    expectFidelity(
+      "a stale edge update",
+      { status: staleEdge.status, body: staleEdge.error },
+      answers.edgeVersionConflict(wireEdge(edgeAt(2, { weight: 2 }))),
+      {
+        same: [
+          "error.code",
+          "error.status",
+          "current.id",
+          "current.version",
+          "current.properties",
+        ],
+        shape: [
+          "error.message",
+          "current.source_id",
+          "current.target_id",
+          "current.edge_type",
+          "current.created_at",
+          "current.updated_at",
+        ],
+      },
+    );
+
+    // The same edge again, under the id it was made with: a repeat,
+    // answered with the edge as it now stands.
+    const repeatedEdge = await client.rawRequest(`/edges`, {
+      method: "POST",
+      body: {
+        id: edgeId,
+        source_id: seeded.id,
+        target_id: other.id,
+        edge_type: "references",
+      },
+    });
+    expectFidelity(
+      "an edge created again under its own id",
+      {
+        status: repeatedEdge.status,
+        body: repeatedEdge.ok ? repeatedEdge.data : repeatedEdge.error,
+      },
+      writeAnswers.edgeRepeated(edgeAt(2, { weight: 2 })),
+      {
+        same: [
+          "acknowledged",
+          "edge.id",
+          "edge.source_id",
+          "edge.target_id",
+          "edge.edge_type",
+          "edge.properties",
+          "edge.version",
+        ],
+        shape: ["edge.created_at", "edge.updated_at"],
       },
     );
 

@@ -1,4 +1,5 @@
 import {
+  chmodSync,
   existsSync,
   linkSync,
   mkdirSync,
@@ -33,6 +34,7 @@ import {
 } from "./harness.js";
 import { CliFolder } from "../../device/cli-adapter.js";
 import {
+  CONFLICTED_COPY_TAG,
   FolderDoor,
   type DoorCreate,
   type DoorRow,
@@ -96,6 +98,8 @@ function scriptFolderWrites(
   options: {
     claims?: (source: string) => boolean;
     reads?: (type: string) => boolean;
+    /** Handed the door, for a fixture that has another machine write. */
+    door?: (door: FolderDoor) => void;
   } = {},
 ): Map<string, DoorRow> {
   // The type, source, natural key and version of each row the hydration
@@ -122,6 +126,7 @@ function scriptFolderWrites(
     options.claims,
     options.reads,
   );
+  options.door?.(door);
   const created: Array<{ id: string; source_id: string | null }> = [];
   answeredCreates.set(harness.server, created);
   scriptWrites(harness.server, {
@@ -3145,6 +3150,68 @@ describe("identity", () => {
 });
 
 describe("writing", () => {
+  it("sends a stale folder's edit on the version it read, behind another edit of the row", async () => {
+    const id = "01a00000-0000-7000-8000-00000000000e";
+    const read = { title: "Read", body: "what the folder read\n" };
+    const newer = { title: "Newer", body: "what the server holds\n" };
+    const { edges: _edges, ...atTwo } = wireItem({
+      id,
+      version: 2,
+      source_id: "stale.md",
+      properties: newer,
+    });
+    harness = await folderHarness("folder-stale-behind-edit", {
+      rows: {
+        "core.note": [
+          {
+            item: { id, version: 1, source_id: "stale.md", properties: read },
+          },
+        ],
+      },
+      events: [replay("11", [itemEvent("11", "item.updated", atTwo)])],
+    });
+    let door: FolderDoor | undefined;
+    const rows = scriptFolderWrites(harness, {
+      door: (made) => {
+        door = made;
+      },
+    });
+    door?.update(id, { properties: newer, version: 1 });
+    // The file under the row's key, never pulled: its create is refused for
+    // the version it read (39), and the copy keeps the row as read.
+    put(harness, "stale.md", "---\ntitle: Stale\n---\nthe stale copy\n");
+    expect((await harness.folder.push()).ok).toBe(true);
+    // The copy then takes in the server's row, and the device edits it.
+    const device = harness.folder.device();
+    expect((await device.catchUp()).ok).toBe(true);
+    const queued = await device.update(id, {
+      properties: { notes: "from the app" },
+      version: 2,
+    });
+    expect(queued.ok, JSON.stringify(queued)).toBe(true);
+    const pushed = await harness.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    if (!pushed.ok) return;
+
+    const patches = harness.server.requests
+      .filter(
+        (request) =>
+          request.method === "PATCH" && request.pathname === `/items/${id}`,
+      )
+      .map(
+        (request) =>
+          (JSON.parse(request.body) as { version?: unknown }).version,
+      );
+    // The witness: the app's edit landed first, on the version the copy
+    // holds, so the file's edit had an answer ahead of it to move onto.
+    expect(patches[0]).toBe(2);
+    expect(
+      patches[1],
+      "the file's edit, made against the version the folder read, was moved onto the answer to another edit, whose content it never read",
+    ).toBe(1);
+    expect(rows.get(id)?.properties.body).toBe(newer.body);
+  });
+
   it("always carries a version on a create, zero where it holds no row", async () => {
     harness = await folderHarness("folder-create-version");
     scriptFolderWrites(harness);
@@ -3382,6 +3449,266 @@ describe("writing", () => {
       edited.value.updated,
       "a change the folder did not make was suppressed too, so echo suppression is suppressing everything",
     ).toBe(1);
+  });
+
+  it("sends a file edited twice before a push as two edits, not a conflict with itself", async () => {
+    const id = "01a00000-0000-7000-8000-00000000000a";
+    harness = await folderHarness("folder-edit-twice", {
+      rows: {
+        "core.note": [
+          {
+            item: {
+              id,
+              source_id: "twice.md",
+              properties: { title: "Twice", body: "as read\n" },
+            },
+          },
+        ],
+      },
+    });
+    const rows = scriptFolderWrites(harness);
+    expect((await harness.folder.pull()).ok).toBe(true);
+
+    // Two edits, each scanned before anything is sent: both are queued
+    // against the version the copy holds, which the first does not move.
+    for (const body of ["first edit", "second edit"]) {
+      writeFileSync(
+        join(harness.dir, "twice.md"),
+        `---\ntitle: Twice\n---\n${body}\n`,
+      );
+      const scanned = await harness.folder.scan();
+      expect(scanned.ok, JSON.stringify(scanned)).toBe(true);
+      if (!scanned.ok) return;
+      expect(scanned.value.updated).toBe(1);
+    }
+    const pushed = await harness.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    if (!pushed.ok) return;
+
+    expect(
+      pushed.value.drain.verdicts
+        .filter((entry) => entry.kind === "update_item")
+        .map((entry) => entry.verdict),
+      "the second edit of the file was not taken as sent: the server merged it against the folder's own first edit as though another machine had written it, and kept the first on the row with the second set aside in a copy",
+    ).toEqual(["accepted", "accepted"]);
+    expect(
+      harness.server.requests
+        .filter(
+          (request) =>
+            request.method === "PATCH" && request.pathname === `/items/${id}`,
+        )
+        .map(
+          (request) =>
+            (JSON.parse(request.body) as { version?: unknown }).version,
+        ),
+    ).toEqual([1, 2]);
+    expect(String(rows.get(id)?.properties.body)).toContain("second edit");
+  });
+
+  it("sends a file saved twice as two edits where another machine retitled the note meanwhile", async () => {
+    const noteId = "01a00000-0000-7000-8000-0000000000a1";
+    const controlId = "01a00000-0000-7000-8000-0000000000a2";
+    harness = await folderHarness("folder-save-twice-retitled", {
+      rows: {
+        "core.note": [
+          {
+            item: {
+              id: noteId,
+              source_id: "note.md",
+              properties: { title: "Note", body: "as read\n" },
+            },
+          },
+          {
+            item: {
+              id: controlId,
+              source_id: "control.md",
+              properties: { title: "Control", body: "as read\n" },
+            },
+          },
+        ],
+      },
+    });
+    let door: FolderDoor | undefined;
+    const rows = scriptFolderWrites(harness, {
+      door: (made) => {
+        door = made;
+      },
+    });
+    expect((await harness.folder.pull()).ok).toBe(true);
+    // Two saves of each file, each scanned before anything is sent. A note
+    // file carries its title, which the person leaves alone.
+    for (const body of ["first save", "second save"]) {
+      put(harness, "note.md", `---\ntitle: Note\n---\n${body}\n`);
+      put(harness, "control.md", `---\ntitle: Control\n---\n${body}\n`);
+      const scanned = await harness.folder.scan();
+      expect(scanned.ok && scanned.value.updated).toBe(2);
+    }
+    // Another machine retitles the note, a property its file carries; and
+    // sets notes on the control, a property its file does not.
+    door?.update(noteId, { properties: { title: "Retitled" }, version: 1 });
+    door?.update(controlId, { properties: { notes: "theirs" }, version: 1 });
+    const pushed = await harness.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    if (!pushed.ok) return;
+
+    const verdicts = (itemId: string) =>
+      pushed.value.drain.verdicts
+        .filter((entry) => entry.item_id === itemId)
+        .map((entry) => entry.verdict);
+    // The control: what the other machine changed is nothing the file
+    // carries, so both saves land.
+    expect(verdicts(controlId)).toEqual(["accepted", "accepted"]);
+    expect(
+      verdicts(noteId),
+      "the second save came back conflicted with the folder's own first, because the title the file carries unchanged was checked against the other machine's",
+    ).toEqual(["accepted", "accepted"]);
+    expect(rows.get(noteId)?.properties).toEqual({
+      title: "Retitled",
+      body: "second save\n",
+    });
+    expect(rows.get(controlId)?.properties).toEqual({
+      title: "Control",
+      body: "second save\n",
+      notes: "theirs",
+    });
+    // The file ends on the second save, under the other machine's title.
+    expect(read(harness, "note.md")).toContain("second save");
+    expect(read(harness, "note.md")).toContain("title: Retitled");
+    expect(
+      [...rows.values()].filter((row) =>
+        (row.tags ?? []).includes(CONFLICTED_COPY_TAG),
+      ),
+    ).toEqual([]);
+  });
+
+  it("keeps a file whose newest save conflicted with its own earlier one, and sends it again", async () => {
+    const id = "01a00000-0000-7000-8000-0000000000a3";
+    harness = await folderHarness("folder-save-against-its-own", {
+      rows: {
+        "core.note": [
+          {
+            item: {
+              id,
+              source_id: "note.md",
+              properties: { title: "Note", body: "as read\n" },
+            },
+          },
+        ],
+      },
+    });
+    let door: FolderDoor | undefined;
+    const rows = scriptFolderWrites(harness, {
+      door: (made) => {
+        door = made;
+      },
+    });
+    expect((await harness.folder.pull()).ok).toBe(true);
+    // The first save changes the body; the second the body and the title,
+    // which another machine retitles meanwhile. The second cannot go on the
+    // first's answer without taking its title over the other machine's, so
+    // it goes on the first's base and collides with the first's body.
+    put(harness, "note.md", "---\ntitle: Note\n---\nfirst save\n");
+    expect((await harness.folder.scan()).ok).toBe(true);
+    put(harness, "note.md", "---\ntitle: Mine\n---\nsecond save\n");
+    expect((await harness.folder.scan()).ok).toBe(true);
+    door?.update(id, { properties: { title: "Retitled" }, version: 1 });
+    const pushed = await harness.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    if (!pushed.ok) return;
+    // The witness: the second save was set aside in a copy, and the row
+    // kept the first save's body.
+    expect(
+      pushed.value.drain.verdicts
+        .filter((entry) => entry.item_id === id)
+        .map((entry) => entry.verdict),
+    ).toEqual(["accepted", "conflicted"]);
+    expect(rows.get(id)?.properties.body).toBe("first save\n");
+    expect(
+      read(harness, "note.md"),
+      "the pull wrote the row's older save over the file holding the newest one",
+    ).toContain("second save");
+
+    // The next push sends what the file holds as an edit of the row.
+    const again = await harness.folder.push();
+    expect(again.ok, JSON.stringify(again)).toBe(true);
+    if (!again.ok) return;
+    expect(
+      again.value.drain.verdicts
+        .filter((entry) => entry.item_id === id)
+        .map((entry) => entry.verdict),
+    ).toEqual(["accepted"]);
+    expect(rows.get(id)?.properties).toEqual({
+      title: "Mine",
+      body: "second save\n",
+    });
+    expect(read(harness, "note.md")).toContain("second save");
+  });
+
+  it("sends a file saved three times before a push on the answers ahead of each save, its create merged over another machine's write that left the file alone", async () => {
+    const id = "01a00000-0000-7000-8000-00000000000d";
+    harness = await folderHarness("folder-save-after-merge", {
+      rows: {
+        "core.note": [
+          {
+            item: {
+              id,
+              version: 1,
+              source_id: "merged.md",
+              properties: { title: "Merged", body: "as read\n" },
+            },
+          },
+        ],
+      },
+    });
+    let door: FolderDoor | undefined;
+    const rows = scriptFolderWrites(harness, {
+      door: (made) => {
+        door = made;
+      },
+    });
+    // The row's file, never pulled: the folder creates it under the key,
+    // conditional on the version it read, and then the person saves again.
+    put(harness, "merged.md", "---\ntitle: Merged\n---\nfirst save\n");
+    const first = await harness.folder.scan();
+    expect(first.ok && first.value.created).toBe(1);
+    put(harness, "merged.md", "---\ntitle: Merged\n---\nsecond save\n");
+    const second = await harness.folder.scan();
+    expect(second.ok && second.value.updated).toBe(1);
+    put(harness, "merged.md", "---\ntitle: Merged\n---\nthird save\n");
+    const third = await harness.folder.scan();
+    expect(third.ok && third.value.updated).toBe(1);
+    // Another machine sets a property the file does not carry, so the
+    // create is merged over that write, answered more than one version past
+    // the one it read.
+    door?.update(id, { properties: { notes: "elsewhere" }, version: 1 });
+    const pushed = await harness.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    if (!pushed.ok) return;
+
+    expect(
+      pushed.value.drain.verdicts.map((entry) => [entry.kind, entry.verdict]),
+      "a later save came back conflicted with the folder's own save before it, its body set aside in a copy",
+    ).toEqual([
+      ["create_item", "accepted"],
+      ["update_item", "accepted"],
+      ["update_item", "accepted"],
+    ]);
+    expect(
+      harness.server.requests
+        .filter(
+          (request) =>
+            request.method === "PATCH" && request.pathname === `/items/${id}`,
+        )
+        .map(
+          (request) =>
+            (JSON.parse(request.body) as { version?: unknown }).version,
+        ),
+    ).toEqual([3, 4]);
+    expect(rows.get(id)?.properties).toEqual({
+      title: "Merged",
+      body: "third save\n",
+      notes: "elsewhere",
+    });
   });
 
   it("defers a delete past the rename grace", async () => {
@@ -4566,6 +4893,228 @@ describe("a file that is not a document", () => {
       readFileSync(join(harness.dir, "photo.png")),
       "the file of an item still held was taken away because its new bytes could not be fetched",
     ).toEqual(photo);
+  });
+
+  it("holds a file's move behind an edit of its bytes that waits on their upload", async () => {
+    const id = "01a00000-0000-7000-8000-0000000000f7";
+    const text = Buffer.from("plain text a server holds as a file\n");
+    harness = await folderHarness("folder-file-move-behind-bytes", {
+      slice,
+      rows: {
+        "core.file": [
+          {
+            item: {
+              id,
+              type: "core.file",
+              source_id: "notes.txt",
+              properties: {
+                title: "notes.txt",
+                blob_ref: hashOf(text),
+                mime_type: "text/plain",
+              },
+            },
+          },
+        ],
+      },
+    });
+    scriptBlob(harness.server, text);
+    const rows = scriptFolderWrites(harness);
+    // The first upload fails the way a busy server does; the rest land.
+    harness.server.answer("POST", "/blobs", answers.serverFault());
+    acceptUploads(harness.server);
+    expect((await harness.folder.pull()).ok).toBe(true);
+
+    // New bytes, whose edit waits on their upload, then a move of the same
+    // file, which is an edit of the same row waiting on nothing.
+    const edited = Buffer.from("plain text, edited\n");
+    writeFileSync(join(harness.dir, "notes.txt"), edited);
+    expect((await harness.folder.scan()).ok).toBe(true);
+    renameSync(join(harness.dir, "notes.txt"), join(harness.dir, "moved.txt"));
+    expect((await harness.folder.scan()).ok).toBe(true);
+
+    expect((await harness.folder.push()).ok).toBe(true);
+    const held = await harness.folder.device().queue();
+    expect(held.ok).toBe(true);
+    if (!held.ok) return;
+    expect(
+      held.value
+        .filter((row) => row.kind === "update_item")
+        .map((row) => [row.verdict, row.reason]),
+      "the move went out ahead of the edit of the bytes, which was waiting on their upload",
+    ).toEqual([
+      ["blocked", "awaiting_dependency"],
+      ["blocked", "awaiting_dependency"],
+    ]);
+
+    expect((await harness.folder.push()).ok).toBe(true);
+    expect(
+      harness.server.requests
+        .filter(
+          (request) =>
+            request.method === "PATCH" && request.pathname === `/items/${id}`,
+        )
+        .map(
+          (request) =>
+            (JSON.parse(request.body) as { version?: unknown }).version,
+        ),
+    ).toEqual([1, 2]);
+    expect([
+      rows.get(id)?.source_id,
+      rows.get(id)?.properties.blob_ref,
+    ]).toEqual(["moved.txt", hashOf(edited)]);
+  });
+
+  it("holds a file's second move behind its first, which had no answer, though the bytes between them are refused", async () => {
+    const id = "01a00000-0000-7000-8000-0000000000f8";
+    const text = Buffer.from("plain text a server holds as a file\n");
+    harness = await folderHarness("folder-move-behind-refused-bytes", {
+      slice,
+      rows: {
+        "core.file": [
+          {
+            item: {
+              id,
+              type: "core.file",
+              source_id: "notes.txt",
+              properties: {
+                title: "notes.txt",
+                blob_ref: hashOf(text),
+                mime_type: "text/plain",
+              },
+            },
+          },
+        ],
+      },
+    });
+    scriptBlob(harness.server, text);
+    // The first edit meets a busy server; the rest reach the door. The
+    // server refuses the new bytes outright.
+    harness.server.answer("PATCH", /^\/items\/[^/]+$/, answers.serverFault());
+    const rows = scriptFolderWrites(harness);
+    harness.server.answer(
+      "POST",
+      "/blobs",
+      refusal(400, "validation_error", "not bytes this server takes"),
+    );
+    expect((await harness.folder.pull()).ok).toBe(true);
+
+    // A move, new bytes, and a second move, each scanned before any drain.
+    renameSync(join(harness.dir, "notes.txt"), join(harness.dir, "first.txt"));
+    expect((await harness.folder.scan()).ok).toBe(true);
+    writeFileSync(join(harness.dir, "first.txt"), "plain text, edited\n");
+    expect((await harness.folder.scan()).ok).toBe(true);
+    renameSync(join(harness.dir, "first.txt"), join(harness.dir, "second.txt"));
+    expect((await harness.folder.scan()).ok).toBe(true);
+
+    const device = harness.folder.device();
+    expect((await device.drain()).ok).toBe(true);
+    const patches = (): unknown[] =>
+      harness?.server.requests
+        .filter(
+          (request) =>
+            request.method === "PATCH" && request.pathname === `/items/${id}`,
+        )
+        .map(
+          (request) =>
+            (JSON.parse(request.body) as { version?: unknown }).version,
+        ) ?? [];
+    const edits = async () => {
+      const queued = await device.queue();
+      expect(queued.ok).toBe(true);
+      return queued.ok
+        ? queued.value
+            .filter((row) => row.kind === "update_item")
+            .map((row) => [row.verdict, row.reason])
+        : [];
+    };
+    expect(
+      await edits(),
+      "the second move went out beside the first, which had no answer, because the edit of the bytes between them was refused and stepped out of line",
+    ).toEqual([
+      [null, null],
+      ["blocked", "awaiting_dependency"],
+      ["blocked", "awaiting_dependency"],
+    ]);
+    expect(patches()).toEqual([1]);
+
+    // With the first answered, the bytes' edit is refused with its upload
+    // and the second move goes, on the first's answer.
+    expect((await device.drain()).ok).toBe(true);
+    expect((await edits()).map(([verdict]) => verdict)).toEqual([
+      "accepted",
+      "refused",
+      "accepted",
+    ]);
+    expect(patches()).toEqual([1, 1, 2]);
+    expect(rows.get(id)?.source_id).toBe("second.txt");
+  });
+
+  it("holds a file's move behind an edit of its bytes that cannot be opened for now", async () => {
+    const id = "01a00000-0000-7000-8000-0000000000f9";
+    const text = Buffer.from("plain text a server holds as a file\n");
+    harness = await folderHarness("folder-file-move-behind-locked-bytes", {
+      slice,
+      rows: {
+        "core.file": [
+          {
+            item: {
+              id,
+              type: "core.file",
+              source_id: "notes.txt",
+              properties: {
+                title: "notes.txt",
+                blob_ref: hashOf(text),
+                mime_type: "text/plain",
+              },
+            },
+          },
+        ],
+      },
+    });
+    scriptBlob(harness.server, text);
+    const rows = scriptFolderWrites(harness);
+    acceptUploads(harness.server);
+    expect((await harness.folder.pull()).ok).toBe(true);
+
+    // New bytes, whose edit waits on their upload, then a move of the file.
+    const edited = Buffer.from("plain text, edited and locked\n");
+    writeFileSync(join(harness.dir, "notes.txt"), edited);
+    expect((await harness.folder.scan()).ok).toBe(true);
+    renameSync(join(harness.dir, "notes.txt"), join(harness.dir, "moved.txt"));
+    expect((await harness.folder.scan()).ok).toBe(true);
+
+    // The bytes held beside the store cannot be opened for this drain.
+    const device = harness.folder.device();
+    const heldAt = `${device.store}.blobs/${hashOf(edited).slice("sha256:".length)}`;
+    chmodSync(heldAt, 0o000);
+    try {
+      const drained = await device.drain();
+      expect(drained.ok, JSON.stringify(drained)).toBe(true);
+      const held = await device.queue();
+      expect(held.ok).toBe(true);
+      if (!held.ok) return;
+      // The witness: the upload was tried and left unanswered.
+      expect(
+        held.value.find((row) => row.kind === "upload_blob")?.verdict,
+      ).toBe(null);
+      expect(
+        held.value
+          .filter((row) => row.kind === "update_item")
+          .map((row) => [row.verdict, row.reason]),
+        "the move went out ahead of the edit of the bytes, which waits on bytes that could not be opened",
+      ).toEqual([
+        ["blocked", "awaiting_dependency"],
+        ["blocked", "awaiting_dependency"],
+      ]);
+    } finally {
+      chmodSync(heldAt, 0o644);
+    }
+
+    expect((await device.drain()).ok).toBe(true);
+    expect([
+      rows.get(id)?.source_id,
+      rows.get(id)?.properties.blob_ref,
+    ]).toEqual(["moved.txt", hashOf(edited)]);
   });
 
   it("sends an edited file item named like a document as bytes", async () => {

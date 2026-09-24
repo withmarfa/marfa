@@ -88,8 +88,14 @@ pub fn queued_one(write: &QueuedWrite, json: bool) -> Result<(), CliError> {
     if !write.depends_on.is_empty() {
         writeln!(
             out,
-            "waiting on {} earlier write(s) to the same row",
+            "waiting on {} write(s) it cannot go without",
             write.depends_on.len()
+        )?;
+    }
+    if let Some(ahead) = &write.follows {
+        writeln!(
+            out,
+            "after {ahead}, the write ahead of it to the same row or edge"
         )?;
     }
     Ok(())
@@ -132,10 +138,16 @@ pub fn queued(writes: &[QueuedWrite], json: bool) -> Result<(), CliError> {
             1 => format!("  waiting on {}", write.depends_on[0]),
             n => format!("  waiting on {n} writes"),
         };
+        // The write ahead of it to the same row or edge, which it goes out
+        // after (42): a row held with nothing it depends on is held by this.
+        let after = match &write.follows {
+            Some(ahead) => format!("  after {ahead}"),
+            None => String::new(),
+        };
         writeln!(
             out,
-            "{}  {}  {}{}{}{}",
-            write.kind, subject, verdict, reason, refusals, held
+            "{}  {}  {}{}{}{}{}",
+            write.kind, subject, verdict, reason, refusals, held, after
         )?;
     }
     if writes.is_empty() {

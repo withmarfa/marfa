@@ -6,7 +6,7 @@
 //! be a call with no bound on it, and the two behaviors are indistinguishable
 //! to a caller who runs the drain again.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::File;
 
 use serde::Serialize;
@@ -14,9 +14,9 @@ use serde::Serialize;
 use crate::catalog::Catalog;
 use crate::error::CoreError;
 use crate::http::{Answer, Call, CallBody, Http, Method, Outgoing};
-use crate::model::{BlockedReason, QueuedWrite, Verdict, WriteKind};
+use crate::model::{BlockedReason, QueuedWrite, Subject, Verdict, WriteKind};
 use crate::store;
-use crate::wire::{WireEdgeAnswer, WireErrorEnvelope, WireWriteAnswer};
+use crate::wire::{WireEdgeAnswer, WireErrorEnvelope, WireItem, WireWriteAnswer};
 use crate::{Core, Result};
 
 /// What a drain did.
@@ -24,7 +24,9 @@ use crate::{Core, Result};
 pub struct DrainReport {
     /// Rows the drain put on the wire.
     pub sent: usize,
-    /// Rows it did not send because something they depend on is unanswered.
+    /// Rows it did not send because a write they depend on, or the write
+    /// ahead of them to the same row or edge, has no answer yet
+    /// (`queue-and-verdicts.md` 4, 42).
     pub held: usize,
     /// One entry per row the drain sent (`queue-and-verdicts.md` 6), and
     /// one per row it settled without sending because of another's answer:
@@ -319,18 +321,39 @@ enum Sendable<'a> {
 /// Whether a row can go out yet.
 enum Readiness {
     Ready,
-    /// Something it names has not been answered (`queue-and-verdicts.md` 4).
+    /// A write it depends on has not been answered (`queue-and-verdicts.md`
+    /// 4), or the write ahead of it to the same row or edge is still waiting
+    /// for an answer in this pass (42). A held row holds the writes behind
+    /// it in turn, whatever holds it: a write behind one held on a create
+    /// waits on that create too, or on the held row itself where that is an
+    /// edge's create, and the one other thing a write waits on, the upload
+    /// of a file's bytes, is never blocked by a server and refuses what waits
+    /// on it once dead (16).
     Held,
-    /// Something it names was refused, so this one is too, and the reason
+    /// A write it depends on was refused, so this one is too, and the reason
     /// names the write that was refused (16).
     RefusedWith(String),
 }
 
+/// Whether `row` can go out, given the verdicts as this pass has them and the
+/// rows still waiting in it: sent and not answered, or held.
 fn readiness(
     row: &QueuedWrite,
     rows: &HashMap<&str, &QueuedWrite>,
     verdicts: &HashMap<String, Option<Verdict>>,
+    waiting: &HashSet<String>,
 ) -> Readiness {
+    // Ordering first: while the write ahead is waiting this one is held,
+    // whatever it depends on, so a write the drain would refuse does not
+    // step out of line and let the writes behind it past the one ahead.
+    // Any answer to the write ahead releases it, a refusal included.
+    if row
+        .follows
+        .as_deref()
+        .is_some_and(|ahead| waiting.contains(ahead))
+    {
+        return Readiness::Held;
+    }
     for dependency in &row.depends_on {
         // The verdict as this pass has it, which is not the verdict the pass
         // started with: a create answered a moment ago releases the update
@@ -621,6 +644,13 @@ pub fn drain(core: &Core, http: &Http, asked: Asked) -> Result<DrainReport> {
         .collect();
 
     let rows: HashMap<&str, &QueuedWrite> = all.iter().map(|row| (row.id.as_str(), row)).collect();
+    // The rows this pass sent and had no answer to, or held: a write to the
+    // same row or edge behind one of them waits for the next pass
+    // (`queue-and-verdicts.md` 42). Sent beside it, an edit would go on the
+    // version both were queued against, and a body sent under its key cannot
+    // be moved afterwards (3); a delete would put the row in the bin before
+    // the edits ahead of it reached it.
+    let mut waiting: HashSet<String> = HashSet::new();
 
     for row in &all {
         if answers.get(&row.id).and_then(Option::as_ref).is_some() {
@@ -634,7 +664,7 @@ pub fn drain(core: &Core, http: &Http, asked: Asked) -> Result<DrainReport> {
         };
         let row = current.as_ref().unwrap_or(row);
 
-        match readiness(row, &rows, &answers) {
+        match readiness(row, &rows, &answers, &waiting) {
             Readiness::Held => {
                 let conn = core.conn()?;
                 store::record_verdict(
@@ -648,6 +678,7 @@ pub fn drain(core: &Core, http: &Http, asked: Asked) -> Result<DrainReport> {
                     },
                 )?;
                 answers.insert(row.id.clone(), Some(Verdict::Blocked));
+                waiting.insert(row.id.clone());
                 report.held += 1;
                 continue;
             }
@@ -663,6 +694,7 @@ pub fn drain(core: &Core, http: &Http, asked: Asked) -> Result<DrainReport> {
                         conflicted_copy_id: None,
                     },
                 )?;
+                move_edits_back(&conn, row)?;
                 drop(conn);
                 answers.insert(row.id.clone(), Some(Verdict::Refused));
                 // Reconciled like any other refusal: the server never took
@@ -679,9 +711,6 @@ pub fn drain(core: &Core, http: &Http, asked: Asked) -> Result<DrainReport> {
 
         let payload = {
             let conn = core.conn()?;
-            if let Some(version) = own_create_version(&conn, row)? {
-                store::rebase(&conn, &row.id, version)?;
-            }
             store::payload_of(&conn, &row.id)?
         };
         // An upload's bytes are opened before anything is marked sent: bytes
@@ -723,7 +752,8 @@ pub fn drain(core: &Core, http: &Http, asked: Asked) -> Result<DrainReport> {
                     // Held and not opened now: a file locked, a process out of
                     // handles. Neither is the write's fault, so it stays
                     // unanswered and uncounted for the next drain, and the
-                    // report says why.
+                    // report says why. A write waiting on it is held, since
+                    // it has no answer, and so is what follows that write.
                     Err(error) => {
                         report.verdicts.push(verdict_of(
                             row,
@@ -794,6 +824,20 @@ pub fn drain(core: &Core, http: &Http, asked: Asked) -> Result<DrainReport> {
             );
         }
         answers.insert(row.id.clone(), settled.verdict);
+        if settled.verdict.is_none() {
+            waiting.insert(row.id.clone());
+        }
+        // An edit that did not land as it was made: the edits of the same
+        // row made against it go back onto its base (42). A refused
+        // credential is not about the edit and clears on its own.
+        if matches!(
+            settled.verdict,
+            Some(Verdict::Refused | Verdict::Blocked | Verdict::Dead)
+        ) && !settled.stops_the_drain
+        {
+            let conn = core.conn()?;
+            move_edits_back(&conn, row)?;
+        }
         // Writes this answer settled besides its own, which the pass would
         // otherwise reach later and send.
         for (other, verdict, reason) in &settled.also {
@@ -832,50 +876,228 @@ pub fn drain(core: &Core, http: &Http, asked: Asked) -> Result<DrainReport> {
     Ok(report)
 }
 
-/// The version a write should be sent on where it was based on this
-/// device's own create (`queue-and-verdicts.md` 36): the local row of an
-/// unanswered create is at 0, and the create's answer says what the server
-/// made of it. Nothing where the write was based on anything else.
-fn own_create_version(conn: &rusqlite::Connection, row: &QueuedWrite) -> Result<Option<i64>> {
-    let (created, field, subject) = match row.kind {
-        WriteKind::UpdateItem => (WriteKind::CreateItem, "item", row.item_id.as_deref()),
-        WriteKind::UpdateEdge => (WriteKind::CreateEdge, "edge", row.edge_id.as_deref()),
-        _ => return Ok(None),
+/// What the server answered a create or an edit with: the version, and for
+/// an item the row at it, which is what an edit behind it is checked against.
+struct AnsweredAt<'a> {
+    version: i64,
+    item: Option<&'a WireItem>,
+}
+
+/// Moves the edits waiting behind a write the server took onto the version
+/// it answered `subject` with: the row or edge the answer names, which for a
+/// create landing on a row the server held is that row, and the copy has
+/// moved the edits onto it already (`queue-and-verdicts.md` 38).
+///
+/// Behind a create, the edits based on 0, the placeholder the copy of an
+/// unanswered create holds and the server never mints (36). Behind an edit
+/// answered `accepted` or `merged`, the edits based on the version the server
+/// applied it to, the one before its answer (42): the row it answered with is
+/// then exactly what those edits were made against, the version they read
+/// with this edit laid over it (35). Behind a `conflicted` edit, nothing: the
+/// row kept the server's value where this edit collided, so it does not hold
+/// what the edits behind it were made against.
+///
+/// An edit the server applied past its own base, or a create carrying a
+/// version and answered more than one past it, was merged over another
+/// device's write, silently where nothing collided. Behind an edit, any edit
+/// based on an earlier version goes on the answer where the answer holds
+/// what that edit was made against for every property it carries (`holds`):
+/// an edit changes only what it carries, so there it changes what the person
+/// changed and leaves the other write standing. That is also how the third
+/// edit of a chain behind such an answer reaches the second's answer, which
+/// holds what the third read. Otherwise it goes as it stands, and behind a
+/// create on the version the create was based on, which this device read
+/// (36). A create the server acknowledged as a repeat of one
+/// it had already taken answers the row or edge as it stands now, whoever has
+/// written it since; the edits behind it go on 1, the version that create
+/// made. A create carrying a natural key is sent with no id (38), so the one
+/// acknowledgment it meets is of a row in the bin, which is refused before it
+/// reaches here (41).
+fn move_edits_behind(
+    conn: &rusqlite::Connection,
+    row: &QueuedWrite,
+    verdict: Verdict,
+    acknowledged: bool,
+    subject: &str,
+    at: &AnsweredAt<'_>,
+) -> Result<()> {
+    let version = at.version;
+    let landed = matches!(verdict, Verdict::Accepted | Verdict::Merged);
+    for (id, base) in store::edits_behind(conn, row, subject)? {
+        let to = match row.kind {
+            WriteKind::CreateItem | WriteKind::CreateEdge => {
+                if base != Some(0) {
+                    continue;
+                }
+                match row.base_version {
+                    _ if acknowledged => 1,
+                    Some(created_on) if created_on > 0 && version > created_on + 1 => {
+                        if holds(conn, &id, at)? {
+                            version
+                        } else {
+                            created_on
+                        }
+                    }
+                    _ => version,
+                }
+            }
+            WriteKind::UpdateItem | WriteKind::UpdateEdge => {
+                let before = base.is_some_and(|base| base < version);
+                // An edge is never merged, so an answer to its edit is that
+                // edit applied to the version it named, and the next edit
+                // of it made against that goes on the answer. An item's is
+                // checked against what the edit was made against.
+                let onto = landed
+                    && before
+                    && if row.kind == WriteKind::UpdateEdge {
+                        base == Some(version - 1)
+                    } else {
+                        holds(conn, &id, at)?
+                    };
+                if onto {
+                    version
+                } else if let Some(back) = back_to(conn, row, &id, base)? {
+                    back
+                } else {
+                    continue;
+                }
+            }
+            _ => return Ok(()),
+        };
+        store::move_edit(conn, &id, to)?;
+    }
+    Ok(())
+}
+
+/// Moves the edits of the same row or edge behind `row`, an edit that did not
+/// land as it was made (refused, blocked by the server, dead), back onto the
+/// version it was based on where they were made against it
+/// (`queue-and-verdicts.md` 42).
+fn move_edits_back(conn: &rusqlite::Connection, row: &QueuedWrite) -> Result<()> {
+    if !matches!(row.kind, WriteKind::UpdateItem | WriteKind::UpdateEdge) {
+        return Ok(());
+    }
+    let Some(subject) = row.subject_id() else {
+        return Ok(());
     };
-    if row.base_version != Some(0) {
+    for (id, base) in store::edits_behind(conn, row, subject)? {
+        if let Some(back) = back_to(conn, row, &id, base)? {
+            store::move_edit(conn, &id, back)?;
+        }
+    }
+    Ok(())
+}
+
+/// Where the edit `id` behind `row` goes when `row` did not land as it was
+/// made, or landed on content that edit never read: onto the version `row`
+/// was based on, where `id` was made later, against the copy with `row` laid
+/// over it (35), and carries a property `row` carries. Its value for such a
+/// property came from `row` and not from the server, so on its own base the
+/// server would take it as newer than whatever the row holds, which this
+/// device never read. On `row`'s base the server merges or conflicts on it
+/// instead. An edit that carries none of `row`'s properties read the server
+/// for everything it carries, and stays where it is.
+fn back_to(
+    conn: &rusqlite::Connection,
+    row: &QueuedWrite,
+    id: &str,
+    base: Option<i64>,
+) -> Result<Option<i64>> {
+    let Some(ahead) = row.base_version else {
+        return Ok(None);
+    };
+    if base.is_none_or(|base| base <= ahead) {
         return Ok(None);
     }
-    for dependency in &row.depends_on {
-        let Some(create) = store::queued_write(conn, dependency)? else {
-            continue;
-        };
-        if create.kind != created
-            || !matches!(
-                create.verdict,
-                Some(Verdict::Accepted | Verdict::Merged | Verdict::Conflicted)
-            )
-        {
-            continue;
-        }
-        // Only an answer about the row this write addresses. Where the
-        // create landed on a row the server already held, the copy moved
-        // this write onto that row when the answer came (38).
-        let answered = create
-            .answer
-            .as_deref()
-            .and_then(|answer| serde_json::from_str::<serde_json::Value>(answer).ok())
-            .and_then(|answer| answer.get(field).cloned());
-        let Some(answered) = answered else {
-            continue;
-        };
-        if answered.get("id").and_then(serde_json::Value::as_str) != subject {
-            continue;
-        }
-        if let Some(version) = answered.get("version").and_then(serde_json::Value::as_i64) {
-            return Ok(Some(version));
+    let carried = |id: &str| -> Result<Vec<String>> {
+        let body: serde_json::Value = serde_json::from_str(&store::payload_of(conn, id)?)?;
+        Ok(body
+            .get("properties")
+            .and_then(serde_json::Value::as_object)
+            .map(|properties| properties.keys().cloned().collect())
+            .unwrap_or_default())
+    };
+    let ahead_carries = carried(&row.id)?;
+    let shared = carried(id)?
+        .iter()
+        .any(|property| ahead_carries.contains(property));
+    Ok(shared.then_some(ahead))
+}
+
+/// Whether the row an answer names holds, for every property the edit `id`
+/// changed, the value the copy held when that edit was made
+/// (`queue-and-verdicts.md` 42). A property the edit carries at the value it
+/// read is no change of its own, and it is dropped from the edit when the
+/// edit is moved, so it is not checked. An edge is never merged, so none
+/// holds; neither does an edit whose reading was never recorded. A natural
+/// key an edit carries is not checked: the server resolves a key both writes
+/// changed to the later writer (`versions.md` 13), so on its own base the
+/// edit's key lands over another's all the same.
+fn holds(conn: &rusqlite::Connection, id: &str, at: &AnsweredAt<'_>) -> Result<bool> {
+    let Some(item) = at.item else {
+        return Ok(false);
+    };
+    let Some(read) = store::read_of(conn, id)? else {
+        return Ok(false);
+    };
+    let read: serde_json::Value = serde_json::from_str(&read)?;
+    let body: serde_json::Value = serde_json::from_str(&store::payload_of(conn, id)?)?;
+    let null = serde_json::Value::Null;
+    if let Some(serde_json::Value::Object(properties)) = read.get("properties") {
+        for (key, value) in properties {
+            let sent = body.pointer(&format!("/properties/{}", pointer_token(key)));
+            if sent == Some(value) {
+                continue;
+            }
+            if item.properties.get(key).unwrap_or(&null) != value {
+                return Ok(false);
+            }
         }
     }
-    Ok(None)
+    Ok(true)
+}
+
+/// Whether a conflicted edit collided only with what it was made against:
+/// for every property the row kept its own value for, that value is the one
+/// the copy held when the edit was made, which was this device's own earlier
+/// write laid over the copy (`queue-and-verdicts.md` 35, 42). The copy the
+/// server set aside then holds the newest of this device's writes, and the
+/// row an older one.
+fn against_its_own(
+    conn: &rusqlite::Connection,
+    row: &QueuedWrite,
+    answer: &WireWriteAnswer,
+) -> Result<bool> {
+    let Some(resolution) = &answer.conflict_resolution else {
+        return Ok(false);
+    };
+    let Some(read) = store::read_of(conn, &row.id)? else {
+        return Ok(false);
+    };
+    let read: serde_json::Value = serde_json::from_str(&read)?;
+    let body: serde_json::Value = serde_json::from_str(&store::payload_of(conn, &row.id)?)?;
+    let null = serde_json::Value::Null;
+    let mut kept = 0;
+    for field in &resolution.fields {
+        let token = pointer_token(field);
+        let Some(sent) = body.pointer(&format!("/properties/{token}")) else {
+            continue;
+        };
+        let held = answer.item.properties.get(field).unwrap_or(&null);
+        if held == sent {
+            continue;
+        }
+        kept += 1;
+        if read.pointer(&format!("/properties/{token}")) != Some(held) {
+            return Ok(false);
+        }
+    }
+    Ok(kept > 0)
+}
+
+/// A property name as one step of a JSON pointer.
+fn pointer_token(key: &str) -> String {
+    key.replace('~', "~0").replace('/', "~1")
 }
 
 fn verdict_of(row: &QueuedWrite, settled: &Settled) -> DrainVerdict {
@@ -989,7 +1211,18 @@ fn settle(
                     // The row the server returned, whole, including the
                     // version and the fields it stamps (9, 10, 11). The
                     // local row was minted at version 0 and this replaces it.
-                    store::upsert_item(&tx, &parsed.item, tags.as_deref(), &indexing)?;
+                    // Not over a newer row: an answer replayed from the
+                    // server's record can arrive after a catch-up brought a
+                    // later version, and adopting it would take the copy
+                    // back to what it held before, under edits made since.
+                    if !store::holds_newer(
+                        &tx,
+                        Subject::Item,
+                        &parsed.item.id,
+                        parsed.item.version,
+                    )? {
+                        store::upsert_item(&tx, &parsed.item, tags.as_deref(), &indexing)?;
+                    }
                     // A create carrying a natural key went without the id
                     // minted here, so its answer names the server's row:
                     // one the key already resolved, or one it made.
@@ -997,6 +1230,7 @@ fn settle(
                         && let Some(local) = row.item_id.as_deref()
                     {
                         store::adopt_answered_id(&tx, local, &parsed.item.id)?;
+                        store::refollow(&tx, &parsed.item.id, &row.id)?;
                     }
                     store::record_verdict(
                         &tx,
@@ -1008,6 +1242,28 @@ fn settle(
                             conflicted_copy_id: conflicted_copy_id.as_deref(),
                         },
                     )?;
+                    move_edits_behind(
+                        &tx,
+                        row,
+                        verdict,
+                        parsed.acknowledged,
+                        &parsed.item.id,
+                        &AnsweredAt {
+                            version: parsed.item.version,
+                            item: Some(&parsed.item),
+                        },
+                    )?;
+                    // A folder's save set aside in a copy against this
+                    // device's own earlier save: the file holds the newest,
+                    // which the row does not, so the pull leaves the file and
+                    // the next scan sends it as an edit of the row as it now
+                    // stands (`folders.md` 13).
+                    if verdict == Verdict::Conflicted
+                        && row.kind == WriteKind::UpdateItem
+                        && against_its_own(&tx, row, &parsed)?
+                    {
+                        store::untake_latest_save(&tx, row, &parsed.item.id, parsed.item.version)?;
+                    }
                     store::lay_waiting_writes_over(&tx, &parsed.item.id, &indexing)?;
                     tx.commit()?;
                     Ok(Settled {
@@ -1029,8 +1285,16 @@ fn settle(
                     let tx = conn.transaction()?;
                     // Adopted for its version: the local edge was minted at
                     // 0 and the next update to it has to name the one the
-                    // server gave it.
-                    store::upsert_edge(&tx, &parsed.edge)?;
+                    // server gave it. Not over a newer edge, for the reason
+                    // an item's answer is not.
+                    if !store::holds_newer(
+                        &tx,
+                        Subject::Edge,
+                        &parsed.edge.id,
+                        parsed.edge.version,
+                    )? {
+                        store::upsert_edge(&tx, &parsed.edge)?;
+                    }
                     store::record_verdict(
                         &tx,
                         &row.id,
@@ -1041,10 +1305,21 @@ fn settle(
                             conflicted_copy_id: None,
                         },
                     )?;
+                    move_edits_behind(
+                        &tx,
+                        row,
+                        Verdict::Accepted,
+                        parsed.acknowledged,
+                        &parsed.edge.id,
+                        &AnsweredAt {
+                            version: parsed.edge.version,
+                            item: None,
+                        },
+                    )?;
                     store::lay_waiting_edge_writes_over(&tx, &parsed.edge.id)?;
                     tx.commit()?;
                     Ok(Settled {
-                        replayed: replayed_header,
+                        replayed: parsed.acknowledged || replayed_header,
                         ..Settled::plain(Some(Verdict::Accepted), None, row.refusals)
                     })
                 }
@@ -1468,11 +1743,12 @@ fn reconcile_inner(core: &Core, row: &QueuedWrite) -> Result<()> {
         }
         let conn = core.conn()?;
         match found {
-            // Nothing is laid back over it: every later write to an edge
-            // waits on the earlier ones, so a refused edge write refuses
-            // them too (`queue-and-verdicts.md` 16) and none is left waiting.
+            // A later write to the edge is ordered behind this one and not
+            // refused with it (`queue-and-verdicts.md` 42), so what is still
+            // waiting is laid back over the edge the server holds (35).
             Some(edge) => {
                 store::upsert_edge(&conn, &edge)?;
+                store::lay_waiting_edge_writes_over(&conn, edge_id)?;
             }
             // The server holds no such edge, which for a refused create is
             // the honest answer and for a refused update means it went
@@ -1507,6 +1783,8 @@ fn reconcile_inner(core: &Core, row: &QueuedWrite) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use serde_json::json;
+
     use super::*;
 
     fn write<'a>(
@@ -1530,6 +1808,44 @@ mod tests {
         }
     }
 
+    /// A row is held while the write ahead of it waits in this pass, or while
+    /// a write it depends on has no answer; any answer to the write ahead
+    /// releases it, and an answer to what it depends on does where it landed.
+    #[test]
+    fn a_row_is_held_until_the_write_ahead_and_what_it_depends_on_answer() {
+        let conn = store::open_in_memory().unwrap();
+        let create = store::enqueue(
+            &conn,
+            &write(WriteKind::CreateItem, "mine", None, None, &[]),
+        )
+        .unwrap();
+        let depends_on = [create.id.clone()];
+        let edit = store::enqueue(
+            &conn,
+            &write(WriteKind::UpdateItem, "mine", None, Some(0), &depends_on),
+        )
+        .unwrap();
+        let all = [create.clone(), edit.clone()];
+        let rows: HashMap<&str, &QueuedWrite> =
+            all.iter().map(|row| (row.id.as_str(), row)).collect();
+        let held = |verdict: Option<Verdict>, waiting: &[&str]| {
+            let answers: HashMap<String, Option<Verdict>> =
+                [(create.id.clone(), verdict)].into_iter().collect();
+            let waiting: HashSet<String> = waiting.iter().map(|id| id.to_string()).collect();
+            match readiness(&edit, &rows, &answers, &waiting) {
+                Readiness::Held => Some(true),
+                Readiness::Ready => None,
+                Readiness::RefusedWith(_) => Some(false),
+            }
+        };
+        assert_eq!(held(None, &[&create.id]), Some(true));
+        assert_eq!(held(Some(Verdict::Blocked), &[]), Some(true));
+        assert_eq!(held(Some(Verdict::Accepted), &[]), None);
+        assert_eq!(held(Some(Verdict::Refused), &[]), Some(false));
+        // The edit follows the create too: any answer to it releases.
+        assert_eq!(edit.follows.as_deref(), Some(create.id.as_str()));
+    }
+
     /// A paced drain holds a source back for a minute from when it was found
     /// unclaimed, and a drain somebody asked for never does. The witness is
     /// the same record past the minute, released.
@@ -1546,73 +1862,584 @@ mod tests {
         assert!(held_back(&conn, Asked::Paced, soon).unwrap().is_empty());
     }
 
-    /// The version comes from an answer about the row the edit addresses and
-    /// no other. The witness is the same edit rebased once the answer names
-    /// its row, so the first `None` is the id check and not a rebase that
-    /// never fires.
+    /// The version a queued write will go out on, as the queue reports it
+    /// and as its body names it; `None` in the body until it is moved, since
+    /// these bodies are written without one.
+    fn based_on(conn: &rusqlite::Connection, id: &str) -> (Option<i64>, Option<i64>) {
+        let row = store::queued_write(conn, id).unwrap().unwrap();
+        let body: serde_json::Value =
+            serde_json::from_str(&store::payload_of(conn, id).unwrap()).unwrap();
+        (row.base_version, body["version"].as_i64())
+    }
+
+    /// The two subjects an edit can have: a row, named by the item, and an
+    /// edge, named by the edge.
+    const SUBJECTS: [(WriteKind, WriteKind, &str, Option<&str>); 2] = [
+        (WriteKind::CreateItem, WriteKind::UpdateItem, "mine", None),
+        (
+            WriteKind::CreateEdge,
+            WriteKind::UpdateEdge,
+            "link",
+            Some("link"),
+        ),
+    ];
+
+    /// The edits behind a create move where its answer is about the row they
+    /// address and no other. The witness is the same edit moved once the
+    /// answer names its row, so the first check is the subject and not a
+    /// rebase that never fires.
     #[test]
     fn only_an_answer_about_the_row_itself_rebases_an_edit_of_it() {
         let conn = store::open_in_memory().unwrap();
-        for (created, edited, field, subject, edge) in [
-            (
-                WriteKind::CreateItem,
-                WriteKind::UpdateItem,
-                "item",
-                "mine",
-                None,
-            ),
-            (
-                WriteKind::CreateEdge,
-                WriteKind::UpdateEdge,
-                "edge",
-                "link",
-                Some("link"),
-            ),
-        ] {
+        for (created, edited, subject, edge) in SUBJECTS {
             let create = store::enqueue(&conn, &write(created, "mine", edge, None, &[])).unwrap();
             let depends_on = [create.id.clone()];
             let edit =
                 store::enqueue(&conn, &write(edited, "mine", edge, Some(0), &depends_on)).unwrap();
-            let answer =
-                |id: &str| serde_json::json!({ field: { "id": id, "version": 5 } }).to_string();
-            let answered = |id: &str| {
-                store::record_verdict(
-                    &conn,
-                    &create.id,
-                    &store::Answered {
-                        verdict: Verdict::Accepted,
-                        reason: None,
-                        answer: Some(&answer(id)),
-                        conflicted_copy_id: None,
-                    },
-                )
-                .unwrap();
-                store::queued_write(&conn, &edit.id).unwrap().unwrap()
-            };
-            assert_eq!(
-                own_create_version(&conn, &answered("theirs")).unwrap(),
-                None,
-                "an answer about another {field} rebased an edit of this one"
-            );
-            assert_eq!(
-                own_create_version(&conn, &answered(subject)).unwrap(),
-                Some(5)
-            );
-
-            // Rebased, the write reports what it was sent on in both places.
-            store::rebase(&conn, &edit.id, 5).unwrap();
-            let rebased = store::queued_write(&conn, &edit.id).unwrap().unwrap();
-            assert_eq!(rebased.base_version, Some(5));
-            let payload: serde_json::Value =
-                serde_json::from_str(&store::payload_of(&conn, &edit.id).unwrap()).unwrap();
-            assert_eq!(payload["version"], 5);
-
-            // And only a write based on the placeholder: one based on a
-            // version the server issued waits on the same create and is not
-            // moved.
+            // Based on a version the server issued, and waiting on the same
+            // create: not moved, because it is not based on the placeholder.
             let issued =
                 store::enqueue(&conn, &write(edited, "mine", edge, Some(3), &depends_on)).unwrap();
-            assert_eq!(own_create_version(&conn, &issued).unwrap(), None);
+
+            move_edits_behind(&conn, &create, Verdict::Accepted, false, "theirs", &at(5)).unwrap();
+            assert_eq!(
+                based_on(&conn, &edit.id),
+                (Some(0), None),
+                "an answer about another row rebased an edit of this one"
+            );
+            move_edits_behind(&conn, &create, Verdict::Accepted, false, subject, &at(5)).unwrap();
+            assert_eq!(based_on(&conn, &edit.id), (Some(5), Some(5)));
+            assert_eq!(based_on(&conn, &issued.id), (Some(3), None));
         }
+    }
+
+    /// Edits of one row queued one after another are all based on what the
+    /// copy held, and each moves onto the answer to the one ahead of it as
+    /// that answer arrives: the placeholder onto the create's, then each
+    /// edit's onto the one after, merged answers included.
+    #[test]
+    fn a_chain_of_edits_moves_one_answer_at_a_time() {
+        let conn = store::open_in_memory().unwrap();
+        for (created, edited, subject, edge) in SUBJECTS {
+            let create = store::enqueue(&conn, &write(created, "mine", edge, None, &[])).unwrap();
+            let depends_on = [create.id.clone()];
+            let edits: Vec<QueuedWrite> = (0..3)
+                .map(|_| {
+                    let edit =
+                        store::enqueue(&conn, &write(edited, "mine", edge, Some(0), &depends_on))
+                            .unwrap();
+                    // An item's edit moves where the answer holds what it
+                    // read; these carry no property, so every answer does.
+                    if edited == WriteKind::UpdateItem {
+                        store::record_read(&conn, &edit.id, &json!({ "properties": {} })).unwrap();
+                    }
+                    edit
+                })
+                .collect();
+            let bases = |conn: &rusqlite::Connection| -> Vec<(Option<i64>, Option<i64>)> {
+                edits.iter().map(|edit| based_on(conn, &edit.id)).collect()
+            };
+            let row = store::testing::note("mine", "title", "body", "2026-01-01T00:00:00Z");
+            let answered = |version| AnsweredAt {
+                version,
+                item: (edited == WriteKind::UpdateItem).then_some(&row),
+            };
+
+            move_edits_behind(
+                &conn,
+                &create,
+                Verdict::Accepted,
+                false,
+                subject,
+                &answered(1),
+            )
+            .unwrap();
+            assert_eq!(bases(&conn), vec![(Some(1), Some(1)); 3]);
+
+            store::mark_sent(&conn, &edits[0].id).unwrap();
+            move_edits_behind(
+                &conn,
+                &edits[0],
+                Verdict::Accepted,
+                false,
+                subject,
+                &answered(2),
+            )
+            .unwrap();
+            assert_eq!(
+                bases(&conn),
+                vec![(Some(1), Some(1)), (Some(2), Some(2)), (Some(2), Some(2))],
+                "the edits behind the first did not move onto its answer"
+            );
+
+            store::mark_sent(&conn, &edits[1].id).unwrap();
+            let second = if edited == WriteKind::UpdateItem {
+                Verdict::Merged
+            } else {
+                Verdict::Accepted
+            };
+            move_edits_behind(&conn, &edits[1], second, false, subject, &answered(3)).unwrap();
+            assert_eq!(
+                bases(&conn),
+                vec![(Some(1), Some(1)), (Some(2), Some(2)), (Some(3), Some(3))],
+                "the third edit did not move onto the second's answer"
+            );
+        }
+    }
+
+    /// Behind a conflicted edit nothing moves onto its answer: the row kept
+    /// the server's value where the edit collided. The witness is the same
+    /// edit moved behind the same answer taken as accepted.
+    #[test]
+    fn nothing_moves_behind_a_conflicted_edit() {
+        let conn = store::open_in_memory().unwrap();
+        let queue = || {
+            store::enqueue(
+                &conn,
+                &write(WriteKind::UpdateItem, "mine", None, Some(3), &[]),
+            )
+            .unwrap()
+        };
+        let first = queue();
+        let second = queue();
+        store::record_read(&conn, &second.id, &json!({ "properties": {} })).unwrap();
+        let answered = store::testing::note("mine", "title", "body", "2026-01-01T00:00:00Z");
+        let answer = AnsweredAt {
+            version: 4,
+            item: Some(&answered),
+        };
+        move_edits_behind(&conn, &first, Verdict::Conflicted, false, "mine", &answer).unwrap();
+        assert_eq!(
+            based_on(&conn, &second.id),
+            (Some(3), None),
+            "an edit behind a conflicted one was moved onto the version it came back with"
+        );
+        move_edits_behind(&conn, &first, Verdict::Accepted, false, "mine", &answer).unwrap();
+        assert_eq!(based_on(&conn, &second.id), (Some(4), Some(4)));
+    }
+
+    /// The answer to an edit, at a version, with no row to check an edit
+    /// behind it against.
+    fn at(version: i64) -> AnsweredAt<'static> {
+        AnsweredAt {
+            version,
+            item: None,
+        }
+    }
+
+    /// An item's edit moves onto an answer only where it is based on an
+    /// earlier version than the answer and the answer holds what it read; an
+    /// edit whose reading was never recorded, or one made on a later version,
+    /// stays. The witness is the edit that moves.
+    #[test]
+    fn an_item_edit_moves_only_onto_a_later_answer_that_holds_what_it_read() {
+        let conn = store::open_in_memory().unwrap();
+        let queue = |base| {
+            store::enqueue(
+                &conn,
+                &write(WriteKind::UpdateItem, "mine", None, Some(base), &[]),
+            )
+            .unwrap()
+        };
+        let first = queue(3);
+        let read = queue(3);
+        let unread = queue(3);
+        let later = queue(6);
+        for edit in [&read, &later] {
+            store::record_read(&conn, &edit.id, &json!({ "properties": {} })).unwrap();
+        }
+        let answered = store::testing::note("mine", "title", "body", "2026-01-01T00:00:00Z");
+        let answer = AnsweredAt {
+            version: 5,
+            item: Some(&answered),
+        };
+        move_edits_behind(&conn, &first, Verdict::Accepted, false, "mine", &answer).unwrap();
+        assert_eq!(based_on(&conn, &read.id), (Some(5), Some(5)));
+        assert_eq!(
+            based_on(&conn, &unread.id),
+            (Some(3), None),
+            "an edit whose reading was never recorded was moved onto an answer"
+        );
+        assert_eq!(
+            based_on(&conn, &later.id),
+            (Some(6), None),
+            "an edit made on a later version was moved back onto an older answer"
+        );
+    }
+
+    /// Behind an edit merged over another device's write, an edit based on
+    /// what it was based on moves onto the answer where the answer holds,
+    /// for every property it carries, what the copy held when it was made,
+    /// and stays where the other write touched one of them. The witness for
+    /// each stay is the move.
+    #[test]
+    fn an_edit_behind_a_merge_moves_where_the_answer_holds_what_it_was_made_against() {
+        let row = |body: &str| {
+            let mut item = store::testing::note("mine", "title", body, "2026-01-01T00:00:00Z");
+            item.version = 5;
+            item
+        };
+        for (read, answered, moves) in [
+            (
+                json!({ "properties": { "body": "first" } }),
+                row("first"),
+                true,
+            ),
+            (
+                json!({ "properties": { "body": "first" } }),
+                row("elsewhere"),
+                false,
+            ),
+            (
+                json!({ "properties": { "body": "first", "notes": null } }),
+                row("first"),
+                true,
+            ),
+        ] {
+            let conn = store::open_in_memory().unwrap();
+            let first = store::enqueue(
+                &conn,
+                &write(WriteKind::UpdateItem, "mine", None, Some(3), &[]),
+            )
+            .unwrap();
+            let second = store::enqueue(
+                &conn,
+                &write(WriteKind::UpdateItem, "mine", None, Some(3), &[]),
+            )
+            .unwrap();
+            store::record_read(&conn, &second.id, &read).unwrap();
+            let answer = AnsweredAt {
+                version: 5,
+                item: Some(&answered),
+            };
+            move_edits_behind(&conn, &first, Verdict::Accepted, false, "mine", &answer).unwrap();
+            let expected = if moves {
+                (Some(5), Some(5))
+            } else {
+                (Some(3), None)
+            };
+            assert_eq!(
+                based_on(&conn, &second.id),
+                expected,
+                "an edit made against {read} behind an answer holding {:?}",
+                answered.properties
+            );
+        }
+    }
+
+    /// What an edit is checked against: every property it changed from what
+    /// it read, each of them, and a property the answer lacks is one it does
+    /// not hold where the edit read a value for it. A property carried at the
+    /// value read is no change and is not checked. Each case is witnessed by
+    /// the one beside it that differs in the answer alone.
+    #[test]
+    fn an_edit_holds_where_the_answer_keeps_every_property_it_changed_as_read() {
+        let answered = |properties: serde_json::Value| {
+            let mut item = store::testing::note("mine", "title", "body", "2026-01-01T00:00:00Z");
+            item.properties = properties.as_object().unwrap().clone();
+            item.version = 5;
+            item
+        };
+        for (read, sent, row, expected) in [
+            // The title is carried at the value read, so another's title
+            // does not stop the move.
+            (
+                json!({ "body": "first", "title": "held" }),
+                json!({ "body": "second", "title": "held" }),
+                json!({ "body": "first", "title": "elsewhere" }),
+                true,
+            ),
+            // Changed, it does, and it is the later of the two it carries.
+            (
+                json!({ "body": "first", "title": "held" }),
+                json!({ "body": "second", "title": "mine" }),
+                json!({ "body": "first", "title": "elsewhere" }),
+                false,
+            ),
+            (
+                json!({ "body": "first", "title": "held" }),
+                json!({ "body": "second", "title": "mine" }),
+                json!({ "body": "first", "title": "held" }),
+                true,
+            ),
+            // A property read with a value and gone from the answer.
+            (
+                json!({ "notes": "kept" }),
+                json!({ "notes": "mine" }),
+                json!({ "body": "first" }),
+                false,
+            ),
+            // One read as absent, and still absent.
+            (
+                json!({ "notes": null }),
+                json!({ "notes": "mine" }),
+                json!({ "body": "first" }),
+                true,
+            ),
+        ] {
+            let conn = store::open_in_memory().unwrap();
+            let body = json!({ "version": 3, "properties": sent }).to_string();
+            let edit = store::enqueue(
+                &conn,
+                &store::NewWrite {
+                    payload: &body,
+                    ..write(WriteKind::UpdateItem, "mine", None, Some(3), &[])
+                },
+            )
+            .unwrap();
+            store::record_read(&conn, &edit.id, &json!({ "properties": read })).unwrap();
+            let item = answered(row.clone());
+            let at = AnsweredAt {
+                version: 5,
+                item: Some(&item),
+            };
+            assert_eq!(
+                holds(&conn, &edit.id, &at).unwrap(),
+                expected,
+                "an edit that read {read} and carries {sent}, against an answer holding {row}"
+            );
+        }
+    }
+
+    /// Behind an edit that did not land as made, a later edit made on a later
+    /// version goes back onto its base where it carries a property of that
+    /// edit's, and stays where it carries none or was made on the same base.
+    #[test]
+    fn an_edit_made_against_one_that_did_not_land_goes_back_onto_its_base() {
+        let conn = store::open_in_memory().unwrap();
+        let queue = |base: i64, properties: serde_json::Value| {
+            let body = json!({ "version": base, "properties": properties }).to_string();
+            store::enqueue(
+                &conn,
+                &store::NewWrite {
+                    payload: &body,
+                    ..write(WriteKind::UpdateItem, "mine", None, Some(base), &[])
+                },
+            )
+            .unwrap()
+        };
+        let ahead = queue(3, json!({ "body": "first" }));
+        let shares = queue(4, json!({ "body": "second", "title": "held" }));
+        let apart = queue(4, json!({ "title": "mine" }));
+        let alongside = queue(3, json!({ "body": "third" }));
+        store::record_read(
+            &conn,
+            &shares.id,
+            &json!({ "properties": { "body": "first", "title": "held" } }),
+        )
+        .unwrap();
+        move_edits_back(&conn, &ahead).unwrap();
+        let moved: serde_json::Value =
+            serde_json::from_str(&store::payload_of(&conn, &shares.id).unwrap()).unwrap();
+        assert_eq!(
+            moved,
+            json!({ "version": 3, "properties": { "body": "second" } }),
+            "the edit made against the first's body did not go back onto its base"
+        );
+        assert_eq!(
+            store::queued_write(&conn, &apart.id)
+                .unwrap()
+                .unwrap()
+                .base_version,
+            Some(4),
+            "an edit sharing nothing with the first went back onto its base"
+        );
+        assert_eq!(
+            store::queued_write(&conn, &alongside.id)
+                .unwrap()
+                .unwrap()
+                .base_version,
+            Some(3)
+        );
+    }
+
+    /// A move drops every property the edit carries at the value it read, so
+    /// the edit asserts only what it changed; the witness is the property it
+    /// changed, which stays.
+    #[test]
+    fn a_move_drops_what_the_edit_carries_unchanged() {
+        let conn = store::open_in_memory().unwrap();
+        let body = json!({ "version": 3, "properties": { "title": "held", "body": "second" } })
+            .to_string();
+        let edit = store::enqueue(
+            &conn,
+            &store::NewWrite {
+                payload: &body,
+                ..write(WriteKind::UpdateItem, "mine", None, Some(3), &[])
+            },
+        )
+        .unwrap();
+        store::record_read(
+            &conn,
+            &edit.id,
+            &json!({ "properties": { "title": "held", "body": "first" } }),
+        )
+        .unwrap();
+        store::move_edit(&conn, &edit.id, 5).unwrap();
+        let moved: serde_json::Value =
+            serde_json::from_str(&store::payload_of(&conn, &edit.id).unwrap()).unwrap();
+        assert_eq!(
+            moved,
+            json!({ "version": 5, "properties": { "body": "second" } })
+        );
+    }
+
+    /// A create conditional on the version the copy read moves the edits
+    /// behind it onto its answer where the server applied it to that version
+    /// or made the row, or where the answer is at or below that version, and
+    /// onto that version where it applied it more than one past it, over
+    /// another device's write. The witnesses are the answers that move them
+    /// onto the answer.
+    #[test]
+    fn a_create_applied_over_another_write_leaves_what_follows_on_its_own_base() {
+        for (answered, sent_on) in [(4, 4), (1, 1), (2, 2), (6, 3)] {
+            let conn = store::open_in_memory().unwrap();
+            let (create, edit) = create_and_edit(&conn, Some(3));
+            move_edits_behind(
+                &conn,
+                &create,
+                Verdict::Accepted,
+                false,
+                "mine",
+                &at(answered),
+            )
+            .unwrap();
+            assert_eq!(
+                based_on(&conn, &edit.id),
+                (Some(sent_on), Some(sent_on)),
+                "a create based on 3 and answered at {answered}"
+            );
+        }
+        // Where the answer holds what the edit was made against, it goes on
+        // the answer after all.
+        let conn = store::open_in_memory().unwrap();
+        let (create, edit) = create_and_edit(&conn, Some(3));
+        store::record_read(
+            &conn,
+            &edit.id,
+            &json!({ "properties": { "body": "created" } }),
+        )
+        .unwrap();
+        let mut answered = store::testing::note("mine", "title", "created", "2026-01-01T00:00:00Z");
+        answered.version = 6;
+        let answer = AnsweredAt {
+            version: 6,
+            item: Some(&answered),
+        };
+        move_edits_behind(&conn, &create, Verdict::Accepted, false, "mine", &answer).unwrap();
+        assert_eq!(based_on(&conn, &edit.id), (Some(6), Some(6)));
+    }
+
+    /// A create the server acknowledged as a repeat answers the row or edge
+    /// as it stands, so the edits behind it go on 1, the version that create
+    /// made, whatever the answer names and whatever version the create
+    /// carried. The witness is the same answer not acknowledged, which moves
+    /// them onto it.
+    #[test]
+    fn a_repeated_create_sends_what_follows_on_the_version_it_made() {
+        for (created, subject, edge, base, acknowledged, sent_on) in [
+            (WriteKind::CreateItem, "mine", None, None, false, 6),
+            (WriteKind::CreateItem, "mine", None, None, true, 1),
+            (WriteKind::CreateItem, "mine", None, Some(3), true, 1),
+            (WriteKind::CreateEdge, "link", Some("link"), None, false, 6),
+            (WriteKind::CreateEdge, "link", Some("link"), None, true, 1),
+        ] {
+            let conn = store::open_in_memory().unwrap();
+            let create = store::enqueue(&conn, &write(created, "mine", edge, base, &[])).unwrap();
+            let edit = store::enqueue(
+                &conn,
+                &write(
+                    created.edit().unwrap(),
+                    "mine",
+                    edge,
+                    Some(0),
+                    std::slice::from_ref(&create.id),
+                ),
+            )
+            .unwrap();
+            move_edits_behind(
+                &conn,
+                &create,
+                Verdict::Accepted,
+                acknowledged,
+                subject,
+                &at(6),
+            )
+            .unwrap();
+            assert_eq!(
+                based_on(&conn, &edit.id),
+                (Some(sent_on), Some(sent_on)),
+                "a {created} based on {base:?} answered at 6, acknowledged {acknowledged}"
+            );
+        }
+    }
+
+    /// An item's create based on `base`, and an edit of it behind it based
+    /// on the placeholder.
+    fn create_and_edit(
+        conn: &rusqlite::Connection,
+        base: Option<i64>,
+    ) -> (QueuedWrite, QueuedWrite) {
+        let create =
+            store::enqueue(conn, &write(WriteKind::CreateItem, "mine", None, base, &[])).unwrap();
+        let edit = store::enqueue(
+            conn,
+            &write(
+                WriteKind::UpdateItem,
+                "mine",
+                None,
+                Some(0),
+                std::slice::from_ref(&create.id),
+            ),
+        )
+        .unwrap();
+        (create, edit)
+    }
+
+    /// Only the unsent edits of the same row queued after the answered one
+    /// and still waiting. Each absence is witnessed by the waiting edits the
+    /// same call names.
+    #[test]
+    fn only_the_waiting_unsent_edits_queued_after_it_are_behind_it() {
+        let conn = store::open_in_memory().unwrap();
+        let queue = |item: &str| {
+            store::enqueue(
+                &conn,
+                &write(WriteKind::UpdateItem, item, None, Some(3), &[]),
+            )
+            .unwrap()
+        };
+        let _earlier = queue("mine");
+        let first = queue("mine");
+        let sent = queue("mine");
+        store::mark_sent(&conn, &sent.id).unwrap();
+        let refused = queue("mine");
+        let blocked = queue("mine");
+        for (id, verdict) in [
+            (&refused.id, Verdict::Refused),
+            (&blocked.id, Verdict::Blocked),
+        ] {
+            store::record_verdict(
+                &conn,
+                id,
+                &store::Answered {
+                    verdict,
+                    reason: (verdict == Verdict::Blocked)
+                        .then_some(BlockedReason::AwaitingDependency.as_str()),
+                    answer: None,
+                    conflicted_copy_id: None,
+                },
+            )
+            .unwrap();
+        }
+        let waiting = queue("mine");
+        let _other = queue("theirs");
+
+        let behind = store::edits_behind(&conn, &first, "mine").unwrap();
+        assert_eq!(
+            behind,
+            vec![(blocked.id.clone(), Some(3)), (waiting.id.clone(), Some(3))],
+            "the edits behind named one queued before the answered one, one already sent, one refused by the drain, or one of another row"
+        );
     }
 }

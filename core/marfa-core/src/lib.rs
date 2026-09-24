@@ -526,7 +526,7 @@ impl Core {
             )));
         }
         let payload = edit.payload(base)?;
-        let depends_on = store::untaken_for_edge(&conn, id)?;
+        let depends_on = store::untaken_create_for_edge(&conn, id)?;
         let mut next = held.clone();
         for (key, value) in &edit.properties {
             next.properties.insert(key.clone(), value.clone());
@@ -564,7 +564,7 @@ impl Core {
                 message: format!("{id} is not an edge this copy holds"),
             });
         };
-        let depends_on = store::untaken_for_edge(&conn, id)?;
+        let depends_on = store::untaken_create_for_edge(&conn, id)?;
         // **The type travels with the write.** Reconciling a refused delete
         // means reading the server's edges for this source, and that read is
         // by type — but the local row is gone by then, because a delete
@@ -1048,6 +1048,9 @@ fn queue_create(
             depends_on: after,
         },
     )?;
+    if let (Some(source), Some(source_id)) = (&draft.source, &draft.source_id) {
+        store::follow_row_under_key(tx, &queued, source, source_id)?;
+    }
     // One write per tag, each waiting on the create
     // (`queue-and-verdicts.md` 33, `device.md` 22), queued with it: a create
     // that landed with its tags queued separately and then failed to queue
@@ -1129,6 +1132,19 @@ fn queue_update(
         )));
     }
     let payload = edit.payload(base)?;
+    // What this edit is made against, before it is laid over the copy: the
+    // copy's row, where the edit is based on the version the copy holds. One
+    // based on a version it read earlier was made against that version, not
+    // against what the copy has taken in since, and nothing records it.
+    let read = (base == held.version).then(|| {
+        serde_json::json!({
+            "properties": edit
+                .properties
+                .keys()
+                .map(|key| (key.clone(), held.properties.get(key).cloned().unwrap_or(Value::Null)))
+                .collect::<serde_json::Map<String, Value>>(),
+        })
+    });
     let mut next = held.clone();
     for (key, value) in &edit.properties {
         next.properties.insert(key.clone(), value.clone());
@@ -1150,15 +1166,16 @@ fn queue_update(
     // the caller names. A write held for every unanswered row is a write a
     // refused tag can refuse, and statement 16 is about a row the server
     // never accepted, not about a sibling write that failed for its own
-    // reasons. The queue drains in order, so ordering needs no dependency
-    // to hold it.
+    // reasons. Ordering is a different thing and is recorded apart from
+    // this: the queue notes the write ahead of this one to the same row,
+    // which holds it without refusing it (`queue-and-verdicts.md` 42).
     let mut depends_on = store::untaken_creates_for_item(tx, id)?;
     for waited in after {
         if !depends_on.contains(waited) {
             depends_on.push(waited.clone());
         }
     }
-    store::enqueue(
+    let queued = store::enqueue(
         tx,
         &store::NewWrite {
             kind: WriteKind::UpdateItem,
@@ -1172,7 +1189,11 @@ fn queue_update(
             payload: &payload,
             depends_on: &depends_on,
         },
-    )
+    )?;
+    if let Some(read) = &read {
+        store::record_read(tx, &queued.id, read)?;
+    }
+    Ok(queued)
 }
 
 /// An edge, held locally and queued in the caller's transaction.
@@ -1260,6 +1281,36 @@ mod tests {
             url: url.into(),
             key: "marfa_k1_test".into(),
         })
+    }
+
+    /// An edit records what it was made against only where it is based on
+    /// the version the copy holds, since only then is the copy's row what it
+    /// was made against; one based on a version read earlier records nothing
+    /// and is never moved over a merge (`queue-and-verdicts.md` 42).
+    #[test]
+    fn an_edit_records_what_it_read_only_on_the_version_held() {
+        let conn = store::open_in_memory().unwrap();
+        let mut row = store::testing::note("row", "title", "held", "2026-01-01T00:00:00Z");
+        row.version = 5;
+        store::upsert_item(&conn, &row, None, &catalog::Indexing::default()).unwrap();
+        let catalog = catalog::Catalog::load(&conn).unwrap();
+        let edit = |base| Edit {
+            properties: serde_json::json!({ "body": "edited", "notes": "new" })
+                .as_object()
+                .unwrap()
+                .clone(),
+            base_version: Some(base),
+            source_id: None,
+        };
+        let held = queue_update(&conn, &catalog, "row", &edit(5), &[], Based::OnHeld).unwrap();
+        let read: Value =
+            serde_json::from_str(&store::read_of(&conn, &held.id).unwrap().unwrap()).unwrap();
+        assert_eq!(
+            read,
+            serde_json::json!({ "properties": { "body": "held", "notes": null } })
+        );
+        let earlier = queue_update(&conn, &catalog, "row", &edit(3), &[], Based::AsRead).unwrap();
+        assert_eq!(store::read_of(&conn, &earlier.id).unwrap(), None);
     }
 
     #[test]
