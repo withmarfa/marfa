@@ -7,11 +7,13 @@ import {
   scriptBlob,
   startHarness,
   scriptHydration,
+  scriptWrites,
   type Harness,
 } from "./harness.js";
 import {
   SCRIPTED_TYPES,
   snapshotType,
+  answers,
   connected,
   heldLog,
   itemEvent,
@@ -265,9 +267,16 @@ describe("the working copy holds one slice", () => {
       "the thumbnail was fetched rather than read from the item held",
     ).toBe(asked);
 
-    // An item whose type declares none carries none.
+    // An item whose type declares none carries none, and an item the copy
+    // does not hold is refused as that rather than answered as one that
+    // carries none.
     const none = await device.thumbnail("beside", `${out}.none`);
     expect(none.ok && none.value.thumbnail).toBeNull();
+    const absent = await device.thumbnail("not-held", `${out}.absent`);
+    expect(
+      absent.ok ? "answered" : absent.refusal.code,
+      "the thumbnail of an item the copy does not hold was answered, or refused as though the server had said so",
+    ).toBe("not_held");
 
     // The image's base64 is not searchable. The witness: the same token in
     // a body is found.
@@ -428,6 +437,121 @@ describe("the working copy holds one slice", () => {
       await found("unicornsXYZ"),
       "a type gained a thumbnail after the stream opened and the image's base64 went into the index",
     ).toEqual([]);
+  });
+
+  describe("keeps a thumbnail out of its index on every path that writes a row", () => {
+    const catalog = {
+      kind: "json" as const,
+      status: 200,
+      body: { data: [...SCRIPTED_TYPES, snapshotType()], next_cursor: null },
+    };
+    const image = "data:image/png;base64,iVBORw0KGgoA/unicornsXYZ";
+    const found = async (query: string): Promise<string[]> => {
+      const hits = await harness?.device.search(query);
+      return hits?.ok ? hits.value.map((hit) => hit.item.id) : [];
+    };
+
+    it("keeps a thumbnail out of its index when a catch-up applies it", async () => {
+      harness = await startHarness("thumbnail-applied");
+      const { server, device } = harness;
+      scriptHydration(server, { head: "10", catalog });
+      server.answer(
+        "GET",
+        "/events",
+        replay("11", [
+          itemEvent(
+            "11",
+            "item.created",
+            wireItem({
+              id: "applied",
+              type: "user.snapshot",
+              properties: { title: "zebraword", thumbnail: image },
+            }),
+          ),
+        ]),
+      );
+      expect((await device.hydrate(["user.snapshot"], "library")).ok).toBe(
+        true,
+      );
+      expect((await device.catchUp()).ok).toBe(true);
+      // The witness: the event was applied and its row indexed.
+      expect(await found("zebraword")).toEqual(["applied"]);
+      expect(
+        await found("unicornsXYZ"),
+        "an applied event put the image's base64 into the index",
+      ).toEqual([]);
+    });
+
+    it("keeps a thumbnail out of its index when a drain's answer carries it", async () => {
+      harness = await startHarness("thumbnail-settled");
+      const { server, device } = harness;
+      scriptHydration(server, { head: "10", catalog });
+      expect((await device.hydrate(["user.snapshot"], "library")).ok).toBe(
+        true,
+      );
+      const created = await device.create({
+        type: "user.snapshot",
+        properties: { title: "Made here" },
+      });
+      expect(created.ok, JSON.stringify(created)).toBe(true);
+      if (!created.ok) return;
+      const id = created.value.item_id ?? "";
+      // The server's row carries a title and an image the local one did
+      // not, so what the index holds afterwards is what the answer wrote.
+      scriptWrites(server, {
+        create: [
+          answers.created(
+            wireItem({
+              id,
+              type: "user.snapshot",
+              properties: { title: "zebraword", thumbnail: image },
+            }),
+          ),
+        ],
+      });
+      const drained = await device.drain();
+      expect(drained.ok, JSON.stringify(drained)).toBe(true);
+      // The witness: the answer's row was written and indexed.
+      expect(await found("zebraword")).toEqual([id]);
+      expect(
+        await found("unicornsXYZ"),
+        "the row a drain's answer carried put the image's base64 into the index",
+      ).toEqual([]);
+    });
+
+    it("keeps a thumbnail out of its index when a local edit writes it", async () => {
+      harness = await startHarness("thumbnail-edited");
+      const { server, device } = harness;
+      scriptHydration(server, {
+        head: "10",
+        catalog,
+        rows: {
+          "user.snapshot": [
+            {
+              item: {
+                id: "edited",
+                type: "user.snapshot",
+                properties: { title: "Before" },
+              },
+            },
+          ],
+        },
+      });
+      expect((await device.hydrate(["user.snapshot"], "library")).ok).toBe(
+        true,
+      );
+      const edit = await device.update("edited", {
+        properties: { title: "zebraword", thumbnail: image },
+        version: 1,
+      });
+      expect(edit.ok, JSON.stringify(edit)).toBe(true);
+      // The witness: the edit was laid over the row and indexed.
+      expect(await found("zebraword")).toEqual(["edited"]);
+      expect(
+        await found("unicornsXYZ"),
+        "a local edit put the image's base64 into the index",
+      ).toEqual([]);
+    });
   });
 
   it("says the bytes are absent rather than the item", async () => {
