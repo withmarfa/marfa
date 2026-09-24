@@ -320,10 +320,9 @@ export function buildAllowedScopes(
   // asks whether a bundle may be the thing that publishes one it recognizes.
   //
   // The permission family is emitted above, from the closed set, so the
-  // drop no longer changes this function's output for one. What it still
-  // decides is whether a *configuration* can claim the literal, which is the
-  // half that reaches a stored client ceiling and the consent screen's
-  // grouping.
+  // drop does not change this function's output for one. What it decides is
+  // whether a *configuration* can claim the literal, which is the half that
+  // reaches a stored client ceiling and the consent screen's grouping.
   for (const scope of expandBundlesToScopes(permissionBundles)) {
     if (!isValidScope(scope)) {
       warnOnceAboutBundleScope(scope);

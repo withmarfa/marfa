@@ -55,12 +55,11 @@ import { publish } from "../pubsub.js";
  * A revoked grant is not a standing one, so it contributes nothing and the
  * record comes back at the approval alone.
  *
- * **`source` is the device literal and not the wider union it used to
- * declare.** There is one caller. The merge rule inside is specific to the
- * device surface, and the authorize surface has the deliberate opposite
- * contract: a narrowing there is a decision the user made and revokes the
- * tokens carrying what was dropped. Advertising this
- * function as serving both would let a future authorize caller pick it up
+ * **`source` is the device literal, not a union of surfaces.** The merge
+ * rule inside is specific to the device surface, and the authorize surface
+ * has the deliberate opposite contract: a narrowing there is a decision the
+ * user made and revokes the tokens carrying what was dropped. Advertising
+ * this function as serving both would let an authorize caller pick it up
  * and silently disable that revoke.
  */
 async function createUserAppGrant(
