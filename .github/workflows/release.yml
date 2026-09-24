@@ -469,7 +469,6 @@ jobs:
           # `cargo publish` would package again.
           cargo publish --manifest-path "$RUNNER_TEMP/crate/marfa-client-$VERSION/Cargo.toml"
 
-
       # No `--provenance`: npm attests provenance only from a GitHub-hosted
       # runner's OIDC identity, and every job here runs on the self-hosted
       # pool. `npm view` answers a version it has, and E404 for a package or
