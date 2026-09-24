@@ -362,8 +362,15 @@ describe("editing a key's claims", () => {
     ).toBe(false);
 
     // The control: the same row claiming nothing is written, so the refusal
-    // is the claim and not the row.
+    // is the claim and not the row, and the listing that did not hold the
+    // refused row holds this one.
     const bare = await operatorRow(`bare-operator-${suffix}`, []);
     expect(bare.sources).toEqual([]);
+    expect(
+      (await ctx.storage.keys.list()).some(
+        (k) => k.label === `bare-operator-${suffix}`,
+      ),
+      "the listing does not surface a written row, so the absence above proves nothing",
+    ).toBe(true);
   });
 });
