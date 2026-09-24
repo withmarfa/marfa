@@ -1157,7 +1157,7 @@ export function keyRoutes(storage: Storage, salt: string) {
       const seed = seedsFromOperator && namesNoReach ? EVERY_TYPE : undefined;
       // **An operator mint takes nothing on any axis, the content maps
       // included.** The permissions are already forced empty above;
-      // leaving the four maps to the body would let an unauthenticated first
+      // leaving the five maps to the body would let an unauthenticated first
       // caller name `*: write` on every family and get an operator credential
       // holding it. There is no ceiling to clamp it against either, because
       // bootstrap has no creator.
