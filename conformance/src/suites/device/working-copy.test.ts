@@ -546,10 +546,12 @@ describe("the working copy belongs to one server", () => {
       "the writer closing last left the file as it was, so the check above proves nothing",
     ).toBe(false);
 
-    // The helper starts first and waits for saves.
-    const reader = harness.device
-      .reopen({ reader: true })
-      .hold(["changes", "--for", "8"]);
+    // The helper starts first and waits for saves. `changes` opens to read
+    // whether or not it is told to, so it starts here without `--reader`,
+    // and the app starting after it is the writer all the same.
+    const reader = harness.device.hold(["changes", "--for", "20"]);
+    const pause = (ms: number) =>
+      new Promise((resolve) => setTimeout(resolve, ms));
     try {
       await vi.waitFor(
         () => {
@@ -562,28 +564,40 @@ describe("the working copy belongs to one server", () => {
       );
       const told = () =>
         reader.stdout.split("\n").filter((line) => line.trim() !== "");
+      // Many of its polls pass with nothing saved.
+      await pause(1_000);
       expect(
         told(),
         "the reader reported a save before anything saved",
       ).toHaveLength(1);
-      // The app opens second and is the writer all the same.
-      const wrote = await harness.device.create({
-        type: "core.note",
-        properties: { title: "saved by the app", body: "saved" },
-      });
-      expect(
-        wrote.ok,
-        `a reader started first took the writer role, so the app cannot write to its own store: ${JSON.stringify(wrote)}`,
-      ).toBe(true);
+      // Three saves a third of a second apart, each told once: a reader
+      // that polled slowly would fold two into one, and one that forgot
+      // what it had seen would tell each again at every poll.
+      for (const title of ["first", "second", "third"]) {
+        const wrote = await harness.device.create({
+          type: "core.note",
+          properties: { title, body: "saved" },
+        });
+        expect(
+          wrote.ok,
+          `a reader started first took the writer role, so the app cannot write to its own store: ${JSON.stringify(wrote)}`,
+        ).toBe(true);
+        await pause(350);
+      }
       await vi.waitFor(
         () => {
           expect(
             told().length,
             "the writer saved and the reader was not told",
-          ).toBeGreaterThan(1);
+          ).toBeGreaterThanOrEqual(4);
         },
         { timeout: 5_000, interval: 50 },
       );
+      await pause(1_000);
+      expect(
+        told(),
+        "the reader told three saves a third of a second apart some other number of times",
+      ).toHaveLength(4);
     } finally {
       await reader.stop();
     }

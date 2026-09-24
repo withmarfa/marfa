@@ -223,7 +223,13 @@ describe("a store opened to read writes nothing from the server either", () => {
     harness = await hydratedHarness("reading-open-refusals", {
       rows: { "core.note": [{ item: { id: HELD.id, version: HELD.version } }] },
     });
-    const reader = harness.device.reopen({ reader: true });
+    // Named a server that is not one: a reading handle is refused before
+    // any server is resolved, so resolving one cannot fail it, or refresh
+    // a kept token for a command that will never send.
+    const reader = harness.device.reopen({
+      reader: true,
+      url: "not a server url",
+    });
     // The witness: the reading open reads, so the refusals below are the
     // handle and not a store it cannot open.
     const listed = await reader.list();
