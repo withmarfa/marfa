@@ -7,7 +7,9 @@ use uuid::Uuid;
 
 use crate::catalog::Indexing;
 use crate::error::CoreError;
-use crate::model::{BlockedReason, Edge, Item, ItemState, QueuedWrite, Tier, Verdict, WriteKind};
+use crate::model::{
+    BlockedReason, Edge, Item, ItemState, QueuedWrite, Subject, Tier, Verdict, WriteKind,
+};
 use crate::wire::{WireEdge, WireItem, WireType};
 
 pub const SCHEMA: &str = include_str!("schema.sql");
@@ -19,7 +21,7 @@ pub const META_SLICE_TIER: &str = "slice_tier";
 pub const META_EVENT_CURSOR: &str = "event_cursor";
 pub const META_HYDRATE_STATE: &str = "hydrate_state";
 pub const HYDRATE_IN_PROGRESS: &str = "in_progress";
-pub const SCHEMA_VERSION: &str = "9";
+pub const SCHEMA_VERSION: &str = "10";
 
 /// Each schema version from 6 and the statements it named, hashed as the
 /// folder mapping hashes bytes. A change to `schema.sql` without a new version
@@ -38,6 +40,7 @@ const SCHEMA_HASHES: &[(&str, &str)] = &[
     ("7", "b0e4c59d5dbd0471"),
     ("8", "662310c80f2c6871"),
     ("9", "23d541400ea60681"),
+    ("10", "bd491aca38ffff47"),
 ];
 
 const ITEM_COLUMNS: &str = "id, type, state, tier, version, schema_version, source, source_id, occurred_at, created_at, updated_at, properties";
@@ -274,6 +277,22 @@ pub fn refuse_unless_hydrated(conn: &Connection) -> Result<(), CoreError> {
     }
 }
 
+/// Whether the copy holds the row or edge `id` at a version past `version`:
+/// an answer at `version` is then older than what the copy holds, and is not
+/// adopted over it (`queue-and-verdicts.md` 9).
+pub fn holds_newer(
+    conn: &Connection,
+    subject: Subject,
+    id: &str,
+    version: i64,
+) -> Result<bool, CoreError> {
+    let held = match subject {
+        Subject::Item => held_version(conn, id)?,
+        Subject::Edge => edge_by_id(conn, id)?.map(|edge| edge.version),
+    };
+    Ok(held.is_some_and(|held| held > version))
+}
+
 /// The version of the row held for `id`, or nothing if it is not held.
 pub fn held_version(conn: &Connection, id: &str) -> Result<Option<i64>, CoreError> {
     Ok(conn
@@ -285,7 +304,7 @@ pub fn held_version(conn: &Connection, id: &str) -> Result<Option<i64>, CoreErro
 
 const QUEUE_COLUMNS: &str = "id, kind, item_id, target_id, edge_id, namespace, tag, \
      base_version, idempotency_key, depends_on, verdict, reason, answer, \
-     conflicted_copy_id, refusals, queued_at, answered_at, blob";
+     conflicted_copy_id, refusals, queued_at, answered_at, blob, follows";
 
 /// What a caller is asking the server to do, before it has been asked.
 pub struct NewWrite<'a> {
@@ -317,11 +336,13 @@ pub fn enqueue(conn: &Connection, write: &NewWrite<'_>) -> Result<QueuedWrite, C
     } else {
         Some(serde_json::to_string(write.depends_on)?)
     };
+    let follows = write_ahead(conn, write)?;
     conn.execute(
         "INSERT INTO queue (
              id, kind, item_id, target_id, edge_id, namespace, tag, blob,
-             base_version, idempotency_key, payload, depends_on, queued_at
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+             base_version, idempotency_key, payload, depends_on, queued_at,
+             follows
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
         params![
             id,
             write.kind.as_str(),
@@ -336,9 +357,175 @@ pub fn enqueue(conn: &Connection, write: &NewWrite<'_>) -> Result<QueuedWrite, C
             write.payload,
             depends_on,
             now_iso(),
+            follows,
         ],
     )?;
     queued_write(conn, &id)?.ok_or_else(|| CoreError::Store("the queued write vanished".into()))
+}
+
+/// The write ahead of `write` to the same row or edge that is still to be
+/// written (`queue-and-verdicts.md` 42).
+fn write_ahead(conn: &Connection, write: &NewWrite<'_>) -> Result<Option<String>, CoreError> {
+    let Some(subject) = write.kind.subject() else {
+        return Ok(None);
+    };
+    let named = match subject {
+        Subject::Item => write.item_id,
+        Subject::Edge => write.edge_id,
+    };
+    let Some(named) = named else {
+        return Ok(None);
+    };
+    let direct = last_write_to(conn, subject, named)?;
+    if subject != Subject::Item {
+        return Ok(direct);
+    }
+    // A create carrying this row's natural key lands on this row
+    // (`queue-and-verdicts.md` 38), so it is a write to it too.
+    let keyed: Option<(String, i64)> = conn
+        .query_row(
+            "SELECT queue.id, queue.seq FROM queue, items
+              WHERE items.id = ?1 AND items.source_id IS NOT NULL
+                AND queue.kind = ?2 AND queue.item_id != ?1
+                AND json_extract(queue.payload, '$.source') = items.source
+                AND json_extract(queue.payload, '$.source_id') = items.source_id
+                AND (queue.verdict IS NULL OR queue.verdict NOT IN (?3, ?4, ?5))
+              ORDER BY queue.seq DESC LIMIT 1",
+            params![
+                named,
+                WriteKind::CreateItem.as_str(),
+                Verdict::Accepted.as_str(),
+                Verdict::Merged.as_str(),
+                Verdict::Conflicted.as_str()
+            ],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()?;
+    let Some((keyed, keyed_seq)) = keyed else {
+        return Ok(direct);
+    };
+    let direct_seq: Option<i64> = match &direct {
+        Some(id) => conn
+            .query_row("SELECT seq FROM queue WHERE id = ?1", [id], |row| {
+                row.get(0)
+            })
+            .optional()?,
+        None => None,
+    };
+    Ok(if direct_seq.is_some_and(|seq| seq > keyed_seq) {
+        direct
+    } else {
+        Some(keyed)
+    })
+}
+
+/// The last write queued to the row or edge `named` that the server has not
+/// written: one unanswered, blocked or dead, which a drain or a release can
+/// still send, or one refused. One the drain refused without sending it can
+/// be released and sent; one the server refused never will be, and ordering
+/// behind it holds nothing, since its answer is in. One the server has
+/// written is behind whatever is queued now, and ordering behind it would
+/// hold nothing either.
+pub fn last_write_to(
+    conn: &Connection,
+    subject: Subject,
+    named: &str,
+) -> Result<Option<String>, CoreError> {
+    let kinds = subject.kinds();
+    let places = vec!["?"; kinds.len()].join(", ");
+    Ok(conn
+        .query_row(
+            &format!(
+                "SELECT id FROM queue
+                  WHERE {column} = ? AND kind IN ({places})
+                    AND (verdict IS NULL OR verdict NOT IN (?, ?, ?))
+                  ORDER BY seq DESC LIMIT 1",
+                column = subject.column()
+            ),
+            params_from_iter(
+                std::iter::once(named)
+                    .chain(kinds.iter().map(|kind| kind.as_str()))
+                    .chain([
+                        Verdict::Accepted.as_str(),
+                        Verdict::Merged.as_str(),
+                        Verdict::Conflicted.as_str(),
+                    ]),
+            ),
+            |row| row.get(0),
+        )
+        .optional()?)
+}
+
+/// Orders a create carrying the natural key of a row the copy holds behind
+/// that row's last write still to be written: the server lands the create
+/// on that row (`queue-and-verdicts.md` 38), so it is a write to it, and
+/// sent beside an edit of the row that has no answer it would reach the row
+/// out of the order the two were made in.
+pub fn follow_row_under_key(
+    conn: &Connection,
+    create: &QueuedWrite,
+    source: &str,
+    source_id: &str,
+) -> Result<(), CoreError> {
+    let held: Option<String> = conn
+        .query_row(
+            "SELECT id FROM items WHERE source = ?1 AND source_id = ?2 AND id != ?3",
+            params![source, source_id, create.item_id],
+            |row| row.get(0),
+        )
+        .optional()?;
+    let Some(held) = held else {
+        return Ok(());
+    };
+    if let Some(ahead) = last_write_to(conn, Subject::Item, &held)? {
+        conn.execute(
+            "UPDATE queue SET follows = ?2 WHERE id = ?1",
+            params![create.id, ahead],
+        )?;
+    }
+    Ok(())
+}
+
+/// Orders the writes to the row `item_id` again by the order they were
+/// queued: each still to be written follows the nearest one still to be
+/// written ahead of it (`queue-and-verdicts.md` 42). What a write's `follows`
+/// says when it is queued, said again for a row the writes of a create that
+/// landed on it have just been moved onto (38, 39), when that row may have
+/// writes of its own still to go ahead of them. The create itself, which
+/// has its answer, is `answered` and orders nothing.
+pub fn refollow(conn: &Connection, item_id: &str, answered: &str) -> Result<(), CoreError> {
+    let kinds = Subject::Item.kinds();
+    let places = vec!["?"; kinds.len()].join(", ");
+    let mut statement = conn.prepare(&format!(
+        "SELECT id FROM queue
+          WHERE item_id = ? AND id != ? AND kind IN ({places})
+            AND (verdict IS NULL OR verdict NOT IN (?, ?, ?))
+          ORDER BY seq"
+    ))?;
+    let ids: Vec<String> = statement
+        .query_map(
+            params_from_iter(
+                [item_id, answered]
+                    .into_iter()
+                    .chain(kinds.iter().map(|kind| kind.as_str()))
+                    .chain([
+                        Verdict::Accepted.as_str(),
+                        Verdict::Merged.as_str(),
+                        Verdict::Conflicted.as_str(),
+                    ]),
+            ),
+            |row| row.get(0),
+        )?
+        .collect::<Result<_, _>>()?;
+    let mut ahead: Option<String> = None;
+    for id in ids {
+        conn.execute(
+            "UPDATE queue SET follows = ?2 WHERE id = ?1",
+            params![id, ahead],
+        )?;
+        ahead = Some(id);
+    }
+    Ok(())
 }
 
 /// One queued write by id.
@@ -481,6 +668,7 @@ fn read_writes(
             queued_at: row.get(15)?,
             answered_at: row.get(16)?,
             blob: row.get(17)?,
+            follows: row.get(18)?,
         })
     })?;
 
@@ -526,6 +714,7 @@ fn read_writes(
             base_version: raw.base_version,
             idempotency_key: raw.idempotency_key,
             depends_on,
+            follows: raw.follows,
             verdict,
             reason: raw.reason,
             answer: raw.answer,
@@ -558,6 +747,7 @@ struct RawWrite {
     refusals: i64,
     queued_at: String,
     answered_at: Option<String>,
+    follows: Option<String>,
 }
 
 type TypeRow = (
@@ -925,7 +1115,39 @@ pub fn land_on_held_row(
         params![local, mark],
     )?;
     adopt_answered_id(conn, local, answered)?;
+    refollow(conn, answered, &create.id)?;
     Ok(refused)
+}
+
+/// Marks the files bound to `item_id` as holding bytes the row does not, read
+/// at `version`, where `edit` is the last update of that row queued: its save
+/// was set aside in a conflicted copy against this device's own earlier one
+/// (`queue-and-verdicts.md` 42), so what the file holds reached no row. The
+/// pull then leaves the file as it is, and the next scan sends it as an edit
+/// based on that version (`folders.md` 13). Where a later update is queued,
+/// the file holds that one's bytes, and it is left to its own answer.
+pub fn untake_latest_save(
+    conn: &Connection,
+    edit: &QueuedWrite,
+    item_id: &str,
+    version: i64,
+) -> Result<(), CoreError> {
+    conn.execute(
+        "UPDATE folder_files SET content_hash = ?2
+          WHERE item_id = ?1
+            AND NOT EXISTS (
+              SELECT 1 FROM queue
+               WHERE kind = ?3 AND item_id = ?1
+                 AND seq > (SELECT seq FROM queue WHERE id = ?4)
+            )",
+        params![
+            item_id,
+            crate::folder::state::untaken_read_at(version),
+            WriteKind::UpdateItem.as_str(),
+            edit.id
+        ],
+    )?;
+    Ok(())
 }
 
 /// Blocks every unanswered create naming `source`, under
@@ -1759,11 +1981,17 @@ mod tests {
             .map(|column| column.trim().to_string())
             .collect();
         // `seq` is the rowid the queue is ordered by and is deliberately not
-        // read back. `payload`, `spent_keys` and `sent` are read through their
-        // own queries rather than this list, because each is wanted on its own
-        // at a different moment: the payload when a row is sent, the other two
-        // when one is released.
-        table.retain(|name| !matches!(name.as_str(), "seq" | "payload" | "spent_keys" | "sent"));
+        // read back. `payload`, `spent_keys`, `sent` and `read` are read
+        // through their own queries rather than this list, because each is
+        // wanted on its own at a different moment: the payload when a row is
+        // sent, the next two when one is released, and the last when an
+        // answer ahead of it may move it.
+        table.retain(|name| {
+            !matches!(
+                name.as_str(),
+                "seq" | "payload" | "spent_keys" | "sent" | "read"
+            )
+        });
         table.sort();
         named.sort();
         assert_eq!(
@@ -2136,6 +2364,190 @@ mod tests {
             .collect();
         unblocked.sort();
         assert_eq!(unblocked, vec!["awaiting_dependency", "credential_refused"]);
+    }
+
+    /// After a landing, the row's writes still to be written follow one
+    /// another in the order they were queued, whichever row each was queued
+    /// against, and the create that landed orders nothing. The witness for
+    /// the skipped create is the write behind it following the one before.
+    #[test]
+    fn a_landing_orders_the_row_again_by_the_order_writes_were_queued() {
+        let conn = conn();
+        let queue = |kind: WriteKind, item: &str| {
+            enqueue(
+                &conn,
+                &NewWrite {
+                    kind,
+                    item_id: Some(item),
+                    target_id: None,
+                    edge_id: None,
+                    namespace: None,
+                    tag: None,
+                    blob: None,
+                    base_version: Some(1),
+                    payload: "{}",
+                    depends_on: &[],
+                },
+            )
+            .unwrap()
+        };
+        let own = queue(WriteKind::UpdateItem, "held");
+        let create = queue(WriteKind::CreateItem, "minted");
+        let moved = queue(WriteKind::UpdateItem, "minted");
+        assert_eq!(moved.follows.as_deref(), Some(create.id.as_str()));
+        adopt_answered_id(&conn, "minted", "held").unwrap();
+        refollow(&conn, "held", &create.id).unwrap();
+        let moved = queued_write(&conn, &moved.id).unwrap().unwrap();
+        assert_eq!(
+            moved.follows.as_deref(),
+            Some(own.id.as_str()),
+            "the write moved onto the row does not follow the row's own write ahead of it"
+        );
+        assert_eq!(queued_write(&conn, &own.id).unwrap().unwrap().follows, None);
+    }
+
+    /// An answer is older than the copy only where the copy holds the row or
+    /// edge at a later version; the witnesses are the same answer at the
+    /// version held and past it, and a row the copy does not hold.
+    #[test]
+    fn an_answer_is_older_only_than_a_later_version_held() {
+        let conn = conn();
+        let mut row = note("row", "title", "body", "2026-01-01T00:00:00Z");
+        row.version = 5;
+        upsert_item(&conn, &row, None, &Indexing::default()).unwrap();
+        let mut edge = wire_edge("link", "row", "row", "references");
+        edge.version = 5;
+        upsert_edge(&conn, &edge).unwrap();
+        for (subject, id) in [(Subject::Item, "row"), (Subject::Edge, "link")] {
+            assert!(holds_newer(&conn, subject, id, 4).unwrap());
+            assert!(!holds_newer(&conn, subject, id, 5).unwrap());
+            assert!(!holds_newer(&conn, subject, id, 6).unwrap());
+            assert!(!holds_newer(&conn, subject, "elsewhere", 1).unwrap());
+        }
+    }
+
+    /// Every kind of write to a row is a write to it, and every kind of write
+    /// to an edge a write to that edge, so each follows the one queued ahead
+    /// of it; and a write ahead that died, or that the drain refused without
+    /// sending it, still orders the one behind it, since a release can send
+    /// it again. The witness is the upload, which is a write to no row and
+    /// follows nothing.
+    #[test]
+    fn every_write_to_a_row_or_an_edge_follows_the_one_ahead_of_it() {
+        let conn = conn();
+        let queue = |kind: WriteKind, edge: Option<&str>| {
+            enqueue(
+                &conn,
+                &NewWrite {
+                    kind,
+                    item_id: Some("row"),
+                    target_id: None,
+                    edge_id: edge,
+                    namespace: None,
+                    tag: None,
+                    blob: None,
+                    base_version: None,
+                    payload: "{}",
+                    depends_on: &[],
+                },
+            )
+            .unwrap()
+        };
+        for subject in [Subject::Item, Subject::Edge] {
+            let edge = (subject == Subject::Edge).then_some("link");
+            let mut ahead: Option<String> = None;
+            for kind in subject.kinds() {
+                let queued = queue(kind, edge);
+                assert_eq!(
+                    queued.follows, ahead,
+                    "a {kind} does not follow the write to the same {subject:?} ahead of it"
+                );
+                ahead = Some(queued.id);
+            }
+            for verdict in [Verdict::Refused, Verdict::Dead] {
+                let answered = ahead.clone().unwrap();
+                record_verdict(
+                    &conn,
+                    &answered,
+                    &Answered {
+                        verdict,
+                        reason: None,
+                        answer: None,
+                        conflicted_copy_id: None,
+                    },
+                )
+                .unwrap();
+                let behind = queue(subject.kinds()[0], edge);
+                assert_eq!(
+                    behind.follows.as_deref(),
+                    Some(answered.as_str()),
+                    "a write behind a {verdict} one does not follow it"
+                );
+                ahead = Some(behind.id);
+            }
+        }
+        assert_eq!(queue(WriteKind::UploadBlob, None).follows, None);
+        assert_eq!(
+            Subject::Item.kinds().len() + Subject::Edge.kinds().len(),
+            14
+        );
+    }
+
+    /// A write follows the nearest write ahead of it to the same row or edge
+    /// that is still to be written, and nothing else: not one the server has
+    /// written, not a write to another row, and not an edge write, which
+    /// names the row it starts from and is a write to the edge. The witness
+    /// for each is the write it does follow.
+    #[test]
+    fn a_write_follows_the_write_ahead_of_it_to_the_same_row() {
+        let conn = conn();
+        let queue = |kind: WriteKind, item: &str, edge: Option<&str>| {
+            enqueue(
+                &conn,
+                &NewWrite {
+                    kind,
+                    item_id: Some(item),
+                    target_id: None,
+                    edge_id: edge,
+                    namespace: None,
+                    tag: None,
+                    blob: None,
+                    base_version: Some(1),
+                    payload: "{}",
+                    depends_on: &[],
+                },
+            )
+            .unwrap()
+        };
+        let first = queue(WriteKind::UpdateItem, "row", None);
+        assert_eq!(first.follows, None);
+        let written = queue(WriteKind::AddTag, "row", None);
+        assert_eq!(written.follows.as_deref(), Some(first.id.as_str()));
+        record_verdict(
+            &conn,
+            &written.id,
+            &Answered {
+                verdict: Verdict::Accepted,
+                reason: None,
+                answer: None,
+                conflicted_copy_id: None,
+            },
+        )
+        .unwrap();
+        // An edge from the row, and a write to another row, between them.
+        let edge = queue(WriteKind::UpdateEdge, "row", Some("link"));
+        assert_eq!(edge.follows, None);
+        queue(WriteKind::UpdateItem, "other", None);
+        let delete = queue(WriteKind::DeleteItem, "row", None);
+        assert_eq!(
+            delete.follows.as_deref(),
+            Some(first.id.as_str()),
+            "the delete follows the written tag, an edge or another row rather than the edit ahead of it"
+        );
+        let next_edge = queue(WriteKind::DeleteEdge, "row", Some("link"));
+        assert_eq!(next_edge.follows.as_deref(), Some(edge.id.as_str()));
+        let upload = queue(WriteKind::UploadBlob, "row", None);
+        assert_eq!(upload.follows, None);
     }
 
     /// The two lookups laid over every answer and event go through their
@@ -2705,10 +3117,32 @@ pub fn lay_waiting_edge_writes_over(conn: &Connection, edge_id: &str) -> Result<
     upsert_edge(conn, &edge.as_wire())
 }
 
-/// Moves a queued write onto the version the server gave the row it was
-/// based on, where that row was this device's own create
-/// (`queue-and-verdicts.md` 36). The payload and the column both move, so
-/// the queue reports what was sent.
+/// Moves an edit behind an answer onto another version
+/// (`queue-and-verdicts.md` 36, 42), and drops from its body every property
+/// it carries at the value the copy held when it was made: no change of its
+/// own, and sent on another version it would assert a value this device
+/// read as newer than whatever another device wrote since. An edit whose
+/// reading was never recorded is moved as it stands.
+pub fn move_edit(conn: &Connection, id: &str, version: i64) -> Result<(), CoreError> {
+    if let Some(read) = read_of(conn, id)? {
+        let read: Value = serde_json::from_str(&read)?;
+        let mut body: Value = serde_json::from_str(&payload_of(conn, id)?)?;
+        if let (Some(Value::Object(read)), Some(Value::Object(properties))) =
+            (read.get("properties").cloned(), body.get_mut("properties"))
+        {
+            properties.retain(|key, value| read.get(key) != Some(value));
+        }
+        conn.execute(
+            "UPDATE queue SET payload = ?2 WHERE id = ?1",
+            params![id, body.to_string()],
+        )?;
+    }
+    rebase(conn, id, version)
+}
+
+/// Moves a queued write onto another version (`queue-and-verdicts.md` 36,
+/// 42). The payload and the column both move, so the queue reports what was
+/// sent.
 pub fn rebase(conn: &Connection, id: &str, version: i64) -> Result<(), CoreError> {
     let mut payload: Value = serde_json::from_str(&payload_of(conn, id)?)?;
     if let Some(body) = payload.as_object_mut() {
@@ -2719,6 +3153,70 @@ pub fn rebase(conn: &Connection, id: &str, version: i64) -> Result<(), CoreError
         params![id, payload.to_string(), version],
     )?;
     Ok(())
+}
+
+/// The edits of `subject` waiting behind `answered`, a create or an edit of
+/// the same row or edge, with the version each is based on, in the order they
+/// were queued: the ones an answer to it can move (`queue-and-verdicts.md`
+/// 36, 42).
+///
+/// Only edits queued after it, because one queued before was made without
+/// what it carried. Only edits never sent, because a sent body is fixed by
+/// the key it went under (3) and a changed one is refused as that key reused.
+/// And only edits still waiting: one the drain refused with what it waited on
+/// (16, 39) goes nowhere unless a caller releases it (27).
+pub fn edits_behind(
+    conn: &Connection,
+    answered: &QueuedWrite,
+    subject: &str,
+) -> Result<Vec<(String, Option<i64>)>, CoreError> {
+    let Some((kind, column)) = answered
+        .kind
+        .edit()
+        .and_then(|kind| Some((kind, kind.subject()?.column())))
+    else {
+        return Ok(Vec::new());
+    };
+    let mut statement = conn.prepare(&format!(
+        "SELECT id, base_version FROM queue
+          WHERE kind = ?1 AND {column} = ?2 AND sent = 0
+            AND (verdict IS NULL OR verdict = ?3)
+            AND seq > (SELECT seq FROM queue WHERE id = ?4)
+          ORDER BY seq"
+    ))?;
+    let behind = statement
+        .query_map(
+            params![
+                kind.as_str(),
+                subject,
+                Verdict::Blocked.as_str(),
+                answered.id
+            ],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?
+        .collect::<Result<_, _>>()?;
+    Ok(behind)
+}
+
+/// Records what the copy held, for each property an edit carries, when the
+/// edit was made: what the edit was made against (`queue-and-verdicts.md`
+/// 42).
+pub fn record_read(conn: &Connection, id: &str, read: &Value) -> Result<(), CoreError> {
+    conn.execute(
+        "UPDATE queue SET read = ?2 WHERE id = ?1",
+        params![id, read.to_string()],
+    )?;
+    Ok(())
+}
+
+/// What an edit was made against, where it was recorded.
+pub fn read_of(conn: &Connection, id: &str) -> Result<Option<String>, CoreError> {
+    Ok(conn
+        .query_row("SELECT read FROM queue WHERE id = ?1", [id], |row| {
+            row.get::<_, Option<String>>(0)
+        })
+        .optional()?
+        .flatten())
 }
 
 /// Adds tags to the row the copy holds.
@@ -2792,13 +3290,14 @@ pub fn edge_by_id(conn: &Connection, id: &str) -> Result<Option<Edge>, CoreError
         .optional()?)
 }
 
-/// Queue rows naming this edge that the server has not answered, and its
-/// create while the server has not taken it, blocked included, for the
-/// reason `untaken_creates_for_item` gives.
-pub fn untaken_for_edge(conn: &Connection, edge_id: &str) -> Result<Vec<String>, CoreError> {
+/// The create of this edge while the server has not taken it: unanswered, or
+/// blocked, for the reason `untaken_creates_for_item` gives. The only write
+/// an edit or a delete of the edge cannot go without; the writes to it ahead
+/// of one order it and do not refuse it (`queue-and-verdicts.md` 42).
+pub fn untaken_create_for_edge(conn: &Connection, edge_id: &str) -> Result<Vec<String>, CoreError> {
     Ok(waiting_writes_for_edge(conn, edge_id)?
         .into_iter()
-        .filter(|row| row.verdict.is_none() || row.kind == WriteKind::CreateEdge)
+        .filter(|row| row.kind == WriteKind::CreateEdge)
         .map(|row| row.id)
         .collect())
 }

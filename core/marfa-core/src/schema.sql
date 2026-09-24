@@ -165,6 +165,23 @@ CREATE TABLE IF NOT EXISTS queue (
   -- the drain makes from the verdicts, not something a delete may make on
   -- its behalf.
   depends_on TEXT,
+  -- The write ahead of this one to the same row or edge, by queue id, where
+  -- one was still to be written when this one was queued
+  -- (`queue-and-verdicts.md` 42). Ordering and nothing else: this one waits
+  -- while that one has gone out without an answer or is itself held, any
+  -- answer releases it, and a refusal of that one is not a refusal of this
+  -- one, which is what `depends_on` means and why the two are kept apart.
+  follows TEXT,
+  -- For an item's update based on the version the copy held, what the copy
+  -- held for each property it carries when it was made: what the edit was
+  -- made against (`queue-and-verdicts.md` 42), as `{"properties": {...}}`.
+  -- An answer to an edit ahead of it moves this one onto that answer only
+  -- where the answer holds these for every property this edit changed, and
+  -- a move drops the properties it carries at these values. The copy cannot
+  -- say afterwards, because it lays this edit over the row. Null for any
+  -- other write, and for an edit based on a version the copy has moved
+  -- past, which was made against that version and not the copy's row.
+  read TEXT,
   -- One of the six (`queue-and-verdicts.md` 7), or null while unanswered.
   -- Null is the absence of an answer rather than a seventh verdict.
   --

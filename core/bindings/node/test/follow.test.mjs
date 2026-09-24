@@ -49,6 +49,7 @@ function created(id, cursor) {
 }
 
 /** @typedef {import("node:http").ServerResponse} Response */
+/** @typedef {import("../index.js").Subscription} Subscription */
 
 /** A stream held open, saying only keepalives. @param {Response} res */
 function held(res) {
@@ -164,9 +165,14 @@ test(
     ]);
     /** @type {string[]} */
     const told = [];
+    // Held until the test ends: a subscription nobody holds ends its
+    // follow when it is collected, which would end this one cleanly.
+    /** @type {Subscription | undefined} */
+    let subscription;
+    t.after(() => subscription?.stop());
     /** @type {Promise<{ error: string | null | undefined; before: number }>} */
     const ended = new Promise((resolve) => {
-      core.follow(
+      subscription = core.follow(
         (change) => told.push(change.cursor),
         (error) => resolve({ error, before: told.length }),
       );
@@ -193,9 +199,13 @@ test(
       },
     ]);
     let calls = 0;
+    // Held until the test ends, for the reason the test above gives.
+    /** @type {Subscription | undefined} */
+    let subscription;
+    t.after(() => subscription?.stop());
     /** @type {string | null | undefined} */
     const error = await new Promise((resolve) => {
-      core.follow(() => {
+      subscription = core.follow(() => {
         calls += 1;
         throw new Error("the listener broke");
       }, resolve);

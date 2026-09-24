@@ -529,6 +529,42 @@ impl WriteKind {
         WriteKind::UploadBlob,
     ];
 
+    /// The edit of what a write of this kind writes: an item's update for an
+    /// item's create or update, and an edge's for an edge's. No other write
+    /// is based on a version, so no other has edits behind it that name one
+    /// (`queue-and-verdicts.md` 36, 42).
+    pub fn edit(self) -> Option<WriteKind> {
+        match self {
+            WriteKind::CreateItem | WriteKind::UpdateItem => Some(WriteKind::UpdateItem),
+            WriteKind::CreateEdge | WriteKind::UpdateEdge => Some(WriteKind::UpdateEdge),
+            _ => None,
+        }
+    }
+
+    /// What a write of this kind is a write to: a row, named by `item_id`,
+    /// or an edge, named by `edge_id`. An edge write names its endpoints in
+    /// `item_id` and `target_id` too, and is a write to neither. An upload is
+    /// a write to no row.
+    pub fn subject(self) -> Option<Subject> {
+        match self {
+            WriteKind::CreateItem
+            | WriteKind::UpdateItem
+            | WriteKind::DeleteItem
+            | WriteKind::RestoreItem
+            | WriteKind::TransitionItem
+            | WriteKind::ReplaceMetadata
+            | WriteKind::MergeMetadata
+            | WriteKind::AddTag
+            | WriteKind::RemoveTag
+            | WriteKind::WriteExtension
+            | WriteKind::DeleteExtension => Some(Subject::Item),
+            WriteKind::CreateEdge | WriteKind::UpdateEdge | WriteKind::DeleteEdge => {
+                Some(Subject::Edge)
+            }
+            WriteKind::UploadBlob => None,
+        }
+    }
+
     pub fn as_str(self) -> &'static str {
         match self {
             WriteKind::CreateItem => "create_item",
@@ -547,6 +583,31 @@ impl WriteKind {
             WriteKind::DeleteExtension => "delete_extension",
             WriteKind::UploadBlob => "upload_blob",
         }
+    }
+}
+
+/// What a queued write is a write to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Subject {
+    Item,
+    Edge,
+}
+
+impl Subject {
+    /// The queue column that names it.
+    pub fn column(self) -> &'static str {
+        match self {
+            Subject::Item => "item_id",
+            Subject::Edge => "edge_id",
+        }
+    }
+
+    /// Every kind of write to it.
+    pub fn kinds(self) -> Vec<WriteKind> {
+        WriteKind::ALL
+            .into_iter()
+            .filter(|kind| kind.subject() == Some(self))
+            .collect()
     }
 }
 
@@ -757,9 +818,18 @@ pub struct QueuedWrite {
     pub blob: Option<String>,
     pub base_version: Option<i64>,
     pub idempotency_key: String,
-    /// The queue rows this one waits for. Empty when nothing holds it; more
-    /// than one when an edge waits on both of its endpoints.
+    /// The writes this one cannot go without, by queue id: the create of a
+    /// row it names while the server has not taken it, the creates of both of
+    /// an edge's endpoints, the edge's own create, the upload a file item
+    /// names (`queue-and-verdicts.md` 4). A refusal of one refuses this one
+    /// too (12, 16).
     pub depends_on: Vec<String>,
+    /// The write ahead of this one to the same row or edge, by queue id,
+    /// where one was still to be written when this one was queued. This one
+    /// is held while that one has gone out without an answer or is held
+    /// behind one that has; any answer to it releases this one, and a
+    /// refusal of it refuses nothing (`queue-and-verdicts.md` 42).
+    pub follows: Option<String>,
     pub verdict: Option<Verdict>,
     /// In whichever vocabulary the verdict speaks: one of the five blocked
     /// reasons under `blocked` (read as one by `blocked_reason`), and under
@@ -777,6 +847,14 @@ pub struct QueuedWrite {
 }
 
 impl QueuedWrite {
+    /// The row or edge this write is a write to, by id.
+    pub fn subject_id(&self) -> Option<&str> {
+        match self.kind.subject()? {
+            Subject::Item => self.item_id.as_deref(),
+            Subject::Edge => self.edge_id.as_deref(),
+        }
+    }
+
     /// What became of this write, with what its verdict carries; nothing
     /// while it is unanswered.
     pub fn outcome(&self) -> Result<Option<Outcome>, CoreError> {
@@ -1116,6 +1194,7 @@ mod tests {
             base_version: Some(1),
             idempotency_key: "k".into(),
             depends_on: Vec::new(),
+            follows: None,
             verdict,
             reason: reason.map(str::to_string),
             answer: answer.map(str::to_string),

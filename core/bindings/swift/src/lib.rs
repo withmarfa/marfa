@@ -293,7 +293,11 @@ pub struct QueuedWrite {
     pub blob: Option<String>,
     pub base_version: Option<i64>,
     pub idempotency_key: String,
+    /// The writes this one cannot go without, and is refused with.
     pub depends_on: Vec<String>,
+    /// The write ahead of this one to the same row or edge, which it goes
+    /// out after and is not refused with.
+    pub follows: Option<String>,
     pub verdict: Option<Verdict>,
     /// The server's answer, whole, as it arrived.
     pub answer: Option<String>,
@@ -755,6 +759,7 @@ fn queued(write: marfa_core::QueuedWrite) -> Result<QueuedWrite, MarfaError> {
         base_version: write.base_version,
         idempotency_key: write.idempotency_key,
         depends_on: write.depends_on,
+        follows: write.follows,
         answer: write.answer,
         refusals: write.refusals,
         queued_at: write.queued_at,

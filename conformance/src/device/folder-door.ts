@@ -28,7 +28,12 @@ export interface DoorRow {
   version: number;
   /** A row somebody trashed, which a natural key still resolves. */
   trashed?: boolean;
+  /** The row's tags, which a read answers in its metadata. */
+  tags?: string[];
 }
+
+/** The tag the server gives the sibling a keep-both resolution writes. */
+export const CONFLICTED_COPY_TAG = "conflicted-copy";
 
 /** A create's body, as far as the door reads it. */
 export interface DoorCreate {
@@ -56,14 +61,11 @@ export interface DoorDecision {
  * whether a create lands on a row or makes one, is refused for an id or a
  * version, or is refused a source the key does not claim; whether an update
  * lands, names a row that is not there or one in the bin; whether a read finds
- * the row. `fidelity.test.ts` holds each of those decisions to the real
+ * the row. The queue's fixtures for an edit behind an edit use it for the same
+ * reason: what the second edit meets depends on what the server made of the
+ * first. `fidelity.test.ts` holds each of those decisions to the real
  * server's for the same request, so a fixture passing against this door is
  * passing against the server's rules and not against this file's.
- *
- * What the door does not compute it does not answer: a stale version on an
- * update, or a stale create whose changes collide with nothing, is answered
- * `501` rather than with a merge the door never performed, so a fixture that
- * reaches one fails at the harness rather than passing on an invented answer.
  */
 export class FolderDoor {
   /** Every row the door holds by id, including the ones it was seeded with. */
@@ -106,6 +108,27 @@ export class FolderDoor {
       sent.source_id === undefined
         ? undefined
         : this.keyed(sent.source, sent.source_id);
+    // An id the door already holds, where no natural key resolves a row, is a
+    // repeat of a create it performed: acknowledged with the row as it
+    // stands, and nothing written (`items.md` 3). A repeat naming a row of
+    // another type is refused `id_reused`, which the door does not model.
+    const repeated = sent.id === undefined ? undefined : this.rows.get(sent.id);
+    if (
+      incumbent === undefined &&
+      sent.id !== undefined &&
+      repeated !== undefined
+    ) {
+      if ((repeated.type ?? "core.note") !== (sent.type ?? "core.note")) {
+        return {
+          answer: refusal(
+            501,
+            "not_scripted",
+            "the scripted folder door does not refuse an id reused for another type",
+          ),
+        };
+      }
+      return { answer: this.acknowledged(sent.id) };
+    }
     if (incumbent !== undefined) {
       const held = this.rows.get(incumbent)!;
       // Asked before anything else about the row, and answered without
@@ -122,22 +145,7 @@ export class FolderDoor {
       // A row in the bin is acknowledged and not written, whatever version
       // the create carries (`versions.md` 10).
       if (held.trashed === true) {
-        // The stored row, which carries no hydrated edges: nothing was
-        // written, so nothing was read back with them.
-        const { edges: _edges, ...stored } = this.wire(incumbent);
-        const body = answers.upserted(stored);
-        return {
-          answer:
-            body.kind === "json"
-              ? {
-                  ...body,
-                  body: {
-                    ...(body.body as Record<string, unknown>),
-                    acknowledged: true,
-                  },
-                }
-              : body,
-        };
+        return { answer: this.acknowledged(incumbent) };
       }
       if (sent.id !== undefined && sent.id !== incumbent) {
         return {
@@ -165,17 +173,22 @@ export class FolderDoor {
               !same(held.properties[field], ancestor.properties[field]),
           )
           .sort();
-        // A stale create whose changes collide with nothing is merged by the
-        // server; no folder fixture sends one, so the door does not model
-        // the merge, and says so rather than answering something else.
+        // A stale create whose changes collide with nothing is merged over
+        // the row as it stands: only what it changed since the version it
+        // names is applied, and the answer is the upsert's.
         if (colliding.length === 0) {
-          return {
-            answer: refusal(
-              501,
-              "not_scripted",
-              "the scripted folder door does not merge a stale create",
+          const changed = Object.fromEntries(
+            Object.entries(sent.properties).filter(
+              ([field, value]) => !same(value, ancestor.properties[field]),
             ),
-          };
+          );
+          this.remember(incumbent, held);
+          this.rows.set(incumbent, {
+            ...held,
+            properties: { ...held.properties, ...changed },
+            version: held.version + 1,
+          });
+          return { answer: answers.upserted(this.wire(incumbent)) };
         }
         return {
           answer: answers.versionConflict(
@@ -218,11 +231,13 @@ export class FolderDoor {
    * An update, which moves none of type, source or key unless it names the
    * key. On the version the row is at it lands. On one the row has moved
    * past it is merged against that version's snapshot as the server merges
-   * it (`versions.md` 8, 11, 13): a field only it changed is applied, a field
-   * both changed collides, and a collision is resolved last writer wins where
-   * the caller asked the server to resolve and refused where it did not. A
-   * collision on a keep-both property, which the server answers by writing a
-   * sibling, is not modeled and answers `501`.
+   * it (`versions.md` 8, 11, 13): a property, or the natural key, that only
+   * it changed is applied, one both changed collides, and a collision is
+   * refused where the caller did not ask the server to resolve. Where it did,
+   * a last-writer property and the natural key take this write's value, and a
+   * keep-both property keeps the row's while this write's goes to a sibling:
+   * the row's properties with the losing values laid over, under the row's
+   * type and source and no natural key, tagged as a conflicted copy.
    */
   update(
     id: string,
@@ -242,6 +257,7 @@ export class FolderDoor {
     let applied: Record<string, unknown> = sentProperties;
     let sourceId = sent.source_id ?? before.source_id;
     let resolution: Record<string, string> | undefined;
+    let sibling: string | undefined;
     if (sent.version !== before.version) {
       const ancestor = this.snapshots.get(id)?.get(sent.version);
       if (ancestor === undefined) {
@@ -268,14 +284,6 @@ export class FolderDoor {
       // Both changed it, whether or not to the same value: the server calls
       // that a collision too, and resolves it to the value both wrote.
       const colliding = changed.filter((side) => !same(side.theirs, side.base));
-      const keepBoth = Object.keys(NOTE_MERGE_POLICY.fields);
-      if (colliding.some((side) => keepBoth.includes(side.field))) {
-        return refusal(
-          501,
-          "not_scripted",
-          "the scripted folder door does not write a conflicted copy",
-        );
-      }
       if (colliding.length > 0 && options.resolve !== true) {
         return answers.versionConflict(
           this.snapshot(id, before),
@@ -284,9 +292,11 @@ export class FolderDoor {
           NOTE_MERGE_POLICY,
         );
       }
+      const keepBoth = Object.keys(NOTE_MERGE_POLICY.fields);
+      const kept = colliding.filter((side) => keepBoth.includes(side.field));
       applied = Object.fromEntries(
         changed
-          .filter((side) => side.field !== "source_id")
+          .filter((side) => side.field !== "source_id" && !kept.includes(side))
           .map((side) => [side.field, side.mine]),
       );
       sourceId = changed.some((side) => side.field === "source_id")
@@ -294,8 +304,25 @@ export class FolderDoor {
         : before.source_id;
       if (colliding.length > 0) {
         resolution = Object.fromEntries(
-          colliding.map((side) => [side.field, "last_writer_wins"]),
+          colliding.map((side) => [
+            side.field,
+            kept.includes(side) ? "keep_both_copies" : "last_writer_wins",
+          ]),
         );
+      }
+      if (kept.length > 0) {
+        sibling = uuidv7();
+        this.rows.set(sibling, {
+          properties: {
+            ...before.properties,
+            ...Object.fromEntries(kept.map((side) => [side.field, side.mine])),
+          },
+          source: before.source,
+          source_id: null,
+          type: before.type,
+          version: 1,
+          tags: [CONFLICTED_COPY_TAG],
+        });
       }
     }
     this.remember(id, before);
@@ -307,7 +334,30 @@ export class FolderDoor {
     });
     return resolution === undefined
       ? answers.updated(this.wire(id))
-      : answers.resolved(this.wire(id), resolution);
+      : answers.resolved(this.wire(id), resolution, sibling);
+  }
+
+  /** A create the door answers without writing: the stored row, which
+   *  carries no hydrated edges because nothing was read back with them. */
+  private acknowledged(id: string): Answer {
+    const { edges: _edges, ...stored } = this.wire(id);
+    const body = answers.upserted(stored);
+    return body.kind === "json"
+      ? {
+          ...body,
+          body: {
+            ...(body.body as Record<string, unknown>),
+            acknowledged: true,
+          },
+        }
+      : body;
+  }
+
+  /** The conflicted copies a keep-both resolution wrote, by id. */
+  conflictedCopies(): Array<[string, DoorRow]> {
+    return [...this.rows].filter(([, row]) =>
+      (row.tags ?? []).includes(CONFLICTED_COPY_TAG),
+    );
   }
 
   /** A read by id, which a device makes to hold a row a refusal named. A row
@@ -315,7 +365,7 @@ export class FolderDoor {
   read(id: string): Answer {
     const row = this.rows.get(id);
     return row !== undefined && row.trashed !== true
-      ? answers.updated(this.wire(id))
+      ? answers.updated(this.wire(id), row.tags ?? [])
       : refusal(404, "item_not_found", `Item ${id} not found`);
   }
 

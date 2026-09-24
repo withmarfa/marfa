@@ -105,9 +105,18 @@ export interface QueuedWrite {
   blob: string | null;
   base_version: number | null;
   idempotency_key: string;
-  /** The queue rows this one waits for. Empty when nothing holds it; more
-   *  than one when an edge waits on both of its endpoints. */
+  /** The writes this one cannot go without, by queue id: the create of a
+   *  row it names while the server has not taken it, the creates of both of
+   *  an edge's endpoints, the edge's own create, the upload a file item
+   *  names. A refusal of one refuses this one (`queue-and-verdicts.md` 4,
+   *  12, 16). */
   depends_on: string[];
+  /** The write ahead of this one to the same row or edge, where one was
+   *  still to be written when this one was queued. This one is held while
+   *  that one has gone out without an answer or is held behind one that
+   *  has, and goes on any answer to it (`queue-and-verdicts.md` 42); a row
+   *  held with nothing it depends on still waiting is held by this. */
+  follows: string | null;
   verdict: string | null;
   reason: string | null;
   /** The server's answer, kept whole, because a device reports a verdict and
@@ -133,7 +142,9 @@ export interface Edge {
 export interface DrainReport {
   /** Rows the drain put on the wire. */
   sent: number;
-  /** Rows it did not send because something they depend on is unanswered. */
+  /** Rows it did not send because a write they depend on, or the write
+   *  ahead of them to the same row or edge, has no answer yet
+   *  (`queue-and-verdicts.md` 4, 42). */
   held: number;
   verdicts: DrainVerdict[];
   /** Why the drain stopped before the queue was empty. A refused credential
