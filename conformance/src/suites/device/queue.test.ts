@@ -2049,6 +2049,12 @@ describe("an answer the device applies keeps what it has not had answered", () =
         })
       ).ok,
     ).toBe(true);
+    // The witness: the queued tag is on the row, so its going is the
+    // reconcile's doing.
+    const queued = await device.get(HELD.id);
+    expect(queued.ok, JSON.stringify(queued)).toBe(true);
+    if (!queued.ok) return;
+    expect(queued.value.tags).toContain("refused-here");
     scriptWrites(server, {
       tags: [refusal(400, "validation_error", "not a tag this server takes")],
       update: [answers.serverFault()],
@@ -2062,13 +2068,22 @@ describe("an answer the device applies keeps what it has not had answered", () =
         ),
       ],
     });
+    const readBack = () =>
+      server.requests.filter(
+        (request) =>
+          request.method === "GET" && request.pathname === `/items/${HELD.id}`,
+      ).length;
+    const readsBefore = readBack();
     expect((await device.drain()).ok).toBe(true);
+    expect(readBack() - readsBefore, "the refused tag was not read back").toBe(
+      1,
+    );
 
     const read = await device.get(HELD.id);
     expect(read.ok).toBe(true);
     if (!read.ok) return;
-    // The witness: the refusal was reconciled, so the row took the server's
-    // copy and lost the refused tag.
+    // The refusal was reconciled, so the row took the server's copy and lost
+    // the refused tag.
     expect(
       read.value.tags,
       "the refused tag was not reconciled away, so nothing here is about a reconcile",
