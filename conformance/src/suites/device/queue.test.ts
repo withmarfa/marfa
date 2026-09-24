@@ -1366,54 +1366,76 @@ describe("an answer the device applies keeps what it has not had answered", () =
   it("blocks a create whose natural key names a row it cannot read", async () => {
     // The envelope names a row that is gone by the time the device reads it,
     // so there is nothing to move onto, and the create stops as any write
-    // refused this way does (`queue-and-verdicts.md` 22).
+    // refused this way does (`queue-and-verdicts.md` 22, 23): on each of the
+    // two refusals a create's natural key can meet.
     const GONE = "01a00000-0000-7000-8000-0000000000c9";
-    harness = await hydratedHarness("queue-create-refused-onto-gone", {
-      rows: held(),
-    });
-    const { device, server } = harness;
-    const created = await device.create({
-      type: "core.note",
-      properties: { title: "mine", body: "mine" },
-      source: "notes",
-      sourceId: "gone.md",
-      version: 0,
-    });
-    expect(created.ok).toBe(true);
-    if (!created.ok) return;
-    const local = created.value.item_id ?? "";
-    scriptWrites(server, {
-      create: [
-        answers.ancestorUnavailable(
-          {
-            id: GONE,
-            version: 1,
-            properties: { title: "gone" },
-            tier: "library",
-            occurred_at: "2026-01-01T00:00:00.000Z",
-            source_id: "gone.md",
-          },
-          0,
-        ),
+    const current = {
+      id: GONE,
+      version: 2,
+      properties: { title: "gone" },
+      tier: "library" as const,
+      occurred_at: "2026-01-01T00:00:00.000Z",
+      source_id: "gone.md",
+    };
+    for (const [label, refused, reason] of [
+      [
+        "unread",
+        answers.ancestorUnavailable(current, 0),
+        "ancestor_unavailable",
       ],
-      read: [refusal(404, "item_not_found", "Item not found")],
-    });
-    const drained = await device.drain();
-    expect(drained.ok, JSON.stringify(drained)).toBe(true);
-    if (!drained.ok) return;
-    // The witness: the device did go to read the row it would have moved onto.
-    expect(
-      server.requests.some(
-        (request) =>
-          request.method === "GET" && request.pathname === `/items/${GONE}`,
-      ),
-    ).toBe(true);
-    const [verdict] = drained.value.verdicts;
-    expect(
-      [verdict?.verdict, verdict?.reason],
-      "a create was refused onto a row the device could not hold, leaving its copy holding nothing under the key",
-    ).toEqual(["blocked", "ancestor_unavailable"]);
-    expect((await device.get(local)).ok).toBe(true);
+      [
+        "stale",
+        answers.versionConflict(
+          current,
+          { ...current, version: 1 },
+          ["title"],
+          { fields: {}, default: "last_writer_wins" },
+        ),
+        "conflict_unresolved",
+      ],
+    ] as const) {
+      const own = await hydratedHarness(
+        `queue-create-refused-onto-gone-${label}`,
+        {
+          rows: held(),
+        },
+      );
+      try {
+        const created = await own.device.create({
+          type: "core.note",
+          properties: { title: "mine", body: "mine" },
+          source: "notes",
+          sourceId: "gone.md",
+          version: 0,
+        });
+        expect(created.ok).toBe(true);
+        if (!created.ok) return;
+        const local = created.value.item_id ?? "";
+        scriptWrites(own.server, {
+          create: [refused],
+          read: [refusal(404, "item_not_found", "Item not found")],
+        });
+        const drained = await own.device.drain();
+        expect(drained.ok, JSON.stringify(drained)).toBe(true);
+        if (!drained.ok) return;
+        // The witness: the device did go to read the row it would have
+        // moved onto.
+        expect(
+          own.server.requests.some(
+            (request) =>
+              request.method === "GET" && request.pathname === `/items/${GONE}`,
+          ),
+        ).toBe(true);
+        const [verdict] = drained.value.verdicts;
+        expect(
+          [verdict?.verdict, verdict?.reason],
+          "a create was refused onto a row the device could not hold, leaving its copy holding nothing under the key",
+        ).toEqual(["blocked", reason]);
+        expect((await own.device.get(local)).ok).toBe(true);
+      } finally {
+        await own.stop();
+      }
+    }
   });
 
   it("reads the row a create landed on again after a failure that clears on its own", async () => {

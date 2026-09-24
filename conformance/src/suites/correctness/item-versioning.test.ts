@@ -413,6 +413,10 @@ describe("item versioning", () => {
     const body = stale.error as unknown as StaleVersionResponse &
       Partial<ConflictResponse>;
     expect(body.error.status).toBe(409);
+    expect(
+      body.current.id,
+      "the refusal did not name the row it is about in current.id",
+    ).toBe(r.data.item.id);
     expect(body.current.version).toBe(2);
     expect(body.current.properties.title).toBe("Server title");
     // And not the three a merge would need.

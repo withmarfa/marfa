@@ -410,6 +410,8 @@ describe("a write naming a source", () => {
       JSON.stringify(refused),
       "the refusal names the type of a row its key may not read",
     ).not.toContain("core.bookmark");
+    // Its witness is below: the key that may write the row, declaring
+    // another type, is told the row's type in `details.actual_type`.
 
     const mismatched = await both.bulkItems({ atomic: false, items: [entry] });
     expect(
@@ -564,6 +566,17 @@ describe("a write naming a source", () => {
       disclosed(createOnly.data.results),
       "a create_only entry named a row its key may not read",
     ).toEqual([]);
+
+    // The witness for the type: a key that may read the row's type but not
+    // write it is refused naming the type, so its absence above is the gate
+    // and not a message that never names one.
+    const readerRefused = await reader.rawRequest("/items", {
+      method: "POST",
+      body: note(live),
+    });
+    expect(readerRefused.status).toBe(403);
+    expect(JSON.stringify(readerRefused.error)).toContain("core.bookmark");
+    expect(JSON.stringify(readerRefused.error)).not.toContain(liveId);
 
     // The witness for the bulk half: a key that may read the row's type is
     // told its id, so the absence above is the gate and not a door that

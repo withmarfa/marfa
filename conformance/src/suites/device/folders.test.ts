@@ -2278,6 +2278,10 @@ describe("identity", () => {
       [sent?.source, sent?.source_id, sent?.version],
       "the create was based on another source's row, which a folder only reads as its own by case",
     ).toEqual(["Notes", "note.md", 0]);
+    // The witness: the file is bound, to the row its own create made.
+    expect(/marfa_id:\s*(\S+)/.exec(read(harness, "note.md"))?.[1]).toBe(
+      itemFor(keysByItem(harness), "note.md"),
+    );
     expect(
       /marfa_id:\s*(\S+)/.exec(read(harness, "note.md"))?.[1],
       "this folder's file was bound to the row under `notes`",

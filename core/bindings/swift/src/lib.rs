@@ -1400,6 +1400,15 @@ mod tests {
                     let events = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n: connected\n\n";
                     let _ = match (path.as_str(), resumed) {
                         ("/types", _) => stream.write_all(json(r#"{"data":[{"id":"core.note","display_hints":{"title_field":"title"}}],"next_cursor":null}"#).as_bytes()),
+                        // A create is refused for a source the key does not
+                        // claim; a listing answers an empty slice.
+                        ("/items", _) if head.starts_with("POST") => {
+                            let body = r#"{"error":{"code":"forbidden","message":"not claimed","details":{"source":"notes"}}}"#;
+                            stream.write_all(format!(
+                                "HTTP/1.1 403 Forbidden\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                                body.len()
+                            ).as_bytes())
+                        }
                         ("/items", _) => stream.write_all(json(r#"{"data":[],"next_cursor":null}"#).as_bytes()),
                         ("/events", false) => stream.write_all(format!("{events}event: stream_cursor\ndata: {{\"type\":\"stream_cursor\",\"cursor\":\"10\"}}\n\n").as_bytes()),
                         ("/events", true) => {
@@ -1416,6 +1425,34 @@ mod tests {
             }
         });
         Quiet { url, streams }
+    }
+
+    /// The source a create was refused for reaches a Swift caller, which
+    /// would otherwise read `credential_refused` as a key that stopped working
+    /// (`queue-and-verdicts.md` 40).
+    #[test]
+    fn a_drain_names_a_source_its_key_does_not_claim() {
+        let server = quiet();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("core.sqlite").display().to_string();
+        let core = MarfaCore::open(path, Some(server.url.clone()), Some("k".into())).unwrap();
+        core.hydrate(vec!["core.note".into()], Tier::Library)
+            .unwrap();
+        core.create_item(Draft {
+            r#type: "core.note".into(),
+            id: None,
+            properties_json: r#"{"title":"a"}"#.into(),
+            tags: vec![],
+            tier: None,
+            source: Some("notes".into()),
+            source_id: Some("a.md".into()),
+            occurred_at: None,
+            base_version: Some(0),
+        })
+        .unwrap();
+        let report = core.drain().unwrap();
+        assert_eq!(report.unclaimed_sources, vec!["notes".to_string()]);
+        assert_eq!(report.sent, 1);
     }
 
     struct Told(std::sync::mpsc::Sender<Option<MarfaError>>);
