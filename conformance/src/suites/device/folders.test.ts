@@ -1888,11 +1888,18 @@ describe("identity", () => {
         timeout: 20_000,
         interval: 100,
       });
+      // Passes enough for an ask or a line one pass after that ask to show.
+      await new Promise((resolve) => setTimeout(resolve, 3_000));
+      expect(
+        creates(),
+        "a folder left watching asked again on the pass after it asked",
+      ).toBe(2);
+      expect(watching.running(), watching.stderr).toBe(true);
     } finally {
       await watching.stop();
     }
     // It said so once, and printed nothing on the passes after, where
-    // nothing changed.
+    // nothing changed, the one that asked again and found the same included.
     const reports = watching.stdout.split('"unclaimed_sources"').length - 1;
     expect(
       reports,
@@ -2316,6 +2323,8 @@ describe("identity", () => {
         },
         { timeout: 20_000, interval: 100 },
       );
+      // Passes enough for a line printed one pass after the push to show.
+      await new Promise((resolve) => setTimeout(resolve, 3_000));
       expect(watching.running(), watching.stderr).toBe(true);
     } finally {
       await watching.stop();
@@ -2326,10 +2335,17 @@ describe("identity", () => {
       quiet.split(lost).length - 1,
       `a watcher said the same lost file on every pass: ${quiet}`,
     ).toBe(1);
+    // After it, one line: the push's summary, which carries the lost count
+    // as every summary line does. That count is the only later mention of
+    // the lost file, and no pass after the push printed anything.
+    const later = watching.stdout.slice(quiet.length).trim().split("\n");
     expect(
-      watching.stdout.slice(quiet.length).trim().split("\n").length,
+      later,
       `a watcher printed a pass where nothing happened: ${watching.stdout}`,
-    ).toBe(1);
+    ).toHaveLength(1);
+    expect(later[0]).toMatch(
+      /^1 created, 0 updated, 0 renamed, 0 deleted; sent 1; \d+ file\(s\) written, 1 bound to an item that is gone$/,
+    );
   });
 
   it("refuses a folder that names no source, or one it may never name", async () => {
