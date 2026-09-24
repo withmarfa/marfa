@@ -1,6 +1,8 @@
 //! The server a direct command talks to, and how it talks to it.
 
 pub mod request;
+#[cfg(test)]
+mod shapes;
 pub mod transport;
 
 use std::cell::RefCell;

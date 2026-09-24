@@ -542,7 +542,7 @@
         ]
       },
       "ItemListRow": {
-        "anyOf": [
+        "oneOf": [
           {
             "$ref": "#/components/schemas/Item"
           },

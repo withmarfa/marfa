@@ -534,7 +534,11 @@ const listItemsRoute = createRoute({
               .describe(
                 "An `Item`, or, when `include` names `metadata`, an `ItemWithMetadata`; every row of one page is the same shape.",
               )
-              .openapi("ItemListRow"),
+              // `oneOf`, not the `anyOf` a union gets by default: the two
+              // shapes share no required key, so a row is exactly one of
+              // them, and a generator reads `anyOf` as one object holding
+              // both shapes' required keys, which no row has.
+              .openapi("ItemListRow", {}, { unionPreferredType: "oneOf" }),
             "ItemPage",
           ),
         },
