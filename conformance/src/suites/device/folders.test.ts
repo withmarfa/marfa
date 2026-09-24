@@ -2320,7 +2320,7 @@ describe("identity", () => {
     } finally {
       await watching.stop();
     }
-    // The passes between the first saying and the later file said nothing,
+    // The passes between the first report and the later file said nothing,
     // and the watcher was passing through them: it saw the later file.
     expect(
       quiet.split(lost).length - 1,
