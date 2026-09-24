@@ -74,4 +74,66 @@ describe("a thumbnail's value", () => {
       expect(check(value).success, value.slice(0, 40)).toBe(false);
     }
   });
+
+  it("is refused when its bytes miss the signature by one byte", () => {
+    const nearMisses: [string, Buffer][] = [
+      // Everything of the PNG signature but its last byte.
+      ["image/png", Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0])],
+      // A JPEG's first two bytes, and not its third.
+      ["image/jpeg", Buffer.from([0xff, 0xd8, 0x00, 0xe0])],
+      // A RIFF container that is not a WebP one.
+      [
+        "image/webp",
+        Buffer.concat([
+          Buffer.from("RIFF"),
+          Buffer.from([0, 0, 0, 0]),
+          Buffer.from("WAVEfmt "),
+        ]),
+      ],
+    ];
+    for (const [mime, head] of nearMisses) {
+      // The witness: the same length and padding with the real signature
+      // is taken, so the refusal below is the signature's.
+      const real = { "image/png": PNG, "image/jpeg": JPEG, "image/webp": WEBP }[
+        mime
+      ];
+      expect(check(uri(mime, padded(real ?? PNG, 64))).success, mime).toBe(
+        true,
+      );
+      const result = check(uri(mime, padded(head, 64)));
+      expect(result.success, `${mime} near miss`).toBe(false);
+      if (!result.success) {
+        expect(result.errors[0]?.message).toContain(
+          "image, as its data URI says",
+        );
+      }
+    }
+  });
+
+  it("is refused when its base64 is not the one spelling of its bytes", () => {
+    // The witness: the canonical spelling of the same eight bytes is taken.
+    expect(check("data:image/png;base64,iVBORw0KGgo=").success).toBe(true);
+    // The last character carries a bit the bytes do not use: a lenient
+    // decoder reads the same bytes, a strict one refuses it.
+    const result = check("data:image/png;base64,iVBORw0KGgp=");
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.errors[0]?.message).toContain("canonical base64");
+    }
+  });
+
+  it("is refused, not failed on, when its base64 is not whole groups of four", () => {
+    // Base64 of a length no encoder writes, which the decoder throws on
+    // rather than answering: a refusal here, never an error.
+    for (const value of [
+      "data:image/png;base64,AAAAA",
+      "data:image/png;base64,iVBORw0KGgoAA",
+    ]) {
+      const result = check(value);
+      expect(result.success, value).toBe(false);
+      if (!result.success) {
+        expect(result.errors[0]?.field).toBe("thumbnail");
+      }
+    }
+  });
 });
