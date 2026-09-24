@@ -23,18 +23,37 @@ const FIRST_FRAME_WAIT: Duration = Duration::from_secs(15);
 // has to outlast that budget.
 const HEAD_WAIT: Duration = Duration::from_secs(10);
 const TYPE_FILTER_LIMIT: usize = 10;
-/// How often a held stream looks at its stop flag while nothing arrives.
-const STOP_POLL: Duration = Duration::from_millis(250);
-/// A held stream that says nothing, not even a keepalive, for this long is
-/// taken as gone and opened again.
-const SILENCE: Duration = Duration::from_secs(90);
-/// The wait before asking again after a stream that could not be opened or
-/// ended early, doubling each time to the most. A stream that stayed open
-/// at least the most resets it, so the client's own bound on a stream is
-/// followed by an immediate reopen and a server that ends every stream at
-/// once is asked at most every thirty seconds.
-const RECONNECT_FIRST: Duration = Duration::from_secs(1);
-const RECONNECT_MOST: Duration = Duration::from_secs(30);
+
+/// How a follow paces itself. `PACE` is the one in use; the tests shorten
+/// it so a wait that doubles to thirty seconds can be watched doubling.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Pace {
+    /// How often a held stream looks at its stop flag while nothing arrives.
+    pub(crate) stop_poll: Duration,
+    /// A held stream that says nothing, not even a keepalive, for this long
+    /// is taken as gone and opened again.
+    pub(crate) silence: Duration,
+    /// The wait before asking again after a stream that could not be opened
+    /// or ended early, doubling each time to `reconnect_most`. A stream that
+    /// stayed open at least `reconnect_most` resets it, so the client's own
+    /// bound on a stream is followed by an immediate reopen and a server
+    /// that ends every stream at once is asked at most every
+    /// `reconnect_most`.
+    pub(crate) reconnect_first: Duration,
+    pub(crate) reconnect_most: Duration,
+    /// The longest `Retry-After` a follow waits out. A server may name any
+    /// number, and one past this would park the follow for as long as it
+    /// said; the server's own webhook delivery honors the same bound.
+    pub(crate) retry_after_most: Duration,
+}
+
+pub(crate) const PACE: Pace = Pace {
+    stop_poll: Duration::from_millis(250),
+    silence: Duration::from_secs(90),
+    reconnect_first: Duration::from_secs(1),
+    reconnect_most: Duration::from_secs(30),
+    retry_after_most: Duration::from_secs(300),
+};
 
 struct Slice {
     types: Vec<String>,
@@ -95,6 +114,11 @@ fn adopt(core: &Core, types: &[WireType]) -> Result<Catalog> {
 
 /// Opens the stream from `cursor` and reads its frames on a thread of their
 /// own, so the caller can wait on them with a bound.
+///
+/// The thread outlives a caller that lets the frames go: it learns they are
+/// unwanted only when it next has a frame to hand on, so it keeps the
+/// connection, and nothing of the store, until the server's next keepalive
+/// or the stream's `bound`.
 fn open(
     http: &Http,
     cursor: &str,
@@ -254,23 +278,40 @@ fn aged_out(core: &Core, payload: EventPayload) -> Result<CoreError> {
 /// catch-up's rules, until `stop` is set (`device.md` 40).
 ///
 /// A stream that ends, drops or cannot be opened is opened again from the
-/// stored cursor, so nothing between the two is lost: the cursor moves only
-/// with an applied event. What does not clear by asking again ends it: a
-/// cursor the log has aged past, a refused credential, a store that is no
-/// longer hydrated, an answer no retry changes.
+/// stored cursor, so nothing between the two is lost: the cursor moves past
+/// each event in the transaction that takes it, applied or skipped, and
+/// never past one not yet taken. What does not clear by asking again ends
+/// it: a cursor the log has aged past, a refused credential, a store that
+/// is no longer hydrated, an answer no retry changes.
 ///
 /// `stop` is looked at between frames and at least every quarter second,
 /// including while a stream is being asked for: that request runs on a
 /// thread of its own holding only the transport, so it cannot keep the
-/// store once this has returned.
+/// store once this has returned. The thread reading the last stream's
+/// frames may hold its connection a while longer (`open` says how long).
 pub(crate) fn follow(
     core: &Core,
     http: Arc<Http>,
     stop: &AtomicBool,
     on_change: &mut dyn FnMut(&Change),
 ) -> Result<FollowReport> {
+    follow_paced(core, http, stop, on_change, &PACE, &mut |wait| {
+        wait_unless_stopped(stop, wait, PACE.stop_poll);
+    })
+}
+
+/// The follow, at a given pace and with a given way of waiting between
+/// streams.
+fn follow_paced(
+    core: &Core,
+    http: Arc<Http>,
+    stop: &AtomicBool,
+    on_change: &mut dyn FnMut(&Change),
+    pace: &Pace,
+    pause: &mut dyn FnMut(Duration),
+) -> Result<FollowReport> {
     let mut report = FollowReport::default();
-    let mut backoff = RECONNECT_FIRST;
+    let mut backoff = pace.reconnect_first;
     let mut asked = false;
     while !stop.load(Ordering::Relaxed) {
         let (slice, cursor) = start(core)?;
@@ -279,7 +320,7 @@ pub(crate) fn follow(
             report.reconnects += 1;
         }
         asked = true;
-        let Some(reached) = reach(&http, &cursor, &slice, stop) else {
+        let Some(reached) = reach(&http, &cursor, &slice, stop, pace.stop_poll) else {
             break;
         };
         let (types, frames) = match reached {
@@ -290,12 +331,12 @@ pub(crate) fn follow(
                     CoreError::RateLimited {
                         retry_after_seconds: Some(seconds),
                         ..
-                    } => backoff.max(Duration::from_secs(*seconds)),
+                    } => backoff.max(Duration::from_secs(*seconds).min(pace.retry_after_most)),
                     _ => backoff,
                 };
                 report.last_failure = Some(error.to_string());
-                wait_unless_stopped(stop, wait);
-                backoff = (backoff * 2).min(RECONNECT_MOST);
+                pause(wait);
+                backoff = (backoff * 2).min(pace.reconnect_most);
                 continue;
             }
             Err(error) => return Err(error),
@@ -307,10 +348,10 @@ pub(crate) fn follow(
             if stop.load(Ordering::Relaxed) {
                 return Ok(report);
             }
-            let frame = match frames.recv_timeout(STOP_POLL) {
+            let frame = match frames.recv_timeout(pace.stop_poll) {
                 Ok(Ok(frame)) => frame,
                 Ok(Err(_)) | Err(RecvTimeoutError::Disconnected) => break,
-                Err(RecvTimeoutError::Timeout) if heard.elapsed() > SILENCE => break,
+                Err(RecvTimeoutError::Timeout) if heard.elapsed() > pace.silence => break,
                 Err(RecvTimeoutError::Timeout) => continue,
             };
             heard = Instant::now();
@@ -335,11 +376,11 @@ pub(crate) fn follow(
                 }
             }
         }
-        if opened.elapsed() >= RECONNECT_MOST {
-            backoff = RECONNECT_FIRST;
+        if opened.elapsed() >= pace.reconnect_most {
+            backoff = pace.reconnect_first;
         } else {
-            wait_unless_stopped(stop, backoff);
-            backoff = (backoff * 2).min(RECONNECT_MOST);
+            pause(backoff);
+            backoff = (backoff * 2).min(pace.reconnect_most);
         }
     }
     Ok(report)
@@ -350,7 +391,13 @@ type Reached = Result<(Vec<WireType>, Receiver<io::Result<Frame>>)>;
 /// Asks for the type catalog and the stream on a thread holding only the
 /// transport, and waits for the answer while watching `stop`. `None` when
 /// `stop` was set first.
-fn reach(http: &Arc<Http>, cursor: &str, slice: &Slice, stop: &AtomicBool) -> Option<Reached> {
+fn reach(
+    http: &Arc<Http>,
+    cursor: &str,
+    slice: &Slice,
+    stop: &AtomicBool,
+    poll: Duration,
+) -> Option<Reached> {
     let (sender, answer) = mpsc::sync_channel::<Reached>(1);
     let http = Arc::clone(http);
     let cursor = cursor.to_string();
@@ -371,7 +418,7 @@ fn reach(http: &Arc<Http>, cursor: &str, slice: &Slice, stop: &AtomicBool) -> Op
         if stop.load(Ordering::Relaxed) {
             return None;
         }
-        match answer.recv_timeout(STOP_POLL) {
+        match answer.recv_timeout(poll) {
             Ok(reached) => return Some(reached),
             Err(RecvTimeoutError::Timeout) => continue,
             Err(RecvTimeoutError::Disconnected) => {
@@ -395,10 +442,18 @@ fn passes(error: &CoreError) -> bool {
     }
 }
 
-fn wait_unless_stopped(stop: &AtomicBool, wait: Duration) {
-    let until = Instant::now() + wait;
-    while Instant::now() < until && !stop.load(Ordering::Relaxed) {
-        thread::sleep(STOP_POLL.min(until - Instant::now()));
+/// Sleeps for `wait`, looking at `stop` every `poll`. A wait too long to
+/// add to the clock lasts until `stop` is set.
+fn wait_unless_stopped(stop: &AtomicBool, wait: Duration, poll: Duration) {
+    let until = Instant::now().checked_add(wait);
+    while !stop.load(Ordering::Relaxed) {
+        let left = until.map_or(poll, |until| {
+            until.saturating_duration_since(Instant::now())
+        });
+        if left.is_zero() {
+            return;
+        }
+        thread::sleep(poll.min(left));
     }
 }
 
