@@ -401,6 +401,20 @@ function validateFieldShape(
     );
   }
 
+  // An array's elements are not validated as their items_type says, so an
+  // array of thumbnails would carry images nothing checks, under a name the
+  // one-thumbnail rule never counts.
+  if (fd.items_type === "thumbnail") {
+    errors.push(
+      issue({
+        field: `fields.${name}.items_type`,
+        expected: "an element type other than thumbnail",
+        actual: '"thumbnail"',
+        hint: "A thumbnail is one image a type carries. Declare it as its own field of type thumbnail.",
+      }),
+    );
+  }
+
   if (fd.searchable !== undefined && typeof fd.searchable !== "boolean") {
     errors.push(
       issue({
@@ -764,19 +778,21 @@ export function validateTypeSchema(
     }
   }
 
+  const descendants =
+    typeof obj.id === "string" && ctx.descendantsOf
+      ? ctx.descendantsOf(obj.id)
+      : [];
+  if (fields) {
+    validateDescendantShapes(fields, requiredNames, descendants, errors);
+  }
+
   const visibleFields = new Set<string>([
     ...(fields ? Object.keys(fields) : []),
     ...ancestorFields.keys(),
   ]);
 
   if (fields) {
-    validateThumbnails(
-      typeof obj.id === "string" ? obj.id : "",
-      fields,
-      ancestorFields,
-      ctx.descendantsOf,
-      errors,
-    );
+    validateThumbnails(fields, ancestorFields, descendants, errors);
   }
 
   for (const name of requiredNames) {
@@ -938,18 +954,56 @@ function thumbnailNames(
 }
 
 /**
+ * The inheritance rule seen from the parent: a type may not declare a field
+ * under a name a type inheriting from it already declares with another shape.
+ * The child's registration checked it against the parent as the parent then
+ * stood; this checks a change to the parent against the child as it stands,
+ * so neither order leaves the child's items read by one shape and validated
+ * by the other.
+ */
+function validateDescendantShapes(
+  fields: Record<string, unknown>,
+  requiredNames: ReadonlySet<string>,
+  descendants: readonly TypeSchema[],
+  errors: SchemaValidationIssue[],
+): void {
+  for (const [name, def] of Object.entries(fields)) {
+    const raw = asRecord(def);
+    if (!raw) continue;
+    const own = normalizeFieldDefinition(raw, {
+      required: requiredNames.has(name),
+    });
+    for (const child of descendants) {
+      const declared = child.fields[name];
+      if (!declared) continue;
+      const conflict = describeShapeConflict(declared, own);
+      if (conflict) {
+        errors.push(
+          issue({
+            field: `fields.${name}.${conflict.attribute}`,
+            code: "inheritance_violation",
+            expected: `the shape "${child.id}" already declares "${name}" with`,
+            actual: `${conflict.expected} here, ${conflict.actual} in "${child.id}"`,
+            hint: `Give "${name}" the shape "${child.id}" declares, rename it here, or change "${child.id}" first.`,
+          }),
+        );
+      }
+    }
+  }
+}
+
+/**
  * A type carries at most one thumbnail, counting what it inherits and what
  * the types that inherit from it already declare, so a device reading "the
  * item's thumbnail" is never choosing between two.
  */
 function validateThumbnails(
-  id: string,
   fields: Record<string, unknown>,
   ancestorFields: ReadonlyMap<
     string,
     { owner: string; definition: FieldDefinition }
   >,
-  descendantsOf: ((typeId: string) => TypeSchema[]) | undefined,
+  descendants: readonly TypeSchema[],
   errors: SchemaValidationIssue[],
 ): void {
   const own = Object.keys(fields).filter((name) => isThumbnail(fields[name]));
@@ -986,12 +1040,12 @@ function validateThumbnails(
     return;
   }
   // A type gaining a thumbnail its registered children already declare one
-  // beside would leave each of them with two.
-  const crowded = (id && descendantsOf ? descendantsOf(id) : []).flatMap(
-    (child) =>
-      Object.entries(child.fields)
-        .filter(([name, def]) => def.type === "thumbnail" && name !== last)
-        .map(([name]) => `"${name}" in "${child.id}"`),
+  // beside would leave each of them with two. A child declaring this one
+  // under the same name redeclares it, which is not a second.
+  const crowded = descendants.flatMap((child) =>
+    Object.entries(child.fields)
+      .filter(([name, def]) => def.type === "thumbnail" && name !== last)
+      .map(([name]) => `"${name}" in "${child.id}"`),
   );
   if (crowded.length > 0) {
     errors.push(
