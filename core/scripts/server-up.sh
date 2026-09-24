@@ -36,10 +36,21 @@ repo="${MARFA_SERVER_REPO:-$(cd "$(dirname "$0")/../.." && pwd)}"
 # Asked of the kernel, then released so the server can bind it a moment
 # later. The window between is not zero, which is why the health check below
 # is what decides a boot succeeded rather than this line.
+#
+# Asked on the address the server binds, not the one the URL names. Node
+# given no host listens on `::` with IPv6-only off where the machine has
+# IPv6, which takes the port in both families, and on `0.0.0.0` where it does
+# not. A port asked of `127.0.0.1` alone can be one a listener holds on IPv6,
+# and the server's bind then fails with `EADDRINUSE`.
 free_port() {
   python3 -c 'import socket
-s = socket.socket()
-s.bind(("127.0.0.1", 0))
+try:
+    s = socket.socket(socket.AF_INET6)
+    s.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)
+    s.bind(("::", 0))
+except OSError:
+    s = socket.socket()
+    s.bind(("0.0.0.0", 0))
 print(s.getsockname()[1])
 s.close()'
 }
