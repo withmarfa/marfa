@@ -1873,6 +1873,21 @@ describe("identity", () => {
         "a folder left watching asked about an unclaimed source on every pass",
       ).toBe(1);
       expect(watching.running(), watching.stderr).toBe(true);
+      // The witness: the watcher was passing all along, and the minute is
+      // what held it back. Set back the record of when the source was found,
+      // and the next pass asks again.
+      const store = new DatabaseSync(harness.folder.store);
+      try {
+        store
+          .prepare("UPDATE meta SET value = ? WHERE key = ?")
+          .run("2020-01-01T00:00:00.000Z", "unclaimed_source:notes");
+      } finally {
+        store.close();
+      }
+      await vi.waitFor(() => expect(creates()).toBe(2), {
+        timeout: 20_000,
+        interval: 100,
+      });
     } finally {
       await watching.stop();
     }
@@ -1887,7 +1902,7 @@ describe("identity", () => {
 
     // A push is asked for, and asks at once.
     expect((await harness.folder.push()).ok).toBe(true);
-    expect(creates(), "a push did not ask again").toBe(2);
+    expect(creates(), "a push did not ask again").toBe(3);
   });
 
   it("counts an edit over unread content when the file moved before it went", async () => {
@@ -2260,25 +2275,60 @@ describe("identity", () => {
 
   it("says in words when a file is bound to an item that is gone, once while watching", async () => {
     harness = await folderHarness("folder-lost-words");
+    // The one file's create is refused and its row read back as gone; any
+    // other file's create is taken, so a file added later is a pass the
+    // watcher is seen to run.
+    const door = new FolderDoor();
     scriptWrites(harness.server, {
-      create: [refusal(400, "invalid_properties", "the body is not allowed")],
-      read: [refusal(404, "item_not_found", "Item not found")],
+      create: [
+        (request) => {
+          const sent = JSON.parse(request.body) as DoorCreate;
+          return sent.source_id === "mine.md"
+            ? refusal(400, "invalid_properties", "the body is not allowed")
+            : door.create(sent).answer;
+        },
+      ],
+      read: [(request) => door.read(request.pathname.split("/").at(-1) ?? "")],
     });
     put(harness, "mine.md", "---\ntitle: Mine\n---\nnot allowed\n");
+    const lost = "bound to an item that is gone";
+    const createsOf = (key: string) =>
+      harness!.server.requests.filter(
+        (request) =>
+          request.method === "POST" &&
+          request.pathname === "/items" &&
+          (JSON.parse(request.body) as DoorCreate).source_id === key,
+      ).length;
     const watching = harness.folder.watchText();
+    let quiet = "";
     try {
+      await vi.waitFor(() => expect(watching.stdout).toContain(`1 ${lost}`), {
+        timeout: 20_000,
+        interval: 100,
+      });
+      await new Promise((resolve) => setTimeout(resolve, 3_000));
+      quiet = watching.stdout;
+      put(harness, "later.md", "---\ntitle: Later\n---\nallowed\n");
       await vi.waitFor(
-        () =>
-          expect(watching.stdout).toContain("1 bound to an item that is gone"),
+        () => {
+          expect(createsOf("later.md")).toBe(1);
+          expect(watching.stdout.length).toBeGreaterThan(quiet.length);
+        },
         { timeout: 20_000, interval: 100 },
       );
-      await new Promise((resolve) => setTimeout(resolve, 3_000));
+      expect(watching.running(), watching.stderr).toBe(true);
     } finally {
       await watching.stop();
     }
+    // The passes between the first saying and the later file said nothing,
+    // and the watcher was passing through them: it saw the later file.
     expect(
-      watching.stdout.split("bound to an item that is gone").length - 1,
-      `a watcher said the same lost file on every pass: ${watching.stdout}`,
+      quiet.split(lost).length - 1,
+      `a watcher said the same lost file on every pass: ${quiet}`,
+    ).toBe(1);
+    expect(
+      watching.stdout.slice(quiet.length).trim().split("\n").length,
+      `a watcher printed a pass where nothing happened: ${watching.stdout}`,
     ).toBe(1);
   });
 
