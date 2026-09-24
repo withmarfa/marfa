@@ -491,6 +491,151 @@ describe("the scripted answers match the server's", () => {
       at(stale.scripted, "current.id"),
     ]).toEqual([realId, doorId]);
 
+    // An update and a read, decided by both on the row each holds.
+    const patch = async (
+      name: string,
+      ids: [string, string],
+      body: { properties: Record<string, unknown>; version: number },
+      fields: Fields,
+      resolve = false,
+    ) => {
+      const real = await client.rawRequest<Record<string, unknown>>(
+        `/items/${ids[0]}${resolve ? "?conflict=auto" : ""}`,
+        { method: "PATCH", body },
+      );
+      expectFidelity(
+        name,
+        { status: real.status, body: real.ok ? real.data : real.error },
+        door.update(ids[1], body, { resolve }),
+        fields,
+      );
+    };
+    const readBoth = async (
+      name: string,
+      ids: [string, string],
+      fields: Fields,
+    ) => {
+      const real = await client.rawRequest<Record<string, unknown>>(
+        `/items/${ids[0]}`,
+      );
+      expectFidelity(
+        name,
+        { status: real.status, body: real.ok ? real.data : real.error },
+        door.read(ids[1]),
+        fields,
+      );
+    };
+    const missing = "01a00000-0000-7000-8000-0000000000fc";
+    await patch(
+      "an update naming the version the row is at",
+      [realId, doorId],
+      { properties: { title: "patched" }, version: 2 },
+      {
+        same: ["item.version", "item.properties", "item.source_id"],
+        shape: ["item.id"],
+      },
+    );
+    // Stale, at version 2 of a row since moved on: a change nobody else made
+    // is merged, a collision on a last-writer field is refused, and resolved
+    // where the caller asks.
+    const merged = {
+      same: ["item.version", "item.properties", "item.source_id"],
+      shape: ["item.id"],
+    };
+    await patch(
+      "a stale update of a field nobody changed since",
+      [realId, doorId],
+      { properties: { body: "only here" }, version: 2 },
+      merged,
+      true,
+    );
+    await patch(
+      "a stale update colliding on a last-writer field",
+      [realId, doorId],
+      { properties: { title: "stale title" }, version: 2 },
+      {
+        same: [
+          "error.code",
+          "conflicting_fields",
+          "current.version",
+          "ancestor.version",
+        ],
+        shape: [
+          "error.message",
+          "error.status",
+          "current.id",
+          "current.properties",
+          "current.tier",
+          "current.occurred_at",
+          "current.source_id",
+          "ancestor.id",
+          "ancestor.properties",
+          "ancestor.tier",
+          "ancestor.occurred_at",
+          "ancestor.source_id",
+          "merge_policy",
+        ],
+      },
+    );
+    await patch(
+      "the same collision, resolved by the server",
+      [realId, doorId],
+      { properties: { title: "stale title" }, version: 2 },
+      {
+        ...merged,
+        same: [...merged.same, "conflict_resolution"],
+      },
+      true,
+    );
+    await patch(
+      "an update of a row nobody holds",
+      [missing, missing],
+      { properties: { title: "nowhere" }, version: 1 },
+      { same: ["error.code"], shape: ["error.message"] },
+    );
+    await readBoth("a read of a row held", [realId, doorId], {
+      same: ["item.version", "item.properties", "item.state"],
+      shape: ["item.id"],
+    });
+    await readBoth("a read of a row nobody holds", [missing, missing], {
+      same: ["error.code"],
+      shape: ["error.message"],
+    });
+
+    // The row in the bin: an update is refused, a read finds nothing, and a
+    // keyed create is acknowledged and not written.
+    const binned = await client.deleteItem(realId);
+    expect(binned.ok, JSON.stringify(binned.error)).toBe(true);
+    door.trash(doorId);
+    await patch(
+      "an update of a row in the bin",
+      [realId, doorId],
+      { properties: { title: "binned" }, version: 3 },
+      { same: ["error.code"], shape: ["error.message"] },
+    );
+    await readBoth("a read of a row in the bin", [realId, doorId], {
+      same: ["error.code"],
+      shape: ["error.message"],
+    });
+    const acknowledged = await decide(
+      "a keyed create onto a row in the bin",
+      { ...keyed, version: 0, properties: { title: "after the bin" } },
+      {
+        same: [
+          "acknowledged",
+          "item.state",
+          "item.version",
+          "item.properties",
+          "item.source_id",
+        ],
+        shape: ["item.id"],
+      },
+    );
+    expect([
+      at(acknowledged.real, "item.id"),
+      at(acknowledged.scripted, "item.id"),
+    ]).toEqual([realId, doorId]);
+
     // A source the credential's key does not claim: refused, naming it.
     await decide(
       "a create naming a source its key does not claim",

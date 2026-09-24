@@ -26,6 +26,8 @@ export interface DoorRow {
   source_id: string | null;
   type?: string;
   version: number;
+  /** A row somebody trashed, which a natural key still resolves. */
+  trashed?: boolean;
 }
 
 /** A create's body, as far as the door reads it. */
@@ -52,10 +54,16 @@ export interface DoorDecision {
  * A folder fixture scripts its server with this rather than with fixed
  * answers, because what a folder does depends on what the server decides:
  * whether a create lands on a row or makes one, is refused for an id or a
- * version, or is refused a source the key does not claim. `fidelity.test.ts`
- * holds each decision here to the real server's for the same request, so a
- * fixture passing against this door is passing against the server's rules and
- * not against this file's.
+ * version, or is refused a source the key does not claim; whether an update
+ * lands, names a row that is not there or one in the bin; whether a read finds
+ * the row. `fidelity.test.ts` holds each of those decisions to the real
+ * server's for the same request, so a fixture passing against this door is
+ * passing against the server's rules and not against this file's.
+ *
+ * What the door does not compute it does not answer: a stale version on an
+ * update, or a stale create whose changes collide with nothing, is answered
+ * `501` rather than with a merge the door never performed, so a fixture that
+ * reaches one fails at the harness rather than passing on an invented answer.
  */
 export class FolderDoor {
   /** Every row the door holds by id, including the ones it was seeded with. */
@@ -111,6 +119,26 @@ export class FolderDoor {
           ),
         };
       }
+      // A row in the bin is acknowledged and not written, whatever version
+      // the create carries (`versions.md` 10).
+      if (held.trashed === true) {
+        // The stored row, which carries no hydrated edges: nothing was
+        // written, so nothing was read back with them.
+        const { edges: _edges, ...stored } = this.wire(incumbent);
+        const body = answers.upserted(stored);
+        return {
+          answer:
+            body.kind === "json"
+              ? {
+                  ...body,
+                  body: {
+                    ...(body.body as Record<string, unknown>),
+                    acknowledged: true,
+                  },
+                }
+              : body,
+        };
+      }
       if (sent.id !== undefined && sent.id !== incumbent) {
         return {
           answer: answers.idNotTheKeys(
@@ -134,8 +162,7 @@ export class FolderDoor {
           .filter(
             (field) =>
               !same(sent.properties[field], ancestor.properties[field]) &&
-              !same(held.properties[field], ancestor.properties[field]) &&
-              !same(held.properties[field], sent.properties[field]),
+              !same(held.properties[field], ancestor.properties[field]),
           )
           .sort();
         // A stale create whose changes collide with nothing is merged by the
@@ -187,7 +214,16 @@ export class FolderDoor {
     return { answer: answers.created(this.wire(id)), minted: id };
   }
 
-  /** An update, which moves none of type, source or key unless it names the key. */
+  /**
+   * An update, which moves none of type, source or key unless it names the
+   * key. On the version the row is at it lands. On one the row has moved
+   * past it is merged against that version's snapshot as the server merges
+   * it (`versions.md` 8, 11, 13): a field only it changed is applied, a field
+   * both changed collides, and a collision is resolved last writer wins where
+   * the caller asked the server to resolve and refused where it did not. A
+   * collision on a keep-both property, which the server answers by writing a
+   * sibling, is not modeled and answers `501`.
+   */
   update(
     id: string,
     sent: {
@@ -195,24 +231,98 @@ export class FolderDoor {
       source_id?: string;
       version: number;
     },
+    options: { resolve?: boolean } = {},
   ): Answer {
+    // A row in the bin is not there to an update, as it is not to a read.
     const before = this.rows.get(id);
-    if (before !== undefined) this.remember(id, before);
+    if (before === undefined || before.trashed === true) {
+      return refusal(404, "item_not_found", `Item ${id} not found`);
+    }
+    const sentProperties = sent.properties ?? {};
+    let applied: Record<string, unknown> = sentProperties;
+    let sourceId = sent.source_id ?? before.source_id;
+    let resolution: Record<string, string> | undefined;
+    if (sent.version !== before.version) {
+      const ancestor = this.snapshots.get(id)?.get(sent.version);
+      if (ancestor === undefined) {
+        return answers.ancestorUnavailable(
+          this.snapshot(id, before),
+          sent.version,
+        );
+      }
+      const sides = Object.keys(sentProperties).map((field) => ({
+        field,
+        mine: sentProperties[field],
+        base: ancestor.properties[field],
+        theirs: before.properties[field],
+      }));
+      if (sent.source_id !== undefined) {
+        sides.push({
+          field: "source_id",
+          mine: sent.source_id,
+          base: ancestor.source_id,
+          theirs: before.source_id,
+        });
+      }
+      const changed = sides.filter((side) => !same(side.mine, side.base));
+      // Both changed it, whether or not to the same value: the server calls
+      // that a collision too, and resolves it to the value both wrote.
+      const colliding = changed.filter((side) => !same(side.theirs, side.base));
+      const keepBoth = Object.keys(NOTE_MERGE_POLICY.fields);
+      if (colliding.some((side) => keepBoth.includes(side.field))) {
+        return refusal(
+          501,
+          "not_scripted",
+          "the scripted folder door does not write a conflicted copy",
+        );
+      }
+      if (colliding.length > 0 && options.resolve !== true) {
+        return answers.versionConflict(
+          this.snapshot(id, before),
+          this.snapshot(id, ancestor),
+          colliding.map((side) => side.field).sort(),
+          NOTE_MERGE_POLICY,
+        );
+      }
+      applied = Object.fromEntries(
+        changed
+          .filter((side) => side.field !== "source_id")
+          .map((side) => [side.field, side.mine]),
+      );
+      sourceId = changed.some((side) => side.field === "source_id")
+        ? (sent.source_id ?? before.source_id)
+        : before.source_id;
+      if (colliding.length > 0) {
+        resolution = Object.fromEntries(
+          colliding.map((side) => [side.field, "last_writer_wins"]),
+        );
+      }
+    }
+    this.remember(id, before);
     this.rows.set(id, {
-      properties: { ...before?.properties, ...sent.properties },
-      source: before?.source,
-      source_id: sent.source_id ?? before?.source_id ?? null,
-      type: before?.type,
-      version: sent.version + 1,
+      ...before,
+      properties: { ...before.properties, ...applied },
+      source_id: sourceId,
+      version: before.version + 1,
     });
-    return answers.updated(this.wire(id));
+    return resolution === undefined
+      ? answers.updated(this.wire(id))
+      : answers.resolved(this.wire(id), resolution);
   }
 
-  /** A read by id, which a device makes to hold a row a refusal named. */
+  /** A read by id, which a device makes to hold a row a refusal named. A row
+   *  in the bin reads as absent, as it does on the server. */
   read(id: string): Answer {
-    return this.rows.has(id)
+    const row = this.rows.get(id);
+    return row !== undefined && row.trashed !== true
       ? answers.updated(this.wire(id))
-      : refusal(404, "item_not_found", "Item not found");
+      : refusal(404, "item_not_found", `Item ${id} not found`);
+  }
+
+  /** Moves a row to the bin, as another device's delete would. */
+  trash(id: string): void {
+    const row = this.rows.get(id);
+    if (row !== undefined) this.rows.set(id, { ...row, trashed: true });
   }
 
   private remember(id: string, row: DoorRow): void {
@@ -242,6 +352,7 @@ export class FolderDoor {
       properties: row.properties,
       ...(row.source === undefined ? {} : { source: row.source }),
       source_id: row.source_id,
+      ...(row.trashed === true ? { state: "trashed" } : {}),
     });
   }
 }

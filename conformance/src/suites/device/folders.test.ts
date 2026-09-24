@@ -145,6 +145,7 @@ function scriptFolderWrites(
             source_id?: string;
             version: number;
           },
+          { resolve: request.query.get("conflict") === "auto" },
         ),
     ],
     // A device reads a row by id to hold one a refusal named, and to
@@ -814,7 +815,10 @@ describe("files and items", () => {
     expect(read(harness, "source.md").split("[[other]]")).toHaveLength(2);
 
     // The person takes the line out, and nothing else: the frontmatter
-    // the folder wrote stays, so the only difference is the link.
+    // the folder wrote stays, so the only difference is the link. Each edit
+    // below is drained before the next, as a folder left watching drains
+    // every pass: queued together, each would be based on the version the
+    // copy read before the first, and the server would merge each against it.
     const takeOut = () => {
       writeFileSync(
         join(harness!.dir, "source.md"),
@@ -823,6 +827,7 @@ describe("files and items", () => {
     };
     takeOut();
     expect((await harness.folder.scan()).ok).toBe(true);
+    expect((await device.drain()).ok).toBe(true);
 
     // The edge stays (21), and the link does not come back.
     const again = await harness.folder.pull();
@@ -853,6 +858,7 @@ describe("files and items", () => {
       read(harness, "source.md") + "and [[nowhere]]\n",
     );
     expect((await harness.folder.scan()).ok).toBe(true);
+    expect((await device.drain()).ok).toBe(true);
     const stoodDown = await harness.folder.pull();
     expect(stoodDown.ok && stoodDown.value.rewritten).toBe(0);
     expect(
@@ -870,6 +876,7 @@ describe("files and items", () => {
         .replace("and [[nowhere]]\n", ""),
     );
     expect((await harness.folder.scan()).ok).toBe(true);
+    expect((await device.drain()).ok).toBe(true);
     const mentioned = await device.createEdge({
       source,
       target,
