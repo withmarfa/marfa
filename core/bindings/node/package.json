@@ -15,7 +15,8 @@
     "build": "napi build --platform --release",
     "build:debug": "napi build --platform",
     "proof": "node scripts/proof.mjs",
-    "check": "tsc -p tsconfig.json"
+    "check": "tsc -p tsconfig.json",
+    "test": "node --expose-gc --test test/"
   },
   "devDependencies": {
     "@napi-rs/cli": "^3",

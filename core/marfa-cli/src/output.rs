@@ -20,6 +20,23 @@ pub fn report<T: Serialize>(
     Ok(())
 }
 
+/// One line for a command that runs and reports as it goes: compact JSON,
+/// flushed, so a reader can take each line as it arrives.
+pub fn line_of<T: Serialize>(
+    value: &T,
+    json: bool,
+    human: impl FnOnce() -> String,
+) -> Result<(), CliError> {
+    let mut out = io::stdout().lock();
+    if json {
+        writeln!(out, "{}", serde_json::to_string(value)?)?;
+    } else {
+        writeln!(out, "{}", human())?;
+    }
+    out.flush()?;
+    Ok(())
+}
+
 pub fn items(items: &[Item], json: bool) -> Result<(), CliError> {
     let mut out = io::stdout().lock();
     if json {

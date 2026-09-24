@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { describe, it, expect, afterEach, vi } from "vitest";
 import {
   KEY,
@@ -484,6 +484,123 @@ describe("the working copy belongs to one server", () => {
       file.includes(KEY),
       "the key is written into the store, so a copied file carries the credential with it",
     ).toBe(false);
+  });
+
+  it("opens a store to read without claiming the writer role, and is told when it saves", async () => {
+    harness = await hydratedHarness("reader-first", {
+      rows: { "core.note": [{ item: { id: "n1" } }] },
+    });
+    // A path where nothing has been made: the reading open refuses it and
+    // leaves nothing there. The witness: an ordinary open of such a path
+    // makes the store.
+    const made = `${harness.device.store}.made`;
+    expect((await harness.device.reopen({ store: made }).status()).ok).toBe(
+      true,
+    );
+    expect(existsSync(made)).toBe(true);
+    const absent = `${harness.device.store}.absent`;
+    const nowhere = await harness.device
+      .reopen({ reader: true, store: absent })
+      .status();
+    expect(nowhere.ok, "a reading open answered for a path with no store").toBe(
+      false,
+    );
+    if (!nowhere.ok) expect(nowhere.refusal.code).toBe("invalid");
+    expect(existsSync(absent)).toBe(false);
+
+    // Never writes, even where a writer died with a save still in its
+    // journal and the reader is the last to close: a writer that closes
+    // last folds the journal into the file, and a reader must not. The
+    // hydration's head read is still the answer at the front, so the follow
+    // reads it, waits, and asks again for this one.
+    harness.server.answer("GET", "/events", {
+      kind: "sse",
+      hold: true,
+      frames: [
+        connected,
+        itemEvent("11", "item.created", wireItem({ id: "journaled" })),
+      ],
+    });
+    const dying = harness.device.holdFollow(20);
+    try {
+      await vi.waitFor(() => expect(dying.stdout).toContain('"cursor":"11"'), {
+        timeout: 10_000,
+        interval: 25,
+      });
+    } finally {
+      await dying.stop();
+    }
+    const bytes = () => readFileSync(harness!.device.store);
+    const untouched = bytes();
+    const reading = harness.device.reopen({ reader: true });
+    expect((await reading.status()).ok).toBe(true);
+    expect((await reading.get("journaled")).ok).toBe(true);
+    expect(
+      bytes().equals(untouched),
+      "a store opened to read was written",
+    ).toBe(true);
+    // The witness: the writer, closing last, folds the journal in.
+    expect((await harness.device.status()).ok).toBe(true);
+    expect(
+      bytes().equals(untouched),
+      "the writer closing last left the file as it was, so the check above proves nothing",
+    ).toBe(false);
+
+    // The helper starts first and waits for saves. `changes` opens to read
+    // whether or not it is told to, so it starts here without `--reader`,
+    // and the app starting after it is the writer all the same.
+    const reader = harness.device.hold(["changes", "--for", "20"]);
+    const pause = (ms: number) =>
+      new Promise((resolve) => setTimeout(resolve, ms));
+    try {
+      await vi.waitFor(
+        () => {
+          expect(
+            reader.stdout,
+            `the reader never started watching: ${reader.stderr}`,
+          ).toContain('"watching":true');
+        },
+        { timeout: 10_000, interval: 25 },
+      );
+      const told = () =>
+        reader.stdout.split("\n").filter((line) => line.trim() !== "");
+      // Many of its polls pass with nothing saved.
+      await pause(1_000);
+      expect(
+        told(),
+        "the reader reported a save before anything saved",
+      ).toHaveLength(1);
+      // Three saves a third of a second apart, each told once: a reader
+      // that polled slowly would fold two into one, and one that forgot
+      // what it had seen would tell each again at every poll.
+      for (const title of ["first", "second", "third"]) {
+        const wrote = await harness.device.create({
+          type: "core.note",
+          properties: { title, body: "saved" },
+        });
+        expect(
+          wrote.ok,
+          `a reader started first took the writer role, so the app cannot write to its own store: ${JSON.stringify(wrote)}`,
+        ).toBe(true);
+        await pause(350);
+      }
+      await vi.waitFor(
+        () => {
+          expect(
+            told().length,
+            "the writer saved and the reader was not told",
+          ).toBeGreaterThanOrEqual(4);
+        },
+        { timeout: 5_000, interval: 50 },
+      );
+      await pause(1_000);
+      expect(
+        told(),
+        "the reader told three saves a third of a second apart some other number of times",
+      ).toHaveLength(4);
+    } finally {
+      await reader.stop();
+    }
   });
 
   it("gives a second opener a reading handle that refuses writes", async () => {

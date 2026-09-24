@@ -383,8 +383,13 @@ mod tests {
         let after = Cli::try_parse_from(["marfa", "device", "queue", "--db", "s"]).unwrap();
         for cli in [before, after] {
             match cli.command {
-                Command::Device(DeviceArgs { db, command }) => {
+                Command::Device(DeviceArgs {
+                    db,
+                    reader,
+                    command,
+                }) => {
                     assert_eq!(db.as_deref(), Some(std::path::Path::new("s")));
+                    assert!(!reader);
                     assert!(matches!(command, DeviceCommand::Queue));
                 }
                 other => panic!("{other:?}"),

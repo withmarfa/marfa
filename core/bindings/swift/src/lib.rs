@@ -2,6 +2,7 @@
 //! because UniFFI has no arbitrary-JSON type.
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 uniffi::setup_scaffolding!();
 
@@ -772,8 +773,91 @@ pub struct MarfaCore {
     inner: marfa_core::Core,
 }
 
+/// One event a held stream applied: what it was, what it was about, and the
+/// cursor it left.
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct Change {
+    pub event: String,
+    pub item_id: Option<String>,
+    pub edge_id: Option<String>,
+    pub cursor: String,
+}
+
+impl From<&marfa_core::Change> for Change {
+    fn from(change: &marfa_core::Change) -> Self {
+        Change {
+            event: change.event.clone(),
+            item_id: change.item_id.clone(),
+            edge_id: change.edge_id.clone(),
+            cursor: change.cursor.clone(),
+        }
+    }
+}
+
+/// What an app hands `follow`: told of each change as it lands, on a thread
+/// of the core's, and once when the stream ends, with the error that ended
+/// it or none where it was stopped.
+#[uniffi::export(with_foreign)]
+pub trait ChangeListener: Send + Sync {
+    fn changed(&self, change: Change);
+    fn ended(&self, error: Option<MarfaError>);
+}
+
+/// A held stream, stopped by `stop` or by letting it go. The follow ends
+/// within a quarter second of either, and `ended` is called once it has.
+#[derive(uniffi::Object)]
+pub struct Subscription {
+    stop: Arc<AtomicBool>,
+}
+
+#[uniffi::export]
+impl Subscription {
+    pub fn stop(&self) {
+        self.stop.store(true, Ordering::Relaxed);
+    }
+}
+
+/// The follow's thread holds the core, and with it the writer's claim on
+/// the store, so a subscription nobody holds any more must end it.
+impl Drop for Subscription {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+    }
+}
+
 #[uniffi::export]
 impl MarfaCore {
+    /// Opens a store another process writes, to read it only: never the
+    /// writer, never a write, and a path with no store is refused.
+    #[uniffi::constructor]
+    pub fn open_reader(path: String) -> Result<Arc<Self>, MarfaError> {
+        Ok(Arc::new(MarfaCore {
+            inner: marfa_core::Core::open_reader(path)?,
+        }))
+    }
+
+    /// A number that moves each time another process saves to the store.
+    pub fn data_version(&self) -> Result<i64, MarfaError> {
+        Ok(self.inner.data_version()?)
+    }
+
+    /// Holds the event stream open on a thread of its own and applies each
+    /// event as it arrives, telling `listener` of each change.
+    pub fn follow(self: Arc<Self>, listener: Arc<dyn ChangeListener>) -> Arc<Subscription> {
+        let stop = Arc::new(AtomicBool::new(false));
+        let flag = Arc::clone(&stop);
+        std::thread::spawn(move || {
+            let ended = self
+                .inner
+                .follow(&flag, |change| listener.changed(change.into()));
+            // Let go of the store before saying so: a listener that opens it
+            // again on being told must find the writer's role free.
+            drop(self);
+            listener.ended(ended.err().map(Into::into));
+        });
+        Arc::new(Subscription { stop })
+    }
+
     /// Opens the file at `path`, creating it when absent. `url` and `key`
     /// go together; without them only local reads work.
     #[uniffi::constructor]
@@ -1254,6 +1338,181 @@ mod tests {
                 r#type: Some("core.note".into()),
                 tags: vec!["a".into(), "b".into()],
             }
+        );
+    }
+
+    /// A server that hydrates an empty `core.note` slice at cursor 10 and
+    /// holds every stream after it open, saying keepalives, until it stops.
+    struct Quiet {
+        url: String,
+        streams: Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    fn quiet() -> Quiet {
+        use std::io::{BufRead, BufReader, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let streams = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counted = Arc::clone(&streams);
+        std::thread::spawn(move || {
+            for stream in listener.incoming().flatten() {
+                let counted = Arc::clone(&counted);
+                std::thread::spawn(move || {
+                    let mut reader = BufReader::new(stream.try_clone().unwrap());
+                    let (mut head, mut line) = (String::new(), String::new());
+                    while reader.read_line(&mut line).unwrap_or(0) > 2 {
+                        head.push_str(&line);
+                        line.clear();
+                    }
+                    let path = head.split_whitespace().nth(1).unwrap_or("/");
+                    let path = path.split('?').next().unwrap_or("/").to_string();
+                    let resumed = head.to_ascii_lowercase().contains("last-event-id");
+                    let mut stream = stream;
+                    let json = |body: &str| {
+                        format!(
+                            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                            body.len()
+                        )
+                    };
+                    let events = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n: connected\n\n";
+                    let _ = match (path.as_str(), resumed) {
+                        ("/types", _) => stream.write_all(json(r#"{"data":[{"id":"core.note","display_hints":{"title_field":"title"}}],"next_cursor":null}"#).as_bytes()),
+                        ("/items", _) => stream.write_all(json(r#"{"data":[],"next_cursor":null}"#).as_bytes()),
+                        ("/events", false) => stream.write_all(format!("{events}event: stream_cursor\ndata: {{\"type\":\"stream_cursor\",\"cursor\":\"10\"}}\n\n").as_bytes()),
+                        ("/events", true) => {
+                            counted.fetch_add(1, Ordering::SeqCst);
+                            let _ = stream.write_all(events.as_bytes());
+                            while stream.write_all(b": keepalive\n\n").is_ok() {
+                                std::thread::sleep(std::time::Duration::from_millis(50));
+                            }
+                            Ok(())
+                        }
+                        _ => stream.write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"),
+                    };
+                });
+            }
+        });
+        Quiet { url, streams }
+    }
+
+    struct Told(std::sync::mpsc::Sender<Option<MarfaError>>);
+
+    impl ChangeListener for Told {
+        fn changed(&self, _: Change) {}
+        fn ended(&self, error: Option<MarfaError>) {
+            let _ = self.0.send(error);
+        }
+    }
+
+    #[test]
+    fn a_subscription_let_go_ends_its_follow() {
+        let server = quiet();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("core.sqlite").display().to_string();
+        let core = MarfaCore::open(path, Some(server.url.clone()), Some("k".into())).unwrap();
+        core.hydrate(vec!["core.note".into()], Tier::Library)
+            .unwrap();
+        let (told, ended) = std::sync::mpsc::channel();
+        let subscription = Arc::clone(&core).follow(Arc::new(Told(told)));
+        // The witness: the follow is holding a stream.
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while server.streams.load(Ordering::SeqCst) == 0 {
+            assert!(
+                std::time::Instant::now() < until,
+                "the follow never held a stream"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        drop(subscription);
+        assert_eq!(
+            ended.recv_timeout(std::time::Duration::from_secs(2)),
+            Ok(None),
+            "a subscription let go left its follow holding the store"
+        );
+    }
+
+    /// Opens the store again the moment it is told the follow ended, as an
+    /// app closing and reopening it would, and says which handle it got.
+    struct Reopens {
+        path: String,
+        handle: std::sync::mpsc::Sender<Handle>,
+    }
+
+    impl ChangeListener for Reopens {
+        fn changed(&self, _: Change) {}
+        fn ended(&self, _: Option<MarfaError>) {
+            let reopened = MarfaCore::open(self.path.clone(), None, None).unwrap();
+            let _ = self.handle.send(reopened.held_handle());
+        }
+    }
+
+    #[test]
+    fn a_follow_lets_go_of_the_store_before_it_says_it_ended() {
+        let server = quiet();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("core.sqlite").display().to_string();
+        let core =
+            MarfaCore::open(path.clone(), Some(server.url.clone()), Some("k".into())).unwrap();
+        core.hydrate(vec!["core.note".into()], Tier::Library)
+            .unwrap();
+        let (handle, reopened) = std::sync::mpsc::channel();
+        let subscription = Arc::clone(&core).follow(Arc::new(Reopens { path, handle }));
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while server.streams.load(Ordering::SeqCst) == 0 {
+            assert!(
+                std::time::Instant::now() < until,
+                "the follow never held a stream"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        // The app lets go of its own handle, then stops the follow.
+        drop(core);
+        subscription.stop();
+        let handle = reopened
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("the follow never said it ended");
+        assert!(
+            matches!(handle, Handle::Writer),
+            "a store opened again on being told the follow ended was still held by it"
+        );
+    }
+
+    #[test]
+    fn a_store_opened_to_read_is_never_made_never_the_writer_and_hears_of_saves() {
+        let dir = tempfile::tempdir().unwrap();
+        let absent = dir.path().join("absent.sqlite");
+        assert!(MarfaCore::open_reader(absent.display().to_string()).is_err());
+        assert!(
+            !absent.exists(),
+            "a reading open made a store where there was none"
+        );
+
+        let server = quiet();
+        let path = dir.path().join("core.sqlite").display().to_string();
+        let writer = MarfaCore::open(path.clone(), Some(server.url), Some("k".into())).unwrap();
+        writer
+            .hydrate(vec!["core.note".into()], Tier::Library)
+            .unwrap();
+        let reader = MarfaCore::open_reader(path).unwrap();
+        assert!(matches!(reader.held_handle(), Handle::Reader));
+        let before = reader.data_version().unwrap();
+        writer
+            .create_item(Draft {
+                r#type: "core.note".into(),
+                id: None,
+                properties_json: r#"{"title":"saved"}"#.into(),
+                tags: Vec::new(),
+                tier: None,
+                source: None,
+                source_id: None,
+                occurred_at: None,
+                base_version: None,
+            })
+            .unwrap();
+        assert_ne!(
+            reader.data_version().unwrap(),
+            before,
+            "the writer saved and the reader was not told"
         );
     }
 }

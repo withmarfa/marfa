@@ -1,8 +1,10 @@
 //! The Node-facing shape of `marfa_core`.
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use napi::bindgen_prelude::*;
+use napi::threadsafe_function::{ThreadsafeCallContext, ThreadsafeFunctionCallMode};
 use napi_derive::napi;
 
 #[napi(string_enum = "snake_case")]
@@ -607,6 +609,48 @@ fn failure(error: marfa_core::CoreError) -> Error {
     Error::new(napi::Status::GenericFailure, format!("{code}: {detail}"))
 }
 
+/// One event a held stream applied: what it was, what it was about, and the
+/// cursor it left.
+#[napi(object)]
+pub struct Change {
+    pub event: String,
+    pub item_id: Option<String>,
+    pub edge_id: Option<String>,
+    pub cursor: String,
+}
+
+/// What the follow's thread hands the JavaScript thread, in the order it
+/// happened.
+enum Told {
+    Change(Change),
+    End(Option<String>),
+}
+
+/// A held stream, stopped by `stop` or by being collected. The follow ends
+/// within a quarter second of either, and `onEnd` is called once it has.
+#[napi]
+pub struct Subscription {
+    stop: Arc<AtomicBool>,
+}
+
+#[napi]
+impl Subscription {
+    #[napi]
+    pub fn stop(&self) {
+        self.stop.store(true, Ordering::Relaxed);
+    }
+}
+
+/// The follow's thread holds the core, and with it the writer's claim on
+/// the store, so a subscription nobody holds any more must end it. Node
+/// drops it when it is collected and when its environment is torn down, a
+/// worker's included, so either ends the follow.
+impl Drop for Subscription {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+    }
+}
+
 /// A local copy of a slice of one server.
 #[napi]
 pub struct MarfaCore {
@@ -751,6 +795,95 @@ impl Task for Drain {
 
 #[napi]
 impl MarfaCore {
+    /// Opens a store another process writes, to read it only: never the
+    /// writer, never a write, and a path with no store is refused.
+    #[napi(factory)]
+    pub fn open_reader(path: String) -> Result<MarfaCore> {
+        let core = marfa_core::Core::open_reader(path).map_err(failure)?;
+        Ok(MarfaCore {
+            inner: Arc::new(core),
+        })
+    }
+
+    /// A number that moves each time another process saves to the store.
+    #[napi]
+    pub fn data_version(&self) -> Result<i64> {
+        self.inner.data_version().map_err(failure)
+    }
+
+    /// Holds the event stream open on a thread of its own and applies each
+    /// event as it arrives: `onChange` for each change, then `onEnd` once,
+    /// with the error that ended it or null where it was stopped. Neither
+    /// callback keeps the process alive. An `onChange` that throws ends the
+    /// follow, and `onEnd` is told what it threw, as `listener_threw: …`.
+    #[napi]
+    pub fn follow(
+        &self,
+        env: Env,
+        on_change: Function<Change, ()>,
+        on_end: Function<Option<String>, ()>,
+    ) -> Result<Subscription> {
+        let stop = Arc::new(AtomicBool::new(false));
+        let on_change = on_change.create_ref()?;
+        let on_end = on_end.create_ref()?;
+        let flag = Arc::clone(&stop);
+        let mut threw: Option<String> = None;
+        // One queue carries both callbacks, so `onEnd` runs after every
+        // `onChange` sent before it; two would keep no order between them.
+        // Its own function does nothing: each call is made here, where a
+        // throw can be caught.
+        let tell = env
+            .create_function_from_closure::<(), (), _>("follow", |_| Ok(()))?
+            .build_threadsafe_function::<Told>()
+            .callee_handled::<false>()
+            .weak::<true>()
+            .build_callback(move |context: ThreadsafeCallContext<Told>| {
+                match context.value {
+                    Told::Change(change) => {
+                        if threw.is_none()
+                            && let Err(thrown) = on_change.borrow_back(&context.env)?.call(change)
+                        {
+                            threw = Some(thrown.reason);
+                            flag.store(true, Ordering::Relaxed);
+                        }
+                    }
+                    Told::End(error) => {
+                        let error = match threw.take() {
+                            Some(thrown) => {
+                                Some(format!("listener_threw: onChange threw {thrown}"))
+                            }
+                            None => error,
+                        };
+                        on_end.borrow_back(&context.env)?.call(error)?;
+                    }
+                }
+                Ok(())
+            })?;
+        let flag = Arc::clone(&stop);
+        let core = Arc::clone(&self.inner);
+        std::thread::spawn(move || {
+            let result = core.follow(&flag, |change| {
+                tell.call(
+                    Told::Change(Change {
+                        event: change.event.clone(),
+                        item_id: change.item_id.clone(),
+                        edge_id: change.edge_id.clone(),
+                        cursor: change.cursor.clone(),
+                    }),
+                    ThreadsafeFunctionCallMode::NonBlocking,
+                );
+            });
+            // Let go of the store before saying so: an `onEnd` that opens it
+            // again must find the writer's role free.
+            drop(core);
+            tell.call(
+                Told::End(result.err().map(|error| failure(error).reason)),
+                ThreadsafeFunctionCallMode::NonBlocking,
+            );
+        });
+        Ok(Subscription { stop })
+    }
+
     /// Opens the file at `path`, creating it when absent. `url` and `key` go
     /// together; without them only local reads work.
     #[napi(factory)]

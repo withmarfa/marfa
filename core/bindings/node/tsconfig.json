@@ -9,5 +9,5 @@
     "target": "es2022",
     "types": ["node"]
   },
-  "files": ["scripts/proof.mjs"]
+  "files": ["scripts/proof.mjs", "test/follow.test.mjs"]
 }

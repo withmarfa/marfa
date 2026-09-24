@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import {
   startHarness,
   scriptHydration,
@@ -13,12 +13,15 @@ import {
   headRead,
   itemEvent,
   itemsPage,
+  refusal,
   replay,
   streamCursor,
   typeCatalog,
   wireItem,
   wireType,
 } from "../../device/marfa-answers.js";
+import type { Answer } from "../../device/scripted-server.js";
+import type { FollowReport } from "../../device/protocol.js";
 
 /**
  * "Events apply in log order, gated by version", and "a stale cursor means
@@ -539,6 +542,353 @@ describe("catch-up replays from the cursor", () => {
       held.value.properties.title,
       "the event erased a blocked edit, which is still in the queue for a release to send again, so the copy shows it undone while the queue holds it",
     ).toBe("edited here");
+  });
+
+  it("applies each event on a held stream as it arrives, and resumes from its cursor when the stream drops", async () => {
+    harness = await startHarness("follow-held");
+    const { server, device } = harness;
+    scriptHydration(server, {
+      head: "10",
+      rows: {
+        "core.note": [
+          {
+            item: {
+              id: "row",
+              version: 1,
+              properties: { title: "as hydrated", body: "the body" },
+            },
+          },
+        ],
+      },
+    });
+    const resumedFrom: Array<string | undefined> = [];
+    server.answer(
+      "GET",
+      "/events",
+      // Two events and then the stream ends: the connection a laptop loses
+      // when it sleeps. The second is older than the row it names, so it
+      // changes nothing and is not reported.
+      (request) => {
+        resumedFrom.push(request.headers["last-event-id"]);
+        return {
+          kind: "sse",
+          frames: [
+            connected,
+            itemEvent(
+              "11",
+              "item.updated",
+              wireItem({
+                id: "row",
+                version: 2,
+                properties: { title: "changed while held", body: "the body" },
+              }),
+            ),
+            itemEvent(
+              "12",
+              "item.updated",
+              wireItem({
+                id: "row",
+                version: 1,
+                properties: { title: "as hydrated", body: "the body" },
+              }),
+            ),
+          ],
+        };
+      },
+      // A connection dropped before it answered.
+      (request) => {
+        resumedFrom.push(request.headers["last-event-id"]);
+        return { kind: "drop" };
+      },
+      (request) => {
+        resumedFrom.push(request.headers["last-event-id"]);
+        return {
+          kind: "sse",
+          hold: true,
+          frames: [
+            connected,
+            itemEvent(
+              "13",
+              "item.created",
+              wireItem({
+                id: "arrived",
+                version: 1,
+                properties: { title: "arrived live", body: "new" },
+              }),
+            ),
+          ],
+        };
+      },
+    );
+
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    const follow = device.holdFollow(10);
+    try {
+      // As it arrives: the change is told while the stream is still held,
+      // not when the follow ends.
+      await vi.waitFor(
+        () => {
+          expect(
+            follow.stdout,
+            `the event on the held stream was not told: ${follow.stderr}`,
+          ).toContain('"cursor":"13"');
+        },
+        { timeout: 9_000, interval: 50 },
+      );
+      expect(
+        follow.running(),
+        "the change was told only once the follow ended",
+      ).toBe(true);
+    } finally {
+      await follow.stop();
+    }
+    const lines = follow.stdout
+      .split("\n")
+      .filter((line) => line.trim() !== "")
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    expect(
+      lines.map((change) => [change.event, change.item_id, change.cursor]),
+      "the device did not report each event that changed the copy, and only those, in the order they arrived",
+    ).toEqual([
+      ["item.updated", "row", "11"],
+      ["item.created", "arrived", "13"],
+    ]);
+    expect(
+      resumedFrom,
+      "the stream was opened again from somewhere other than the last event applied, so an event in between is lost or applied twice",
+    ).toEqual(["10", "12", "12"]);
+
+    const held = await device.get("row");
+    expect(held.ok && held.value.properties.title).toBe("changed while held");
+    expect(
+      (await device.get("arrived")).ok,
+      "the event that arrived on the held stream was reported and not applied",
+    ).toBe(true);
+  });
+
+  it("asks again at a falling rate when every stream ends at once, and ends on an answer no retry changes", async () => {
+    harness = await startHarness("follow-backoff");
+    const { server, device } = harness;
+    scriptHydration(server, { head: "10" });
+    // A server that ends every stream the moment it opens, and later one
+    // that fails and then refuses.
+    let next: Answer[] = [];
+    server.answer("GET", "/events", () =>
+      next.length > 1
+        ? next.shift()!
+        : (next[0] ?? { kind: "sse", frames: [connected] }),
+    );
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    const streams = () =>
+      server.requests.filter((request) => request.pathname === "/events")
+        .length;
+    const before = streams();
+    const followed = await device.follow(4);
+    expect(followed.ok, JSON.stringify(followed)).toBe(true);
+    const asked = streams() - before;
+    // The witness: it does ask again.
+    expect(asked, "the follow never asked for a stream again").toBeGreaterThan(
+      1,
+    );
+    expect(
+      asked,
+      "the follow asked for a new stream the moment each one ended, which hammers a server that ends them and never lets a laptop sleep",
+    ).toBeLessThanOrEqual(4);
+    if (followed.ok) {
+      expect(
+        followed.value.report,
+        "the report does not count the streams asked for after the first, or counts a failure that did not happen",
+      ).toMatchObject({
+        reconnects: asked - 1,
+        failed_opens: 0,
+        last_failure: null,
+      });
+    }
+
+    // A server failing is asked again, and the report says so.
+    next = [
+      refusal(503, "unavailable", "busy"),
+      { kind: "sse", frames: [connected] },
+    ];
+    const failedFrom = streams();
+    const failing = await device.follow(3);
+    expect(failing.ok, JSON.stringify(failing)).toBe(true);
+    expect(
+      streams() - failedFrom,
+      "the 503 was not asked again",
+    ).toBeGreaterThan(1);
+    if (failing.ok) {
+      expect(failing.value.report.failed_opens).toBe(1);
+      expect(
+        failing.value.report.last_failure,
+        "the report does not say why a stream could not be opened",
+      ).toContain("503");
+    }
+
+    // An answer that no retry changes ends the follow and says so.
+    next = [
+      refusal(503, "unavailable", "busy"),
+      refusal(405, "method_not_allowed", "not here"),
+    ];
+    const refusedFrom = streams();
+    const refused = await device.follow(10);
+    expect(
+      refused.ok,
+      "a follow went on asking for a stream the server will never serve, and said nothing",
+    ).toBe(false);
+    if (!refused.ok) expect(refused.refusal.raw).toContain("405");
+    expect(
+      streams() - refusedFrom,
+      "the 503 was not asked again, so a server busy for a moment ends every follow",
+    ).toBe(2);
+  });
+
+  it("ends a follow whose reader has gone, rather than going on untold", async () => {
+    harness = await startHarness("follow-unprinted");
+    const { server, device } = harness;
+    scriptHydration(server, { head: "10" });
+    server.answer(
+      "GET",
+      "/events",
+      // The first stream ends at once, so the change arrives on the next,
+      // after the reader of what the follow prints has gone.
+      { kind: "sse", frames: [connected] },
+      {
+        kind: "sse",
+        hold: true,
+        frames: [
+          connected,
+          itemEvent("11", "item.created", wireItem({ id: "arrived" })),
+        ],
+      },
+    );
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+
+    const follow = device.holdFollow(60);
+    follow.closeStdout();
+    const ended = await Promise.race([
+      follow.exited().then(() => true),
+      new Promise<boolean>((resolve) =>
+        setTimeout(() => {
+          resolve(false);
+        }, 20_000),
+      ),
+    ]);
+    await follow.stop();
+    expect(
+      ended,
+      "a follow that could not print a change went on following, applying changes nobody is told of",
+    ).toBe(true);
+    // A reader that went away is not a failure, as it is not for any
+    // command whose output is cut off.
+    expect(follow.exitCode(), follow.stderr).toBe(0);
+    // The witness: the change it could not print had arrived and been
+    // applied, so the follow did meet a line it could not write.
+    expect((await device.get("arrived")).ok).toBe(true);
+  });
+
+  it("prints its report when interrupted, as it does when its time is up", async () => {
+    harness = await startHarness("follow-interrupted");
+    const { server, device } = harness;
+    scriptHydration(server, { head: "10" });
+    server.answer("GET", "/events", {
+      kind: "sse",
+      hold: true,
+      frames: [
+        connected,
+        itemEvent("11", "item.created", wireItem({ id: "arrived" })),
+      ],
+    });
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+
+    const follow = device.holdFollow();
+    try {
+      await vi.waitFor(
+        () => {
+          expect(
+            follow.stdout,
+            `the follow never told the change: ${follow.stderr}`,
+          ).toContain('"cursor":"11"');
+        },
+        { timeout: 10_000, interval: 25 },
+      );
+      follow.interrupt();
+      const ended = await Promise.race([
+        follow.exited().then(() => true),
+        new Promise<boolean>((resolve) =>
+          setTimeout(() => {
+            resolve(false);
+          }, 5_000),
+        ),
+      ]);
+      expect(ended, "an interrupted follow went on following").toBe(true);
+    } finally {
+      await follow.stop();
+    }
+    expect(
+      follow.exitCode(),
+      `an interrupted follow did not end on its own: ${follow.stderr}`,
+    ).toBe(0);
+    const report = JSON.parse(
+      follow.stdout.trim().split("\n").at(-1) ?? "null",
+    ) as FollowReport | null;
+    expect(
+      report,
+      "an interrupted follow ended without saying what it did",
+    ).toMatchObject({ applied: 1, cursor: "11" });
+  });
+
+  it("ends a follow at once when stopped while its stream is still being asked for", async () => {
+    harness = await startHarness("follow-stall");
+    const { server, device } = harness;
+    scriptHydration(server, { head: "10" });
+    server.answer("GET", "/events", { kind: "stall" });
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+
+    const started = Date.now();
+    const followed = await device.follow(1);
+    expect(followed.ok, JSON.stringify(followed)).toBe(true);
+    // The witness: the stream was asked for and never answered.
+    expect(
+      server.requests.filter((request) => request.pathname === "/events")
+        .length,
+    ).toBe(2);
+    expect(
+      Date.now() - started,
+      "the follow waited out a request nobody answered after it was told to stop, holding the store the whole time",
+    ).toBeLessThan(5_000);
+    if (followed.ok) expect(followed.value.report.cursor).toBe("10");
+  });
+
+  it("ends a follow whose cursor the log has aged past, and forgets the cursor", async () => {
+    harness = await startHarness("follow-aged-out");
+    const { server, device } = harness;
+    scriptHydration(server, { head: "10" });
+    server.answer("GET", "/events", {
+      kind: "sse",
+      frames: [connected, streamCursor("900"), catchupTooOld("500", "10")],
+    });
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+
+    const before = server.requests.filter(
+      (request) => request.pathname === "/events",
+    ).length;
+    const aged = await device.follow(5);
+    expect(
+      aged.ok,
+      "a held stream told its cursor had aged out went on as if current",
+    ).toBe(false);
+    if (!aged.ok) expect(aged.refusal.code).toBe("catch_up_too_old");
+    expect(
+      server.requests.filter((request) => request.pathname === "/events")
+        .length - before,
+      "the follow asked again from a cursor the log cannot serve",
+    ).toBe(1);
+    const status = await device.status();
+    expect(
+      status.ok && status.value.event_cursor,
+      "the aged-out cursor is still held, so the next follow asks from it again",
+    ).toBeFalsy();
   });
 
   it("leaves the cursor at the last applied event when the stream ends early", async () => {

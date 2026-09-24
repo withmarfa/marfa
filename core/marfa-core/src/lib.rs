@@ -15,19 +15,23 @@ mod hydrate;
 mod lock;
 mod model;
 mod query;
+#[cfg(test)]
+mod scripted;
 mod search;
 mod sse;
 mod store;
 mod wire;
 
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, MutexGuard};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
 use rusqlite::Connection;
 use serde_json::Value;
 
 pub use blob::{file_type_for, mime_type_for};
+pub use catch_up::{Change, FollowReport};
 pub use drain::{DrainReport, DrainVerdict};
 pub use error::CoreError;
 pub use folder::{Folder, PullReport, ScanReport, Slice};
@@ -41,6 +45,14 @@ pub use store::CEILING;
 
 pub type Result<T> = std::result::Result<T, CoreError>;
 
+struct StreamClaim<'a>(&'a AtomicBool);
+
+impl Drop for StreamClaim<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
+}
+
 /// Where the slice comes from. The key is held in memory and never written.
 #[derive(Debug, Clone)]
 pub struct Server {
@@ -50,7 +62,9 @@ pub struct Server {
 
 pub struct Core {
     conn: Mutex<Connection>,
-    http: Option<http::Http>,
+    /// Shared so a held stream can ask for its next stream on a thread that
+    /// holds the transport and nothing of the store.
+    http: Option<Arc<http::Http>>,
     /// Where blobs' bytes are held: beside the working copy's file, and nowhere for a
     /// store held in memory.
     cache: Option<blob::Cache>,
@@ -58,6 +72,10 @@ pub struct Core {
     /// Held for as long as the `Core` lives, which is what makes it the
     /// claim rather than a record of one (`device.md` 3).
     lock: lock::WriterLock,
+    /// Set while a hydration, a catch-up or a follow runs. Each moves the
+    /// one cursor, so two at once could move it backwards, apply an event
+    /// twice, or apply one to a copy a hydration has replaced.
+    streaming: AtomicBool,
 }
 
 const DEFAULT_CATCH_UP_IDLE: Duration = Duration::from_secs(3);
@@ -80,6 +98,25 @@ impl Core {
             cache.sweep_incoming(INCOMING_GRACE);
         }
         Self::from_connection(store::open(path)?, server, lock, Some(cache))
+    }
+
+    /// Opens a store another process writes, to read it and nothing else
+    /// (`device.md` 41).
+    ///
+    /// It never claims the writer role, so a helper started before the app
+    /// cannot lock the app out of its own store, and it never writes, so it
+    /// refuses a path where no store has been made rather than making one.
+    /// `data_version` is how it learns the writer saved.
+    pub fn open_reader(path: impl AsRef<Path>) -> Result<Core> {
+        let path = path.as_ref();
+        Ok(Core {
+            conn: Mutex::new(store::open_to_read(path)?),
+            http: None,
+            cache: Some(blob::Cache::beside(path)),
+            catch_up_idle: DEFAULT_CATCH_UP_IDLE,
+            lock: lock::WriterLock::reader(),
+            streaming: AtomicBool::new(false),
+        })
     }
 
     pub fn open_in_memory(server: Option<Server>) -> Result<Core> {
@@ -107,7 +144,7 @@ impl Core {
         cache: Option<blob::Cache>,
     ) -> Result<Core> {
         let http = match server {
-            Some(server) => Some(http::Http::new(&server.url, &server.key)?),
+            Some(server) => Some(Arc::new(http::Http::new(&server.url, &server.key)?)),
             None => None,
         };
         if let Some(http) = &http
@@ -125,19 +162,61 @@ impl Core {
             cache,
             catch_up_idle: DEFAULT_CATCH_UP_IDLE,
             lock,
+            streaming: AtomicBool::new(false),
         })
     }
 
     /// Replaces the local copy with every item of the declared `types` at
     /// `tier`, with their tags and outbound edges, and stores the event
     /// cursor to catch up from.
+    ///
+    /// Refused while a catch-up or a follow runs on this handle, as they are
+    /// while it runs: a follow left running across a hydration would apply
+    /// events read against the old slice to the new copy and move the cursor
+    /// the hydration stored. A caller stops its follow first.
     pub fn hydrate(&self, types: &[String], tier: Tier) -> Result<HydrateReport> {
+        // A hydration replaces the copy, which is a write to the store like
+        // any other (`device.md` 26).
+        self.lock.refuse_unless_writer()?;
+        let _streaming = self.claim_stream()?;
         hydrate::hydrate(self, self.http()?, types, tier)
     }
 
     /// Applies every event since the stored cursor and advances it.
     pub fn catch_up(&self) -> Result<CatchUpReport> {
+        self.lock.refuse_unless_writer()?;
+        let _streaming = self.claim_stream()?;
         catch_up::catch_up(self, self.http()?, self.catch_up_idle)
+    }
+
+    /// Holds the event stream open and applies each event as it arrives,
+    /// telling `on_change` of each one that changed the copy, until `stop` is
+    /// set (`device.md` 40).
+    ///
+    /// `on_change` is called with no lock on the store held, so it may read
+    /// the row it is told about.
+    pub fn follow(
+        &self,
+        stop: &AtomicBool,
+        mut on_change: impl FnMut(&Change),
+    ) -> Result<FollowReport> {
+        self.lock.refuse_unless_writer()?;
+        let http = self.http.clone().ok_or(CoreError::NoServer)?;
+        let _streaming = self.claim_stream()?;
+        // A follow runs on a thread of its own, and a binding says it ended
+        // when this returns: a fault that unwound past here would end the
+        // thread with nothing said, and a caller waiting to be told would
+        // wait for good.
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            catch_up::follow(self, http, stop, &mut on_change)
+        }))
+        .unwrap_or_else(|fault| Err(CoreError::Invalid(fault_message(fault.as_ref()))))
+    }
+
+    /// A number that moves each time another process saves to this store:
+    /// a reader polls it and reads again when it moves (`device.md` 41).
+    pub fn data_version(&self) -> Result<i64> {
+        store::data_version(&*self.conn()?)
     }
 
     pub fn list(&self, filters: &ListFilters, sort: Sort) -> Result<Vec<Item>> {
@@ -733,10 +812,14 @@ impl Core {
         if let Some(path) = cache.held(&hash)? {
             return Ok(path);
         }
-        let Some(http) = self.http.as_ref() else {
+        let Some(http) = self.http.as_deref() else {
+            let reason = match self.handle() {
+                Handle::Reader => "a reading handle fetches nothing; the writer fetches them",
+                Handle::Writer => "this working copy was opened with no server to fetch them from",
+            };
             return Err(CoreError::BytesAbsent {
                 hash,
-                reason: "this working copy was opened with no server to fetch them from".into(),
+                reason: reason.into(),
             });
         };
         blob::fetch(cache, http, &hash)
@@ -794,7 +877,20 @@ impl Core {
     }
 
     fn http(&self) -> Result<&http::Http> {
-        self.http.as_ref().ok_or(CoreError::NoServer)
+        self.http.as_deref().ok_or(CoreError::NoServer)
+    }
+
+    fn claim_stream(&self) -> Result<StreamClaim<'_>> {
+        self.streaming
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .map_err(|_| {
+                CoreError::Invalid(
+                    "this working copy is already hydrating, catching up or following; one \
+                     at a time moves its cursor"
+                        .into(),
+                )
+            })?;
+        Ok(StreamClaim(&self.streaming))
     }
 
     pub(crate) fn cache(&self) -> Result<&blob::Cache> {
@@ -1049,6 +1145,16 @@ fn queue_upload(conn: &Connection, hash: &str, mime_type: &str) -> Result<Queued
     )
 }
 
+/// What a fault on a follow's thread said, as the refusal it ends with.
+fn fault_message(fault: &(dyn std::any::Any + Send)) -> String {
+    let said = fault
+        .downcast_ref::<&str>()
+        .map(|said| (*said).to_string())
+        .or_else(|| fault.downcast_ref::<String>().cloned())
+        .unwrap_or_else(|| "no message".into());
+    format!("the follow stopped on a fault in the core: {said}")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1187,8 +1293,8 @@ mod tests {
         };
         // **Every door, not the two that are easy to reach.** The comment
         // above claims the guard is consulted by all of them, and a test
-        // covering two of seventeen proves it for two: the call could go
-        // missing from any of the other fifteen with nothing red.
+        // covering two of them proves it for two: the call could go missing
+        // from any of the others with nothing red.
         let refusals: Vec<(&str, CoreError)> = vec![
             ("create_item", reader.create_item(&draft).unwrap_err()),
             ("update_item", reader.update_item("x", &edit).unwrap_err()),
@@ -1251,6 +1357,21 @@ mod tests {
                     .attach("x", Path::new("no-such-file.png"), &Attachment::default())
                     .unwrap_err(),
             ),
+            // The three that write the copy from the server's side. Each is
+            // refused at the handle before it reaches the missing server.
+            (
+                "hydrate",
+                reader
+                    .hydrate(&["core.note".into()], Tier::Library)
+                    .unwrap_err(),
+            ),
+            ("catch_up", reader.catch_up().unwrap_err()),
+            (
+                "follow",
+                reader
+                    .follow(&std::sync::atomic::AtomicBool::new(true), |_| {})
+                    .unwrap_err(),
+            ),
         ];
         for (door, refusal) in &refusals {
             assert_eq!(
@@ -1269,7 +1390,7 @@ mod tests {
         // list from quietly shrinking.
         assert_eq!(
             refusals.len(),
-            19,
+            22,
             "an entry has gone from the list above. Every method on `Core` \
              that calls `refuse_unless_writer` belongs in it, and a door \
              dropped from it is a door nothing here covers."
@@ -1358,6 +1479,292 @@ mod tests {
             core.blob(&other),
             Err(CoreError::BytesAbsent { hash, .. }) if hash == other
         ));
+    }
+
+    /// The type catalog a follow asks for on every stream is written only
+    /// where it changed, so a reader told of each save is not told of a
+    /// catalog nobody changed.
+    #[test]
+    fn an_unchanged_type_catalog_is_not_written_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("core.sqlite");
+        let writer = Core::open(&path, None).unwrap();
+        let reader = Core::open_reader(&path).unwrap();
+        let catalog = [store::testing::wire_type("core.note", None, Some("title"))];
+        let replace = |types: &[crate::wire::WireType]| {
+            let mut conn = writer.conn().unwrap();
+            let tx = conn.transaction().unwrap();
+            store::replace_types(&tx, types).unwrap();
+            tx.commit().unwrap();
+        };
+        replace(&catalog);
+        let before = reader.data_version().unwrap();
+        replace(&catalog);
+        assert_eq!(
+            reader.data_version().unwrap(),
+            before,
+            "the same catalog was written again, and a reader was told of a save that changed nothing"
+        );
+        // The server's order is not the store's, and the same catalog in
+        // another order is the same catalog.
+        let two = [
+            store::testing::wire_type("core.note", None, Some("title")),
+            store::testing::wire_type("user.recipe", None, Some("title")),
+        ];
+        replace(&two);
+        let before = reader.data_version().unwrap();
+        replace(&[two[1].clone(), two[0].clone()]);
+        assert_eq!(
+            reader.data_version().unwrap(),
+            before,
+            "the same catalog in another order was written again"
+        );
+        // The witness: a catalog that differs is written.
+        replace(&[store::testing::wire_type("core.note", None, Some("body"))]);
+        assert_ne!(reader.data_version().unwrap(), before);
+    }
+
+    /// Two streams on one handle would each move the one cursor.
+    #[test]
+    fn one_stream_at_a_time_moves_the_cursor() {
+        let dir = tempfile::tempdir().unwrap();
+        // Nothing answers here, so the follow asks again until it is stopped.
+        let core = Core::open(
+            dir.path().join("core.sqlite"),
+            Some(Server {
+                url: "http://127.0.0.1:9".into(),
+                key: "k".into(),
+            }),
+        )
+        .unwrap();
+        {
+            let conn = core.conn().unwrap();
+            store::meta_set(&conn, store::META_EVENT_CURSOR, "10").unwrap();
+            store::meta_set(&conn, store::META_SLICE_TYPES, "[\"core.note\"]").unwrap();
+            store::meta_set(&conn, store::META_SLICE_TIER, "library").unwrap();
+        }
+        let stop = AtomicBool::new(false);
+        std::thread::scope(|scope| {
+            let following = scope.spawn(|| core.follow(&stop, |_| {}));
+            std::thread::sleep(Duration::from_millis(300));
+            let second = core.catch_up();
+            let hydrating = core.hydrate(&["core.note".into()], Tier::Library);
+            stop.store(true, Ordering::Relaxed);
+            let report = following.join().unwrap().unwrap();
+            assert!(
+                matches!(&second, Err(CoreError::Invalid(message)) if message.contains("already")),
+                "a catch-up ran beside a follow on one handle: {second:?}"
+            );
+            assert!(
+                matches!(&hydrating, Err(CoreError::Invalid(message)) if message.contains("already")),
+                "a hydration ran under a follow, which goes on applying events to the copy it replaces: {hydrating:?}"
+            );
+            // The witness: the follow was running, asking for a stream.
+            assert!(report.failed_opens >= 1, "{report:?}");
+        });
+        // And once it ended, the handle takes the next one.
+        assert!(!matches!(core.catch_up(), Err(CoreError::Invalid(_))));
+    }
+
+    /// A hydration holds the claim for as long as it runs, so no follow or
+    /// catch-up moves the cursor under it.
+    #[test]
+    fn no_stream_runs_across_a_hydration() {
+        let server = scripted::Scripted::start();
+        // The hydration's first read, the log's head, is never answered.
+        server.on("/events", vec![scripted::Answer::Stall]);
+        let dir = tempfile::tempdir().unwrap();
+        let core = Core::open(
+            dir.path().join("core.sqlite"),
+            Some(Server {
+                url: server.url(),
+                key: "k".into(),
+            }),
+        )
+        .unwrap();
+        {
+            let conn = core.conn().unwrap();
+            store::meta_set(&conn, store::META_EVENT_CURSOR, "10").unwrap();
+            store::meta_set(&conn, store::META_SLICE_TYPES, "[\"core.note\"]").unwrap();
+            store::meta_set(&conn, store::META_SLICE_TIER, "library").unwrap();
+        }
+        std::thread::scope(|scope| {
+            let hydrating = scope.spawn(|| core.hydrate(&["core.note".into()], Tier::Library));
+            // The witness: the hydration is under way.
+            server.wait_for("/events", 1, Duration::from_secs(5));
+            let caught = core.catch_up();
+            let followed = core.follow(&AtomicBool::new(false), |_| {});
+            for (what, refused) in [("catch-up", caught.err()), ("follow", followed.err())] {
+                assert!(
+                    matches!(&refused, Some(CoreError::Invalid(message)) if message.contains("already")),
+                    "a {what} ran across a hydration: {refused:?}"
+                );
+            }
+            drop(server);
+            assert!(hydrating.join().unwrap().is_err());
+        });
+        // And once it ended, the handle takes the next one.
+        assert!(!matches!(core.catch_up(), Err(CoreError::Invalid(_))));
+    }
+
+    #[test]
+    fn a_store_opened_to_read_never_claims_the_writer_and_is_told_of_saves() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("core.sqlite");
+        assert!(
+            Core::open_reader(&path).is_err(),
+            "a reading open answered for a path where no store was made"
+        );
+        assert!(
+            !path.exists(),
+            "a reading open made a store it was only meant to read"
+        );
+        // The witness: the same open once a writer has made the store.
+        drop(Core::open(&path, None).unwrap());
+        let reader = Core::open_reader(&path).unwrap();
+        assert_eq!(reader.handle(), Handle::Reader);
+        let writer = Core::open(&path, None).unwrap();
+        assert_eq!(
+            writer.handle(),
+            Handle::Writer,
+            "a reader opened first took the writer role, so the app is locked out of its own store"
+        );
+
+        let before = reader.data_version().unwrap();
+        assert_eq!(
+            reader.data_version().unwrap(),
+            before,
+            "the signal moved with no save, so a reader cannot tell a save from nothing"
+        );
+        {
+            let conn = writer.conn().unwrap();
+            store::meta_set(&conn, "saved", "yes").unwrap();
+        }
+        assert_ne!(
+            reader.data_version().unwrap(),
+            before,
+            "the writer saved and the reader's signal did not move"
+        );
+    }
+
+    /// A reading open says what is wrong with a file it cannot read, and
+    /// hands on what it cannot name.
+    #[test]
+    fn a_reading_open_names_what_is_wrong_with_the_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let at = |name: &str| dir.path().join(name);
+        let made = |name: &str, sql: &str| {
+            let path = at(name);
+            Connection::open(&path).unwrap().execute_batch(sql).unwrap();
+            path
+        };
+        let refusal = |path: &Path| match Core::open_reader(path) {
+            Err(error) => error,
+            Ok(_) => panic!("{} opened to read", path.display()),
+        };
+        let not_a_store = |path: &Path| match refusal(path) {
+            CoreError::Invalid(message) => message,
+            other => panic!("{} was refused as {other:?}", path.display()),
+        };
+
+        let absent = at("absent.sqlite");
+        assert!(not_a_store(&absent).contains("never makes one"));
+        assert!(!absent.exists());
+        let tableless = made("tableless.sqlite", "CREATE TABLE other (x);");
+        assert!(not_a_store(&tableless).contains("has no schema to read"));
+        let words = at("words.sqlite");
+        std::fs::write(&words, "words, not a database. ".repeat(40)).unwrap();
+        assert!(not_a_store(&words).contains("has no schema to read"));
+
+        // An error it has no name for is handed on as the store's own.
+        let odd = made("odd.sqlite", "CREATE TABLE meta (key TEXT);");
+        assert!(
+            matches!(refusal(&odd), CoreError::Store(message) if message.contains("no such column")),
+            "an error the reading open cannot name was called something it is not"
+        );
+
+        // A store another build made, or one that never said which it is.
+        let meta = "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);";
+        let older = made(
+            "older.sqlite",
+            &format!("{meta} INSERT INTO meta VALUES ('schema_version', '1');"),
+        );
+        let unversioned = made("unversioned.sqlite", meta);
+        for (path, found) in [(&older, "1"), (&unversioned, "none")] {
+            assert_eq!(
+                refusal(path),
+                CoreError::WrongSchema {
+                    expected: store::SCHEMA_VERSION.into(),
+                    found: found.into(),
+                    path: path.display().to_string(),
+                }
+            );
+        }
+        // The witness: a store this build made opens.
+        drop(Core::open(at("store.sqlite"), None).unwrap());
+        assert!(Core::open_reader(at("store.sqlite")).is_ok());
+    }
+
+    /// A reading open answers bytes held beside the store and fetches none,
+    /// and says that is why.
+    #[test]
+    fn a_reading_open_answers_held_bytes_and_says_why_it_fetches_no_others() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("core.sqlite");
+        let writer = Core::open(&path, None).unwrap();
+        let file = dir.path().join("note.txt");
+        std::fs::write(&file, b"held here").unwrap();
+        let hash = writer.cache().unwrap().take(&file).unwrap();
+
+        let reader = Core::open_reader(&path).unwrap();
+        let held = reader.blob(&hash).unwrap();
+        assert_eq!(std::fs::read(held).unwrap(), b"held here");
+        let other = blob::name_of(b"never held");
+        let reason = |core: &Core| match core.blob(&other) {
+            Err(CoreError::BytesAbsent { reason, .. }) => reason,
+            answer => panic!("{answer:?}"),
+        };
+        assert!(reason(&reader).contains("reading handle"));
+        // The witness: the writer, with no server either, says otherwise.
+        assert!(!reason(&writer).contains("reading handle"));
+    }
+
+    /// Claims made at the same instant: one wins, and the rest are refused
+    /// until it lets go.
+    #[test]
+    fn claims_made_at_once_never_both_win() {
+        use std::sync::atomic::AtomicUsize;
+        let core = Core::open_in_memory(None).unwrap();
+        let holding = AtomicUsize::new(0);
+        let (won, overlapped) = (AtomicUsize::new(0), AtomicBool::new(false));
+        for _ in 0..300 {
+            let go = AtomicBool::new(false);
+            std::thread::scope(|scope| {
+                for _ in 0..8 {
+                    scope.spawn(|| {
+                        while !go.load(Ordering::Acquire) {
+                            std::hint::spin_loop();
+                        }
+                        if let Ok(claim) = core.claim_stream() {
+                            won.fetch_add(1, Ordering::SeqCst);
+                            if holding.fetch_add(1, Ordering::SeqCst) > 0 {
+                                overlapped.store(true, Ordering::SeqCst);
+                            }
+                            std::thread::yield_now();
+                            holding.fetch_sub(1, Ordering::SeqCst);
+                            drop(claim);
+                        }
+                    });
+                }
+                go.store(true, Ordering::Release);
+            });
+        }
+        // The witness: claims were won.
+        assert!(won.load(Ordering::SeqCst) >= 300);
+        assert!(
+            !overlapped.load(Ordering::SeqCst),
+            "two claims were held at once, so two streams could move one cursor"
+        );
     }
 
     #[test]

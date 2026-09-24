@@ -21,7 +21,7 @@ The server is `--url` on any command, then `MARFA_API_URL`, then the server a ke
 
 The refresh is the direct commands'. `device` and `folders` take the credential once, when the command starts (a stale token is refreshed then), and a command that outlives the access token ends with a `401`; unattended work runs under a key.
 
-`marfa device --db PATH <command>` is the working copy: `hydrate`, `catch-up`, `status`, `items`, `search`, `edges`, `tags`, `metadata`, `extensions`, `blobs`, `queue`, `drain`, `forget` and `release`, on the store `--db` (or `MARFA_DB`) names. A blob's bytes are fetched when asked for and kept beside it, in a folder named for its file with `.blobs` after it. There is no default store. `marfa folders <command>` is a folder, which carries its own store. Both take the server and the credential the same way the direct commands do.
+`marfa device --db PATH <command>` is the working copy: `hydrate`, `catch-up`, `follow`, `status`, `items`, `search`, `edges`, `tags`, `metadata`, `extensions`, `blobs`, `queue`, `drain`, `forget` and `release`, on the store `--db` (or `MARFA_DB`) names. A blob's bytes are fetched when asked for and kept beside it, in a folder named for its file with `.blobs` after it. `follow` holds the event stream open and prints a line for each event that changes the copy. `--reader` opens a store another process writes, to read it only: it never takes the writer role, makes a store or writes to one. `changes` always opens that way and prints a line each time the writer saves. There is no default store. `marfa folders <command>` is a folder, which carries its own store. Both take the server and the credential the same way the direct commands do.
 
 `--json` on any command prints the answer as JSON and a refusal as one JSON object on stderr, `{"error":{"code","message","server":{"status","code","details"}|null,"retry_after_seconds"},"exit":N}`, where `error.code` is from the closed set `marfa --help` lists. The exit code is one of six:
 
@@ -60,7 +60,7 @@ cargo build -p marfa-cli
 
 ## Bindings
 
-Both open a store on a file with a server and reach the reads, hydrate and catch-up, every queued write, uploads, attachments and a blob's bytes, the queue, drain, release, forget, and the six verdicts as a typed value carrying what each one says. An in-memory store and catch-up's idle setting stay in Rust, where the tests use them.
+Both open a store on a file with a server and reach the reads, hydrate and catch-up, a held stream (`follow`, with a listener and a subscription to stop it), every queued write, uploads, attachments and a blob's bytes, the queue, drain, release, forget, and the six verdicts as a typed value carrying what each one says. Both also open a store to read (`openReader`) and read its change signal (`dataVersion`). An in-memory store and catch-up's idle setting stay in Rust, where the tests use them.
 
 Swift: `bindings/swift/build.sh` packages the FFI crate with cargo-swift into `bindings/swift/MarfaCore`, with macOS, iOS and simulator slices; the example in `bindings/swift/Example` runs with `swift run`.
 
@@ -71,8 +71,9 @@ cd bindings/node
 pnpm install --ignore-workspace
 pnpm --ignore-workspace run build
 pnpm --ignore-workspace run check
+pnpm --ignore-workspace run test
 ```
 
-`check` holds the proof script to the `index.d.ts` the build generates.
+`check` holds the proof script and the tests to the `index.d.ts` the build generates. `test` drives the held stream and the reading open against a server it scripts itself.
 
-`scripts/binding-proof.sh` drives both, after both are built, through a write made offline and its verdict once the server returns: each hydrates, the server stops, each queues writes and drains into nothing, the server comes back on the same origin with the same data, and each drains again.
+`scripts/binding-proof.sh` drives both, after both are built, through a write made offline and its verdict once the server returns: each hydrates, the server stops, each queues writes and drains into nothing, the server comes back on the same origin with the same data, and each drains again. Then each holds the event stream open while the binary makes a note on the server, and is told of it.
