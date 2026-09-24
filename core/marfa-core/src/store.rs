@@ -2796,7 +2796,7 @@ pub fn edge_by_id(conn: &Connection, id: &str) -> Result<Option<Edge>, CoreError
 /// Queue rows naming this edge that the server has not answered, and its
 /// create while the server has not taken it, blocked included, for the
 /// reason `untaken_creates_for_item` gives.
-pub fn unanswered_for_edge(conn: &Connection, edge_id: &str) -> Result<Vec<String>, CoreError> {
+pub fn untaken_for_edge(conn: &Connection, edge_id: &str) -> Result<Vec<String>, CoreError> {
     Ok(waiting_writes_for_edge(conn, edge_id)?
         .into_iter()
         .filter(|row| row.verdict.is_none() || row.kind == WriteKind::CreateEdge)

@@ -509,7 +509,7 @@ impl Core {
             )));
         }
         let payload = edit.payload(base)?;
-        let depends_on = store::unanswered_for_edge(&conn, id)?;
+        let depends_on = store::untaken_for_edge(&conn, id)?;
         let mut next = held.clone();
         for (key, value) in &edit.properties {
             next.properties.insert(key.clone(), value.clone());
@@ -547,7 +547,7 @@ impl Core {
                 message: format!("{id} is not an edge this copy holds"),
             });
         };
-        let depends_on = store::unanswered_for_edge(&conn, id)?;
+        let depends_on = store::untaken_for_edge(&conn, id)?;
         // **The type travels with the write.** Reconciling a refused delete
         // means reading the server's edges for this source, and that read is
         // by type — but the local row is gone by then, because a delete

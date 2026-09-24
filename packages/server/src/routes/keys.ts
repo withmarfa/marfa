@@ -1103,11 +1103,11 @@ export function keyRoutes(storage: Storage, salt: string) {
           );
         }
       }
-      // Forced empty for an operator mint, because the guard above measures
-      // the request and this line writes the derive. A body naming nothing
-      // takes the creator's whole set, so deriving here would copy whatever
-      // the calling operator row holds onto the new one through a request
-      // that named nothing at all, and an operator key holds nothing.
+      // Forced empty for an operator mint: an operator key holds nothing on
+      // any axis, which `api_keys_operator_holds_nothing` enforces on the
+      // row, and the guard above measures only what the request named, so a
+      // body naming nothing, which takes a creator's whole set, would
+      // otherwise derive permissions the row may not hold.
       const permissions = mintsOperatorKey
         ? []
         : seedsFromOperator

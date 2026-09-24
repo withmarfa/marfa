@@ -801,8 +801,9 @@ export class SqliteItemStore implements ItemStore {
         occurred_at: row.occurred_at,
         source_id: row.source_id,
       };
-      // The same three as a refusal's envelope carries them, so a caller
-      // told that one of them collided can read both sides.
+      // The same three as a refusal's envelope carries them, with the row's
+      // id: a caller told that one of them collided can read both sides, and
+      // a create that named only a natural key learns which row refused it.
       const snapshotFields: SnapshotItemFields = {
         id,
         tier: row.tier as Tier,
