@@ -1379,11 +1379,16 @@ mod tests {
             Err(CoreError::HydrationIncomplete)
         );
         assert!(server.seen("/types").is_empty());
-        // The witness: the same store, its hydration finished, catches up.
+        // The witness: the same store, its hydration finished, catches up,
+        // reading the catalog the refusals above did not.
         {
             let conn = core.conn().unwrap();
             store::meta_delete(&conn, store::META_HYDRATE_STATE).unwrap();
         }
         assert!(core.catch_up().unwrap().reached_head);
+        assert!(
+            !server.seen("/types").is_empty(),
+            "the catch-up read no catalog, so its absence above proves nothing"
+        );
     }
 }

@@ -272,8 +272,13 @@ impl Http {
 
     /// Sends one queued write and reads whatever came back.
     ///
-    /// **The only `Err`s are a transport failure and an answer on another
-    /// contract**, and that is the whole point of this signature. Every
+    /// **The only `Err`s are a request that will not build (`Invalid`), a
+    /// transport failure (`Network`) and an answer on another contract
+    /// (`ContractMismatch`)**, and that is the whole point of this
+    /// signature: none of the three carries a status and a code for the
+    /// classification to read. The drain retries a transport failure
+    /// uncounted, counts a request that will not build, and ends its pass on
+    /// the third. Every
     /// status the server can answer with is an `Answer`, including the
     /// refusals, because the classification
     /// (`queue-and-verdicts.md` 17 to 23) turns on the status and the code

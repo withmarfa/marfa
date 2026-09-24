@@ -121,7 +121,8 @@ async function freePort(): Promise<number> {
   return new Promise((resolvePort, reject) => {
     const probe = createServer();
     probe.once("error", reject);
-    probe.listen(0, "127.0.0.1", () => {
+    // No host, so the probe binds as the server does, on both families.
+    probe.listen(0, () => {
       const address = probe.address();
       const port = typeof address === "object" && address ? address.port : 0;
       probe.close(() => resolvePort(port));

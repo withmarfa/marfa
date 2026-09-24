@@ -1032,11 +1032,23 @@ describe("catch-up replays from the cursor", () => {
       frames: [connected, streamCursor("900"), catchupTooOld("500", "10")],
     });
     expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    // The witness: the hydration left a cursor for the follow to lose.
+    const held = await device.status();
+    expect(held.ok, JSON.stringify(held)).toBe(true);
+    if (!held.ok) return;
+    expect(held.value.event_cursor).toBe("10");
 
     const before = server.requests.filter(
       (request) => request.pathname === "/events",
     ).length;
-    const aged = await device.follow(5);
+    // Given far longer than it needs, so ending is the follow's own doing and
+    // not the bound running out.
+    const started = Date.now();
+    const aged = await device.follow(30);
+    expect(
+      Date.now() - started,
+      "the follow stayed open after its cursor aged out and ended only when its time ran out",
+    ).toBeLessThan(10_000);
     expect(
       aged.ok,
       "a held stream told its cursor had aged out went on as if current",
@@ -1048,10 +1060,12 @@ describe("catch-up replays from the cursor", () => {
       "the follow asked again from a cursor the log cannot serve",
     ).toBe(1);
     const status = await device.status();
+    expect(status.ok, JSON.stringify(status)).toBe(true);
+    if (!status.ok) return;
     expect(
-      status.ok && status.value.event_cursor,
+      status.value.event_cursor ?? null,
       "the aged-out cursor is still held, so the next follow asks from it again",
-    ).toBeFalsy();
+    ).toBeNull();
   });
 
   it("leaves the cursor at the last applied event when the stream ends early", async () => {

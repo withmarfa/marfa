@@ -122,8 +122,9 @@ jobs:
 
       # Outside the pnpm workspace, so every call carries the flag. `check`
       # holds the Node proof and tests to the declarations the build
-      # generates; `test` drives the held stream and the reading open against
-      # a server it scripts itself.
+      # generates; `test` drives the held stream, the reading open, and a
+      # drain whose create names a source its key does not claim, against a
+      # server it scripts itself.
       - name: Build, check and test the Node module
         working-directory: core/bindings/node
         run: |

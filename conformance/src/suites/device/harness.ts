@@ -71,7 +71,7 @@ function refuseIfStale(binary: string): void {
     "../../../../core",
   );
   // The sources the binary is compiled from, and no others. A binding beside
-  // these crates, or an integration test inside one, is not in the binary,
+  // these crates, or a test under a crate's `tests/`, is not in the binary,
   // so counting it would refuse a binary that `cargo build -p marfa-cli` has
   // no reason to relink.
   const sources = ["marfa-core", "marfa-cli", "marfa-client"]

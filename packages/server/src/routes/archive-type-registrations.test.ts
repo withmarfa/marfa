@@ -497,27 +497,34 @@ describe("archives carry type registrations", () => {
       source_id: "et1",
     });
     const entries = await extractArchive(await exportArchive(source));
-    const withEdgeType = (property: Record<string, string>) =>
-      repack(entries, {
+    const withEdgeType = async (property: Record<string, string>) => {
+      const id = `user.depicts-${uniqueSuffix()}`;
+      const archive = await repack(entries, {
         "types.ndjson":
           JSON.stringify({
             edge_type: {
-              id: `user.depicts-${uniqueSuffix()}`,
+              id,
               cardinality: "many-to-many",
               property_schema: { preview: property },
             },
           }) + "\n",
       });
+      return { archive, id };
+    };
 
-    // The witness: the same edge type with a text property restores.
-    const plain = await restore(
-      await newContext(),
-      await withEdgeType({ type: "string" }),
-    );
+    // The witness: the same edge type with a text property restores, and
+    // the listing each refusal below reads holds it.
+    const plainDestination = await newContext();
+    const plainEdgeType = await withEdgeType({ type: "string" });
+    const plain = await restore(plainDestination, plainEdgeType.archive);
     expect(plain.status, await plain.clone().text()).toBe(200);
     expect(((await plain.json()) as RestoreResult).edge_types_registered).toBe(
       1,
     );
+    expect(
+      (await plainDestination.storage.edgeTypes.list()).map((type) => type.id),
+      "the listing does not surface a restored edge type, so its emptiness below proves nothing",
+    ).toEqual([plainEdgeType.id]);
 
     const refused: Record<string, string>[] = [
       { type: "thumbnail" },
@@ -526,7 +533,10 @@ describe("archives carry type registrations", () => {
     ];
     for (const property of refused) {
       const destination = await newContext();
-      const res = await restore(destination, await withEdgeType(property));
+      const res = await restore(
+        destination,
+        (await withEdgeType(property)).archive,
+      );
       expect(
         res.status,
         `an archive registered an edge type whose property is ${JSON.stringify(property)}`,
@@ -568,11 +578,18 @@ describe("archives carry type registrations", () => {
     };
 
     // The witness: a child adding no thumbnail of its own restores beside
-    // the same parent.
+    // the same parent, and the listing each refusal below reads holds it.
     const plain = await pair({ camera: { type: "string" } });
-    const restored = await restore(await newContext(), plain.archive);
+    const plainDestination = await newContext();
+    const restored = await restore(plainDestination, plain.archive);
     expect(restored.status, await restored.clone().text()).toBe(200);
     expect(((await restored.json()) as RestoreResult).types_registered).toBe(2);
+    expect(
+      (await plainDestination.storage.types.listRegistered()).map(
+        (schema) => schema.id,
+      ),
+      "the listing does not surface a restored child, so its absence below proves nothing",
+    ).toContain(plain.childId);
 
     const refused: Record<string, { type: string }>[] = [
       { preview: { type: "thumbnail" } },

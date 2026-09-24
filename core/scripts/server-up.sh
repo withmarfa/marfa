@@ -36,10 +36,21 @@ repo="${MARFA_SERVER_REPO:-$(cd "$(dirname "$0")/../.." && pwd)}"
 # Asked of the kernel, then released so the server can bind it a moment
 # later. The window between is not zero, which is why the health check below
 # is what decides a boot succeeded rather than this line.
+#
+# Asked on the address the server binds, not the one the URL names. Node
+# given no host listens on `::` with IPv6-only off where the machine has
+# IPv6, which takes the port in both families, and on `0.0.0.0` where it does
+# not. A port asked of `127.0.0.1` alone can be one a listener holds on IPv6,
+# and the server's bind then fails with `EADDRINUSE`.
 free_port() {
   python3 -c 'import socket
-s = socket.socket()
-s.bind(("127.0.0.1", 0))
+try:
+    s = socket.socket(socket.AF_INET6)
+    s.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)
+    s.bind(("::", 0))
+except OSError:
+    s = socket.socket()
+    s.bind(("0.0.0.0", 0))
 print(s.getsockname()[1])
 s.close()'
 }
@@ -75,8 +86,20 @@ export API_KEY_SALT="${API_KEY_SALT:-$(openssl rand -hex 32)}"
 # in use as an unhandled `EADDRINUSE` and a node stack trace. On a shared
 # runner the usual cause is a server a previous run failed to stop, and that
 # is worth saying in one line.
-if curl -fsS --max-time 2 "${url}/health" >/dev/null 2>&1; then
+#
+# A listener that takes the connection and never answers is refused too: the
+# server can still bind the port on `::` beside one held on `127.0.0.1`
+# alone, and every health check below would then reach the silent one. curl
+# says so with exit 28, a timeout, where a free port refuses the connection.
+probe=0
+curl -fsS --max-time 2 "${url}/health" >/dev/null 2>&1 || probe=$?
+if [[ "${probe}" -eq 0 ]]; then
   echo "server-up: something is already answering ${url}/health" >&2
+  echo "server-up: stop it, or set PORT to boot somewhere else" >&2
+  exit 1
+fi
+if [[ "${probe}" -eq 28 ]]; then
+  echo "server-up: something at ${url} takes connections and does not answer" >&2
   echo "server-up: stop it, or set PORT to boot somewhere else" >&2
   exit 1
 fi
@@ -128,8 +151,10 @@ fail() {
   exit 1
 }
 
+# Every call is bounded: a connection taken and never answered would
+# otherwise hold the boot for good rather than fail it.
 for _ in $(seq 1 120); do
-  if curl -fsS "${url}/health" >/dev/null 2>&1; then
+  if curl -fsS --max-time 2 "${url}/health" >/dev/null 2>&1; then
     break
   fi
   if ! kill -0 "${pid}" 2>/dev/null; then
@@ -137,7 +162,7 @@ for _ in $(seq 1 120); do
   fi
   sleep 0.5
 done
-curl -fsS "${url}/health" >/dev/null 2>&1 || fail "no answer from ${url}/health"
+curl -fsS --max-time 2 "${url}/health" >/dev/null 2>&1 || fail "no answer from ${url}/health"
 
 if [[ -n "${kept_key}" ]]; then
   write_env "${kept_key}"
@@ -156,7 +181,7 @@ done
 [[ -n "${secret}" ]] || fail "no bootstrap secret in the server log"
 
 mint() {
-  curl -sS -X POST "${url}/keys" \
+  curl -sS --max-time 10 -X POST "${url}/keys" \
     -H "Authorization: Bearer $1" \
     -H 'Content-Type: application/json' \
     -d "{\"label\":\"$2\",\"source\":\"$2\"}"

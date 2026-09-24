@@ -2049,6 +2049,12 @@ describe("an answer the device applies keeps what it has not had answered", () =
         })
       ).ok,
     ).toBe(true);
+    // The witness: the queued tag is on the row, so its going is the
+    // reconcile's doing.
+    const queued = await device.get(HELD.id);
+    expect(queued.ok, JSON.stringify(queued)).toBe(true);
+    if (!queued.ok) return;
+    expect(queued.value.tags).toContain("refused-here");
     scriptWrites(server, {
       tags: [refusal(400, "validation_error", "not a tag this server takes")],
       update: [answers.serverFault()],
@@ -2062,13 +2068,22 @@ describe("an answer the device applies keeps what it has not had answered", () =
         ),
       ],
     });
+    const readBack = () =>
+      server.requests.filter(
+        (request) =>
+          request.method === "GET" && request.pathname === `/items/${HELD.id}`,
+      ).length;
+    const readsBefore = readBack();
     expect((await device.drain()).ok).toBe(true);
+    expect(readBack() - readsBefore, "the refused tag was not read back").toBe(
+      1,
+    );
 
     const read = await device.get(HELD.id);
     expect(read.ok).toBe(true);
     if (!read.ok) return;
-    // The witness: the refusal was reconciled, so the row took the server's
-    // copy and lost the refused tag.
+    // The refusal was reconciled, so the row took the server's copy and lost
+    // the refused tag.
     expect(
       read.value.tags,
       "the refused tag was not reconciled away, so nothing here is about a reconcile",
@@ -3879,6 +3894,12 @@ describe("an edit behind an edit of the same row", () => {
     const queue = await queueOf(device);
     const rowEdit = queue.find((row) => row.kind === "update_item");
     // The witness: the create went out and had no answer.
+    expect(
+      server.requests.filter(
+        (request) => request.method === "POST" && request.pathname === "/items",
+      ),
+      "the create went out other than once, so the edit is not waiting on the one answer it lacks",
+    ).toHaveLength(1);
     expect(queue.find((row) => row.kind === "create_item")?.verdict).toBe(null);
     expect(
       [rowEdit?.verdict, rowEdit?.reason, rowEdit?.follows],
@@ -3953,13 +3974,21 @@ describe("an edit behind an edit of the same row", () => {
       [tag?.verdict, tag?.reason, tag?.follows],
       "the tag moved onto the row went out beside the row's own edit, which had no answer",
     ).toEqual(["blocked", "awaiting_dependency", rowEdit?.id]);
-    expect(
+    const sent = (method: string, pathname: string | RegExp) =>
       server.requests.filter(
         (request) =>
-          request.method === "POST" &&
-          request.pathname === `/items/${KEYED.id}/tags`,
-      ),
-    ).toEqual([]);
+          request.method === method &&
+          (typeof pathname === "string"
+            ? request.pathname === pathname
+            : pathname.test(request.pathname)),
+      ).length;
+    // The create and the row's edit went out, the edit to meet the busy
+    // server, and no tag went anywhere.
+    expect(
+      [sent("POST", "/items"), sent("PATCH", `/items/${KEYED.id}`)],
+      "the create or the row's edit went out other than once, so the tag is not waiting on the one edit that had no answer",
+    ).toEqual([1, 1]);
+    expect(sent("POST", /^\/items\/[^/]+\/tags$/)).toBe(0);
   });
 
   it("keeps the later edge a catch-up brought over an older edge answer replayed after it", async () => {

@@ -1873,11 +1873,33 @@ describe("identity", () => {
         "a folder left watching asked about an unclaimed source on every pass",
       ).toBe(1);
       expect(watching.running(), watching.stderr).toBe(true);
+      // The witness: the watcher was passing all along, and the minute is
+      // what held it back. Set back the record of when the source was found,
+      // and the next pass asks again.
+      const store = new DatabaseSync(harness.folder.store);
+      try {
+        store
+          .prepare("UPDATE meta SET value = ? WHERE key = ?")
+          .run("2020-01-01T00:00:00.000Z", "unclaimed_source:notes");
+      } finally {
+        store.close();
+      }
+      await vi.waitFor(() => expect(creates()).toBe(2), {
+        timeout: 20_000,
+        interval: 100,
+      });
+      // Passes enough for an ask or a line one pass after that ask to show.
+      await new Promise((resolve) => setTimeout(resolve, 3_000));
+      expect(
+        creates(),
+        "a folder left watching asked again on the pass after it asked",
+      ).toBe(2);
+      expect(watching.running(), watching.stderr).toBe(true);
     } finally {
       await watching.stop();
     }
     // It said so once, and printed nothing on the passes after, where
-    // nothing changed.
+    // nothing changed, the one that asked again and found the same included.
     const reports = watching.stdout.split('"unclaimed_sources"').length - 1;
     expect(
       reports,
@@ -1887,7 +1909,7 @@ describe("identity", () => {
 
     // A push is asked for, and asks at once.
     expect((await harness.folder.push()).ok).toBe(true);
-    expect(creates(), "a push did not ask again").toBe(2);
+    expect(creates(), "a push did not ask again").toBe(3);
   });
 
   it("counts an edit over unread content when the file moved before it went", async () => {
@@ -2260,26 +2282,70 @@ describe("identity", () => {
 
   it("says in words when a file is bound to an item that is gone, once while watching", async () => {
     harness = await folderHarness("folder-lost-words");
+    // The one file's create is refused and its row read back as gone; any
+    // other file's create is taken, so a file added later is a pass the
+    // watcher is seen to run.
+    const door = new FolderDoor();
     scriptWrites(harness.server, {
-      create: [refusal(400, "invalid_properties", "the body is not allowed")],
-      read: [refusal(404, "item_not_found", "Item not found")],
+      create: [
+        (request) => {
+          const sent = JSON.parse(request.body) as DoorCreate;
+          return sent.source_id === "mine.md"
+            ? refusal(400, "invalid_properties", "the body is not allowed")
+            : door.create(sent).answer;
+        },
+      ],
+      read: [(request) => door.read(request.pathname.split("/").at(-1) ?? "")],
     });
     put(harness, "mine.md", "---\ntitle: Mine\n---\nnot allowed\n");
+    const lost = "bound to an item that is gone";
+    const createsOf = (key: string) =>
+      harness!.server.requests.filter(
+        (request) =>
+          request.method === "POST" &&
+          request.pathname === "/items" &&
+          (JSON.parse(request.body) as DoorCreate).source_id === key,
+      ).length;
     const watching = harness.folder.watchText();
+    let quiet = "";
     try {
+      await vi.waitFor(() => expect(watching.stdout).toContain(`1 ${lost}`), {
+        timeout: 20_000,
+        interval: 100,
+      });
+      await new Promise((resolve) => setTimeout(resolve, 3_000));
+      quiet = watching.stdout;
+      put(harness, "later.md", "---\ntitle: Later\n---\nallowed\n");
       await vi.waitFor(
-        () =>
-          expect(watching.stdout).toContain("1 bound to an item that is gone"),
+        () => {
+          expect(createsOf("later.md")).toBe(1);
+          expect(watching.stdout.length).toBeGreaterThan(quiet.length);
+        },
         { timeout: 20_000, interval: 100 },
       );
+      // Passes enough for a line printed one pass after the push to show.
       await new Promise((resolve) => setTimeout(resolve, 3_000));
+      expect(watching.running(), watching.stderr).toBe(true);
     } finally {
       await watching.stop();
     }
+    // The passes between the first report and the later file said nothing,
+    // and the watcher was passing through them: it saw the later file.
     expect(
-      watching.stdout.split("bound to an item that is gone").length - 1,
-      `a watcher said the same lost file on every pass: ${watching.stdout}`,
+      quiet.split(lost).length - 1,
+      `a watcher said the same lost file on every pass: ${quiet}`,
     ).toBe(1);
+    // After it, one line: the push's summary, which carries the lost count
+    // as every summary line does. That count is the only later mention of
+    // the lost file, and no pass after the push printed anything.
+    const later = watching.stdout.slice(quiet.length).trim().split("\n");
+    expect(
+      later,
+      `a watcher printed a pass where nothing happened: ${watching.stdout}`,
+    ).toHaveLength(1);
+    expect(later[0]).toMatch(
+      /^1 created, 0 updated, 0 renamed, 0 deleted; sent 1; \d+ file\(s\) written, 1 bound to an item that is gone$/,
+    );
   });
 
   it("refuses a folder that names no source, or one it may never name", async () => {
@@ -4771,9 +4837,11 @@ describe("a file that is not a document", () => {
   });
 
   it("writes an item carrying a blob_ref outside the file types as a document", async () => {
+    const unfetched = hashOf(Buffer.from("not fetched"));
+    const bytes = Buffer.from("the bytes a file item names\n");
     harness = await folderHarness("folder-file-not-a-file", {
       slice: {
-        types: ["core.note", "core.bookmark"],
+        types: ["core.note", "core.bookmark", "core.file"],
         defaultType: "core.note",
       },
       rows: {
@@ -4782,27 +4850,47 @@ describe("a file that is not a document", () => {
             item: {
               id: "01a00000-0000-7000-8000-0000000000b1",
               type: "core.bookmark",
+              properties: { title: "Budget.xlsx", blob_ref: unfetched },
+            },
+          },
+        ],
+        // A file item beside it, whose bytes the same pull fetches.
+        "core.file": [
+          {
+            item: {
+              id: "01a00000-0000-7000-8000-0000000000b2",
+              type: "core.file",
               properties: {
-                title: "Budget.xlsx",
-                blob_ref: hashOf(Buffer.from("not fetched")),
+                title: "notes.txt",
+                blob_ref: hashOf(bytes),
+                mime_type: "text/plain",
               },
             },
           },
         ],
       },
     });
+    scriptBlob(harness.server, bytes);
     const pulled = await harness.folder.pull();
     expect(pulled.ok).toBe(true);
     if (!pulled.ok) return;
-    expect(pulled.value.written).toBe(1);
+    expect(pulled.value.written).toBe(2);
     expect(
       existsSync(join(harness.dir, "Budget.xlsx.md")),
       "an item of a type that is not a file was written under a file's name, so the next scan would not read it as the document it is",
     ).toBe(true);
+    const fetched = (hash: string) =>
+      harness!.server.requests.some((request) =>
+        request.pathname.startsWith(`/blobs/${hash}`),
+      );
+    // The witness: the same pull fetched the file item's bytes.
     expect(
-      harness.server.requests.some((request) =>
-        request.pathname.startsWith("/blobs/"),
-      ),
+      fetched(hashOf(bytes)),
+      "the pull fetched no bytes at all, so nothing here is about the bookmark",
+    ).toBe(true);
+    expect(readFileSync(join(harness.dir, "notes.txt"))).toEqual(bytes);
+    expect(
+      fetched(unfetched),
       "the pull fetched bytes for an item that is not a file",
     ).toBe(false);
   });
@@ -5090,10 +5178,17 @@ describe("a file that is not a document", () => {
     try {
       const drained = await device.drain();
       expect(drained.ok, JSON.stringify(drained)).toBe(true);
+      if (!drained.ok) return;
       const held = await device.queue();
       expect(held.ok).toBe(true);
       if (!held.ok) return;
-      // The witness: the upload was tried and left unanswered.
+      // The witness: the upload was tried, met bytes it could not open, and
+      // was left unanswered.
+      expect(
+        drained.value.verdicts.find((row) => row.kind === "upload_blob")
+          ?.reason ?? "",
+        "the upload was never tried, so nothing here waited on bytes that could not be opened",
+      ).toContain(`the bytes of ${hashOf(edited)} could not be opened`);
       expect(
         held.value.find((row) => row.kind === "upload_blob")?.verdict,
       ).toBe(null);

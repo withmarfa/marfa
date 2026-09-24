@@ -59,6 +59,14 @@ function hydrateOneFile(server: Harness["server"], hash: string): void {
 
 let harness: Harness | undefined;
 
+/**
+ * A PNG's signature, then base64 that spells `word`: `/` makes the word a
+ * token of its own. Held as text, it is found by a search for the word, which
+ * is what makes a thumbnail's absence from a search the thumbnail rule's
+ * doing rather than the tokenizer's.
+ */
+const pngOf = (word: string) => `data:image/png;base64,iVBORw0KGgoA/${word}`;
+
 afterEach(async () => {
   await harness?.stop();
   harness = undefined;
@@ -220,9 +228,7 @@ describe("the working copy holds one slice", () => {
         next_cursor: null,
       },
     });
-    // A PNG's signature, then base64 that spells a word a search could
-    // find: `/` makes it a token of its own.
-    const data = "iVBORw0KGgoA/unicornsXYZ";
+    const image = pngOf("unicornsXYZ");
     scriptHydration(server, {
       head: "10",
       rows: {
@@ -233,7 +239,7 @@ describe("the working copy holds one slice", () => {
               type: "user.snapshot",
               properties: {
                 title: "Holiday",
-                thumbnail: `data:image/png;base64,${data}`,
+                thumbnail: image,
               },
             },
           },
@@ -242,7 +248,7 @@ describe("the working copy holds one slice", () => {
           {
             item: {
               id: "beside",
-              properties: { title: "Beside", body: "unicornsXYZ" },
+              properties: { title: "Beside", body: image },
             },
           },
         ],
@@ -261,7 +267,7 @@ describe("the working copy holds one slice", () => {
     expect(
       readFileSync(out),
       "the thumbnail's bytes are not the image the item carried",
-    ).toEqual(Buffer.from(data, "base64"));
+    ).toEqual(Buffer.from(image.replace(/^data:[^,]*,/, ""), "base64"));
     expect(
       server.requests.length,
       "the thumbnail was fetched rather than read from the item held",
@@ -278,13 +284,18 @@ describe("the working copy holds one slice", () => {
       "the thumbnail of an item the copy does not hold was answered, or refused as though the server had said so",
     ).toBe("not_held");
 
-    // The image's base64 is not searchable. The witness: the same token in
-    // a body is found.
+    // The image's base64 is not searchable. The witness: the same image
+    // held as a note's text is found.
     const hits = await device.search("unicornsXYZ");
     expect(hits.ok).toBe(true);
     if (!hits.ok) return;
+    const ids = hits.value.map((hit) => hit.item.id);
     expect(
-      hits.value.map((hit) => hit.item.id),
+      ids,
+      "the image held as text was not found either, so nothing here is about the thumbnail",
+    ).toContain("beside");
+    expect(
+      ids,
       "a search matched the thumbnail's base64, so every image answers searches for whatever its encoding happens to spell",
     ).toEqual(["beside"]);
   });
@@ -461,8 +472,8 @@ describe("the working copy holds one slice", () => {
     });
     // An image under a property the type never declares, which sends the
     // device to the catalog once and is then taken as the text it is.
-    const icon = "data:image/png;base64,iVBORw0KGgoA/iconwordXYZ";
-    const cover = "data:image/png;base64,iVBORw0KGgoA/unicornsXYZ";
+    const icon = pngOf("iconwordXYZ");
+    const cover = pngOf("unicornsXYZ");
     const photo = (id: string, properties: Record<string, unknown>) =>
       wireItem({ id, type: "user.photo", properties });
     const found = async (query: string): Promise<string[]> => {
@@ -507,8 +518,10 @@ describe("the working copy holds one slice", () => {
       expect((await device.hydrate(["user.photo"], "library")).ok).toBe(true);
       const followed = await device.follow(3);
       expect(followed.ok, JSON.stringify(followed)).toBe(true);
-      // The witness: the event was applied and its row indexed.
+      // The witness: the event was applied and its row indexed, and an image
+      // held as text is found, so the thumbnail's absence is its own.
       expect(await found("zebraword")).toEqual(["second"]);
+      expect(await found("iconwordXYZ")).toEqual(["first", "second"]);
       expect(
         await found("unicornsXYZ"),
         "an image already read again for hid the thumbnail after it in the same item, and the thumbnail's base64 went into the index",
@@ -605,8 +618,10 @@ describe("the working copy holds one slice", () => {
       expect((await device.hydrate(["user.photo"], "library")).ok).toBe(true);
       const caught = await device.catchUp();
       expect(caught.ok, JSON.stringify(caught)).toBe(true);
-      // The witness: the event was applied and its row indexed.
+      // The witness: the event was applied and its row indexed, and an image
+      // held as text is found, so the thumbnail's absence is its own.
       expect(await found("zebraword")).toEqual(["second"]);
+      expect(await found("iconwordXYZ")).toEqual(["first", "second"]);
       expect(
         await found("unicornsXYZ"),
         "an image already read again for hid the thumbnail after it in the same item, and the thumbnail's base64 went into the index",
@@ -624,7 +639,7 @@ describe("the working copy holds one slice", () => {
       status: 200,
       body: { data: [...SCRIPTED_TYPES, snapshotType()], next_cursor: null },
     };
-    const image = "data:image/png;base64,iVBORw0KGgoA/unicornsXYZ";
+    const image = pngOf("unicornsXYZ");
     const found = async (query: string): Promise<string[]> => {
       const hits = await harness?.device.search(query);
       return hits?.ok ? hits.value.map((hit) => hit.item.id) : [];
@@ -683,14 +698,15 @@ describe("the working copy holds one slice", () => {
             wireItem({
               id,
               type: "user.snapshot",
-              properties: { title: "zebraword", thumbnail: image },
+              properties: { title: pngOf("zebraword"), thumbnail: image },
             }),
           ),
         ],
       });
       const drained = await device.drain();
       expect(drained.ok, JSON.stringify(drained)).toBe(true);
-      // The witness: the answer's row was written and indexed.
+      // The witness: the answer's row was written and indexed, an image in
+      // its title found as the text it is there.
       expect(await found("zebraword")).toEqual([id]);
       expect(
         await found("unicornsXYZ"),
@@ -720,15 +736,181 @@ describe("the working copy holds one slice", () => {
         true,
       );
       const edit = await device.update("edited", {
-        properties: { title: "zebraword", thumbnail: image },
+        properties: { title: pngOf("zebraword"), thumbnail: image },
         version: 1,
       });
       expect(edit.ok, JSON.stringify(edit)).toBe(true);
-      // The witness: the edit was laid over the row and indexed.
+      // The witness: the edit was laid over the row and indexed, an image in
+      // its title found as the text it is there.
       expect(await found("zebraword")).toEqual(["edited"]);
       expect(
         await found("unicornsXYZ"),
         "a local edit put the image's base64 into the index",
+      ).toEqual([]);
+    });
+
+    it("keeps a thumbnail out of its index when a refused write's row is read back", async () => {
+      harness = await startHarness("thumbnail-reconciled");
+      const { server, device } = harness;
+      scriptHydration(server, {
+        head: "10",
+        catalog,
+        rows: {
+          "user.snapshot": [
+            {
+              item: {
+                id: "refused",
+                type: "user.snapshot",
+                properties: { title: "Before" },
+              },
+            },
+          ],
+        },
+      });
+      expect((await device.hydrate(["user.snapshot"], "library")).ok).toBe(
+        true,
+      );
+      const edit = await device.update("refused", {
+        properties: { title: "Mine" },
+        version: 1,
+      });
+      expect(edit.ok, JSON.stringify(edit)).toBe(true);
+      // The edit is refused, and the row read back carries an image in its
+      // title and in its thumbnail, so what the index holds afterwards is
+      // what the read-back wrote.
+      scriptWrites(server, {
+        update: [refusal(400, "invalid_properties", "not this edit")],
+        read: [
+          answers.updated(
+            wireItem({
+              id: "refused",
+              type: "user.snapshot",
+              version: 2,
+              properties: { title: pngOf("zebraword"), thumbnail: image },
+            }),
+          ),
+        ],
+      });
+      expect((await device.drain()).ok).toBe(true);
+      // The witness: the read-back row was written and indexed.
+      expect(await found("zebraword")).toEqual(["refused"]);
+      expect(
+        await found("unicornsXYZ"),
+        "the row a refused write's reconcile read back put the image's base64 into the index",
+      ).toEqual([]);
+    });
+
+    it("keeps a thumbnail out of its index when a refused create lands on the row its key names", async () => {
+      harness = await startHarness("thumbnail-landed");
+      const { server, device } = harness;
+      scriptHydration(server, { head: "10", catalog });
+      expect((await device.hydrate(["user.snapshot"], "library")).ok).toBe(
+        true,
+      );
+      const created = await device.create({
+        type: "user.snapshot",
+        source: "photos",
+        sourceId: "holiday.png",
+        version: 0,
+        properties: { title: "Made here" },
+      });
+      expect(created.ok, JSON.stringify(created)).toBe(true);
+      // The key names a row the server holds, which the refusal names and
+      // the device reads, carrying an image in its title and its thumbnail.
+      const row = {
+        id: "landed",
+        type: "user.snapshot",
+        source: "photos",
+        source_id: "holiday.png",
+        version: 3,
+        properties: { title: pngOf("zebraword"), thumbnail: image },
+      };
+      scriptWrites(server, {
+        create: [
+          answers.ancestorUnavailable(
+            {
+              id: row.id,
+              version: row.version,
+              properties: row.properties,
+              tier: "library",
+              occurred_at: "2026-01-01T00:00:00.000Z",
+              source_id: row.source_id,
+            },
+            0,
+          ),
+        ],
+        read: [answers.updated(wireItem(row))],
+      });
+      const drained = await device.drain();
+      expect(drained.ok, JSON.stringify(drained)).toBe(true);
+      // The witness: the create landed on the row, which was written and
+      // indexed.
+      expect(
+        drained.ok && drained.value.verdicts.map((entry) => entry.reason),
+      ).toEqual(["ancestor_unavailable"]);
+      expect(await found("zebraword")).toEqual(["landed"]);
+      expect(
+        await found("unicornsXYZ"),
+        "the row a refused create landed on put the image's base64 into the index",
+      ).toEqual([]);
+    });
+
+    it("keeps a thumbnail out of its index when a waiting edit is laid over a row an event brought", async () => {
+      harness = await startHarness("thumbnail-laid-over");
+      const { server, device } = harness;
+      scriptHydration(server, {
+        head: "10",
+        catalog,
+        rows: {
+          "user.snapshot": [
+            {
+              item: {
+                id: "laid",
+                type: "user.snapshot",
+                properties: { title: "Before" },
+              },
+            },
+          ],
+        },
+      });
+      // Another device's write brings the image; this device's edit of the
+      // title, not yet sent, is laid back over it.
+      server.answer(
+        "GET",
+        "/events",
+        replay("11", [
+          itemEvent(
+            "11",
+            "item.updated",
+            wireItem({
+              id: "laid",
+              type: "user.snapshot",
+              version: 2,
+              properties: { title: "Theirs", thumbnail: image },
+            }),
+          ),
+        ]),
+      );
+      expect((await device.hydrate(["user.snapshot"], "library")).ok).toBe(
+        true,
+      );
+      const edit = await device.update("laid", {
+        properties: { title: pngOf("zebraword") },
+        version: 1,
+      });
+      expect(edit.ok, JSON.stringify(edit)).toBe(true);
+      expect((await device.catchUp()).ok).toBe(true);
+      // The witness: the event was applied and the waiting edit laid over
+      // it, so the row holds the image and the edit's title, indexed.
+      const held = await device.get("laid");
+      expect(held.ok && held.value.properties).toEqual({
+        title: pngOf("zebraword"),
+        thumbnail: image,
+      });
+      expect(await found("zebraword")).toEqual(["laid"]);
+      expect(
+        await found("unicornsXYZ"),
+        "the row a waiting edit was laid over put the image's base64 into the index",
       ).toEqual([]);
     });
   });
@@ -893,21 +1075,37 @@ describe("the working copy holds one slice", () => {
     const { server, device } = harness;
     const bytes = Buffer.from("the bytes the name is for\n");
     const hash = scriptBlob(server, bytes, Buffer.from("something else\n"));
+    // Bytes that do hash to their name, fetched beside them.
+    const kept = scriptBlob(
+      server,
+      Buffer.from("the bytes this name is for\n"),
+    );
     hydrateOneFile(server, hash);
     expect((await device.hydrate(["core.file"], "library")).ok).toBe(true);
+    expect((await device.blob(kept)).ok).toBe(true);
 
     const altered = await device.blob(hash);
     expect(
       altered.ok,
       "the device kept bytes that are not the blob they were fetched as, so the name answers a different file",
     ).toBe(false);
-    // The link was followed, so the refusal is the check on what came back
-    // and not a fetch that never happened.
+    // The altered blob's own link was followed, so the refusal is the check
+    // on what came back and not a fetch that never happened.
     expect(
-      server.requests.some((request) => request.pathname.startsWith("/links/")),
+      server.requests.some(
+        (request) =>
+          request.pathname === `/links/${hash.slice("sha256:".length)}`,
+      ),
       "the device never followed the link, so nothing here is about what it does with what the link serves",
     ).toBe(true);
     await server.offline();
+    // The witness: an ask with the server gone is answered from the store
+    // for bytes it kept, so the refusal below is bytes it did not keep.
+    const held = await device.blob(kept);
+    expect(
+      held.ok,
+      `bytes the device kept were not answered with the server gone: ${JSON.stringify(held)}`,
+    ).toBe(true);
     const after = await device.blob(hash);
     expect(
       after.ok,

@@ -728,6 +728,11 @@ describe("bootstrap sentinel", () => {
       };
       expect(operator.is_operator).toBe(true);
       expect(operator.sources).toEqual([]);
+      // The listing that held no key after the refusal holds this one.
+      expect(
+        (await storage.keys.list()).map((k) => k.source),
+        "the listing does not surface a minted key, so its emptiness above proves nothing",
+      ).toEqual(["first-admin"]);
     } finally {
       await storage.close();
       rmSync(tmpDir, { recursive: true, force: true });

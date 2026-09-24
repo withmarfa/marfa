@@ -268,8 +268,8 @@ mod tests {
             }),
             vec!["bookmark", "image", "note"]
         );
-        // Every tag given, with no type to do the narrowing for it: four rows
-        // carry one of the two and one carries both.
+        // Every tag given, with no type to do the narrowing for it: three rows
+        // carry only one of the two and one carries both.
         assert_eq!(
             ids(SearchFilters {
                 tags: vec!["birds".into(), "garden".into()],
