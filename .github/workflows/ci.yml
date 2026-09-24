@@ -486,7 +486,7 @@ jobs:
       # this directory, so a hand-written file here would ship as generated.
       - name: Regenerate the Swift types and check for drift
         run: |
-          rm -rf swift/Sources/MarfaTypes
+          rm -rf swift/Sources
           pnpm run generate:swift
           if [ -n "$(git status --porcelain swift/Sources)" ]; then
             git status --porcelain swift/Sources

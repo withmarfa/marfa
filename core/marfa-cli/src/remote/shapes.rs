@@ -160,3 +160,65 @@ fn a_type_registration_carries_compatible_with_in_either_spelling() {
         );
     }
 }
+
+/// Every `.rs` file under `dir`, at any depth.
+fn sources(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let mut found = Vec::new();
+    for entry in std::fs::read_dir(dir).unwrap() {
+        let path = entry.unwrap().path();
+        if path.is_dir() {
+            found.extend(sources(&path));
+        } else if path.extension().is_some_and(|extension| extension == "rs") {
+            found.push(path);
+        }
+    }
+    found
+}
+
+/// An object the generator wrote with no fields, which reads nothing: what
+/// it emits for a union it cannot express.
+fn is_empty_struct(text: &str) -> bool {
+    text.lines()
+        .any(|line| line.starts_with("pub struct ") && line.trim_end().ends_with(" {}"))
+}
+
+#[test]
+fn no_generated_model_is_an_object_with_no_fields() {
+    // The witness: the rule flags the struct the generator wrote for the
+    // housekeeping report's values before `schemaMappings` stopped it.
+    assert!(is_empty_struct("pub struct HousekeepingReportValue {}\n"));
+    let models =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../marfa-client/src/models");
+    let files = sources(&models);
+    assert!(files.len() > 100, "read {} models", files.len());
+    let empty: Vec<_> = files
+        .iter()
+        .filter(|path| is_empty_struct(&std::fs::read_to_string(path).unwrap()))
+        .collect();
+    assert!(empty.is_empty(), "models with no fields: {empty:?}");
+}
+
+#[test]
+fn no_command_calls_a_generated_operation() {
+    // The generated operations send a request and read its answer without
+    // the contract check, so the binary reaches the wire through `Remote`
+    // alone; this module's tests are the one place that calls them.
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let own = root.join("remote/shapes.rs");
+    let calls = |text: &str| {
+        text.lines().any(|line| {
+            line.contains("marfa_client::apis::") && !line.contains("apis::configuration")
+        })
+    };
+    assert!(calls(
+        "use marfa_client::apis::audit_api::list_audit_log;\n"
+    ));
+    let offending: Vec<_> = sources(&root)
+        .into_iter()
+        .filter(|path| *path != own && calls(&std::fs::read_to_string(path).unwrap()))
+        .collect();
+    assert!(
+        offending.is_empty(),
+        "calling a generated operation: {offending:?}"
+    );
+}

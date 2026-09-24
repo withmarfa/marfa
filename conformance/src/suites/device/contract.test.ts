@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { describe, it, expect, afterEach } from "vitest";
+import { answers } from "../../device/marfa-answers.js";
 import { BUILT_FOR, ScriptedServer } from "../../device/scripted-server.js";
 import { KEY, fileOf, requireBinary } from "./harness.js";
 
@@ -316,6 +317,25 @@ function codeOf(stderr: string): string {
   }
 }
 
+/**
+ * Commands outside the table that reach the server, driven the same way:
+ * the table lists published operations, and these reach one without being
+ * its entry.
+ */
+const beyondTheTable: Record<string, () => string[]> = {
+  "keys bootstrap": () => ["--secret", "s"],
+};
+
+/** Every command driven here, as the table names it and beyond it. */
+async function driven(): Promise<{ command: string }[]> {
+  const outcome = await marfa(["--json", "operations"]);
+  const rows = JSON.parse(outcome.stdout) as { command: string }[];
+  return [
+    ...rows,
+    ...Object.keys(beyondTheTable).map((command) => ({ command })),
+  ];
+}
+
 /** The one command that reads a server on another contract: saying so is its job. */
 const DESCRIBES = "status";
 
@@ -342,6 +362,10 @@ describe("every command holds the server to the contract", () => {
   async function everyDoor(contract: string): Promise<ScriptedServer> {
     const started = await ScriptedServer.start();
     started.contract = contract;
+    // The root's body names the contract the binary was built for, whatever
+    // its header says, so a write that reads the root before it mints is
+    // sent, and it is the mint's own answer that has to be refused.
+    started.answer("GET", "/", answers.root(builtFor));
     for (const method of ["GET", "POST", "PUT", "PATCH", "DELETE"]) {
       started.answer(method, /^\/.+/, { kind: "json", status: 200, body: {} });
     }
@@ -359,10 +383,11 @@ describe("every command holds the server to the contract", () => {
 
   it("refuses contract_mismatch from every command but status", async () => {
     const served = String(builtFor + 1);
-    for (const row of await table()) {
+    for (const row of await driven()) {
       if (row.command === DESCRIBES) continue;
       server = await everyDoor(served);
-      const argv = invocations[row.command]?.() ?? [];
+      const argv =
+        (invocations[row.command] ?? beyondTheTable[row.command])?.() ?? [];
       const outcome = await marfa(
         [
           "--json",
@@ -394,11 +419,12 @@ describe("every command holds the server to the contract", () => {
     // The witness: the same invocations against the same answers, on the
     // contract the binary was built for, are not refused for the contract.
     const printed: string[] = [];
-    const rows = await table();
+    const rows = await driven();
     for (const row of rows) {
       if (row.command === DESCRIBES) continue;
       server = await everyDoor(BUILT_FOR);
-      const argv = invocations[row.command]?.() ?? [];
+      const argv =
+        (invocations[row.command] ?? beyondTheTable[row.command])?.() ?? [];
       const outcome = await marfa(
         [
           "--json",

@@ -115,19 +115,35 @@ jobs:
             echo "::error::$version is not 0.0.N; every version steps by 0.0.1."
             exit 1
           fi
+          # Whether a version has a public release: "true", "false", or the
+          # step fails, so a lookup that errs is never read as either.
+          released() {
+            local answer
+            if answer=$(gh release view "v0.0.$1" --json isDraft --jq .isDraft 2>&1); then
+              [ "$answer" = "false" ] && echo true || echo false
+            elif grep -q "release not found" <<< "$answer"; then
+              echo false
+            else
+              echo "::error::Could not ask whether 0.0.$1 is released: $answer" >&2
+              return 1
+            fi
+          }
+          remote_tags=$(git ls-remote --tags --refs origin 'refs/tags/v0.0.*')
           previous=-1
           above=()
-          for tag in $(git ls-remote --tags --refs origin 'refs/tags/v0.0.*' | awk '{ print $2 }'); do
+          while read -r _ tag; do
+            [ -n "$tag" ] || continue
             n="${tag#refs/tags/v0.0.}"
             [[ "$n" =~ ^(0|[1-9][0-9]*)$ ]] || continue
             if [ "$n" -lt "$patch" ] && [ "$n" -gt "$previous" ]; then previous="$n"; fi
             if [ "$n" -gt "$patch" ]; then above+=("$n"); fi
-          done
+          done <<< "$remote_tags"
           # A version above this one that is only tagged is waiting on this
           # one, as two tags pushed together are; one that is released means
           # this tag was made in a gap.
           for n in "${above[@]}"; do
-            if [ "$(gh release view "v0.0.$n" --json isDraft --jq .isDraft 2>/dev/null)" = "false" ]; then
+            state=$(released "$n")
+            if [ "$state" = "true" ]; then
               echo "::error::0.0.$n is already released, so $version is not the next version."
               exit 1
             fi
@@ -144,7 +160,8 @@ jobs:
           # needs no history in this shallow checkout. A compare that fails
           # fails the step rather than reading as either answer.
           if [ "$previous" -ge 0 ]; then
-            if [ "$(gh release view "v0.0.$previous" --json isDraft --jq .isDraft 2>/dev/null)" != "false" ]; then
+            state=$(released "$previous")
+            if [ "$state" != "true" ]; then
               echo "::error::0.0.$previous is tagged but not released; release it before $version."
               exit 1
             fi
@@ -202,16 +219,8 @@ jobs:
           pnpm --ignore-workspace install --frozen-lockfile
           pnpm --ignore-workspace run build
           pnpm --ignore-workspace pack --pack-destination "$RUNNER_TEMP/artifacts"
-          # A pack that found no build still succeeds, holding package.json
-          # alone, so what the package's `files` names is asked for by name.
-          listing=$(tar -tzf "$RUNNER_TEMP/artifacts/withmarfa-core-$VERSION.tgz")
-          for entry in package/index.js package/index.d.ts package/marfa-core.darwin-arm64.node; do
-            if ! grep -qx "$entry" <<< "$listing"; then
-              echo "::error::@withmarfa/core's tarball has no $entry:"
-              echo "$listing"
-              exit 1
-            fi
-          done
+          bash scripts/release/hold-tarball.sh "$RUNNER_TEMP/artifacts/withmarfa-core-$VERSION.tgz" \
+            index.js index.d.ts marfa-core.darwin-arm64.node
 
       - name: Build the binary for macOS
         working-directory: core
@@ -227,7 +236,12 @@ jobs:
           tar -czf "$RUNNER_TEMP/artifacts/marfa-$VERSION-darwin-arm64.tar.gz" -C target/release marfa
 
       - name: Pack @withmarfa/client
-        run: pnpm --filter @withmarfa/client pack --pack-destination "$RUNNER_TEMP/artifacts"
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          pnpm --filter @withmarfa/client pack --pack-destination "$RUNNER_TEMP/artifacts"
+          bash scripts/release/hold-tarball.sh "$RUNNER_TEMP/artifacts/withmarfa-client-$VERSION.tgz" \
+            dist/index.js dist/index.d.ts
 
       # `--allow-dirty` because the stamp just wrote the version into the
       # manifests of this checkout, which is the only place it lives.
@@ -391,7 +405,10 @@ jobs:
           GH_TOKEN: ${{ secrets.SWIFT_SDK_TOKEN }}
         run: |
           branch="release/v$VERSION"
-          if [ "$(gh pr list -R "$SWIFT_SDK" --head "$branch" --state all --json number --jq length)" != "0" ]; then
+          # Assigned, so a failed lookup fails the step rather than reading
+          # as a pull request that exists.
+          proposed=$(gh pr list -R "$SWIFT_SDK" --head "$branch" --state all --json number --jq length)
+          if [ "$proposed" != "0" ]; then
             echo "$SWIFT_SDK already has a pull request from $branch"
             exit 0
           fi
@@ -407,6 +424,12 @@ jobs:
             mkdir -p "$sdk/Sources"
             cp -R "$RUNNER_TEMP/types/Sources/MarfaTypes" "$sdk/Sources/MarfaTypes"
             git -C "$sdk" add Sources/MarfaTypes
+            # A release that changed nothing the types describe has nothing
+            # to propose.
+            if git -C "$sdk" diff --cached --quiet; then
+              echo "$SWIFT_SDK already holds these types"
+              exit 0
+            fi
             git -C "$sdk" \
               -c user.name="github-actions[bot]" \
               -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
@@ -466,7 +489,10 @@ jobs:
           tar -xzf "artifacts/marfa-client-$VERSION.crate" -C "$RUNNER_TEMP/crate"
           # The package is the one the build job made and checked, published
           # from where it was unpacked rather than from the checkout, which
-          # `cargo publish` would package again.
+          # would need the version stamped again. Its manifest is the
+          # normalized one cargo wrote; the original beside it is a name
+          # cargo reserves for itself and refuses to package.
+          rm "$RUNNER_TEMP/crate/marfa-client-$VERSION/Cargo.toml.orig"
           cargo publish --manifest-path "$RUNNER_TEMP/crate/marfa-client-$VERSION/Cargo.toml"
 
       # No `--provenance`: npm attests provenance only from a GitHub-hosted

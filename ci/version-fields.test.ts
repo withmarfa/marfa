@@ -202,11 +202,12 @@ function publishedDirs(manifests: readonly Manifest[]): string[] {
   return [...dirs].sort();
 }
 
-/** The READMEs a published package ships, read off the tree. */
+/** The READMEs a published package ships, read off the tree, with or
+ *  without an extension: npm ships a bare `README` too. */
 function publishedReadmes(dirs: readonly string[]): Manifest[] {
   return execFileSync(
     "git",
-    ["ls-files", "--", ...dirs.map((dir) => `:(glob)${dir}/**/README.md`)],
+    ["ls-files", "--", ...dirs.map((dir) => `:(glob)${dir}/**/README*`)],
     { cwd: ROOT, encoding: "utf8" },
   )
     .split("\n")
