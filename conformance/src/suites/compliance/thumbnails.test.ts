@@ -429,12 +429,16 @@ describe("a thumbnail field", () => {
     ).toEqual(alone.data.results.map((result) => result.id));
   });
 
-  it("is not found by a search that finds the same token in a body", async () => {
-    // A PNG's signature, then base64 that spells a word of its own: `/`
-    // ends one token and starts the next.
-    let token = `thumb${ctx.runId.replace(/[^A-Za-z0-9]/g, "")}`;
+  /** A PNG's signature, then base64 that spells a word of its own: `/` ends
+   *  one token and starts the next. */
+  const spelling = (word: string) => {
+    let token = `${word}${ctx.runId.replace(/[^A-Za-z0-9]/g, "")}`;
     while ((token.length + 1) % 4 !== 0) token += "Q";
-    const image = `data:image/png;base64,iVBORw0KGgoA/${token}`;
+    return { token, image: `data:image/png;base64,iVBORw0KGgoA/${token}` };
+  };
+
+  it("is not found by a search that finds the same token in a body", async () => {
+    const { token, image } = spelling("thumb");
     const inThumbnail = await create({
       title: "Carries the token in its image",
       thumbnail: image,
@@ -456,5 +460,42 @@ describe("a thumbnail field", () => {
       ids,
       "a search matched an image's base64, so every thumbnail answers searches for whatever its encoding spells",
     ).not.toContain(inThumbnail.data.item.id);
+  });
+
+  it("is not found after an update writes it, where the same token in a body is", async () => {
+    const made = await create({
+      title: "Before",
+      thumbnail: spelling("pre").image,
+    });
+    expect(made.ok, JSON.stringify(made.error)).toBe(true);
+    const words = await create({ title: "Words", body: "before" });
+    expect(words.ok, JSON.stringify(words.error)).toBe(true);
+
+    // Both rows are updated: one's thumbnail and one's body take the same
+    // image, so what the index holds afterwards is what the update wrote.
+    const { token, image } = spelling("upd");
+    const updated = await client.updateItem(made.data.item.id, {
+      properties: { thumbnail: image },
+      version: made.data.item.version,
+    });
+    expect(updated.ok, JSON.stringify(updated.error)).toBe(true);
+    const inBody = await client.updateItem(words.data.item.id, {
+      properties: { body: image },
+      version: words.data.item.version,
+    });
+    expect(inBody.ok, JSON.stringify(inBody.error)).toBe(true);
+
+    const found = await client.search(token, { limit: 50 });
+    expect(found.ok).toBe(true);
+    const ids = found.data.data.map((hit) => hit.item.id);
+    // The witness: the update indexes the same image held as a body's text.
+    expect(
+      ids,
+      "the image an update put in a body was not found either, so nothing here is about the thumbnail",
+    ).toContain(words.data.item.id);
+    expect(
+      ids,
+      "an update put the thumbnail's base64 into the index",
+    ).not.toContain(made.data.item.id);
   });
 });
