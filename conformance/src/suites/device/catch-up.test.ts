@@ -1041,7 +1041,14 @@ describe("catch-up replays from the cursor", () => {
     const before = server.requests.filter(
       (request) => request.pathname === "/events",
     ).length;
-    const aged = await device.follow(5);
+    // Given far longer than it needs, so ending is the follow's own doing and
+    // not the bound running out.
+    const started = Date.now();
+    const aged = await device.follow(30);
+    expect(
+      Date.now() - started,
+      "the follow stayed open after its cursor aged out and ended only when its time ran out",
+    ).toBeLessThan(10_000);
     expect(
       aged.ok,
       "a held stream told its cursor had aged out went on as if current",
