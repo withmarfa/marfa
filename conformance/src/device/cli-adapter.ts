@@ -320,10 +320,7 @@ export class CliDevice implements DeviceUnderTest {
    * the store for every case after it, and they would fail as the rule rather
    * than as the leak.
    */
-  hold(
-    args: string[],
-    at: "device" | "root" | "text" = "device",
-  ): HeldCommand {
+  hold(args: string[], at: "device" | "root" | "text" = "device"): HeldCommand {
     const child = spawn(
       this.options.binary,
       [
