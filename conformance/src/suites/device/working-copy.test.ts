@@ -439,6 +439,185 @@ describe("the working copy holds one slice", () => {
     ).toEqual([]);
   });
 
+  describe("keeps a thumbnail out of its index when the catalog was already read again for another image", () => {
+    /** The catalog, holding `user.photo` with `cover` as its thumbnail or
+     *  without a thumbnail at all. */
+    const photos = (withCover: boolean) => ({
+      kind: "json" as const,
+      status: 200,
+      body: {
+        data: [
+          ...SCRIPTED_TYPES,
+          wireType("user.photo", {
+            fields: {
+              title: { type: "string" },
+              body: { type: "string" },
+              ...(withCover ? { cover: { type: "thumbnail" } } : {}),
+            },
+          }),
+        ],
+        next_cursor: null,
+      },
+    });
+    // An image under a property the type never declares, which sends the
+    // device to the catalog once and is then taken as the text it is.
+    const icon = "data:image/png;base64,iVBORw0KGgoA/iconwordXYZ";
+    const cover = "data:image/png;base64,iVBORw0KGgoA/unicornsXYZ";
+    const photo = (id: string, properties: Record<string, unknown>) =>
+      wireItem({ id, type: "user.photo", properties });
+    const found = async (query: string): Promise<string[]> => {
+      const hits = await harness?.device.search(query);
+      return hits?.ok ? hits.value.map((hit) => hit.item.id).sort() : [];
+    };
+
+    it("keeps a thumbnail out of its index when it follows, in one item, an image already read again for", async () => {
+      harness = await startHarness("thumbnail-after-spent");
+      const { server, device } = harness;
+      scriptHydration(server, { head: "10", catalog: photos(false) });
+      // `cover` becomes the thumbnail after the device's second read: the
+      // one the stream opened with and the one `icon` sent it to.
+      let reads = 0;
+      server.answer("GET", "/types", () => {
+        reads += 1;
+        return photos(reads > 2);
+      });
+      server.answer(
+        "GET",
+        "/events",
+        heldLog([
+          itemEvent(
+            "11",
+            "item.created",
+            photo("first", { title: "First", body: "as sent", icon }),
+          ),
+          // `icon` comes first, and the device has read the catalog again
+          // for it already.
+          itemEvent(
+            "12",
+            "item.created",
+            photo("second", {
+              title: "Second",
+              body: "zebraword",
+              icon,
+              cover,
+            }),
+          ),
+        ]),
+      );
+      expect((await device.hydrate(["user.photo"], "library")).ok).toBe(true);
+      const followed = await device.follow(3);
+      expect(followed.ok, JSON.stringify(followed)).toBe(true);
+      // The witness: the event was applied and its row indexed.
+      expect(await found("zebraword")).toEqual(["second"]);
+      expect(
+        await found("unicornsXYZ"),
+        "an image already read again for hid the thumbnail after it in the same item, and the thumbnail's base64 went into the index",
+      ).toEqual([]);
+      expect(
+        reads,
+        "the image after one already read again for, in the same item, did not send the device to the catalog",
+      ).toBe(3);
+    });
+
+    it("keeps a thumbnail out of its index when its property was read again for before its type declared it", async () => {
+      harness = await startHarness("thumbnail-declared-later");
+      const { server, device } = harness;
+      scriptHydration(server, { head: "10", catalog: photos(false) });
+      // The type declares `cover` its thumbnail only after the device's
+      // third read, which the third stream opened with.
+      let reads = 0;
+      server.answer("GET", "/types", () => {
+        reads += 1;
+        return photos(reads > 3);
+      });
+      const first = itemEvent(
+        "11",
+        "item.created",
+        photo("first", { title: "First", body: "as sent", cover: icon }),
+      );
+      const second = itemEvent(
+        "12",
+        "item.created",
+        photo("second", { title: "Second", body: "zebraword", cover }),
+      );
+      // The first stream meets `cover` and is opened again; the second takes
+      // it as the text it still is and ends; the third, on a catalog read
+      // just before the type declared it, carries an item written after.
+      let opened = 0;
+      server.answer("GET", "/events", (request) => {
+        opened += 1;
+        const after = BigInt(request.headers["last-event-id"] ?? "0");
+        const log = opened <= 2 ? [first] : [first, second];
+        return {
+          kind: "sse",
+          hold: opened !== 2,
+          frames: [
+            connected,
+            ...log.filter((frame) => BigInt(frame.id ?? "0") > after),
+          ],
+        };
+      });
+      expect((await device.hydrate(["user.photo"], "library")).ok).toBe(true);
+      const followed = await device.follow(4);
+      expect(followed.ok, JSON.stringify(followed)).toBe(true);
+      // The witness: the event was applied and its row indexed.
+      expect(await found("zebraword")).toEqual(["second"]);
+      expect(
+        await found("unicornsXYZ"),
+        "a property read again for in one stream was never read again for, so the thumbnail its type declared later went into the index",
+      ).toEqual([]);
+      expect(
+        reads,
+        "a stream met an image under a property read again for in an earlier stream and did not read the catalog again",
+      ).toBe(4);
+    });
+
+    it("keeps a thumbnail out of its index when a catch-up meets it after an image already read again for", async () => {
+      harness = await startHarness("thumbnail-catch-up-after-spent");
+      const { server, device } = harness;
+      scriptHydration(server, { head: "10", catalog: photos(false) });
+      let reads = 0;
+      server.answer("GET", "/types", () => {
+        reads += 1;
+        return photos(reads > 2);
+      });
+      server.answer(
+        "GET",
+        "/events",
+        replay("12", [
+          itemEvent(
+            "11",
+            "item.created",
+            photo("first", { title: "First", body: "as sent", icon }),
+          ),
+          itemEvent(
+            "12",
+            "item.created",
+            photo("second", {
+              title: "Second",
+              body: "zebraword",
+              icon,
+              cover,
+            }),
+          ),
+        ]),
+      );
+      expect((await device.hydrate(["user.photo"], "library")).ok).toBe(true);
+      const caught = await device.catchUp();
+      expect(caught.ok, JSON.stringify(caught)).toBe(true);
+      // The witness: the event was applied and its row indexed.
+      expect(await found("zebraword")).toEqual(["second"]);
+      expect(
+        await found("unicornsXYZ"),
+        "an image already read again for hid the thumbnail after it in the same item, and the thumbnail's base64 went into the index",
+      ).toEqual([]);
+      expect(
+        reads,
+        "the image after one already read again for, in the same item, did not send the catch-up to the catalog",
+      ).toBe(3);
+    });
+  });
+
   describe("keeps a thumbnail out of its index on every path that writes a row", () => {
     const catalog = {
       kind: "json" as const,

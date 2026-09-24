@@ -950,6 +950,78 @@ describe("catch-up replays from the cursor", () => {
     expect(followed.value.report.cursor).toBe("30");
   });
 
+  it("reads the catalog once a stream for an image under a property declared as text, and holds it as text", async () => {
+    harness = await startHarness("follow-image-as-text");
+    const { server, device } = harness;
+    // `icon` is declared as text and holds an image. The catalog it has
+    // cannot tell that from a property the type has since made its
+    // thumbnail, so the stream opens again once to read it; read again, it
+    // is still text, and every event after is taken as it is.
+    scriptHydration(server, {
+      head: "10",
+      catalog: {
+        kind: "json",
+        status: 200,
+        body: {
+          data: [
+            wireType("core.note"),
+            wireType("core.file"),
+            wireType("user.photo", {
+              fields: {
+                title: { type: "string" },
+                body: { type: "string" },
+                icon: { type: "string" },
+              },
+            }),
+          ],
+          next_cursor: null,
+        },
+      },
+    });
+    const ids = ["11", "12", "13", "14", "15"];
+    server.answer(
+      "GET",
+      "/events",
+      heldLog(
+        ids.map((id) =>
+          itemEvent(
+            id,
+            "item.created",
+            wireItem({
+              id: `photo-${id}`,
+              type: "user.photo",
+              properties: {
+                title: `Photo ${id}`,
+                body: "as sent",
+                icon: "data:image/png;base64,iVBORw0KGgoA/iconwordXYZ",
+              },
+            }),
+          ),
+        ),
+      ),
+    );
+    expect((await device.hydrate(["user.photo"], "library")).ok).toBe(true);
+    const asked = (pathname: string) =>
+      server.requests.filter((request) => request.pathname === pathname).length;
+    const before = { types: asked("/types"), events: asked("/events") };
+    const followed = await device.follow(3);
+    expect(followed.ok, JSON.stringify(followed)).toBe(true);
+    if (!followed.ok) return;
+    // The witness: the image did send the device to the catalog again.
+    expect(asked("/types") - before.types).toBe(2);
+    expect(
+      asked("/events") - before.events,
+      "each event carrying an image under a property declared as text opened the stream again",
+    ).toBe(2);
+    expect(followed.value.report.reconnects).toBe(1);
+    expect(followed.value.report.applied).toBe(5);
+    const hits = await device.search("iconwordXYZ");
+    expect(
+      hits.ok ? hits.value.map((hit) => hit.item.id).sort() : [],
+      "an image under a property declared as text was not held and indexed as the text it is",
+    ).toEqual(ids.map((id) => `photo-${id}`));
+  });
+
   it("ends a follow whose cursor the log has aged past, and forgets the cursor", async () => {
     harness = await startHarness("follow-aged-out");
     const { server, device } = harness;
@@ -1230,6 +1302,52 @@ describe("catch-up keeps the copy to its slice", () => {
       reads() - before,
       "the catalog was not read once for the catch-up and once for each type an event named that it did not hold",
     ).toBe(3);
+  });
+
+  it("reads the catalog once for an image under a property no type declares, not once for each event carrying it", async () => {
+    harness = await startHarness("catalog-undeclared-image");
+    const { server, device } = harness;
+    scriptHydration(server, { head: "10" });
+    const ids = ["11", "12", "13"];
+    server.answer(
+      "GET",
+      "/events",
+      replay(
+        "13",
+        ids.map((id) =>
+          itemEvent(
+            id,
+            "item.created",
+            wireItem({
+              id: `note-${id}`,
+              properties: {
+                title: `Note ${id}`,
+                body: "as sent",
+                preview: "data:image/png;base64,iVBORw0KGgoA/previewXYZ",
+              },
+            }),
+          ),
+        ),
+      ),
+    );
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    const reads = () =>
+      server.requests.filter((request) => request.pathname === "/types").length;
+    const before = reads();
+    const caught = await device.catchUp();
+    expect(caught.ok, JSON.stringify(caught)).toBe(true);
+    if (!caught.ok) return;
+    expect(caught.value.cursor).toBe("13");
+    // The witness: the image did send the catch-up to the catalog again,
+    // once more than the read it starts with.
+    expect(
+      reads() - before,
+      "an image under a property no type declares was read again for with each event carrying it, or never",
+    ).toBe(2);
+    const held = await device.list();
+    expect(held.ok ? held.value.map((item) => item.id).sort() : []).toEqual(
+      ids.map((id) => `note-${id}`),
+    );
   });
 });
 
