@@ -1106,6 +1106,27 @@ mod tests {
     }
 
     #[test]
+    fn a_fault_on_the_follows_thread_ends_it_with_a_refusal_and_frees_the_stream() {
+        let server = Scripted::start();
+        server.on("/types", vec![types(&[(NOTE, None)])]);
+        server.on(
+            "/events",
+            vec![stream(vec![connected(), created("n1", "11")], held())],
+        );
+        let (_dir, core) = hydrated(&server);
+        let ended = core.follow(&AtomicBool::new(false), |_| panic!("a listener fault"));
+        match ended {
+            Err(CoreError::Invalid(said)) => assert!(
+                said.contains("a fault in the core: a listener fault"),
+                "{said}"
+            ),
+            other => panic!("a fault ended the follow as {other:?}"),
+        }
+        // The claim went with the unwinding, so the copy can be followed again.
+        assert!(core.claim_stream().is_ok());
+    }
+
+    #[test]
     fn neither_a_catch_up_nor_a_follow_runs_on_a_hydration_that_did_not_finish() {
         let server = Scripted::start();
         server.on("/types", vec![types(&[(NOTE, None)])]);

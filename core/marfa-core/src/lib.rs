@@ -203,7 +203,14 @@ impl Core {
         self.lock.refuse_unless_writer()?;
         let http = self.http.clone().ok_or(CoreError::NoServer)?;
         let _streaming = self.claim_stream()?;
-        catch_up::follow(self, http, stop, &mut on_change)
+        // A follow runs on a thread of its own, and a binding says it ended
+        // when this returns: a fault that unwound past here would end the
+        // thread with nothing said, and a caller waiting to be told would
+        // wait for good.
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            catch_up::follow(self, http, stop, &mut on_change)
+        }))
+        .unwrap_or_else(|fault| Err(CoreError::Invalid(fault_message(fault.as_ref()))))
     }
 
     /// A number that moves each time another process saves to this store:
@@ -1136,6 +1143,16 @@ fn queue_upload(conn: &Connection, hash: &str, mime_type: &str) -> Result<Queued
             depends_on: &[],
         },
     )
+}
+
+/// What a fault on a follow's thread said, as the refusal it ends with.
+fn fault_message(fault: &(dyn std::any::Any + Send)) -> String {
+    let said = fault
+        .downcast_ref::<&str>()
+        .map(|said| (*said).to_string())
+        .or_else(|| fault.downcast_ref::<String>().cloned())
+        .unwrap_or_else(|| "no message".into());
+    format!("the follow stopped on a fault in the core: {said}")
 }
 
 #[cfg(test)]
