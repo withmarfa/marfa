@@ -53,6 +53,17 @@ const TypeConstraintSchema = z
     },
   );
 
+/** Nothing reads a thumbnail from an edge, and a value nothing reads is a
+ *  value nothing checks. */
+const EdgePropertyTypeSchema = z
+  .string()
+  .refine((type) => type !== "thumbnail", {
+    message: "An edge never carries a thumbnail",
+  })
+  .describe(
+    "A field type, as a type's `fields` take one, but never `thumbnail`: an edge carries no thumbnail.",
+  );
+
 /** Exported so the archive restore validates a carried edge type through
  *  exactly the shape this route accepts, rather than a second reading of
  *  the same rules that can drift from it. */
@@ -74,11 +85,11 @@ export const EdgeTypeRequestSchema = z
       .record(
         z.string(),
         z.object({
-          type: z.string(),
+          type: EdgePropertyTypeSchema,
           description: z.string().optional(),
           required: z.boolean().optional(),
           enum_values: z.array(z.string()).optional(),
-          items_type: z.string().optional(),
+          items_type: EdgePropertyTypeSchema.optional(),
         }),
       )
       .optional(),
@@ -286,18 +297,6 @@ export function edgeTypeRoutes(storage: Storage) {
       throw new MarfaError(
         ErrorCode.VALIDATION_ERROR,
         "A registered edge type does not support `extends`",
-      );
-    }
-    // An edge carries no thumbnail: nothing reads one from an edge, and a
-    // value nothing reads is a value nothing checks.
-    const thumbnail = Object.entries(body.property_schema ?? {}).find(
-      ([, definition]) => definition.type === "thumbnail",
-    );
-    if (thumbnail) {
-      throw new MarfaError(
-        ErrorCode.VALIDATION_ERROR,
-        `property_schema.${thumbnail[0]} is a thumbnail, which an edge never carries`,
-        { field: `property_schema.${thumbnail[0]}` },
       );
     }
 

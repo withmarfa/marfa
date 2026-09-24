@@ -396,6 +396,17 @@ export async function registerArchiveTypes(
       if (schema.parent && !getTypeSchema(schema.parent)) continue;
       if (schema.parent) {
         assertParentChainResolves(schema.id, schema.parent);
+        // Checked again now its parent is registered: the first pass ran
+        // before the batch's own parents were, so it could not see what a
+        // child inherits from one of them, a second thumbnail among it.
+        const inherited = validateTypeSchema(schema);
+        if (!inherited.success) {
+          throw new MarfaError(
+            ErrorCode.INVALID_SCHEMA,
+            `Archive carries an invalid type schema for "${schema.id}"`,
+            { errors: inherited.errors },
+          );
+        }
       }
       // `types.create` registers into the registry as part of the write, so
       // nothing here calls it directly.

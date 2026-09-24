@@ -104,7 +104,7 @@ const FieldDefinitionSchema = z
     type: z
       .enum(FIELD_TYPES as unknown as [string, ...string[]])
       .describe(
-        "`thumbnail` holds a small image the writer supplies: `data:image/png;base64,…`, `image/jpeg` or `image/webp`, canonical base64, at most 16 KiB decoded, beginning with that format's signature. A type carries at most one, never under a name search indexes whatever its type (`title`, `body`, `description`, `name`).",
+        "`thumbnail` holds a small image the writer supplies: `data:image/png;base64,…`, `image/jpeg` or `image/webp`, canonical base64, at most 16 KiB decoded, beginning with that format's signature. A type carries at most one, never under a name search indexes whatever its type (`title`, `body`, `description`, `name`), and never as an array's `items_type`.",
       ),
     description: z.string().optional(),
     required: z.boolean().optional(),

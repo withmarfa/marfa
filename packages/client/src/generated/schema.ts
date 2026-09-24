@@ -1817,10 +1817,12 @@ export interface components {
             cascade_on_delete?: "cascade" | "orphan" | "block";
             property_schema?: {
                 [key: string]: {
+                    /** @description A field type, as a type's `fields` take one, but never `thumbnail`: an edge carries no thumbnail. */
                     type: string;
                     description?: string;
                     required?: boolean;
                     enum_values?: string[];
+                    /** @description A field type, as a type's `fields` take one, but never `thumbnail`: an edge carries no thumbnail. */
                     items_type?: string;
                 };
             };
@@ -1961,7 +1963,7 @@ export interface components {
         };
         FieldDefinition: {
             /**
-             * @description `thumbnail` holds a small image the writer supplies: `data:image/png;base64,…`, `image/jpeg` or `image/webp`, canonical base64, at most 16 KiB decoded, beginning with that format's signature. A type carries at most one, never under a name search indexes whatever its type (`title`, `body`, `description`, `name`).
+             * @description `thumbnail` holds a small image the writer supplies: `data:image/png;base64,…`, `image/jpeg` or `image/webp`, canonical base64, at most 16 KiB decoded, beginning with that format's signature. A type carries at most one, never under a name search indexes whatever its type (`title`, `body`, `description`, `name`), and never as an array's `items_type`.
              * @enum {string}
              */
             type: "string" | "number" | "integer" | "boolean" | "url" | "email" | "datetime" | "date" | "enum" | "array" | "object" | "thumbnail";
