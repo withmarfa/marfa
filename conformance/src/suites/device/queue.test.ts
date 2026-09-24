@@ -3898,7 +3898,7 @@ describe("an edit behind an edit of the same row", () => {
       server.requests.filter(
         (request) => request.method === "POST" && request.pathname === "/items",
       ),
-      "the create never went out, so nothing here waited on its answer",
+      "the create went out other than once, so the edit is not waiting on the one answer it lacks",
     ).toHaveLength(1);
     expect(queue.find((row) => row.kind === "create_item")?.verdict).toBe(null);
     expect(
@@ -3986,7 +3986,7 @@ describe("an edit behind an edit of the same row", () => {
     // server, and no tag went anywhere.
     expect(
       [sent("POST", "/items"), sent("PATCH", `/items/${KEYED.id}`)],
-      "the row's edit never went out, so the tag waited on nothing that was sent",
+      "the create or the row's edit went out other than once, so the tag is not waiting on the one edit that had no answer",
     ).toEqual([1, 1]);
     expect(sent("POST", /^\/items\/[^/]+\/tags$/)).toBe(0);
   });
