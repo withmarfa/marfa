@@ -1,8 +1,8 @@
 import createFetchClient, { type Client, type Middleware } from "openapi-fetch";
-import { CONTRACT_VERSION } from "./contract.js";
-import type { paths } from "./schema.js";
+import { CONTRACT_VERSION } from "./generated/contract.js";
+import type { paths } from "./generated/schema.js";
 
-export type { components, operations, paths } from "./schema.js";
+export type { components, operations, paths } from "./generated/schema.js";
 export { CONTRACT_VERSION };
 
 /** The response header every answer carries its contract version in. */

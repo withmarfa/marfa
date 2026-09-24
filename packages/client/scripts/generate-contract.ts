@@ -11,6 +11,6 @@ const document = JSON.parse(
 ) as { info: { version: string } };
 const contract = contractVersionOf(document.info.version);
 writeFileSync(
-  fileURLToPath(new URL("../src/contract.ts", import.meta.url)),
+  fileURLToPath(new URL("../src/generated/contract.ts", import.meta.url)),
   `// Generated from openapi.json by scripts/generate-contract.ts — do not edit.\n\n/** The contract version this client was generated for. */\nexport const CONTRACT_VERSION = ${String(contract)};\n`,
 );

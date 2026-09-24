@@ -45,8 +45,6 @@ jobs:
       group: marfa-suite-shared-host
       cancel-in-progress: false
       queue: max
-    env:
-      NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@v7
 
@@ -99,10 +97,6 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 22
-      - name: Configure registry auth
-        env:
-          NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > .npmrc
       - run: pnpm install --frozen-lockfile
       # server-up.sh runs the server through tsx, which resolves
       # @withmarfa/shared through its dist.
