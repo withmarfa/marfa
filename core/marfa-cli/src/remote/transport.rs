@@ -11,7 +11,9 @@ use std::time::Duration;
 
 use marfa_client::apis::configuration::Configuration;
 use marfa_core::CoreError;
-use marfa_core::http::{CONTRACT_HEADER, Call, CallBody, Reply, ReplyBody, retry_after_seconds};
+use marfa_core::http::{
+    CONTRACT_HEADER, Call, CallBody, Reply, ReplyBody, header_value, retry_after_seconds,
+};
 use reqwest::blocking::{Body, Client};
 use url::Url;
 
@@ -38,14 +40,10 @@ pub struct Transport {
     whole_answer_budget: Duration,
 }
 
-/// Whether an answer can be read by this binary: one naming the contract it
-/// was built for, or a refusal naming none, since a proxy in front of the
-/// server answers without one and its status is still the truth.
+/// Whether an answer can be read by this binary's direct surface, which
+/// was generated for the client's contract.
 pub fn speaks_this_contract(contract: Option<&str>, status: u16) -> bool {
-    match contract {
-        Some(served) => served == marfa_client::CONTRACT_VERSION.to_string(),
-        None => !(200..300).contains(&status),
-    }
+    marfa_core::http::speaks_contract(marfa_client::CONTRACT_VERSION, contract, status)
 }
 
 /// Scheme, host, port and path prefix: what identifies a server without
@@ -201,7 +199,13 @@ impl Transport {
         };
         let retry_after_seconds = retry_after_seconds(header("Retry-After"), header("Date"));
         let content_type = header("Content-Type").unwrap_or("").to_string();
-        let contract = header(CONTRACT_HEADER).map(str::to_string);
+        let contract = header_value(
+            response
+                .headers()
+                .get_all(CONTRACT_HEADER)
+                .iter()
+                .map(|value| value.as_bytes()),
+        );
         let location = header("Location").map(str::to_string);
         // A refusal is read whole even on a streamed call, so the envelope
         // reaches the classification; only a success is handed back as a

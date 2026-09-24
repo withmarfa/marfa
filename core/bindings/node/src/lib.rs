@@ -609,6 +609,7 @@ fn failure(error: marfa_core::CoreError) -> Error {
         E::StreamIncomplete { .. } => ("stream_incomplete", error.to_string()),
         E::WrongServer { .. } => ("wrong_server", error.to_string()),
         E::BytesAbsent { .. } => ("bytes_absent", error.to_string()),
+        E::ContractMismatch { .. } => ("contract_mismatch", error.to_string()),
         E::Invalid(message) => ("invalid", message.clone()),
     };
     Error::new(napi::Status::GenericFailure, format!("{code}: {detail}"))
@@ -1252,6 +1253,22 @@ impl MarfaCore {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_contract_refusal_crosses_under_its_own_code() {
+        let error = failure(marfa_core::CoreError::ContractMismatch {
+            origin: "https://marfa.example".into(),
+            served: Some("4".into()),
+            expected: 3,
+            status: 200,
+            write_sent: false,
+        });
+        assert!(
+            error.reason.starts_with("contract_mismatch: "),
+            "{}",
+            error.reason
+        );
+    }
 
     #[test]
     fn every_blocked_reason_crosses_as_itself_both_ways() {

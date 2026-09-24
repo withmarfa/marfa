@@ -481,6 +481,15 @@ jobs:
             diff <(echo "$configuration") <(echo "$beside") || true
             exit 1
           fi
+      - name: Regenerate the core's contract and check for drift
+        run: |
+          rm -f core/marfa-core/src/contract.rs
+          pnpm run generate:core
+          if [ -n "$(git status --porcelain core/marfa-core/src/contract.rs)" ]; then
+            git status --porcelain core/marfa-core/src/contract.rs
+            echo "The core's contract is out of date with openapi.json, or was edited by hand. Run 'pnpm generate' and commit."
+            exit 1
+          fi
       # The generator is a Swift package pinned in `swift/generator`; the
       # runner's Xcode toolchain builds it. What reaches the release's zip is
       # this directory, so a hand-written file here would ship as generated.

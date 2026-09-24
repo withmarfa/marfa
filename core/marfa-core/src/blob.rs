@@ -15,8 +15,7 @@ use ureq::Agent;
 
 use crate::Result;
 use crate::error::CoreError;
-use crate::http::{Call, CallBody, Http, Method, ReplyBody};
-use crate::wire::WireErrorEnvelope;
+use crate::http::{Call, CallBody, Http, Method, refusal};
 
 const PREFIX: &str = "sha256:";
 
@@ -219,16 +218,16 @@ pub(crate) fn fetch(cache: &Cache, http: &Http, hash: &str) -> Result<PathBuf> {
             CoreError::Network(reason) => absent(format!("the server cannot be reached: {reason}")),
             other => other,
         })?;
-    let ReplyBody::Text(text) = reply.body else {
-        unreachable!("the core's transport reads every answer whole")
-    };
-    if reply.status == 404 {
+    let text = reply.body;
+    // Only the server's own 404, naming its contract: a proxy's says nothing
+    // about which bytes the server holds.
+    if reply.status == 404 && reply.contract.is_some() {
         // The server holds no bytes by this name. The item naming them is
         // still whole, which is what absent bytes are (`device.md` 30).
         return Err(absent(format!("the server holds none: {text}")));
     }
     if !(200..300).contains(&reply.status) {
-        return Err(refused(reply.status, &text, reply.retry_after_seconds));
+        return Err(refusal(reply.status, &text, reply.retry_after_seconds));
     }
     let link: serde_json::Value = serde_json::from_str(&text)?;
     let link = link
@@ -268,34 +267,6 @@ fn open(link: &str) -> std::result::Result<impl Read, String> {
         return Err(format!("the link answered {status}"));
     }
     Ok(response.into_body().into_reader())
-}
-
-/// A refusal from the link door, with the server's code, read as the
-/// transport reads the refusals it keeps to itself. A 404 never reaches
-/// here: the caller reads it as absent bytes.
-fn refused(status: u16, text: &str, retry_after_seconds: Option<u64>) -> CoreError {
-    let (code, message) = match serde_json::from_str::<WireErrorEnvelope>(text) {
-        Ok(envelope) => (
-            envelope.error.code,
-            envelope.error.message.unwrap_or_default(),
-        ),
-        Err(_) => ("unknown".to_string(), text.chars().take(200).collect()),
-    };
-    match status {
-        400 | 422 => CoreError::Validation { code, message },
-        401 => CoreError::Unauthorized { code, message },
-        403 => CoreError::Forbidden { code, message },
-        429 => CoreError::RateLimited {
-            code,
-            message,
-            retry_after_seconds,
-        },
-        _ => CoreError::Server {
-            status,
-            code,
-            message,
-        },
-    }
 }
 
 /// The MIME type a file is sent under: the one given, else its extension's,

@@ -130,6 +130,7 @@ impl CliError {
                 CoreError::StreamIncomplete { .. } => "stream_incomplete",
                 CoreError::WrongServer { .. } => "wrong_server",
                 CoreError::BytesAbsent { .. } => "bytes_absent",
+                CoreError::ContractMismatch { .. } => "contract_mismatch",
                 CoreError::Invalid(_) => "invalid",
             },
             CliError::Io(_) => "io",
@@ -164,6 +165,7 @@ impl CliError {
                 | CoreError::Forbidden { .. }
                 | CoreError::Validation { .. }
                 | CoreError::UnknownType { .. }
+                | CoreError::ContractMismatch { .. }
                 | CoreError::Invalid(_) => Exit::Refused,
                 CoreError::Unauthorized { .. } => Exit::Credential,
                 CoreError::RateLimited { .. }
@@ -213,6 +215,8 @@ impl CliError {
                 CoreError::UnknownType { .. } => Some((Some(400), Some("unknown_type"), None)),
                 CoreError::RateLimited { code, .. } => Some((Some(429), Some(code), None)),
                 CoreError::Server { status, code, .. } => Some((Some(*status), Some(code), None)),
+                // Its body, and so its code, was not read.
+                CoreError::ContractMismatch { status, .. } => Some((Some(*status), None, None)),
                 _ => None,
             },
             CliError::Refused {

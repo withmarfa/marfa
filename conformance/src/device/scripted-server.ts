@@ -43,6 +43,12 @@ export type Answer =
       status: number;
       body: unknown;
       headers?: Record<string, string>;
+      /**
+       * The contract this one answer names, where it is not the server's:
+       * `null` names none, as a proxy in front of the server answers, and a
+       * list names it once per header line.
+       */
+      contract?: string | string[] | null;
     }
   | { kind: "sse"; frames: SseFrame[]; hold?: boolean }
   /** Bytes as they are, which is what a blob's link serves. */
@@ -309,9 +315,15 @@ export class ScriptedServer {
     }
     if (answer.kind === "json") {
       const body = JSON.stringify(answer.body);
+      const named =
+        answer.contract === undefined
+          ? this.named()
+          : answer.contract === null
+            ? {}
+            : { [CONTRACT_HEADER]: answer.contract };
       response.writeHead(answer.status, {
         "content-type": "application/json",
-        ...this.named(),
+        ...named,
         ...answer.headers,
       });
       response.end(body);

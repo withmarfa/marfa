@@ -13,7 +13,7 @@ use serde::Serialize;
 
 use crate::catalog::Catalog;
 use crate::error::CoreError;
-use crate::http::{Answer, Call, CallBody, Http, Method, Outgoing, ReplyBody};
+use crate::http::{Answer, Call, CallBody, Http, Method, Outgoing};
 use crate::model::{BlockedReason, QueuedWrite, Verdict, WriteKind};
 use crate::store;
 use crate::wire::{WireEdgeAnswer, WireErrorEnvelope, WireWriteAnswer};
@@ -32,8 +32,9 @@ pub struct DrainReport {
     /// another naming the same unclaimed source.
     pub verdicts: Vec<DrainVerdict>,
     /// Why the drain stopped before the queue was empty, when it did. A
-    /// refused credential parks every row and stops the pass (20); nothing
-    /// else ends a drain early.
+    /// refused credential parks every row and stops the pass (20). The one
+    /// other way a pass ends early is an answer on another contract, and that
+    /// ends it as a refusal rather than as a report (`device.md` 42).
     pub stopped: Option<String>,
     /// The sources the server said this credential's key does not claim,
     /// once each: where a create naming one was refused for it this pass, or
@@ -220,6 +221,9 @@ fn classify(answer: &std::result::Result<Answer, CoreError>) -> Classified {
         // A dropped connection, a refused connection, a read that timed out:
         // statements about the environment rather than about the write (17).
         Err(CoreError::Network(_)) => return Classified::Environmental,
+        // An answer on another contract never reaches here: the pass ends on
+        // it before anything classifies it (`device.md` 42).
+        //
         // Anything else `send` can return is about the request rather than
         // the environment — a header the transport would not build, say —
         // and retrying it forever uncounted is the failure statement 17's
@@ -527,10 +531,7 @@ fn upload(http: &Http, bytes: File, mime_type: &str) -> std::result::Result<Answ
         credential: true,
         stream: false,
     })?;
-    let body = match reply.body {
-        ReplyBody::Text(text) => text,
-        ReplyBody::Stream(_) => unreachable!("the core's transport reads every answer whole"),
-    };
+    let body = reply.body;
     let code = match serde_json::from_str::<WireErrorEnvelope>(&body) {
         Ok(envelope) => envelope.error.code,
         Err(_) => String::new(),
@@ -666,7 +667,7 @@ pub fn drain(core: &Core, http: &Http, asked: Asked) -> Result<DrainReport> {
                 answers.insert(row.id.clone(), Some(Verdict::Refused));
                 // Reconciled like any other refusal: the server never took
                 // the write, so the copy must not go on holding it.
-                reconcile(core, row);
+                reconcile(core, row)?;
                 report.verdicts.push(verdict_of(
                     row,
                     &Settled::plain(Some(Verdict::Refused), Some(reason), row.refusals),
@@ -751,6 +752,13 @@ pub fn drain(core: &Core, http: &Http, asked: Asked) -> Result<DrainReport> {
         let (answer, shape) = match sendable {
             Sendable::Json(outgoing, shape) => (http.send(&outgoing), shape),
             Sendable::Upload { bytes, mime_type } => (upload(http, bytes, &mime_type), Shape::Blob),
+        };
+        // An answer on another contract was not read, so there is nothing to
+        // settle: the write stays sent and unanswered, and the pass ends,
+        // since every later answer comes from the same server.
+        let answer = match answer {
+            Err(error @ CoreError::ContractMismatch { .. }) => return Err(error),
+            answer => answer,
         };
         report.sent += 1;
         if let Ok(answer) = &answer
@@ -1124,7 +1132,7 @@ fn settle(
                     },
                 )?;
             }
-            reconcile(core, row);
+            reconcile(core, row)?;
             Ok(Settled::plain(
                 Some(Verdict::Refused),
                 Some(code),
@@ -1371,14 +1379,21 @@ fn finish_counted(
 /// would hold the edit the server declined, forever, and every later read
 /// of that row would answer it.
 ///
-/// **Best effort, and it says so by returning nothing.** The verdict is
-/// already recorded when this runs, so a read that fails leaves the row
-/// refused and the copy briefly wrong rather than un-refusing the write and
-/// discarding every verdict the pass had reached. The next drain does not
-/// retry it — a refusal is terminal — so a failure here is corrected by the
-/// next catch-up that touches the row, or by a caller reading it.
-fn reconcile(core: &Core, row: &QueuedWrite) {
-    let _ = reconcile_inner(core, row);
+/// **Best effort, with one exception.** The verdict is already recorded
+/// when this runs, so a read that fails leaves the row refused and the copy
+/// briefly wrong rather than un-refusing the write and discarding every
+/// verdict the pass had reached. The next drain does not retry it — a
+/// refusal is terminal — so a failure here is corrected by the next
+/// catch-up that touches the row, or by a caller reading it.
+///
+/// The exception is a read answered on another contract, which ends the
+/// pass as any answer on another contract does (`device.md` 42): the
+/// writes after it would go to the same server.
+fn reconcile(core: &Core, row: &QueuedWrite) -> Result<()> {
+    match reconcile_inner(core, row) {
+        Err(error @ CoreError::ContractMismatch { .. }) => Err(error),
+        _ => Ok(()),
+    }
 }
 
 fn reconcile_inner(core: &Core, row: &QueuedWrite) -> Result<()> {

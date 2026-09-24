@@ -3,7 +3,9 @@
 //! threads run exactly as they do against a real one.
 //!
 //! Each path answers from its own list in order, and the last answer
-//! repeats. A request is recorded before it is answered.
+//! repeats. A request is recorded before it is answered. Every answer names
+//! the core's contract, as a real server's does, unless a JSON answer names
+//! its own.
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
@@ -12,6 +14,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
+
+use crate::contract::CONTRACT_VERSION;
+use crate::http::CONTRACT_HEADER;
 
 #[derive(Debug, Clone)]
 pub enum Answer {
@@ -196,6 +201,12 @@ fn serve(stream: TcpStream, script: &Mutex<Script>, stopping: &AtomicBool) {
                 "HTTP/1.1 {status} Scripted\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n",
                 body.len()
             );
+            if !headers
+                .iter()
+                .any(|(name, _)| name.eq_ignore_ascii_case(CONTRACT_HEADER))
+            {
+                head.push_str(&format!("{CONTRACT_HEADER}: {CONTRACT_VERSION}\r\n"));
+            }
             for (name, value) in headers {
                 head.push_str(&format!("{name}: {value}\r\n"));
             }
@@ -205,7 +216,7 @@ fn serve(stream: TcpStream, script: &Mutex<Script>, stopping: &AtomicBool) {
             let chunked = matches!(then, Then::Break);
             let _ = write!(
                 stream,
-                "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: close\r\n{}\r\n",
+                "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: close\r\n{CONTRACT_HEADER}: {CONTRACT_VERSION}\r\n{}\r\n",
                 if chunked {
                     "Transfer-Encoding: chunked\r\n"
                 } else {

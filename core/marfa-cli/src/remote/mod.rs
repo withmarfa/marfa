@@ -512,6 +512,16 @@ mod tests {
     }
 
     #[test]
+    fn the_working_copy_and_the_direct_surface_hold_one_contract() {
+        // Both are generated from one document, so a binary never holds one
+        // server to two contracts.
+        assert_eq!(
+            marfa_core::contract::CONTRACT_VERSION,
+            marfa_client::CONTRACT_VERSION
+        );
+    }
+
+    #[test]
     fn a_refusal_keeps_the_envelope_and_reads_the_oauth_shape_too() {
         match refused(
             422,
@@ -878,6 +888,34 @@ mod tests {
             .map(|r| r.path().to_string())
             .collect();
         assert_eq!(paths, vec!["/items", "/items/i"]);
+    }
+
+    /// An answer naming its contract twice, differently, speaks neither,
+    /// whichever line comes first.
+    #[test]
+    fn an_answer_naming_its_contract_twice_differently_is_refused() {
+        let built_for = marfa_client::CONTRACT_VERSION.to_string();
+        let other = another_contract();
+        let door = Door::open(vec![
+            Answer::json("200 OK", PAGE).with_header(marfa_core::http::CONTRACT_HEADER, &other),
+            Answer::json("200 OK", PAGE)
+                .on_contract(Some(&other))
+                .with_header(marfa_core::http::CONTRACT_HEADER, built_for.clone()),
+            Answer::json("200 OK", PAGE)
+                .with_header(marfa_core::http::CONTRACT_HEADER, built_for.clone()),
+        ]);
+        let remote = remote_at(&door, Some("marfa_k1_x"));
+        assert_eq!(
+            mismatch(remote.json(&Request::get(&["items"]))),
+            format!("answers contract {built_for} and {other}")
+        );
+        assert_eq!(
+            mismatch(remote.json(&Request::get(&["items"]))),
+            format!("answers contract {other} and {built_for}")
+        );
+        // The witness: the same contract named twice is one, and read.
+        assert!(remote.json(&Request::get(&["items"])).is_ok());
+        door.received();
     }
 
     /// A success that names no contract is not one this binary can trust;

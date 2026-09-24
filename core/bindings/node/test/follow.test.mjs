@@ -3,7 +3,7 @@
 // a server this file scripts. Run with `--expose-gc`: one case lets a
 // subscription be collected.
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -12,6 +12,12 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { Worker } from "node:worker_threads";
 import { Handle, MarfaCore, Tier } from "../index.js";
+
+/** The contract every answer names, as a real server's does: the one the
+ * core is built for, read off the document it is built from. */
+const CONTRACT = /** @type {{ info: { version: string } }} */ (
+  JSON.parse(readFileSync(new URL("../../../../openapi.json", import.meta.url), "utf8"))
+).info.version;
 
 const AT = "2026-01-01T00:00:00Z";
 
@@ -63,7 +69,10 @@ async function scripted(streams) {
   const server = createServer((req, res) => {
     const path = (req.url ?? "").split("?")[0];
     const json = (/** @type {unknown} */ body) => {
-      res.writeHead(200, { "content-type": "application/json" });
+      res.writeHead(200, {
+        "content-type": "application/json",
+        "x-marfa-contract": CONTRACT,
+      });
       res.end(JSON.stringify(body));
     };
     if (path === "/types") {
@@ -74,7 +83,10 @@ async function scripted(streams) {
     } else if (path === "/items") {
       json({ data: [], next_cursor: null });
     } else if (path === "/events") {
-      res.writeHead(200, { "content-type": "text/event-stream" });
+      res.writeHead(200, {
+        "content-type": "text/event-stream",
+        "x-marfa-contract": CONTRACT,
+      });
       res.write(": connected\n\n");
       if (req.headers["last-event-id"] === undefined) {
         res.end(

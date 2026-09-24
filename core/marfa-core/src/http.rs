@@ -5,6 +5,7 @@ use serde::de::DeserializeOwned;
 use ureq::Agent;
 use url::Url;
 
+use crate::contract::CONTRACT_VERSION;
 use crate::error::CoreError;
 use crate::model::Tier;
 use crate::wire::{WireEdge, WireErrorEnvelope, WireItemWithMetadata, WirePage, WireType};
@@ -119,24 +120,37 @@ pub struct Call<'a> {
     pub stream: bool,
 }
 
-/// What a call got back. **The only `Err` is a transport failure**: every
-/// status the server can answer with is a `Reply`, because the direct
-/// surface classifies on the status and the envelope together, exactly as
-/// the drain does with an `Answer`.
-pub struct Reply {
+/// What a call got back. Every status the server can answer with is a
+/// `Reply`, because the direct surface classifies on the status and the
+/// envelope together, exactly as the drain does with an `Answer`; an `Err`
+/// is a transport failure, or, from the core's own transport, an answer on
+/// another contract. The core's own transport reads every body whole, so
+/// its replies carry a `String`.
+pub struct Reply<B = ReplyBody> {
     pub status: u16,
     pub content_type: String,
     pub retry_after_seconds: Option<u64>,
     /// The contract version the answer names in `X-Marfa-Contract`, when it
-    /// names one: the caller decides whether it can read the body.
+    /// names one. The binary's transport hands it to the caller to judge; the
+    /// core's has judged it before a `Reply` exists.
     pub contract: Option<String>,
     /// Where a redirect points, so the refusal of one can say.
     pub location: Option<String>,
-    pub body: ReplyBody,
+    pub body: B,
 }
 
 /// The response header every answer names its contract version in.
 pub const CONTRACT_HEADER: &str = "X-Marfa-Contract";
+
+/// Whether an answer can be read by a caller built for `expected`: one
+/// naming that contract, or a refusal naming none, since a proxy in front of
+/// the server answers without one and its status is still the truth.
+pub fn speaks_contract(expected: u64, contract: Option<&str>, status: u16) -> bool {
+    match contract {
+        Some(served) => served == expected.to_string(),
+        None => !(200..300).contains(&status),
+    }
+}
 
 pub enum ReplyBody {
     Text(String),
@@ -258,9 +272,10 @@ impl Http {
 
     /// Sends one queued write and reads whatever came back.
     ///
-    /// **The only `Err` is a transport failure**, and that is the whole point
-    /// of this signature. Every status the server can answer with is an
-    /// `Answer`, including the refusals, because the classification
+    /// **The only `Err`s are a transport failure and an answer on another
+    /// contract**, and that is the whole point of this signature. Every
+    /// status the server can answer with is an `Answer`, including the
+    /// refusals, because the classification
     /// (`queue-and-verdicts.md` 17 to 23) turns on the status and the code
     /// together: a 409 is `ancestor_unavailable`, `version_conflict` or
     /// `idempotency_key_in_flight`, and the three are classified apart —
@@ -295,6 +310,7 @@ impl Http {
             .run(request)
             .map_err(|error| CoreError::Network(error.to_string()))?;
         let status = response.status().as_u16();
+        self.hold(&response, status, true)?;
         let retry_after_seconds = retry_after(&response);
         let replayed = response
             .headers()
@@ -349,6 +365,7 @@ impl Http {
             .call()
             .map_err(|error| CoreError::Network(error.to_string()))?;
         let status = response.status().as_u16();
+        self.hold(&response, status, false)?;
         if !(200..300).contains(&status) {
             let retry_after = retry_after(&response);
             let text = response.into_body().read_to_string().unwrap_or_default();
@@ -357,8 +374,10 @@ impl Http {
         Ok(Box::new(response.into_body().into_reader()))
     }
 
-    /// Sends one call and reads its answer whole.
-    pub fn call(&self, call: Call<'_>) -> Result<Reply, CoreError> {
+    /// Sends one call and reads its answer whole. An answer on another
+    /// contract is refused before its body is read, as every answer the
+    /// core reads is.
+    pub fn call(&self, call: Call<'_>) -> Result<Reply<String>, CoreError> {
         let url = self.url(call.segments, call.params);
         let mut builder = ureq::http::Request::builder()
             .method(call.method.as_str())
@@ -389,6 +408,7 @@ impl Http {
         }
         .map_err(|error| CoreError::Network(error.to_string()))?;
         let status = response.status().as_u16();
+        self.hold(&response, status, call.method != Method::Get)?;
         let retry_after_seconds = retry_after(&response);
         let content_type = response
             .headers()
@@ -396,21 +416,12 @@ impl Http {
             .and_then(|value| value.to_str().ok())
             .unwrap_or("")
             .to_string();
-        let header = |name: &str| {
-            response
-                .headers()
-                .get(name)
-                .and_then(|value| value.to_str().ok())
-                .map(str::to_string)
-        };
-        let contract = header(CONTRACT_HEADER);
-        let location = header("Location");
-        let body = ReplyBody::Text(
-            response
-                .into_body()
-                .read_to_string()
-                .map_err(|error| CoreError::Network(error.to_string()))?,
-        );
+        let contract = header(&response, CONTRACT_HEADER);
+        let location = header(&response, "Location");
+        let body = response
+            .into_body()
+            .read_to_string()
+            .map_err(|error| CoreError::Network(error.to_string()))?;
         Ok(Reply {
             status,
             content_type,
@@ -418,6 +429,28 @@ impl Http {
             contract,
             location,
             body,
+        })
+    }
+
+    /// Refuses an answer this core cannot read before anything reads its
+    /// body: one naming another contract, or a success naming none. The
+    /// contract is named by the answer, so a write refused this way was sent.
+    fn hold<B>(
+        &self,
+        response: &ureq::http::Response<B>,
+        status: u16,
+        write_sent: bool,
+    ) -> Result<(), CoreError> {
+        let served = header(response, CONTRACT_HEADER);
+        if speaks_contract(CONTRACT_VERSION, served.as_deref(), status) {
+            return Ok(());
+        }
+        Err(CoreError::ContractMismatch {
+            origin: self.origin(),
+            served,
+            expected: CONTRACT_VERSION,
+            status,
+            write_sent,
         })
     }
 
@@ -452,16 +485,61 @@ impl Http {
             .call()
             .map_err(|error| CoreError::Network(error.to_string()))?;
         let status = response.status().as_u16();
+        self.hold(&response, status, false)?;
+        let served = header(&response, CONTRACT_HEADER);
         let retry_after = retry_after(&response);
         let text = response
             .into_body()
             .read_to_string()
             .map_err(|error| CoreError::Network(error.to_string()))?;
         if !(200..300).contains(&status) {
-            return Err(refusal(status, &text, retry_after));
+            return Err(match refusal(status, &text, retry_after) {
+                // A 404 is the server saying it holds no such row only when
+                // the server said it. One naming no contract is a proxy's,
+                // and a copy reading it as the row's absence would forget a
+                // row the server holds.
+                CoreError::NotFound { code, message } if served.is_none() => CoreError::Server {
+                    status,
+                    code,
+                    message,
+                },
+                refused => refused,
+            });
         }
         serde_json::from_str(&text)
             .map_err(|error| CoreError::Decoding(format!("{}: {error}", url.path())))
+    }
+}
+
+fn header<B>(response: &ureq::http::Response<B>, name: &str) -> Option<String> {
+    header_value(
+        response
+            .headers()
+            .get_all(name)
+            .iter()
+            .map(|value| value.as_bytes()),
+    )
+}
+
+/// What an answer says in one header, read off every line it sent for it.
+///
+/// Lines that agree are one value. Lines that disagree are kept together,
+/// so the value is none of them: an answer naming its contract as both `1`
+/// and `2` speaks neither, and reading its first line alone would take
+/// whichever a proxy happened to put first. Shared with the binary's
+/// transport, which reads the same header off a different HTTP stack.
+pub fn header_value<'a>(lines: impl IntoIterator<Item = &'a [u8]>) -> Option<String> {
+    let mut values: Vec<String> = Vec::new();
+    for line in lines {
+        let value = String::from_utf8_lossy(line).into_owned();
+        if !values.contains(&value) {
+            values.push(value);
+        }
+    }
+    if values.is_empty() {
+        None
+    } else {
+        Some(values.join(" and "))
     }
 }
 
@@ -538,7 +616,7 @@ fn http_date(raw: &str) -> Option<i64> {
     Some(days * 86_400 + hour * 3_600 + minute * 60 + second)
 }
 
-fn refusal(status: u16, text: &str, retry_after_seconds: Option<u64>) -> CoreError {
+pub(crate) fn refusal(status: u16, text: &str, retry_after_seconds: Option<u64>) -> CoreError {
     let (code, message) = match serde_json::from_str::<WireErrorEnvelope>(text) {
         Ok(envelope) => (
             envelope.error.code,
@@ -581,6 +659,70 @@ mod tests {
                 .as_str(),
             "https://gw.example/TenantA/items/a%20b?type=core.note"
         );
+    }
+
+    #[test]
+    fn an_answer_is_read_only_on_the_contract_it_names() {
+        assert!(speaks_contract(3, Some("3"), 200));
+        assert!(speaks_contract(3, Some("3"), 404));
+        assert!(!speaks_contract(3, Some("4"), 200));
+        // Another contract is refused on a refusal too: its envelope may be
+        // shaped in ways the caller cannot read.
+        assert!(!speaks_contract(3, Some("4"), 404));
+        // A success naming none is refused, and a refusal naming none, a
+        // proxy's, is handed on.
+        assert!(!speaks_contract(3, None, 200));
+        assert!(speaks_contract(3, None, 502));
+        assert!(!speaks_contract(3, Some("03"), 200));
+        assert!(!speaks_contract(1, Some("10"), 200));
+        // The bounds of a success: 299 is one, 300 is not.
+        assert!(!speaks_contract(3, None, 299));
+        assert!(speaks_contract(3, None, 300));
+    }
+
+    #[test]
+    fn a_contract_named_twice_differently_is_neither() {
+        let named = |lines: &[&str]| {
+            let mut response = ureq::http::Response::builder();
+            for line in lines {
+                response = response.header(CONTRACT_HEADER, *line);
+            }
+            header(&response.body(()).unwrap(), CONTRACT_HEADER)
+        };
+        assert_eq!(named(&[]), None);
+        assert_eq!(named(&["3"]).as_deref(), Some("3"));
+        assert_eq!(named(&["3", "3"]).as_deref(), Some("3"));
+        for twice in [named(&["3", "4"]), named(&["4", "3"])] {
+            assert!(!speaks_contract(3, twice.as_deref(), 200), "{twice:?}");
+            assert!(!speaks_contract(3, twice.as_deref(), 404), "{twice:?}");
+        }
+        assert_eq!(named(&["3", "4"]).as_deref(), Some("3 and 4"));
+    }
+
+    #[test]
+    fn a_contract_refusal_names_both_contracts_and_whether_a_write_went() {
+        let read = CoreError::ContractMismatch {
+            origin: "https://marfa.example".into(),
+            served: Some("4".into()),
+            expected: 3,
+            status: 200,
+            write_sent: false,
+        }
+        .to_string();
+        assert!(read.contains("answered 200 on contract 4"), "{read}");
+        assert!(read.contains("speaks contract 3"), "{read}");
+        assert!(!read.contains("may have taken effect"), "{read}");
+        let write = CoreError::ContractMismatch {
+            origin: "https://marfa.example".into(),
+            served: None,
+            expected: 3,
+            status: 201,
+            write_sent: true,
+        }
+        .to_string();
+        assert!(write.contains("answered 201 naming no contract"), "{write}");
+        assert!(write.contains("check the URL"), "{write}");
+        assert!(write.contains("may have taken effect"), "{write}");
     }
 
     #[test]
