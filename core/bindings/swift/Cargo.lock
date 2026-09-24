@@ -772,6 +772,7 @@ version = "0.0.0"
 dependencies = [
  "marfa-core",
  "serde_json",
+ "tempfile",
  "uniffi",
 ]
 

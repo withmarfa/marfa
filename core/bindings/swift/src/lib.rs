@@ -1337,4 +1337,133 @@ mod tests {
             }
         );
     }
+
+    /// A server that hydrates an empty `core.note` slice at cursor 10 and
+    /// holds every stream after it open, saying keepalives, until it stops.
+    struct Quiet {
+        url: String,
+        streams: Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    fn quiet() -> Quiet {
+        use std::io::{BufRead, BufReader, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let streams = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counted = Arc::clone(&streams);
+        std::thread::spawn(move || {
+            for stream in listener.incoming().flatten() {
+                let counted = Arc::clone(&counted);
+                std::thread::spawn(move || {
+                    let mut reader = BufReader::new(stream.try_clone().unwrap());
+                    let (mut head, mut line) = (String::new(), String::new());
+                    while reader.read_line(&mut line).unwrap_or(0) > 2 {
+                        head.push_str(&line);
+                        line.clear();
+                    }
+                    let path = head.split_whitespace().nth(1).unwrap_or("/");
+                    let path = path.split('?').next().unwrap_or("/").to_string();
+                    let resumed = head.to_ascii_lowercase().contains("last-event-id");
+                    let mut stream = stream;
+                    let json = |body: &str| {
+                        format!(
+                            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                            body.len()
+                        )
+                    };
+                    let events = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n: connected\n\n";
+                    let _ = match (path.as_str(), resumed) {
+                        ("/types", _) => stream.write_all(json(r#"{"data":[{"id":"core.note","display_hints":{"title_field":"title"}}],"next_cursor":null}"#).as_bytes()),
+                        ("/items", _) => stream.write_all(json(r#"{"data":[],"next_cursor":null}"#).as_bytes()),
+                        ("/events", false) => stream.write_all(format!("{events}event: stream_cursor\ndata: {{\"type\":\"stream_cursor\",\"cursor\":\"10\"}}\n\n").as_bytes()),
+                        ("/events", true) => {
+                            counted.fetch_add(1, Ordering::SeqCst);
+                            let _ = stream.write_all(events.as_bytes());
+                            while stream.write_all(b": keepalive\n\n").is_ok() {
+                                std::thread::sleep(std::time::Duration::from_millis(50));
+                            }
+                            Ok(())
+                        }
+                        _ => stream.write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"),
+                    };
+                });
+            }
+        });
+        Quiet { url, streams }
+    }
+
+    struct Told(std::sync::mpsc::Sender<Option<MarfaError>>);
+
+    impl ChangeListener for Told {
+        fn changed(&self, _: Change) {}
+        fn ended(&self, error: Option<MarfaError>) {
+            let _ = self.0.send(error);
+        }
+    }
+
+    #[test]
+    fn a_subscription_let_go_ends_its_follow() {
+        let server = quiet();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("core.sqlite").display().to_string();
+        let core = MarfaCore::open(path, Some(server.url.clone()), Some("k".into())).unwrap();
+        core.hydrate(vec!["core.note".into()], Tier::Library)
+            .unwrap();
+        let (told, ended) = std::sync::mpsc::channel();
+        let subscription = Arc::clone(&core).follow(Arc::new(Told(told)));
+        // The witness: the follow is holding a stream.
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while server.streams.load(Ordering::SeqCst) == 0 {
+            assert!(
+                std::time::Instant::now() < until,
+                "the follow never held a stream"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        drop(subscription);
+        assert_eq!(
+            ended.recv_timeout(std::time::Duration::from_secs(2)),
+            Ok(None),
+            "a subscription let go left its follow holding the store"
+        );
+    }
+
+    #[test]
+    fn a_store_opened_to_read_is_never_made_never_the_writer_and_hears_of_saves() {
+        let dir = tempfile::tempdir().unwrap();
+        let absent = dir.path().join("absent.sqlite");
+        assert!(MarfaCore::open_reader(absent.display().to_string()).is_err());
+        assert!(
+            !absent.exists(),
+            "a reading open made a store where there was none"
+        );
+
+        let server = quiet();
+        let path = dir.path().join("core.sqlite").display().to_string();
+        let writer = MarfaCore::open(path.clone(), Some(server.url), Some("k".into())).unwrap();
+        writer
+            .hydrate(vec!["core.note".into()], Tier::Library)
+            .unwrap();
+        let reader = MarfaCore::open_reader(path).unwrap();
+        assert!(matches!(reader.held_handle(), Handle::Reader));
+        let before = reader.data_version().unwrap();
+        writer
+            .create_item(Draft {
+                r#type: "core.note".into(),
+                id: None,
+                properties_json: r#"{"title":"saved"}"#.into(),
+                tags: Vec::new(),
+                tier: None,
+                source: None,
+                source_id: None,
+                occurred_at: None,
+                base_version: None,
+            })
+            .unwrap();
+        assert_ne!(
+            reader.data_version().unwrap(),
+            before,
+            "the writer saved and the reader was not told"
+        );
+    }
 }
