@@ -21,12 +21,12 @@ pub const META_HYDRATE_STATE: &str = "hydrate_state";
 pub const HYDRATE_IN_PROGRESS: &str = "in_progress";
 pub const SCHEMA_VERSION: &str = "9";
 
-/// Each schema version and the statements it named, hashed as the folder
-/// mapping hashes bytes. A change to `schema.sql` without a new version would
-/// open a store from the earlier build and fail on its first read of a column
-/// that build never wrote, so the test holds the statements to the row for the
-/// version above: a new schema is a new row under a new version, and moving
-/// the version to a row that names other statements fails it.
+/// Each schema version from 6 and the statements it named, hashed as the
+/// folder mapping hashes bytes. A change to `schema.sql` without a new version
+/// would open a store from the earlier build and fail on its first read of a
+/// column that build never wrote, so the test holds the statements to the row
+/// for the version above: a new schema is a new row under a new version, and
+/// moving the version to a row that names other statements fails it.
 ///
 /// Over the statements SQLite executes, not the file: a comment cannot make
 /// one build read a column another build never wrote, and a hash that moved
