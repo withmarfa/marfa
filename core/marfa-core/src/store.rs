@@ -21,18 +21,24 @@ pub const META_HYDRATE_STATE: &str = "hydrate_state";
 pub const HYDRATE_IN_PROGRESS: &str = "in_progress";
 pub const SCHEMA_VERSION: &str = "9";
 
-/// The schema the version above names, hashed as the folder mapping hashes
-/// bytes. A change to `schema.sql` without a new version would open a store
-/// from the earlier build and fail on its first read of a column that build
-/// never wrote; the test that holds this hash is what makes the version move
-/// with the schema.
+/// Each schema version and the statements it named, hashed as the folder
+/// mapping hashes bytes. A change to `schema.sql` without a new version would
+/// open a store from the earlier build and fail on its first read of a column
+/// that build never wrote, so the test holds the statements to the row for the
+/// version above: a new schema is a new row under a new version, and moving
+/// the version to a row that names other statements fails it.
 ///
 /// Over the statements SQLite executes, not the file: a comment cannot make
 /// one build read a column another build never wrote, and a hash that moved
 /// on one would price every edit to the prose at a version bump that refuses
 /// every working copy on disk.
 #[cfg(test)]
-const SCHEMA_HASH: &str = "23d541400ea60681";
+const SCHEMA_HASHES: &[(&str, &str)] = &[
+    ("6", "f73a05f772245511"),
+    ("7", "b0e4c59d5dbd0471"),
+    ("8", "662310c80f2c6871"),
+    ("9", "23d541400ea60681"),
+];
 
 const ITEM_COLUMNS: &str = "id, type, state, tier, version, schema_version, source, source_id, occurred_at, created_at, updated_at, properties";
 const EDGE_COLUMNS: &str =
@@ -1103,10 +1109,96 @@ mod tests {
     /// statements moves both, or this says so.
     #[test]
     fn the_schema_version_names_the_schema_as_it_is() {
+        let versions: Vec<&str> = SCHEMA_HASHES.iter().map(|(version, _)| *version).collect();
+        let hashes: Vec<&str> = SCHEMA_HASHES.iter().map(|(_, hash)| *hash).collect();
+        assert_eq!(
+            versions.last(),
+            Some(&SCHEMA_VERSION),
+            "SCHEMA_VERSION is not the newest row of SCHEMA_HASHES: a version moved back, or a row was added without moving it"
+        );
+        let unique = |list: &[&str]| {
+            list.iter().collect::<std::collections::HashSet<_>>().len() == list.len()
+        };
+        assert!(
+            unique(&versions),
+            "two rows of SCHEMA_HASHES name one version"
+        );
+        assert!(
+            unique(&hashes),
+            "two versions in SCHEMA_HASHES name the same statements"
+        );
         assert_eq!(
             crate::folder::state::hash(schema_statements().as_bytes()),
-            SCHEMA_HASH,
-            "schema.sql's statements changed: move SCHEMA_VERSION on and set SCHEMA_HASH to the new value"
+            hashes[hashes.len() - 1],
+            "schema.sql's statements changed: move SCHEMA_VERSION on and add its row to SCHEMA_HASHES"
+        );
+    }
+
+    /// A catalog that changes writes every held row's entry again: the
+    /// thumbnail it now names leaves the entry, the row's tags stay in it,
+    /// and a row in the bin is still given none.
+    #[test]
+    fn a_changed_catalog_indexes_every_held_row_again() {
+        let conn = conn();
+        let photo = |thumbnail: bool| {
+            let mut wire = wire_type("acme.photo", None, Some("title"));
+            if thumbnail {
+                wire.rest.insert(
+                    "fields".into(),
+                    json!({ "thumbnail": { "type": "thumbnail" } }),
+                );
+            }
+            wire
+        };
+        replace_types(&conn, &[photo(false)]).unwrap();
+        let properties = json!({
+            "title": "Holiday",
+            "thumbnail": "data:image/png;base64,iVBORw0KGgoA/unicornsXYZ",
+        });
+        let indexing = crate::catalog::Catalog::load(&conn)
+            .unwrap()
+            .indexing("acme.photo");
+        for (id, state) in [("held", "active"), ("binned", "trashed")] {
+            let row = wire_item(
+                id,
+                "acme.photo",
+                state,
+                "2026-01-01T00:00:00Z",
+                properties.clone(),
+            );
+            upsert_item(&conn, &row, Some(&["summer".into()]), &indexing).unwrap();
+        }
+        let entry = |id: &str| -> Option<(String, String)> {
+            conn.query_row(
+                "SELECT body, tags FROM items_fts WHERE rowid = (SELECT seq FROM items WHERE id = ?1)",
+                [id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()
+            .unwrap()
+        };
+        // The witness: before the catalog names the thumbnail its base64 is
+        // a string like any other, in the entry beside the tags.
+        let (body, tags) = entry("held").expect("the held row has no entry");
+        assert!(body.contains("unicornsXYZ"), "{body}");
+        assert_eq!(tags, "summer");
+        assert_eq!(entry("binned"), None);
+
+        replace_types(&conn, &[photo(true)]).unwrap();
+        let (body, tags) =
+            entry("held").expect("the catalog changed and the held row lost its entry");
+        assert!(
+            !body.contains("unicornsXYZ"),
+            "the catalog named the thumbnail and the entry still holds its base64: {body}"
+        );
+        assert_eq!(
+            tags, "summer",
+            "the entry written again dropped the row's tags"
+        );
+        assert_eq!(
+            entry("binned"),
+            None,
+            "the entry written again put a row in the bin into the index"
         );
     }
 
