@@ -57,7 +57,7 @@ wait "${node_follow}"
 
 echo "== thumbnail, read from each copy with no request"
 marfa() { "${core}/target/debug/marfa" --url "${MARFA_API_URL}" --key "${MARFA_API_KEY}" "$@" >/dev/null; }
-# One item holds a value under the field before the type declares it a
+# One item holds a value under the property before the type declares it a
 # thumbnail, which the server does not check again once it does, so each copy
 # holds an image and a value that is not one.
 marfa types register --body '{"id":"user.snapshot","fields":{"title":{"type":"string"}}}'

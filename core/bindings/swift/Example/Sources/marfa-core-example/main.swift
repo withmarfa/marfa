@@ -159,7 +159,7 @@ do {
 
     case "thumbnail":
         // A store of its own, holding the type the script registered: one
-        // item carrying an image, and one holding a value under the field
+        // item carrying an image, and one holding a value under the property
         // from before the type declared it a thumbnail.
         let copy = try MarfaCore.open(path: path + ".thumbnail", url: url, key: key)
         _ = try copy.hydrate(types: ["user.snapshot"], tier: .library)

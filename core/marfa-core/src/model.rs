@@ -1044,8 +1044,8 @@ mod tests {
     }
 
     /// What the server refuses as a thumbnail, a device refuses to read as
-    /// one: each of these was held under the field before its type declared
-    /// it.
+    /// one: each of these was held under the property before its type
+    /// declared it.
     #[test]
     fn a_value_the_server_would_refuse_is_not_read_as_a_thumbnail() {
         let refused = [

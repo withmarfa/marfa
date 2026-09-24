@@ -202,8 +202,8 @@ if (phase === "hydrate") {
   expect(reader.dataVersion() !== before, "a reader on the same store was not told the copy saved");
 } else if (phase === "thumbnail") {
   // A store of its own, holding the type the script registered: one item
-  // carrying an image, and one holding a value under the field from before
-  // the type declared it a thumbnail.
+  // carrying an image, and one holding a value under the property from
+  // before the type declared it a thumbnail.
   const copy = MarfaCore.open(`${path}.thumbnail`, url, key);
   await copy.hydrate(["user.snapshot"], Tier.Library);
   const snapshots = copy.list({ type: "user.snapshot" });

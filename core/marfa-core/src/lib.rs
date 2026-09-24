@@ -1461,8 +1461,8 @@ mod tests {
         );
     }
 
-    /// A value held under a field before its type declared it a thumbnail is
-    /// not one, and reading it says which item it came from.
+    /// A value held under a property before its type declared it a thumbnail
+    /// is not one, and reading it says which item it came from.
     #[test]
     fn an_unreadable_thumbnail_is_refused_naming_its_item() {
         let dir = tempfile::tempdir().unwrap();
