@@ -594,15 +594,19 @@ describe("source_allowlist lever", () => {
     expect(rolled.status).toBe(403);
     expect(rolled.error?.error.code).toBe("bulk_atomic_rollback");
     expect(rolled.error?.error.details?.code).toBe("forbidden");
-    const listed = await writer.listItems({ source: own, limit: 100 });
-    expect(listed.ok).toBe(true);
+    const ownRows = async () => {
+      const listed = await writer.listItems({ source: own, limit: 100 });
+      expect(listed.ok, JSON.stringify(listed.error)).toBe(true);
+      return listed.data.data.map((item) => item.source_id);
+    };
     expect(
-      listed.data.data.map((item) => item.source_id),
+      await ownRows(),
       "the rolled-back page left a row behind",
     ).not.toContain(`${own}-atomic`);
 
     // The witness: the same entry under the key's own source, which the
-    // list names, lands.
+    // list names, lands, and the listing that found no rolled-back row
+    // finds it.
     const landed = await writer.bulkItems({
       items: [entry(own, `${own}-bulk`)],
       atomic: false,
@@ -610,6 +614,12 @@ describe("source_allowlist lever", () => {
     expect(landed.ok, JSON.stringify(landed.error)).toBe(true);
     expect(landed.data.results[0]?.outcome).toBe("created");
     trackItem(ctx, landed.data.results[0]!.id!);
+    const relisted = await ownRows();
+    expect(
+      relisted,
+      "the listing does not surface a row the key wrote under its own source, so the absence above proves nothing",
+    ).toContain(`${own}-bulk`);
+    expect(relisted).not.toContain(`${own}-atomic`);
   });
 });
 
