@@ -50,8 +50,19 @@ pub fn hash(bytes: &[u8]) -> String {
 /// refused because another device's row already held the natural key, whose
 /// copy moved onto that row (`folders.md` 13). No bytes hash to it, so a scan
 /// reads the file as changed and a pull as the person's, and neither writes
-/// over it.
+/// over it. This one is for a row the copy had read before the create landed
+/// on it.
 pub const UNTAKEN: &str = "";
+
+/// The same, for a row the copy had never read: another device's content,
+/// which an edit from this file would replace as the last writer rather than
+/// be merged against.
+pub const UNTAKEN_UNREAD: &str = "unread";
+
+/// Whether a binding's bytes are ones the server never took.
+pub fn untaken(content_hash: &str) -> bool {
+    content_hash == UNTAKEN || content_hash == UNTAKEN_UNREAD
+}
 
 pub fn bind(conn: &Connection, bound: &Bound) -> Result<(), CoreError> {
     conn.execute(

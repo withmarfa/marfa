@@ -156,6 +156,11 @@ pub struct ScanReport {
     /// nothing is sent for them: the server has already answered those bytes
     /// (`folders.md` 30).
     pub lost: usize,
+    /// Files whose create landed on a row another device made, which this
+    /// device never read, sent as an edit that replaces that row's content
+    /// (`folders.md` 13): the last writer wins, and the other device's
+    /// version stays in the row's history. Counted in `updated` too.
+    pub overwrote: usize,
 }
 
 impl Folder {
@@ -402,9 +407,17 @@ impl Folder {
                         report.lost += 1;
                         continue;
                     }
+                    // Only where the old name is still this row's. In a scan
+                    // where a live file has already moved onto that name, the
+                    // binding there is the live file's, and unbinding it
+                    // would leave that item with no file.
                     let conn = self.core.conn()?;
-                    state::unbind(&conn, &bound.path)?;
-                    state::journal_clear(&conn, &bound.path)?;
+                    let still_ours = state::bound_at(&conn, &bound.path)?
+                        .is_some_and(|row| row.item_id == bound.item_id);
+                    if still_ours {
+                        state::unbind(&conn, &bound.path)?;
+                        state::journal_clear(&conn, &bound.path)?;
+                    }
                     report.requeued += 1;
                     None
                 }
@@ -420,8 +433,12 @@ impl Folder {
                         report.unchanged += 1;
                         continue;
                     }
+                    let unread = bound.content_hash == state::UNTAKEN_UNREAD;
                     if self.queue_update(bound, &seen, &catalog, &mut unresolved)? {
                         report.updated += 1;
+                        if unread {
+                            report.overwrote += 1;
+                        }
                     } else {
                         report.unchanged += 1;
                     }
@@ -872,7 +889,7 @@ impl Folder {
         // does, there is nothing to send and the file is simply in step;
         // otherwise what it holds goes below as an edit of that row, based on
         // the version the copy holds.
-        if bound.content_hash == state::UNTAKEN
+        if state::untaken(&bound.content_hash)
             && bound.path == key
             && self.holds_already(&held, seen, &document, catalog)
         {

@@ -830,22 +830,27 @@ pub fn adopt_answered_id(conn: &Connection, local: &str, answered: &str) -> Resu
 /// where the server refused the create because that row was there
 /// (`queue-and-verdicts.md` 39), and answers the writes it refused on the way.
 ///
-/// The row the create would have made exists, so what waited on the create
-/// no longer waits: a tag, an edge, a delete names the server's row from here
-/// on. An update is the exception. It was based on the create's own row, at
-/// the version the device minted it at, so it names a version of a row the
-/// server never made, and sent on the server's version instead it would write
-/// over a row this device never read; it is refused with the create
-/// (16) and never sent.
+/// The row the create would have made exists, so a write that only adds to
+/// it goes to it: a tag added, an edge made to or from it. A write that
+/// replaces, takes away or moves the state of the row does not. It was made
+/// against the row this device created, and sent to the server's row it
+/// would do to another device's item, one this device never read, what was
+/// meant for this one: its fields replaced, its metadata or an extension
+/// overwritten, a tag it carries taken off, the item archived or deleted. An
+/// update is one of those twice over, since it names a version of a row the
+/// server never made. Each is refused with the create (16) and never sent.
 ///
 /// A file bound to the minted row holds bytes the server never took, so its
 /// binding is marked as agreeing with nothing (`folders.md` 13): the pull
 /// leaves it as it is, and the next scan sends what it holds as an edit of
-/// the server's row or, where the row holds it already, nothing.
+/// the server's row or, where the row holds it already, nothing. Which mark
+/// says whether the copy read that row before the create landed on it, so
+/// the scan can say when the edit goes over content this device never saw.
 pub fn land_on_held_row(
     conn: &Connection,
     create: &QueuedWrite,
     answered: &str,
+    read_before: bool,
 ) -> Result<Vec<(QueuedWrite, String)>, CoreError> {
     let Some(local) = create.item_id.as_deref() else {
         return Ok(Vec::new());
@@ -855,10 +860,29 @@ pub fn land_on_held_row(
         if !row.depends_on.contains(&create.id) {
             continue;
         }
-        if row.kind == WriteKind::UpdateItem {
+        let replaces = match row.kind {
+            WriteKind::AddTag | WriteKind::CreateEdge => false,
+            WriteKind::UpdateItem
+            | WriteKind::DeleteItem
+            | WriteKind::RestoreItem
+            | WriteKind::TransitionItem
+            | WriteKind::ReplaceMetadata
+            | WriteKind::MergeMetadata
+            | WriteKind::RemoveTag
+            | WriteKind::WriteExtension
+            | WriteKind::DeleteExtension => true,
+            // Not written against an item's create, so never one of its
+            // dependants; refused all the same should one ever be.
+            WriteKind::CreateItem
+            | WriteKind::UpdateEdge
+            | WriteKind::DeleteEdge
+            | WriteKind::UploadBlob => true,
+        };
+        if replaces {
             let reason = format!(
-                "the create it was based on was refused because {answered} already holds its natural key, \
-                 and this edit names a version of a row the server never made"
+                "the create it waited on was refused because {answered} already holds its natural key, \
+                 and this {} was made against a row the server never made",
+                row.kind
             );
             record_verdict(
                 conn,
@@ -892,7 +916,14 @@ pub fn land_on_held_row(
     }
     conn.execute(
         "UPDATE folder_files SET content_hash = ?2 WHERE item_id = ?1",
-        params![local, crate::folder::state::UNTAKEN],
+        params![
+            local,
+            if read_before {
+                crate::folder::state::UNTAKEN
+            } else {
+                crate::folder::state::UNTAKEN_UNREAD
+            }
+        ],
     )?;
     adopt_answered_id(conn, local, answered)?;
     Ok(refused)

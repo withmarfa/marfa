@@ -614,6 +614,10 @@ export interface ScanReport {
   /** Files bound to a row the copy lost and unchanged since, so nothing was
    *  sent (`folders.md` 30). */
   lost: number;
+  /** Files sent as an edit over content another device made and this one
+   *  never read, the last writer winning (`folders.md` 13). Counted in
+   *  `updated` too. */
+  overwrote: number;
 }
 
 export interface PullReport {

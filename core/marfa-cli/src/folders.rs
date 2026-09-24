@@ -237,6 +237,10 @@ fn describe_scan(report: &marfa_core::ScanReport) -> String {
                 report.lost,
                 "bound to an item that is gone and unchanged since, so not sent",
             ),
+            (
+                report.overwrote,
+                "sent over another device's content, which this one never read; the last writer wins and the other version stays in the item's history",
+            ),
         ]
         .into_iter()
         .filter(|(count, _)| *count > 0)

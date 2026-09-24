@@ -1416,6 +1416,244 @@ describe("an answer the device applies keeps what it has not had answered", () =
     expect((await device.get(local)).ok).toBe(true);
   });
 
+  it("reads the row a create landed on again after a failure that clears on its own", async () => {
+    // The read that holds the landed row fails for a reason no write caused:
+    // the create is left unanswered and uncounted, and the next drain, which
+    // the server answers the same way, reads again. A refused credential is
+    // the exception that stops everything, as it does anywhere.
+    const THEIRS = "01a00000-0000-7000-8000-0000000000c8";
+    const current = {
+      id: THEIRS,
+      version: 1,
+      properties: { title: "theirs", body: "theirs" },
+      tier: "library" as const,
+      occurred_at: "2026-01-01T00:00:00.000Z",
+      source_id: "raced.md",
+    };
+    const theirs = answers.updated(
+      wireItem({
+        id: THEIRS,
+        version: 1,
+        properties: current.properties,
+        source: "notes",
+        source_id: "raced.md",
+      }),
+    );
+    harness = await hydratedHarness("queue-landed-read-retries", {
+      rows: held(),
+    });
+    const { device, server } = harness;
+    const created = await device.create({
+      type: "core.note",
+      properties: { title: "mine", body: "mine" },
+      source: "notes",
+      sourceId: "raced.md",
+      version: 0,
+    });
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    scriptWrites(server, {
+      create: [answers.ancestorUnavailable(current, 0)],
+      read: [
+        { kind: "drop" },
+        answers.serverFault(),
+        answers.rateLimited(),
+        theirs,
+      ],
+    });
+    const reads = () =>
+      server.requests.filter(
+        (request) =>
+          request.method === "GET" && request.pathname === `/items/${THEIRS}`,
+      ).length;
+    for (const [attempt, waited] of [
+      ["a dropped connection", null],
+      ["a 503", null],
+      ["a 429", 2],
+    ] as const) {
+      const drained = await device.drain();
+      expect(drained.ok, JSON.stringify(drained)).toBe(true);
+      if (!drained.ok) return;
+      expect(
+        [
+          drained.value.verdicts[0]?.verdict,
+          drained.value.verdicts[0]?.refusals,
+        ],
+        `the create was settled on ${attempt} while reading the row it landed on, although that clears on its own`,
+      ).toEqual([null, 0]);
+      expect(drained.value.retry_after_seconds).toBe(waited);
+    }
+    expect(reads()).toBe(3);
+    const landed = await device.drain();
+    expect(landed.ok, JSON.stringify(landed)).toBe(true);
+    if (!landed.ok) return;
+    expect([
+      landed.value.verdicts[0]?.verdict,
+      landed.value.verdicts[0]?.item_id,
+    ]).toEqual(["refused", THEIRS]);
+    expect((await device.get(THEIRS)).ok).toBe(true);
+  });
+
+  it("blocks the whole queue when the read of a landed row meets a refused credential", async () => {
+    const THEIRS = "01a00000-0000-7000-8000-0000000000c8";
+    const current = {
+      id: THEIRS,
+      version: 1,
+      properties: { title: "theirs", body: "theirs" },
+      tier: "library" as const,
+      occurred_at: "2026-01-01T00:00:00.000Z",
+      source_id: "raced.md",
+    };
+    const refusedKey = await hydratedHarness("queue-landed-read-401", {
+      rows: held(),
+    });
+    try {
+      const again = await refusedKey.device.create({
+        type: "core.note",
+        properties: { title: "mine", body: "mine" },
+        source: "notes",
+        sourceId: "raced.md",
+        version: 0,
+      });
+      const behind = await refusedKey.device.update(HELD.id, {
+        properties: { title: "held, edited" },
+        version: HELD.version,
+      });
+      expect(again.ok && behind.ok).toBe(true);
+      scriptWrites(refusedKey.server, {
+        create: [answers.ancestorUnavailable(current, 0)],
+        read: [answers.unauthorized()],
+      });
+      const stopped = await refusedKey.device.drain();
+      expect(stopped.ok, JSON.stringify(stopped)).toBe(true);
+      if (!stopped.ok) return;
+      expect(
+        stopped.value.stopped,
+        "the drain went on past a refused credential",
+      ).not.toBeNull();
+      expect(
+        refusedKey.server.requests.filter(
+          (request) => request.method === "PATCH",
+        ),
+        "a write went out behind a refused credential",
+      ).toEqual([]);
+      const queued = await queueOf(refusedKey.device);
+      expect(queued.map((row) => [row.kind, row.verdict, row.reason])).toEqual([
+        ["create_item", "blocked", "credential_refused"],
+        ["update_item", "blocked", "credential_refused"],
+      ]);
+    } finally {
+      await refusedKey.stop();
+    }
+  });
+
+  it("refuses the writes behind a landed create that would take from the row, and sends those that add", async () => {
+    // Each was made against the row this device created. On the row another
+    // device made, one that replaces, removes or moves its state would do
+    // to that device's item what was meant for this one; one that adds
+    // takes nothing away.
+    const OTHER = { id: "01a00000-0000-7000-8000-00000000000b", version: 1 };
+    const THEIRS = "01a00000-0000-7000-8000-0000000000c7";
+    harness = await hydratedHarness("queue-landed-takes", {
+      rows: { "core.note": [{ item: { id: OTHER.id, version: 1 } }] },
+    });
+    const { device, server } = harness;
+    const created = await device.create({
+      type: "core.note",
+      properties: { title: "mine", body: "mine" },
+      source: "notes",
+      sourceId: "raced.md",
+      version: 0,
+    });
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    const local = created.value.item_id ?? "";
+    const queued = {
+      tag: await device.addTag(local, "kept"),
+      edge: await device.createEdge({
+        source: OTHER.id,
+        target: local,
+        type: "references",
+      }),
+      replaced: await device.writeMetadata(local, ["only"], "replace"),
+      untagged: await device.removeTag(local, "theirs"),
+      extension: await device.writeExtension(local, "app.test", { a: 1 }),
+      archived: await device.transitionItem(local, "archived"),
+      deleted: await device.deleteItem(local),
+    };
+    for (const [name, write] of Object.entries(queued)) {
+      expect(write.ok, `${name}: ${JSON.stringify(write)}`).toBe(true);
+    }
+    const idOf = (write: (typeof queued)[keyof typeof queued]) =>
+      write.ok ? write.value.id : "";
+    scriptWrites(server, {
+      create: [
+        answers.ancestorUnavailable(
+          {
+            id: THEIRS,
+            version: 1,
+            properties: { title: "theirs", body: "theirs" },
+            tier: "library",
+            occurred_at: "2026-01-01T00:00:00.000Z",
+            source_id: "raced.md",
+          },
+          0,
+        ),
+      ],
+      read: [
+        answers.updated(
+          wireItem({
+            id: THEIRS,
+            version: 1,
+            properties: { title: "theirs", body: "theirs" },
+            source: "notes",
+            source_id: "raced.md",
+          }),
+          ["theirs"],
+        ),
+      ],
+      tags: [{ kind: "json", status: 200, body: {} }],
+      edges: [
+        (request) => {
+          const sent = JSON.parse(request.body) as {
+            id: string;
+            source_id: string;
+            target_id: string;
+          };
+          return writeAnswers.edge(sent);
+        },
+      ],
+    });
+    const drained = await device.drain();
+    expect(drained.ok, JSON.stringify(drained)).toBe(true);
+    if (!drained.ok) return;
+    const verdictOf = (id: string) =>
+      drained.value.verdicts.find((entry) => entry.id === id)?.verdict;
+    expect(
+      [verdictOf(idOf(queued.tag)), verdictOf(idOf(queued.edge))],
+      "a write that only adds to the row did not follow the create onto it",
+    ).toEqual(["accepted", "accepted"]);
+    expect(
+      [
+        verdictOf(idOf(queued.replaced)),
+        verdictOf(idOf(queued.untagged)),
+        verdictOf(idOf(queued.extension)),
+        verdictOf(idOf(queued.archived)),
+        verdictOf(idOf(queued.deleted)),
+      ],
+      "a write that takes from the row went to another device's item",
+    ).toEqual(["refused", "refused", "refused", "refused", "refused"]);
+    // Only the tag and the edge went out after the create.
+    expect(
+      server.requests
+        .filter((request) => request.method !== "GET")
+        .map((request) => `${request.method} ${request.pathname}`),
+    ).toEqual(["POST /items", `POST /items/${THEIRS}/tags`, "POST /edges"]);
+    // And the copy holds the other device's row as it is, not deleted.
+    const holding = await device.get(THEIRS);
+    expect(holding.ok && holding.value.state).toBe("active");
+  });
+
   it("sends a create carrying a natural key without the id it minted, and holds the row the answer names", async () => {
     harness = await hydratedHarness("queue-keyed-create-id", { rows: held() });
     const { device, server } = harness;

@@ -26,7 +26,10 @@ pub struct DrainReport {
     pub sent: usize,
     /// Rows it did not send because something they depend on is unanswered.
     pub held: usize,
-    /// One entry per row the drain sent (`queue-and-verdicts.md` 6).
+    /// One entry per row the drain sent (`queue-and-verdicts.md` 6), and
+    /// one per row it settled without sending because of another's answer:
+    /// a write refused with the create it waited on, a create blocked with
+    /// another naming the same unclaimed source.
     pub verdicts: Vec<DrainVerdict>,
     /// Why the drain stopped before the queue was empty, when it did. A
     /// refused credential parks every row and stops the pass (20); nothing
@@ -119,6 +122,10 @@ enum Classified {
     /// create and every one naming the source stop, and nothing else does
     /// (`queue-and-verdicts.md` 40).
     Unclaimed { source: String },
+    /// A create whose natural key resolved a row somebody trashed, which the
+    /// server acknowledged and did not write: refused `trashed`
+    /// (`queue-and-verdicts.md` 41).
+    Trashed,
 }
 
 /// Reads a create's refusal again, knowing it was a create: two refusals
@@ -138,17 +145,35 @@ fn refine(
     };
     let sent = serde_json::from_str::<serde_json::Value>(payload).unwrap_or_default();
     let body = serde_json::from_str::<serde_json::Value>(&answer.body).unwrap_or_default();
+    let keyed = sent
+        .get("source_id")
+        .is_some_and(serde_json::Value::is_string);
     match &class {
+        // Acknowledged and not written: the natural key resolved a row the
+        // person trashed. A keyed create names no id of its own, so an
+        // acknowledgment is never this device's own earlier create answered
+        // again; taking it as `accepted` would bind the file to the bin and
+        // drop what it holds with nothing saying so.
+        Classified::Success
+            if keyed
+                && body
+                    .get("acknowledged")
+                    .and_then(serde_json::Value::as_bool)
+                    == Some(true)
+                && body
+                    .pointer("/item/state")
+                    .and_then(serde_json::Value::as_str)
+                    == Some("trashed") =>
+        {
+            Classified::Trashed
+        }
         // Only a create that named a key: one carrying the id it minted
         // resolves no row by anything but that id. And only where the
         // envelope names a row other than the one minted, which is the row
         // the key resolved.
         Classified::Block(
             BlockedReason::AncestorUnavailable | BlockedReason::ConflictUnresolved,
-        ) if sent
-            .get("source_id")
-            .is_some_and(serde_json::Value::is_string) =>
-        {
+        ) if keyed => {
             match body
                 .pointer("/current/id")
                 .and_then(serde_json::Value::as_str)
@@ -700,6 +725,13 @@ pub fn drain(core: &Core, http: &Http) -> Result<DrainReport> {
 
         let class = refine(row, &payload, &answer, classify(&answer));
         let settled = settle(core, row, &answer, class, shape)?;
+        if let Some(wait) = settled.retry_after_seconds {
+            report.retry_after_seconds = Some(
+                report
+                    .retry_after_seconds
+                    .map_or(wait, |held| held.max(wait)),
+            );
+        }
         answers.insert(row.id.clone(), settled.verdict);
         // Writes this answer settled besides its own, which the pass would
         // otherwise reach later and send.
@@ -812,6 +844,9 @@ struct Settled {
     also: Vec<(QueuedWrite, Verdict, String)>,
     /// The source a refused claim named (`queue-and-verdicts.md` 40).
     unclaimed: Option<String>,
+    /// A wait the server asked for while settling, besides the one on the
+    /// answer itself: the read a landed create makes (39).
+    retry_after_seconds: Option<u64>,
 }
 
 impl Settled {
@@ -828,6 +863,7 @@ impl Settled {
             merged_fields: Vec::new(),
             also: Vec::new(),
             unclaimed: None,
+            retry_after_seconds: None,
         }
     }
 }
@@ -1049,6 +1085,33 @@ fn settle(
             finish_counted(core, row, refusals, envelope)
         }
         Classified::Landed { id, code } => land(core, row, answer, shape, &id, code),
+        Classified::Trashed => {
+            // Refused rather than accepted, and the row the create was
+            // queued as goes: nothing was written, so the file stays with
+            // what it holds, bound to a row the copy no longer holds
+            // (`folders.md` 30), and the next scan reports it.
+            {
+                let conn = core.conn()?;
+                store::record_verdict(
+                    &conn,
+                    &row.id,
+                    &store::Answered {
+                        verdict: Verdict::Refused,
+                        reason: Some("trashed"),
+                        answer: envelope.as_deref(),
+                        conflicted_copy_id: None,
+                    },
+                )?;
+                if let Some(local) = row.item_id.as_deref() {
+                    store::forget_item(&conn, local)?;
+                }
+            }
+            Ok(Settled::plain(
+                Some(Verdict::Refused),
+                Some("trashed".into()),
+                row.refusals,
+            ))
+        }
         Classified::Unclaimed { source } => {
             let mut conn = core.conn()?;
             let tx = conn.transaction()?;
@@ -1137,15 +1200,37 @@ fn land(
     } else {
         match core.http_ref()?.item(id) {
             Ok(Some(found)) => Some(found),
-            // The server cannot be reached to read it. It keeps its answer
-            // to this create under the create's key, so the next drain is
-            // answered the same way and reads again.
-            Err(CoreError::Network(_)) => return Ok(Settled::plain(None, None, row.refusals)),
+            // The read failed for a reason that clears on its own. The
+            // server keeps its answer to this create under the create's key,
+            // so the next drain is answered the same way and reads again,
+            // and nothing is counted (17).
+            Err(CoreError::Network(_) | CoreError::Server { .. }) => {
+                return Ok(Settled::plain(None, None, row.refusals));
+            }
+            Err(CoreError::RateLimited {
+                retry_after_seconds,
+                ..
+            }) => {
+                return Ok(Settled {
+                    retry_after_seconds,
+                    ..Settled::plain(None, None, row.refusals)
+                });
+            }
+            // Every queued write carries the same credential (20).
+            Err(CoreError::Unauthorized { .. }) => {
+                return settle(
+                    core,
+                    row,
+                    answer,
+                    Classified::BlockQueue(BlockedReason::CredentialRefused),
+                    shape,
+                );
+            }
             // Gone, or out of this credential's reach, since the refusal:
             // there is nothing to move onto, so the create stops as any other
             // write refused this way does (22, 23). A key that could never
             // read the row is refused before any envelope names it.
-            Ok(None) | Err(_) => {
+            Ok(None) | Err(CoreError::NotFound { .. } | CoreError::Forbidden { .. }) => {
                 let reason = if code == "version_conflict" {
                     BlockedReason::ConflictUnresolved
                 } else {
@@ -1153,6 +1238,9 @@ fn land(
                 };
                 return settle(core, row, answer, Classified::Block(reason), shape);
             }
+            // An answer the device cannot read: it retries and is counted
+            // (19).
+            Err(_) => return settle(core, row, answer, Classified::Counted, shape),
         }
     };
     let mut conn = core.conn()?;
@@ -1162,7 +1250,7 @@ fn land(
         let indexing = catalog.indexing(&found.item.r#type);
         store::upsert_item(&tx, &found.item, Some(&found.metadata.tags), &indexing)?;
     }
-    let refused = store::land_on_held_row(&tx, row, id)?;
+    let refused = store::land_on_held_row(&tx, row, id, held)?;
     store::record_verdict(
         &tx,
         &row.id,
