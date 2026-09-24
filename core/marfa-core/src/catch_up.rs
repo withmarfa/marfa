@@ -87,14 +87,15 @@ type Unexplained = (String, Option<String>);
 /// type the server will not describe stays unknown, and a property the type
 /// declares as text, an `icon` say, can hold an image as well as one the
 /// type has since made its thumbnail can. The catalog cannot tell those from
-/// a change until it is read again, so each costs one read, and the event is
-/// then taken by the catalog as it is.
+/// a change until it is read again, so each costs one read a stream:
+/// `refreshed` holds what the stream has read again for, and an event naming
+/// only those is taken by the catalog as it is.
 ///
 /// Only an image's data URI is looked for, because only a thumbnail changes
 /// what an entry leaves out, and a property its type does not declare is
 /// otherwise nothing unusual: the server takes one on any type its strict
-/// mode does not name. Every property is looked at rather than the first
-/// image, so one already read again for does not hide another after it.
+/// mode does not name. Every image is looked at rather than the first, so
+/// one already read again for does not hide another after it.
 fn unexplained(
     catalog: &Catalog,
     slice: &Slice,
@@ -399,10 +400,10 @@ fn follow_paced(
     let mut asked = false;
     // Read for once each in a stream: an event naming one again is taken by
     // the catalog as it is, so a type the server will not describe costs one
-    // reopen rather than one for every event naming it. The streams a
-    // reopen for this chains together count as one, and any other end
-    // forgets them, since a property the type has made its thumbnail since
-    // is met by the next stream as one to read again for.
+    // reopen rather than one for every event naming it. Streams chained by a
+    // reopen for one of these count as one, and any other end forgets them,
+    // so the next stream reads again for a property its type has since made
+    // its thumbnail.
     let mut refreshed = HashSet::new();
     while !stop.load(Ordering::Relaxed) {
         let (slice, cursor) = start(core)?;
