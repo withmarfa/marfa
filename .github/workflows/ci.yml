@@ -105,10 +105,11 @@ jobs:
         run: |
           echo "/opt/homebrew/opt/rustup/bin" >> "$GITHUB_PATH"
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
-      # The keychain tests skip, saying so, where no keychain answers. A
-      # runner whose keychain does answer is told to require them, so a
-      # keychain that stops answering later fails the job rather than
-      # quietly narrowing it.
+      # The keychain tests skip, saying so, where no keychain answers. Where
+      # the probe finds one that does, they are required for the rest of the
+      # job, so a keychain that stops answering between the probe and the
+      # tests fails the job; one that answers no probe at all is named in the
+      # log and its tests skip.
       - name: Say whether the keychain answers
         run: |
           if security add-generic-password -a probe -s marfa-keychain-probe -w probe -U; then
@@ -175,8 +176,9 @@ jobs:
 
       # The device half of the contract drives the `marfa` binary as the
       # device under test, so this job builds it. It stays in this job rather
-      # than moving to core.yml because core.yml is path-gated on `core/**`
-      # and would not run for a change to the fixtures alone, and because
+      # than moving to core.yml because core.yml is path-gated on the core and
+      # the server and would not run for a change to the fixtures alone, and
+      # because
       # `release.yml` names ci.yml as the run a commit must be green on.
       # The two jobs share `marfa-suite-shared-host` above, so a cargo build
       # here never runs beside core.yml's on one machine.

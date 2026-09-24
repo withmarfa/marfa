@@ -38,20 +38,25 @@ The device fixtures drive the binary through `conformance/src/device/cli-adapter
 
 ## Build
 
-Three commands, which `Core checks` in `ci.yml` runs on every pull request,
-here and again in `bindings/swift`, its own workspace:
+Three commands, which `Core checks` in `ci.yml` runs on every pull request:
 
 ```sh
-cargo fmt --check
-cargo clippy --all-targets -- -D warnings
-cargo test
+cargo fmt --all --check
+cargo clippy --locked --workspace --exclude marfa-client --all-targets --no-deps -- -D warnings
+cargo test --locked --workspace --exclude marfa-client
 ```
 
-`Core checks` leaves the generated `marfa-client` to its generator. `core.yml`
-runs the rest on a core change: a lane against a real server, where
+and again in `bindings/swift`, its own workspace, as plain `cargo fmt --check`,
+`cargo clippy --locked --all-targets -- -D warnings` and `cargo test --locked`.
+The generated `marfa-client` is held to its generator rather than to clippy or
+the tests; formatting takes it too, since the generator formats what it writes.
+
+`core.yml` runs the rest on a change to the core, to the packages the server is
+built from, or to the workspace's manifests: a lane against a real server, where
 `scripts/server-up.sh` boots one and mints a key and
-`cargo test -p marfa-core -- --ignored` runs the tests that need one, the
-XCFramework, and both bindings' proofs. That is what `scripts` is for.
+`cargo test --workspace --exclude marfa-client -- --ignored` runs the tests
+that need one, the XCFramework, and both bindings' proofs. That is what
+`scripts` is for.
 
 The device fixtures under `conformance/` drive the built binary and refuse one
 older than the source it came from, so build it before running them:

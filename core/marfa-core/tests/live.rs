@@ -1,6 +1,6 @@
 //! Runs against a real server: `MARFA_TEST_URL` and `MARFA_TEST_KEY` name
 //! it, `scripts/server-up.sh` provides both. Ignored by default; run with
-//! `cargo test -p marfa-core -- --include-ignored`.
+//! `cargo test -p marfa-core -- --ignored`.
 
 use std::path::PathBuf;
 use std::process::Command;

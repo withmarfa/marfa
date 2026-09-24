@@ -4,7 +4,8 @@ name: Core
 # ci.yml weighs for its freshness jobs — a gate that skips is a gate that can
 # be wrong — and it lands the other way here: an XCFramework with its iOS
 # slices, both bindings' consumers and a server booted from this checkout,
-# which only the core and the packages the server is built from can change.
+# which only the core, the three packages the server is built from and the
+# workspace's own manifests can change.
 # The core's own three commands run on every pull request, as `Core checks`
 # in ci.yml.
 on:
@@ -12,13 +13,25 @@ on:
     branches: [main]
     paths:
       - "core/**"
-      - "packages/**"
+      - "packages/server/**"
+      - "packages/shared/**"
+      - "packages/types/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "tsconfig.base.json"
       - ".github/workflows/core.yml"
   pull_request:
     branches: [main]
     paths:
       - "core/**"
-      - "packages/**"
+      - "packages/server/**"
+      - "packages/shared/**"
+      - "packages/types/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "tsconfig.base.json"
       - ".github/workflows/core.yml"
   # A path-gated workflow has no other way to be started by hand.
   workflow_dispatch:
@@ -95,7 +108,7 @@ jobs:
           # succeeds; an assignment carries the script's own status.
           server_env="$(scripts/server-up.sh)"
           eval "${server_env}"
-          cargo test --locked -p marfa-core -- --ignored
+          cargo test --locked --workspace --exclude marfa-client -- --ignored
 
       - name: Package the Swift bindings
         run: core/bindings/swift/build.sh
