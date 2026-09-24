@@ -261,8 +261,13 @@ describe("every device statement is asserted by something", () => {
       uncited,
       "a fixture of the device's behavior is cited by no statement, so the rule it asserts is written nowhere",
     ).toEqual([]);
-    // The witness: the files read are the fixtures, so an empty list above
-    // is every one of them cited and not nothing read.
+    // The witness: the files read are the fixtures and their titles are
+    // read, so an empty list above is every one of them cited and not
+    // nothing read.
     expect(fixtureFiles).toContain("queue.test.ts");
+    expect(
+      titlesIn("device/queue.test.ts"),
+      "no title was read from a fixture, so an empty list above checked nothing",
+    ).not.toEqual([]);
   });
 });
