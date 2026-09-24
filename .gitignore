@@ -16,8 +16,8 @@ coverage/
 .env.*
 !.env.example
 
-# Every dependency comes from the public registry, so nothing here needs a
-# registry credential. One written locally, to publish by hand, stays local.
+# Every dependency comes from the public registry, so no install needs a
+# registry credential, and a local one is never tracked.
 .npmrc
 
 # IDE

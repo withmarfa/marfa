@@ -319,6 +319,15 @@ function codeOf(stderr: string): string {
 /** The one command that reads a server on another contract: saying so is its job. */
 const DESCRIBES = "status";
 
+/**
+ * Commands that print nothing against a door answering `{}` on their own
+ * contract, so the answers here cannot witness their silence: `events`
+ * reads a stream, and the stream test above reads one on its own contract;
+ * `login` needs a sign-in the door cannot complete, so its refusal is held
+ * by its code alone.
+ */
+const SILENT_HERE = ["events", "login"];
+
 describe("every command holds the server to the contract", () => {
   async function table(): Promise<{ operation_id: string; command: string }[]> {
     const outcome = await marfa(["--json", "operations"]);
@@ -369,7 +378,10 @@ describe("every command holds the server to the contract", () => {
       const label = `marfa ${row.command} ${argv.join(" ")}: ${outcome.stderr.slice(0, 300)}`;
       expect.soft(outcome.code, label).toBe(1);
       expect.soft(codeOf(outcome.stderr), label).toBe("contract_mismatch");
-      expect.soft(outcome.stdout, label).toBe("");
+      // Every command's silence has a witness but `login`'s (`SILENT_HERE`).
+      if (row.command !== "login") {
+        expect.soft(outcome.stdout, label).toBe("");
+      }
       // It reached the server: a refusal made before sending anything would
       // say nothing about the answer.
       expect.soft(server.requests.length, label).toBeGreaterThan(0);
@@ -381,7 +393,9 @@ describe("every command holds the server to the contract", () => {
   it("reads every door on its own contract, so the refusal above is the contract's", async () => {
     // The witness: the same invocations against the same answers, on the
     // contract the binary was built for, are not refused for the contract.
-    for (const row of await table()) {
+    const printed: string[] = [];
+    const rows = await table();
+    for (const row of rows) {
       if (row.command === DESCRIBES) continue;
       server = await everyDoor(BUILT_FOR);
       const argv = invocations[row.command]?.() ?? [];
@@ -404,8 +418,19 @@ describe("every command holds the server to the contract", () => {
           .not.toBe("contract_mismatch");
       }
       expect.soft(server.requests.length, label).toBeGreaterThan(0);
+      if (outcome.stdout !== "") printed.push(row.command);
       await server.stop();
       server = undefined;
     }
+    // The refusal above asserts each command printed nothing, which says
+    // something only of a command that prints when it is not refused.
+    expect(printed.sort()).toEqual(
+      rows
+        .map((row) => row.command)
+        .filter(
+          (command) => command !== DESCRIBES && !SILENT_HERE.includes(command),
+        )
+        .sort(),
+    );
   });
 });

@@ -349,10 +349,11 @@ jobs:
       - run: pnpm --filter @withmarfa/types validate
       - name: Regenerate and check for drift
         run: |
+          rm -rf packages/types/generated
           pnpm --filter @withmarfa/types generate
           if [ -n "$(git status --porcelain packages/types/generated)" ]; then
             git status --porcelain packages/types/generated
-            echo "Generated type registry is out of date. Run 'pnpm --filter @withmarfa/types generate' and commit."
+            echo "Generated type registry is out of date, or holds a file the generator did not write. Run 'pnpm --filter @withmarfa/types generate' and commit."
             exit 1
           fi
 
@@ -415,8 +416,8 @@ jobs:
   # Each step empties its client's generated directory before regenerating
   # it, so the generator's own output is the whole of what may be there: a
   # committed file it did not write shows as deleted, and one it writes that
-  # is not committed shows as untracked. `git status` rather than `git diff`
-  # for the same reason, since `git diff` sees neither.
+  # is not committed shows as untracked. `git status` rather than `git diff`,
+  # which does not see an untracked file.
   clients-freshness:
     name: Generated clients are fresh
     timeout-minutes: 15
@@ -453,7 +454,10 @@ jobs:
           echo "/opt/homebrew/opt/rustup/bin" >> "$GITHUB_PATH"
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
       # The whole crate directory is checked, so the generator's manifest,
-      # `.openapi-generator/FILES`, is held to what it wrote as well.
+      # `.openapi-generator/FILES`, is held to what it wrote as well. Outside
+      # `src/` the crate holds only its generator's configuration, named
+      # here, so a file beside them would ship in the crate unwritten by
+      # anything.
       - name: Regenerate the Rust client and check for drift
         run: |
           rm -rf core/marfa-client/src
@@ -461,6 +465,20 @@ jobs:
           if [ -n "$(git status --porcelain core/marfa-client)" ]; then
             git status --porcelain core/marfa-client
             echo "marfa-client is out of date with openapi.json, or holds a file the generator did not write. Run 'pnpm generate' and commit."
+            exit 1
+          fi
+          configuration=$(printf '%s\n' \
+            core/marfa-client/.openapi-generator-ignore \
+            core/marfa-client/.openapi-generator/FILES \
+            core/marfa-client/.openapi-generator/VERSION \
+            core/marfa-client/Cargo.toml \
+            core/marfa-client/openapitools.json \
+            core/marfa-client/templates/lib.mustache \
+            core/marfa-client/templates/model_mod.mustache)
+          beside=$(git ls-files core/marfa-client | grep -v '^core/marfa-client/src/' || true)
+          if [ "$beside" != "$configuration" ]; then
+            echo "marfa-client holds files outside src/ other than its generator's configuration:"
+            diff <(echo "$configuration") <(echo "$beside") || true
             exit 1
           fi
       # The generator is a Swift package pinned in `swift/generator`; the

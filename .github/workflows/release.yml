@@ -105,27 +105,33 @@ jobs:
           fi
           # Each version is the one before it plus 0.0.1, and the first is
           # 0.0.1, so every version is 0.0.N, follows the highest 0.0.M below
-          # it, and has none above it: a tag re-made in a gap is not the next
-          # version. The tag being released is on the remote already, so it is
-          # set aside. Read off the remote, which needs no history, and never
-          # through a pipe whose empty answer would fail the step unexplained.
+          # it, and has none released above it: a tag re-made in a gap is not
+          # the next version. The tag being released is on the remote already,
+          # so it is set aside. Read off the remote, which needs no history,
+          # and never through a pipe whose empty answer would fail the step
+          # unexplained.
           IFS=. read -r major minor patch <<< "$version"
           if [ "$major.$minor" != "0.0" ]; then
             echo "::error::$version is not 0.0.N; every version steps by 0.0.1."
             exit 1
           fi
           previous=-1
-          latest=-1
+          above=()
           for tag in $(git ls-remote --tags --refs origin 'refs/tags/v0.0.*' | awk '{ print $2 }'); do
             n="${tag#refs/tags/v0.0.}"
             [[ "$n" =~ ^(0|[1-9][0-9]*)$ ]] || continue
             if [ "$n" -lt "$patch" ] && [ "$n" -gt "$previous" ]; then previous="$n"; fi
-            if [ "$n" -gt "$latest" ]; then latest="$n"; fi
+            if [ "$n" -gt "$patch" ]; then above+=("$n"); fi
           done
-          if [ "$latest" -gt "$patch" ]; then
-            echo "::error::0.0.$latest is already tagged, so $version is not the next version."
-            exit 1
-          fi
+          # A version above this one that is only tagged is waiting on this
+          # one, as two tags pushed together are; one that is released means
+          # this tag was made in a gap.
+          for n in "${above[@]}"; do
+            if [ "$(gh release view "v0.0.$n" --json isDraft --jq .isDraft 2>/dev/null)" = "false" ]; then
+              echo "::error::0.0.$n is already released, so $version is not the next version."
+              exit 1
+            fi
+          done
           expected=$((previous < 0 ? 1 : previous + 1))
           if [ "$patch" != "$expected" ]; then
             echo "::error::$version does not follow the tags before it; the next version is 0.0.$expected."
@@ -353,9 +359,11 @@ jobs:
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
 
       # A set secret can still be the wrong one. npm names the account a
-      # token signs in as, and the Swift SDK's token has to read the
-      # repository it pushes to. crates.io has no read that proves a
-      # publish token, so that one is known only by its publish.
+      # token signs in as, though whether it may publish under the scope is
+      # known only at the publish; the Swift SDK's token has to reach the
+      # repository with push. crates.io has no read that proves a publish
+      # token, so that one is known only by its publish, which is why the
+      # crate goes before the npm packages.
       - name: Check the credentials reach what they publish to
         env:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
@@ -366,8 +374,8 @@ jobs:
             echo "::error::NPM_TOKEN does not sign in to npm."
             exit 1
           fi
-          if ! gh api "repos/$SWIFT_SDK" --jq .full_name > /dev/null; then
-            echo "::error::SWIFT_SDK_TOKEN cannot read $SWIFT_SDK."
+          if [ "$(gh api "repos/$SWIFT_SDK" --jq .permissions.push)" != "true" ]; then
+            echo "::error::SWIFT_SDK_TOKEN cannot push to $SWIFT_SDK."
             exit 1
           fi
 
@@ -410,14 +418,25 @@ jobs:
             --body "The Swift types generated from the API document at marfa v$VERSION, as the monorepo's release built them, at \`Sources/MarfaTypes/\`. They need \`swift-openapi-runtime\`, as the zip on the monorepo's v$VERSION release declares."
 
       # A draft, so it can be removed, and seen by nobody until it is made
-      # public at the end.
+      # public at the end. A release already there keeps every file it holds,
+      # which are the ones a registry may already have: re-running the failed
+      # job reads this run's artifacts, but a full re-run builds them again.
+      # A draft is given only the files it lacks; a public one is left alone.
       - name: Draft the GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if gh release view "v$VERSION" > /dev/null 2>&1; then
-            echo "v$VERSION already has a release; bringing its files up to date"
-            gh release upload "v$VERSION" artifacts/* --clobber
+          if draft=$(gh release view "v$VERSION" --json isDraft --jq .isDraft 2> /dev/null); then
+            if [ "$draft" = "false" ]; then
+              echo "v$VERSION is already released"
+              exit 0
+            fi
+            held=$(gh release view "v$VERSION" --json assets --jq '.assets[].name')
+            for file in artifacts/*; do
+              if ! grep -qx "$(basename "$file")" <<< "$held"; then
+                gh release upload "v$VERSION" "$file"
+              fi
+            done
           else
             gh release create "v$VERSION" artifacts/* \
               --draft \
@@ -425,27 +444,6 @@ jobs:
               --notes-file "artifacts/surface-delta-$VERSION.md" \
               --verify-tag
           fi
-
-      # No `--provenance`: npm attests provenance only from a GitHub-hosted
-      # runner's OIDC identity, and every job here runs on the self-hosted
-      # pool. `npm view` answers a version it has, and E404 for a package or
-      # version it has not; anything else fails the step rather than being
-      # read as either.
-      - name: Publish @withmarfa/core and @withmarfa/client to npm
-        run: |
-          for package in core client; do
-            name="@withmarfa/$package"
-            if found=$(npm view "$name@$VERSION" version --userconfig "$RUNNER_TEMP/.npmrc" 2> "$RUNNER_TEMP/npm-view.err"); then
-              if [ "$found" = "$VERSION" ]; then
-                echo "$name@$VERSION is already on npm"
-                continue
-              fi
-            elif ! grep -q E404 "$RUNNER_TEMP/npm-view.err"; then
-              cat "$RUNNER_TEMP/npm-view.err"
-              exit 1
-            fi
-            npm publish "artifacts/withmarfa-$package-$VERSION.tgz" --access public --userconfig "$RUNNER_TEMP/.npmrc"
-          done
 
       - name: Publish marfa-client to crates.io
         env:
@@ -470,6 +468,28 @@ jobs:
           # from where it was unpacked rather than from the checkout, which
           # `cargo publish` would package again.
           cargo publish --manifest-path "$RUNNER_TEMP/crate/marfa-client-$VERSION/Cargo.toml"
+
+
+      # No `--provenance`: npm attests provenance only from a GitHub-hosted
+      # runner's OIDC identity, and every job here runs on the self-hosted
+      # pool. `npm view` answers a version it has, and E404 for a package or
+      # version it has not; anything else fails the step rather than being
+      # read as either.
+      - name: Publish @withmarfa/core and @withmarfa/client to npm
+        run: |
+          for package in core client; do
+            name="@withmarfa/$package"
+            if found=$(npm view "$name@$VERSION" version --userconfig "$RUNNER_TEMP/.npmrc" 2> "$RUNNER_TEMP/npm-view.err"); then
+              if [ "$found" = "$VERSION" ]; then
+                echo "$name@$VERSION is already on npm"
+                continue
+              fi
+            elif ! grep -q E404 "$RUNNER_TEMP/npm-view.err"; then
+              cat "$RUNNER_TEMP/npm-view.err"
+              exit 1
+            fi
+            npm publish "artifacts/withmarfa-$package-$VERSION.tgz" --access public --userconfig "$RUNNER_TEMP/.npmrc"
+          done
 
       - name: Make the GitHub release public
         env:

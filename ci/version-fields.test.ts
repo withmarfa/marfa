@@ -22,11 +22,11 @@
  *
  * Two kinds of file that are not manifests are read for a product version
  * written as text: `packages/server/src/contract.ts`, where the contract
- * version lives beside the root's build `version`, and every README a
- * published package ships, where an install line is the natural place to
- * write one. Either would pass the manifest rules untouched. What is refused
- * is the release grammar, three dotted numbers; the contract version is one
- * integer and is not one.
+ * version lives and a product version could be mistaken for it, and every
+ * README a published package ships, where an install line is the natural
+ * place to write one. Either would pass the manifest rules untouched. What
+ * is refused is the release grammar, three dotted numbers; the contract
+ * version is one integer and is not one.
  *
  * The placeholder has to be present, not merely not-something-else: the
  * stamp sets the version wherever it finds the placeholder, so a manifest
