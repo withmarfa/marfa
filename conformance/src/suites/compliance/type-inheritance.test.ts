@@ -92,6 +92,49 @@ describe("type inheritance rule", () => {
     expect(cr.ok).toBe(true);
   });
 
+  it("rejects a parent gaining a field whose shape differs from one its child declares", async () => {
+    const parentId = `user.inherit-late-parent-${ctx.runId}`;
+    const childId = `${parentId}.child`;
+    expect(
+      (
+        await client.registerType({
+          id: parentId,
+          fields: { name: { type: "string" } },
+        })
+      ).ok,
+    ).toBe(true);
+    const cr = await client.registerType({
+      id: childId,
+      parent: parentId,
+      fields: { count: { type: "string" } },
+    });
+    expect(cr.ok, JSON.stringify(cr.error)).toBe(true);
+
+    const changed = await client.updateType(parentId, {
+      id: parentId,
+      version: 2,
+      fields: { name: { type: "string" }, count: { type: "integer" } },
+    });
+    expect(
+      changed.status,
+      "a parent gained a field its child already declares with another shape, so the child's items are read by one and validated by the other",
+    ).toBe(400);
+    const errors = changed.error?.error.details?.errors as
+      Array<{ field: string; code?: string }> | undefined;
+    expect(errors?.map((error) => [error.field, error.code])).toContainEqual([
+      "fields.count.type",
+      "inheritance_violation",
+    ]);
+    // The witness: the parent gaining the field as its child declares it is
+    // taken.
+    const same = await client.updateType(parentId, {
+      id: parentId,
+      version: 2,
+      fields: { name: { type: "string" }, count: { type: "string" } },
+    });
+    expect(same.ok, JSON.stringify(same.error)).toBe(true);
+  });
+
   it("a child reads back with the parent's fields merged beside its own", async () => {
     const parentId = `user.inherit-merge-parent-${ctx.runId}`;
     const childId = `${parentId}.child`;

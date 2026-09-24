@@ -89,6 +89,8 @@ describe("a thumbnail field", () => {
       { description: { type: "thumbnail" } },
       { name: { type: "thumbnail" } },
       { thumbnail: { type: "thumbnail" }, cover: { type: "thumbnail" } },
+      { covers: { type: "array", items_type: "thumbnail" } },
+      { title: { type: "array", items_type: "thumbnail" } },
     ];
     for (const fields of refusedShapes) {
       const refused = await client.registerType({
@@ -156,6 +158,48 @@ describe("a thumbnail field", () => {
     expect(plain.ok, JSON.stringify(plain.error)).toBe(true);
   });
 
+  it("refuses a parent gaining a thumbnail under a name its child declares as text, and takes one its child declares as a thumbnail", async () => {
+    const parent = `user.shelf-${ctx.runId}`;
+    expect(
+      (
+        await client.registerType({
+          id: parent,
+          fields: { label: { type: "string" } },
+        })
+      ).ok,
+    ).toBe(true);
+    const child = await client.registerType({
+      id: `user.shelf-child-${ctx.runId}`,
+      parent,
+      fields: { cover: { type: "string" }, preview: { type: "thumbnail" } },
+    });
+    expect(child.ok, JSON.stringify(child.error)).toBe(true);
+    const texted = await client.updateType(parent, {
+      id: parent,
+      version: 2,
+      fields: { label: { type: "string" }, cover: { type: "thumbnail" } },
+    });
+    expect(
+      texted.status,
+      "a parent gained a thumbnail its child reads as text, so a device reads the child's text as the image",
+    ).toBe(400);
+    expect(texted.error?.error.code).toBe("invalid_schema");
+    const errors = texted.error?.error.details?.errors as
+      Array<{ field: string; code?: string }> | undefined;
+    expect(errors?.map((error) => [error.field, error.code])).toContainEqual([
+      "fields.cover.type",
+      "inheritance_violation",
+    ]);
+    // The same name and the same shape is the child redeclaring what its
+    // parent now declares, not a second thumbnail beside it.
+    const same = await client.updateType(parent, {
+      id: parent,
+      version: 2,
+      fields: { label: { type: "string" }, preview: { type: "thumbnail" } },
+    });
+    expect(same.ok, JSON.stringify(same.error)).toBe(true);
+  });
+
   it("refuses a title or a body naming the thumbnail, and an edge property that is one", async () => {
     const titled = await client.registerType({
       id: `user.snapshot-titled-${ctx.runId}`,
@@ -188,6 +232,15 @@ describe("a thumbnail field", () => {
     expect(
       edge.status,
       "an edge type declared a thumbnail property, which nothing checks and nothing reads",
+    ).toBe(400);
+    const arrayEdge = await client.registerEdgeType({
+      id: `mock.depicts-array.${ctx.runId}`,
+      cardinality: "many-to-many",
+      property_schema: { previews: { type: "array", items_type: "thumbnail" } },
+    });
+    expect(
+      arrayEdge.status,
+      "an edge type declared an array of thumbnails, whose elements nothing checks",
     ).toBe(400);
     const plainEdge = await client.registerEdgeType({
       id: `mock.depicts-plain.${ctx.runId}`,
@@ -279,6 +332,89 @@ describe("a thumbnail field", () => {
         Array<{ field: string }> | undefined;
       expect(errors?.map((error) => error.field)).toContain("thumbnail");
     }
+  });
+
+  it("refuses a thumbnail that is not an image on an update and inside a bulk page", async () => {
+    const made = await create({ title: "Updated", thumbnail: uri(padded(64)) });
+    expect(made.ok, JSON.stringify(made.error)).toBe(true);
+    const id = made.data.item.id;
+    // The witness: an image is taken on the update door.
+    const replaced = uri(padded(65));
+    const taken = await client.updateItem(id, {
+      properties: { thumbnail: replaced },
+      version: made.data.item.version,
+    });
+    expect(taken.ok, JSON.stringify(taken.error)).toBe(true);
+    expect(taken.data.item.properties.thumbnail).toBe(replaced);
+
+    const refused = await client.updateItem(id, {
+      properties: { thumbnail: uri(Buffer.from("plain text"), "text/plain") },
+      version: taken.data.item.version,
+    });
+    expect(
+      refused.status,
+      "an update wrote a thumbnail that is not an image",
+    ).toBe(400);
+    expect(refused.error?.error.code).toBe("invalid_properties");
+    expect(
+      (
+        refused.error?.error.details?.errors as
+          Array<{ field: string }> | undefined
+      )?.map((error) => error.field),
+    ).toContain("thumbnail");
+    const kept = await client.getItem(id);
+    expect(kept.ok && kept.data.item.properties.thumbnail).toBe(replaced);
+
+    const marker = `thumbnails-bulk-${ctx.runId}`;
+    const entry = (thumbnail: string, n: number) => ({
+      type: typeId,
+      properties: { title: marker, thumbnail },
+      source_id: `${marker}-${String(n)}`,
+    });
+    const page = await client.bulkItems({
+      items: [
+        entry(uri(padded(64)), 1),
+        entry(uri(Buffer.from("GIF89a and more"), "image/png"), 2),
+      ],
+    });
+    expect(
+      page.status,
+      "a bulk page wrote a thumbnail that is not an image",
+    ).toBe(400);
+    expect(page.error?.error.code).toBe("bulk_atomic_rollback");
+    const details = page.error?.error.details as
+      | {
+          index?: number;
+          code?: string;
+          details?: { errors?: Array<{ field: string }> };
+        }
+      | undefined;
+    expect(details?.index).toBe(1);
+    expect(details?.code).toBe("invalid_properties");
+    expect(details?.details?.errors?.map((error) => error.field)).toContain(
+      "thumbnail",
+    );
+    const rolledBack = await client.search(marker, { limit: 10 });
+    expect(rolledBack.ok).toBe(true);
+    expect(
+      rolledBack.data.data,
+      "the page's good entry was written beside the refused one",
+    ).toEqual([]);
+    // The witness: the good entry alone is written.
+    const alone = await client.bulkItems({
+      items: [entry(uri(padded(64)), 3)],
+    });
+    expect(alone.ok, JSON.stringify(alone.error)).toBe(true);
+    expect(alone.data.counts.created).toBe(1);
+    for (const result of alone.data.results) {
+      if (result.id) trackItem(ctx, result.id);
+    }
+    const found = await client.search(marker, { limit: 10 });
+    expect(found.ok).toBe(true);
+    expect(
+      found.data.data.map((hit) => hit.item.id),
+      "the search that found nothing after the rollback cannot see a written entry either",
+    ).toEqual(alone.data.results.map((result) => result.id));
   });
 
   it("is not found by a search that finds the same token in a body", async () => {
