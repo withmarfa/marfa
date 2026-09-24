@@ -201,6 +201,35 @@ describe("every device statement is asserted by something", () => {
     ).toEqual([]);
   });
 
+  it("runs every device fixture rather than skipping one", () => {
+    // A fixture that skips passes every check here: it is cited, its title
+    // resolves, and it asserts nothing, so the statement citing it reads as
+    // asserted while nothing runs it.
+    const SKIPS = /\b(?:skip|skipIf|runIf|todo)\s*\(/;
+    // The witness: the check sees each way a fixture is skipped.
+    for (const written of [
+      "context.skip();",
+      "({ skip }) => skip()",
+      'it.skip("a fixture", () => {});',
+      'it.skipIf(true)("a fixture", () => {});',
+      'it.runIf(false)("a fixture", () => {});',
+      'it.todo("a fixture");',
+      'describe.skip("a chapter", () => {});',
+    ]) {
+      expect(SKIPS.test(written), written).toBe(true);
+    }
+    const skipping = fixtureFiles.filter((file) =>
+      SKIPS.test(readFileSync(resolve(here, file), "utf8")),
+    );
+    expect(
+      skipping,
+      "a device fixture skips itself, so the statement citing it is asserted by nothing",
+    ).toEqual([]);
+    // The witness: the files read are the fixtures, so an empty list above
+    // is every one of them read and not nothing read.
+    expect(fixtureFiles).toContain("working-copy.test.ts");
+  });
+
   it("cites every fixture of the device's behavior from some statement", () => {
     // The suite's own controls are not the device's behavior: fidelity holds
     // the scripting to the real server and the scripted server's own tests
