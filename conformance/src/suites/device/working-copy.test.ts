@@ -748,6 +748,171 @@ describe("the working copy holds one slice", () => {
         "a local edit put the image's base64 into the index",
       ).toEqual([]);
     });
+
+    it("keeps a thumbnail out of its index when a refused write's row is read back", async () => {
+      harness = await startHarness("thumbnail-reconciled");
+      const { server, device } = harness;
+      scriptHydration(server, {
+        head: "10",
+        catalog,
+        rows: {
+          "user.snapshot": [
+            {
+              item: {
+                id: "refused",
+                type: "user.snapshot",
+                properties: { title: "Before" },
+              },
+            },
+          ],
+        },
+      });
+      expect((await device.hydrate(["user.snapshot"], "library")).ok).toBe(
+        true,
+      );
+      const edit = await device.update("refused", {
+        properties: { title: "Mine" },
+        version: 1,
+      });
+      expect(edit.ok, JSON.stringify(edit)).toBe(true);
+      // The edit is refused, and the row read back carries an image in its
+      // title and in its thumbnail, so what the index holds afterwards is
+      // what the read-back wrote.
+      scriptWrites(server, {
+        update: [refusal(400, "invalid_properties", "not this edit")],
+        read: [
+          answers.updated(
+            wireItem({
+              id: "refused",
+              type: "user.snapshot",
+              version: 2,
+              properties: { title: pngOf("zebraword"), thumbnail: image },
+            }),
+          ),
+        ],
+      });
+      expect((await device.drain()).ok).toBe(true);
+      // The witness: the read-back row was written and indexed.
+      expect(await found("zebraword")).toEqual(["refused"]);
+      expect(
+        await found("unicornsXYZ"),
+        "the row a refused write's reconcile read back put the image's base64 into the index",
+      ).toEqual([]);
+    });
+
+    it("keeps a thumbnail out of its index when a refused create lands on the row its key names", async () => {
+      harness = await startHarness("thumbnail-landed");
+      const { server, device } = harness;
+      scriptHydration(server, { head: "10", catalog });
+      expect((await device.hydrate(["user.snapshot"], "library")).ok).toBe(
+        true,
+      );
+      const created = await device.create({
+        type: "user.snapshot",
+        source: "photos",
+        sourceId: "holiday.png",
+        version: 0,
+        properties: { title: "Made here" },
+      });
+      expect(created.ok, JSON.stringify(created)).toBe(true);
+      // The key names a row the server holds, which the refusal names and
+      // the device reads, carrying an image in its title and its thumbnail.
+      const row = {
+        id: "landed",
+        type: "user.snapshot",
+        source: "photos",
+        source_id: "holiday.png",
+        version: 3,
+        properties: { title: pngOf("zebraword"), thumbnail: image },
+      };
+      scriptWrites(server, {
+        create: [
+          answers.ancestorUnavailable(
+            {
+              id: row.id,
+              version: row.version,
+              properties: row.properties,
+              tier: "library",
+              occurred_at: "2026-01-01T00:00:00.000Z",
+              source_id: row.source_id,
+            },
+            0,
+          ),
+        ],
+        read: [answers.updated(wireItem(row))],
+      });
+      const drained = await device.drain();
+      expect(drained.ok, JSON.stringify(drained)).toBe(true);
+      // The witness: the create landed on the row, which was written and
+      // indexed.
+      expect(
+        drained.ok && drained.value.verdicts.map((entry) => entry.reason),
+      ).toEqual(["ancestor_unavailable"]);
+      expect(await found("zebraword")).toEqual(["landed"]);
+      expect(
+        await found("unicornsXYZ"),
+        "the row a refused create landed on put the image's base64 into the index",
+      ).toEqual([]);
+    });
+
+    it("keeps a thumbnail out of its index when a waiting edit is laid over a row an event brought", async () => {
+      harness = await startHarness("thumbnail-laid-over");
+      const { server, device } = harness;
+      scriptHydration(server, {
+        head: "10",
+        catalog,
+        rows: {
+          "user.snapshot": [
+            {
+              item: {
+                id: "laid",
+                type: "user.snapshot",
+                properties: { title: "Before" },
+              },
+            },
+          ],
+        },
+      });
+      // Another device's write brings the image; this device's edit of the
+      // title, not yet sent, is laid back over it.
+      server.answer(
+        "GET",
+        "/events",
+        replay("11", [
+          itemEvent(
+            "11",
+            "item.updated",
+            wireItem({
+              id: "laid",
+              type: "user.snapshot",
+              version: 2,
+              properties: { title: "Theirs", thumbnail: image },
+            }),
+          ),
+        ]),
+      );
+      expect((await device.hydrate(["user.snapshot"], "library")).ok).toBe(
+        true,
+      );
+      const edit = await device.update("laid", {
+        properties: { title: pngOf("zebraword") },
+        version: 1,
+      });
+      expect(edit.ok, JSON.stringify(edit)).toBe(true);
+      expect((await device.catchUp()).ok).toBe(true);
+      // The witness: the event was applied and the waiting edit laid over
+      // it, so the row holds the image and the edit's title, indexed.
+      const held = await device.get("laid");
+      expect(held.ok && held.value.properties).toEqual({
+        title: pngOf("zebraword"),
+        thumbnail: image,
+      });
+      expect(await found("zebraword")).toEqual(["laid"]);
+      expect(
+        await found("unicornsXYZ"),
+        "the row a waiting edit was laid over put the image's base64 into the index",
+      ).toEqual([]);
+    });
   });
 
   it("says the bytes are absent rather than the item", async () => {
