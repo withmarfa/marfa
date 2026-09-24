@@ -873,6 +873,9 @@ impl MarfaCore {
                     ThreadsafeFunctionCallMode::NonBlocking,
                 );
             });
+            // Let go of the store before saying so: an `onEnd` that opens it
+            // again must find the writer's role free.
+            drop(core);
             tell.call(
                 Told::End(result.err().map(|error| failure(error).reason)),
                 ThreadsafeFunctionCallMode::NonBlocking,

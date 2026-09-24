@@ -850,6 +850,9 @@ impl MarfaCore {
             let ended = self
                 .inner
                 .follow(&flag, |change| listener.changed(change.into()));
+            // Let go of the store before saying so: a listener that opens it
+            // again on being told must find the writer's role free.
+            drop(self);
             listener.ended(ended.err().map(Into::into));
         });
         Arc::new(Subscription { stop })
@@ -1425,6 +1428,52 @@ mod tests {
             ended.recv_timeout(std::time::Duration::from_secs(2)),
             Ok(None),
             "a subscription let go left its follow holding the store"
+        );
+    }
+
+    /// Opens the store again the moment it is told the follow ended, as an
+    /// app closing and reopening it would, and says which handle it got.
+    struct Reopens {
+        path: String,
+        handle: std::sync::mpsc::Sender<Handle>,
+    }
+
+    impl ChangeListener for Reopens {
+        fn changed(&self, _: Change) {}
+        fn ended(&self, _: Option<MarfaError>) {
+            let reopened = MarfaCore::open(self.path.clone(), None, None).unwrap();
+            let _ = self.handle.send(reopened.held_handle());
+        }
+    }
+
+    #[test]
+    fn a_follow_lets_go_of_the_store_before_it_says_it_ended() {
+        let server = quiet();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("core.sqlite").display().to_string();
+        let core =
+            MarfaCore::open(path.clone(), Some(server.url.clone()), Some("k".into())).unwrap();
+        core.hydrate(vec!["core.note".into()], Tier::Library)
+            .unwrap();
+        let (handle, reopened) = std::sync::mpsc::channel();
+        let subscription = Arc::clone(&core).follow(Arc::new(Reopens { path, handle }));
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while server.streams.load(Ordering::SeqCst) == 0 {
+            assert!(
+                std::time::Instant::now() < until,
+                "the follow never held a stream"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        // The app lets go of its own handle, then stops the follow.
+        drop(core);
+        subscription.stop();
+        let handle = reopened
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("the follow never said it ended");
+        assert!(
+            matches!(handle, Handle::Writer),
+            "a store opened again on being told the follow ended was still held by it"
         );
     }
 

@@ -34,7 +34,11 @@ function created(id, cursor) {
     created_at: AT,
     updated_at: AT,
   };
-  const data = JSON.stringify({ type: "item.created", item, metadata: { tags: [] } });
+  const data = JSON.stringify({
+    type: "item.created",
+    item,
+    metadata: { tags: [] },
+  });
   return `id: ${cursor}\nevent: item.created\ndata: ${data}\n\n`;
 }
 
@@ -63,14 +67,19 @@ async function scripted(streams) {
       res.end(JSON.stringify(body));
     };
     if (path === "/types") {
-      json({ data: [{ id: "core.note", display_hints: { title_field: "title" } }], next_cursor: null });
+      json({
+        data: [{ id: "core.note", display_hints: { title_field: "title" } }],
+        next_cursor: null,
+      });
     } else if (path === "/items") {
       json({ data: [], next_cursor: null });
     } else if (path === "/events") {
       res.writeHead(200, { "content-type": "text/event-stream" });
       res.write(": connected\n\n");
       if (req.headers["last-event-id"] === undefined) {
-        res.end('event: stream_cursor\ndata: {"type":"stream_cursor","cursor":"10"}\n\n');
+        res.end(
+          'event: stream_cursor\ndata: {"type":"stream_cursor","cursor":"10"}\n\n',
+        );
         return;
       }
       followed += 1;
@@ -82,9 +91,12 @@ async function scripted(streams) {
       res.writeHead(404).end();
     }
   });
-  await new Promise((resolve) => server.listen(0, "127.0.0.1", () => resolve(undefined)));
+  await new Promise((resolve) =>
+    server.listen(0, "127.0.0.1", () => resolve(undefined)),
+  );
   const address = server.address();
-  if (address === null || typeof address === "string") throw new Error("no port");
+  if (address === null || typeof address === "string")
+    throw new Error("no port");
   return {
     url: `http://127.0.0.1:${address.port}`,
     /** How many streams a follow has asked for. */
@@ -121,90 +133,111 @@ async function hydrated(t, streams) {
   return { server, path, core };
 }
 
-test("tells every change before it tells the end", { timeout: 20_000 }, async (t) => {
-  /** @type {() => void} */
-  let sent = () => {};
-  const flushed = new Promise((resolve) => (sent = () => resolve(undefined)));
-  const { core } = await hydrated(t, [
-    (res) => {
-      let body = "";
-      for (let cursor = 11; cursor <= 60; cursor += 1) body += created(`n${cursor}`, cursor);
-      body += 'event: catchup_too_old\ndata: {"type":"catchup_too_old","min_retained_id":"500"}\n\n';
-      res.end(body, sent);
-    },
-  ]);
-  /** @type {string[]} */
-  const told = [];
-  /** @type {Promise<{ error: string | null | undefined; before: number }>} */
-  const ended = new Promise((resolve) => {
-    core.follow(
-      (change) => told.push(change.cursor),
-      (error) => resolve({ error, before: told.length }),
-    );
-  });
-  await flushed;
-  // Busy while the follow applies the stream, so its calls queue up
-  // behind this and are delivered together.
-  const until = Date.now() + 300;
-  while (Date.now() < until);
-  const { error, before } = await ended;
-  assert.equal(before, 50, "onEnd ran before every change sent ahead of it");
-  assert.match(String(error), /^catch_up_too_old: /);
-});
-
-test("an onChange that throws ends the follow, and onEnd says what it threw", { timeout: 20_000 }, async (t) => {
-  const { core } = await hydrated(t, [
-    (res) => {
-      res.write(created("n11", 11) + created("n12", 12));
-      held(res);
-    },
-  ]);
-  let calls = 0;
-  /** @type {string | null | undefined} */
-  const error = await new Promise((resolve) => {
-    core.follow(() => {
-      calls += 1;
-      throw new Error("the listener broke");
-    }, resolve);
-  });
-  assert.match(String(error), /^listener_threw: .*the listener broke/);
-  assert.equal(calls, 1, "a listener that threw was called again");
-});
-
-test("a subscription nobody holds ends its follow once it is collected", { timeout: 20_000 }, async (t) => {
-  const { server, core } = await hydrated(t, [held]);
-  let ended = false;
-  (() => {
-    core.follow(
-      () => {},
-      () => {
-        ended = true;
+test(
+  "tells every change before it tells the end",
+  { timeout: 20_000 },
+  async (t) => {
+    /** @type {() => void} */
+    let sent = () => {};
+    const flushed = new Promise((resolve) => (sent = () => resolve(undefined)));
+    const { core } = await hydrated(t, [
+      (res) => {
+        let body = "";
+        for (let cursor = 11; cursor <= 60; cursor += 1)
+          body += created(`n${cursor}`, cursor);
+        body +=
+          'event: catchup_too_old\ndata: {"type":"catchup_too_old","min_retained_id":"500"}\n\n';
+        res.end(body, sent);
       },
-    );
-  })();
-  // The witness: the follow is running, holding a stream.
-  while (server.followed() === 0) await sleep(10);
-  const deadline = Date.now() + 10_000;
-  while (!ended && Date.now() < deadline) {
-    globalThis.gc?.();
-    await sleep(50);
-  }
-  assert.ok(ended, "a subscription nobody held was collected, and its follow went on holding the store");
-});
+    ]);
+    /** @type {string[]} */
+    const told = [];
+    /** @type {Promise<{ error: string | null | undefined; before: number }>} */
+    const ended = new Promise((resolve) => {
+      core.follow(
+        (change) => told.push(change.cursor),
+        (error) => resolve({ error, before: told.length }),
+      );
+    });
+    await flushed;
+    // Busy while the follow applies the stream, so its calls queue up
+    // behind this and are delivered together.
+    const until = Date.now() + 300;
+    while (Date.now() < until);
+    const { error, before } = await ended;
+    assert.equal(before, 50, "onEnd ran before every change sent ahead of it");
+    assert.match(String(error), /^catch_up_too_old: /);
+  },
+);
 
-test("a follow in a worker that is torn down lets go of the store", { timeout: 30_000 }, async (t) => {
-  const server = await scripted([
-    (res) => {
-      let body = "";
-      for (let cursor = 11; cursor <= 210; cursor += 1) body += created(`n${cursor}`, cursor);
-      res.write(body);
-      held(res);
-    },
-  ]);
-  t.after(server.close);
-  const path = storeFor(t);
-  const worker = new Worker(
-    `
+test(
+  "an onChange that throws ends the follow, and onEnd says what it threw",
+  { timeout: 20_000 },
+  async (t) => {
+    const { core } = await hydrated(t, [
+      (res) => {
+        res.write(created("n11", 11) + created("n12", 12));
+        held(res);
+      },
+    ]);
+    let calls = 0;
+    /** @type {string | null | undefined} */
+    const error = await new Promise((resolve) => {
+      core.follow(() => {
+        calls += 1;
+        throw new Error("the listener broke");
+      }, resolve);
+    });
+    assert.match(String(error), /^listener_threw: .*the listener broke/);
+    assert.equal(calls, 1, "a listener that threw was called again");
+  },
+);
+
+test(
+  "a subscription nobody holds ends its follow once it is collected",
+  { timeout: 20_000 },
+  async (t) => {
+    const { server, core } = await hydrated(t, [held]);
+    let ended = false;
+    (() => {
+      core.follow(
+        () => {},
+        () => {
+          ended = true;
+        },
+      );
+    })();
+    // The witness: the follow is running, holding a stream.
+    while (server.followed() === 0) await sleep(10);
+    const deadline = Date.now() + 10_000;
+    while (!ended && Date.now() < deadline) {
+      globalThis.gc?.();
+      await sleep(50);
+    }
+    assert.ok(
+      ended,
+      "a subscription nobody held was collected, and its follow went on holding the store",
+    );
+  },
+);
+
+test(
+  "a follow in a worker that is torn down lets go of the store",
+  { timeout: 30_000 },
+  async (t) => {
+    const server = await scripted([
+      (res) => {
+        let body = "";
+        for (let cursor = 11; cursor <= 210; cursor += 1)
+          body += created(`n${cursor}`, cursor);
+        res.write(body);
+        held(res);
+      },
+    ]);
+    t.after(server.close);
+    const path = storeFor(t);
+    const worker = new Worker(
+      `
     const { parentPort, workerData } = require("node:worker_threads");
     const { MarfaCore, Tier } = require(workerData.module);
     // A follow's callbacks keep no thread alive, and this one must last
@@ -220,43 +253,112 @@ test("a follow in a worker that is torn down lets go of the store", { timeout: 3
       }, () => {});
     });
     `,
-    {
-      eval: true,
-      workerData: { module: fileURLToPath(new URL("../index.js", import.meta.url)), path, url: server.url },
-    },
-  );
-  await new Promise((resolve, reject) => {
-    worker.once("message", resolve);
-    worker.once("error", reject);
-  });
-  await worker.terminate();
-  // The witness: the store is held while the worker's follow runs, so a
-  // writer here after it is one the follow let go to.
-  let handle = Handle.Reader;
-  const deadline = Date.now() + 10_000;
-  while (handle !== Handle.Writer && Date.now() < deadline) {
-    handle = MarfaCore.open(path).heldHandle();
-    if (handle !== Handle.Writer) await sleep(50);
-  }
-  assert.equal(handle, Handle.Writer, "a follow whose worker was torn down went on holding the store");
-});
+      {
+        eval: true,
+        workerData: {
+          module: fileURLToPath(new URL("../index.js", import.meta.url)),
+          path,
+          url: server.url,
+        },
+      },
+    );
+    await new Promise((resolve, reject) => {
+      worker.once("message", resolve);
+      worker.once("error", reject);
+    });
+    await worker.terminate();
+    // The witness: the store is held while the worker's follow runs, so a
+    // writer here after it is one the follow let go to.
+    let handle = Handle.Reader;
+    const deadline = Date.now() + 10_000;
+    while (handle !== Handle.Writer && Date.now() < deadline) {
+      handle = MarfaCore.open(path).heldHandle();
+      if (handle !== Handle.Writer) await sleep(50);
+    }
+    assert.equal(
+      handle,
+      Handle.Writer,
+      "a follow whose worker was torn down went on holding the store",
+    );
+  },
+);
 
-test("a store opened to read is never made, never the writer, and hears of saves", { timeout: 20_000 }, async (t) => {
-  const absent = storeFor(t);
-  assert.throws(() => MarfaCore.openReader(absent), /^Error: invalid: /);
-  assert.equal(existsSync(absent), false, "a reading open made a store where there was none");
+test(
+  "a follow lets go of the store before it says it ended",
+  { timeout: 20_000 },
+  async (t) => {
+    const server = await scripted([held]);
+    t.after(server.close);
+    const path = storeFor(t);
+    /** @type {MarfaCore | null} */
+    let core = MarfaCore.open(path, server.url, "k");
+    await core.hydrate(["core.note"], Tier.Library);
+    let collected = false;
+    const registry = new FinalizationRegistry(() => {
+      collected = true;
+    });
+    registry.register(core, "core");
+    /** @type {(handle: Handle) => void} */
+    let reopenedAs = () => {};
+    const reopened = new Promise((resolve) => (reopenedAs = resolve));
+    const subscription = core.follow(
+      () => {},
+      () => reopenedAs(MarfaCore.open(path).heldHandle()),
+    );
+    while (server.followed() === 0) await sleep(10);
+    // The app lets go of its own handle, and it is collected, before it
+    // stops the follow: what holds the store after that is the follow's.
+    core = null;
+    const deadline = Date.now() + 10_000;
+    while (!collected && Date.now() < deadline) {
+      globalThis.gc?.();
+      await sleep(20);
+    }
+    assert.ok(collected, "the app's own handle was never collected");
+    subscription.stop();
+    assert.equal(
+      await reopened,
+      Handle.Writer,
+      "a store opened again on being told the follow ended was still held by it",
+    );
+  },
+);
 
-  // Beside a live writer, from the same process.
-  const { path, core: writer } = await hydrated(t, [held]);
-  const reader = MarfaCore.openReader(path);
-  assert.equal(reader.heldHandle(), Handle.Reader);
-  const before = reader.dataVersion();
-  assert.equal(reader.dataVersion(), before, "the signal moved with no save");
-  const queued = writer.createItem({ type: "core.note", properties: { title: "saved" } });
-  assert.notEqual(reader.dataVersion(), before, "the writer saved and the reader was not told");
-  assert.equal(reader.get(queued.itemId ?? "")?.properties.title, "saved");
-  assert.throws(
-    () => reader.createItem({ type: "core.note", properties: { title: "refused" } }),
-    /^Error: reading_handle: /,
-  );
-});
+test(
+  "a store opened to read is never made, never the writer, and hears of saves",
+  { timeout: 20_000 },
+  async (t) => {
+    const absent = storeFor(t);
+    assert.throws(() => MarfaCore.openReader(absent), /^Error: invalid: /);
+    assert.equal(
+      existsSync(absent),
+      false,
+      "a reading open made a store where there was none",
+    );
+
+    // Beside a live writer, from the same process.
+    const { path, core: writer } = await hydrated(t, [held]);
+    const reader = MarfaCore.openReader(path);
+    assert.equal(reader.heldHandle(), Handle.Reader);
+    const before = reader.dataVersion();
+    assert.equal(reader.dataVersion(), before, "the signal moved with no save");
+    const queued = writer.createItem({
+      type: "core.note",
+      properties: { title: "saved" },
+    });
+    assert.notEqual(
+      reader.dataVersion(),
+      before,
+      "the writer saved and the reader was not told",
+    );
+    assert.equal(reader.get(queued.itemId ?? "")?.properties.title, "saved");
+    assert.throws(
+      () =>
+        reader.createItem({
+          type: "core.note",
+          properties: { title: "refused" },
+        }),
+      /^Error: reading_handle: /,
+    );
+  },
+);
