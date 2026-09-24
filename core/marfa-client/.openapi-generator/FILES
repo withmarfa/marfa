@@ -149,7 +149,6 @@ src/models/housekeeping_job_page.rs
 src/models/housekeeping_job_running_refusal.rs
 src/models/housekeeping_job_running_refusal_error.rs
 src/models/housekeeping_outcome.rs
-src/models/housekeeping_report_value.rs
 src/models/housekeeping_run.rs
 src/models/id_reused_refusal.rs
 src/models/id_reused_refusal_error.rs
@@ -242,7 +241,6 @@ src/models/type_chain_unresolvable_refusal.rs
 src/models/type_chain_unresolvable_refusal_error.rs
 src/models/type_definition.rs
 src/models/type_definition_input.rs
-src/models/type_definition_input_compatible_with.rs
 src/models/type_definition_page.rs
 src/models/type_definition_update.rs
 src/models/type_has_subtypes_or_type_in_use_refusal.rs

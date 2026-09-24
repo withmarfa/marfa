@@ -40,4 +40,4 @@ It sends what the document declares and hands back what the server answered. It 
 
 ## Generating
 
-`src/schema.ts` comes from [openapi-typescript](https://openapi-ts.dev) and `src/contract.ts` from `scripts/generate-contract.ts`, both read off `openapi.json` by `pnpm generate` at the repository root. Both are committed and neither is edited by hand; CI's "Generated clients are fresh" job regenerates them and refuses a difference. Requests go through [openapi-fetch](https://openapi-ts.dev/openapi-fetch/).
+`src/generated/schema.ts` comes from [openapi-typescript](https://openapi-ts.dev) and `src/generated/contract.ts` from `scripts/generate-contract.ts`, both read off `openapi.json` by `pnpm generate` at the repository root. Both are committed and neither is edited by hand; CI's "Generated clients are fresh" job regenerates them into an emptied `src/generated/` and refuses any difference, including a file there the generator did not write. Requests go through [openapi-fetch](https://openapi-ts.dev/openapi-fetch/).

@@ -92,10 +92,9 @@ describe("compareToSurfaceLock", () => {
   it("is quiet when the tree matches the lock", () => {
     const s = [surface()];
     // Both, and neither is redundant. The second says nothing was recorded
-    // at all; the first says nothing would block a build. A guard that
-    // records a violation it never blocks on is exactly how this one came
-    // to be inert, so the blocking set is asserted in its own right rather
-    // than inferred from the full list being empty.
+    // at all; the first says nothing would block a build. A guard can record
+    // a violation it never blocks on, so the blocking set is asserted in its
+    // own right rather than inferred from the full list being empty.
     expect(
       blockingViolations(compareToSurfaceLock(s, buildSurfaceLock(s))),
     ).toEqual([]);

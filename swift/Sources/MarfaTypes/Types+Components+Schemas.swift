@@ -1022,48 +1022,38 @@ extension Components {
         /// An `Item`, or, when `include` names `metadata`, an `ItemWithMetadata`; every row of one page is the same shape.
         ///
         /// - Remark: Generated from `#/components/schemas/ItemListRow`.
-        public struct ItemListRow: Codable, Hashable, Sendable {
-            /// - Remark: Generated from `#/components/schemas/ItemListRow/value1`.
-            public var value1: Components.Schemas.Item?
-            /// - Remark: Generated from `#/components/schemas/ItemListRow/value2`.
-            public var value2: Components.Schemas.ItemWithMetadata?
-            /// Creates a new `ItemListRow`.
-            ///
-            /// - Parameters:
-            ///   - value1:
-            ///   - value2:
-            public init(
-                value1: Components.Schemas.Item? = nil,
-                value2: Components.Schemas.ItemWithMetadata? = nil
-            ) {
-                self.value1 = value1
-                self.value2 = value2
-            }
+        @frozen public enum ItemListRow: Codable, Hashable, Sendable {
+            /// - Remark: Generated from `#/components/schemas/ItemListRow/case1`.
+            case Item(Components.Schemas.Item)
+            /// - Remark: Generated from `#/components/schemas/ItemListRow/case2`.
+            case ItemWithMetadata(Components.Schemas.ItemWithMetadata)
             public init(from decoder: any Swift.Decoder) throws {
                 var errors: [any Swift.Error] = []
                 do {
-                    self.value1 = try .init(from: decoder)
+                    self = .Item(try .init(from: decoder))
+                    return
                 } catch {
                     errors.append(error)
                 }
                 do {
-                    self.value2 = try .init(from: decoder)
+                    self = .ItemWithMetadata(try .init(from: decoder))
+                    return
                 } catch {
                     errors.append(error)
                 }
-                try Swift.DecodingError.verifyAtLeastOneSchemaIsNotNil(
-                    [
-                        self.value1,
-                        self.value2
-                    ],
+                throw Swift.DecodingError.failedToDecodeOneOfSchema(
                     type: Self.self,
                     codingPath: decoder.codingPath,
                     errors: errors
                 )
             }
             public func encode(to encoder: any Swift.Encoder) throws {
-                try self.value1?.encode(to: encoder)
-                try self.value2?.encode(to: encoder)
+                switch self {
+                case let .Item(value):
+                    try value.encode(to: encoder)
+                case let .ItemWithMetadata(value):
+                    try value.encode(to: encoder)
+                }
             }
         }
         /// - Remark: Generated from `#/components/schemas/MissingRequiredFieldOrUnknownTypeOrValidationErrorRefusal`.

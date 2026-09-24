@@ -74,8 +74,7 @@ export default [
     ignores: [
       "**/dist/",
       // The generated client, whose shape is openapi-typescript's.
-      "packages/client/src/schema.ts",
-      "packages/client/src/contract.ts",
+      "packages/client/src/generated/",
       "**/coverage/",
       "**/node_modules/",
       "**/seed/",

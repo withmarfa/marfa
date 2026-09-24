@@ -16,9 +16,8 @@ coverage/
 .env.*
 !.env.example
 
-# Registry auth: copy .npmrc.example to .npmrc with NPM_TOKEN set in the
-# shell. CI writes its own per job from secrets.GITHUB_TOKEN, and a tracked
-# one makes pnpm warn on every invocation when NPM_TOKEN is unset.
+# Every dependency comes from the public registry, so no install needs a
+# registry credential, and a local one is never tracked.
 .npmrc
 
 # IDE

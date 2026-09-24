@@ -1,6 +1,8 @@
 //! The server a direct command talks to, and how it talks to it.
 
 pub mod request;
+#[cfg(test)]
+mod shapes;
 pub mod transport;
 
 use std::cell::RefCell;
@@ -281,7 +283,7 @@ impl Remote {
     /// anything is sent to it: for a write whose answer is the only copy of
     /// what it mints (`Request::minting`).
     pub fn hold_root(&self) -> Result<(), CliError> {
-        let instance = self.describe(&crate::commands::status::root_request())?;
+        let instance = self.root()?;
         let served = instance.get("contract");
         if served.and_then(Value::as_u64) == Some(marfa_client::CONTRACT_VERSION) {
             return Ok(());
@@ -377,10 +379,24 @@ impl Remote {
         read_json(reply, request)
     }
 
-    /// Reads a public door that describes the server, the root or health,
-    /// whatever contract its answer names: saying which server this is, and
-    /// that it speaks another contract, is what reading one is for.
-    pub fn describe(&self, request: &Request) -> Result<Value, CliError> {
+    /// The root, read whatever contract its answer names: saying which server
+    /// this is, and that it speaks another contract, is what reading it is
+    /// for.
+    pub fn root(&self) -> Result<Value, CliError> {
+        self.describe(&crate::commands::status::root_request())
+    }
+
+    /// The health door, read whatever contract its answer names, for the
+    /// same reason as the root.
+    pub fn health(&self) -> Result<Value, CliError> {
+        self.describe(&crate::commands::status::health_request())
+    }
+
+    /// The one read that skips the contract check. Private, and reached only
+    /// through `root` and `health`, so no other door can be read unchecked:
+    /// a command handed this with its own request would print an answer on
+    /// a contract it cannot read.
+    fn describe(&self, request: &Request) -> Result<Value, CliError> {
         let reply = self.send(request, false)?;
         if let Some(redirect) = self.redirected(&reply) {
             return Err(redirect);
@@ -949,13 +965,9 @@ mod tests {
             .on_contract(None),
         ]);
         let statuses: Vec<u16> = (0..2)
-            .map(|_| {
-                match remote_at(&door, Some("marfa_k1_x"))
-                    .describe(&crate::commands::status::root_request())
-                {
-                    Err(CliError::Refused { status, .. }) => status,
-                    other => panic!("{other:?}"),
-                }
+            .map(|_| match remote_at(&door, Some("marfa_k1_x")).root() {
+                Err(CliError::Refused { status, .. }) => status,
+                other => panic!("{other:?}"),
             })
             .collect();
         assert_eq!(statuses, vec![404, 401]);
@@ -1043,9 +1055,7 @@ mod tests {
     #[test]
     fn a_root_on_another_contract_is_described() {
         let door = Door::open(vec![root("2").on_contract(Some("2"))]);
-        let instance = remote_at(&door, Some("marfa_k1_x"))
-            .describe(&crate::commands::status::root_request())
-            .unwrap();
+        let instance = remote_at(&door, Some("marfa_k1_x")).root().unwrap();
         assert_eq!(instance["contract"], 2);
         let received = door.received();
         assert_eq!(received[0].header("authorization"), None);
@@ -1122,9 +1132,7 @@ mod tests {
             )
             .with_header("Retry-After", "7"),
         ]);
-        match remote_at(&door, Some("marfa_k1_x"))
-            .describe(&crate::commands::status::root_request())
-        {
+        match remote_at(&door, Some("marfa_k1_x")).root() {
             Err(CliError::Refused {
                 status,
                 code,
@@ -1147,9 +1155,7 @@ mod tests {
             Answer::json("301 Moved Permanently", "")
                 .with_header("Location", "https://marfa.example/"),
         ]);
-        match remote_at(&door, Some("marfa_k1_x"))
-            .describe(&crate::commands::status::root_request())
-        {
+        match remote_at(&door, Some("marfa_k1_x")).root() {
             Err(CliError::Redirected {
                 status, location, ..
             }) => {

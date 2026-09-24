@@ -287,12 +287,15 @@ describe("an item's neighbors stand outside the envelope", () => {
   });
 
   /**
-   * A hub with `perType` far ends under each of `edgeTypes`, all of them
-   * notes the fixture's own key reads, read back with its neighbors.
+   * A hub with the given number of far ends under each edge type, all of
+   * them notes the fixture's own key reads, read back with its neighbors.
    */
-  async function hubWith(edgeTypes: string[], perType: number) {
+  async function hubWith(blocks: Record<string, number>) {
+    const edgeTypes = Object.entries(blocks).flatMap(([type, count]) =>
+      Array.from({ length: count }, () => type),
+    );
     const created = await client.bulkItems({
-      items: Array.from({ length: 1 + edgeTypes.length * perType }, () =>
+      items: Array.from({ length: 1 + edgeTypes.length }, () =>
         createNote({ source: ctx.source }),
       ),
     });
@@ -304,7 +307,7 @@ describe("an item's neighbors stand outside the envelope", () => {
       edges: farEnds.map((target, i) => ({
         source_id: hub!,
         target_id: target,
-        edge_type: edgeTypes[Math.floor(i / perType)]!,
+        edge_type: edgeTypes[i]!,
       })),
     });
     expect(edges.ok).toBe(true);
@@ -313,8 +316,8 @@ describe("an item's neighbors stand outside the envelope", () => {
 
     const detail = (await read(`/items/${hub!}?include=neighbors`)) as Detail;
     await expectMatchesSchema("GET", "/items/{id}", 200, detail);
-    for (const type of edgeTypes) {
-      expect(detail.item.edges[type]?.data, type).toHaveLength(perType);
+    for (const [type, count] of Object.entries(blocks)) {
+      expect(detail.item.edges[type]?.data, type).toHaveLength(count);
       expect(detail.item.edges[type]?.next_cursor, type).toBeNull();
     }
     // The blocks name every far end, whatever the list beside them holds.
@@ -330,10 +333,12 @@ describe("an item's neighbors stand outside the envelope", () => {
     // Exactly the cap of 100, as four edge types of 25 rather than two of
     // 50, so no block sits at its own per-type cap of 50 and the combined
     // cap is the only bound in reach.
-    const { detail, farEnds } = await hubWith(
-      ["about", "references", "derived-from", "attached-to"],
-      25,
-    );
+    const { detail, farEnds } = await hubWith({
+      about: 25,
+      references: 25,
+      "derived-from": 25,
+      "attached-to": 25,
+    });
     expect(farEnds).toHaveLength(100);
     expect(detail.neighbors_truncated).toBe(false);
     expect((detail.neighbors?.map((n) => n.item.id) ?? []).sort()).toEqual(
@@ -341,18 +346,24 @@ describe("an item's neighbors stand outside the envelope", () => {
     );
   });
 
-  it("flags neighbors_truncated when the far ends across edge types pass the cap", async () => {
-    // Three edge types of 34 each: every block is whole, with no cursor to
-    // follow, and only their combined 102 far ends pass the cap. That is
-    // the case the flag exists for, since no block's cursor can say it.
-    const { detail, farEnds } = await hubWith(
-      ["about", "references", "derived-from"],
-      34,
-    );
+  it("flags neighbors_truncated one past the cap, hydrating exactly the cap", async () => {
+    // 101 far ends across four edge types, so every block is whole, with no
+    // cursor to follow, and only their combined count passes the cap. That
+    // is the case the flag exists for, since no block's cursor can say it.
+    // One past the cap rather than more, so this and the case at the cap
+    // above pin it from both sides: a cap of 101 fails here, one of 99
+    // fails there.
+    const { detail, farEnds } = await hubWith({
+      about: 26,
+      references: 25,
+      "derived-from": 25,
+      "attached-to": 25,
+    });
+    expect(farEnds).toHaveLength(101);
     expect(detail.neighbors_truncated).toBe(true);
     const hydrated = detail.neighbors?.map((n) => n.item.id) ?? [];
-    expect(hydrated.length).toBeGreaterThan(0);
-    expect(hydrated.length).toBeLessThan(farEnds.length);
+    expect(hydrated).toHaveLength(100);
+    expect(new Set(hydrated).size).toBe(100);
     expect(farEnds).toEqual(expect.arrayContaining(hydrated));
   });
 });
@@ -372,16 +383,22 @@ describe("search pages by cursor", () => {
     }
     const seen: string[] = [];
     let cursor: string | undefined;
+    let pages = 0;
     for (let page = 0; page < 10; page++) {
       const answer = await client.search(tag, {
         limit: 2,
         ...(cursor === undefined ? {} : { cursor }),
       });
       expect(answer.ok).toBe(true);
+      pages += 1;
       seen.push(...answer.data.data.map((hit) => hit.item.id));
       if (answer.data.next_cursor === null) break;
       cursor = answer.data.next_cursor;
     }
+    // Five hits two to a page is three pages. A first page that answered
+    // all five with a null cursor would deliver every hit once and pass the
+    // two assertions below without paging at all.
+    expect(pages).toBe(3);
     expect(seen).toHaveLength(5);
     expect(new Set(seen).size).toBe(5);
   });

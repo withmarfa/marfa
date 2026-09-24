@@ -52,8 +52,6 @@ jobs:
       group: marfa-suite-shared-host
       cancel-in-progress: false
       queue: max
-    env:
-      NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -62,10 +60,6 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 22
-      - name: Configure registry auth
-        env:
-          NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > .npmrc
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
       - run: pnpm typecheck
@@ -109,8 +103,6 @@ jobs:
       group: marfa-suite-shared-host
       cancel-in-progress: false
       queue: max
-    env:
-      NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -119,10 +111,6 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 22
-      - name: Configure registry auth
-        env:
-          NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > .npmrc
       - run: pnpm install --frozen-lockfile
       # `marfa:up` runs the server through tsx, which resolves
       # @withmarfa/shared through its dist, and the offline lane reads the
@@ -231,8 +219,6 @@ jobs:
       group: marfa-suite-shared-host
       cancel-in-progress: false
       queue: max
-    env:
-      NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -241,10 +227,6 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 22
-      - name: Configure registry auth
-        env:
-          NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > .npmrc
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter "@withmarfa/server..." build
 
@@ -310,8 +292,6 @@ jobs:
       group: marfa-suite-shared-host
       cancel-in-progress: false
       queue: max
-    env:
-      NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -320,10 +300,6 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 22
-      - name: Configure registry auth
-        env:
-          NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > .npmrc
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter "@withmarfa/server..." build
 
@@ -361,8 +337,6 @@ jobs:
     name: Types codegen freshness
     timeout-minutes: 15
     runs-on: self-hosted
-    env:
-      NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -371,17 +345,15 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 22
-      - name: Configure registry auth
-        env:
-          NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > .npmrc
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @withmarfa/types validate
       - name: Regenerate and check for drift
         run: |
+          rm -rf packages/types/generated
           pnpm --filter @withmarfa/types generate
-          if ! git diff --exit-code packages/types/generated/; then
-            echo "Generated type registry is out of date. Run 'pnpm --filter @withmarfa/types generate' and commit."
+          if [ -n "$(git status --porcelain packages/types/generated)" ]; then
+            git status --porcelain packages/types/generated
+            echo "Generated type registry is out of date, or holds a file the generator did not write. Run 'pnpm --filter @withmarfa/types generate' and commit."
             exit 1
           fi
 
@@ -389,8 +361,6 @@ jobs:
     name: OpenAPI spec freshness
     timeout-minutes: 15
     runs-on: self-hosted
-    env:
-      NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -399,10 +369,6 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 22
-      - name: Configure registry auth
-        env:
-          NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > .npmrc
       - run: pnpm install --frozen-lockfile
       # Build first — the generator script imports through @withmarfa/shared,
       # which needs its dist/ before tsx can resolve it.
@@ -427,10 +393,6 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 22
-      - name: Configure registry auth
-        env:
-          NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > .npmrc
       - run: pnpm install --frozen-lockfile
       - name: Put the Rust toolchain on PATH
         run: |
@@ -447,14 +409,19 @@ jobs:
   # What is generated from `openapi.json` is committed, so a consumer reads
   # the types the document declares without generating anything. This
   # regenerates it from the committed document and refuses a difference: a
-  # change to the document that did not regenerate, or a hand edit to a
-  # generated file.
+  # change to the document that did not regenerate, a hand edit to a
+  # generated file, or a file under a generated directory the generator did
+  # not write.
+  #
+  # Each step empties its client's generated directory before regenerating
+  # it, so the generator's own output is the whole of what may be there: a
+  # committed file it did not write shows as deleted, and one it writes that
+  # is not committed shows as untracked. `git status` rather than `git diff`,
+  # which does not see an untracked file.
   clients-freshness:
     name: Generated clients are fresh
     timeout-minutes: 15
     runs-on: self-hosted
-    env:
-      NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -463,16 +430,14 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 22
-      - name: Configure registry auth
-        env:
-          NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > .npmrc
       - run: pnpm install --frozen-lockfile
       - name: Regenerate the TypeScript client and check for drift
         run: |
+          rm -rf packages/client/src/generated
           pnpm --filter @withmarfa/client run generate
-          if ! git diff --exit-code packages/client/src; then
-            echo "A generated client is out of date with openapi.json. Run 'pnpm generate' and commit."
+          if [ -n "$(git status --porcelain packages/client/src/generated)" ]; then
+            git status --porcelain packages/client/src/generated
+            echo "@withmarfa/client's generated sources are out of date with openapi.json, or hold a file the generator did not write. Run 'pnpm generate' and commit."
             exit 1
           fi
       # OpenAPI Generator is a Java program. The JDK comes from the action
@@ -488,25 +453,44 @@ jobs:
         run: |
           echo "/opt/homebrew/opt/rustup/bin" >> "$GITHUB_PATH"
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
-      # `git status` rather than `git diff`, so a file the generator writes
-      # that is not committed is caught too, and one it no longer writes is
-      # caught by its absence from `.openapi-generator/FILES`.
+      # The whole crate directory is checked, so the generator's manifest,
+      # `.openapi-generator/FILES`, is held to what it wrote as well. Outside
+      # `src/` the crate holds only its generator's configuration, named
+      # here, so a file beside them would ship in the crate unwritten by
+      # anything.
       - name: Regenerate the Rust client and check for drift
         run: |
+          rm -rf core/marfa-client/src
           pnpm run generate:rust
           if [ -n "$(git status --porcelain core/marfa-client)" ]; then
             git status --porcelain core/marfa-client
-            echo "marfa-client is out of date with openapi.json. Run 'pnpm generate' and commit."
+            echo "marfa-client is out of date with openapi.json, or holds a file the generator did not write. Run 'pnpm generate' and commit."
+            exit 1
+          fi
+          configuration=$(printf '%s\n' \
+            core/marfa-client/.openapi-generator-ignore \
+            core/marfa-client/.openapi-generator/FILES \
+            core/marfa-client/.openapi-generator/VERSION \
+            core/marfa-client/Cargo.toml \
+            core/marfa-client/openapitools.json \
+            core/marfa-client/templates/lib.mustache \
+            core/marfa-client/templates/model_mod.mustache)
+          beside=$(git ls-files core/marfa-client | grep -v '^core/marfa-client/src/' || true)
+          if [ "$beside" != "$configuration" ]; then
+            echo "marfa-client holds files outside src/ other than its generator's configuration:"
+            diff <(echo "$configuration") <(echo "$beside") || true
             exit 1
           fi
       # The generator is a Swift package pinned in `swift/generator`; the
-      # runner's Xcode toolchain builds it.
+      # runner's Xcode toolchain builds it. What reaches the release's zip is
+      # this directory, so a hand-written file here would ship as generated.
       - name: Regenerate the Swift types and check for drift
         run: |
+          rm -rf swift/Sources
           pnpm run generate:swift
           if [ -n "$(git status --porcelain swift/Sources)" ]; then
             git status --porcelain swift/Sources
-            echo "The Swift types are out of date with openapi.json. Run 'pnpm generate' and commit."
+            echo "The Swift types are out of date with openapi.json, or hold a file the generator did not write. Run 'pnpm generate' and commit."
             exit 1
           fi
 

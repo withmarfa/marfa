@@ -1,3 +1,8 @@
+/// A housekeeping report's value: a number, a boolean, a string or null.
+pub type HousekeepingReportValue = serde_json::Value;
+/// The types a type definition declares itself compatible with: one name,
+/// or a list of them.
+pub type TypeDefinitionInputCompatibleWith = serde_json::Value;
 pub mod ok;
 pub use self::ok::Acknowledged;
 pub mod add_item_tags_request;
@@ -258,8 +263,6 @@ pub mod housekeeping_job_running_refusal_error;
 pub use self::housekeeping_job_running_refusal_error::HousekeepingJobRunningRefusalError;
 pub mod housekeeping_outcome;
 pub use self::housekeeping_outcome::HousekeepingOutcome;
-pub mod housekeeping_report_value;
-pub use self::housekeeping_report_value::HousekeepingReportValue;
 pub mod housekeeping_run;
 pub use self::housekeeping_run::HousekeepingRun;
 pub mod id_reused_refusal;
@@ -440,8 +443,6 @@ pub mod type_definition;
 pub use self::type_definition::TypeDefinition;
 pub mod type_definition_input;
 pub use self::type_definition_input::TypeDefinitionInput;
-pub mod type_definition_input_compatible_with;
-pub use self::type_definition_input_compatible_with::TypeDefinitionInputCompatibleWith;
 pub mod type_definition_page;
 pub use self::type_definition_page::TypeDefinitionPage;
 pub mod type_definition_update;

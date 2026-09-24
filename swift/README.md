@@ -6,6 +6,6 @@ The Swift types for a Marfa instance, generated from the repository's `openapi.j
 
 ## Generating
 
-`pnpm generate` at the repository root builds the generator pinned in `generator/`, writes `Sources/MarfaTypes/` from `openapi.json` under `openapi-generator-config.yaml`, and writes `Contract.swift` with `generate-contract.ts`. Nothing under `Sources/` is edited by hand; CI's "Generated clients are fresh" job regenerates it and refuses a difference, and "Swift types build" compiles it and runs the tests.
+`pnpm generate` at the repository root builds the generator pinned in `generator/`, writes `Sources/MarfaTypes/` from `openapi.json` under `openapi-generator-config.yaml`, and writes `Contract.swift` with `generate-contract.ts`. Nothing under `Sources/` is edited by hand; CI's "Generated clients are fresh" job regenerates it into an emptied `Sources/MarfaTypes/` and refuses any difference, including a file there the generator did not write, and "Swift types build" compiles it and runs the tests.
 
 One schema is overridden in the configuration: `HousekeepingReport` is read as an `OpenAPIObjectContainer`, because the generator cannot express its values, any scalar or null.

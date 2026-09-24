@@ -20,6 +20,14 @@
  * version by construction: SwiftPM versions a package by its tag. The API
  * document's `info.version` is the contract version, not a product version.
  *
+ * Two kinds of file that are not manifests are read for a product version
+ * written as text: `packages/server/src/contract.ts`, where the contract
+ * version lives and a product version could be mistaken for it, and every
+ * README a published package ships, where an install line is the natural
+ * place to write one. Either would pass the manifest rules untouched. What
+ * is refused is the release grammar, three dotted numbers; the contract
+ * version is one integer and is not one.
+ *
  * The placeholder has to be present, not merely not-something-else: the
  * stamp sets the version wherever it finds the placeholder, so a manifest
  * that dropped the field would build unversioned. A `Cargo.toml` is also
@@ -147,6 +155,66 @@ export function cargoVersionsHeld(dir: string, root: string): VersionHeld[] {
     }));
 }
 
+/** A product version as a release tag carries it: three dotted numbers. */
+const VERSION_TEXT = /\bv?\d+\.\d+\.\d+\b/g;
+
+/** Every product version a file writes as text. */
+export function versionsWritten(files: readonly Manifest[]): VersionHeld[] {
+  return files.flatMap((f) =>
+    [...f.text.matchAll(VERSION_TEXT)].map((match) => ({
+      path: f.path,
+      version: match[0],
+    })),
+  );
+}
+
+/** The file that holds the contract version, beside the build's. */
+const CONTRACT_FILE = "packages/server/src/contract.ts";
+
+/** The Swift package the release zips, which has no manifest to say so. */
+const SWIFT_PACKAGE = "swift";
+
+/**
+ * Every directory a published package is built from: a package.json that is
+ * not private, a crate cargo would publish, and the Swift package.
+ */
+function publishedDirs(manifests: readonly Manifest[]): string[] {
+  const dirs = new Set<string>([SWIFT_PACKAGE]);
+  for (const m of manifests) {
+    if (!m.path.endsWith("package.json") || m.path === "package.json") continue;
+    const pkg = JSON.parse(m.text) as { private?: boolean };
+    if (pkg.private !== true) dirs.add(dirname(m.path));
+  }
+  for (const dir of cargoDirs(manifests)) {
+    const metadata = JSON.parse(
+      execFileSync(
+        "cargo",
+        ["metadata", "--no-deps", "--offline", "--format-version", "1"],
+        { cwd: dir, encoding: "utf8" },
+      ),
+    ) as { packages: (CargoPackage & { publish: string[] | null })[] };
+    for (const p of metadata.packages) {
+      if (p.publish === null) {
+        dirs.add(relative(realpathSync(ROOT), dirname(p.manifest_path)));
+      }
+    }
+  }
+  return [...dirs].sort();
+}
+
+/** The READMEs a published package ships, read off the tree, with or
+ *  without an extension: npm ships a bare `README` too. */
+function publishedReadmes(dirs: readonly string[]): Manifest[] {
+  return execFileSync(
+    "git",
+    ["ls-files", "--", ...dirs.map((dir) => `:(glob)${dir}/**/README*`)],
+    { cwd: ROOT, encoding: "utf8" },
+  )
+    .split("\n")
+    .filter((line) => line.length > 0)
+    .map((path) => ({ path, text: readFileSync(join(ROOT, path), "utf8") }));
+}
+
 /** The tracked manifests, read off the tree. */
 function trackedManifests(): Manifest[] {
   const listed = execFileSync(
@@ -198,6 +266,63 @@ describe("no file holds a version", () => {
     for (const dir of cargoDirs(manifests)) {
       expect(cargoVersionsHeld(dir, ROOT), dir).toEqual([]);
     }
+  });
+
+  it("finds every published package and its README", () => {
+    // Derived rather than listed, so a package that starts publishing is
+    // read here without anyone adding it; counted, so one that is dropped
+    // is noticed.
+    const dirs = publishedDirs(manifests);
+    expect(dirs).toEqual([
+      "core/bindings/node",
+      "core/marfa-client",
+      "packages/client",
+      SWIFT_PACKAGE,
+    ]);
+    expect(publishedReadmes(dirs).map((f) => f.path)).toEqual([
+      "packages/client/README.md",
+      "swift/README.md",
+    ]);
+  });
+
+  it("no published README and not the contract file writes a product version", () => {
+    const files = [
+      ...publishedReadmes(publishedDirs(manifests)),
+      {
+        path: CONTRACT_FILE,
+        text: readFileSync(join(ROOT, CONTRACT_FILE), "utf8"),
+      },
+    ];
+    expect(versionsWritten(files)).toEqual([]);
+  });
+
+  it("would refuse a version written as text, and not the contract integer", () => {
+    // The witness: the rule over files that do write one, beside the
+    // contract file as it is, which must pass.
+    expect(
+      versionsWritten([
+        {
+          path: "packages/client/README.md",
+          text: "npm install @withmarfa/client@0.0.1\n",
+        },
+        {
+          path: "swift/README.md",
+          text: '.package(url: "https://example.com/marfa-swift-sdk", from: "v1.2.3")\n',
+        },
+        {
+          path: CONTRACT_FILE,
+          text: 'export const CONTRACT_VERSION = 1;\nexport const BUILD = "0.0.4";\n',
+        },
+        {
+          path: CONTRACT_FILE,
+          text: readFileSync(join(ROOT, CONTRACT_FILE), "utf8"),
+        },
+      ]),
+    ).toEqual([
+      { path: "packages/client/README.md", version: "0.0.1" },
+      { path: "swift/README.md", version: "v1.2.3" },
+      { path: CONTRACT_FILE, version: "0.0.4" },
+    ]);
   });
 
   it("would refuse a package.json or Cargo.lock that holds a version, or none", () => {

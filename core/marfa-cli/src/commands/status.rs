@@ -25,8 +25,8 @@ pub fn run(remote: &Remote, out: &Printer) -> Result<(), CliError> {
     // A server on another contract is still described: saying which server
     // this is, and that it is the wrong one, is what this command is for. The
     // counts would be read on the contract, so they are not asked for.
-    let instance = remote.describe(&root_request())?;
-    let health = remote.describe(&health_request())?;
+    let instance = remote.root()?;
+    let health = remote.health()?;
     let held = speaks_this_contract(&instance);
     // The counts are scoped to what the credential can read, never
     // refused to one, so a refusal here is the credential's and propagates.

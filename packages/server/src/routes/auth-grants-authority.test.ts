@@ -8,11 +8,11 @@
  * they sit behind a permission of their own rather than behind whatever
  * content the caller happens to reach.
  *
- * Both routes originally fenced on the credential being bound at all, and
- * that check says nothing about what was granted, so a key minted with a
- * single read scope could list every connected app and revoke any of them. Nothing caught it because the one test covering these
- * routes used the operator key, which satisfies every gate in the codebase and
- * so tells you nothing about where the boundary actually is.
+ * A fence on the credential being bound at all says nothing about what was
+ * granted: under one, a key minted with a single read scope could list
+ * every connected app and revoke any of them. So the boundary is tested
+ * with keys minted for it: the operator key satisfies every gate and so
+ * cannot show where the boundary is.
  *
  * The session-gated twin (`POST /auth/grants/:id/revoke`) is a different
  * surface with a different principal — the signed-in human acting on their

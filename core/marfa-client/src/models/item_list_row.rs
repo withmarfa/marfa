@@ -12,86 +12,16 @@ use crate::models;
 use serde::{Deserialize, Serialize};
 
 /// ItemListRow : An `Item`, or, when `include` names `metadata`, an `ItemWithMetadata`; every row of one page is the same shape.
-#[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
-pub struct ItemListRow {
-    #[serde(rename = "id")]
-    pub id: String,
-    #[serde(rename = "type")]
-    pub r#type: String,
-    #[serde(rename = "properties")]
-    pub properties: std::collections::HashMap<String, serde_json::Value>,
-    #[serde(rename = "state")]
-    pub state: models::ItemState,
-    #[serde(rename = "tier", skip_serializing_if = "Option::is_none")]
-    pub tier: Option<models::Tier>,
-    #[serde(rename = "version")]
-    pub version: f64,
-    #[serde(rename = "schema_version")]
-    pub schema_version: i32,
-    #[serde(rename = "source")]
-    pub source: String,
-    #[serde(rename = "source_id", skip_serializing_if = "Option::is_none")]
-    pub source_id: Option<String>,
-    #[serde(rename = "capture_latitude", skip_serializing_if = "Option::is_none")]
-    pub capture_latitude: Option<f64>,
-    #[serde(rename = "capture_longitude", skip_serializing_if = "Option::is_none")]
-    pub capture_longitude: Option<f64>,
-    #[serde(rename = "occurred_at")]
-    pub occurred_at: String,
-    #[serde(rename = "created_at")]
-    pub created_at: String,
-    #[serde(rename = "updated_at")]
-    pub updated_at: String,
-    #[serde(rename = "edges", skip_serializing_if = "Option::is_none")]
-    pub edges: Option<std::collections::HashMap<String, models::EdgePage>>,
-    #[serde(rename = "extensions", skip_serializing_if = "Option::is_none")]
-    pub extensions: Option<
-        std::collections::HashMap<String, std::collections::HashMap<String, serde_json::Value>>,
-    >,
-    #[serde(rename = "item")]
-    pub item: Box<models::Item>,
-    #[serde(rename = "metadata")]
-    pub metadata: Box<models::Metadata>,
-    #[serde(rename = "acknowledged", skip_serializing_if = "Option::is_none")]
-    pub acknowledged: Option<bool>,
+/// An `Item`, or, when `include` names `metadata`, an `ItemWithMetadata`; every row of one page is the same shape.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ItemListRow {
+    Item(Box<models::Item>),
+    ItemWithMetadata(Box<models::ItemWithMetadata>),
 }
 
-impl ItemListRow {
-    /// An `Item`, or, when `include` names `metadata`, an `ItemWithMetadata`; every row of one page is the same shape.
-    pub fn new(
-        id: String,
-        r#type: String,
-        properties: std::collections::HashMap<String, serde_json::Value>,
-        state: models::ItemState,
-        version: f64,
-        schema_version: i32,
-        source: String,
-        occurred_at: String,
-        created_at: String,
-        updated_at: String,
-        item: models::Item,
-        metadata: models::Metadata,
-    ) -> ItemListRow {
-        ItemListRow {
-            id,
-            r#type,
-            properties,
-            state,
-            tier: None,
-            version,
-            schema_version,
-            source,
-            source_id: None,
-            capture_latitude: None,
-            capture_longitude: None,
-            occurred_at,
-            created_at,
-            updated_at,
-            edges: None,
-            extensions: None,
-            item: Box::new(item),
-            metadata: Box::new(metadata),
-            acknowledged: None,
-        }
+impl Default for ItemListRow {
+    fn default() -> Self {
+        Self::Item(Default::default())
     }
 }
