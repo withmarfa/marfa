@@ -112,18 +112,25 @@ jobs:
 
       - name: Package the Swift bindings
         run: core/bindings/swift/build.sh
+      # Every object in every slice built for the systems build.sh names, so
+      # an app on the oldest of them links a framework it can load.
+      - name: Hold the framework to its deployment targets
+        run: core/bindings/swift/check-targets.sh
       - name: Build the Swift example
         working-directory: core/bindings/swift/Example
         run: swift build
 
       # Outside the pnpm workspace, so every call carries the flag. `check`
-      # holds the Node proof to the declarations the build generates.
-      - name: Build and check the Node module
+      # holds the Node proof and tests to the declarations the build
+      # generates; `test` drives the held stream and the reading open against
+      # a server it scripts itself.
+      - name: Build, check and test the Node module
         working-directory: core/bindings/node
         run: |
           pnpm --ignore-workspace install --frozen-lockfile
           pnpm --ignore-workspace run build
           pnpm --ignore-workspace run check
+          pnpm --ignore-workspace run test
 
       # Each binding's consumer, driven against a server stopped and started
       # again: queued writes answered once it is back, a blob fetched, and a
