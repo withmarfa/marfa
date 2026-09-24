@@ -324,7 +324,15 @@ impl Core {
         // missing server would tell it the wrong thing about why it may
         // not write.
         self.lock.refuse_unless_writer()?;
-        drain::drain(self, self.http()?)
+        drain::drain(self, self.http()?, drain::Asked::Now)
+    }
+
+    /// The same, as a folder left watching drains: a source the key was
+    /// found not to claim a moment ago is not asked about again until
+    /// `drain::UNCLAIMED_RETRY` has passed (`queue-and-verdicts.md` 40).
+    pub fn drain_paced(&self) -> Result<DrainReport> {
+        self.lock.refuse_unless_writer()?;
+        drain::drain(self, self.http()?, drain::Asked::Paced)
     }
 
     /// Sends a blocked or dead row again, under a fresh idempotency key

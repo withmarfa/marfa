@@ -36,10 +36,11 @@ pub struct DrainReport {
     /// else ends a drain early.
     pub stopped: Option<String>,
     /// The sources the server said this credential's key does not claim,
-    /// once each, where a create naming one was refused for it
-    /// (`queue-and-verdicts.md` 40). Every create naming one is blocked
-    /// `credential_refused`, a reason that alone reads as a key that no longer
-    /// works; this says which claim is missing.
+    /// once each: where a create naming one was refused for it this pass, or
+    /// where a paced drain left the creates naming it blocked because it was
+    /// found unclaimed a moment ago (`queue-and-verdicts.md` 40). Every
+    /// create naming one is blocked `credential_refused`, a reason that alone
+    /// reads as a key that no longer works; this says which claim is missing.
     pub unclaimed_sources: Vec<String>,
     /// The longest wait the server asked for this pass, where it asked.
     ///
@@ -187,19 +188,19 @@ fn refine(
         }
         // The claim refusal names the source and nothing else. The source
         // allow-list's refusal is the same status and code, names the list
-        // beside it, and is about the type rather than the credential, so no
-        // claim granted afterwards clears it (`types.md` 18).
+        // and the type beside it, and is about the type rather than the
+        // credential, so no claim granted afterwards clears it (`types.md`
+        // 18).
         Classified::Contract if answer.status == 403 && answer.code == "forbidden" => {
-            let details = body.pointer("/error/details");
-            let named = details
+            let named = body
+                .pointer("/error/details")
+                .and_then(serde_json::Value::as_object)
+                .filter(|details| details.len() == 1)
                 .and_then(|details| details.get("source"))
                 .and_then(serde_json::Value::as_str);
-            let listed = details.is_some_and(|details| details.get("allowed").is_some());
             match named {
                 Some(source)
-                    if !listed
-                        && sent.get("source").and_then(serde_json::Value::as_str)
-                            == Some(source) =>
+                    if sent.get("source").and_then(serde_json::Value::as_str) == Some(source) =>
                 {
                     Classified::Unclaimed {
                         source: source.to_string(),
@@ -543,18 +544,57 @@ fn upload(http: &Http, bytes: File, mime_type: &str) -> std::result::Result<Answ
     })
 }
 
+/// How long a drain that nobody asked for leaves the creates naming a source
+/// the credential's key was found not to claim before asking about it again
+/// (`queue-and-verdicts.md` 40).
+///
+/// A folder left watching drains every second, and a claim is granted by a
+/// person, not by time: asking once a second is a refused request a second
+/// for as long as nobody grants it. A drain a caller asked for asks at once.
+pub const UNCLAIMED_RETRY: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// Whether a caller asked for this drain, or it is one a folder left watching
+/// runs on its own cadence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Asked {
+    /// A caller asked: `push`, `device drain`, a binding's drain.
+    Now,
+    /// A folder left watching, which asks about an unclaimed source again
+    /// only once `UNCLAIMED_RETRY` has passed.
+    Paced,
+}
+
+/// The sources a drain leaves the creates of blocked: found unclaimed less
+/// than `UNCLAIMED_RETRY` before `now`, where nobody asked for the drain.
+fn held_back(conn: &rusqlite::Connection, asked: Asked, now: &str) -> Result<Vec<String>> {
+    if asked == Asked::Now {
+        return Ok(Vec::new());
+    }
+    Ok(store::unclaimed_sources(conn)?
+        .into_iter()
+        .filter(|(_, since)| !crate::folder::elapsed_past(since, now, UNCLAIMED_RETRY))
+        .map(|(source, _)| source)
+        .collect())
+}
+
 /// Sends what the queue holds and records what came back.
-pub fn drain(core: &Core, http: &Http) -> Result<DrainReport> {
+pub fn drain(core: &Core, http: &Http, asked: Asked) -> Result<DrainReport> {
     // A drain writes verdicts and adopts rows, so it is a write door and a
     // reading handle is refused at it exactly as it is at the others.
     core.lock_ref().refuse_unless_writer()?;
+    // The sources found unclaimed recently enough that a paced drain leaves
+    // their creates blocked, and reports them as still unclaimed.
+    let held = {
+        let conn = core.conn()?;
+        held_back(&conn, asked, &store::now_iso())?
+    };
     {
         let conn = core.conn()?;
         // Before anything is read: a row blocked for a reason that clears on
         // its own is a finding of the last drain rather than a state, and
         // leaving it blocked here would make this drain skip a dependency
         // that has since been answered (`queue-and-verdicts.md` 24, 27).
-        store::unblock_self_clearing(&conn)?;
+        store::unblock_self_clearing_but(&conn, &held)?;
     }
 
     let mut report = DrainReport {
@@ -562,7 +602,7 @@ pub fn drain(core: &Core, http: &Http) -> Result<DrainReport> {
         held: 0,
         verdicts: Vec::new(),
         stopped: None,
-        unclaimed_sources: Vec::new(),
+        unclaimed_sources: held,
         retry_after_seconds: None,
     };
 
@@ -725,6 +765,19 @@ pub fn drain(core: &Core, http: &Http) -> Result<DrainReport> {
 
         let class = refine(row, &payload, &answer, classify(&answer));
         let settled = settle(core, row, &answer, class, shape)?;
+        // A create naming a source landed, so the key claims it now.
+        if row.kind == WriteKind::CreateItem
+            && matches!(
+                settled.verdict,
+                Some(Verdict::Accepted | Verdict::Merged | Verdict::Conflicted)
+            )
+            && let Some(source) = serde_json::from_str::<serde_json::Value>(&payload)
+                .ok()
+                .and_then(|sent| sent.get("source")?.as_str().map(str::to_string))
+        {
+            let conn = core.conn()?;
+            store::clear_unclaimed(&conn, &source)?;
+        }
         if let Some(wait) = settled.retry_after_seconds {
             report.retry_after_seconds = Some(
                 report
@@ -1128,6 +1181,7 @@ fn settle(
             // The rest of the creates naming it, which would each be asked
             // the same question and given the same answer.
             let blocked = store::block_creates_naming(&tx, &source)?;
+            store::record_unclaimed(&tx, &source)?;
             let mut also = Vec::new();
             for id in blocked {
                 if let Some(other) = store::queued_write(&tx, &id)? {
@@ -1449,6 +1503,22 @@ mod tests {
             payload: "{}",
             depends_on,
         }
+    }
+
+    /// A paced drain holds a source back for a minute from when it was found
+    /// unclaimed, and a drain somebody asked for never does. The witness is
+    /// the same record past the minute, released.
+    #[test]
+    fn holds_an_unclaimed_source_back_for_a_minute_where_nobody_asked() {
+        let conn = store::open_in_memory().unwrap();
+        store::meta_set(&conn, "unclaimed_source:notes", "2026-09-24T10:00:00.000Z").unwrap();
+        let soon = "2026-09-24T10:00:59.000Z";
+        let later = "2026-09-24T10:01:00.000Z";
+        assert_eq!(held_back(&conn, Asked::Paced, soon).unwrap(), vec!["notes"]);
+        assert!(held_back(&conn, Asked::Now, soon).unwrap().is_empty());
+        assert!(held_back(&conn, Asked::Paced, later).unwrap().is_empty());
+        store::clear_unclaimed(&conn, "notes").unwrap();
+        assert!(held_back(&conn, Asked::Paced, soon).unwrap().is_empty());
     }
 
     /// The version comes from an answer about the row the edit addresses and

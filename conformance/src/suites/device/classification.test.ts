@@ -642,6 +642,14 @@ describe("the ceiling, and releasing what it stopped", () => {
               { source: "notes" },
             );
           }
+          // A refusal naming the source beside anything else is not the
+          // claim refusal, which names the source and nothing more.
+          if (sent.source === "wider") {
+            return refusal(403, "forbidden", "Refused for another reason", {
+              source: "wider",
+              reason: "something else",
+            });
+          }
           // The allow-list's refusal: the same status and code, naming the
           // list beside the source (`types.md` 18).
           if (sent.source === "listed") {
@@ -736,6 +744,14 @@ describe("the ceiling, and releasing what it stopped", () => {
       sourceId: "listed.md",
       version: 0,
     });
+    const wider = await device.create({
+      type: "core.note",
+      properties: { title: "wider", body: "wider" },
+      source: "wider",
+      sourceId: "wider.md",
+      version: 0,
+    });
+    expect(wider.ok).toBe(true);
     expect(first.ok && second.ok && own.ok && listed.ok).toBe(true);
     if (!first.ok || !second.ok || !own.ok || !listed.ok) return;
     const local = first.value.item_id ?? "";
@@ -775,6 +791,13 @@ describe("the ceiling, and releasing what it stopped", () => {
     expect(
       [verdictOf(listed.value.id)?.verdict, verdictOf(listed.value.id)?.reason],
       "a source allow-list's refusal was read as a missing claim, which no claim granted can clear",
+    ).toEqual(["refused", "forbidden"]);
+    expect(
+      [
+        verdictOf(wider.ok ? wider.value.id : "")?.verdict,
+        verdictOf(wider.ok ? wider.value.id : "")?.reason,
+      ],
+      "a refusal naming more than the source was read as a missing claim",
     ).toEqual(["refused", "forbidden"]);
     expect(
       drained.value.unclaimed_sources,

@@ -2356,6 +2356,86 @@ pub fn block_unanswered(conn: &Connection, reason: BlockedReason) -> Result<usiz
 }
 
 /// Returns the rows blocked for a reason that clears on its own to unanswered.
+/// The prefix of the meta key recording when a source was found unclaimed
+/// (`queue-and-verdicts.md` 40).
+const UNCLAIMED_PREFIX: &str = "unclaimed_source:";
+
+/// Records that the server refused a create because the credential's key does
+/// not claim `source`, now.
+pub fn record_unclaimed(conn: &Connection, source: &str) -> Result<(), CoreError> {
+    meta_set(conn, &format!("{UNCLAIMED_PREFIX}{source}"), &now_iso())
+}
+
+/// Forgets that `source` was unclaimed: a create naming it was taken.
+pub fn clear_unclaimed(conn: &Connection, source: &str) -> Result<(), CoreError> {
+    meta_delete(conn, &format!("{UNCLAIMED_PREFIX}{source}"))
+}
+
+/// Every source found unclaimed and not taken since, with when it was found.
+pub fn unclaimed_sources(conn: &Connection) -> Result<Vec<(String, String)>, CoreError> {
+    let mut statement =
+        conn.prepare("SELECT key, value FROM meta WHERE key LIKE ?1 ORDER BY key")?;
+    let rows = statement.query_map([format!("{UNCLAIMED_PREFIX}%")], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+    })?;
+    let mut found = Vec::new();
+    for row in rows {
+        let (key, since) = row?;
+        found.push((key[UNCLAIMED_PREFIX.len()..].to_string(), since));
+    }
+    Ok(found)
+}
+
+/// Returns the rows blocked for a reason that clears on its own to
+/// unanswered, but for the creates naming a source in `held`, which stay
+/// blocked: a source the key was found not to claim a moment ago is asked
+/// about again on a slower cadence than a queue drains on
+/// (`queue-and-verdicts.md` 40).
+pub fn unblock_self_clearing_but(conn: &Connection, held: &[String]) -> Result<usize, CoreError> {
+    if held.is_empty() {
+        return unblock_self_clearing(conn);
+    }
+    let mut kept = Vec::new();
+    for row in read_writes(
+        conn,
+        "WHERE verdict = ?1 AND reason = ?2 AND kind = ?3",
+        [
+            Verdict::Blocked.as_str(),
+            BlockedReason::CredentialRefused.as_str(),
+            WriteKind::CreateItem.as_str(),
+        ],
+    )? {
+        let payload: Value = serde_json::from_str(&payload_of(conn, &row.id)?)?;
+        if payload
+            .get("source")
+            .and_then(Value::as_str)
+            .is_some_and(|source| held.iter().any(|named| named == source))
+        {
+            kept.push(row.id);
+        }
+    }
+    let clearing: Vec<&str> = BlockedReason::ALL
+        .into_iter()
+        .filter(|reason| reason.clears_itself())
+        .map(BlockedReason::as_str)
+        .collect();
+    // Which source a create names is in its payload and not in a column, so
+    // the rows held back are found above and left out here by id.
+    let places = vec!["?"; clearing.len()].join(", ");
+    let kept_places = vec!["?"; kept.len()].join(", ");
+    Ok(conn.execute(
+        &format!(
+            "UPDATE queue SET verdict = NULL, reason = NULL, answered_at = NULL
+              WHERE verdict = ? AND reason IN ({places}) AND id NOT IN ({kept_places})"
+        ),
+        params_from_iter(
+            std::iter::once(Verdict::Blocked.as_str())
+                .chain(clearing)
+                .chain(kept.iter().map(String::as_str)),
+        ),
+    )?)
+}
+
 pub fn unblock_self_clearing(conn: &Connection) -> Result<usize, CoreError> {
     let clearing: Vec<&str> = BlockedReason::ALL
         .into_iter()

@@ -1827,6 +1827,52 @@ describe("identity", () => {
     expect(read(harness, "a.md")).toContain(`marfa_id: ${live}`);
   });
 
+  it("asks about an unclaimed source again only now and then while watching", async () => {
+    harness = await folderHarness("folder-unclaimed-watch", {
+      slice: {
+        types: ["core.note"],
+        defaultType: "core.note",
+        source: "notes",
+      },
+    });
+    scriptFolderWrites(harness, { claims: () => false });
+    put(harness, "a.md", "---\ntitle: A\n---\na\n");
+    const creates = () =>
+      harness!.server.requests.filter(
+        (request) => request.method === "POST" && request.pathname === "/items",
+      ).length;
+
+    const watching = harness.folder.watch();
+    try {
+      await vi.waitFor(() => expect(creates()).toBe(1), {
+        timeout: 20_000,
+        interval: 100,
+      });
+      // A watcher drains every second. Asking every second would be a
+      // refused request a second for as long as nobody grants the claim.
+      await new Promise((resolve) => setTimeout(resolve, 4_000));
+      expect(
+        creates(),
+        "a folder left watching asked about an unclaimed source on every pass",
+      ).toBe(1);
+      expect(watching.running(), watching.stderr).toBe(true);
+    } finally {
+      await watching.stop();
+    }
+    // It said so once, and printed nothing on the passes after, where
+    // nothing changed.
+    const reports = watching.stdout.split('"unclaimed_sources"').length - 1;
+    expect(
+      reports,
+      `a watcher printed a pass where nothing happened: ${watching.stdout}`,
+    ).toBe(1);
+    expect(watching.stdout).toContain('"notes"');
+
+    // A push is asked for, and asks at once.
+    expect((await harness.folder.push()).ok).toBe(true);
+    expect(creates(), "a push did not ask again").toBe(2);
+  });
+
   it("refuses a folder that names no source, or one it may never name", async () => {
     harness = await folderHarness("folder-source-refused", { hydrate: false });
     const slice = { types: ["core.note"], defaultType: "core.note" };

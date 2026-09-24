@@ -1293,7 +1293,7 @@ fn title_of(key: &str) -> String {
 }
 
 /// Whether `grace` has passed between two instants in the wire's shape.
-fn elapsed_past(since: &str, now: &str, grace: Duration) -> bool {
+pub(crate) fn elapsed_past(since: &str, now: &str, grace: Duration) -> bool {
     // A pair this cannot read has **not** elapsed. Failing open here sends
     // a delete the folder cannot date, and a delete is the one thing in this
     // file that cannot be taken back; a journal row that sits is recoverable

@@ -54,6 +54,9 @@ pub fn watch(
 
     let started = Instant::now();
     let mut quiet_since = Instant::now();
+    // What stood after the last pass that printed, so a standing condition
+    // is said once rather than once a second.
+    let mut standing: Option<Standing> = None;
     loop {
         if let Some(limit) = stop_after
             && started.elapsed() >= limit
@@ -93,19 +96,77 @@ pub fn watch(
         if quiet_since.elapsed() < SETTLE {
             continue;
         }
-        step(&folder, json)?;
+        step(&folder, json, &mut standing)?;
     }
     Ok(())
 }
 
+/// What a pass leaves standing rather than does: files that are not in step
+/// and sources the key does not claim. Said when it changes, not on every
+/// pass it stays the same.
+#[derive(Debug, Clone, PartialEq)]
+struct Standing {
+    lost: usize,
+    unwritten: usize,
+    collided: usize,
+    outside: usize,
+    absent: usize,
+    kept: usize,
+    unclaimed: Vec<String>,
+}
+
 /// One pass: read the folder, send what it queued, write back what came in.
-fn step(folder: &Folder, json: bool) -> Result<(), CliError> {
+///
+/// Paced: a source the key was found not to claim is asked about again only
+/// once a minute, where a `push` asks at once (`queue-and-verdicts.md` 40).
+fn step(folder: &Folder, json: bool, standing: &mut Option<Standing>) -> Result<(), CliError> {
     let scanned = folder.scan()?;
-    let drained = folder.core().drain()?;
+    let drained = folder.core().drain_paced()?;
     let pulled = folder.pull()?;
-    // Quiet unless something happened, because a watcher printing a line a
-    // second is a watcher nobody reads.
-    if scanned == Default::default() && drained.sent == 0 && pulled == Default::default() {
+    // Quiet unless something happened or what stands changed, because a
+    // watcher printing a line a second is a watcher nobody reads. The counts
+    // of files already in step, and of files outside the slice, are not
+    // events: every folder with files has some on every pass. Nor is a create
+    // asking about an unclaimed source again and being told the same.
+    let news = drained
+        .verdicts
+        .iter()
+        .filter(|entry| {
+            let unclaimed = !drained.unclaimed_sources.is_empty()
+                && entry.verdict == Some(marfa_core::Verdict::Blocked)
+                && entry.reason.as_deref() == Some("credential_refused");
+            !unclaimed
+        })
+        .count();
+    let happened = scanned.created
+        + scanned.updated
+        + scanned.renamed
+        + scanned.missing
+        + scanned.deleted
+        + scanned.parked
+        + scanned.requeued
+        + news
+        + pulled.written
+        + pulled.rewritten
+        + pulled.moved
+        + pulled.removed
+        + pulled.revived
+        > 0;
+    let now = Standing {
+        lost: scanned.lost,
+        unwritten: pulled.unwritten,
+        collided: pulled.collided,
+        outside: pulled.outside,
+        absent: pulled.absent,
+        kept: pulled.kept,
+        unclaimed: drained.unclaimed_sources.clone(),
+    };
+    let changed = standing.as_ref() != Some(&now);
+    let unclaimed_changed = standing
+        .as_ref()
+        .is_none_or(|before| before.unclaimed != now.unclaimed);
+    *standing = Some(now);
+    if !happened && !changed {
         return Ok(());
     }
     output::report(
@@ -117,7 +178,7 @@ fn step(folder: &Folder, json: bool) -> Result<(), CliError> {
             // is a watcher telling somebody nothing is wrong.
             let held = pulled.unwritten + pulled.collided + pulled.outside + pulled.absent;
             let mut lines = vec![format!(
-                "{} created, {} updated, {} renamed, {} deleted; sent {}; {} file(s) written{}",
+                "{} created, {} updated, {} renamed, {} deleted; sent {}; {} file(s) written{}{}{}",
                 scanned.created,
                 scanned.updated,
                 scanned.renamed,
@@ -128,9 +189,24 @@ fn step(folder: &Folder, json: bool) -> Result<(), CliError> {
                     format!(", {held} not written")
                 } else {
                     String::new()
+                },
+                if scanned.lost > 0 {
+                    format!(", {} bound to an item that is gone", scanned.lost)
+                } else {
+                    String::new()
+                },
+                if scanned.overwrote > 0 {
+                    format!(
+                        "; {} sent over another device's content, which it never read",
+                        scanned.overwrote
+                    )
+                } else {
+                    String::new()
                 }
             )];
-            lines.extend(output::unclaimed(&drained));
+            if unclaimed_changed {
+                lines.extend(output::unclaimed(&drained));
+            }
             lines.join("\n")
         },
     )
