@@ -1488,6 +1488,20 @@ mod tests {
             before,
             "the same catalog was written again, and a reader was told of a save that changed nothing"
         );
+        // The server's order is not the store's, and the same catalog in
+        // another order is the same catalog.
+        let two = [
+            store::testing::wire_type("core.note", None, Some("title")),
+            store::testing::wire_type("user.recipe", None, Some("title")),
+        ];
+        replace(&two);
+        let before = reader.data_version().unwrap();
+        replace(&[two[1].clone(), two[0].clone()]);
+        assert_eq!(
+            reader.data_version().unwrap(),
+            before,
+            "the same catalog in another order was written again"
+        );
         // The witness: a catalog that differs is written.
         replace(&[store::testing::wire_type("core.note", None, Some("body"))]);
         assert_ne!(reader.data_version().unwrap(), before);
@@ -1613,6 +1627,126 @@ mod tests {
             reader.data_version().unwrap(),
             before,
             "the writer saved and the reader's signal did not move"
+        );
+    }
+
+    /// A reading open says what is wrong with a file it cannot read, and
+    /// hands on what it cannot name.
+    #[test]
+    fn a_reading_open_names_what_is_wrong_with_the_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let at = |name: &str| dir.path().join(name);
+        let made = |name: &str, sql: &str| {
+            let path = at(name);
+            Connection::open(&path).unwrap().execute_batch(sql).unwrap();
+            path
+        };
+        let refusal = |path: &Path| match Core::open_reader(path) {
+            Err(error) => error,
+            Ok(_) => panic!("{} opened to read", path.display()),
+        };
+        let not_a_store = |path: &Path| match refusal(path) {
+            CoreError::Invalid(message) => message,
+            other => panic!("{} was refused as {other:?}", path.display()),
+        };
+
+        let absent = at("absent.sqlite");
+        assert!(not_a_store(&absent).contains("never makes one"));
+        assert!(!absent.exists());
+        let tableless = made("tableless.sqlite", "CREATE TABLE other (x);");
+        assert!(not_a_store(&tableless).contains("has no schema to read"));
+        let words = at("words.sqlite");
+        std::fs::write(&words, "words, not a database. ".repeat(40)).unwrap();
+        assert!(not_a_store(&words).contains("has no schema to read"));
+
+        // An error it has no name for is handed on as the store's own.
+        let odd = made("odd.sqlite", "CREATE TABLE meta (key TEXT);");
+        assert!(
+            matches!(refusal(&odd), CoreError::Store(message) if message.contains("no such column")),
+            "an error the reading open cannot name was called something it is not"
+        );
+
+        // A store another build made, or one that never said which it is.
+        let meta = "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);";
+        let older = made(
+            "older.sqlite",
+            &format!("{meta} INSERT INTO meta VALUES ('schema_version', '1');"),
+        );
+        let unversioned = made("unversioned.sqlite", meta);
+        for (path, found) in [(&older, "1"), (&unversioned, "none")] {
+            assert_eq!(
+                refusal(path),
+                CoreError::WrongSchema {
+                    expected: store::SCHEMA_VERSION.into(),
+                    found: found.into(),
+                    path: path.display().to_string(),
+                }
+            );
+        }
+        // The witness: a store this build made opens.
+        drop(Core::open(at("store.sqlite"), None).unwrap());
+        assert!(Core::open_reader(at("store.sqlite")).is_ok());
+    }
+
+    /// A reading open answers bytes held beside the store and fetches none,
+    /// and says that is why.
+    #[test]
+    fn a_reading_open_answers_held_bytes_and_says_why_it_fetches_no_others() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("core.sqlite");
+        let writer = Core::open(&path, None).unwrap();
+        let file = dir.path().join("note.txt");
+        std::fs::write(&file, b"held here").unwrap();
+        let hash = writer.cache().unwrap().take(&file).unwrap();
+
+        let reader = Core::open_reader(&path).unwrap();
+        let held = reader.blob(&hash).unwrap();
+        assert_eq!(std::fs::read(held).unwrap(), b"held here");
+        let other = blob::name_of(b"never held");
+        let reason = |core: &Core| match core.blob(&other) {
+            Err(CoreError::BytesAbsent { reason, .. }) => reason,
+            answer => panic!("{answer:?}"),
+        };
+        assert!(reason(&reader).contains("reading handle"));
+        // The witness: the writer, with no server either, says otherwise.
+        assert!(!reason(&writer).contains("reading handle"));
+    }
+
+    /// Claims made at the same instant: one wins, and the rest are refused
+    /// until it lets go.
+    #[test]
+    fn claims_made_at_once_never_both_win() {
+        use std::sync::atomic::AtomicUsize;
+        let core = Core::open_in_memory(None).unwrap();
+        let holding = AtomicUsize::new(0);
+        let (won, overlapped) = (AtomicUsize::new(0), AtomicBool::new(false));
+        for _ in 0..300 {
+            let go = AtomicBool::new(false);
+            std::thread::scope(|scope| {
+                for _ in 0..8 {
+                    scope.spawn(|| {
+                        while !go.load(Ordering::Acquire) {
+                            std::hint::spin_loop();
+                        }
+                        if let Ok(claim) = core.claim_stream() {
+                            won.fetch_add(1, Ordering::SeqCst);
+                            if holding.fetch_add(1, Ordering::SeqCst) > 0 {
+                                overlapped.store(true, Ordering::SeqCst);
+                            }
+                            std::thread::yield_now();
+                            holding.fetch_sub(1, Ordering::SeqCst);
+                            drop(claim);
+                        }
+                    });
+                }
+                go.store(true, Ordering::Release);
+            });
+        }
+        // The witness: claims were won.
+        assert!(won.load(Ordering::SeqCst) >= 300);
+        assert!(
+            !overlapped.load(Ordering::SeqCst),
+            "two claims were held at once, so two streams could move one cursor"
         );
     }
 

@@ -768,19 +768,32 @@ mod tests {
         assert!(run.waits().is_empty());
     }
 
+    /// The pace in use is the one `device.md` 40 and the comments above
+    /// state; the tests that run at `QUICK` hold what is done with it.
+    #[test]
+    fn the_pace_in_use_is_the_stated_one() {
+        assert_eq!(PACE.reconnect_first, Duration::from_secs(1));
+        assert_eq!(PACE.reconnect_most, Duration::from_secs(30));
+        assert_eq!(PACE.stop_poll, MS(250));
+        assert_eq!(PACE.silence, Duration::from_secs(90));
+        assert_eq!(PACE.retry_after_most, Duration::from_secs(300));
+    }
+
     #[test]
     fn a_wait_ends_when_stopped_and_one_too_long_for_the_clock_does_not_panic() {
-        let stop = AtomicBool::new(false);
+        let stop = Arc::new(AtomicBool::new(false));
+        let (ended, done) = mpsc::channel();
+        let flag = Arc::clone(&stop);
         let started = Instant::now();
-        thread::scope(|scope| {
-            scope.spawn(|| wait_unless_stopped(&stop, Duration::MAX, MS(10)));
-            thread::sleep(MS(50));
-            stop.store(true, Ordering::Relaxed);
+        thread::spawn(move || {
+            wait_unless_stopped(&flag, Duration::MAX, MS(10));
+            let _ = ended.send(());
         });
-        assert!(
-            started.elapsed() < Duration::from_secs(1),
-            "the wait outlasted its stop"
-        );
+        thread::sleep(MS(50));
+        stop.store(true, Ordering::Relaxed);
+        done.recv_timeout(Duration::from_secs(2))
+            .expect("the wait outlasted its stop, or panicked");
+        assert!(started.elapsed() < Duration::from_secs(1));
         // The witness: unstopped, a wait lasts as long as it was asked to.
         let started = Instant::now();
         wait_unless_stopped(&AtomicBool::new(false), MS(60), MS(10));
