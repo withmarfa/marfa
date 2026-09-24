@@ -13,7 +13,7 @@ use crate::remote::{CredentialSource, Remote, Transport};
 /// A key has no door that says whose it is, so for a key this reports the
 /// key's kind and its source; a token reports the person it was issued to.
 pub fn run(remote: &Remote, out: &Printer) -> Result<(), CliError> {
-    let instance = remote.describe(&status::root_request())?;
+    let instance = remote.root()?;
     let held = status::speaks_this_contract(&instance);
     let credential = match remote.credential() {
         None => json!(null),
