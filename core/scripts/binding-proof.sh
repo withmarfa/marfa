@@ -3,7 +3,8 @@
 # server comes back: each proof hydrates, the server stops, each queues its
 # writes and drains into nothing, the server returns on the same origin with
 # the same data, and each drains again. Then each holds the event stream open
-# while the binary makes a note on the server, and is told of it.
+# while the binary makes a note on the server, and is told of it. Last, each
+# reads the thumbnails of a type the binary registers, from a store of its own.
 #
 # Each proof checks what it printed and exits non-zero on anything else, so
 # this script fails when a verdict does.
@@ -53,3 +54,19 @@ sleep 3
   --properties '{"title":"Made by the binary","body":"arrives through follow"}' >/dev/null
 wait "${swift_follow}"
 wait "${node_follow}"
+
+echo "== thumbnail, read from each copy with no request"
+marfa() { "${core}/target/debug/marfa" --url "${MARFA_API_URL}" --key "${MARFA_API_KEY}" "$@" >/dev/null; }
+# One item holds a value under the field before the type declares it a
+# thumbnail, which the server does not check again once it does, so each copy
+# holds an image and a value that is not one.
+marfa types register --body '{"id":"user.snapshot","fields":{"title":{"type":"string"}}}'
+marfa items create --type user.snapshot \
+  --properties '{"title":"Held before","thumbnail":"not an image"}'
+marfa types update user.snapshot \
+  --body '{"version":2,"fields":{"title":{"type":"string"},"thumbnail":{"type":"thumbnail"}}}'
+# A PNG's signature, then the words the proofs look for.
+marfa items create --type user.snapshot \
+  --properties '{"title":"With an image","thumbnail":"data:image/png;base64,iVBORw0KGgpiaW5kaW5nIHByb29m"}'
+swift_proof thumbnail
+node_proof thumbnail

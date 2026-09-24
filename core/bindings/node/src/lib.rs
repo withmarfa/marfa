@@ -1208,7 +1208,9 @@ impl MarfaCore {
     }
 
     /// The thumbnail an item carries, from the copy with no request; null
-    /// where the item is not held, its type declares none, or it carries none.
+    /// where its type declares none or it carries none. An item the copy does
+    /// not hold throws `not_found` naming `not_held`, and a held value that is
+    /// not a thumbnail throws `decoding` naming the item.
     #[napi]
     pub fn thumbnail(&self, id: String) -> Result<Option<Thumbnail>> {
         Ok(self

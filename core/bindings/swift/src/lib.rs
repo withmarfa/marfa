@@ -1137,7 +1137,9 @@ impl MarfaCore {
     }
 
     /// The thumbnail an item carries, from the copy with no request; none
-    /// where the item is not held, its type declares none, or it carries none.
+    /// where its type declares none or it carries none. An item the copy does
+    /// not hold throws `NotFound` with the code `not_held`, and a held value
+    /// that is not a thumbnail throws `Decoding` naming the item.
     pub fn thumbnail(&self, id: String) -> Result<Option<Thumbnail>, MarfaError> {
         Ok(self.inner.thumbnail(&id)?.map(|thumbnail| Thumbnail {
             mime_type: thumbnail.mime_type,
